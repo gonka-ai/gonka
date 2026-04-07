@@ -2,13 +2,27 @@ package broker
 
 import (
 	"context"
+	"decentralized-api/logging"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 var ErrLockNotFound = errors.New("lock not found")
+
+func (b *Broker) queueReleaseNode(nodeId string, outcome InferenceResult) {
+	queueErr := b.QueueMessage(ReleaseNode{
+		NodeId:   nodeId,
+		Outcome:  outcome,
+		Response: make(chan bool, 1),
+	})
+	// QueueMessage can only fail if the response channel has capacity 0 (broker.go line 449-452)
+	if queueErr != nil {
+		logging.Error("Error releasing node", types.Nodes, "error", queueErr, "nodeId", nodeId, "outcome", outcome)
+	}
+}
 
 // AcquireMLNode queues a LockAvailableNode command, waits for a node,
 // records it in the lock map, and returns (lockID, inferenceURL, nodeID).
@@ -25,6 +39,11 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 
 	select {
 	case <-ctx.Done():
+		go func() {
+			if node := <-ch; node != nil {
+				b.queueReleaseNode(node.Id, InferenceError{Message: "context cancelled"})
+			}
+		}()
 		return "", "", "", ctx.Err()
 	case node := <-ch:
 		if node == nil {
@@ -49,12 +68,7 @@ func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 	if !ok {
 		return ErrLockNotFound
 	}
-
-	_ = b.QueueMessage(ReleaseNode{
-		NodeId:   entry.nodeID,
-		Outcome:  outcome,
-		Response: make(chan bool, 1),
-	})
+	b.queueReleaseNode(entry.nodeID, outcome)
 	return nil
 }
 
@@ -77,10 +91,6 @@ func (b *Broker) evictExpiredLocks() {
 	b.lockMapMu.Unlock()
 
 	for _, entry := range expired {
-		_ = b.QueueMessage(ReleaseNode{
-			NodeId:   entry.nodeID,
-			Outcome:  InferenceError{Message: "lock TTL expired"},
-			Response: make(chan bool, 2),
-		})
+		b.queueReleaseNode(entry.nodeID, InferenceError{Message: "lock TTL expired"})
 	}
 }

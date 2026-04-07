@@ -35,9 +35,12 @@ func DoWithNode(
 	ctx context.Context,
 	lock NodeLock,
 	model string,
-	maxAttempts int,
+	maxAttempts uint,
 	do func(ctx context.Context, endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
+	if maxAttempts == 0 {
+		return nil, errors.New("mlnode: maxAttempts must be > 0")
+	}
 	var excludedNodeIDs []string
 	seen := make(map[string]struct{})
 	var lastErr error

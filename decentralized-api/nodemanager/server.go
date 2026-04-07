@@ -3,10 +3,13 @@ package nodemanager
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"decentralized-api/broker"
+	"decentralized-api/logging"
 	"decentralized-api/nodemanager/gen"
 
+	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -36,9 +39,11 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
+		logging.Error("[NodeManager] No nodes available", types.Nodes)
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
 	}
 	if ctx.Err() != nil {
+		logging.Error("[NodeManager] Deadline exceeded", types.Nodes)
 		return nil, status.Error(codes.DeadlineExceeded, ctx.Err().Error())
 	}
 	// queue is full, so returning unavailable code
@@ -55,20 +60,23 @@ func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest)
 		return &gen.ReleaseMLNodeResponse{}, nil
 	}
 	if errors.Is(err, broker.ErrLockNotFound) {
-		return nil, status.Error(codes.NotFound, "lock not found")
+		logging.Error("[NodeManager] Lock not found ", types.Nodes)
+		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
 	return nil, status.Error(codes.Internal, err.Error())
 }
 
 func outcomeFromProto(o gen.ReleaseOutcome) broker.InferenceResult {
 	switch o {
+	case gen.ReleaseOutcome_SUCCESS:
+		return broker.InferenceSuccess{}
 	case gen.ReleaseOutcome_TRANSPORT_ERROR:
 		return broker.InferenceError{Message: "transport error"}
 	case gen.ReleaseOutcome_APPLICATION_ERROR:
 		return broker.InferenceError{Message: "application error"}
 	case gen.ReleaseOutcome_TIMEOUT:
 		return broker.InferenceError{Message: "timeout"}
-	default: // SUCCESS
-		return broker.InferenceSuccess{}
+	default:
+		return broker.InferenceError{Message: fmt.Sprintf("unknown outcome: %v", o)}
 	}
 }
