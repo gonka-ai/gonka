@@ -54,12 +54,12 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	require.Empty(t, retriedRequest.FinalSignature)
 }
 
-func TestProcessThresholdSigningDeadlines_AutoRetryUpdatesEpochAndStopsAtMaxAttempts(t *testing.T) {
+func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMaxAttempts(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	initialEpochID := uint64(401)
 	activeEpochID := uint64(402)
 	setSignedEpochForRetryTests(t, k, ctx, initialEpochID)
-	setSignedEpochForRetryTests(t, k, ctx, activeEpochID)
+	setDealingEpochForRetryTests(t, k, ctx, activeEpochID)
 	setMaxSigningAttemptsForRetryTests(t, k, ctx, 3)
 
 	signingData := makeSigningDataForRetryTests(initialEpochID, 21)
@@ -71,7 +71,7 @@ func TestProcessThresholdSigningDeadlines_AutoRetryUpdatesEpochAndStopsAtMaxAtte
 
 	k.SetActiveEpochID(ctx, activeEpochID)
 
-	// 1st expiry -> auto-retry #2 and epoch switch to active epoch.
+	// 1st expiry -> auto-retry #2 while keeping the original request epoch.
 	retry1Ctx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry1Ctx))
 
@@ -79,12 +79,12 @@ func TestProcessThresholdSigningDeadlines_AutoRetryUpdatesEpochAndStopsAtMaxAtte
 	require.NoError(t, err)
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retry1Request.Status)
 	require.EqualValues(t, 2, retry1Request.Attempt)
-	require.Equal(t, activeEpochID, retry1Request.CurrentEpochId)
+	require.Equal(t, initialEpochID, retry1Request.CurrentEpochId)
 	require.NotEqual(t, retry1Request.DeadlineBlockHeight, initialRequest.DeadlineBlockHeight)
-	require.NotEqual(t, initialHash, retry1Request.MessageHash)
+	require.Equal(t, initialHash, retry1Request.MessageHash)
 	require.Empty(t, retry1Request.PartialSignatures)
 
-	// 2nd expiry -> auto-retry #3.
+	// 2nd expiry -> auto-retry #3 in the same request epoch.
 	retry2Ctx := retry1Ctx.WithBlockHeight(retry1Request.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry2Ctx))
 
@@ -92,7 +92,7 @@ func TestProcessThresholdSigningDeadlines_AutoRetryUpdatesEpochAndStopsAtMaxAtte
 	require.NoError(t, err)
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retry2Request.Status)
 	require.EqualValues(t, 3, retry2Request.Attempt)
-	require.Equal(t, activeEpochID, retry2Request.CurrentEpochId)
+	require.Equal(t, initialEpochID, retry2Request.CurrentEpochId)
 
 	// 3rd expiry -> terminal EXPIRED because max attempts reached.
 	terminalCtx := retry2Ctx.WithBlockHeight(retry2Request.DeadlineBlockHeight)
@@ -258,16 +258,24 @@ func TestRequestThresholdSignature_RejectsRetryAfterCancelled(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(305)
 	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
 
 	signingData := makeSigningDataForRetryTests(epochID, 40)
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
-	require.NoError(t, k.CancelThresholdSignature(ctx, signingData.RequestId))
+	
+	// Expire the request before cancelling
+	req, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	expiryCtx := ctx.WithBlockHeight(req.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
 
-	cancelledRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, k.CancelThresholdSignature(expiryCtx, signingData.RequestId))
+
+	cancelledRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
 	require.NoError(t, err)
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED, cancelledRequest.Status)
 
-	err = k.RequestThresholdSignature(ctx, signingData)
+	err = k.RequestThresholdSignature(expiryCtx, signingData)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "request_id already exists")
 	require.Contains(t, err.Error(), types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED.String())
@@ -300,6 +308,17 @@ func setSignedEpochForRetryTests(t *testing.T, k Keeper, ctx sdk.Context, epochI
 		EpochId:        epochID,
 		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
 		GroupPublicKey: []byte{1},
+	})
+	require.NoError(t, err)
+}
+
+func setDealingEpochForRetryTests(t *testing.T, k Keeper, ctx sdk.Context, epochID uint64) {
+	t.Helper()
+
+	err := k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_DEALING,
+		GroupPublicKey: []byte{},
 	})
 	require.NoError(t, err)
 }

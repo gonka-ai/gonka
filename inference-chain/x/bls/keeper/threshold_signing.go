@@ -186,12 +186,13 @@ func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) erro
 		return err
 	}
 
-	if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
-		return fmt.Errorf("cannot cancel completed threshold signing request: %x", requestID)
-	}
-
 	if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED {
 		return nil
+	}
+
+	if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED &&
+		request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED {
+		return fmt.Errorf("can only cancel failed or expired requests, current status: %s", request.Status.String())
 	}
 
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
@@ -287,23 +288,6 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	previousAttempt := request.Attempt
 	previousEpochID := request.CurrentEpochId
 	previousDeadlineBlockHeight := request.DeadlineBlockHeight
-
-	activeEpochID, hasActiveEpoch := k.GetActiveEpochID(ctx)
-	if hasActiveEpoch && activeEpochID > 0 && activeEpochID != request.CurrentEpochId {
-		activeEpochData, getErr := k.GetEpochBLSData(ctx, activeEpochID)
-		if getErr != nil {
-			return false, fmt.Errorf("failed to load active epoch %d for retry: %w", activeEpochID, getErr)
-		}
-		if activeEpochData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED &&
-			activeEpochData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
-			return false, fmt.Errorf("active epoch %d DKG not completed for retry, current phase: %s", activeEpochID, activeEpochData.DkgPhase.String())
-		}
-		if len(activeEpochData.GroupPublicKey) == 0 {
-			return false, fmt.Errorf("active epoch %d has no group public key for retry", activeEpochID)
-		}
-
-		request.CurrentEpochId = activeEpochID
-	}
 
 	signingData := types.SigningData{
 		CurrentEpochId: request.CurrentEpochId,
@@ -509,9 +493,9 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	if err != nil {
 		retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "signature aggregation failed")
 		if retryErr != nil {
-			return retryErr
-		}
-		if retried {
+			k.Logger().Error("Failed to auto-retry failed threshold signing request, falling back to FAILED",
+				"request_id", fmt.Sprintf("%x", request.RequestId), "error", retryErr)
+		} else if retried {
 			return nil
 		}
 
@@ -649,11 +633,9 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 
 			retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "deadline expired")
 			if retryErr != nil {
-				k.Logger().Error("Failed to auto-retry expired threshold signing request",
+				k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
 					"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
-				continue
-			}
-			if retried {
+			} else if retried {
 				continue
 			}
 
