@@ -79,8 +79,6 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
-			spendable, required := ms.parseBalanceError(err.Error())
-			ms.LogError("Balance details", types.Claims, "spendable", spendable, "required", required)
 			return &types.MsgClaimRewardsResponse{
 				Amount: 0,
 				Result: "Insufficient funds for paying participant for work, claim can be retried",
@@ -123,14 +121,6 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		Amount: uint64(settleAmount.GetTotalCoins()),
 		Result: "Rewards claimed successfully",
 	}, nil
-}
-
-func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
-	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dngonka", &spendable, &required)
-	if err != nil {
-		return 0, 0
-	}
-	return spendable, required
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
