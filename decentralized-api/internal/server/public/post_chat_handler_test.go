@@ -235,7 +235,7 @@ func TestReadRequest_AcceptsMultipartContent(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"Hello"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png"}},{"type":"text","text":" world"}]}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 
@@ -248,7 +248,7 @@ func TestMultipartContent_RoundTrip(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"describe this"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"high"}}]}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 
 	roundTripped, err := json.Marshal(chatRequest.OpenAiRequest)
@@ -270,7 +270,7 @@ func TestReadRequest_AcceptsMissingMessageContent(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"assistant"}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err, "missing content is valid for assistant/tool-calling messages")
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 
@@ -290,7 +290,7 @@ func TestReadRequest_AcceptsToolCallingPayload(t *testing.T) {
 	}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 	require.Len(t, chatRequest.OpenAiRequest.Messages, 3)
@@ -314,7 +314,7 @@ func TestReadRequest_RejectsUnsupportedContentType(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":123}]}`)
 	req := createTestRequest(body)
 
-	_, err := readRequest(req, nil, "transfer-agent")
+	_, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.Error(t, err)
 
 	var httpErr *echo.HTTPError

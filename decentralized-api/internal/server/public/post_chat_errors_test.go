@@ -2,7 +2,6 @@ package public
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +43,10 @@ func newTestConfigManager(t *testing.T) *apiconfig.ConfigManager {
 	return configManager
 }
 
+func textMessageContent(text string) MessageContent {
+	return MessageContent{Text: &text}
+}
+
 func TestPostChat_MissingAuthorization(t *testing.T) {
 	e := echo.New()
 	configManager := newTestConfigManager(t)
@@ -58,7 +61,7 @@ func TestPostChat_MissingAuthorization(t *testing.T) {
 		configManager: configManager,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"content":"hi"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	ctx := e.NewContext(req, rec)
@@ -120,7 +123,7 @@ func TestPostChat_TransferAgentNotAllowed(t *testing.T) {
 		configManager: configManager,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"content":"hi"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	ctx := e.NewContext(req, rec)
@@ -135,42 +138,6 @@ func TestPostChat_TransferAgentNotAllowed(t *testing.T) {
 	mockCosmos.AssertExpectations(t)
 }
 
-func TestValidateMessages_AcceptsStringContent(t *testing.T) {
-	messages := []Message{
-		{Role: "user", Content: json.RawMessage(`"hello"`)},
-	}
-
-	err := validateMessages(messages)
-	require.NoError(t, err)
-}
-
-func TestValidateMessages_RejectsNullContent(t *testing.T) {
-	messages := []Message{
-		{Role: "user", Content: json.RawMessage(`null`)},
-		{Role: "assistant", Content: json.RawMessage(`null`)},
-	}
-
-	err := validateMessages(messages)
-	require.Error(t, err)
-
-	var httpErr *echo.HTTPError
-	require.ErrorAs(t, err, &httpErr)
-	require.Equal(t, http.StatusBadRequest, httpErr.Code)
-}
-
-func TestValidateMessages_RejectsUnsupportedContent(t *testing.T) {
-	messages := []Message{
-		{Role: "user", Content: json.RawMessage(`[{"type":"image_url","text":"x"}]`)},
-	}
-
-	err := validateMessages(messages)
-	require.Error(t, err)
-
-	var httpErr *echo.HTTPError
-	require.ErrorAs(t, err, &httpErr)
-	require.Equal(t, http.StatusBadRequest, httpErr.Code)
-}
-
 type fakePricingQueryServer struct {
 	types.UnimplementedQueryServer
 	price          uint64
@@ -178,6 +145,7 @@ type fakePricingQueryServer struct {
 	pubkey         string
 	balance        int64
 	epochGroupData *types.EpochGroupData
+	epochGroupErr  error
 }
 
 func (f *fakePricingQueryServer) GetModelPerTokenPrice(ctx context.Context, req *types.QueryGetModelPerTokenPriceRequest) (*types.QueryGetModelPerTokenPriceResponse, error) {
@@ -195,6 +163,9 @@ func (f *fakePricingQueryServer) AccountByAddress(ctx context.Context, req *type
 }
 
 func (f *fakePricingQueryServer) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest) (*types.QueryCurrentEpochGroupDataResponse, error) {
+	if f.epochGroupErr != nil {
+		return nil, f.epochGroupErr
+	}
 	if f.epochGroupData == nil {
 		return &types.QueryCurrentEpochGroupDataResponse{}, nil
 	}
@@ -328,6 +299,71 @@ func TestValidateRequester_UnsupportedModel(t *testing.T) {
 	mockCosmos.AssertExpectations(t)
 }
 
+func TestValidateRequester_ModelValidationUnavailable(t *testing.T) {
+	devKey := newTestKey()
+	body := `{"model":"supported-model","messages":[{"role":"user","content":"hello"}]}`
+	timestamp := time.Now().UnixNano()
+	transferAddress := "ta1"
+
+	components := calculations.SignatureComponents{
+		Payload:         utils.GenerateSHA256Hash(body),
+		Timestamp:       timestamp,
+		TransferAddress: transferAddress,
+	}
+	signature, err := calculations.Sign(devKey, components, calculations.Developer)
+	require.NoError(t, err)
+
+	request := &ChatRequest{
+		Body:            []byte(body),
+		Timestamp:       timestamp,
+		TransferAddress: transferAddress,
+		AuthKey:         signature,
+		SignBodyHash:    utils.GenerateSHA256Hash(body),
+		OpenAiRequest: OpenAiRequest{
+			Model:     "supported-model",
+			MaxTokens: 1,
+		},
+	}
+
+	queryServer := &fakePricingQueryServer{
+		price:         1,
+		found:         true,
+		pubkey:        devKey.GetPubKeyBase64(),
+		balance:       100,
+		epochGroupErr: fmt.Errorf("epoch group query failed"),
+	}
+	conn, cleanup := startTestGRPCServer(t, queryServer)
+	t.Cleanup(cleanup)
+
+	mockCosmos := &cosmosclient.MockCosmosMessageClient{}
+	mockCosmos.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
+
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 1}
+	params := &types.EpochParams{EpochLength: 1}
+	phaseTracker.Update(chainphase.BlockInfo{Height: 1, Hash: "hash-1"}, epoch, params, true, nil)
+
+	s := &Server{
+		recorder:            mockCosmos,
+		phaseTracker:        phaseTracker,
+		epochGroupDataCache: internal.NewEpochGroupDataCache(mockCosmos),
+	}
+	requester := &types.QueryAccountByAddressResponse{
+		Pubkey:  devKey.GetPubKeyBase64(),
+		Balance: 100,
+	}
+
+	err = s.validateRequester(context.Background(), request, requester, 1)
+	require.Error(t, err)
+
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusServiceUnavailable, httpErr.Code)
+	require.Equal(t, "unable to fetch current epoch group data", httpErr.Message)
+
+	mockCosmos.AssertExpectations(t)
+}
+
 func TestValidateRequest_InvalidTimestamp(t *testing.T) {
 	configManager := newTestConfigManager(t)
 	status := &coretypes.ResultStatus{
@@ -410,7 +446,7 @@ func TestHandleTransferRequest_CapacityLimit(t *testing.T) {
 		OpenAiRequest: OpenAiRequest{
 			Model:     "test-model",
 			MaxTokens: 1,
-			Messages:  []Message{{Role: "user", Content: json.RawMessage(`"` + strings.Repeat("x", 10) + `"`)}},
+			Messages:  []Message{{Role: "user", Content: textMessageContent(strings.Repeat("x", 10))}},
 		},
 	}
 

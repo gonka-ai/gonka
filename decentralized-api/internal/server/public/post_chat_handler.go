@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -300,48 +299,6 @@ func (s *Server) enforceTransferAgentAccess(taAddress string) error {
 	}
 	logging.Warn("Transfer Agent not in whitelist", types.Inferences, "address", taAddress)
 	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
-}
-
-func validateMessages(messages []Message) error {
-	for i, message := range messages {
-		if err := validateMessageContent(message); err != nil {
-			logging.Warn("Unsupported message content", types.Inferences, "index", i, "role", message.Role, "error", err)
-			return ErrUnsupportedMessageContent
-		}
-	}
-	return nil
-}
-
-func validateMessageContent(message Message) error {
-	trimmed := bytes.TrimSpace(message.Content)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return errors.New("empty message content")
-	}
-
-	var s string
-	if json.Unmarshal(message.Content, &s) == nil {
-		if strings.TrimSpace(s) == "" {
-			return errors.New("empty message content")
-		}
-		return nil
-	}
-
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(message.Content, &parts); err != nil {
-		return err
-	}
-	if len(parts) == 0 {
-		return errors.New("empty message content")
-	}
-	for _, part := range parts {
-		if part.Type != "text" {
-			return fmt.Errorf("unsupported content type: %s", part.Type)
-		}
-	}
-	return nil
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
@@ -1027,6 +984,10 @@ func readRequest(request *http.Request, transferAddress string, body []byte, sig
 			openAiRequest = completionsRequest
 		}
 	}
+	if forwardPath == chatCompletionsPath && len(openAiRequest.Messages) == 0 {
+		logging.Warn("Chat completion request without messages", types.Inferences)
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "messages is required")
+	}
 
 	timestamp, err := strconv.ParseInt(request.Header.Get(utils.XTimestampHeader), 10, 64)
 	if err != nil {
@@ -1082,7 +1043,8 @@ func (s *Server) validateModelSupported(model string) error {
 	}
 	epochGroupData, err := s.epochGroupDataCache.GetCurrentEpochGroupData(epochState.LatestEpoch.EpochIndex)
 	if err != nil {
-		return err
+		logging.Warn("Failed to fetch current epoch group data for model validation", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch current epoch group data")
 	}
 	for _, m := range epochGroupData.SubGroupModels {
 		if m == model {

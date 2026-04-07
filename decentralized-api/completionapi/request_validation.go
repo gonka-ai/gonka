@@ -50,14 +50,14 @@ func validateOpenAICompatRequestMap(requestMap map[string]interface{}) error {
 
 		switch role {
 		case roleDeveloper, roleSystem, roleUser:
-			if err := ensureFieldsAbsent(message, "tool_calls", "tool_call_id", "function_call", "name"); err != nil {
+			if err := ensureFieldsAbsent(message, "tool_calls", "tool_call_id", "function_call"); err != nil {
 				return fmt.Errorf("messages[%d]: %w", i, err)
 			}
 			if err := validateRequiredContent(message); err != nil {
 				return fmt.Errorf("messages[%d].content: %w", i, err)
 			}
 		case roleAssistant:
-			if err := ensureFieldsAbsent(message, "tool_call_id", "name"); err != nil {
+			if err := ensureFieldsAbsent(message, "tool_call_id"); err != nil {
 				return fmt.Errorf("messages[%d]: %w", i, err)
 			}
 
@@ -231,20 +231,19 @@ func validateNonEmptyContent(content interface{}) error {
 			if err != nil {
 				return fmt.Errorf("[%d].type: %w", i, err)
 			}
-			if partType != "text" {
-				return fmt.Errorf("[%d].type must be \"text\"", i)
-			}
-			text, err := getRequiredNonEmptyString(part, "text")
-			if err != nil {
-				return fmt.Errorf("[%d].text: %w", i, err)
-			}
-			if strings.TrimSpace(text) == "" {
-				return fmt.Errorf("[%d].text must not be empty", i)
+			if partType == "text" {
+				text, err := getRequiredNonEmptyString(part, "text")
+				if err != nil {
+					return fmt.Errorf("[%d].text: %w", i, err)
+				}
+				if strings.TrimSpace(text) == "" {
+					return fmt.Errorf("[%d].text must not be empty", i)
+				}
 			}
 		}
 		return nil
 	default:
-		return fmt.Errorf("must be a string or an array of text parts")
+		return fmt.Errorf("must be a string or an array of typed content parts")
 	}
 }
 

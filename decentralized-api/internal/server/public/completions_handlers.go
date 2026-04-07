@@ -97,11 +97,6 @@ func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool)
 		return OpenAiRequest{}, false
 	}
 
-	content, err := json.Marshal(rawPrompt)
-	if err != nil {
-		return OpenAiRequest{}, false
-	}
-
 	var maxTokens int32
 	if completionsReq.MaxTokens != nil {
 		maxTokens = *completionsReq.MaxTokens
@@ -110,6 +105,7 @@ func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool)
 	if completionsReq.Seed != nil {
 		seed = *completionsReq.Seed
 	}
+	promptText := rawPrompt
 
 	return OpenAiRequest{
 		Model:               completionsReq.Model,
@@ -118,7 +114,7 @@ func tryBuildOpenAiRequestFromCompletionsBody(body []byte) (OpenAiRequest, bool)
 		MaxCompletionTokens: maxTokens,
 		Messages: []Message{{
 			Role:    "user",
-			Content: content,
+			Content: MessageContent{Text: &promptText},
 		}},
 	}, true
 }
