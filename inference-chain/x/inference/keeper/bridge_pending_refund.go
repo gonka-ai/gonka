@@ -85,6 +85,78 @@ func (k Keeper) refundPendingBridgeWithdrawalByMint(ctx sdk.Context, pendingWith
 	return k.MintTokens(ctx, pendingWithdrawal.Creator, recipientAddr.String(), pendingWithdrawal.Amount)
 }
 
+func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, blsRequestID []byte, reason string) error {
+	if len(blsRequestID) == 0 {
+		return fmt.Errorf("bls request id cannot be empty")
+	}
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	requestKey := hex.EncodeToString(blsRequestID)
+
+	pendingMint, err := k.BridgeMintRefundsMap.Get(ctx, requestKey)
+	switch {
+	case err == nil:
+		return k.processAutoRefundMint(sdkCtx, requestKey, pendingMint, reason)
+	case !errors.Is(err, collections.ErrNotFound):
+		return fmt.Errorf("failed to load pending bridge mint request %s for auto-refund: %w", requestKey, err)
+	}
+
+	pendingWithdrawal, err := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
+	switch {
+	case err == nil:
+		return k.processAutoRefundWithdrawal(sdkCtx, requestKey, pendingWithdrawal, reason)
+	case !errors.Is(err, collections.ErrNotFound):
+		return fmt.Errorf("failed to load pending bridge withdrawal request %s for auto-refund: %w", requestKey, err)
+	}
+
+	return nil
+}
+
+func (k Keeper) processAutoRefundMint(
+	ctx sdk.Context,
+	requestKey string,
+	pendingMint types.MsgRequestBridgeMint,
+	reason string,
+) error {
+	if err := k.refundPendingBridgeMintFromEscrow(ctx, &pendingMint); err != nil {
+		return fmt.Errorf("failed to auto-refund pending bridge mint request %s: %w", requestKey, err)
+	}
+	if err := k.BridgeMintRefundsMap.Remove(ctx, requestKey); err != nil {
+		return fmt.Errorf("failed to cleanup pending bridge mint request %s after auto-refund: %w", requestKey, err)
+	}
+
+	emitBridgeAutoRefundEvent(ctx, requestKey, "mint", reason)
+	return nil
+}
+
+func (k Keeper) processAutoRefundWithdrawal(
+	ctx sdk.Context,
+	requestKey string,
+	pendingWithdrawal types.MsgRequestBridgeWithdrawal,
+	reason string,
+) error {
+	if err := k.refundPendingBridgeWithdrawalByMint(ctx, &pendingWithdrawal); err != nil {
+		return fmt.Errorf("failed to auto-refund pending bridge withdrawal request %s: %w", requestKey, err)
+	}
+	if err := k.BridgeWithdrawalRefundsMap.Remove(ctx, requestKey); err != nil {
+		return fmt.Errorf("failed to cleanup pending bridge withdrawal request %s after auto-refund: %w", requestKey, err)
+	}
+
+	emitBridgeAutoRefundEvent(ctx, requestKey, "withdrawal", reason)
+	return nil
+}
+
+func emitBridgeAutoRefundEvent(ctx sdk.Context, requestKey, operationType, reason string) {
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"bridge_operation_auto_refunded",
+			sdk.NewAttribute("request_id", requestKey),
+			sdk.NewAttribute("operation_type", operationType),
+			sdk.NewAttribute("reason", reason),
+		),
+	)
+}
+
 func (k Keeper) GetAllBridgePendingMintRefunds(ctx context.Context) []types.BridgePendingMintRefund {
 	iter, err := k.BridgeMintRefundsMap.Iterate(ctx, nil)
 	if err != nil {

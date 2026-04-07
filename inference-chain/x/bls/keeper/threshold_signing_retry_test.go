@@ -34,7 +34,6 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
 	require.NoError(t, err)
 
-	// Expire exactly at deadline block so expiration index processing picks it up
 	expiryCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
 
@@ -42,7 +41,6 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, expiredRequest.Status)
 
-	// Retry with the same request_id should now be allowed
 	require.NoError(t, k.RequestThresholdSignature(expiryCtx, signingData))
 
 	retriedRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
@@ -71,7 +69,6 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 
 	k.SetActiveEpochID(ctx, activeEpochID)
 
-	// 1st expiry -> auto-retry #2 while keeping the original request epoch.
 	retry1Ctx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry1Ctx))
 
@@ -84,7 +81,6 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.Equal(t, initialHash, retry1Request.MessageHash)
 	require.Empty(t, retry1Request.PartialSignatures)
 
-	// 2nd expiry -> auto-retry #3 in the same request epoch.
 	retry2Ctx := retry1Ctx.WithBlockHeight(retry1Request.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry2Ctx))
 
@@ -94,7 +90,6 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.EqualValues(t, 3, retry2Request.Attempt)
 	require.Equal(t, initialEpochID, retry2Request.CurrentEpochId)
 
-	// 3rd expiry -> terminal EXPIRED because max attempts reached.
 	terminalCtx := retry2Ctx.WithBlockHeight(retry2Request.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(terminalCtx))
 
@@ -112,7 +107,6 @@ func TestRequestThresholdSignature_RetryAllowedAfterFailedAndCleansStaleExpirati
 	signingData := makeSigningDataForRetryTests(epochID, 2)
 	staleDeadline := int64(12345)
 
-	// Seed an existing FAILED request and a stale expiration index entry
 	failedRequest := &types.ThresholdSigningRequest{
 		RequestId:           signingData.RequestId,
 		CurrentEpochId:      signingData.CurrentEpochId,
@@ -134,7 +128,6 @@ func TestRequestThresholdSignature_RetryAllowedAfterFailedAndCleansStaleExpirati
 
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
 
-	// Stale index entry from the failed attempt must be removed
 	staleValue, err := kvStore.Get(staleExpirationKey)
 	require.NoError(t, err)
 	require.Nil(t, staleValue)
@@ -263,7 +256,6 @@ func TestRequestThresholdSignature_RejectsRetryAfterCancelled(t *testing.T) {
 	signingData := makeSigningDataForRetryTests(epochID, 40)
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
 	
-	// Expire the request before cancelling
 	req, err := k.GetSigningStatus(ctx, signingData.RequestId)
 	require.NoError(t, err)
 	expiryCtx := ctx.WithBlockHeight(req.DeadlineBlockHeight)
@@ -298,6 +290,10 @@ type retryTestBlsHook struct {
 
 func (h *retryTestBlsHook) AfterThresholdSigningCompleted(_ context.Context, _ []byte, _ uint64) error {
 	h.called = true
+	return nil
+}
+
+func (h *retryTestBlsHook) AfterThresholdSigningFailed(_ context.Context, _ []byte, _ uint64, _ string) error {
 	return nil
 }
 

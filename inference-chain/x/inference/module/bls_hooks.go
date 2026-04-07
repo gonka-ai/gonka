@@ -17,3 +17,7 @@ func NewBlsHooks(k keeper.Keeper) BlsHooks {
 func (h BlsHooks) AfterThresholdSigningCompleted(ctx context.Context, requestID []byte, _ uint64) error {
 	return h.k.CleanupBridgePendingRefundByBlsRequestID(ctx, requestID)
 }
+
+func (h BlsHooks) AfterThresholdSigningFailed(ctx context.Context, requestID []byte, _ uint64, reason string) error {
+	return h.k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, reason)
+}

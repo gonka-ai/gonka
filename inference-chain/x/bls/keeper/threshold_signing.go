@@ -369,7 +369,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 			return err
 		}
 		reason := "request expired"
-		if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
+		if err := k.notifyThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
 			return err
 		}
 		return nil
@@ -512,7 +512,7 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 		}
 
 		reason := fmt.Sprintf("signature aggregation failed: %v", err)
-		if emitErr := k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId, reason); emitErr != nil {
+		if emitErr := k.notifyThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId, reason); emitErr != nil {
 			return emitErr
 		}
 		return nil
@@ -588,6 +588,15 @@ func (k Keeper) emitThresholdSigningFailed(ctx sdk.Context, requestID []byte, ep
 	})
 }
 
+func (k Keeper) notifyThresholdSigningFailed(ctx sdk.Context, requestID []byte, epochID uint64, reason string) error {
+	if err := k.Hooks().AfterThresholdSigningFailed(ctx, requestID, epochID, reason); err != nil {
+		k.Logger().Error("Failed to run threshold signing failure hooks",
+			"request_id", fmt.Sprintf("%x", requestID), "error", err)
+	}
+
+	return k.emitThresholdSigningFailed(ctx, requestID, epochID, reason)
+}
+
 // removeFromExpirationIndex removes a request from the expiration index
 func (k Keeper) removeFromExpirationIndex(ctx sdk.Context, deadlineBlockHeight int64, requestID []byte) {
 	kvStore := k.storeService.OpenKVStore(ctx)
@@ -653,7 +662,7 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 			k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, requestID)
 
 			reason := "deadline expired"
-			if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
+			if err := k.notifyThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
 				k.Logger().Error("Failed to emit threshold signing failed event",
 					"request_id", fmt.Sprintf("%x", requestID), "error", err)
 				// Continue processing even if event emission fails
