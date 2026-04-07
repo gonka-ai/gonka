@@ -53,6 +53,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	cdc := codec.NewProtoCodec(registry)
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
@@ -70,7 +72,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		cdc,
 		runtime.NewKVStoreService(streamvestingStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		nil,                   // bank keeper
 		bookkeepingBankKeeper, // bank escrow keeper
 	)
@@ -82,7 +84,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		cdc,
 		runtime.NewKVStoreService(blsStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 	)
 
 	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
@@ -91,7 +93,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		runtime.NewKVStoreService(inferenceStoreKey),
 		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		bookkeepingBankKeeper,
 		bankViewKeeper,
 		groupMock,

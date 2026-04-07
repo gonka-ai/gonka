@@ -81,6 +81,8 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 	cdc := codec.NewProtoCodec(registry)
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
@@ -107,7 +109,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		cdc,
 		runtime.NewKVStoreService(collateralStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		nil,                // bank keeper
 		bookkepingBankMock, // bookkeeping bank keeper
 	)
@@ -119,7 +121,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		cdc,
 		runtime.NewKVStoreService(blsStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 	)
 
 	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
@@ -128,7 +130,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(inferenceStoreKey),
 		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		bookkepingBankMock,
 		bankViewMock,
 		groupMock,

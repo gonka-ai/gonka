@@ -94,13 +94,15 @@ func setupKeeperForPendingRefundGuardTests(t *testing.T) (Keeper, sdk.Context) {
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	k := NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(storeKey),
 		runtime.NewTransientStoreService(transientStoreKey),
 		log.NewNopLogger(),
-		authority.String(),
+		authorityBech32,
 		nil,
 		nil,
 		nil,
