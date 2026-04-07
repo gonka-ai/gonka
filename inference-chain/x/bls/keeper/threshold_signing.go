@@ -286,58 +286,50 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	}
 
 	previousAttempt := request.Attempt
-	previousEpochID := request.CurrentEpochId
 	previousDeadlineBlockHeight := request.DeadlineBlockHeight
 
-	signingData := types.SigningData{
-		CurrentEpochId: request.CurrentEpochId,
-		ChainId:        request.ChainId,
-		RequestId:      request.RequestId,
-		Data:           request.Data,
-	}
-	request.EncodedData = k.encodeSigningData(signingData)
+	cacheCtx, writeCache := ctx.CacheContext()
 
-	hash := sha3.NewLegacyKeccak256()
-	hash.Write(request.EncodedData)
-	request.MessageHash = hash.Sum(nil)
+	retryReq := *request
+	retryReq.Attempt++
+	retryReq.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES
+	retryReq.PartialSignatures = []types.PartialSignature{}
+	retryReq.FinalSignature = []byte{}
+	retryReq.DeadlineBlockHeight = cacheCtx.BlockHeight() + signingDeadlineBlocks
 
-	request.Attempt++
-	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES
-	request.PartialSignatures = []types.PartialSignature{}
-	request.FinalSignature = []byte{}
-	request.DeadlineBlockHeight = ctx.BlockHeight() + signingDeadlineBlocks
-
-	kvStore := k.storeService.OpenKVStore(ctx)
-	expirationKey := types.ExpirationIndexKey(request.DeadlineBlockHeight, request.RequestId)
+	kvStore := k.storeService.OpenKVStore(cacheCtx)
+	expirationKey := types.ExpirationIndexKey(retryReq.DeadlineBlockHeight, retryReq.RequestId)
 	if err := kvStore.Set(expirationKey, []byte{}); err != nil {
 		return false, fmt.Errorf("failed to store expiration index entry for retry: %w", err)
 	}
 
-	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+	if err := k.storeThresholdSigningRequest(cacheCtx, &retryReq); err != nil {
 		return false, err
 	}
 
-	k.removeFromExpirationIndex(ctx, previousDeadlineBlockHeight, request.RequestId)
+	k.removeFromExpirationIndex(cacheCtx, previousDeadlineBlockHeight, retryReq.RequestId)
 
-	if err := ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningRequested{
-		RequestId:           request.RequestId,
-		CurrentEpochId:      request.CurrentEpochId,
-		EncodedData:         request.EncodedData,
-		MessageHash:         request.MessageHash,
-		DeadlineBlockHeight: request.DeadlineBlockHeight,
+	if err := cacheCtx.EventManager().EmitTypedEvent(&types.EventThresholdSigningRequested{
+		RequestId:           retryReq.RequestId,
+		CurrentEpochId:      retryReq.CurrentEpochId,
+		EncodedData:         retryReq.EncodedData,
+		MessageHash:         retryReq.MessageHash,
+		DeadlineBlockHeight: retryReq.DeadlineBlockHeight,
 	}); err != nil {
 		return false, fmt.Errorf("failed to emit threshold signing requested event on retry: %w", err)
 	}
 
+	writeCache()
+	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
+
 	k.Logger().Info("Automatically retrying threshold signing request",
-		"request_id", fmt.Sprintf("%x", request.RequestId),
+		"request_id", fmt.Sprintf("%x", retryReq.RequestId),
 		"trigger_reason", triggerReason,
 		"attempt_from", previousAttempt,
-		"attempt_to", request.Attempt,
-		"epoch_from", previousEpochID,
-		"epoch_to", request.CurrentEpochId,
+		"attempt_to", retryReq.Attempt,
+		"epoch_id", retryReq.CurrentEpochId,
 		"deadline_from", previousDeadlineBlockHeight,
-		"deadline_to", request.DeadlineBlockHeight,
+		"deadline_to", retryReq.DeadlineBlockHeight,
 		"max_signing_attempts", maxSigningAttempts,
 	)
 
@@ -367,20 +359,12 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 			return nil
 		}
 
-		// Mark as expired and emit failure event
-		request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED
-
-		// Remove from expiration index since it's no longer collecting signatures
-		k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
-
-		if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
-			return err
-		}
-		reason := "request expired"
-		if err := k.notifyThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
-			return err
-		}
-		return nil
+		return k.finalizeFailedThresholdSigningRequest(
+			ctx,
+			request,
+			types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+			"request expired",
+		)
 	}
 
 	// Get current epoch BLS data for validation
@@ -422,13 +406,16 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		Signature:          partialSignature,
 	})
 
+	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+		return err
+	}
+
 	// Check if threshold reached and aggregate
 	if err := k.checkThresholdAndAggregate(ctx, request, &epochBLSData); err != nil {
 		return fmt.Errorf("threshold check and aggregation failed: %w", err)
 	}
 
-	// Store updated request
-	return k.storeThresholdSigningRequest(ctx, request)
+	return nil
 }
 
 // validateSlotOwnership checks if the submitter owns the claimed slot indices
@@ -507,23 +494,13 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 			return nil
 		}
 
-		// Aggregation failed - mark as failed
-		request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED
-		request.FinalSignature = []byte{}
-
-		// Remove from expiration index since it's no longer collecting signatures
-		k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
-
-		// Persist terminal state before event emission
-		if storeErr := k.storeThresholdSigningRequest(ctx, request); storeErr != nil {
-			return storeErr
-		}
-
 		reason := fmt.Sprintf("signature aggregation failed: %v", err)
-		if emitErr := k.notifyThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId, reason); emitErr != nil {
-			return emitErr
-		}
-		return nil
+		return k.finalizeFailedThresholdSigningRequest(
+			ctx,
+			request,
+			types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED,
+			reason,
+		)
 	}
 
 	// Success - update request with final signature
@@ -538,8 +515,9 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 		return err
 	}
 
-	if err := k.Hooks().AfterThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochId); err != nil {
-		return err
+	if err := k.runThresholdSigningCompletedPostProcess(ctx, request.RequestId, request.CurrentEpochId); err != nil {
+		k.Logger().Error("Failed to run threshold signing completion hooks",
+			"request_id", fmt.Sprintf("%x", request.RequestId), "error", err)
 	}
 
 	// Emit completion event
@@ -596,13 +574,60 @@ func (k Keeper) emitThresholdSigningFailed(ctx sdk.Context, requestID []byte, ep
 	})
 }
 
-func (k Keeper) notifyThresholdSigningFailed(ctx sdk.Context, requestID []byte, epochID uint64, reason string) error {
-	if err := k.Hooks().AfterThresholdSigningFailed(ctx, requestID, epochID, reason); err != nil {
+func (k Keeper) maybeCloseRetryAfterFailedPostProcess(ctx sdk.Context, request *types.ThresholdSigningRequest, reason string) bool {
+	cacheCtx, writeCache := ctx.CacheContext()
+
+	closeRetry, err := k.Hooks().AfterThresholdSigningFailed(cacheCtx, request.RequestId, request.CurrentEpochId, reason)
+	if err != nil {
 		k.Logger().Error("Failed to run threshold signing failure hooks",
-			"request_id", fmt.Sprintf("%x", requestID), "error", err)
+			"request_id", fmt.Sprintf("%x", request.RequestId), "error", err)
+		return false
 	}
 
-	return k.emitThresholdSigningFailed(ctx, requestID, epochID, reason)
+	if closeRetry {
+		request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED
+		if err := k.storeThresholdSigningRequest(cacheCtx, request); err != nil {
+			k.Logger().Error("Failed to store cancelled threshold signing request",
+				"request_id", fmt.Sprintf("%x", request.RequestId), "error", err)
+			return false
+		}
+	}
+
+	writeCache()
+	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
+	return closeRetry
+}
+
+func (k Keeper) runThresholdSigningCompletedPostProcess(ctx sdk.Context, requestID []byte, epochID uint64) error {
+	cacheCtx, writeCache := ctx.CacheContext()
+
+	if err := k.Hooks().AfterThresholdSigningCompleted(cacheCtx, requestID, epochID); err != nil {
+		return err
+	}
+
+	writeCache()
+	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
+	return nil
+}
+
+func (k Keeper) finalizeFailedThresholdSigningRequest(
+	ctx sdk.Context,
+	request *types.ThresholdSigningRequest,
+	status types.ThresholdSigningStatus,
+	reason string,
+) error {
+	request.Status = status
+	request.FinalSignature = []byte{}
+
+	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
+
+	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+		return err
+	}
+
+	k.maybeCloseRetryAfterFailedPostProcess(ctx, request, reason)
+
+	return k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId, reason)
 }
 
 // removeFromExpirationIndex removes a request from the expiration index
@@ -656,24 +681,15 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 				continue
 			}
 
-			// Mark as expired
-			request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED
-
-			// Store updated request
-			if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
-				k.Logger().Error("Failed to store expired threshold signing request",
+			if err := k.finalizeFailedThresholdSigningRequest(
+				ctx,
+				request,
+				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+				"deadline expired",
+			); err != nil {
+				k.Logger().Error("Failed to finalize expired threshold signing request",
 					"request_id", fmt.Sprintf("%x", requestID), "error", err)
 				continue
-			}
-
-			// Remove from expiration index (cleanup)
-			k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, requestID)
-
-			reason := "deadline expired"
-			if err := k.notifyThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
-				k.Logger().Error("Failed to emit threshold signing failed event",
-					"request_id", fmt.Sprintf("%x", requestID), "error", err)
-				// Continue processing even if event emission fails
 			}
 
 			expiredCount++

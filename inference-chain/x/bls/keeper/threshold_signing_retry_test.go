@@ -3,8 +3,10 @@ package keeper
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
+	corestore "cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
 	"cosmossdk.io/store/metrics"
@@ -285,7 +287,7 @@ func TestRequestThresholdSignature_RejectsRetryAfterCancelled(t *testing.T) {
 
 	signingData := makeSigningDataForRetryTests(epochID, 40)
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
-	
+
 	req, err := k.GetSigningStatus(ctx, signingData.RequestId)
 	require.NoError(t, err)
 	expiryCtx := ctx.WithBlockHeight(req.DeadlineBlockHeight)
@@ -314,17 +316,139 @@ func TestBlsHooksSharedAcrossKeeperCopies(t *testing.T) {
 	require.True(t, hook.called)
 }
 
+func TestProcessThresholdSigningDeadlines_HookCanCloseRetry(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(306)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+
+	hook := &retryTestBlsHook{closeRetry: true}
+	require.NoError(t, k.SetHooks(hook))
+
+	signingData := makeSigningDataForRetryTests(epochID, 50)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	req, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	expiryCtx := ctx.WithBlockHeight(req.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
+
+	cancelledRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED, cancelledRequest.Status)
+}
+
+func TestProcessThresholdSigningDeadlines_HookErrorRollsBackPostProcessSideEffects(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(307)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+
+	sideEffectKey := []byte("failed_hook_rollback_key")
+	sideEffectEvent := "failed_hook_rollback_event"
+	hook := &retryTestBlsHook{
+		storeService: k.storeService,
+		hookKey:      sideEffectKey,
+		hookEvent:    sideEffectEvent,
+		failedErr:    errors.New("hook failed"),
+	}
+	require.NoError(t, k.SetHooks(hook))
+
+	signingData := makeSigningDataForRetryTests(epochID, 51)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	req, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	expiryCtx := ctx.WithBlockHeight(req.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
+
+	updatedRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, updatedRequest.Status)
+
+	kvStore := k.storeService.OpenKVStore(expiryCtx)
+	sideEffectValue, err := kvStore.Get(sideEffectKey)
+	require.NoError(t, err)
+	require.Nil(t, sideEffectValue)
+
+	foundSideEffectEvent := false
+	for _, event := range expiryCtx.EventManager().Events() {
+		if event.Type == sideEffectEvent {
+			foundSideEffectEvent = true
+			break
+		}
+	}
+	require.False(t, foundSideEffectEvent)
+}
+
+func TestRunThresholdSigningCompletedPostProcess_ErrorRollsBackSideEffects(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	sideEffectKey := []byte("completed_hook_rollback_key")
+	sideEffectEvent := "completed_hook_rollback_event"
+	hook := &retryTestBlsHook{
+		storeService:  k.storeService,
+		hookKey:       sideEffectKey,
+		hookEvent:     sideEffectEvent,
+		completedErr:  errors.New("hook failed"),
+	}
+	require.NoError(t, k.SetHooks(hook))
+
+	err := k.runThresholdSigningCompletedPostProcess(ctx, bytes.Repeat([]byte{9}, 32), 1)
+	require.Error(t, err)
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	sideEffectValue, getErr := kvStore.Get(sideEffectKey)
+	require.NoError(t, getErr)
+	require.Nil(t, sideEffectValue)
+
+	foundSideEffectEvent := false
+	for _, event := range ctx.EventManager().Events() {
+		if event.Type == sideEffectEvent {
+			foundSideEffectEvent = true
+			break
+		}
+	}
+	require.False(t, foundSideEffectEvent)
+}
+
 type retryTestBlsHook struct {
-	called bool
+	called       bool
+	closeRetry   bool
+	storeService corestore.KVStoreService
+	hookKey      []byte
+	hookEvent    string
+	completedErr error
+	failedErr    error
 }
 
-func (h *retryTestBlsHook) AfterThresholdSigningCompleted(_ context.Context, _ []byte, _ uint64) error {
+func (h *retryTestBlsHook) writeSideEffects(ctx context.Context) error {
+	if h.storeService != nil && len(h.hookKey) > 0 {
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		kvStore := h.storeService.OpenKVStore(sdkCtx)
+		if err := kvStore.Set(h.hookKey, []byte{1}); err != nil {
+			return err
+		}
+	}
+	if h.hookEvent != "" {
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(h.hookEvent))
+	}
+	return nil
+}
+
+func (h *retryTestBlsHook) AfterThresholdSigningCompleted(ctx context.Context, _ []byte, _ uint64) error {
 	h.called = true
-	return nil
+	if err := h.writeSideEffects(ctx); err != nil {
+		return err
+	}
+	return h.completedErr
 }
 
-func (h *retryTestBlsHook) AfterThresholdSigningFailed(_ context.Context, _ []byte, _ uint64, _ string) error {
-	return nil
+func (h *retryTestBlsHook) AfterThresholdSigningFailed(ctx context.Context, _ []byte, _ uint64, _ string) (bool, error) {
+	if err := h.writeSideEffects(ctx); err != nil {
+		return false, err
+	}
+	return h.closeRetry, h.failedErr
 }
 
 func setSignedEpochForRetryTests(t *testing.T, k Keeper, ctx sdk.Context, epochID uint64) {

@@ -61,14 +61,16 @@ func TestProcessAutoRefundForFailedBridgeOperation_Mint(t *testing.T) {
 		Return(nil).
 		Times(1)
 
-	require.NoError(t, k.ProcessAutoRefundForFailedBridgeOperation(expiryCtx, requestID, "deadline expired"))
+	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(expiryCtx, requestID, "deadline expired")
+	require.NoError(t, err)
+	require.True(t, closeRetry)
 
 	_, err = k.BridgeMintRefundsMap.Get(expiryCtx, requestKey)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 
-	cancelledRequest, err := blsK.GetSigningStatus(expiryCtx, requestID)
+	updatedRequest, err := blsK.GetSigningStatus(expiryCtx, requestID)
 	require.NoError(t, err)
-	require.Equal(t, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED, cancelledRequest.Status)
+	require.Equal(t, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, updatedRequest.Status)
 
 	found := false
 	for _, event := range expiryCtx.EventManager().Events() {
@@ -126,15 +128,17 @@ func TestProcessAutoRefundForFailedBridgeOperation_Withdrawal(t *testing.T) {
 		return nil
 	})
 
-	require.NoError(t, k.ProcessAutoRefundForFailedBridgeOperation(expiryCtx, requestID, "signature aggregation failed"))
+	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(expiryCtx, requestID, "signature aggregation failed")
+	require.NoError(t, err)
+	require.True(t, closeRetry)
 	require.Equal(t, 1, mintCalls)
 
 	_, err = k.BridgeWithdrawalRefundsMap.Get(expiryCtx, requestKey)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 
-	cancelledRequest, err := blsK.GetSigningStatus(expiryCtx, requestID)
+	updatedRequest, err := blsK.GetSigningStatus(expiryCtx, requestID)
 	require.NoError(t, err)
-	require.Equal(t, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED, cancelledRequest.Status)
+	require.Equal(t, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, updatedRequest.Status)
 
 	found := false
 	for _, event := range expiryCtx.EventManager().Events() {
@@ -150,5 +154,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_NoPendingContext(t *testing.T
 	k, _, ctx, _ := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x66}, 32)
 
-	require.NoError(t, k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired"))
+	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
+	require.NoError(t, err)
+	require.False(t, closeRetry)
 }
