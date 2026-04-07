@@ -1,44 +1,68 @@
 package events
 
-import "context"
+import (
+	"context"
+	"log/slog"
+	"time"
 
-// EventType identifies the kind of chain event.
-type EventType string
-
-const (
-	EventInferenceFinished EventType = "inference_finished"
-	EventEpochChanged      EventType = "epoch_changed"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"google.golang.org/grpc"
 )
 
-// Event carries a parsed chain event and its attributes.
+const defaultPollInterval = 2 * time.Second
+
+// Event carries a new-block notification.
 type Event struct {
-	Type        EventType
-	InferenceID string // set for EventInferenceFinished
-	EpochID     uint64 // set for EventEpochChanged
+	BlockHeight int64
 }
 
-// Handler is called for each event dispatched by the Listener.
+// Handler is called for each new block.
 type Handler func(ctx context.Context, event Event)
 
-// Listener subscribes to chain blocks and dispatches parsed events to registered handlers.
-// This is a stub — real implementation requires a chain RPC connection.
+// Listener polls the chain for new blocks via gRPC and dispatches events.
 type Listener struct {
+	conn     grpc.ClientConnInterface
+	interval time.Duration
 	handlers []Handler
 }
 
-// NewListener creates a Listener. rpcURL is not yet used in the stub.
-func NewListener(rpcURL string) *Listener {
-	return &Listener{}
+// NewListener creates a Listener using the given gRPC connection.
+func NewListener(conn grpc.ClientConnInterface) *Listener {
+	return &Listener{conn: conn, interval: defaultPollInterval}
 }
 
-// Register adds a handler that will be called for every incoming event.
+// Register adds a handler called for every new block.
 func (l *Listener) Register(h Handler) {
 	l.handlers = append(l.handlers, h)
 }
 
-// Start begins subscribing to chain events. Blocks until ctx is cancelled.
-// Stub: returns immediately.
+// Start polls for new blocks until ctx is cancelled.
 func (l *Listener) Start(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
+	svc := cmtservice.NewServiceClient(l.conn)
+	var lastHeight int64
+
+	ticker := time.NewTicker(l.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			resp, err := svc.GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
+			if err != nil {
+				slog.Warn("chain events: GetLatestBlock failed", "err", err)
+				continue
+			}
+			h := resp.SdkBlock.Header.Height
+			if h <= lastHeight {
+				continue
+			}
+			lastHeight = h
+			e := Event{BlockHeight: h}
+			for _, handler := range l.handlers {
+				handler(ctx, e)
+			}
+		}
+	}
 }

@@ -1,7 +1,6 @@
 package chain_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,31 +9,27 @@ import (
 	"common/chain"
 )
 
-func newTestClient() *chain.Client {
-	return chain.New("http://localhost:26657")
+func TestNew_DialSuccess(t *testing.T) {
+	// grpc.Dial is non-blocking by default — succeeds even with no server
+	c, err := chain.New("http://localhost:26657")
+	require.NoError(t, err)
+	assert.NotNil(t, c)
+	assert.NotNil(t, c.InferenceQueryClient())
+	assert.NotNil(t, c.BLSQueryClient())
+	assert.NotNil(t, c.RestrictionsQueryClient())
+	assert.NotNil(t, c.CometServiceClient())
 }
 
-func TestGetRandomExecutor_ReturnsNotImplemented(t *testing.T) {
-	dest, err := newTestClient().GetRandomExecutor(context.Background(), "some-model")
-	require.Error(t, err)
-	assert.Nil(t, dest)
+func TestNew_ConnIsReturned(t *testing.T) {
+	c, err := chain.New("localhost:9090")
+	require.NoError(t, err)
+	assert.NotNil(t, c.Conn())
 }
 
-func TestGetInference_ReturnsNotImplemented(t *testing.T) {
-	inf, err := newTestClient().GetInference(context.Background(), "inf-123")
-	require.Error(t, err)
-	assert.Nil(t, inf)
-}
-
-func TestGetEpochSeed_ReturnsNotImplemented(t *testing.T) {
-	seed, err := newTestClient().GetEpochSeed(context.Background(), 42)
-	require.Error(t, err)
-	assert.Nil(t, seed)
-}
-
-func TestGetEpochInfo_ReturnsNotImplemented(t *testing.T) {
-	epochID, blockHeight, err := newTestClient().GetEpochInfo(context.Background())
-	require.Error(t, err)
-	assert.Equal(t, uint64(0), epochID)
-	assert.Equal(t, int64(0), blockHeight)
+func TestNewFromConn(t *testing.T) {
+	c1, err := chain.New("localhost:9090")
+	require.NoError(t, err)
+	c2, err := chain.NewFromConn(c1.Conn())
+	require.NoError(t, err)
+	assert.NotNil(t, c2)
 }
