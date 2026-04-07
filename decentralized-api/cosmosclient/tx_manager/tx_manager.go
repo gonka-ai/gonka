@@ -191,7 +191,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 
 		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put in queue", types.Messages, "tx_id", id, "resend_err", err)
-			return nil, ErrTxFailedToBroadcastAndPutOnRetry
+			return nil, fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return &sdk.TxResponse{}, nil
 	}
@@ -202,8 +202,9 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 		if isRetryableBroadcastError(broadcastErr) {
 			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
 				logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+				return nil, fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
-			return nil, ErrTxFailedToBroadcastAndPutOnRetry
+			return nil, ErrTxQueuedForRetry
 		}
 		// Non-retryable broadcast error - fail immediately
 		logging.Error("SendTransactionAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
@@ -222,8 +223,9 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
 		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
 			logging.Error("tx failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
+			return nil, fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
-		return nil, ErrTxFailedToBroadcastAndPutOnRetry
+		return nil, ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
 		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, deadlineBlock); err != nil {
@@ -234,7 +236,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 
 	// Should never reach here, but fail safe
 	logging.Error("Unexpected classification result", types.Messages, "tx_id", id)
-	return nil, ErrTxFailedToBroadcastAndPutOnRetry
+	return nil, fmt.Errorf("unexpected broadcast classification result for tx_id %s", id)
 }
 
 func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...int64) error {
@@ -268,7 +270,7 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 
 		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put batch in queue", types.Messages, "tx_id", id, "resend_err", err)
-			return ErrTxFailedToBroadcastAndPutOnRetry
+			return fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return nil
 	}
@@ -279,8 +281,9 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 		if isRetryableBroadcastError(broadcastErr) {
 			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
 				logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+				return fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
-			return ErrTxFailedToBroadcastAndPutOnRetry
+			return ErrTxQueuedForRetry
 		}
 		// Non-retryable broadcast error - fail immediately
 		logging.Error("SendBatchAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
@@ -299,8 +302,9 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
 		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
 			logging.Error("batch failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
+			return fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
-		return ErrTxFailedToBroadcastAndPutOnRetry
+		return ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
 		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, deadlineBlock); err != nil {
@@ -311,7 +315,7 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 
 	// Should never reach here, but fail safe
 	logging.Error("Unexpected classification result for batch", types.Messages, "tx_id", id)
-	return ErrTxFailedToBroadcastAndPutOnRetry
+	return fmt.Errorf("unexpected broadcast classification result for batch tx_id %s", id)
 }
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {

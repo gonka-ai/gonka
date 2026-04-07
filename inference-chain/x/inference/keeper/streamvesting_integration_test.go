@@ -127,9 +127,8 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	// Set parameters for vesting periods
 	params := types.DefaultParams()
-	params.TokenomicsParams.WorkVestingPeriod = 5      // 5 epochs for work coins
-	params.TokenomicsParams.RewardVestingPeriod = 10   // 10 epochs for reward coins
-	params.TokenomicsParams.TopMinerVestingPeriod = 15 // 15 epochs for top miner rewards
+	params.TokenomicsParams.WorkVestingPeriod = 5    // 5 epochs for work coins
+	params.TokenomicsParams.RewardVestingPeriod = 10 // 10 epochs for reward coins
 	k.SetParams(ctx, params)
 
 	participantAddrStr := sample.AccAddress()
@@ -289,29 +288,6 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestVestingIntegration_TopMinerRewards(t *testing.T) {
-	k, _, ctx, mocks := setupKeeperWithMocksForStreamVesting(t)
-
-	// Configure top miner vesting period
-	params := types.DefaultParams()
-	params.TokenomicsParams.TopMinerVestingPeriod = 15 // 15 epochs for top miner rewards
-	k.SetParams(ctx, params)
-
-	participantAddrStr := sample.AccAddress()
-	rewardAmount := int64(5000)
-	topMinerVestingPeriod := uint64(15)
-
-	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
-
-	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedCoins, &topMinerVestingPeriod, gomock.Any()).
-		Return(nil)
-
-	// Execute top miner reward payment
-	err := k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "top-miner-reward", &topMinerVestingPeriod)
-	require.NoError(t, err)
-}
-
 func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	k, _, ctx, _ := setupKeeperWithMocksForStreamVesting(t)
 
@@ -319,7 +295,6 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	params := types.DefaultParams()
 	params.TokenomicsParams.WorkVestingPeriod = 0
 	params.TokenomicsParams.RewardVestingPeriod = 180
-	params.TokenomicsParams.TopMinerVestingPeriod = 365
 
 	// Should not error on valid parameters
 	err := k.SetParams(ctx, params)
@@ -330,7 +305,6 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
-	require.Equal(t, uint64(365), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
 }
 
 func TestVestingIntegration_ErrorHandling(t *testing.T) {

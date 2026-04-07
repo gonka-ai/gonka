@@ -1,0 +1,8 @@
+FROM golang:1.24.2-alpine3.20
+WORKDIR /app
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app/build/testapp ./e2e/testapp
+RUN CGO_ENABLED=0 go test -c -tags e2e -o /e2e-tests ./e2e/
+CMD ["/e2e-tests", "-test.v", "-test.timeout", "300s"]

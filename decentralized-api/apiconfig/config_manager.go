@@ -328,6 +328,18 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 	return cm.currentConfig.TransferAgentAccessCache
 }
 
+func (cm *ConfigManager) SetSubnetVersions(cache SubnetVersionsCache) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.SubnetVersionsCache = cache
+}
+
+func (cm *ConfigManager) GetSubnetVersions() SubnetVersionsCache {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.currentConfig.SubnetVersionsCache
+}
+
 func (cm *ConfigManager) GetHeight() int64 {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()

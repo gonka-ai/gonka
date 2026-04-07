@@ -38,11 +38,14 @@ func RecoverSession(
 		}
 	}
 
-	sm := state.NewStateMachine(
+	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, verifier,
 		smOpts...,
 	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create state machine: %w", err)
+	}
 
 	sess, err := NewSession(sm, signer, escrowID, meta.Group, clients, verifier, WithStorage(store))
 	if err != nil {

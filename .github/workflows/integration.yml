@@ -18,6 +18,8 @@ on:
       - 'decentralized-api/**'
       - 'local-test-net/**'
       - 'testermint/**'
+      - 'versioned/**'
+      - 'subnet/**'
 
   issue_comment:
     types: [created]

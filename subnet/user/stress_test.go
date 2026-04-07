@@ -193,14 +193,16 @@ func runStress(t *testing.T, numHosts, rounds int) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hostSigners {
-		sm := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-stress", group, nil, host.WithGrace(grace))
 		require.NoError(t, err)
 		clients[i] = &ConcurrentClient{inner: &InProcessClient{Host: h}}
 	}
 
-	userSM := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-stress", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -225,7 +227,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	// --- State root at peak (pre-finalize, measures raw hashing cost at N inferences) ---
 	preFinSt := session.StateMachine().SnapshotState()
 	srStart := time.Now()
-	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys)
+	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys, preFinSt.Fees)
 	require.NoError(t, err)
 	srDuration := time.Since(srStart)
 

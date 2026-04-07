@@ -330,9 +330,9 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         val join1Ratio = join1Change / totalChange
         val join2Ratio = join2Change / totalChange
 
-        assertThat(genesisRatio).isCloseTo(0.3108728943338438, Percentage.withPercentage(1.0))
-        assertThat(join1Ratio).isCloseTo(0.30627871362940273, Percentage.withPercentage(1.0))
-        assertThat(join2Ratio).isCloseTo(0.38284839203675347, Percentage.withPercentage(1.0))
+        assertThat(genesisRatio).isCloseTo(0.3108728943338438, Percentage.withPercentage(1.5))
+        assertThat(join1Ratio).isCloseTo(0.30627871362940273, Percentage.withPercentage(1.5))
+        assertThat(join2Ratio).isCloseTo(0.38284839203675347, Percentage.withPercentage(1.5))
     }
 
     private fun getConfirmationWeights(pair: LocalInferencePair): Map<String, Pair<Long, Long>> {

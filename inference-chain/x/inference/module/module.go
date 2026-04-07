@@ -1,8 +1,10 @@
 package inference
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -171,7 +173,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 13 }
+func (AppModule) ConsensusVersion() uint64 { return 14 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -612,12 +614,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
 	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
-
-	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
-		return
-	}
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -1191,6 +1187,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes)
 
 		// Determine percentage weight: use adjusted reservation if present, else raw share
 		var percentage math.LegacyDec
@@ -1206,9 +1203,10 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		}
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
-			Address:            ap.Index,
-			PercentageWeight:   percentage,
-			Secp256k1PublicKey: pubKeyBytes,
+			Address:                    ap.Index,
+			PercentageWeight:           percentage,
+			Secp256k1PublicKey:         pubKeyBytes,
+			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
 
@@ -1217,7 +1215,8 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			"weight", ap.Weight,
 			"percentage", percentage.String(),
 			"epochID", epochID,
-			"keyLength", len(pubKeyBytes))
+			"keyLength", len(pubKeyBytes),
+			"additionalKeyCount", len(additionalPubKeys))
 	}
 
 	if len(finalizedParticipants) == 0 {
@@ -1235,4 +1234,68 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	am.LogInfo("Successfully initiated BLS key generation", types.EpochGroup,
 		"epochID", epochID,
 		"participantCount", len(finalizedParticipants))
+}
+
+func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, participantAddress string, primaryPubKey []byte) [][]byte {
+	const blsDealerPartMsgTypeURL = "/inference.bls.MsgSubmitDealerPart"
+
+	resp, err := am.keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: participantAddress,
+		MessageTypeUrl: blsDealerPartMsgTypeURL,
+	})
+	if err != nil {
+		am.LogWarn("Failed to query BLS grantee keys, falling back to primary key only", types.EpochGroup,
+			"participant", participantAddress,
+			"messageType", blsDealerPartMsgTypeURL,
+			"error", err)
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(resp.Grantees))
+	additionalPubKeys := make([][]byte, 0, len(resp.Grantees))
+	for _, grantee := range resp.Grantees {
+		if grantee == nil || grantee.PubKey == "" {
+			continue
+		}
+
+		pubKeyBytes, err := base64.StdEncoding.DecodeString(grantee.PubKey)
+		if err != nil {
+			am.LogWarn("Skipping invalid grantee public key encoding for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"error", err)
+			continue
+		}
+		if len(pubKeyBytes) != 33 {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key length for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"length", len(pubKeyBytes))
+			continue
+		}
+		if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key prefix for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+			continue
+		}
+		if bytes.Equal(pubKeyBytes, primaryPubKey) {
+			continue
+		}
+
+		keyID := string(pubKeyBytes)
+		if _, exists := seen[keyID]; exists {
+			continue
+		}
+		seen[keyID] = struct{}{}
+		additionalPubKeys = append(additionalPubKeys, append([]byte(nil), pubKeyBytes...))
+	}
+
+	// Keep deterministic key ordering so ciphertext index mapping stays aligned across chain and DAPI
+	slices.SortFunc(additionalPubKeys, func(a, b []byte) int {
+		return bytes.Compare(a, b)
+	})
+
+	return additionalPubKeys
 }

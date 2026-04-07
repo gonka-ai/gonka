@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"testing"
@@ -15,7 +14,7 @@ import (
 // TestMarshalSettlement_RoundTrip verifies that the settlement JSON produced by
 // marshalSettlement can be parsed and re-verified with the chain-side logic:
 //
-//	sha256(recomputed_host_stats_hash || rest_hash || 0x02) == state_root
+//	sha256(recomputed_host_stats_hash || fees_be || rest_hash || 0x02) == state_root
 //
 // This test catches the bug that causes state_root mismatch on-chain.
 func TestMarshalSettlement_RoundTrip(t *testing.T) {
@@ -27,7 +26,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {
 			Status: types.StatusFinished, ExecutorSlot: 0, Model: "llama",
-			PromptHash: []byte("abcdefghijklmnopqrstuvwxyz012345"), // 32 bytes
+			PromptHash:  []byte("abcdefghijklmnopqrstuvwxyz012345"), // 32 bytes
 			InputLength: 100, MaxTokens: 50, ReservedCost: 150,
 		},
 	}
@@ -38,6 +37,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	payload := &state.SettlementPayload{
 		EscrowID:   "42",
 		Nonce:      5,
+		Fees:       321,
 		RestHash:   restHash,
 		HostStats:  hostStats,
 		Signatures: map[uint32][]byte{0: []byte("sig0"), 1: []byte("sig1")},
@@ -58,7 +58,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	parsedRestHash, err := base64.StdEncoding.DecodeString(parsed.RestHash)
 	require.NoError(t, err)
 
-	// Recompute host_stats_hash from parsed host_stats
+	// Recompute state root from parsed payload fields.
 	parsedHostStats := make(map[uint32]*types.HostStats, len(parsed.HostStats))
 	for _, hs := range parsed.HostStats {
 		parsedHostStats[hs.SlotID] = &types.HostStats{
@@ -68,15 +68,10 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	}
 	hsHash, err := state.ComputeHostStatsHash(parsedHostStats)
 	require.NoError(t, err)
-
-	h := sha256.New()
-	h.Write(hsHash)
-	h.Write(parsedRestHash)
-	h.Write([]byte{0x02})
-	expectedRoot := h.Sum(nil)
+	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, parsed.Fees, types.PhaseSettlement)
 
 	require.Equal(t, expectedRoot, stateRoot,
-		"state_root mismatch: sha256(host_stats_hash || rest_hash || 0x02) != state_root")
+		"state_root mismatch: sha256(host_stats_hash || fees_be || rest_hash || 0x02) != state_root")
 }
 
 // TestMarshalSettlement_KotlinReserialize simulates the Kotlin Gson round-trip:
@@ -99,7 +94,7 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{
-		EscrowID: "42", Nonce: 5, RestHash: restHash,
+		EscrowID: "42", Nonce: 5, Fees: 321, RestHash: restHash,
 		HostStats:  hostStats,
 		Signatures: map[uint32][]byte{0: []byte("sig0")},
 	}
@@ -134,12 +129,7 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 	}
 	hsHash, err := state.ComputeHostStatsHash(parsedHostStats)
 	require.NoError(t, err)
-
-	h := sha256.New()
-	h.Write(hsHash)
-	h.Write(parsedRestHash)
-	h.Write([]byte{0x02})
-	expectedRoot := h.Sum(nil)
+	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, reparsed.Fees, types.PhaseSettlement)
 
 	require.Equal(t, expectedRoot, stateRoot,
 		"state_root mismatch after Kotlin-style re-serialization")

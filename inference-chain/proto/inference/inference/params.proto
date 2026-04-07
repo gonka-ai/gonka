@@ -30,15 +30,15 @@ message Params {
 message GenesisOnlyParams {
   int64 total_supply = 1;
   int64 originator_supply = 2;
-  int64 top_reward_amount = 3;
+  reserved 3;
+  reserved "top_reward_amount";
   int64 standard_reward_amount = 4;
   int64 pre_programmed_sale_amount = 5;
-  int32 top_rewards = 6;
+  reserved 6;
+  reserved "top_rewards";
   string supply_denom = 7;
-  int64 top_reward_period = 8;
-  int64 top_reward_payouts = 9;
-  int64 top_reward_payouts_per_miner = 10;
-  int64 top_reward_max_duration = 11;
+  reserved 8, 9, 10, 11;
+  reserved "top_reward_period", "top_reward_payouts", "top_reward_payouts_per_miner", "top_reward_max_duration";
   Decimal max_individual_power_percentage = 12;
   bool genesis_guardian_enabled = 13;
   int64 genesis_guardian_network_maturity_threshold = 14;
@@ -51,11 +51,12 @@ message TokenomicsParams {
   Decimal subsidy_reduction_interval = 1;
   Decimal subsidy_reduction_amount = 2;
   Decimal current_subsidy_percentage = 3;
-  Decimal top_reward_allowed_failure = 4;
-  int64 top_miner_poc_qualification = 5;
+  reserved 4, 5;
+  reserved "top_reward_allowed_failure", "top_miner_poc_qualification";
   uint64 work_vesting_period = 6;
   uint64 reward_vesting_period = 7;
-  uint64 top_miner_vesting_period = 8;
+  reserved 8;
+  reserved "top_miner_vesting_period";
 }
 
 message EpochParams {
@@ -328,6 +329,14 @@ message TransferAgentAccessParams {
   repeated string allowed_transfer_addresses = 1;
 }
 
+// SubnetApprovedVersion describes a single approved subnet binary.
+message SubnetApprovedVersion {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  string binary = 2;
+  string sha256 = 3;
+}
+
 // SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
 message SubnetEscrowParams {
   option (gogoproto.equal) = true;
@@ -337,4 +346,5 @@ message SubnetEscrowParams {
   uint32 group_size = 4;
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
+  repeated SubnetApprovedVersion approved_versions = 7;
 }

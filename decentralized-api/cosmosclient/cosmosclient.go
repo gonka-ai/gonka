@@ -231,8 +231,10 @@ type CosmosMessageClient interface {
 	GetClientContext() sdkclient.Context
 	GetAccountAddress() string
 	GetAccountPubKey() cryptotypes.PubKey
+	GetSignerPubKey() cryptotypes.PubKey
 	GetSignerAddress() string
 	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
+	RespondDealerComplaints(transaction *blstypes.MsgRespondDealerComplaints) error
 	SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*sdk.TxResponse, error)
 	SubmitGroupKeyValidationSignature(transaction *blstypes.MsgSubmitGroupKeyValidationSignature) error
 	SubmitPartialSignature(requestId []byte, slotIndices []uint32, partialSignature []byte) error
@@ -277,6 +279,20 @@ func (icc *InferenceCosmosClient) GetAccountAddress() string {
 
 func (icc *InferenceCosmosClient) GetAccountPubKey() cryptotypes.PubKey {
 	return icc.apiAccount.AccountKey
+}
+
+func (icc *InferenceCosmosClient) GetSignerPubKey() cryptotypes.PubKey {
+	if icc.apiAccount == nil || icc.apiAccount.SignerAccount == nil || icc.apiAccount.SignerAccount.Record == nil {
+		logging.Error("Signer account is not configured", types.Messages)
+		return nil
+	}
+
+	pubKey, err := icc.apiAccount.SignerAccount.Record.GetPubKey()
+	if err != nil {
+		logging.Error("Failed to get signer public key", types.Messages, "error", err)
+		return nil
+	}
+	return pubKey
 }
 
 func (icc *InferenceCosmosClient) GetSignerAddress() string {
@@ -513,6 +529,12 @@ func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.M
 }
 
 func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) RespondDealerComplaints(transaction *blstypes.MsgRespondDealerComplaints) error {
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
 	return err

@@ -137,16 +137,6 @@ jobs:
           docker --version
           docker compose version
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install Make
         run: |
           sudo apt-get update
@@ -167,7 +157,7 @@ jobs:
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
         run: |
-          make build-docker USE_REGISTRY_CACHE=1
+          make build-docker
           echo "=== Images immediately after build ==="
           docker images | head -20
 
@@ -178,6 +168,8 @@ jobs:
           docker save -o docker-images/decentralized-api.tar ghcr.io/product-science/api:latest
           docker save -o docker-images/inference-mock-server.tar inference-mock-server:latest
           docker save -o docker-images/proxy.tar ghcr.io/product-science/proxy:latest
+          docker save -o docker-images/versiond.tar versiond:latest
+          docker save -o docker-images/testapp-server.tar testapp-server:latest
           gzip docker-images/*.tar
           echo "=== Created files ==="
           ls -la docker-images/
@@ -192,7 +184,7 @@ jobs:
       - name: Make Upgrade Build
         if: ${{ inputs.enable_upgrades }}
         run: |
-          make build-for-upgrade-tests USE_REGISTRY_CACHE=1
+          make build-for-upgrade-tests
           # Fix ownership of upgrade build files
           sudo chown -R $USER:$USER public-html/ || true
 
@@ -239,6 +231,8 @@ jobs:
           sudo docker load -i docker-images/decentralized-api.tar || true
           sudo docker load -i docker-images/inference-mock-server.tar || true
           sudo docker load -i docker-images/proxy.tar || true
+          sudo docker load -i docker-images/versiond.tar || true
+          sudo docker load -i docker-images/testapp-server.tar || true
           rm -rf docker-images/
 
       - name: Install Make
@@ -561,4 +555,3 @@ jobs:
           echo "*Individual test reports are available in the Checks tab above*" >> $GITHUB_STEP_SUMMARY
           
           echo "##[debug]FINAL TOTALS: Passed=$TOTAL_PASSED, Failed=$TOTAL_FAILED, Skipped=$TOTAL_SKIPPED"
-

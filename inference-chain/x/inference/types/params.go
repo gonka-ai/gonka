@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 
@@ -18,9 +19,8 @@ var (
 	KeyBaseWeightRatio                   = []byte("BaseWeightRatio")
 	KeyCollateralPerWeightUnit           = []byte("CollateralPerWeightUnit")
 	// Vesting parameter keys for TokenomicsParams
-	KeyWorkVestingPeriod     = []byte("WorkVestingPeriod")
-	KeyRewardVestingPeriod   = []byte("RewardVestingPeriod")
-	KeyTopMinerVestingPeriod = []byte("TopMinerVestingPeriod")
+	KeyWorkVestingPeriod   = []byte("WorkVestingPeriod")
+	KeyRewardVestingPeriod = []byte("RewardVestingPeriod")
 	// Bitcoin reward parameter keys
 	KeyUseBitcoinRewards          = []byte("UseBitcoinRewards")
 	KeyInitialEpochReward         = []byte("InitialEpochReward")
@@ -99,15 +99,9 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
 		TotalSupply:                             1_000 * million * billion,
 		OriginatorSupply:                        160 * million * billion,
-		TopRewardAmount:                         120 * million * billion,
 		PreProgrammedSaleAmount:                 120 * million * billion,
-		TopRewards:                              3,
 		SupplyDenom:                             BaseCoin,
 		StandardRewardAmount:                    600 * million * billion,
-		TopRewardPeriod:                         year,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    year * 4,
 		MaxIndividualPowerPercentage:            DecimalFromFloat(0.25),
 		GenesisGuardianEnabled:                  true, // Enable genesis guardian system by default
 		GenesisGuardianNetworkMaturityThreshold: 2_000_000,
@@ -264,11 +258,8 @@ func DefaultTokenomicsParams() *TokenomicsParams {
 		SubsidyReductionInterval: DecimalFromFloat(0.05),
 		SubsidyReductionAmount:   DecimalFromFloat(0.20),
 		CurrentSubsidyPercentage: DecimalFromFloat(0.90),
-		TopRewardAllowedFailure:  DecimalFromFloat(0.10),
-		TopMinerPocQualification: 10,
 		WorkVestingPeriod:        0, // Default: no vesting (production: 180, E2E tests: 2)
 		RewardVestingPeriod:      0, // Default: no vesting (production: 180, E2E tests: 2)
-		TopMinerVestingPeriod:    0, // Default: no vesting (production: 180, E2E tests: 2)
 	}
 }
 
@@ -329,6 +320,28 @@ func (p *SubnetEscrowParams) Validate() error {
 	if p.GroupSize == 0 {
 		return fmt.Errorf("subnet escrow group_size must be positive")
 	}
+	seen := make(map[string]struct{}, len(p.ApprovedVersions))
+	for i, v := range p.ApprovedVersions {
+		if v.Name == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: name cannot be empty", i)
+		}
+		if v.Binary == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: binary cannot be empty", i)
+		}
+		if v.Sha256 == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 cannot be empty", i)
+		}
+		if len(v.Sha256) != 64 {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 must be 64 hex characters, got %d", i, len(v.Sha256))
+		}
+		if _, err := hex.DecodeString(v.Sha256); err != nil {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 is not valid hex: %w", i, err)
+		}
+		if _, dup := seen[v.Name]; dup {
+			return fmt.Errorf("subnet_escrow_params.approved_versions: duplicate name %q", v.Name)
+		}
+		seen[v.Name] = struct{}{}
+	}
 	return nil
 }
 
@@ -353,7 +366,6 @@ func (p *TokenomicsParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{
 		paramtypes.NewParamSetPair(KeyWorkVestingPeriod, &p.WorkVestingPeriod, validateVestingPeriod),
 		paramtypes.NewParamSetPair(KeyRewardVestingPeriod, &p.RewardVestingPeriod, validateVestingPeriod),
-		paramtypes.NewParamSetPair(KeyTopMinerVestingPeriod, &p.TopMinerVestingPeriod, validateVestingPeriod),
 	}
 }
 
@@ -592,9 +604,6 @@ func (p *TokenomicsParams) Validate() error {
 	if p.CurrentSubsidyPercentage == nil {
 		return fmt.Errorf("current subsidy percentage cannot be nil")
 	}
-	if p.TopRewardAllowedFailure == nil {
-		return fmt.Errorf("top reward allowed failure cannot be nil")
-	}
 
 	// Validate vesting parameters
 	if err := validateVestingPeriod(p.WorkVestingPeriod); err != nil {
@@ -602,9 +611,6 @@ func (p *TokenomicsParams) Validate() error {
 	}
 	if err := validateVestingPeriod(p.RewardVestingPeriod); err != nil {
 		return errors.Wrap(err, "invalid reward_vesting_period")
-	}
-	if err := validateVestingPeriod(p.TopMinerVestingPeriod); err != nil {
-		return errors.Wrap(err, "invalid top_miner_vesting_period")
 	}
 
 	return nil

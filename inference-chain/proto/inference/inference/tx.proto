@@ -623,6 +623,7 @@ message MsgSettleSubnetEscrow {
   bytes rest_hash = 5;
   repeated SubnetSettlementHostStats host_stats = 6;
   repeated SubnetSlotSignature signatures = 7;
+  uint64 fees = 8;
 }
 
 message MsgSettleSubnetEscrowResponse {}

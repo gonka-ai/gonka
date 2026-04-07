@@ -7,16 +7,16 @@ PLATFORMS ?= linux/amd64,linux/arm64
 USE_REGISTRY_CACHE ?= 0
 ifeq ($(USE_REGISTRY_CACHE),1)
 DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/proxy-ssl:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/proxy-ssl:buildcache,mode=min
+DOCKER_BUILD_PREFIX := docker buildx build --load $(DOCKER_CACHE_ARGS)
 else
 DOCKER_CACHE_ARGS :=
+DOCKER_BUILD_PREFIX := DOCKER_BUILDKIT=1 docker build
 endif
 
 define DOCKER_BUILD
 	@echo "--> building proxy-ssl docker image"
 	@echo "    	platform: $(PLATFORM)"
-	@docker buildx build \
-		--load \
-		$(DOCKER_CACHE_ARGS) \
+	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		-f $(DOCKER_FILE) \
 		. \

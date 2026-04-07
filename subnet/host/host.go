@@ -39,14 +39,14 @@ type HostRequest struct {
 
 // HostResponse carries the host's reply back to the user.
 type HostResponse struct {
-	StateSig  []byte // nil = withheld
-	StateHash []byte // always set after applying diffs
-	Nonce     uint64 // current nonce after applying diffs
-	Receipt     []byte // executor receipt sig, nil if not executor
-	ConfirmedAt int64  // executor wall-clock timestamp, 0 if not executor
-	Mempool     []*types.SubnetTx
-	ExecutionJob *subnet.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
+	StateSig           []byte // nil = withheld
+	StateHash          []byte // always set after applying diffs
+	Nonce              uint64 // current nonce after applying diffs
+	Receipt            []byte // executor receipt sig, nil if not executor
+	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
+	Mempool            []*types.SubnetTx
+	ExecutionJob       *subnet.ExecuteRequest // non-nil if this host is the executor and execution is deferred
+	CachedResponseBody []byte                 // non-nil when reconnecting to a completed inference
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -59,19 +59,19 @@ type AcceptanceChecker interface {
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu       sync.Mutex
-	sm       *state.StateMachine
-	signer   signing.Signer
-	verifier signing.Verifier
-	engine   subnet.InferenceEngine
+	mu        sync.Mutex
+	sm        *state.StateMachine
+	signer    signing.Signer
+	verifier  signing.Verifier
+	engine    subnet.InferenceEngine
 	validator subnet.ValidationEngine // optional, nil = no validation
-	escrowID string
-	slotIDs  map[uint32]bool
-	group    []types.SlotAssignment
-	mempool  *Mempool
-	checker  AcceptanceChecker
-	store    storage.Storage  // optional, nil = no persistence
-	gsp      *gossip.Gossip   // optional, nil = no gossip pruning
+	escrowID  string
+	slotIDs   map[uint32]bool
+	group     []types.SlotAssignment
+	mempool   *Mempool
+	checker   AcceptanceChecker
+	store     storage.Storage // optional, nil = no persistence
+	gsp       *gossip.Gossip  // optional, nil = no gossip pruning
 
 	// Lookup maps built from group at construction time.
 	slotToAddr  map[uint32]string   // slotID -> validator address
@@ -144,16 +144,16 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:          sm,
-		signer:      signer,
-		engine:      engine,
-		escrowID:    escrowID,
-		slotIDs:     slotIDs,
-		group:       group,
-		mempool:     NewMempool(),
-		checker:     checker,
-		slotToAddr:  slotToAddr,
-		addrToSlots: addrToSlots,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
 		sortedSlots:        sortedSlots,
 		executing:          make(map[uint64]struct{}),
 		validating:         make(map[uint64]struct{}),
@@ -220,9 +220,9 @@ func (h *Host) MempoolTxs() []*types.SubnetTx {
 	return h.mempool.Txs()
 }
 
-func (h *Host) EscrowID() string            { return h.escrowID }
+func (h *Host) EscrowID() string              { return h.escrowID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
-func (h *Host) SlotIDs() map[uint32]bool     { return h.slotIDs }
+func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }
 
 // PrimarySlot returns the lowest slot ID owned by this host.
 // Deterministic: derived from sortedSlots which is sorted at construction time.

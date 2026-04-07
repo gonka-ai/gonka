@@ -62,6 +62,8 @@ func DefaultConfig(numHosts int) types.SessionConfig {
 		TokenPrice:       1,
 		VoteThreshold:    uint32(numHosts) / 2,
 		ValidationRate:   5000,
+		CreateSubnetFee:  0,
+		FeePerNonce:      0,
 	}
 }
 

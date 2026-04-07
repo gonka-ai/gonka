@@ -21,9 +21,13 @@ USE_REGISTRY_CACHE ?= 0
 ifeq ($(USE_REGISTRY_CACHE),1)
 DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/api:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/api:buildcache,mode=min
 DOCKER_CACHE_ARGS_UPGRADE := --cache-from type=registry,ref=ghcr.io/gonka-ai/api:buildcache-upgrade --cache-to type=registry,ref=ghcr.io/gonka-ai/api:buildcache-upgrade,mode=min
+DOCKER_BUILD_PREFIX := docker buildx build --load $(DOCKER_CACHE_ARGS)
+DOCKER_BUILD_UPGRADE_PREFIX := docker buildx build $(DOCKER_CACHE_ARGS_UPGRADE)
 else
 DOCKER_CACHE_ARGS :=
 DOCKER_CACHE_ARGS_UPGRADE :=
+DOCKER_BUILD_PREFIX := DOCKER_BUILDKIT=1 docker build
+DOCKER_BUILD_UPGRADE_PREFIX := DOCKER_BUILDKIT=1 docker build
 endif
 
 define DOCKER_BUILD
@@ -31,9 +35,7 @@ define DOCKER_BUILD
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@docker buildx build \
-		--load \
-		$(DOCKER_CACHE_ARGS) \
+	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
@@ -48,8 +50,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@docker buildx build \
-		$(DOCKER_CACHE_ARGS_UPGRADE) \
+	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \

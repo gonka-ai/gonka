@@ -1,17 +1,19 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build versiond-build-docker testapp-server-build-docker
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
+_MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
 else
 _MOCK_CACHE_ARGS :=
+_MOCK_BUILD_CMD := DOCKER_BUILDKIT=1 docker build
 endif
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
@@ -23,7 +25,7 @@ mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@docker buildx build --load $(_MOCK_CACHE_ARGS) -t inference-mock-server -f testermint/Dockerfile testermint
+	@$(_MOCK_BUILD_CMD) -t inference-mock-server -f testermint/Dockerfile testermint
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
@@ -33,6 +35,14 @@ proxy-ssl-build-docker:
 
 bridge-build-docker:
 	@make -C bridge build-docker SET_LATEST=1
+
+versiond-build-docker:
+	@echo "Building versiond docker image..."
+	@docker build -t versiond:latest -f versioned/Dockerfile versioned
+
+testapp-server-build-docker:
+	@echo "Building testapp-server docker image..."
+	@docker build -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
 release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release
 	@git tag $(TAG_NAME)

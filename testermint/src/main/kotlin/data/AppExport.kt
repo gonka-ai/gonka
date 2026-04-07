@@ -40,15 +40,9 @@ data class TokenomicsData(
 data class GenesisOnlyParams(
     val totalSupply: Long,
     val originatorSupply: Long,
-    val topRewardAmount: Long,
     val standardRewardAmount: Long,
     val preProgrammedSaleAmount: Long,
-    val topRewards: Int,
     val supplyDenom: String,
-    val topRewardPeriod: Long,
-    val topRewardPayouts: Long,
-    val topRewardPayoutsPerMiner: Long,
-    val topRewardMaxDuration: Long,
     val maxIndividualPowerPercentage: Decimal?,
     val genesisGuardianEnabled: Boolean,
     val genesisGuardianNetworkMaturityThreshold: Long,
@@ -84,14 +78,10 @@ data class TokenomicsParams(
     val subsidyReductionInterval: Decimal,
     val subsidyReductionAmount: Decimal,
     val currentSubsidyPercentage: Decimal,
-    val topRewardAllowedFailure: Decimal,
-    val topMinerPocQualification: Long,
     @SerializedName("work_vesting_period")
     val workVestingPeriod: Long? = null,
     @SerializedName("reward_vesting_period") 
     val rewardVestingPeriod: Long? = null,
-    @SerializedName("top_miner_vesting_period")
-    val topMinerVestingPeriod: Long? = null,
 )
 
 data class BitcoinRewardParams(
@@ -251,6 +241,12 @@ data class TransferAgentAccessParams(
     val allowedTransferAddresses: List<String> = emptyList(),
 )
 
+data class SubnetApprovedVersion(
+    val name: String,
+    val binary: String,
+    val sha256: String,
+)
+
 data class SubnetEscrowParams(
     @SerializedName("min_amount")
     val minAmount: Long,
@@ -261,9 +257,11 @@ data class SubnetEscrowParams(
     @SerializedName("group_size")
     val groupSize: Long,
     @SerializedName("allowed_creator_addresses")
-    val allowedCreatorAddresses: List<String> = emptyList(),
+    val allowedCreatorAddresses: List<String>? = emptyList(),
     @SerializedName("token_price")
     val tokenPrice: Long,
+    @SerializedName("approved_versions")
+    val approvedVersions: List<SubnetApprovedVersion>? = emptyList(),
 )
 
 data class PocParams(

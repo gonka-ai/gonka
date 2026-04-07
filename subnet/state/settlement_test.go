@@ -1,7 +1,6 @@
 package state
 
 import (
-	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,6 +23,7 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 
 	st := types.EscrowState{
 		Balance:    9700,
+		Fees:       33,
 		HostStats:  hostStats,
 		Inferences: inferences,
 	}
@@ -33,6 +33,7 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 
 	require.Equal(t, "escrow-1", payload.EscrowID)
 	require.Equal(t, uint64(10), payload.Nonce)
+	require.Equal(t, st.Fees, payload.Fees)
 
 	// RestHash should match independently computed value.
 	restHash, err := ComputeRestHash(st.Balance, st.Inferences, st.WarmKeys)
@@ -74,11 +75,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 	// Recompute state root to sign it.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	h := sha256.New()
-	h.Write(hostStatsHash)
-	h.Write(payload.RestHash)
-	h.Write([]byte{uint8(types.PhaseSettlement)})
-	stateRoot := h.Sum(nil)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -109,11 +106,7 @@ func TestVerifySettlement_Success(t *testing.T) {
 	// Independently recompute and compare.
 	hostStatsHash, err := ComputeHostStatsHash(payload.HostStats)
 	require.NoError(t, err)
-	h := sha256.New()
-	h.Write(hostStatsHash)
-	h.Write(payload.RestHash)
-	h.Write([]byte{uint8(types.PhaseSettlement)})
-	expected := h.Sum(nil)
+	expected := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement)
 	require.Equal(t, expected, root)
 }
 
@@ -176,11 +169,12 @@ func TestVerifySettlement_WrongPhase(t *testing.T) {
 	// Compute state root with WRONG phase (Finalizing = 0x01).
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	h := sha256.New()
-	h.Write(hostStatsHash)
-	h.Write(payload.RestHash)
-	h.Write([]byte{uint8(types.PhaseFinalizing)}) // wrong phase
-	wrongRoot := h.Sum(nil)
+	wrongRoot := ComputeStateRootFromRestHash(
+		hostStatsHash,
+		payload.RestHash,
+		payload.Fees,
+		types.PhaseFinalizing, // wrong phase
+	)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: wrongRoot,
@@ -232,11 +226,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	// Recompute state root for signing.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	h := sha256.New()
-	h.Write(hostStatsHash)
-	h.Write(payload.RestHash)
-	h.Write([]byte{uint8(types.PhaseSettlement)})
-	stateRoot := h.Sum(nil)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -292,11 +282,7 @@ func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
 
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	hh := sha256.New()
-	hh.Write(hostStatsHash)
-	hh.Write(payload.RestHash)
-	hh.Write([]byte{uint8(types.PhaseSettlement)})
-	stateRoot := hh.Sum(nil)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,

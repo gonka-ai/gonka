@@ -8,6 +8,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import java.util.concurrent.Executors
+import kotlin.test.assertNotNull
 
 class SubnetTests : TestermintTest() {
 
@@ -23,6 +24,13 @@ class SubnetTests : TestermintTest() {
 
     private val noRestrictionsConfig = inferenceConfig.copy(
         genesisSpec = inferenceConfig.genesisSpec?.merge(noRestrictionsSpec) ?: noRestrictionsSpec
+    )
+
+    private val noRestrictionsLongEpochConfig = inferenceConfig.copy(
+        genesisSpec = createSpec(
+            epochLength = 40,
+            epochShift = 10
+        ).merge(noRestrictionsSpec)
     )
 
     @Test
@@ -93,6 +101,7 @@ class SubnetTests : TestermintTest() {
             }
 
             logSection("Finalizing via proxy")
+            val statusBeforeFinalization = genesis.getSubnetProxyStatus(handle.proxyUrl)
             val result = genesis.finalizeSubnetProxy(handle.proxyUrl)
 
             logSection("Verifying settlement data")
@@ -100,12 +109,37 @@ class SubnetTests : TestermintTest() {
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
+
+            // Verify the fees.
+            // Note: no fees are charged for finalization nonces,
+            // so we calculate the expected fees based on the latest nonce _before_ finalization began.
+            val activeNonces = statusBeforeFinalization.nonce
+            val expectedFees = statusBeforeFinalization.config.createSubnetFee + (statusBeforeFinalization.config.feePerNonce * activeNonces)
+            assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
+            assertThat(result.parsed.fees).isEqualTo(expectedFees)
+
             val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
             assertThat(totalCompletedValidations).isGreaterThan(0)
+
+            val totalCost = result.parsed.hostStats.sumOf { it.cost }
+
+            // Hosts should receive the total cost for their inferences + fees paid by the user.
+            val totalPayout = totalCost + result.parsed.fees
+
+            // Refund: the user should get back any remaining balance after inference costs + fees.
+            val expectedRemainder = escrowAmount - totalPayout
 
             logSection("Submitting settlement from user account")
             val settleResp = genesis.settleSubnetEscrow(result.rawJson, from = userKeyName)
             assertThat(settleResp.code).isEqualTo(0)
+
+            val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "subnet_escrow_settled" })
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "total_payout" }?.value)
+                .isEqualTo(totalPayout.toString())
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "fees" }?.value)
+                .isEqualTo(result.parsed.fees.toString())
+            assertThat(settleEvent.attributes.firstOrNull { it.key == "remainder" }?.value)
+                .isEqualTo(expectedRemainder.toString())
 
             logSection("Verifying escrow settled")
             val escrow = genesis.node.querySubnetEscrow(1)
@@ -113,7 +147,7 @@ class SubnetTests : TestermintTest() {
 
             logSection("Verifying user got refund")
             val balanceAfter = genesis.getBalance(userAddress)
-            assertThat(balanceAfter).isGreaterThan(fundAmount - escrowAmount)
+            assertThat(balanceAfter).isEqualTo(fundAmount - totalPayout)
         } finally {
             genesis.stopSubnetProxy(1)
         }
@@ -182,8 +216,8 @@ class SubnetTests : TestermintTest() {
 
     @Test
     fun `parallel subnet sessions with isolated settlement`() {
-        val sessionCount = 10
-        val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
+        val sessionCount = 6
+        val (cluster, genesis) = initCluster(config = noRestrictionsLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
         cluster.allPairs.forEach { pair ->

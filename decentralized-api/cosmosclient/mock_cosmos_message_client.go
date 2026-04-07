@@ -68,6 +68,11 @@ func (m *MockCosmosMessageClient) GetAccountPubKey() cryptotypes.PubKey {
 	return args.Get(0).(cryptotypes.PubKey)
 }
 
+func (m *MockCosmosMessageClient) GetSignerPubKey() cryptotypes.PubKey {
+	args := m.Called()
+	return args.Get(0).(cryptotypes.PubKey)
+}
+
 func (m *MockCosmosMessageClient) GetSignerAddress() string {
 	args := m.Called()
 	return args.String(0)
@@ -209,6 +214,11 @@ func (m *MockCosmosMessageClient) SendTransactionSyncNoRetry(transaction proto.M
 }
 
 func (m *MockCosmosMessageClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) RespondDealerComplaints(transaction *blstypes.MsgRespondDealerComplaints) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }

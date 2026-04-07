@@ -16,21 +16,30 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
 // ComputeStateRoot computes a flat commitment hash over the session state:
 //
-//   state_root = sha256(host_stats_hash || rest_hash || phase_byte)
+//	state_root = sha256(host_stats_hash || fees_be || rest_hash || phase_byte)
 //
 // where:
-//   host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
-//   rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
-//   warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
-//   inferences_hash = sha256(proto(sorted inference records))
-//   phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement
 //
-// All components have fixed, known lengths (32 + 32 + 1), so the
+//	host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
+//	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
+//	fees_be         = uint64 fees in big-endian            -- 8 bytes
+//	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
+//	inferences_hash = sha256(proto(sorted inference records))
+//	phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement
+//
+// All components have fixed, known lengths (32 + 32 + 8 + 1), so the
 // concatenation is unambiguous without length prefixes.
 //
 // Mainnet settlement hardcodes phase_byte=0x02 when recomputing, rejecting
 // any pre-settlement state.
-func ComputeStateRoot(balance uint64, hostStats map[uint32]*types.HostStats, inferences map[uint64]*types.InferenceRecord, phase types.SessionPhase, warmKeys map[uint32]string) ([]byte, error) {
+func ComputeStateRoot(
+	balance uint64,
+	hostStats map[uint32]*types.HostStats,
+	inferences map[uint64]*types.InferenceRecord,
+	phase types.SessionPhase,
+	warmKeys map[uint32]string,
+	fees uint64,
+) ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(hostStats)
 	if err != nil {
 		return nil, err
@@ -40,11 +49,7 @@ func ComputeStateRoot(balance uint64, hostStats map[uint32]*types.HostStats, inf
 		return nil, err
 	}
 
-	h := sha256.New()
-	h.Write(hostStatsHash)
-	h.Write(restHash)
-	h.Write([]byte{uint8(phase)})
-	return h.Sum(nil), nil
+	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase), nil
 }
 
 // ComputeHostStatsHash computes sha256(proto(sorted host stats)).
@@ -57,6 +62,21 @@ func ComputeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 // Exported for settlement verification on mainnet.
 func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
 	return computeRestHash(balance, inferences, warmKeys)
+}
+
+// ComputeStateRootFromRestHash computes the canonical state root when host
+// stats hash and rest hash are already available.
+func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase) []byte {
+	// Encode fees as fixed-width big-endian to preserve deterministic hashing.
+	feesBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(feesBytes, fees)
+
+	h := sha256.New()
+	h.Write(hostStatsHash)
+	h.Write(feesBytes)
+	h.Write(restHash)
+	h.Write([]byte{uint8(phase)})
+	return h.Sum(nil)
 }
 
 // computeWarmKeysHash computes sha256 over sorted (slotID, address) pairs.

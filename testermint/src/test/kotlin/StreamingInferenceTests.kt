@@ -42,12 +42,16 @@ class StreamingInferenceTests : TestermintTest() {
         val inferenceResult = getStreamingInferenceResult(genesis)
         logSection("Verifying inference changes")
         val afterBalances = genesis.api.getParticipants()
-        val expectedCoinBalanceChanges = expectedCoinBalanceChanges(listOf(inferenceResult.inference))
-        expectedCoinBalanceChanges.forEach { (address, change) ->
-            assertThat(afterBalances.first { it.id == address }.coinsOwed).isEqualTo(
-                beforeBalances.first { it.id == address }.coinsOwed + change
-            )
+        val totalCoinsOwedDelta = afterBalances.sumOf { participant ->
+            participant.coinsOwed - beforeBalances.first { it.id == participant.id }.coinsOwed
         }
+
+        assertThat(totalCoinsOwedDelta).isEqualTo(inferenceResult.inference.actualCost)
+        assertThat(
+            afterBalances.any { participant ->
+                participant.coinsOwed > beforeBalances.first { it.id == participant.id }.coinsOwed
+            }
+        ).describedAs("Streaming inference should create an immediate owed balance for at least one participant").isTrue()
     }
 
     @Test

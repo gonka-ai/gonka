@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+
+	"github.com/labstack/echo/v4"
 )
 
 // createTestRequest creates a test HTTP request with the given body
@@ -226,4 +229,96 @@ func TestMaxRequestBodySizeConstant(t *testing.T) {
 	// MaxRequestBodySize should be 10 MB
 	expectedSize := 10 * 1024 * 1024
 	require.Equal(t, expectedSize, MaxRequestBodySize, "MaxRequestBodySize should be 10 MB")
+}
+
+func TestReadRequest_AcceptsMultipartContent(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"Hello"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png"}},{"type":"text","text":" world"}]}]}`)
+	req := createTestRequest(body)
+
+	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	require.NoError(t, err)
+	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
+
+	promptText, ignoredParts := FlattenMessagesText(chatRequest.OpenAiRequest.Messages)
+	require.Equal(t, "Hello world\n", promptText)
+	require.Equal(t, 1, ignoredParts)
+}
+
+func TestMultipartContent_RoundTrip(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"describe this"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"high"}}]}]}`)
+	req := createTestRequest(body)
+
+	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	require.NoError(t, err)
+
+	roundTripped, err := json.Marshal(chatRequest.OpenAiRequest)
+	require.NoError(t, err)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(roundTripped, &result))
+	messages := result["messages"].([]interface{})
+	content := messages[0].(map[string]interface{})["content"].([]interface{})
+
+	imgPart := content[1].(map[string]interface{})
+	require.Equal(t, "image_url", imgPart["type"])
+	imgURL := imgPart["image_url"].(map[string]interface{})
+	require.Equal(t, "https://example.com/cat.png", imgURL["url"])
+	require.Equal(t, "high", imgURL["detail"])
+}
+
+func TestReadRequest_AcceptsMissingMessageContent(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"assistant"}]}`)
+	req := createTestRequest(body)
+
+	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	require.NoError(t, err, "missing content is valid for assistant/tool-calling messages")
+	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
+
+	text, ignored := FlattenMessagesText(chatRequest.OpenAiRequest.Messages)
+	require.Equal(t, "\n", text)
+	require.Equal(t, 0, ignored)
+}
+
+func TestReadRequest_AcceptsToolCallingPayload(t *testing.T) {
+	body := []byte(`{
+		"model":"test",
+		"messages":[
+			{"role":"user","content":"What is the weather in NYC?"},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"NYC\"}"}}]},
+			{"role":"tool","content":"72°F and sunny","tool_call_id":"call_1"}
+		]
+	}`)
+	req := createTestRequest(body)
+
+	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	require.NoError(t, err)
+	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
+	require.Len(t, chatRequest.OpenAiRequest.Messages, 3)
+
+	require.NotNil(t, chatRequest.OpenAiRequest.Messages[0].Content.Text)
+	require.Nil(t, chatRequest.OpenAiRequest.Messages[1].Content.Text)
+	require.Nil(t, chatRequest.OpenAiRequest.Messages[1].Content.Parts)
+	require.NotNil(t, chatRequest.OpenAiRequest.Messages[2].Content.Text)
+
+	roundTripped, err := json.Marshal(chatRequest.OpenAiRequest)
+	require.NoError(t, err)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(roundTripped, &result))
+	messages := result["messages"].([]interface{})
+	assistantMsg := messages[1].(map[string]interface{})
+	require.Nil(t, assistantMsg["content"], "assistant content should marshal as null")
+}
+
+func TestReadRequest_RejectsUnsupportedContentType(t *testing.T) {
+	body := []byte(`{"model":"test","messages":[{"role":"user","content":123}]}`)
+	req := createTestRequest(body)
+
+	_, err := readRequest(req, nil, "transfer-agent")
+	require.Error(t, err)
+
+	var httpErr *echo.HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	require.Equal(t, http.StatusBadRequest, httpErr.Code)
+	require.Contains(t, httpErr.Message, "invalid chat completion request")
 }

@@ -389,10 +389,6 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-tokenomics-data"))
     }
 
-    fun getTopMiners(): TopMinersResponse = wrapLog("getTopMiners", false) {
-        execAndParse(listOf("query", "inference", "list-top-miner"))
-    }
-
     fun queryBLSEpochData(epochId: Long): EpochBLSDataWrapper = wrapLog("queryBLSEpochData", false) {
         execAndParse(listOf("query", "bls", "epoch-data", epochId.toString()))
     }

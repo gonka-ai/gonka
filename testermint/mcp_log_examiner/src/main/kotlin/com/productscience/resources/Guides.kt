@@ -39,7 +39,7 @@ fun loadGuides(resourcePath: String): List<Guide> {
     val dirUrl = classLoader.getResource(resourcePath)
 
     if (dirUrl == null) {
-        println("Guides directory not found in classpath: $resourcePath")
+        System.err.println("Guides directory not found in classpath: $resourcePath")
         return emptyList()
     }
 
@@ -86,7 +86,7 @@ fun loadGuides(resourcePath: String): List<Guide> {
                 ?.filterNotNull() ?: emptyList()
         }
     } catch (e: Exception) {
-        println("Error loading guides: ${e.message}")
+        System.err.println("Error loading guides: ${e.message}")
         e.printStackTrace()
         emptyList()
     }

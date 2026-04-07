@@ -44,8 +44,6 @@ const (
 	Query_GetUnitOfComputePriceProposal_FullMethodName             = "/inference.inference.Query/GetUnitOfComputePriceProposal"
 	Query_CurrentEpochGroupData_FullMethodName                     = "/inference.inference.Query/CurrentEpochGroupData"
 	Query_ModelsAll_FullMethodName                                 = "/inference.inference.Query/ModelsAll"
-	Query_TopMiner_FullMethodName                                  = "/inference.inference.Query/TopMiner"
-	Query_TopMinerAll_FullMethodName                               = "/inference.inference.Query/TopMinerAll"
 	Query_InferenceTimeout_FullMethodName                          = "/inference.inference.Query/InferenceTimeout"
 	Query_InferenceTimeoutAll_FullMethodName                       = "/inference.inference.Query/InferenceTimeoutAll"
 	Query_InferenceValidationDetails_FullMethodName                = "/inference.inference.Query/InferenceValidationDetails"
@@ -152,9 +150,6 @@ type QueryClient interface {
 	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
-	// Queries a list of TopMiner items.
-	TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error)
-	TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error)
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
@@ -484,24 +479,6 @@ func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurren
 func (c *queryClient) ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error) {
 	out := new(QueryModelsAllResponse)
 	err := c.cc.Invoke(ctx, Query_ModelsAll_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error) {
-	out := new(QueryGetTopMinerResponse)
-	err := c.cc.Invoke(ctx, Query_TopMiner_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error) {
-	out := new(QueryAllTopMinerResponse)
-	err := c.cc.Invoke(ctx, Query_TopMinerAll_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1076,9 +1053,6 @@ type QueryServer interface {
 	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
-	// Queries a list of TopMiner items.
-	TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error)
-	TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error)
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
@@ -1260,12 +1234,6 @@ func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCur
 }
 func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
-}
-func (UnimplementedQueryServer) TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TopMiner not implemented")
-}
-func (UnimplementedQueryServer) TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TopMinerAll not implemented")
 }
 func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeout not implemented")
@@ -1900,42 +1868,6 @@ func _Query_ModelsAll_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).ModelsAll(ctx, req.(*QueryModelsAllRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_TopMiner_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetTopMinerRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).TopMiner(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_TopMiner_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).TopMiner(ctx, req.(*QueryGetTopMinerRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_TopMinerAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryAllTopMinerRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).TopMinerAll(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_TopMinerAll_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).TopMinerAll(ctx, req.(*QueryAllTopMinerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3090,14 +3022,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ModelsAll",
 			Handler:    _Query_ModelsAll_Handler,
-		},
-		{
-			MethodName: "TopMiner",
-			Handler:    _Query_TopMiner_Handler,
-		},
-		{
-			MethodName: "TopMinerAll",
-			Handler:    _Query_TopMinerAll_Handler,
 		},
 		{
 			MethodName: "InferenceTimeout",

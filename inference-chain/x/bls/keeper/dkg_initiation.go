@@ -275,11 +275,12 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 		}
 
 		blsParticipant := types.BLSParticipantInfo{
-			Address:            participant.Address,
-			PercentageWeight:   participant.PercentageWeight,
-			Secp256K1PublicKey: participant.Secp256k1PublicKey,
-			SlotStartIndex:     startIndex,
-			SlotEndIndex:       endIndex,
+			Address:                    participant.Address,
+			PercentageWeight:           participant.PercentageWeight,
+			Secp256K1PublicKey:         participant.Secp256k1PublicKey,
+			AllowedSecp256K1PublicKeys: participant.AllowedSecp256k1PublicKeys,
+			SlotStartIndex:             startIndex,
+			SlotEndIndex:               endIndex,
 		}
 
 		blsParticipants = append(blsParticipants, blsParticipant)

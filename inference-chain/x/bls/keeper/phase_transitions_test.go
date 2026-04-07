@@ -312,10 +312,11 @@ func createTestG2Commitment() []byte {
 func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
-	// Create test epoch data in VERIFYING phase
+	// Create test epoch data in DISPUTING phase
 	epochID := uint64(20)
 	epochBLSData := createTestEpochBLSData(epochID, 3)
-	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING
+	epochBLSData.CandidateValidDealers = []bool{true, true, false}
 
 	// Set up dealer parts with valid commitments for first 2 participants
 	testCommitment := createTestG2Commitment()
@@ -324,11 +325,6 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
 
-	// Set up verification submissions for first 2 participants (sufficient >50%)
-	// Both participants approve both dealers
-	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
-	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
-
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
 
@@ -336,19 +332,19 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	err := k.CompleteDKG(ctx, &epochBLSData)
 	require.NoError(t, err)
 
-	// Verify DKG completed successfully
+	// Verify DKG completed successfully.
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, epochBLSData.DkgPhase)
 	require.NotNil(t, epochBLSData.GroupPublicKey)
-	require.Equal(t, 96, len(epochBLSData.GroupPublicKey)) // Compressed G2 point (96 bytes)
+	require.Equal(t, 96, len(epochBLSData.GroupPublicKey))
 
 	// Verify epoch data was stored
 	storedData, err := k.GetEpochBLSData(ctx, epochID)
 	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)
-	require.Equal(t, 96, len(storedData.GroupPublicKey)) // Compressed G2 point (96 bytes)
+	require.Equal(t, 96, len(storedData.GroupPublicKey))
 
-	// Verify active epoch was cleared
+	// Verify active epoch was cleared on completion.
 	activeEpoch, found := k.GetActiveEpochID(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
@@ -357,13 +353,11 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 func TestCompleteDKG_InsufficientVerification(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
-	// Create test epoch data in VERIFYING phase
+	// Create test epoch data in DISPUTING phase with no candidate valid dealers.
 	epochID := uint64(21)
 	epochBLSData := createTestEpochBLSData(epochID, 3)
-	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
-
-	// Only set up verification submission for first participant (insufficient <50%)
-	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING
+	epochBLSData.CandidateValidDealers = []bool{false, false, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
@@ -397,7 +391,19 @@ func TestCompleteDKG_WrongPhase(t *testing.T) {
 	// Call CompleteDKG
 	err := k.CompleteDKG(ctx, &epochBLSData)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "not in VERIFYING phase")
+	require.Contains(t, err.Error(), "not in DISPUTING phase")
+}
+
+func TestCompleteDKG_InvalidCandidateValidDealersLength(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	epochBLSData := createTestEpochBLSData(uint64(29), 3)
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING
+	epochBLSData.CandidateValidDealers = []bool{true, true}
+
+	err := k.CompleteDKG(ctx, &epochBLSData)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid candidate valid dealers length")
 }
 
 func TestDetermineValidDealersWithConsensus(t *testing.T) {
@@ -423,15 +429,10 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-	// Expected results:
-	// Majority is measured against all participants (5), not just submitters (3):
-	// required approvals = floor(5/2)+1 = 3.
-	// Dealer 0: 3 approvals -> VALID
-	// Dealer 1: 2 approvals -> INVALID
-	// Dealer 2: 2 approvals -> INVALID
-	// Dealer 3: 1 approval -> INVALID
-	// Dealer 4: 0 approvals -> INVALID
-	expectedValidDealers := []bool{true, false, false, false, false}
+	// Expected results under slot-weighted quorum excluding dealer self.
+	// With only participants 0..2 submitting, dealer 0 only gets votes from 1 and 2.
+	// That covers 40/100 slots, which is below >50%.
+	expectedValidDealers := []bool{false, false, false, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
@@ -459,6 +460,28 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
+func TestDetermineValidDealersWithConsensus_DealerOwnsExactlyHalfSlots(t *testing.T) {
+	k, _ := keepertest.BlsKeeper(t)
+
+	// 2 participants -> each gets exactly 50/100 slots in the fixture.
+	epochBLSData := createTestEpochBLSData(uint64(30), 2)
+
+	// Both participants submitted dealer parts.
+	epochBLSData.DealerParts[0].DealerAddress = "participant1"
+	epochBLSData.DealerParts[0].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[1].DealerAddress = "participant2"
+	epochBLSData.DealerParts[1].Commitments = [][]byte{createTestG2Commitment()}
+
+	// Everyone votes "true" for dealer 0 (including dealer 0 itself).
+	// Because self vote is excluded, dealer 0 can only get 50 non-self slots, while quorum is 51.
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true}
+
+	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false}, validDealers)
+}
+
 func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) {
 	k, _ := keepertest.BlsKeeper(t)
 
@@ -478,10 +501,8 @@ func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) 
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-	// Need 2 of 3 approvals:
-	// Dealer 0 gets approvals from verifiers 0 and 1 => VALID
-	// Dealers 1 and 2 only have verifier 0 approval => INVALID
-	expectedValidDealers := []bool{true, false, false}
+	// Under slot-weighted quorum excluding dealer self, dealer 0 only gets 33/100 slots.
+	expectedValidDealers := []bool{false, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
@@ -520,9 +541,10 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
 
-	// Set up verification submissions for first 2 participants (sufficient)
+	// Set up verification submissions so both dealers pass slot-weighted quorum
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
@@ -530,12 +552,22 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	// Set block height at verifying deadline
 	ctx = ctx.WithBlockHeight(epochBLSData.VerifyingPhaseDeadlineBlock)
 
-	// Process transition
+	// Process transition from VERIFYING -> DISPUTING.
 	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
 	require.NoError(t, err)
 
-	// Verify DKG completed
+	// Verify DKG moved to DISPUTING first.
 	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DISPUTING, storedData.DkgPhase)
+	require.Greater(t, storedData.DisputingPhaseDeadlineBlock, storedData.VerifyingPhaseDeadlineBlock)
+
+	// Process transition from DISPUTING -> COMPLETED at disputing deadline.
+	ctx = ctx.WithBlockHeight(storedData.DisputingPhaseDeadlineBlock)
+	err = k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
+	require.NoError(t, err)
+
+	storedData, err = k.GetEpochBLSData(ctx, epochID)
 	require.NoError(t, err)
 	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, storedData.DkgPhase)
 	require.NotNil(t, storedData.GroupPublicKey)

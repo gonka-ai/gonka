@@ -65,10 +65,8 @@
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
         "originator_supply": "160000000000000000",
-        "top_reward_amount": "120000000000000000",
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
-        "top_rewards": 3,
         "supply_denom": "ngonka"
       },
       "model_list": [

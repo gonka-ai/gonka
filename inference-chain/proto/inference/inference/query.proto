@@ -16,7 +16,6 @@ import "inference/inference/pocbatch.proto";
 import "inference/inference/tokenomics_data.proto";
 import "inference/inference/unit_of_compute.proto";
 import "inference/inference/model.proto";
-import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
@@ -177,16 +176,6 @@ service Query {
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-
-  }
-
-  // Queries a list of TopMiner items.
-  rpc TopMiner    (QueryGetTopMinerRequest) returns (QueryGetTopMinerResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/top_miner/{address}";
-
-  }
-  rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/top_miner";
 
   }
 
@@ -754,23 +743,6 @@ message QueryModelsAllRequest {
 message QueryModelsAllResponse {
   repeated Model model = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
-}
-
-message QueryGetTopMinerRequest {
-  string address = 1;
-}
-
-message QueryGetTopMinerResponse {
-  TopMiner top_miner = 1 [(gogoproto.nullable) = false];
-}
-
-message QueryAllTopMinerRequest {
-  cosmos.base.query.v1beta1.PageRequest pagination = 1;
-}
-
-message QueryAllTopMinerResponse {
-  repeated TopMiner                               top_miner  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetInferenceTimeoutRequest {
