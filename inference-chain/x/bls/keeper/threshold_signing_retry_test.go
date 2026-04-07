@@ -131,6 +131,59 @@ func TestAddPartialSignature_ExpiredRequestAutoRetryAndTerminalExpiry(t *testing
 	require.EqualValues(t, 2, terminalRequest.Attempt)
 }
 
+func TestMaybeAutoRetryThresholdSigningRequest_DeadlineCollisionKeepsExpirationTracking(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(451)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Greater(t, params.SigningDeadlineBlocks, int64(0))
+	params.MaxSigningAttempts = 2
+	require.NoError(t, k.SetParams(ctx, params))
+
+	signingData := makeSigningDataForRetryTests(epochID, 91)
+	retryBlockHeight := int64(250)
+	collidingDeadline := retryBlockHeight + params.SigningDeadlineBlocks
+
+	request := &types.ThresholdSigningRequest{
+		RequestId:           signingData.RequestId,
+		CurrentEpochId:      signingData.CurrentEpochId,
+		ChainId:             signingData.ChainId,
+		Data:                signingData.Data,
+		EncodedData:         []byte("encoded"),
+		MessageHash:         bytes.Repeat([]byte{0xAB}, 32),
+		Status:              types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES,
+		PartialSignatures:   []types.PartialSignature{},
+		FinalSignature:      []byte{},
+		CreatedBlockHeight:  1,
+		DeadlineBlockHeight: collidingDeadline,
+		Attempt:             1,
+	}
+	require.NoError(t, k.storeThresholdSigningRequest(ctx, request))
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	expirationKey := types.ExpirationIndexKey(collidingDeadline, request.RequestId)
+	require.NoError(t, kvStore.Set(expirationKey, []byte{1}))
+
+	retryCtx := ctx.WithBlockHeight(retryBlockHeight)
+	retried, err := k.maybeAutoRetryThresholdSigningRequest(retryCtx, request, "test deadline collision")
+	require.NoError(t, err)
+	require.True(t, retried)
+
+	retriedRequest, err := k.GetSigningStatus(retryCtx, request.RequestId)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, retriedRequest.Attempt)
+	require.Equal(t, collidingDeadline, retriedRequest.DeadlineBlockHeight)
+
+	deadlineCtx := retryCtx.WithBlockHeight(collidingDeadline)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(deadlineCtx))
+
+	terminalRequest, err := k.GetSigningStatus(deadlineCtx, request.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, terminalRequest.Status)
+}
+
 func TestRequestThresholdSignature_RetryAllowedAfterFailedAndCleansStaleExpirationIndex(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(302)

@@ -20,7 +20,17 @@ func (k Keeper) setBridgeMintPendingRefund(ctx context.Context, blsRequestID []b
 	if msg == nil {
 		return fmt.Errorf("bridge mint message cannot be nil")
 	}
-	return k.BridgeMintRefundsMap.Set(ctx, hex.EncodeToString(blsRequestID), *msg)
+
+	requestKey := hex.EncodeToString(blsRequestID)
+	exists, err := k.BridgeMintRefundsMap.Has(ctx, requestKey)
+	if err != nil {
+		return fmt.Errorf("failed to check pending bridge mint refund %s: %w", requestKey, err)
+	}
+	if exists {
+		return fmt.Errorf("pending bridge mint refund already exists for request id: %s", requestKey)
+	}
+
+	return k.BridgeMintRefundsMap.Set(ctx, requestKey, *msg)
 }
 
 func (k Keeper) setBridgeWithdrawalPendingRefund(ctx context.Context, blsRequestID []byte, msg *types.MsgRequestBridgeWithdrawal) error {
@@ -30,7 +40,17 @@ func (k Keeper) setBridgeWithdrawalPendingRefund(ctx context.Context, blsRequest
 	if msg == nil {
 		return fmt.Errorf("bridge withdrawal message cannot be nil")
 	}
-	return k.BridgeWithdrawalRefundsMap.Set(ctx, hex.EncodeToString(blsRequestID), *msg)
+
+	requestKey := hex.EncodeToString(blsRequestID)
+	exists, err := k.BridgeWithdrawalRefundsMap.Has(ctx, requestKey)
+	if err != nil {
+		return fmt.Errorf("failed to check pending bridge withdrawal refund %s: %w", requestKey, err)
+	}
+	if exists {
+		return fmt.Errorf("pending bridge withdrawal refund already exists for request id: %s", requestKey)
+	}
+
+	return k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, *msg)
 }
 
 func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte) error {

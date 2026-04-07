@@ -195,8 +195,6 @@ func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) erro
 		return fmt.Errorf("can only cancel failed or expired requests, current status: %s", request.Status.String())
 	}
 
-	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
-
 	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED
 	return k.storeThresholdSigningRequest(ctx, request)
 }
@@ -297,6 +295,7 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	retryReq.FinalSignature = []byte{}
 	retryReq.DeadlineBlockHeight = cacheCtx.BlockHeight() + signingDeadlineBlocks
 
+	k.removeFromExpirationIndex(cacheCtx, previousDeadlineBlockHeight, retryReq.RequestId)
 	kvStore := k.storeService.OpenKVStore(cacheCtx)
 	expirationKey := types.ExpirationIndexKey(retryReq.DeadlineBlockHeight, retryReq.RequestId)
 	if err := kvStore.Set(expirationKey, []byte{}); err != nil {
@@ -306,8 +305,6 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	if err := k.storeThresholdSigningRequest(cacheCtx, &retryReq); err != nil {
 		return false, err
 	}
-
-	k.removeFromExpirationIndex(cacheCtx, previousDeadlineBlockHeight, retryReq.RequestId)
 
 	if err := cacheCtx.EventManager().EmitTypedEvent(&types.EventThresholdSigningRequested{
 		RequestId:           retryReq.RequestId,
