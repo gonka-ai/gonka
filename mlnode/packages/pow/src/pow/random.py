@@ -125,6 +125,7 @@ def get_inputs(
     seq_len: int = 16,
     dim: int = 4096,
     dtype: torch.dtype = torch.float16,
+    poc_stronger_rng: bool = False,
 ):
     """
     Generate a random embedding for the model.

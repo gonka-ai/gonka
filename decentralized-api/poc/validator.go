@@ -550,7 +550,8 @@ func (v *OffChainValidator) validateParticipant(
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},
-		StatTest: mlnodeclient.StatTestParamsFromChain(pocParams.StatTest),
+		StatTest:       mlnodeclient.StatTestParamsFromChain(pocParams.StatTest),
+		PocStrongerRng: pocParams.PocStrongerRngEnabled,
 	}
 
 	// Try sending to ML node (single attempt per call - retries handled by queue)

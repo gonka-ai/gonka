@@ -196,14 +196,14 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 }
 
 type StartPoCNodeCommandV2 struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	CallbackUrl string
-	TotalNodes  int
-	Model       string
-	SeqLen      int64
-	PocStrongerRng    bool
+	BlockHeight    int64
+	BlockHash      string
+	PubKey         string
+	CallbackUrl    string
+	TotalNodes     int
+	Model          string
+	SeqLen         int64
+	PocStrongerRng bool
 }
 
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -245,9 +245,9 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		Params: mlnodeclient.PoCParamsV2{
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
-			PocStrongerRng: c.PocStrongerRng,
 		},
-		URL: c.CallbackUrl,
+		URL:            c.CallbackUrl,
+		PocStrongerRng: c.PocStrongerRng,
 	}
 
 	if _, err := worker.GetClient().InitGenerateV2(ctx, req); err != nil {
