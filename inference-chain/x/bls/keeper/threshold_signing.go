@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 
@@ -40,7 +41,27 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		return fmt.Errorf("failed to check request uniqueness: %w", err)
 	}
 	if existingValue != nil {
-		return fmt.Errorf("request_id already exists: %x", signingData.RequestId)
+		var existing types.ThresholdSigningRequest
+		if err := k.cdc.Unmarshal(existingValue, &existing); err != nil {
+			return fmt.Errorf("failed to unmarshal existing threshold signing request: %w", err)
+		}
+
+		// Allow retry only after terminal no-signature outcomes
+		if existing.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED &&
+			existing.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED {
+			return fmt.Errorf("request_id already exists: %x (status: %s)", signingData.RequestId, existing.Status.String())
+		}
+		if !bytes.Equal(existing.ChainId, signingData.ChainId) || !equalSigningDataFields(existing.Data, signingData.Data) {
+			return fmt.Errorf("request_id payload mismatch: %x", signingData.RequestId)
+		}
+
+		k.Logger().Info("Retrying threshold signing request after failed attempt",
+			"request_id", fmt.Sprintf("%x", signingData.RequestId),
+			"previous_status", existing.Status.String(),
+			"previous_deadline_block_height", existing.DeadlineBlockHeight)
+
+		// Defense-in-depth cleanup in case a stale expiration index entry remains
+		k.removeFromExpirationIndex(ctx, existing.DeadlineBlockHeight, signingData.RequestId)
 	}
 
 	// Encode data using Ethereum-compatible abi.encodePacked format
@@ -210,6 +231,18 @@ func (k Keeper) encodeSigningData(signingData types.SigningData) []byte {
 	return encoded
 }
 
+func equalSigningDataFields(existing, incoming [][]byte) bool {
+	if len(existing) != len(incoming) {
+		return false
+	}
+	for i := range existing {
+		if !bytes.Equal(existing[i], incoming[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // AddPartialSignature adds a partial signature to a threshold signing request and checks for completion
 func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndices []uint32, partialSignature []byte, submitter string) error {
 	// Get current request
@@ -234,7 +267,11 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
 			return err
 		}
-		return k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, "request expired")
+		reason := "request expired"
+		if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	// Get current epoch BLS data for validation
@@ -360,8 +397,16 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 		// Remove from expiration index since it's no longer collecting signatures
 		k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
 
-		return k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId,
-			fmt.Sprintf("signature aggregation failed: %v", err))
+		// Persist terminal state before event emission
+		if storeErr := k.storeThresholdSigningRequest(ctx, request); storeErr != nil {
+			return storeErr
+		}
+
+		reason := fmt.Sprintf("signature aggregation failed: %v", err)
+		if emitErr := k.emitThresholdSigningFailed(ctx, request.RequestId, request.CurrentEpochId, reason); emitErr != nil {
+			return emitErr
+		}
+		return nil
 	}
 
 	// Success - update request with final signature
@@ -371,9 +416,17 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	// Remove from expiration index since it's no longer collecting signatures
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
 
+	// Persist terminal state before event emission
+	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+		return err
+	}
+
 	// Emit completion event
-	return k.emitThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochId,
-		finalSignature, totalSlotsCovered)
+	if err := k.emitThresholdSigningCompleted(ctx, request.RequestId, request.CurrentEpochId,
+		finalSignature, totalSlotsCovered); err != nil {
+		return err
+	}
+	return nil
 }
 
 // aggregatePartialSignatures combines partial signatures into final signature
@@ -410,6 +463,11 @@ func (k Keeper) emitThresholdSigningCompleted(ctx sdk.Context, requestID []byte,
 
 // emitThresholdSigningFailed emits failure event
 func (k Keeper) emitThresholdSigningFailed(ctx sdk.Context, requestID []byte, epochID uint64, reason string) error {
+	k.Logger().Error("Threshold signing failed",
+		"request_id", fmt.Sprintf("%x", requestID),
+		"current_epoch_id", epochID,
+		"reason", reason)
+
 	return ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningFailed{
 		RequestId:      requestID,
 		CurrentEpochId: epochID,
@@ -473,8 +531,8 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 			// Remove from expiration index (cleanup)
 			k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, requestID)
 
-			// Emit failure event
-			if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, "deadline expired"); err != nil {
+			reason := "deadline expired"
+			if err := k.emitThresholdSigningFailed(ctx, requestID, request.CurrentEpochId, reason); err != nil {
 				k.Logger().Error("Failed to emit threshold signing failed event",
 					"request_id", fmt.Sprintf("%x", requestID), "error", err)
 				// Continue processing even if event emission fails
