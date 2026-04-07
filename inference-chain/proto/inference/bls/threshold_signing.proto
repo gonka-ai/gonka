@@ -82,4 +82,7 @@ message ThresholdSigningRequest {
   
   // deadline_block_height is the block height after which this request expires
   int64 deadline_block_height = 11;
+
+  // attempt is the current signing attempt number (starts from 1).
+  uint32 attempt = 12;
 }

@@ -88,6 +88,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		FinalSignature:      []byte{},
 		CreatedBlockHeight:  ctx.BlockHeight(),
 		DeadlineBlockHeight: deadlineBlockHeight,
+		Attempt:             1,
 	}
 
 	// Store the request
@@ -263,6 +264,102 @@ func equalSigningDataFields(existing, incoming [][]byte) bool {
 	return true
 }
 
+func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *types.ThresholdSigningRequest, triggerReason string) (bool, error) {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get parameters: %w", err)
+	}
+
+	maxSigningAttempts := params.MaxSigningAttempts
+	if maxSigningAttempts == 0 {
+		maxSigningAttempts = types.DefaultParams().MaxSigningAttempts
+	}
+
+	signingDeadlineBlocks := params.SigningDeadlineBlocks
+	if signingDeadlineBlocks <= 0 {
+		signingDeadlineBlocks = types.DefaultParams().SigningDeadlineBlocks
+	}
+
+	if request.Attempt >= maxSigningAttempts {
+		return false, nil
+	}
+
+	previousAttempt := request.Attempt
+	previousEpochID := request.CurrentEpochId
+	previousDeadlineBlockHeight := request.DeadlineBlockHeight
+
+	activeEpochID, hasActiveEpoch := k.GetActiveEpochID(ctx)
+	if hasActiveEpoch && activeEpochID > 0 && activeEpochID != request.CurrentEpochId {
+		activeEpochData, getErr := k.GetEpochBLSData(ctx, activeEpochID)
+		if getErr != nil {
+			return false, fmt.Errorf("failed to load active epoch %d for retry: %w", activeEpochID, getErr)
+		}
+		if activeEpochData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED &&
+			activeEpochData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
+			return false, fmt.Errorf("active epoch %d DKG not completed for retry, current phase: %s", activeEpochID, activeEpochData.DkgPhase.String())
+		}
+		if len(activeEpochData.GroupPublicKey) == 0 {
+			return false, fmt.Errorf("active epoch %d has no group public key for retry", activeEpochID)
+		}
+
+		request.CurrentEpochId = activeEpochID
+	}
+
+	signingData := types.SigningData{
+		CurrentEpochId: request.CurrentEpochId,
+		ChainId:        request.ChainId,
+		RequestId:      request.RequestId,
+		Data:           request.Data,
+	}
+	request.EncodedData = k.encodeSigningData(signingData)
+
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write(request.EncodedData)
+	request.MessageHash = hash.Sum(nil)
+
+	request.Attempt++
+	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES
+	request.PartialSignatures = []types.PartialSignature{}
+	request.FinalSignature = []byte{}
+	request.DeadlineBlockHeight = ctx.BlockHeight() + signingDeadlineBlocks
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	expirationKey := types.ExpirationIndexKey(request.DeadlineBlockHeight, request.RequestId)
+	if err := kvStore.Set(expirationKey, []byte{}); err != nil {
+		return false, fmt.Errorf("failed to store expiration index entry for retry: %w", err)
+	}
+
+	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+		return false, err
+	}
+
+	k.removeFromExpirationIndex(ctx, previousDeadlineBlockHeight, request.RequestId)
+
+	if err := ctx.EventManager().EmitTypedEvent(&types.EventThresholdSigningRequested{
+		RequestId:           request.RequestId,
+		CurrentEpochId:      request.CurrentEpochId,
+		EncodedData:         request.EncodedData,
+		MessageHash:         request.MessageHash,
+		DeadlineBlockHeight: request.DeadlineBlockHeight,
+	}); err != nil {
+		return false, fmt.Errorf("failed to emit threshold signing requested event on retry: %w", err)
+	}
+
+	k.Logger().Info("Automatically retrying threshold signing request",
+		"request_id", fmt.Sprintf("%x", request.RequestId),
+		"trigger_reason", triggerReason,
+		"attempt_from", previousAttempt,
+		"attempt_to", request.Attempt,
+		"epoch_from", previousEpochID,
+		"epoch_to", request.CurrentEpochId,
+		"deadline_from", previousDeadlineBlockHeight,
+		"deadline_to", request.DeadlineBlockHeight,
+		"max_signing_attempts", maxSigningAttempts,
+	)
+
+	return true, nil
+}
+
 // AddPartialSignature adds a partial signature to a threshold signing request and checks for completion
 func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndices []uint32, partialSignature []byte, submitter string) error {
 	// Get current request
@@ -410,6 +507,14 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	// Threshold reached - aggregate signatures
 	finalSignature, err := k.aggregatePartialSignatures(request.PartialSignatures, epochBLSData)
 	if err != nil {
+		retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "signature aggregation failed")
+		if retryErr != nil {
+			return retryErr
+		}
+		if retried {
+			return nil
+		}
+
 		// Aggregation failed - mark as failed
 		request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED
 		request.FinalSignature = []byte{}
@@ -541,6 +646,16 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 		// Double-check that the request is still collecting signatures and actually expired
 		if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES &&
 			currentBlockHeight >= request.DeadlineBlockHeight {
+
+			retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "deadline expired")
+			if retryErr != nil {
+				k.Logger().Error("Failed to auto-retry expired threshold signing request",
+					"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
+				continue
+			}
+			if retried {
+				continue
+			}
 
 			// Mark as expired
 			request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED

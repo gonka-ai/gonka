@@ -26,6 +26,7 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(301)
 	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
 
 	signingData := makeSigningDataForRetryTests(epochID, 1)
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
@@ -51,6 +52,56 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	require.Greater(t, retriedRequest.DeadlineBlockHeight, retriedRequest.CreatedBlockHeight)
 	require.Empty(t, retriedRequest.PartialSignatures)
 	require.Empty(t, retriedRequest.FinalSignature)
+}
+
+func TestProcessThresholdSigningDeadlines_AutoRetryUpdatesEpochAndStopsAtMaxAttempts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	initialEpochID := uint64(401)
+	activeEpochID := uint64(402)
+	setSignedEpochForRetryTests(t, k, ctx, initialEpochID)
+	setSignedEpochForRetryTests(t, k, ctx, activeEpochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 3)
+
+	signingData := makeSigningDataForRetryTests(initialEpochID, 21)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	initialHash := append([]byte(nil), initialRequest.MessageHash...)
+
+	k.SetActiveEpochID(ctx, activeEpochID)
+
+	// 1st expiry -> auto-retry #2 and epoch switch to active epoch.
+	retry1Ctx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry1Ctx))
+
+	retry1Request, err := k.GetSigningStatus(retry1Ctx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retry1Request.Status)
+	require.EqualValues(t, 2, retry1Request.Attempt)
+	require.Equal(t, activeEpochID, retry1Request.CurrentEpochId)
+	require.NotEqual(t, retry1Request.DeadlineBlockHeight, initialRequest.DeadlineBlockHeight)
+	require.NotEqual(t, initialHash, retry1Request.MessageHash)
+	require.Empty(t, retry1Request.PartialSignatures)
+
+	// 2nd expiry -> auto-retry #3.
+	retry2Ctx := retry1Ctx.WithBlockHeight(retry1Request.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry2Ctx))
+
+	retry2Request, err := k.GetSigningStatus(retry2Ctx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retry2Request.Status)
+	require.EqualValues(t, 3, retry2Request.Attempt)
+	require.Equal(t, activeEpochID, retry2Request.CurrentEpochId)
+
+	// 3rd expiry -> terminal EXPIRED because max attempts reached.
+	terminalCtx := retry2Ctx.WithBlockHeight(retry2Request.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(terminalCtx))
+
+	terminalRequest, err := k.GetSigningStatus(terminalCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, terminalRequest.Status)
+	require.EqualValues(t, 3, terminalRequest.Attempt)
 }
 
 func TestRequestThresholdSignature_RetryAllowedAfterFailedAndCleansStaleExpirationIndex(t *testing.T) {
@@ -227,7 +278,7 @@ func TestBlsHooksSharedAcrossKeeperCopies(t *testing.T) {
 	kCopy := k
 
 	hook := &retryTestBlsHook{}
-	kCopy.SetHooks(hook)
+	require.NoError(t, kCopy.SetHooks(hook))
 
 	require.NoError(t, k.Hooks().AfterThresholdSigningCompleted(context.Background(), bytes.Repeat([]byte{1}, 32), 1))
 	require.True(t, hook.called)
@@ -287,4 +338,13 @@ func setupBlsKeeperForRetryTests(t *testing.T) (Keeper, sdk.Context) {
 	require.NoError(t, k.SetParams(ctx, types.DefaultParams()))
 
 	return k, ctx
+}
+
+func setMaxSigningAttemptsForRetryTests(t *testing.T, k Keeper, ctx sdk.Context, maxAttempts uint32) {
+	t.Helper()
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.MaxSigningAttempts = maxAttempts
+	require.NoError(t, k.SetParams(ctx, params))
 }

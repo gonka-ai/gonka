@@ -72,14 +72,15 @@ func (k Keeper) Hooks() types.BlsHooks {
 	return k.hooksState.hooks
 }
 
-func (k *Keeper) SetHooks(hooks types.BlsHooks) {
+func (k *Keeper) SetHooks(hooks types.BlsHooks) error {
 	if k.hooksState == nil {
 		k.hooksState = &blsHooksState{}
 	}
 	if k.hooksState.hooks != nil {
-		panic("cannot set bls hooks twice")
+		return fmt.Errorf("cannot set bls hooks twice")
 	}
 	k.hooksState.hooks = hooks
+	return nil
 }
 
 // SetActiveEpochID sets the current active epoch undergoing DKG

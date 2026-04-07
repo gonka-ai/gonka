@@ -45,6 +45,7 @@ const (
 	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
 	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
 	Msg_RequestBridgeMint_FullMethodName                = "/inference.inference.Msg/RequestBridgeMint"
+	Msg_CancelBridgeOperation_FullMethodName            = "/inference.inference.Msg/CancelBridgeOperation"
 	Msg_RegisterWrappedTokenContract_FullMethodName     = "/inference.inference.Msg/RegisterWrappedTokenContract"
 	Msg_MigrateAllWrappedTokens_FullMethodName          = "/inference.inference.Msg/MigrateAllWrappedTokens"
 	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
@@ -89,6 +90,7 @@ type MsgClient interface {
 	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeMint, opts ...grpc.CallOption) (*MsgRequestBridgeMintResponse, error)
+	CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error)
 	MigrateAllWrappedTokens(ctx context.Context, in *MsgMigrateAllWrappedTokens, opts ...grpc.CallOption) (*MsgMigrateAllWrappedTokensResponse, error)
 	AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error)
@@ -341,6 +343,15 @@ func (c *msgClient) RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeM
 	return out, nil
 }
 
+func (c *msgClient) CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error) {
+	out := new(MsgCancelBridgeOperationResponse)
+	err := c.cc.Invoke(ctx, Msg_CancelBridgeOperation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error) {
 	out := new(MsgRegisterWrappedTokenContractResponse)
 	err := c.cc.Invoke(ctx, Msg_RegisterWrappedTokenContract_FullMethodName, in, out, opts...)
@@ -447,6 +458,7 @@ type MsgServer interface {
 	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error)
+	CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error)
 	MigrateAllWrappedTokens(context.Context, *MsgMigrateAllWrappedTokens) (*MsgMigrateAllWrappedTokensResponse, error)
 	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
@@ -539,6 +551,9 @@ func (UnimplementedMsgServer) RequestBridgeWithdrawal(context.Context, *MsgReque
 }
 func (UnimplementedMsgServer) RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeMint not implemented")
+}
+func (UnimplementedMsgServer) CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelBridgeOperation not implemented")
 }
 func (UnimplementedMsgServer) RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterWrappedTokenContract not implemented")
@@ -1045,6 +1060,24 @@ func _Msg_RequestBridgeMint_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CancelBridgeOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCancelBridgeOperation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CancelBridgeOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CancelBridgeOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CancelBridgeOperation(ctx, req.(*MsgCancelBridgeOperation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_RegisterWrappedTokenContract_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgRegisterWrappedTokenContract)
 	if err := dec(in); err != nil {
@@ -1299,6 +1332,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestBridgeMint",
 			Handler:    _Msg_RequestBridgeMint_Handler,
+		},
+		{
+			MethodName: "CancelBridgeOperation",
+			Handler:    _Msg_CancelBridgeOperation_Handler,
 		},
 		{
 			MethodName: "RegisterWrappedTokenContract",

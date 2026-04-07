@@ -256,6 +256,5 @@ func InvokeSetBlsHooks(
 		multiHooks = append(multiHooks, hook)
 	}
 
-	keeper.SetHooks(multiHooks)
-	return nil
+	return keeper.SetHooks(multiHooks)
 }

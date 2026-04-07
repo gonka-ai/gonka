@@ -69,6 +69,11 @@ func TestMsgServer_CancelBridgeOperation_MintSuccess(t *testing.T) {
 
 	blsK, ok := k.BlsKeeper.(blskeeper.Keeper)
 	require.True(t, ok)
+	blsParams, err := blsK.GetParams(ctx)
+	require.NoError(t, err)
+	blsParams.MaxSigningAttempts = 1
+	require.NoError(t, blsK.SetParams(ctx, blsParams))
+
 	require.NoError(t, blsK.SetEpochBLSData(ctx, blstypes.EpochBLSData{
 		EpochId:        777,
 		DkgPhase:       blstypes.DKGPhase_DKG_PHASE_SIGNED,
