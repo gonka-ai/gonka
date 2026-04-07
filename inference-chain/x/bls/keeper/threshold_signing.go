@@ -359,6 +359,14 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 
 	// Check deadline
 	if ctx.BlockHeight() > request.DeadlineBlockHeight {
+		retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "request expired")
+		if retryErr != nil {
+			k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
+				"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
+		} else if retried {
+			return nil
+		}
+
 		// Mark as expired and emit failure event
 		request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED
 

@@ -99,6 +99,36 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.EqualValues(t, 3, terminalRequest.Attempt)
 }
 
+func TestAddPartialSignature_ExpiredRequestAutoRetryAndTerminalExpiry(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(450)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 2)
+
+	signingData := makeSigningDataForRetryTests(epochID, 90)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+
+	retryCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight + 1)
+	require.NoError(t, k.AddPartialSignature(retryCtx, signingData.RequestId, []uint32{1}, []byte{1}, ""))
+
+	retriedRequest, err := k.GetSigningStatus(retryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retriedRequest.Status)
+	require.EqualValues(t, 2, retriedRequest.Attempt)
+	require.Greater(t, retriedRequest.DeadlineBlockHeight, retryCtx.BlockHeight())
+
+	terminalCtx := retryCtx.WithBlockHeight(retriedRequest.DeadlineBlockHeight + 1)
+	require.NoError(t, k.AddPartialSignature(terminalCtx, signingData.RequestId, []uint32{1}, []byte{1}, ""))
+
+	terminalRequest, err := k.GetSigningStatus(terminalCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, terminalRequest.Status)
+	require.EqualValues(t, 2, terminalRequest.Attempt)
+}
+
 func TestRequestThresholdSignature_RetryAllowedAfterFailedAndCleansStaleExpirationIndex(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(302)
