@@ -33,11 +33,6 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		return fmt.Errorf("epoch %d has no group public key", signingData.CurrentEpochId)
 	}
 
-	// Load params once and reuse for retry-limit and deadline calculations
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get parameters: %w", err)
-	}
 	maxSigningAttempts := params.MaxSigningAttempts
 	if maxSigningAttempts == 0 {
 		maxSigningAttempts = types.DefaultParams().MaxSigningAttempts
