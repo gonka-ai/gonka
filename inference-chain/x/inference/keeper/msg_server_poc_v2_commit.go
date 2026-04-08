@@ -10,6 +10,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const PocFailureTag = "[PoC Failure]"
+
 // PoCV2StoreCommit handles submission of off-chain artifact store commits.
 func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2StoreCommit) (*types.MsgPoCV2StoreCommitResponse, error) {
 	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {

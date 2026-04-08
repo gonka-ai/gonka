@@ -31,7 +31,6 @@ service Msg {
   rpc RevalidateInference              (MsgRevalidateInference) returns (MsgRevalidateInferenceResponse);
   rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
   rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
-  rpc SubmitPocValidation              (MsgSubmitPocValidation) returns (MsgSubmitPocValidationResponse);
   // PoC v2 validation messages
   rpc SubmitPocValidationsV2           (MsgSubmitPocValidationsV2) returns (MsgSubmitPocValidationsV2Response);
   // PoC v2 off-chain commit messages
@@ -205,23 +204,6 @@ message MsgSubmitPocBatch {
 }
 
 message MsgSubmitPocBatchResponse {}
-
-message MsgSubmitPocValidation {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string participant_address = 2;
-  int64  poc_stage_start_block_height = 3;
-  repeated int64  nonces = 4;
-  repeated double dist = 5;
-  repeated double received_dist = 6;
-  double r_target = 7;
-  double fraud_threshold = 8;
-  int64  n_invalid = 9;
-  double probability_honest = 10;
-  bool   fraud_detected = 11;
-}
-
-message MsgSubmitPocValidationResponse {}
 
 // PoC v2 validation messages
 message MsgSubmitPocValidationsV2 {

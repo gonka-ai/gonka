@@ -73,4 +73,5 @@ var (
 	ErrTAComponentMismatch                   = sdkerrors.Register(ModuleName, 1171, "transfer agent signature components mismatch")
 	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
 	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create subnet escrows for subnets")
+	ErrEpochIndexOutOfRange                  = sdkerrors.Register(ModuleName, 1174, "epoch index can only be current or upcoming epoch")
 )

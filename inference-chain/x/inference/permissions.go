@@ -21,7 +21,6 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgClaimRewards{},
 	&types.MsgValidation{},
 	&types.MsgSubmitPocBatch{},
-	&types.MsgSubmitPocValidation{},
 	&types.MsgSubmitPocValidationsV2{},   // PoC v2 validations
 	&types.MsgPoCV2StoreCommit{},         // PoC v2 off-chain store commits
 	&types.MsgMLNodeWeightDistribution{}, // PoC v2 ML node weight distribution
