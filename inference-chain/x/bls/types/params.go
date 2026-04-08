@@ -220,16 +220,3 @@ func validateMaxSigningAttempts(i interface{}) error {
 
 	return nil
 }
-
-func validateCompletedFallbackBlocks(i interface{}) error {
-	v, ok := i.(int64)
-	if !ok {
-		return fmt.Errorf("invalid parameter type: %T", i)
-	}
-
-	if v < 0 {
-		return fmt.Errorf("completed_fallback_blocks must be non-negative")
-	}
-
-	return nil
-}
