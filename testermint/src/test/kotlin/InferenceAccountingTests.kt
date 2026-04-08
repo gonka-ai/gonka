@@ -324,8 +324,9 @@ const val DEFAULT_TOKEN_COST = 1_000L
 
 fun generateLogProbs(content: String): Logprobs {
     return Logprobs(
-        content.split(" ").map { word ->
-            Content(word.toByteArray().toList().map { it.toInt() }, 0.9, word, listOf())
+        content.split(" ").mapIndexed { index, word ->
+            val tokenId = (index + 1000).toString()
+            Content(word.toByteArray().toList().map { it.toInt() }, 0.9, tokenId, listOf())
         }
     )
 }
