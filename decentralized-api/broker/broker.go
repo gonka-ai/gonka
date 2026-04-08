@@ -209,6 +209,7 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+	MlNodeVersion   string     `json:"ml_node_version"`
 
 	// Epoch-specific data, populated from the chain
 	EpochModels  map[string]types.Model      `json:"epoch_models"`
@@ -712,6 +713,7 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		Models:   modelNames,
 		Host:     node.Host,
 		Port:     strconv.Itoa(node.PoCPort),
+		Version:  in.State.MlNodeVersion,
 	}
 }
 
@@ -729,6 +731,10 @@ func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
 	}
 
 	if !hardwareEquals(a, b) {
+		return false
+	}
+
+	if a.Version != b.Version {
 		return false
 	}
 
@@ -1281,14 +1287,15 @@ func nodeStatusQueryWorker(broker *Broker) {
 					"nodeId", nodeResp.Node.Id,
 					"prevStatus", queryStatusResult.PrevStatus.String(),
 					"currentStatus", queryStatusResult.CurrentStatus.String())
-
-				statusUpdates = append(statusUpdates, StatusUpdate{
-					NodeId:     nodeResp.Node.Id,
-					PrevStatus: queryStatusResult.PrevStatus,
-					NewStatus:  queryStatusResult.CurrentStatus,
-					Timestamp:  timestamp,
-				})
 			}
+
+			statusUpdates = append(statusUpdates, StatusUpdate{
+				NodeId:        nodeResp.Node.Id,
+				PrevStatus:    queryStatusResult.PrevStatus,
+				NewStatus:     queryStatusResult.CurrentStatus,
+				Timestamp:     timestamp,
+				MlNodeVersion: queryStatusResult.MlNodeVersion,
+			})
 		}
 
 		if len(statusUpdates) > 0 {
@@ -1306,6 +1313,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 type statusQueryResult struct {
 	PrevStatus    types.HardwareNodeStatus
 	CurrentStatus types.HardwareNodeStatus
+	MlNodeVersion string
 }
 
 // Pass by value, because this is supposed to be a readonly function
@@ -1319,12 +1327,14 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	nodeId := node.Id
 	prevStatus := state.CurrentStatus
 	var currentStatus types.HardwareNodeStatus
+	var mlNodeVersion string
 	if err != nil {
 		logging.Error("queryNodeStatus. Failed to query node status. Assuming currentStatus = FAILED", types.Nodes,
 			"nodeId", nodeId, "error", err)
 		currentStatus = types.HardwareNodeStatus_FAILED
 	} else {
 		currentStatus = toStatus(*status)
+		mlNodeVersion = status.Version
 	}
 
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
@@ -1374,6 +1384,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	return &statusQueryResult{
 		PrevStatus:    prevStatus,
 		CurrentStatus: currentStatus,
+		MlNodeVersion: mlNodeVersion,
 	}, nil
 }
 

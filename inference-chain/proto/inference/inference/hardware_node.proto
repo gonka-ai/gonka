@@ -16,6 +16,7 @@ message HardwareNode {
   repeated Hardware hardware = 4;
   string host = 5;
   string port = 6;
+  string version = 7;
 }
 
 enum HardwareNodeStatus {

@@ -61,7 +61,8 @@ const (
 )
 
 type StateResponse struct {
-	State MLNodeState `json:"state"`
+	State   MLNodeState `json:"state"`
+	Version string      `json:"version"`
 }
 
 func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {
