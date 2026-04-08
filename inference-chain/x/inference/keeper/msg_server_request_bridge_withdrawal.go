@@ -93,7 +93,10 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, fmt.Errorf("failed to request BLS signature: %v", err)
 	}
 
-	err = k.setBridgeWithdrawalPendingRefund(goCtx, requestIdHash[:], msg)
+	err = k.setBridgeWithdrawalPendingRefund(goCtx, requestIdHash[:], msg, types.BridgeTokenReference{
+		ChainId:         bridgeWrappedTokenContract.ChainId,
+		ContractAddress: bridgeWrappedTokenContract.ContractAddress,
+	})
 	if err != nil {
 		k.LogError("Bridge withdrawal: Failed to persist pending refund context", types.Messages, "error", err)
 		return nil, fmt.Errorf("failed to persist bridge withdrawal pending refund context: %v", err)

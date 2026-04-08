@@ -124,7 +124,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_Withdrawal(t *testing.T) {
 		ChainId:         "ethereum",
 		ContractAddress: "0xabc",
 	}
-	require.NoError(t, k.WrappedContractReverseIndex.Set(expiryCtx, strings.ToLower(testutil.Creator), wrappedRef))
+	require.NoError(t, k.BridgeWithdrawalTokenRefsMap.Set(expiryCtx, requestKey, wrappedRef))
 	require.NoError(t, k.WrappedTokenContractsMap.Set(expiryCtx, collections.Join(wrappedRef.ChainId, strings.ToLower(wrappedRef.ContractAddress)), types.BridgeWrappedTokenContract{
 		ChainId:                wrappedRef.ChainId,
 		ContractAddress:        wrappedRef.ContractAddress,
@@ -221,11 +221,14 @@ func TestProcessAutoRefundForFailedBridgeOperation_WithdrawalContractNotRegister
 		Amount:             "1000",
 		DestinationAddress: "0xabc",
 	}))
+	require.NoError(t, k.BridgeWithdrawalTokenRefsMap.Set(ctx, requestKey, types.BridgeTokenReference{
+		ChainId:         "ethereum",
+		ContractAddress: "0xabc",
+	}))
 
 	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "wrapped token contract")
-	require.Contains(t, err.Error(), "is not registered")
+	require.Contains(t, err.Error(), "active wrapped token contract not found")
 	require.False(t, closeRetry)
 
 	stillPending, getErr := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)

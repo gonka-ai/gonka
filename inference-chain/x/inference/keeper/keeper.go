@@ -85,6 +85,7 @@ type (
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
+		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
 		WrappedTokenCodeIDItem         collections.Item[uint64]
 		WrappedTokenMetadataMap        collections.Map[collections.Pair[string, string], types.BridgeTokenMetadata]
 		WrappedTokenContractsMap       collections.Map[collections.Pair[string, string], types.BridgeWrappedTokenContract]
@@ -426,6 +427,13 @@ func NewKeeper(
 			"bridge_withdrawal_refunds",
 			collections.StringKey,
 			codec.CollValue[types.MsgRequestBridgeWithdrawal](cdc),
+		),
+		BridgeWithdrawalTokenRefsMap: collections.NewMap(
+			sb,
+			types.BridgeWithdrawalTokenRefsPrefix,
+			"bridge_withdrawal_token_refs",
+			collections.StringKey,
+			codec.CollValue[types.BridgeTokenReference](cdc),
 		),
 		WrappedTokenMetadataMap: collections.NewMap(
 			sb,

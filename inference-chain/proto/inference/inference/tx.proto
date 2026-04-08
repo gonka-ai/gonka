@@ -50,6 +50,7 @@ service Msg {
   rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal) returns (MsgRequestBridgeWithdrawalResponse);
   rpc RequestBridgeMint                (MsgRequestBridgeMint) returns (MsgRequestBridgeMintResponse);
   rpc CancelBridgeOperation            (MsgCancelBridgeOperation) returns (MsgCancelBridgeOperationResponse);
+  rpc GovernanceCancelBridgeOperation  (MsgGovernanceCancelBridgeOperation) returns (MsgGovernanceCancelBridgeOperationResponse);
   rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract) returns (MsgRegisterWrappedTokenContractResponse);
   rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens) returns (MsgMigrateAllWrappedTokensResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
@@ -412,6 +413,17 @@ message MsgCancelBridgeOperation {
 }
 
 message MsgCancelBridgeOperationResponse {}
+
+message MsgGovernanceCancelBridgeOperation {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string request_id = 2;
+  string override_recipient = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string override_wrapped_contract = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string reason = 5;
+}
+
+message MsgGovernanceCancelBridgeOperationResponse {}
 
 // SetCw20CodeId updates the code id used for new wrapped-token instantiations.
 message MsgRegisterWrappedTokenContract {

@@ -52,6 +52,9 @@ func (msg *MsgClaimRewards) GetSignersStrings() []string            { return []s
 func (msg *MsgRequestBridgeMint) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeWithdrawal) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgCancelBridgeOperation) GetSignersStrings() []string   { return []string{msg.Creator} }
+func (msg *MsgGovernanceCancelBridgeOperation) GetSignersStrings() []string {
+	return []string{msg.Authority}
+}
 
 // Subnet escrow messages
 func (msg *MsgCreateSubnetEscrow) GetSignersStrings() []string { return []string{msg.Creator} }

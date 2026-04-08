@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
@@ -33,12 +34,23 @@ func (k Keeper) setBridgeMintPendingRefund(ctx context.Context, blsRequestID []b
 	return k.BridgeMintRefundsMap.Set(ctx, requestKey, *msg)
 }
 
-func (k Keeper) setBridgeWithdrawalPendingRefund(ctx context.Context, blsRequestID []byte, msg *types.MsgRequestBridgeWithdrawal) error {
+func (k Keeper) setBridgeWithdrawalPendingRefund(
+	ctx context.Context,
+	blsRequestID []byte,
+	msg *types.MsgRequestBridgeWithdrawal,
+	tokenReference types.BridgeTokenReference,
+) error {
 	if len(blsRequestID) == 0 {
 		return fmt.Errorf("bls request id cannot be empty")
 	}
 	if msg == nil {
 		return fmt.Errorf("bridge withdrawal message cannot be nil")
+	}
+	if tokenReference.ChainId == "" {
+		return fmt.Errorf("bridge withdrawal token reference chain id cannot be empty")
+	}
+	if tokenReference.ContractAddress == "" {
+		return fmt.Errorf("bridge withdrawal token reference contract address cannot be empty")
 	}
 
 	requestKey := hex.EncodeToString(blsRequestID)
@@ -49,8 +61,26 @@ func (k Keeper) setBridgeWithdrawalPendingRefund(ctx context.Context, blsRequest
 	if exists {
 		return fmt.Errorf("pending bridge withdrawal refund already exists for request id: %s", requestKey)
 	}
+	tokenRefExists, err := k.BridgeWithdrawalTokenRefsMap.Has(ctx, requestKey)
+	if err != nil {
+		return fmt.Errorf("failed to check pending bridge withdrawal token reference %s: %w", requestKey, err)
+	}
+	if tokenRefExists {
+		return fmt.Errorf("pending bridge withdrawal token reference already exists for request id: %s", requestKey)
+	}
 
-	return k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, *msg)
+	if err := k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, *msg); err != nil {
+		return err
+	}
+	if err := k.BridgeWithdrawalTokenRefsMap.Set(ctx, requestKey, tokenReference); err != nil {
+		rollbackErr := k.BridgeWithdrawalRefundsMap.Remove(ctx, requestKey)
+		if rollbackErr != nil {
+			return fmt.Errorf("failed to persist pending bridge withdrawal token reference %s: %w (rollback failed: %v)", requestKey, err, rollbackErr)
+		}
+		return fmt.Errorf("failed to persist pending bridge withdrawal token reference %s: %w", requestKey, err)
+	}
+
+	return nil
 }
 
 func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte) error {
@@ -97,10 +127,8 @@ func (k Keeper) refundPendingBridgeWithdrawalByMint(ctx sdk.Context, pendingWith
 	if !ok || !amountInt.IsPositive() {
 		return fmt.Errorf("invalid bridge withdrawal amount %q", pendingWithdrawal.Amount)
 	}
-
-	// Defensive check: refund should mint only through a currently registered wrapped contract
-	if _, found := k.GetWrappedTokenContractByWrappedAddress(ctx, pendingWithdrawal.Creator); !found {
-		return fmt.Errorf("wrapped token contract %q is not registered", pendingWithdrawal.Creator)
+	if pendingWithdrawal.Creator == "" {
+		return fmt.Errorf("bridge withdrawal wrapped contract cannot be empty")
 	}
 
 	if k.mintTokensFn != nil {
@@ -108,6 +136,52 @@ func (k Keeper) refundPendingBridgeWithdrawalByMint(ctx sdk.Context, pendingWith
 	}
 
 	return k.MintTokens(ctx, pendingWithdrawal.Creator, recipientAddr.String(), pendingWithdrawal.Amount)
+}
+
+func (k Keeper) getPendingWithdrawalTokenReference(
+	ctx context.Context,
+	requestKey string,
+	pendingWithdrawal *types.MsgRequestBridgeWithdrawal,
+) (types.BridgeTokenReference, error) {
+	reference, err := k.BridgeWithdrawalTokenRefsMap.Get(ctx, requestKey)
+	if err == nil {
+		if reference.ChainId == "" || reference.ContractAddress == "" {
+			return types.BridgeTokenReference{}, fmt.Errorf("pending bridge withdrawal token reference is incomplete for request id: %s", requestKey)
+		}
+		return reference, nil
+	}
+	if !errors.Is(err, collections.ErrNotFound) {
+		return types.BridgeTokenReference{}, fmt.Errorf("failed to load pending bridge withdrawal token reference %s: %w", requestKey, err)
+	}
+
+	if pendingWithdrawal == nil {
+		return types.BridgeTokenReference{}, fmt.Errorf("pending bridge withdrawal request is nil")
+	}
+
+	legacyReference, legacyErr := k.WrappedContractReverseIndex.Get(ctx, strings.ToLower(pendingWithdrawal.Creator))
+	if legacyErr != nil {
+		if errors.Is(legacyErr, collections.ErrNotFound) {
+			return types.BridgeTokenReference{}, fmt.Errorf("pending bridge withdrawal token reference not found for request id %s: %w", requestKey, collections.ErrNotFound)
+		}
+		return types.BridgeTokenReference{}, fmt.Errorf("failed to load legacy bridge withdrawal token reference %s: %w", requestKey, legacyErr)
+	}
+
+	if legacyReference.ChainId == "" || legacyReference.ContractAddress == "" {
+		return types.BridgeTokenReference{}, fmt.Errorf("legacy bridge withdrawal token reference is incomplete for request id: %s", requestKey)
+	}
+
+	return legacyReference, nil
+}
+
+func (k Keeper) resolveActiveWrappedContractByTokenReference(
+	ctx sdk.Context,
+	tokenReference types.BridgeTokenReference,
+) (string, error) {
+	contract, found := k.GetWrappedTokenContract(ctx, tokenReference.ChainId, tokenReference.ContractAddress)
+	if !found {
+		return "", fmt.Errorf("active wrapped token contract not found for chain %s contract %s", tokenReference.ChainId, tokenReference.ContractAddress)
+	}
+	return contract.WrappedContractAddress, nil
 }
 
 func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, blsRequestID []byte, reason string) (bool, error) {
@@ -166,11 +240,26 @@ func (k Keeper) processAutoRefundWithdrawal(
 	pendingWithdrawal types.MsgRequestBridgeWithdrawal,
 	reason string,
 ) error {
-	if err := k.refundPendingBridgeWithdrawalByMint(ctx, &pendingWithdrawal); err != nil {
+	tokenReference, err := k.getPendingWithdrawalTokenReference(ctx, requestKey, &pendingWithdrawal)
+	if err != nil {
+		return fmt.Errorf("failed to resolve pending bridge withdrawal token reference %s: %w", requestKey, err)
+	}
+	refundWrappedContract, err := k.resolveActiveWrappedContractByTokenReference(ctx, tokenReference)
+	if err != nil {
+		return fmt.Errorf("failed to resolve wrapped token contract for pending bridge withdrawal request %s: %w", requestKey, err)
+	}
+
+	refundRequest := pendingWithdrawal
+	refundRequest.Creator = refundWrappedContract
+
+	if err := k.refundPendingBridgeWithdrawalByMint(ctx, &refundRequest); err != nil {
 		return fmt.Errorf("failed to auto-refund pending bridge withdrawal request %s: %w", requestKey, err)
 	}
 	if err := k.BridgeWithdrawalRefundsMap.Remove(ctx, requestKey); err != nil {
 		return fmt.Errorf("failed to cleanup pending bridge withdrawal request %s after auto-refund: %w", requestKey, err)
+	}
+	if err := k.BridgeWithdrawalTokenRefsMap.Remove(ctx, requestKey); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return fmt.Errorf("failed to cleanup pending bridge withdrawal token reference %s after auto-refund: %w", requestKey, err)
 	}
 
 	emitBridgeAutoRefundEvent(ctx, requestKey, "withdrawal", reason)
@@ -245,7 +334,19 @@ func (k Keeper) GetAllBridgePendingWithdrawalRefunds(ctx context.Context) []type
 			UserAddress:        value.UserAddress,
 			Amount:             value.Amount,
 			DestinationAddress: value.DestinationAddress,
+			ChainId:            "",
+			ContractAddress:    "",
 		})
+		lastIdx := len(refunds) - 1
+		tokenReference, tokenRefErr := k.getPendingWithdrawalTokenReference(ctx, key, &value)
+		if tokenRefErr != nil {
+			if !errors.Is(tokenRefErr, collections.ErrNotFound) {
+				k.LogError("failed to resolve bridge withdrawal pending refund token reference", types.Messages, "request_id", key, "error", tokenRefErr)
+			}
+			continue
+		}
+		refunds[lastIdx].ChainId = tokenReference.ChainId
+		refunds[lastIdx].ContractAddress = tokenReference.ContractAddress
 	}
 	return refunds
 }
@@ -263,6 +364,9 @@ func (k Keeper) CleanupBridgePendingRefundByBlsRequestID(ctx context.Context, bl
 
 	if err := k.BridgeWithdrawalRefundsMap.Remove(ctx, requestKey); err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return fmt.Errorf("failed to cleanup pending bridge withdrawal request %s: %w", requestKey, err)
+	}
+	if err := k.BridgeWithdrawalTokenRefsMap.Remove(ctx, requestKey); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return fmt.Errorf("failed to cleanup pending bridge withdrawal token reference %s: %w", requestKey, err)
 	}
 
 	return nil

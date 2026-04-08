@@ -61,22 +61,34 @@ func TestSetBridgeWithdrawalPendingRefund_RejectsDuplicateRequestID(t *testing.T
 		Amount:             "3000",
 		DestinationAddress: "0x333",
 	}
+	firstRef := types.BridgeTokenReference{
+		ChainId:         "ethereum",
+		ContractAddress: "0x333",
+	}
 	second := types.MsgRequestBridgeWithdrawal{
 		Creator:            "gonka1secondwithdrawcreatoraddress000000000000",
 		UserAddress:        "gonka1secondwithdrawuseraddress00000000000000",
 		Amount:             "4000",
 		DestinationAddress: "0x444",
 	}
+	secondRef := types.BridgeTokenReference{
+		ChainId:         "polygon",
+		ContractAddress: "0x444",
+	}
 
-	require.NoError(t, k.setBridgeWithdrawalPendingRefund(ctx, requestID, &first))
+	require.NoError(t, k.setBridgeWithdrawalPendingRefund(ctx, requestID, &first, firstRef))
 
-	err := k.setBridgeWithdrawalPendingRefund(ctx, requestID, &second)
+	err := k.setBridgeWithdrawalPendingRefund(ctx, requestID, &second, secondRef)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already exists")
 
 	stored, err := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
 	require.NoError(t, err)
 	require.Equal(t, first, stored)
+
+	storedRef, err := k.BridgeWithdrawalTokenRefsMap.Get(ctx, requestKey)
+	require.NoError(t, err)
+	require.Equal(t, firstRef, storedRef)
 }
 
 func setupKeeperForPendingRefundGuardTests(t *testing.T) (Keeper, sdk.Context) {

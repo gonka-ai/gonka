@@ -62,7 +62,7 @@ func TestMsgServer_CancelBridgeOperation_WithdrawalSuccess(t *testing.T) {
 		ChainId:         "ethereum",
 		ContractAddress: "0xabc",
 	}
-	require.NoError(t, k.WrappedContractReverseIndex.Set(expiryCtx, strings.ToLower(testutil.Creator), wrappedRef))
+	require.NoError(t, k.BridgeWithdrawalTokenRefsMap.Set(expiryCtx, requestKey, wrappedRef))
 	require.NoError(t, k.WrappedTokenContractsMap.Set(expiryCtx, collections.Join(wrappedRef.ChainId, strings.ToLower(wrappedRef.ContractAddress)), types.BridgeWrappedTokenContract{
 		ChainId:                wrappedRef.ChainId,
 		ContractAddress:        wrappedRef.ContractAddress,
@@ -152,7 +152,7 @@ func TestMsgServer_CancelBridgeOperation_WithdrawalCreatorAllowed(t *testing.T) 
 		ChainId:         "ethereum",
 		ContractAddress: "0xabc",
 	}
-	require.NoError(t, k.WrappedContractReverseIndex.Set(expiryCtx, strings.ToLower(testutil.Creator), wrappedRef))
+	require.NoError(t, k.BridgeWithdrawalTokenRefsMap.Set(expiryCtx, requestKey, wrappedRef))
 	require.NoError(t, k.WrappedTokenContractsMap.Set(expiryCtx, collections.Join(wrappedRef.ChainId, strings.ToLower(wrappedRef.ContractAddress)), types.BridgeWrappedTokenContract{
 		ChainId:                wrappedRef.ChainId,
 		ContractAddress:        wrappedRef.ContractAddress,

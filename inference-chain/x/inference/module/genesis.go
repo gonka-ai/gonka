@@ -129,6 +129,20 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}
+			if elem.ChainId == "" && elem.ContractAddress == "" {
+				continue
+			}
+			if elem.ChainId == "" || elem.ContractAddress == "" {
+				//nolint:forbidigo // genesis code
+				panic("invalid pending withdrawal refund token reference in genesis")
+			}
+			if err := k.BridgeWithdrawalTokenRefsMap.Set(ctx, elem.RequestId, types.BridgeTokenReference{
+				ChainId:         elem.ChainId,
+				ContractAddress: elem.ContractAddress,
+			}); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
 		}
 	}
 

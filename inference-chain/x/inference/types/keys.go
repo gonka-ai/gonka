@@ -78,6 +78,7 @@ var (
 	SubnetEscrowsByEpochPrefix             = collections.NewPrefix(52)
 	BridgeMintRefundsPrefix                = collections.NewPrefix(53)
 	BridgeWithdrawalRefundsPrefix          = collections.NewPrefix(54)
+	BridgeWithdrawalTokenRefsPrefix        = collections.NewPrefix(55)
 	ParamsKey                              = []byte("p_inference")
 )
 

@@ -68,6 +68,8 @@ func TestGenesis_BridgePendingRefundsRoundTrip(t *testing.T) {
 				UserAddress:        testutil.Requester,
 				Amount:             "2000",
 				DestinationAddress: "0xdef",
+				ChainId:            "ethereum",
+				ContractAddress:    "0xtoken",
 			},
 		},
 	}
@@ -92,4 +94,6 @@ func TestGenesis_BridgePendingRefundsRoundTrip(t *testing.T) {
 	require.Equal(t, testutil.Requester, pendingWithdrawal.UserAddress)
 	require.Equal(t, "2000", pendingWithdrawal.Amount)
 	require.Equal(t, "0xdef", pendingWithdrawal.DestinationAddress)
+	require.Equal(t, "ethereum", pendingWithdrawal.ChainId)
+	require.Equal(t, "0xtoken", pendingWithdrawal.ContractAddress)
 }

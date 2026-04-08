@@ -66,6 +66,8 @@ message BridgePendingWithdrawalRefund {
   string userAddress = 3;
   string amount = 4;
   string destinationAddress = 5;
+  string chainId = 6;
+  string contractAddress = 7;
 }
 
 // Bridge groups all bridge-related entities under a single parent structure

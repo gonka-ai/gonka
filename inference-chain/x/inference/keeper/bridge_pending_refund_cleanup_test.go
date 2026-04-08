@@ -35,6 +35,10 @@ func TestCleanupBridgePendingRefundByBlsRequestID_RemovesMatchingEntries(t *test
 		Amount:             "3000",
 		DestinationAddress: "0x123",
 	}))
+	require.NoError(t, k.BridgeWithdrawalTokenRefsMap.Set(ctx, hex.EncodeToString(withdrawID), types.BridgeTokenReference{
+		ChainId:         "ethereum",
+		ContractAddress: "0x123",
+	}))
 
 	require.NoError(t, k.CleanupBridgePendingRefundByBlsRequestID(ctx, mintID))
 	require.NoError(t, k.CleanupBridgePendingRefundByBlsRequestID(ctx, withdrawID))
@@ -44,6 +48,8 @@ func TestCleanupBridgePendingRefundByBlsRequestID_RemovesMatchingEntries(t *test
 	require.ErrorIs(t, err, collections.ErrNotFound)
 
 	_, err = k.BridgeWithdrawalRefundsMap.Get(ctx, hex.EncodeToString(withdrawID))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.BridgeWithdrawalTokenRefsMap.Get(ctx, hex.EncodeToString(withdrawID))
 	require.ErrorIs(t, err, collections.ErrNotFound)
 
 	stillPending, err := k.BridgeMintRefundsMap.Get(ctx, hex.EncodeToString(otherMintID))
