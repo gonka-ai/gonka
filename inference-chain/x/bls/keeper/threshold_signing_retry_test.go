@@ -587,6 +587,84 @@ func TestRunThresholdSigningCompletedPostProcess_ErrorRollsBackSideEffects(t *te
 	require.False(t, foundSideEffectEvent)
 }
 
+func TestProcessCompletedPostProcessRetries_RetriesAndClearsQueue(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	sideEffectKey := []byte("completed_retry_hook_key")
+	sideEffectEvent := "completed_retry_hook_event"
+	hook := &retryTestBlsHook{
+		storeService: k.storeService,
+		hookKey:      sideEffectKey,
+		hookEvent:    sideEffectEvent,
+		completedErr: errors.New("transient failure"),
+	}
+	require.NoError(t, k.SetHooks(hook))
+
+	requestID := bytes.Repeat([]byte{0x6A}, 32)
+	request := &types.ThresholdSigningRequest{
+		RequestId:      requestID,
+		CurrentEpochId: 777,
+		Status:         types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED,
+	}
+	require.NoError(t, k.storeThresholdSigningRequest(ctx, request))
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	k.enqueueCompletedPostProcessRetry(ctx, requestID)
+
+	queueValue, err := kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.NotNil(t, queueValue)
+
+	require.NoError(t, k.ProcessCompletedPostProcessRetries(ctx))
+
+	queueValue, err = kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.NotNil(t, queueValue)
+
+	sideEffectValue, err := kvStore.Get(sideEffectKey)
+	require.NoError(t, err)
+	require.Nil(t, sideEffectValue)
+
+	hook.completedErr = nil
+
+	require.NoError(t, k.ProcessCompletedPostProcessRetries(ctx))
+
+	queueValue, err = kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.Nil(t, queueValue)
+
+	sideEffectValue, err = kvStore.Get(sideEffectKey)
+	require.NoError(t, err)
+	require.NotNil(t, sideEffectValue)
+
+	foundSideEffectEvent := false
+	for _, event := range ctx.EventManager().Events() {
+		if event.Type == sideEffectEvent {
+			foundSideEffectEvent = true
+			break
+		}
+	}
+	require.True(t, foundSideEffectEvent)
+}
+
+func TestProcessCompletedPostProcessRetries_RemovesMissingRequestQueueEntry(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	requestID := bytes.Repeat([]byte{0x7B}, 32)
+	kvStore := k.storeService.OpenKVStore(ctx)
+	k.enqueueCompletedPostProcessRetry(ctx, requestID)
+
+	queueValue, err := kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.NotNil(t, queueValue)
+
+	require.NoError(t, k.ProcessCompletedPostProcessRetries(ctx))
+
+	queueValue, err = kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.Nil(t, queueValue)
+}
+
 type retryTestBlsHook struct {
 	called       bool
 	closeRetry   bool

@@ -174,6 +174,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Don't return error to avoid halting the chain - log and continue
 	}
 
+	if err := am.keeper.ProcessCompletedPostProcessRetries(sdkCtx); err != nil {
+		am.keeper.Logger().Error("Failed to process threshold signing completion retries", "error", err)
+	}
+
 	return nil
 }
 

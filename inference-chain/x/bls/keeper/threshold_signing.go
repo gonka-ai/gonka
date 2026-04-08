@@ -515,6 +515,7 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	if err := k.runThresholdSigningCompletedPostProcess(ctx, request.RequestId, request.CurrentEpochId); err != nil {
 		k.Logger().Error("Failed to run threshold signing completion hooks",
 			"request_id", fmt.Sprintf("%x", request.RequestId), "error", err)
+		k.enqueueCompletedPostProcessRetry(ctx, request.RequestId)
 	}
 
 	// Emit completion event
@@ -607,6 +608,19 @@ func (k Keeper) runThresholdSigningCompletedPostProcess(ctx sdk.Context, request
 	return nil
 }
 
+func (k Keeper) enqueueCompletedPostProcessRetry(ctx sdk.Context, requestID []byte) {
+	if len(requestID) == 0 {
+		return
+	}
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	retryKey := types.CompletedPostProcessRetryKey(requestID)
+	if err := kvStore.Set(retryKey, []byte{}); err != nil {
+		k.Logger().Error("Failed to enqueue threshold signing completion retry",
+			"request_id", fmt.Sprintf("%x", requestID), "error", err)
+	}
+}
+
 func (k Keeper) finalizeFailedThresholdSigningRequest(
 	ctx sdk.Context,
 	request *types.ThresholdSigningRequest,
@@ -637,8 +651,10 @@ func (k Keeper) removeFromExpirationIndex(ctx sdk.Context, deadlineBlockHeight i
 }
 
 const defaultMaxExpiredRequestsPerBlock uint32 = 200
+const defaultMaxCompletedPostProcessRetriesPerBlock uint32 = 100
 
 var maxExpiredRequestsPerBlock = defaultMaxExpiredRequestsPerBlock
+var maxCompletedPostProcessRetriesPerBlock = defaultMaxCompletedPostProcessRetriesPerBlock
 
 // ProcessThresholdSigningDeadlines processes expired threshold signing requests efficiently using expiration index
 func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
@@ -769,6 +785,79 @@ func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 			"retried_count", retriedCount,
 			"stale_index_count", staleIndexCount,
 			"bad_keys_cleaned", len(badKeys),
+			"max_per_block", maxToProcess,
+			"has_backlog", hasBacklog)
+	}
+
+	return nil
+}
+
+func (k Keeper) ProcessCompletedPostProcessRetries(ctx sdk.Context) error {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	retryStore := prefix.NewStore(store, types.CompletedPostProcessRetryPrefix)
+
+	iterator := retryStore.Iterator(nil, nil)
+
+	maxToProcess := maxCompletedPostProcessRetriesPerBlock
+	if maxToProcess == 0 {
+		maxToProcess = defaultMaxCompletedPostProcessRetriesPerBlock
+	}
+
+	var queuedRequestIDs [][]byte
+	hasBacklog := false
+	for ; iterator.Valid(); iterator.Next() {
+		if uint32(len(queuedRequestIDs)) >= maxToProcess {
+			hasBacklog = true
+			break
+		}
+		queuedRequestIDs = append(queuedRequestIDs, append([]byte(nil), iterator.Key()...))
+	}
+	iterator.Close()
+
+	var succeededCount uint32
+	var failedCount uint32
+	var staleCount uint32
+
+	for _, requestID := range queuedRequestIDs {
+		if len(requestID) == 0 {
+			retryStore.Delete(requestID)
+			staleCount++
+			continue
+		}
+
+		request, err := k.GetSigningStatus(ctx, requestID)
+		if err != nil {
+			k.Logger().Error("Failed to load threshold signing request for completion retry",
+				"request_id", fmt.Sprintf("%x", requestID), "error", err)
+			retryStore.Delete(requestID)
+			staleCount++
+			continue
+		}
+
+		if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
+			retryStore.Delete(requestID)
+			staleCount++
+			continue
+		}
+
+		if err := k.runThresholdSigningCompletedPostProcess(ctx, request.RequestId, request.CurrentEpochId); err != nil {
+			k.Logger().Error("Failed to re-run threshold signing completion hooks",
+				"request_id", fmt.Sprintf("%x", requestID), "error", err)
+			failedCount++
+			continue
+		}
+
+		retryStore.Delete(requestID)
+		succeededCount++
+	}
+
+	processedCount := uint32(len(queuedRequestIDs))
+	if processedCount > 0 || hasBacklog {
+		k.Logger().Info("Processed threshold signing completion retries",
+			"processed_count", processedCount,
+			"succeeded_count", succeededCount,
+			"failed_count", failedCount,
+			"stale_count", staleCount,
 			"max_per_block", maxToProcess,
 			"has_backlog", hasBacklog)
 	}

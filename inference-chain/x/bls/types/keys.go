@@ -16,10 +16,11 @@ const (
 )
 
 var (
-	ParamsKey                     = []byte("p_bls")
-	EpochBLSDataPrefix            = []byte("epoch_bls_data")
-	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
-	ExpirationIndexPrefix         = []byte("expiration_index")
+	ParamsKey                       = []byte("p_bls")
+	EpochBLSDataPrefix              = []byte("epoch_bls_data")
+	ThresholdSigningRequestPrefix   = []byte("threshold_signing_request")
+	ExpirationIndexPrefix           = []byte("expiration_index")
+	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
 )
 
 func KeyPrefix(p string) []byte {
@@ -64,4 +65,11 @@ func ExpirationIndexPrefixForBlock(blockHeight int64) []byte {
 	copy(prefix, ExpirationIndexPrefix)
 	copy(prefix[len(ExpirationIndexPrefix):], deadlineBytes)
 	return prefix
+}
+
+func CompletedPostProcessRetryKey(requestID []byte) []byte {
+	key := make([]byte, len(CompletedPostProcessRetryPrefix)+len(requestID))
+	copy(key, CompletedPostProcessRetryPrefix)
+	copy(key[len(CompletedPostProcessRetryPrefix):], requestID)
+	return key
 }
