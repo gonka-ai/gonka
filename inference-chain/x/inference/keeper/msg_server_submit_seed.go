@@ -17,6 +17,15 @@ func (k msgServer) SubmitSeed(ctx context.Context, msg *types.MsgSubmitSeed) (*t
 		Signature:   msg.Signature,
 	}
 
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return nil, types.ErrEffectiveEpochNotFound
+	}
+
+	if msg.EpochIndex < currentEpochIndex || msg.EpochIndex > currentEpochIndex+1 {
+		return nil, types.ErrEpochIndexOutOfRange
+	}
+
 	if err := k.SetRandomSeed(ctx, seed); err != nil {
 		return nil, err
 	}

@@ -20,6 +20,8 @@ message EpochGroupData {
   int64 effective_block_height = 4;
   int64 last_block_height = 5;
   repeated SeedSignature member_seed_signatures = 6;
+  reserved 7;
+  reserved "finishedInferences";
   repeated ValidationWeight validation_weights = 8;
   int64 unit_of_compute_price = 9;
   int64 number_of_requests = 10;

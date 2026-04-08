@@ -14,7 +14,11 @@ func TestMsgServer_SubmitSeed_Permissions(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
 
 	signer := testutil.Creator
-	msg := &types.MsgSubmitSeed{Creator: signer}
+	msg := &types.MsgSubmitSeed{
+		Creator:    signer,
+		EpochIndex: 1,
+		Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+	}
 
 	// Unregistered participant should fail
 	err := keeper.CheckPermission(ms, ctx, msg, keeper.ParticipantPermission)
