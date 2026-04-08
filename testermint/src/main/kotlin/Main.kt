@@ -542,7 +542,7 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
 data class ChatMessage(
     val role: String,
     val content: String,
-    val toolCalls: List<Any> = emptyList()
+    val toolCalls: List<Any>? = null
 )
 
 data class InferenceRequestPayload(
