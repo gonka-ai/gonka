@@ -302,9 +302,6 @@ func TestMaxTokens(t *testing.T) {
 }
 
 func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
-	// TODO(vision-costs): This test currently verifies multipart preservation only.
-	// Future fix should add assertions that non-text parts (e.g. image_url) are
-	// reflected in prompt token accounting to avoid underfunded transactions.
 	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
 	require.NoError(t, err)
 
@@ -317,10 +314,10 @@ func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
 	require.True(t, isArray)
 }
 
-func TestModifyRequestBody_AcceptsNullMessageContent(t *testing.T) {
-	r, err := ModifyRequestBody([]byte(jsonBodyNullContent), 7)
-	require.NoError(t, err, "content:null is valid for tool-calling assistant messages")
-	require.NotNil(t, r)
+func TestModifyRequestBody_RejectsNullMessageContentForUser(t *testing.T) {
+	_, err := ModifyRequestBody([]byte(jsonBodyNullContent), 7)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is required")
 }
 
 func TestModifyRequestBody_AcceptsToolCallingPayload(t *testing.T) {

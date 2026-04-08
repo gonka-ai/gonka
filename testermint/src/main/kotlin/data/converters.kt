@@ -167,6 +167,7 @@ class ConfirmationPoCPhaseDeserializer : JsonDeserializer<ConfirmationPoCPhase> 
             ?: throw IllegalArgumentException("Unknown ConfirmationPoCPhase value: $intValue")
     }
 }
+
 class InferenceStatusDeserializer : JsonDeserializer<InferenceStatus> {
     override fun deserialize(
         json: JsonElement,
@@ -184,6 +185,23 @@ class InferenceStatusDeserializer : JsonDeserializer<InferenceStatus> {
         )
     }
 }
+
+class SubnetInferenceStatusDeserializer : JsonDeserializer<SubnetInferenceStatus> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): SubnetInferenceStatus {
+        return SubnetInferenceStatus.fromAny(
+            if (json.isJsonPrimitive && json.asJsonPrimitive.isNumber) {
+                json.asInt
+            } else {
+                null
+            }
+        )
+    }
+}
+
 class ProposalStatusDeserializer : JsonDeserializer<ProposalStatus> {
     override fun deserialize(
         json: JsonElement,

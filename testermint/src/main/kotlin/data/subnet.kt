@@ -80,3 +80,93 @@ data class SubnetSlotSignatureEntry(
     val slotId: Int,
     val signature: String
 )
+
+data class SubnetInferencePayload(
+    val status: SubnetInferenceStatus,
+    @SerializedName("executor_slot")
+    val executorSlot: Int,
+    val model: String,
+    @SerializedName("prompt_hash")
+    val promptHash: String,
+    @SerializedName("response_hash")
+    val responseHash: String?,
+    @SerializedName("input_length")
+    val inputLength: Long,
+    @SerializedName("max_tokens")
+    val maxTokens: Long,
+    @SerializedName("input_tokens")
+    val inputTokens: Long?,
+    @SerializedName("output_tokens")
+    val outputTokens: Long?,
+    @SerializedName("reserved_cost")
+    val reservedCost: Long,
+    @SerializedName("actual_cost")
+    val actualCost: Long?,
+    @SerializedName("started_at")
+    val startedAt: Long,
+    @SerializedName("confirmed_at")
+    val confirmedAt: Long?,
+    @SerializedName("votes_valid")
+    val votesValid: Int?,
+    @SerializedName("votes_invalid")
+    val votesInvalid: Int?,
+    @SerializedName("validated_by")
+    val validatedBy: Array<Long>?,
+) {
+    val statusEnum: SubnetInferenceStatus
+        get() = status
+}
+
+enum class SubnetInferenceStatus(val value: Int) {
+    PENDING(0),
+    STARTED(1),
+    FINISHED(2),
+    CHALLENGED(3),
+    VALIDATED(4),
+    INVALIDATED(5),
+    TIMED_OUT(6),
+    UNSPECIFIED(7);
+
+    companion object {
+        fun fromValue(value: Int): SubnetInferenceStatus =
+            values().find { it.value == value } ?: UNSPECIFIED
+
+        fun fromAny(value: Any?): SubnetInferenceStatus {
+            return when (value) {
+                is Number -> fromValue(value.toInt())
+                else -> UNSPECIFIED
+            }
+        }
+    }
+}
+
+data class SubnetChallengeReceiptRequest(
+    @SerializedName("inference_id")
+    val inferenceID: Long,
+    val payload: SubnetPayloadJSON,
+    val diffs: List<SubnetDiffJSON>,
+)
+
+data class SubnetChallengeReceiptResponse(
+    val receipt: List<String>,
+)
+
+data class SubnetDiffJSON(
+    val nonce: Long,
+    val txs: String,
+    @SerializedName("user_sig")
+    val userSig: String,
+    @SerializedName("post_state_root")
+    val postStateRoot: String,
+)
+
+data class SubnetPayloadJSON(
+    val prompt: String,
+    val model: String,
+    @SerializedName("input_length")
+    val inputLength: Long,
+    @SerializedName("max_tokens")
+    val maxTokens: Long,
+    @SerializedName("started_at")
+    val startedAt: Long,
+)

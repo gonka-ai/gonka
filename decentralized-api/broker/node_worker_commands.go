@@ -4,7 +4,6 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
-	"errors"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -176,66 +175,6 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		result.FinalStatus = types.HardwareNodeStatus_INFERENCE
 		result.FinalPocStatus = PocStatusIdle
 		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
-	}
-	return result
-}
-
-// StartTrainingNodeCommand starts training on a single node
-type StartTrainingNodeCommand struct {
-	TaskId         uint64
-	Participant    string
-	MasterNodeAddr string
-	NodeRanks      map[string]int
-	WorldSize      int
-}
-
-func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
-	result := NodeResult{
-		OriginalTarget: types.HardwareNodeStatus_TRAINING,
-	}
-
-	if ctx.Err() != nil {
-		result.Succeeded = false
-		result.Error = ctx.Err().Error()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		return result
-	}
-
-	rank, ok := c.NodeRanks[worker.nodeId]
-	if !ok {
-		err := errors.New("rank not found for node")
-		logging.Error(err.Error(), types.Training, "node_id", worker.nodeId)
-		result.Succeeded = false
-		result.Error = err.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		return result
-	}
-
-	// Stop node first
-	if err := worker.GetClient().Stop(ctx); err != nil {
-		logging.Error("Failed to stop node for training", types.Training, "node_id", worker.nodeId, "error", err)
-		result.Succeeded = false
-		result.Error = err.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		return result
-	}
-
-	// Start training
-	trainingErr := worker.GetClient().StartTraining(
-		ctx, c.TaskId, c.Participant, worker.nodeId,
-		c.MasterNodeAddr, rank, c.WorldSize,
-	)
-	if trainingErr != nil {
-		logging.Error("Failed to start training", types.Training, "node_id", worker.nodeId, "error", trainingErr)
-		result.Succeeded = false
-		result.Error = trainingErr.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-	} else {
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_TRAINING
-		result.FinalPocStatus = PocStatusIdle
-		logging.Info("Successfully started training on node", types.Training, "node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
 	}
 	return result
 }

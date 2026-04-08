@@ -401,6 +401,7 @@ fun GsonBuilder.registerCosmosTypes(): GsonBuilder {
         .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
         .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
         .registerTypeAdapter(InferenceStatus::class.java, InferenceStatusDeserializer())
+        .registerTypeAdapter(SubnetInferenceStatus::class.java, SubnetInferenceStatusDeserializer())
         .registerTypeAdapter(ProposalStatus::class.java, ProposalStatusDeserializer())
 }
 

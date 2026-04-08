@@ -27,13 +27,6 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgMLNodeWeightDistribution{}, // PoC v2 ML node weight distribution
 	&types.MsgSubmitSeed{},
 	&types.MsgBridgeExchange{},
-	&types.MsgSubmitTrainingKvRecord{},
-	&types.MsgJoinTraining{},
-	&types.MsgJoinTrainingStatus{},
-	&types.MsgTrainingHeartbeat{},
-	&types.MsgSetBarrier{},
-	&types.MsgClaimTrainingTaskForAssignment{},
-	&types.MsgAssignTrainingTask{},
 	&types.MsgSubmitNewUnfundedParticipant{},
 	&types.MsgSubmitHardwareDiff{},
 	&types.MsgInvalidateInference{},

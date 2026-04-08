@@ -14,6 +14,8 @@ import (
 
 type ChatRequest struct {
 	Body              []byte
+	ForwardPath       string
+	ForwardBody       []byte
 	Request           *http.Request
 	OpenAiRequest     OpenAiRequest
 	AuthKey           string // signature signing inference request
@@ -24,6 +26,7 @@ type ChatRequest struct {
 	Timestamp         int64  // timestamp of the request
 	TransferSignature string // signature of the transfer address
 	PromptHash        string
+	SignBodyHash      string
 }
 
 type OpenAiRequest struct {
@@ -162,6 +165,12 @@ func FlattenMessagesText(messages []Message) (string, int) {
 	return b.String(), ignoredParts
 }
 
+// ContentText keeps backward-compatible text extraction behavior.
+func (m Message) ContentText() string {
+	text, _ := m.Content.FlattenedText()
+	return text
+}
+
 type ExecutorDestination struct {
 	Url     string `json:"url"`
 	Address string `json:"address"`
@@ -201,31 +210,6 @@ type ParticipantDto struct {
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
 	BlockHeight  int64            `json:"block_height"`
-}
-
-type StartTrainingDto struct {
-	HardwareResources []HardwareResourcesDto `json:"hardware_resources"`
-	Config            TrainingConfigDto      `json:"config"`
-}
-
-type HardwareResourcesDto struct {
-	Type  string `json:"type"`
-	Count uint32 `json:"count"`
-}
-
-type TrainingConfigDto struct {
-	Datasets              TrainingDatasetsDto `json:"datasets"`
-	NumUocEstimationSteps uint32              `json:"num_uoc_estimation_steps"`
-}
-
-type TrainingDatasetsDto struct {
-	Train string `json:"train"`
-	Test  string `json:"test"`
-}
-
-type LockTrainingNodesDto struct {
-	TrainingTaskId uint64   `json:"training_task_id"`
-	NodeIds        []string `json:"node_ids"`
 }
 
 type ProofVerificationRequest struct {

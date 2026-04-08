@@ -21,14 +21,7 @@ func (msg *MsgMigrateAllWrappedTokens) GetSignersStrings() []string   { return [
 func (msg *MsgRegisterWrappedTokenContract) GetSignersStrings() []string {
 	return []string{msg.Authority}
 }
-func (msg *MsgAddUserToTrainingAllowList) GetSignersStrings() []string {
-	return []string{msg.Authority}
-}
 func (msg *MsgCreatePartialUpgrade) GetSignersStrings() []string { return []string{msg.Authority} }
-func (msg *MsgRemoveUserFromTrainingAllowList) GetSignersStrings() []string {
-	return []string{msg.Authority}
-}
-func (msg *MsgSetTrainingAllowList) GetSignersStrings() []string { return []string{msg.Authority} }
 func (msg *MsgAddParticipantsToAllowList) GetSignersStrings() []string {
 	return []string{msg.Authority}
 }
@@ -37,19 +30,10 @@ func (msg *MsgRemoveParticipantsFromAllowList) GetSignersStrings() []string {
 }
 
 // Creator signed messages
-func (msg *MsgCreateTrainingTask) GetSignersStrings() []string      { return []string{msg.Creator} }
-func (msg *MsgCreateDummyTrainingTask) GetSignersStrings() []string { return []string{msg.Creator} }
-func (msg *MsgAssignTrainingTask) GetSignersStrings() []string      { return []string{msg.Creator} }
-func (msg *MsgClaimTrainingTaskForAssignment) GetSignersStrings() []string {
-	return []string{msg.Creator}
-}
 func (msg *MsgFinishInference) GetSignersStrings() []string      { return []string{msg.Creator} }
 func (msg *MsgInvalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
 func (msg *MsgRevalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
 func (msg *MsgStartInference) GetSignersStrings() []string       { return []string{msg.Creator} }
-func (msg *MsgJoinTraining) GetSignersStrings() []string         { return []string{msg.Creator} }
-func (msg *MsgJoinTrainingStatus) GetSignersStrings() []string   { return []string{msg.Creator} }
-func (msg *MsgSetBarrier) GetSignersStrings() []string           { return []string{msg.Creator} }
 func (msg *MsgSubmitHardwareDiff) GetSignersStrings() []string   { return []string{msg.Creator} }
 func (msg *MsgSubmitNewParticipant) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgSubmitNewUnfundedParticipant) GetSignersStrings() []string {
@@ -61,11 +45,9 @@ func (msg *MsgSubmitPocValidationsV2) GetSignersStrings() []string   { return []
 func (msg *MsgPoCV2StoreCommit) GetSignersStrings() []string         { return []string{msg.Creator} }
 func (msg *MsgMLNodeWeightDistribution) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgSubmitSeed) GetSignersStrings() []string               { return []string{msg.Creator} }
-func (msg *MsgSubmitTrainingKvRecord) GetSignersStrings() []string   { return []string{msg.Creator} }
 func (msg *MsgSubmitUnitOfComputePriceProposal) GetSignersStrings() []string {
 	return []string{msg.Creator}
 }
-func (msg *MsgTrainingHeartbeat) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgValidation) GetSignersStrings() []string              { return []string{msg.Creator} }
 func (msg *MsgClaimRewards) GetSignersStrings() []string            { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeMint) GetSignersStrings() []string       { return []string{msg.Creator} }

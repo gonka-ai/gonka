@@ -198,8 +198,6 @@ type NodeState struct {
 	PocIntendedStatus PocStatus `json:"poc_intended_status"`
 	PocCurrentStatus  PocStatus `json:"poc_current_status"`
 
-	TrainingTask *TrainingTaskPayload `json:"training_task,omitempty"`
-
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
@@ -223,17 +221,9 @@ func (s NodeState) MarshalJSON() ([]byte, error) {
 	})
 }
 
-type TrainingTaskPayload struct {
-	Id             uint64         `json:"id"`
-	MasterNodeAddr string         `json:"master_node_addr"`
-	NodeRanks      map[string]int `json:"node_ranks"`
-	WorldSize      int            `json:"world_size"`
-}
-
 type ReconcileInfo struct {
-	Status         types.HardwareNodeStatus `json:"status"`
-	PocStatus      PocStatus                `json:"poc_status"`
-	TrainingTaskId uint64                   `json:"training_task_id"`
+	Status    types.HardwareNodeStatus `json:"status"`
+	PocStatus PocStatus                `json:"poc_status"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
@@ -408,10 +398,6 @@ func (b *Broker) executeCommand(command Command) {
 		command.Execute(b)
 	case SyncNodesCommand:
 		b.syncNodes()
-	case LockNodesForTrainingCommand:
-		b.lockNodesForTraining(command)
-	case StartTrainingCommand:
-		command.Execute(b)
 	case SetNodesActualStatusCommand:
 		command.Execute(b)
 	case SetNodeAdminStateCommand:
@@ -444,7 +430,7 @@ func (b *Broker) QueueMessage(command Command) error {
 	}
 
 	switch command.(type) {
-	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, StartTrainingCommand, LockNodesForTrainingCommand, SyncNodesCommand:
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, SyncNodesCommand:
 		b.highPriorityCommands <- command
 	default:
 		b.lowPriorityCommands <- command
@@ -690,13 +676,6 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 		}
 	}
 	return diff
-}
-
-func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	// PRTODO: implement
-	command.Response <- true
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
@@ -1207,18 +1186,6 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 		}
 	case types.HardwareNodeStatus_STOPPED:
 		return StopNodeCommand{}
-	case types.HardwareNodeStatus_TRAINING:
-		if nodeState.TrainingTask == nil {
-			logging.Error("Training task ID is nil, cannot create StartTrainingCommand", types.Nodes)
-			return nil
-		}
-		return StartTrainingNodeCommand{
-			TaskId:         nodeState.TrainingTask.Id,
-			Participant:    b.participantInfo.GetAddress(),
-			MasterNodeAddr: nodeState.TrainingTask.MasterNodeAddr,
-			NodeRanks:      nodeState.TrainingTask.NodeRanks,
-			WorldSize:      nodeState.TrainingTask.WorldSize,
-		}
 	default:
 		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
 			"intended_state", nodeState.IntendedStatus.String())
@@ -1404,8 +1371,6 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 		return types.HardwareNodeStatus_POC
 	case mlnodeclient.MlNodeState_INFERENCE:
 		return types.HardwareNodeStatus_INFERENCE
-	case mlnodeclient.MlNodeState_TRAIN:
-		return types.HardwareNodeStatus_TRAINING
 	case mlnodeclient.MlNodeState_STOPPED:
 		return types.HardwareNodeStatus_STOPPED
 	default:

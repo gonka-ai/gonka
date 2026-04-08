@@ -116,65 +116,8 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 		return sortedParticipants[i].Address < sortedParticipants[j].Address
 	})
 
-	// Count how many participants actually carry weight; we must be able to give each of them >= 1 slot.
-	nonZeroCount := 0
-	for _, p := range sortedParticipants {
-		if !p.PercentageWeight.IsZero() {
-			nonZeroCount++
-		}
-	}
-
-	// If we have more non-zero participants than slots, select the top N by weight
-	if nonZeroCount > int(totalSlots) {
-		// Calculate weight of participants that will be excluded for logging
-		excludedWeight := math.LegacyZeroDec()
-		excludedCount := nonZeroCount - int(totalSlots)
-
-		// Sort by weight descending, then by address for determinism
-		sort.Slice(sortedParticipants, func(i, j int) bool {
-			if sortedParticipants[i].PercentageWeight.Equal(sortedParticipants[j].PercentageWeight) {
-				return sortedParticipants[i].Address < sortedParticipants[j].Address
-			}
-			return sortedParticipants[i].PercentageWeight.GT(sortedParticipants[j].PercentageWeight)
-		})
-
-		// Calculate weight of excluded participants (those beyond totalSlots)
-		for i := int(totalSlots); i < len(sortedParticipants); i++ {
-			excludedWeight = excludedWeight.Add(sortedParticipants[i].PercentageWeight)
-		}
-
-		// Defensive check: verify we can safely slice (should always be true given nonZeroCount > totalSlots)
-		if int(totalSlots) > len(sortedParticipants) {
-			return nil, fmt.Errorf("internal error: totalSlots %d exceeds participant count %d", totalSlots, len(sortedParticipants))
-		}
-
-		// Keep only top totalSlots participants
-		sortedParticipants = sortedParticipants[:totalSlots]
-
-		// Recalculate total weight for the selected participants
-		totalWeight = math.LegacyZeroDec()
-		for _, p := range sortedParticipants {
-			totalWeight = totalWeight.Add(p.PercentageWeight)
-		}
-
-		// Critical safety check: verify totalWeight is not zero after selection
-		if totalWeight.IsZero() {
-			return nil, fmt.Errorf("total weight is zero after participant selection")
-		}
-
-		excludedPercentage := excludedWeight.Quo(totalWeight.Add(excludedWeight)).Mul(math.LegacyNewDec(100))
-
-		k.Logger().Warn(
-			"Participant count exceeds available slots, selected top participants by weight",
-			"original_participant_count", nonZeroCount,
-			"selected_participant_count", totalSlots,
-			"excluded_participant_count", excludedCount,
-			"excluded_weight_percentage", excludedPercentage.String(),
-		)
-	}
-
 	// 3. Allocate floor(ratio * totalSlots) slots to each participant and remember the fractional remainders.
-	// Note: Arrays are sized after potential participant truncation to match final count
+	// Slot allocation is strictly weight-based over the full participant set. Participants may receive zero slots.
 	assigned := make([]int64, len(sortedParticipants))
 	remainders := make([]math.LegacyDec, len(sortedParticipants))
 	assignedTotal := int64(0)
@@ -232,25 +175,7 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 		}
 	}
 
-	// 4. Ensure every non-zero-weight participant has at least one slot.
-	for i, p := range sortedParticipants {
-		if p.PercentageWeight.IsZero() {
-			continue
-		}
-		if assigned[i] > 0 {
-			continue
-		}
-
-		donor := findDonorIndex(assigned, remainders, sortedParticipants)
-		if donor == -1 {
-			return nil, fmt.Errorf("unable to assign at least one slot to participant %s", p.Address)
-		}
-
-		assigned[donor]--
-		assigned[i]++
-	}
-
-	// 5. Final validation: slot counts should sum to totalSlots.
+	// 4. Final validation: slot counts should sum to totalSlots.
 	checkTotal := int64(0)
 	for _, cnt := range assigned {
 		checkTotal += cnt
@@ -259,7 +184,32 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 		return nil, fmt.Errorf("slot assignment mismatch: expected %d, got %d", totalSlots, checkTotal)
 	}
 
-	// 6. Build the BLS participant list with contiguous slot ranges.
+	// Log the amount of non-zero voting power that got zero slots under strict weight allocation.
+	nonZeroCount := 0
+	excludedCount := 0
+	excludedWeight := math.LegacyZeroDec()
+	for i, p := range sortedParticipants {
+		if p.PercentageWeight.IsZero() {
+			continue
+		}
+		nonZeroCount++
+		if assigned[i] == 0 {
+			excludedCount++
+			excludedWeight = excludedWeight.Add(p.PercentageWeight)
+		}
+	}
+	if excludedCount > 0 {
+		excludedPercentage := excludedWeight.Quo(totalWeight).Mul(math.LegacyNewDec(100))
+		k.Logger().Warn(
+			"Some non-zero-weight participants received zero slots under strict weight allocation",
+			"non_zero_participant_count", nonZeroCount,
+			"excluded_participant_count", excludedCount,
+			"excluded_weight_percentage", excludedPercentage.String(),
+			"total_slots", totalSlots,
+		)
+	}
+
+	// 5. Build the BLS participant list with contiguous slot ranges.
 	blsParticipants := make([]types.BLSParticipantInfo, 0, len(sortedParticipants))
 	currentSlot := uint32(0)
 	for i, participant := range sortedParticipants {
@@ -301,41 +251,6 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 	}
 
 	return blsParticipants, nil
-}
-
-func findDonorIndex(assigned []int64, remainders []math.LegacyDec, participants []types.ParticipantWithWeightAndKey) int {
-	donor := -1
-	for i, p := range participants {
-		if p.PercentageWeight.IsZero() {
-			continue
-		}
-		if assigned[i] <= 1 {
-			continue
-		}
-		if donor == -1 {
-			donor = i
-			continue
-		}
-
-		if assigned[i] > assigned[donor] {
-			donor = i
-			continue
-		}
-		if assigned[i] == assigned[donor] {
-			ri := remainders[i]
-			rd := remainders[donor]
-			if !ri.Equal(rd) {
-				if ri.GT(rd) {
-					donor = i
-				}
-				continue
-			}
-			if participants[i].Address < participants[donor].Address {
-				donor = i
-			}
-		}
-	}
-	return donor
 }
 
 // SetEpochBLSData stores EpochBLSData in the state

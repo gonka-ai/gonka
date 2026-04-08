@@ -29,6 +29,9 @@ message Params {
 
   // Duration in blocks for the disputing phase (e.g., 3 blocks for PoC)
   int64 dispute_phase_duration_blocks = 6;
+
+  // Blocks to wait before allowing COMPLETED fallback (0 = disabled).
+  int64 completed_fallback_blocks = 7;
 }
 
 // PartialSignature represents a partial signature from a single participant in threshold signing

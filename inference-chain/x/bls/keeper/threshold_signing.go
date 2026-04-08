@@ -14,15 +14,18 @@ import (
 
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
-	// Validate current epoch has completed DKG
 	epochBLSData, err := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", signingData.CurrentEpochId, err)
 	}
 
-	// Verify epoch has completed DKG (has group public key)
-	if epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_COMPLETED && epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_SIGNED {
-		return fmt.Errorf("epoch %d DKG not completed, current phase: %s", signingData.CurrentEpochId, epochBLSData.DkgPhase.String())
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get parameters: %w", err)
+	}
+
+	if err := k.validateThresholdSigningEpochPhase(ctx, &epochBLSData, params); err != nil {
+		return err
 	}
 
 	if len(epochBLSData.GroupPublicKey) == 0 {
@@ -49,10 +52,6 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	messageHash := hash.Sum(nil)
 
 	// Calculate deadline block height
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get parameters: %w", err)
-	}
 	deadlineBlockHeight := ctx.BlockHeight() + int64(params.SigningDeadlineBlocks)
 
 	// Create threshold signing request
@@ -100,6 +99,42 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 	}
 
 	return nil
+}
+
+func (k Keeper) validateThresholdSigningEpochPhase(ctx sdk.Context, epochBLSData *types.EpochBLSData, params types.Params) error {
+	switch epochBLSData.DkgPhase {
+	case types.DKGPhase_DKG_PHASE_SIGNED:
+		return nil
+	case types.DKGPhase_DKG_PHASE_COMPLETED:
+		if epochBLSData.DisputingPhaseDeadlineBlock <= 0 {
+			return fmt.Errorf("epoch %d DKG is completed but not signed; signed phase required (missing disputing deadline metadata)", epochBLSData.EpochId)
+		}
+
+		if params.CompletedFallbackBlocks == 0 {
+			return fmt.Errorf("epoch %d DKG is completed but not signed; completed fallback is disabled", epochBLSData.EpochId)
+		}
+
+		fallbackActivationBlock := epochBLSData.DisputingPhaseDeadlineBlock + params.CompletedFallbackBlocks
+		if ctx.BlockHeight() < fallbackActivationBlock {
+			return fmt.Errorf(
+				"epoch %d DKG is completed but not signed; fallback available at block %d (current: %d)",
+				epochBLSData.EpochId,
+				fallbackActivationBlock,
+				ctx.BlockHeight(),
+			)
+		}
+
+		k.Logger().Warn(
+			"Allowing threshold signing for completed epoch after signed timeout fallback",
+			"epoch_id", epochBLSData.EpochId,
+			"current_block_height", ctx.BlockHeight(),
+			"fallback_activation_block", fallbackActivationBlock,
+			"fallback_timeout_blocks", params.CompletedFallbackBlocks,
+		)
+		return nil
+	default:
+		return fmt.Errorf("epoch %d DKG is not signed, current phase: %s", epochBLSData.EpochId, epochBLSData.DkgPhase.String())
+	}
 }
 
 // GetSigningStatus returns the status of a threshold signing request by request_id

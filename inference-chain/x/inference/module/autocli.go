@@ -101,12 +101,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{
-					RpcMethod:      "TrainingAllowList",
-					Use:            "training-allow-list [role]",
-					Short:          "Query the current training allow list",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "role"}},
-				},
-				{
 					RpcMethod: "TokenomicsData",
 					Use:       "show-tokenomics-data",
 					Short:     "show tokenomics_data",
@@ -142,12 +136,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "show-inference-timeout [id]",
 					Short:          "Shows a inference_timeout",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "expirationHeight"}, {ProtoField: "inferenceId"}},
-				},
-				{
-					RpcMethod:      "TrainingTask",
-					Use:            "training-task",
-					Short:          "Query trainingTask",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{
 					RpcMethod:      "HardwareNodesAll",
@@ -219,27 +207,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
-					RpcMethod:      "QueuedTrainingTasks",
-					Use:            "queued-training-tasks",
-					Short:          "Query queued-training-tasks",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-
-				{
-					RpcMethod:      "TrainingTaskAll",
-					Use:            "training-task-all",
-					Short:          "Query training-task-all",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-
-				{
-					RpcMethod:      "InProgressTrainingTasks",
-					Use:            "in-progress-training-tasks",
-					Short:          "Query in-progress-training-tasks",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-
-				{
 					RpcMethod: "PartialUpgradeAll",
 					Use:       "list-partial-upgrade",
 					Short:     "List all partial_upgrade",
@@ -250,20 +217,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a partial_upgrade",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
 				},
-				{
-					RpcMethod:      "TrainingKvRecord",
-					Use:            "training-kv-record [task-id] [key]",
-					Short:          "Query training-kv-record",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "key"}},
-				},
-
-				{
-					RpcMethod:      "ListTrainingKvRecordKeys",
-					Use:            "list-training-kv-record-keys [task-id]",
-					Short:          "Query list-training-kv-record-keys",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}},
-				},
-
 				{
 					RpcMethod:      "GetAllModelCapacities",
 					Use:            "all-model-capacities",
@@ -439,27 +392,9 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
 				},
 				{
-					RpcMethod:      "CreateTrainingTask",
-					Use:            "create-training-task",
-					Short:          "Send a createTrainingTask tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-				{
 					RpcMethod:      "SubmitHardwareDiff",
 					Use:            "submit-hardware-diff",
 					Short:          "Send a SubmitHardwareDiff tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-				{
-					RpcMethod:      "ClaimTrainingTaskForAssignment",
-					Use:            "claim-training-task-for-assignment",
-					Short:          "Send a claim-training-task-for-assignment tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-				{
-					RpcMethod:      "AssignTrainingTask",
-					Use:            "assign-training-task",
-					Short:          "Send a assign-training-task tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{
@@ -467,30 +402,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "create-partial-upgrade [height] [node-version] [api-binaries-json]",
 					Short:          "Send a create_partial_upgrade tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
-				},
-				{
-					RpcMethod:      "SetBarrier",
-					Use:            "set-barrier",
-					Short:          "Send a set-barrier tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-				{
-					RpcMethod:      "AddUserToTrainingAllowList",
-					Use:            "add-user-to-training-allow-list [authority] [address]",
-					Short:          "Send a addUserToTrainingAllowList tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "authority"}, {ProtoField: "address"}},
-				},
-				{
-					RpcMethod:      "RemoveUserFromTrainingAllowList",
-					Use:            "remove-user-from-training-allow-list [authority] [address]",
-					Short:          "Send a removeUserFromTrainingAllowList tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "authority"}, {ProtoField: "address"}},
-				},
-				{
-					RpcMethod:      "SetTrainingAllowList",
-					Use:            "set-training-allow-list [authority] [addresses]",
-					Short:          "Send a setTrainingAllowList tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "authority"}, {ProtoField: "addresses"}},
 				},
 				{
 					RpcMethod:      "RequestBridgeMint",
