@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"time"
 
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
+
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 )
@@ -88,12 +90,14 @@ func NewServer(
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
+	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", s.postChat)
+	g.POST("completions", s.postCompletions)
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
@@ -156,7 +160,6 @@ func NewServer(
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
-
 	return s
 }
 

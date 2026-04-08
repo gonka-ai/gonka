@@ -5,11 +5,17 @@ import (
 	"decentralized-api/completionapi"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/productscience/inference/x/inference/types"
+)
+
+const (
+	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
+	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
 )
 
 func ProxyResponse(
@@ -46,6 +52,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 	// Stream the response from the completion server to the client
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), maxScannerBufferSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -81,6 +88,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			logging.Error("Error while streaming response", types.Inferences, "inferenceId", inferenceId, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
 		}
 	}
 

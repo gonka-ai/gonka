@@ -9,6 +9,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -25,6 +26,8 @@ import (
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // AuthKeyContext represents the context in which an AuthKey was used
@@ -38,10 +41,15 @@ const (
 	// BothContexts indicates the AuthKey was used for both transfer and executor requests
 	BothContexts = TransferContext | ExecutorContext
 
-	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MB)
-	// This prevents memory exhaustion attacks from oversized requests
+	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MiB)
 	MaxRequestBodySize = 10 * 1024 * 1024
+	// MaxRequestBodyLimit is the Echo body-limit middleware value that matches MaxRequestBodySize exactly.
+	MaxRequestBodyLimit = "10485760"
+
+	chatCompletionsPath = "/v1/chat/completions"
 )
+
+const executorCompletionsUnsupportedMsg = "selected executor does not support /v1/completions; upgrade required"
 
 // Package-level variables for AuthKey reuse prevention
 var (
@@ -202,9 +210,18 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 }
 
 func (s *Server) postChat(ctx echo.Context) error {
+	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
+	if err != nil {
+		logging.Error("Unable to read request body", types.Server, "error", err)
+		return mapRequestBodyReadError(err)
+	}
+	return s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)), chatCompletionsPath, body)
+}
+
+func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
-	chatRequest, err := readRequest(ctx.Request(), ctx.Response().Writer, s.recorder.GetAccountAddress())
+	chatRequest, err := readRequest(ctx.Request(), s.recorder.GetAccountAddress(), body, signBodyHash, forwardPath, forwardBody)
 	if err != nil {
 		return err
 	}
@@ -230,6 +247,9 @@ func (s *Server) postChat(ctx echo.Context) error {
 	// for both transfer-agent and executor request paths.
 	if err := s.enforceDeveloperAccessGate(ctx.Request().Context(), chatRequest.RequesterAddress); err != nil {
 		return err
+	}
+	if err := completionapi.ValidateOpenAICompatRequestBody(chatRequest.Body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
@@ -336,8 +356,14 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
-		logging.Error("Failed to get executor", types.Inferences, "error", err)
-		return err
+		logging.Error("Failed to get executor", types.Inferences, "model", request.OpenAiRequest.Model, "error", err)
+		if st, ok := grpcstatus.FromError(err); ok {
+			if st.Code() == codes.NotFound {
+				return echo.NewHTTPError(http.StatusNotFound, "model not found")
+			}
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "no executors available for model")
+		}
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "no executors available for model")
 	}
 
 	seed := rand.Int31()
@@ -361,8 +387,16 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		}
 	}()
 
-	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
-	// the same process to create the same final request body
+	forwardPath := request.ForwardPath
+	if forwardPath == "" {
+		forwardPath = chatCompletionsPath
+	}
+	forwardBody := request.ForwardBody
+	if len(forwardBody) == 0 {
+		forwardBody = request.Body
+	}
+
+	// Send the same body shape to the next hop that was used for developer signature verification.
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 
 	if s.configManager.GetApiConfig().PublicUrl == executor.Url {
@@ -378,7 +412,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
+	req, err := http.NewRequest(http.MethodPost, executor.Url+forwardPath, bytes.NewReader(forwardBody))
 	if err != nil {
 		logging.Error("handleTransferRequest. Failed to create request to the executor node", types.Inferences, "error", err)
 		return err
@@ -401,6 +435,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return err
 	}
 	defer resp.Body.Close()
+
+	if unsupportedErr := mapExecutorCompletionsUnsupportedError(forwardPath, resp.StatusCode); unsupportedErr != nil {
+		logging.Warn("Selected executor does not support completions endpoint", types.Inferences,
+			"executor", executor.Address, "url", executor.Url, "status_code", resp.StatusCode, "path", forwardPath)
+		return unsupportedErr
+	}
 
 	logging.Info("Proxying response from executor", types.Inferences,
 		"inferenceId", inferenceUUID,
@@ -501,6 +541,11 @@ func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if len(openAiRequest.Messages) == 0 {
+		if completionsRequest, ok := tryBuildOpenAiRequestFromCompletionsBody(requestBytes); ok {
+			openAiRequest = completionsRequest
+		}
+	}
 
 	promptText, ignoredParts := FlattenMessagesText(openAiRequest.Messages)
 	if ignoredParts > 0 {
@@ -546,11 +591,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
+	inferencePath := request.ForwardPath
+	if inferencePath == "" {
+		inferencePath = chatCompletionsPath
+	}
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
 			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "/v1/chat/completions")
+		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), inferencePath)
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
@@ -567,6 +616,9 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	if err != nil {
 		logging.Error("Failed to get response from inference node", types.Inferences,
 			"inferenceId", inferenceId, "error", err)
+		if errors.Is(err, broker.ErrNoNodesAvailable) {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "no inference nodes available")
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -926,18 +978,24 @@ func getInferenceErrorMessage(resp *http.Response) string {
 	}
 }
 
-func readRequest(request *http.Request, writer http.ResponseWriter, transferAddress string) (*ChatRequest, error) {
-	body, err := readRequestBody(request, writer)
-	if err != nil {
-		logging.Error("Unable to read request body", types.Server, "error", err)
-		return nil, err
+func readRequest(request *http.Request, transferAddress string, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) (*ChatRequest, error) {
+	if forwardPath == "" {
+		forwardPath = chatCompletionsPath
 	}
 
 	openAiRequest := OpenAiRequest{}
-	err = json.Unmarshal(body, &openAiRequest)
-	if err != nil {
+	if err := json.Unmarshal(body, &openAiRequest); err != nil {
 		logging.Warn("Invalid chat completion request body", types.Inferences, "error", err)
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid chat completion request: "+err.Error())
+	}
+	if len(openAiRequest.Messages) == 0 && forwardPath == completionsPath {
+		if completionsRequest, ok := tryBuildOpenAiRequestFromCompletionsBody(body); ok {
+			openAiRequest = completionsRequest
+		}
+	}
+	if forwardPath == chatCompletionsPath && len(openAiRequest.Messages) == 0 {
+		logging.Warn("Chat completion request without messages", types.Inferences)
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "messages is required")
 	}
 
 	timestamp, err := strconv.ParseInt(request.Header.Get(utils.XTimestampHeader), 10, 64)
@@ -947,9 +1005,14 @@ func readRequest(request *http.Request, writer http.ResponseWriter, transferAddr
 	if request.Header.Get(utils.XTransferAddressHeader) != "" {
 		transferAddress = request.Header.Get(utils.XTransferAddressHeader)
 	}
+	if len(forwardBody) == 0 {
+		forwardBody = body
+	}
 
 	return &ChatRequest{
 		Body:              body,
+		ForwardPath:       forwardPath,
+		ForwardBody:       append([]byte(nil), forwardBody...),
 		Request:           request,
 		OpenAiRequest:     openAiRequest,
 		AuthKey:           request.Header.Get(utils.AuthorizationHeader),
@@ -960,6 +1023,7 @@ func readRequest(request *http.Request, writer http.ResponseWriter, transferAddr
 		TransferAddress:   transferAddress,
 		TransferSignature: request.Header.Get(utils.XTASignatureHeader),
 		PromptHash:        request.Header.Get(utils.XPromptHashHeader),
+		SignBodyHash:      signBodyHash,
 	}, nil
 }
 
@@ -975,6 +1039,60 @@ func readRequestBody(r *http.Request, writer http.ResponseWriter) ([]byte, error
 	return buf.Bytes(), nil
 }
 
+// mapRequestBodyReadError converts low-level body read failures into stable, safe HTTP responses.
+func mapRequestBodyReadError(err error) error {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body too large")
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed request body")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return echo.NewHTTPError(http.StatusRequestTimeout, "request body read timeout")
+	}
+	if errors.Is(err, context.Canceled) {
+		return echo.NewHTTPError(http.StatusBadRequest, "request body read cancelled")
+	}
+	return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
+}
+
+func mapExecutorCompletionsUnsupportedError(forwardPath string, statusCode int) error {
+	if forwardPath != completionsPath {
+		return nil
+	}
+	switch statusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return echo.NewHTTPError(http.StatusServiceUnavailable, executorCompletionsUnsupportedMsg)
+	default:
+		return nil
+	}
+}
+
+func (s *Server) validateModelSupported(model string) error {
+	if model == "" {
+		return ErrNoModelSpecified
+	}
+	if s.phaseTracker == nil || s.epochGroupDataCache == nil {
+		return nil
+	}
+	epochState := s.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		return nil
+	}
+	epochGroupData, err := s.epochGroupDataCache.GetCurrentEpochGroupData(epochState.LatestEpoch.EpochIndex)
+	if err != nil {
+		logging.Warn("Failed to fetch current epoch group data for model validation", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "unable to fetch current epoch group data")
+	}
+	for _, m := range epochGroupData.SubGroupModels {
+		if m == model {
+			return nil
+		}
+	}
+	return echo.NewHTTPError(http.StatusNotFound, "model not found")
+}
+
 // validateRequester validates requester with dynamic pricing fallback to legacy
 func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, requester *types.QueryAccountByAddressResponse, promptTokenCount int) error {
 	if requester == nil {
@@ -986,6 +1104,10 @@ func (s *Server) validateRequester(ctx context.Context, request *ChatRequest, re
 	if err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
+	}
+
+	if err := s.validateModelSupported(request.OpenAiRequest.Model); err != nil {
+		return err
 	}
 
 	if request.OpenAiRequest.MaxTokens == 0 {

@@ -14,6 +14,8 @@ import (
 
 type ChatRequest struct {
 	Body              []byte
+	ForwardPath       string
+	ForwardBody       []byte
 	Request           *http.Request
 	OpenAiRequest     OpenAiRequest
 	AuthKey           string // signature signing inference request
@@ -24,6 +26,7 @@ type ChatRequest struct {
 	Timestamp         int64  // timestamp of the request
 	TransferSignature string // signature of the transfer address
 	PromptHash        string
+	SignBodyHash      string
 }
 
 type OpenAiRequest struct {
@@ -160,6 +163,12 @@ func FlattenMessagesText(messages []Message) (string, int) {
 		ignoredParts += ignored
 	}
 	return b.String(), ignoredParts
+}
+
+// ContentText keeps backward-compatible text extraction behavior.
+func (m Message) ContentText() string {
+	text, _ := m.Content.FlattenedText()
+	return text
 }
 
 type ExecutorDestination struct {

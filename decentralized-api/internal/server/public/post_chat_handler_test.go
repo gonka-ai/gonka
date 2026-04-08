@@ -231,11 +231,126 @@ func TestMaxRequestBodySizeConstant(t *testing.T) {
 	require.Equal(t, expectedSize, MaxRequestBodySize, "MaxRequestBodySize should be 10 MB")
 }
 
+func TestMapRequestBodyReadError(t *testing.T) {
+	testCases := []struct {
+		name         string
+		inputErr     error
+		expectedCode int
+		expectedMsg  string
+	}{
+		{
+			name:         "max bytes exceeded",
+			inputErr:     &http.MaxBytesError{Limit: MaxRequestBodySize},
+			expectedCode: http.StatusRequestEntityTooLarge,
+			expectedMsg:  "request body too large",
+		},
+		{
+			name:         "unexpected EOF",
+			inputErr:     io.ErrUnexpectedEOF,
+			expectedCode: http.StatusBadRequest,
+			expectedMsg:  "malformed request body",
+		},
+		{
+			name:         "read timeout",
+			inputErr:     context.DeadlineExceeded,
+			expectedCode: http.StatusRequestTimeout,
+			expectedMsg:  "request body read timeout",
+		},
+		{
+			name:         "read canceled",
+			inputErr:     context.Canceled,
+			expectedCode: http.StatusBadRequest,
+			expectedMsg:  "request body read cancelled",
+		},
+		{
+			name:         "generic read error",
+			inputErr:     errors.New("transport failed"),
+			expectedCode: http.StatusBadRequest,
+			expectedMsg:  "failed to read request body",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := mapRequestBodyReadError(tc.inputErr)
+
+			var httpErr *echo.HTTPError
+			require.ErrorAs(t, err, &httpErr)
+			require.Equal(t, tc.expectedCode, httpErr.Code)
+			require.Equal(t, tc.expectedMsg, httpErr.Message)
+		})
+	}
+}
+
+func TestMapExecutorCompletionsUnsupportedError(t *testing.T) {
+	testCases := []struct {
+		name            string
+		forwardPath     string
+		statusCode      int
+		expectErr       bool
+		expectedCode    int
+		expectedMessage string
+	}{
+		{
+			name:            "completions endpoint not found",
+			forwardPath:     completionsPath,
+			statusCode:      http.StatusNotFound,
+			expectErr:       true,
+			expectedCode:    http.StatusServiceUnavailable,
+			expectedMessage: executorCompletionsUnsupportedMsg,
+		},
+		{
+			name:            "completions method not allowed",
+			forwardPath:     completionsPath,
+			statusCode:      http.StatusMethodNotAllowed,
+			expectErr:       true,
+			expectedCode:    http.StatusServiceUnavailable,
+			expectedMessage: executorCompletionsUnsupportedMsg,
+		},
+		{
+			name:            "completions not implemented",
+			forwardPath:     completionsPath,
+			statusCode:      http.StatusNotImplemented,
+			expectErr:       true,
+			expectedCode:    http.StatusServiceUnavailable,
+			expectedMessage: executorCompletionsUnsupportedMsg,
+		},
+		{
+			name:        "chat path keeps original status handling",
+			forwardPath: chatCompletionsPath,
+			statusCode:  http.StatusNotFound,
+			expectErr:   false,
+		},
+		{
+			name:        "completions other status is not remapped",
+			forwardPath: completionsPath,
+			statusCode:  http.StatusBadGateway,
+			expectErr:   false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := mapExecutorCompletionsUnsupportedError(tc.forwardPath, tc.statusCode)
+
+			if !tc.expectErr {
+				require.NoError(t, err)
+				return
+			}
+
+			var httpErr *echo.HTTPError
+			require.ErrorAs(t, err, &httpErr)
+			require.Equal(t, tc.expectedCode, httpErr.Code)
+			require.Equal(t, tc.expectedMessage, httpErr.Message)
+		})
+	}
+}
+
 func TestReadRequest_AcceptsMultipartContent(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"Hello"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png"}},{"type":"text","text":" world"}]}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 
@@ -248,7 +363,7 @@ func TestMultipartContent_RoundTrip(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"describe this"},{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"high"}}]}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 
 	roundTripped, err := json.Marshal(chatRequest.OpenAiRequest)
@@ -270,7 +385,7 @@ func TestReadRequest_AcceptsMissingMessageContent(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"assistant"}]}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err, "missing content is valid for assistant/tool-calling messages")
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 
@@ -290,7 +405,7 @@ func TestReadRequest_AcceptsToolCallingPayload(t *testing.T) {
 	}`)
 	req := createTestRequest(body)
 
-	chatRequest, err := readRequest(req, nil, "transfer-agent")
+	chatRequest, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.NoError(t, err)
 	require.Equal(t, "test", chatRequest.OpenAiRequest.Model)
 	require.Len(t, chatRequest.OpenAiRequest.Messages, 3)
@@ -314,7 +429,7 @@ func TestReadRequest_RejectsUnsupportedContentType(t *testing.T) {
 	body := []byte(`{"model":"test","messages":[{"role":"user","content":123}]}`)
 	req := createTestRequest(body)
 
-	_, err := readRequest(req, nil, "transfer-agent")
+	_, err := readRequest(req, "transfer-agent", body, "", chatCompletionsPath, body)
 	require.Error(t, err)
 
 	var httpErr *echo.HTTPError
