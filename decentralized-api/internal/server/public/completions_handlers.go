@@ -15,7 +15,7 @@ const completionsPath = "/v1/completions"
 func (s *Server) postCompletions(ctx echo.Context) error {
 	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
+		return mapRequestBodyReadError(err)
 	}
 
 	var completionsReq CompletionsRequest

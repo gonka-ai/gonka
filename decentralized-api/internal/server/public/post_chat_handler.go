@@ -41,12 +41,15 @@ const (
 	// BothContexts indicates the AuthKey was used for both transfer and executor requests
 	BothContexts = TransferContext | ExecutorContext
 
-	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MB)
-	// This prevents memory exhaustion attacks from oversized requests
+	// MaxRequestBodySize is the maximum allowed size for request bodies (10 MiB)
 	MaxRequestBodySize = 10 * 1024 * 1024
+	// MaxRequestBodyLimit is the Echo body-limit middleware value that matches MaxRequestBodySize exactly.
+	MaxRequestBodyLimit = "10485760"
 
 	chatCompletionsPath = "/v1/chat/completions"
 )
+
+const executorCompletionsUnsupportedMsg = "selected executor does not support /v1/completions; upgrade required"
 
 // Package-level variables for AuthKey reuse prevention
 var (
@@ -210,7 +213,7 @@ func (s *Server) postChat(ctx echo.Context) error {
 	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
 		logging.Error("Unable to read request body", types.Server, "error", err)
-		return err
+		return mapRequestBodyReadError(err)
 	}
 	return s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)), chatCompletionsPath, body)
 }
@@ -432,6 +435,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return err
 	}
 	defer resp.Body.Close()
+
+	if unsupportedErr := mapExecutorCompletionsUnsupportedError(forwardPath, resp.StatusCode); unsupportedErr != nil {
+		logging.Warn("Selected executor does not support completions endpoint", types.Inferences,
+			"executor", executor.Address, "url", executor.Url, "status_code", resp.StatusCode, "path", forwardPath)
+		return unsupportedErr
+	}
 
 	logging.Info("Proxying response from executor", types.Inferences,
 		"inferenceId", inferenceUUID,
@@ -1028,6 +1037,36 @@ func readRequestBody(r *http.Request, writer http.ResponseWriter) ([]byte, error
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// mapRequestBodyReadError converts low-level body read failures into stable, safe HTTP responses.
+func mapRequestBodyReadError(err error) error {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body too large")
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return echo.NewHTTPError(http.StatusBadRequest, "malformed request body")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return echo.NewHTTPError(http.StatusRequestTimeout, "request body read timeout")
+	}
+	if errors.Is(err, context.Canceled) {
+		return echo.NewHTTPError(http.StatusBadRequest, "request body read cancelled")
+	}
+	return echo.NewHTTPError(http.StatusBadRequest, "failed to read request body")
+}
+
+func mapExecutorCompletionsUnsupportedError(forwardPath string, statusCode int) error {
+	if forwardPath != completionsPath {
+		return nil
+	}
+	switch statusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return echo.NewHTTPError(http.StatusServiceUnavailable, executorCompletionsUnsupportedMsg)
+	default:
+		return nil
+	}
 }
 
 func (s *Server) validateModelSupported(model string) error {

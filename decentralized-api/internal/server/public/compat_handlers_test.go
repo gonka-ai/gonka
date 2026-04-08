@@ -91,6 +91,7 @@ func TestModelsEndpoint_Minimal(t *testing.T) {
 	model := resp.Data[0]
 	require.Equal(t, "test-model", model.ID)
 	require.Equal(t, "test-model", model.Name)
+	require.NotZero(t, model.Created)
 	require.Equal(t, uint64(4096), model.ContextLength)
 	require.Equal(t, uint64(4096), model.MaxOutputLength)
 	require.Equal(t, []string{"text"}, model.InputModalities)

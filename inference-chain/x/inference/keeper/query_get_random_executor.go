@@ -83,7 +83,7 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 	if epochParams.EpochParams == nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: epoch params are nil",
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index)
-		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: epoch params are nill")
+		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: epoch params are nil")
 	}
 
 	epochContext, err := types.NewEpochContextFromEffectiveEpoch(*effectiveEpoch, *epochParams.EpochParams, sdkCtx.BlockHeight())

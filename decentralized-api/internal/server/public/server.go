@@ -90,7 +90,7 @@ func NewServer(
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
-	e.Use(echoMiddleware.BodyLimit("10M"))
+	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
