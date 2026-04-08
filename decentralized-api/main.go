@@ -261,20 +261,24 @@ func main() {
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config, validator, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
-	nmGrpcServer := grpc.NewServer()
-	nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
-	reflection.Register(nmGrpcServer)
-	addr = fmt.Sprintf(":%v", config.GetApiConfig().NodeManagerGrpcPort)
-	nmLis, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("node manager failed to listen on %v: %v", addr, err)
-	}
-	go func() {
-		logging.Info("start node manager gRPC server", types.Server, "addr", addr)
-		if err := nmGrpcServer.Serve(nmLis); err != nil {
-			log.Fatalf("node manager gRPC server failed: %v", err)
+	nmGrpcPort := config.GetApiConfig().NodeManagerGrpcPort
+	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
+	if nmGrpcPort != 0 {
+		nmGrpcServer := grpc.NewServer()
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
+		reflection.Register(nmGrpcServer)
+		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
+		nmLis, err := net.Listen("tcp", nodeManagerAddr)
+		if err != nil {
+			log.Fatalf("node manager failed to listen on %v: %v", nodeManagerAddr, err)
 		}
-	}()
+		go func() {
+			logging.Info("start node manager gRPC server", types.Server, "nodeManagerAddr", nodeManagerAddr)
+			if err := nmGrpcServer.Serve(nmLis); err != nil {
+				log.Fatalf("node manager gRPC server failed: %v", err)
+			}
+		}()
+	}
 
 	logging.Info("Servers started", types.Server, "addr", addr)
 

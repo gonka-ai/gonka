@@ -6,7 +6,7 @@
 FROM golang:1.24.2-alpine3.20 AS builder
 
 ARG GOOS=linux
-ARG GOARCH
+ARG GOARCH=amd64
 ARG BLST_PORTABLE=0
 
 ENV GOOS=${GOOS} \

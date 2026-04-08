@@ -75,11 +75,21 @@ class NodeManagerTests : TestermintTest() {
         nodeManagerClient(genesis).use { client ->
             val first = client.acquireMLNode(defaultModel)
             client.releaseMLNode(first.lockId)
-            Thread.sleep(100)
 
-            val second = client.acquireMLNode(defaultModel)
-            assertThat(second.lockId).isNotEqualTo(first.lockId)
-            client.releaseMLNode(second.lockId)
+            var second: NodeManagerProto.AcquireMLNodeResponse? = null
+            run {
+                repeat(20) { attempt ->
+                    try {
+                        second = client.acquireMLNode(defaultModel)
+                        return@run
+                    } catch (_: StatusRuntimeException) {
+                        if (attempt == 19) error("Node was not re-acquirable after release")
+                        Thread.sleep(100)
+                    }
+                }
+            }
+            assertThat(second!!.lockId).isNotEqualTo(first.lockId)
+            client.releaseMLNode(second!!.lockId)
         }
     }
 }

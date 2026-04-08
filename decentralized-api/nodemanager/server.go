@@ -43,8 +43,8 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
 	}
 	if ctx.Err() != nil {
-		logging.Error("[NodeManager] Deadline exceeded", types.Nodes)
-		return nil, status.Error(codes.DeadlineExceeded, ctx.Err().Error())
+		logging.Error("[NodeManager] Context error", types.Nodes, "err", ctx.Err())
+		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	// queue is full, so returning unavailable code
 	return nil, status.Error(codes.Unavailable, err.Error())

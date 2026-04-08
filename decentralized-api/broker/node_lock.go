@@ -77,6 +77,9 @@ func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 // to avoid a deadlock if the queue is momentarily full.
 func (b *Broker) evictExpiredLocks() {
 	ttlSeconds := b.configManager.GetApiConfig().NodeManagerLockTTLSeconds
+	if ttlSeconds <= 0 {
+		ttlSeconds = 1200 // 20 minutes defensive fallback
+	}
 	ttl := time.Duration(ttlSeconds) * time.Second
 
 	now := time.Now()
