@@ -33,6 +33,17 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		return fmt.Errorf("epoch %d has no group public key", signingData.CurrentEpochId)
 	}
 
+	// Load params once and reuse for retry-limit and deadline calculations
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get parameters: %w", err)
+	}
+	maxSigningAttempts := params.MaxSigningAttempts
+	if maxSigningAttempts == 0 {
+		maxSigningAttempts = types.DefaultParams().MaxSigningAttempts
+	}
+	attempt := uint32(1)
+
 	// Validate uniqueness - ensure request_id doesn't already exist
 	key := types.ThresholdSigningRequestKey(signingData.RequestId)
 	kvStore := k.storeService.OpenKVStore(ctx)
@@ -54,11 +65,17 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		if !bytes.Equal(existing.ChainId, signingData.ChainId) || !equalSigningDataFields(existing.Data, signingData.Data) {
 			return fmt.Errorf("request_id payload mismatch: %x", signingData.RequestId)
 		}
+		if existing.Attempt >= maxSigningAttempts {
+			return fmt.Errorf("max signing attempts reached for request_id: %x (attempts: %d)", signingData.RequestId, existing.Attempt)
+		}
+		attempt = existing.Attempt + 1
 
 		k.Logger().Info("Retrying threshold signing request after failed attempt",
 			"request_id", fmt.Sprintf("%x", signingData.RequestId),
 			"previous_status", existing.Status.String(),
-			"previous_deadline_block_height", existing.DeadlineBlockHeight)
+			"previous_deadline_block_height", existing.DeadlineBlockHeight,
+			"next_attempt", attempt,
+			"max_signing_attempts", maxSigningAttempts)
 
 		// Defense-in-depth cleanup in case a stale expiration index entry remains
 		k.removeFromExpirationIndex(ctx, existing.DeadlineBlockHeight, signingData.RequestId)
@@ -88,7 +105,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		FinalSignature:      []byte{},
 		CreatedBlockHeight:  ctx.BlockHeight(),
 		DeadlineBlockHeight: deadlineBlockHeight,
-		Attempt:             1,
+		Attempt:             attempt,
 	}
 
 	// Store the request

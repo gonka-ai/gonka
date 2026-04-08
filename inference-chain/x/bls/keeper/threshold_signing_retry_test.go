@@ -24,11 +24,11 @@ import (
 	"github.com/productscience/inference/x/bls/types"
 )
 
-func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
+func TestRequestThresholdSignature_RetryRejectedAfterExpiredWhenMaxAttemptsReached(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(301)
 	setSignedEpochForRetryTests(t, k, ctx, epochID)
-	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 2)
 
 	signingData := makeSigningDataForRetryTests(epochID, 1)
 	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
@@ -36,22 +36,25 @@ func TestRequestThresholdSignature_RetryAllowedAfterExpired(t *testing.T) {
 	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
 	require.NoError(t, err)
 
-	expiryCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
-	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
+	firstDeadlineCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(firstDeadlineCtx))
 
-	expiredRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
+	retryRequest, err := k.GetSigningStatus(firstDeadlineCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retryRequest.Status)
+	require.EqualValues(t, 2, retryRequest.Attempt)
+
+	secondDeadlineCtx := firstDeadlineCtx.WithBlockHeight(retryRequest.DeadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(secondDeadlineCtx))
+
+	expiredRequest, err := k.GetSigningStatus(secondDeadlineCtx, signingData.RequestId)
 	require.NoError(t, err)
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, expiredRequest.Status)
+	require.EqualValues(t, 2, expiredRequest.Attempt)
 
-	require.NoError(t, k.RequestThresholdSignature(expiryCtx, signingData))
-
-	retriedRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
-	require.NoError(t, err)
-	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retriedRequest.Status)
-	require.Equal(t, expiryCtx.BlockHeight(), retriedRequest.CreatedBlockHeight)
-	require.Greater(t, retriedRequest.DeadlineBlockHeight, retriedRequest.CreatedBlockHeight)
-	require.Empty(t, retriedRequest.PartialSignatures)
-	require.Empty(t, retriedRequest.FinalSignature)
+	err = k.RequestThresholdSignature(secondDeadlineCtx, signingData)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max signing attempts reached")
 }
 
 func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMaxAttempts(t *testing.T) {
