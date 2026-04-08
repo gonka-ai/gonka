@@ -1573,3 +1573,49 @@ func TestUpdateNodeHostCollisionWithPortChange(t *testing.T) {
 	require.NotEqual(t, foundNode1.Node.InferencePort, foundNode2.Node.InferencePort, "Inference ports should be different")
 	require.NotEqual(t, foundNode1.Node.PoCPort, foundNode2.Node.PoCPort, "PoC ports should be different")
 }
+
+func TestAreHardwareNodesEqual_Version(t *testing.T) {
+	a := &types.HardwareNode{Host: "host", Port: "9090", Models: []string{"m1"}}
+	b := &types.HardwareNode{Host: "host", Port: "9090", Models: []string{"m1"}}
+
+	assert.True(t, areHardwareNodesEqual(a, b), "nodes with empty version should be equal")
+
+	a.Version = "v1.0.0"
+	b.Version = "v1.0.0"
+	assert.True(t, areHardwareNodesEqual(a, b), "nodes with same version should be equal")
+
+	b.Version = "v1.0.1"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
+}
+
+func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.MlNodeVersion = "v2.3.4"
+
+	hw := convertInferenceNodeToHardwareNode(node)
+
+	assert.Equal(t, "v2.3.4", hw.Version)
+}
+
+func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
+	node := createTestNode("node-1")
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:        "node-1",
+			PrevStatus:    types.HardwareNodeStatus_UNKNOWN,
+			NewStatus:     types.HardwareNodeStatus_INFERENCE,
+			MlNodeVersion: "v3.0.0",
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}

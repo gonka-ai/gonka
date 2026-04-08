@@ -36,6 +36,17 @@ def client():
     return TestClient(app)
 
 
+def test_state_response_includes_version(client):
+    """Every /state response must include a non-empty version string."""
+    response = client.get("/api/v1/state")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "version" in data
+    assert isinstance(data["version"], str)
+    assert data["version"]  # non-empty
+
+
 def test_stopped_node_returns_only_state_field(client):
     """Node is idle after clean shutdown. No vLLM, no PoC — minimal response."""
     response = client.get("/api/v1/state")

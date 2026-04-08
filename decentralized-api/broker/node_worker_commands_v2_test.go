@@ -157,3 +157,33 @@ func TestStopPowV2_MockBehavior(t *testing.T) {
 	assert.Len(t, resp.Results, 1, "Should have one backend result")
 	assert.Equal(t, "stopped", resp.Results[0].Status, "Backend status should be stopped")
 }
+
+// TestStartPoCNodeCommandV2_StrongerRngPropagated verifies that PocStrongerRng is forwarded to InitGenerateV2.
+func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
+	node := createTestNode("test-node-rng")
+	mockClient := mlnodeclient.NewMockClient()
+	broker := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-rng", node, mockClient, broker)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight:    1000,
+		BlockHash:      "test-hash",
+		PubKey:         "test-pub",
+		CallbackUrl:    "http://localhost/cb",
+		TotalNodes:     3,
+		Model:          "test-model",
+		SeqLen:         256,
+		PocStrongerRng: true,
+	}
+
+	result := cmd.Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	require.Equal(t, 1, mockClient.InitGenerateV2Called)
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.True(t, mockClient.LastInitGenerateV2Req.PocStrongerRng, "PocStrongerRng must be forwarded to InitGenerateV2")
+}

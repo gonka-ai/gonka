@@ -65,8 +65,10 @@ type MockClient struct {
 	LastInferenceModel   string
 	LastInferenceArgs    []string
 	LastModelStatusCheck *Model
-	LastModelDownload    *Model
-	LastModelDelete      *Model
+	LastModelDownload      *Model
+	LastModelDelete        *Model
+	LastInitGenerateV2Req  *PoCInitGenerateRequestV2
+	LastGenerateV2Req      *PoCGenerateRequestV2
 }
 
 // NewMockClient creates a new mock client with default values
@@ -401,6 +403,7 @@ func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequ
 	defer m.Mu.Unlock()
 
 	m.InitGenerateV2Called++
+	m.LastInitGenerateV2Req = &req
 
 	// Update mock state: node is now in PoC generation mode, not inference
 	m.CurrentState = MlNodeState_POW
@@ -419,6 +422,7 @@ func (m *MockClient) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (
 	defer m.Mu.Unlock()
 
 	m.GenerateV2Called++
+	m.LastGenerateV2Req = &req
 
 	// Default success response
 	return &PoCGenerateResponseV2{
