@@ -101,6 +101,128 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.EqualValues(t, 3, terminalRequest.Attempt)
 }
 
+func TestProcessThresholdSigningDeadlines_ProcessesOverdueRequests(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(403)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+
+	signingData := makeSigningDataForRetryTests(epochID, 22)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	request, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+
+	overdueCtx := ctx.WithBlockHeight(request.DeadlineBlockHeight + 5)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(overdueCtx))
+
+	expiredRequest, err := k.GetSigningStatus(overdueCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, expiredRequest.Status)
+}
+
+func TestProcessThresholdSigningDeadlines_RespectsPerBlockLimit(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(404)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+
+	originalMax := maxExpiredRequestsPerBlock
+	maxExpiredRequestsPerBlock = 2
+	defer func() {
+		maxExpiredRequestsPerBlock = originalMax
+	}()
+
+	requestIDs := make([][]byte, 0, 3)
+	var deadlineBlockHeight int64
+	for i := 0; i < 3; i++ {
+		signingData := makeSigningDataForRetryTests(epochID, byte(23+i))
+		require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+		requestIDs = append(requestIDs, append([]byte(nil), signingData.RequestId...))
+
+		request, err := k.GetSigningStatus(ctx, signingData.RequestId)
+		require.NoError(t, err)
+		if i == 0 {
+			deadlineBlockHeight = request.DeadlineBlockHeight
+		} else {
+			require.Equal(t, deadlineBlockHeight, request.DeadlineBlockHeight)
+		}
+	}
+
+	expiryCtx := ctx.WithBlockHeight(deadlineBlockHeight)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
+
+	expiredCount := 0
+	collectingCount := 0
+	for _, requestID := range requestIDs {
+		request, err := k.GetSigningStatus(expiryCtx, requestID)
+		require.NoError(t, err)
+
+		switch request.Status {
+		case types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED:
+			expiredCount++
+		case types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES:
+			collectingCount++
+		default:
+			t.Fatalf("unexpected request status after limited pass: %s", request.Status.String())
+		}
+	}
+
+	require.Equal(t, int(maxExpiredRequestsPerBlock), expiredCount)
+	require.Equal(t, len(requestIDs)-int(maxExpiredRequestsPerBlock), collectingCount)
+
+	nextBlockCtx := expiryCtx.WithBlockHeight(expiryCtx.BlockHeight() + 1)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(nextBlockCtx))
+
+	for _, requestID := range requestIDs {
+		request, err := k.GetSigningStatus(nextBlockCtx, requestID)
+		require.NoError(t, err)
+		require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, request.Status)
+	}
+}
+
+func TestProcessThresholdSigningDeadlines_MalformedKeyCleanedAndDoesNotBypassLimit(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(405)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 1)
+
+	originalMax := maxExpiredRequestsPerBlock
+	maxExpiredRequestsPerBlock = 1
+	defer func() {
+		maxExpiredRequestsPerBlock = originalMax
+	}()
+
+	signingData := makeSigningDataForRetryTests(epochID, 26)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	request, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	expiryCtx := ctx.WithBlockHeight(request.DeadlineBlockHeight)
+
+	kvStore := k.storeService.OpenKVStore(expiryCtx)
+	badSuffixKey := []byte{0x00}
+	badFullKey := append(append([]byte(nil), types.ExpirationIndexPrefix...), badSuffixKey...)
+	require.NoError(t, kvStore.Set(badFullKey, []byte{1}))
+
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(expiryCtx))
+
+	badValue, err := kvStore.Get(badFullKey)
+	require.NoError(t, err)
+	require.Nil(t, badValue)
+
+	afterFirstPass, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, afterFirstPass.Status)
+
+	nextBlockCtx := expiryCtx.WithBlockHeight(expiryCtx.BlockHeight() + 1)
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(nextBlockCtx))
+
+	afterSecondPass, err := k.GetSigningStatus(nextBlockCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, afterSecondPass.Status)
+}
+
 func TestAddPartialSignature_ExpiredRequestAutoRetryAndTerminalExpiry(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(450)
@@ -440,10 +562,10 @@ func TestRunThresholdSigningCompletedPostProcess_ErrorRollsBackSideEffects(t *te
 	sideEffectKey := []byte("completed_hook_rollback_key")
 	sideEffectEvent := "completed_hook_rollback_event"
 	hook := &retryTestBlsHook{
-		storeService:  k.storeService,
-		hookKey:       sideEffectKey,
-		hookEvent:     sideEffectEvent,
-		completedErr:  errors.New("hook failed"),
+		storeService: k.storeService,
+		hookKey:      sideEffectKey,
+		hookEvent:    sideEffectEvent,
+		completedErr: errors.New("hook failed"),
 	}
 	require.NoError(t, k.SetHooks(hook))
 

@@ -636,69 +636,156 @@ func (k Keeper) removeFromExpirationIndex(ctx sdk.Context, deadlineBlockHeight i
 	_ = kvStore.Delete(expirationKey)
 }
 
+const defaultMaxExpiredRequestsPerBlock uint32 = 200
+
+var maxExpiredRequestsPerBlock = defaultMaxExpiredRequestsPerBlock
+
 // ProcessThresholdSigningDeadlines processes expired threshold signing requests efficiently using expiration index
 func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
 	currentBlockHeight := ctx.BlockHeight()
 
-	// Get KV store
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 
-	// Use expiration index prefix for the current block height
-	// This only scans requests expiring exactly at this block height - O(requests_expiring_now) instead of O(all_requests)
-	expirationPrefix := types.ExpirationIndexPrefixForBlock(currentBlockHeight)
-	expirationStore := prefix.NewStore(store, expirationPrefix)
+	expirationStore := prefix.NewStore(store, types.ExpirationIndexPrefix)
 
 	iterator := expirationStore.Iterator(nil, nil)
-	defer iterator.Close()
 
-	var expiredCount uint32
-
-	for ; iterator.Valid(); iterator.Next() {
-		// Extract request_id from the key
-		// Key format: {request_id} (within the block-specific prefix)
-		requestID := iterator.Key()
-
-		// Load the full request to update its status
-		request, err := k.GetSigningStatus(ctx, requestID)
-		if err != nil {
-			k.Logger().Error("Failed to load threshold signing request for deadline processing",
-				"request_id", fmt.Sprintf("%x", requestID), "error", err)
-			continue // Skip this request and continue processing others
-		}
-
-		// Double-check that the request is still collecting signatures and actually expired
-		if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES &&
-			currentBlockHeight >= request.DeadlineBlockHeight {
-
-			retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "deadline expired")
-			if retryErr != nil {
-				k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
-					"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
-			} else if retried {
-				continue
-			}
-
-			if err := k.finalizeFailedThresholdSigningRequest(
-				ctx,
-				request,
-				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
-				"deadline expired",
-			); err != nil {
-				k.Logger().Error("Failed to finalize expired threshold signing request",
-					"request_id", fmt.Sprintf("%x", requestID), "error", err)
-				continue
-			}
-
-			expiredCount++
-		}
+	maxToProcess := maxExpiredRequestsPerBlock
+	if maxToProcess == 0 {
+		maxToProcess = defaultMaxExpiredRequestsPerBlock
 	}
 
-	// Log summary if any requests were processed
-	if expiredCount > 0 {
+	type expiringItem struct {
+		deadline int64
+		reqID    []byte
+	}
+
+	var toProcess []expiringItem
+	var badKeys [][]byte
+	hasBacklog := false
+
+	for ; iterator.Valid(); iterator.Next() {
+		rawKey := iterator.Key()
+		deadlineBlockHeight, requestID, err := parseExpirationIndexEntry(rawKey)
+		if err != nil {
+			k.Logger().Error("Failed to parse expiration index key, scheduling for deletion",
+				"raw_key", fmt.Sprintf("%x", rawKey), "error", err)
+			badKeys = append(badKeys, append([]byte(nil), rawKey...))
+
+			if uint32(len(toProcess)+len(badKeys)) >= maxToProcess {
+				iterator.Next()
+				if iterator.Valid() {
+					if nextDeadline, _, err := parseExpirationIndexEntry(iterator.Key()); err == nil && nextDeadline <= currentBlockHeight {
+						hasBacklog = true
+					} else if err != nil {
+						hasBacklog = true
+					}
+				}
+				break
+			}
+			continue
+		}
+
+		if deadlineBlockHeight > currentBlockHeight {
+			break
+		}
+
+		toProcess = append(toProcess, expiringItem{
+			deadline: deadlineBlockHeight,
+			reqID:    append([]byte(nil), requestID...),
+		})
+
+		if uint32(len(toProcess)+len(badKeys)) >= maxToProcess {
+			iterator.Next()
+			if iterator.Valid() {
+				if nextDeadline, _, err := parseExpirationIndexEntry(iterator.Key()); err == nil && nextDeadline <= currentBlockHeight {
+					hasBacklog = true
+				} else if err != nil {
+					hasBacklog = true
+				}
+			}
+			break
+		}
+	}
+	iterator.Close()
+
+	for _, badKey := range badKeys {
+		expirationStore.Delete(badKey)
+	}
+
+	var expiredCount uint32
+	var retriedCount uint32
+	var staleIndexCount uint32
+
+	for _, item := range toProcess {
+		request, err := k.GetSigningStatus(ctx, item.reqID)
+		if err != nil {
+			k.Logger().Error("Failed to load threshold signing request for deadline processing",
+				"request_id", fmt.Sprintf("%x", item.reqID),
+				"deadline_block_height", item.deadline,
+				"error", err)
+			k.removeFromExpirationIndex(ctx, item.deadline, item.reqID)
+			staleIndexCount++
+			continue
+		}
+
+		if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES ||
+			request.DeadlineBlockHeight != item.deadline {
+			k.removeFromExpirationIndex(ctx, item.deadline, item.reqID)
+			staleIndexCount++
+			continue
+		}
+
+		retried, retryErr := k.maybeAutoRetryThresholdSigningRequest(ctx, request, "deadline expired")
+		if retryErr != nil {
+			k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
+				"request_id", fmt.Sprintf("%x", item.reqID), "error", retryErr)
+		} else if retried {
+			retriedCount++
+			continue
+		}
+
+		if err := k.finalizeFailedThresholdSigningRequest(
+			ctx,
+			request,
+			types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+			"deadline expired",
+		); err != nil {
+			k.Logger().Error("Failed to finalize expired threshold signing request",
+				"request_id", fmt.Sprintf("%x", item.reqID), "error", err)
+			continue
+		}
+
+		expiredCount++
+	}
+
+	processedDueCount := uint32(len(toProcess) + len(badKeys))
+	if processedDueCount > 0 || staleIndexCount > 0 || hasBacklog {
 		k.Logger().Info("Processed expired threshold signing requests",
 			"block_height", currentBlockHeight,
+			"processed_due_count", processedDueCount,
 			"expired_count", expiredCount)
+		k.Logger().Debug("Threshold signing deadline processing details",
+			"retried_count", retriedCount,
+			"stale_index_count", staleIndexCount,
+			"bad_keys_cleaned", len(badKeys),
+			"max_per_block", maxToProcess,
+			"has_backlog", hasBacklog)
 	}
 
 	return nil
+}
+
+func parseExpirationIndexEntry(key []byte) (int64, []byte, error) {
+	if len(key) < 8 {
+		return 0, nil, fmt.Errorf("invalid expiration index key length: %d", len(key))
+	}
+
+	deadlineBlockHeight := int64(binary.BigEndian.Uint64(key[:8]))
+	requestID := append([]byte(nil), key[8:]...)
+	if len(requestID) == 0 {
+		return 0, nil, fmt.Errorf("missing request id in expiration index key")
+	}
+
+	return deadlineBlockHeight, requestID, nil
 }
