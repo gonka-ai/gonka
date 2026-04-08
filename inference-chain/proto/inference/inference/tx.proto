@@ -8,9 +8,7 @@ import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
-import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
-import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/subnet_escrow.proto";
@@ -43,17 +41,8 @@ service Msg {
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
   rpc DeleteGovernanceModel            (MsgDeleteGovernanceModel) returns (MsgDeleteGovernanceModelResponse);
-  rpc CreateTrainingTask               (MsgCreateTrainingTask) returns (MsgCreateTrainingTaskResponse);
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff) returns (MsgSubmitHardwareDiffResponse);
   rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade) returns (MsgCreatePartialUpgradeResponse);
-  rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment) returns (MsgClaimTrainingTaskForAssignmentResponse);
-  rpc AssignTrainingTask               (MsgAssignTrainingTask) returns (MsgAssignTrainingTaskResponse);
-  rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord) returns (MsgSubmitTrainingKvRecordResponse);
-  rpc JoinTraining                     (MsgJoinTraining) returns (MsgJoinTrainingResponse);
-  rpc TrainingHeartbeat                (MsgTrainingHeartbeat) returns (MsgTrainingHeartbeatResponse);
-  rpc SetBarrier                       (MsgSetBarrier) returns (MsgSetBarrierResponse);
-  rpc JoinTrainingStatus               (MsgJoinTrainingStatus) returns (MsgJoinTrainingStatusResponse);
-  rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask) returns (MsgCreateDummyTrainingTaskResponse);
   rpc BridgeExchange                   (MsgBridgeExchange) returns (MsgBridgeExchangeResponse);
   rpc RegisterBridgeAddresses          (MsgRegisterBridgeAddresses) returns (MsgRegisterBridgeAddressesResponse);
   rpc RegisterLiquidityPool            (MsgRegisterLiquidityPool) returns (MsgRegisterLiquidityPoolResponse);
@@ -63,9 +52,6 @@ service Msg {
   rpc RequestBridgeMint                (MsgRequestBridgeMint) returns (MsgRequestBridgeMintResponse);
   rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract) returns (MsgRegisterWrappedTokenContractResponse);
   rpc MigrateAllWrappedTokens          (MsgMigrateAllWrappedTokens) returns (MsgMigrateAllWrappedTokensResponse);
-  rpc AddUserToTrainingAllowList       (MsgAddUserToTrainingAllowList) returns (MsgAddUserToTrainingAllowListResponse);
-  rpc RemoveUserFromTrainingAllowList  (MsgRemoveUserFromTrainingAllowList) returns (MsgRemoveUserFromTrainingAllowListResponse);
-  rpc SetTrainingAllowList             (MsgSetTrainingAllowList) returns (MsgSetTrainingAllowListResponse);
   rpc AddParticipantsToAllowList       (MsgAddParticipantsToAllowList) returns (MsgAddParticipantsToAllowListResponse);
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
   rpc ApproveIbcTokenForTrading        (MsgApproveIbcTokenForTrading) returns (MsgApproveIbcTokenForTradingResponse);
@@ -309,17 +295,6 @@ message MsgDeleteGovernanceModel {
 
 message MsgDeleteGovernanceModelResponse {}
 
-message MsgCreateTrainingTask {
-  option (cosmos.msg.v1.signer) = "creator";
-  string                    creator = 1;
-  repeated TrainingHardwareResources hardware_resources = 2;
-  TrainingConfig            config = 3;
-}
-
-message MsgCreateTrainingTaskResponse {
-  TrainingTask task = 1;
-}
-
 message MsgSubmitHardwareDiff {
   option (cosmos.msg.v1.signer) = "creator";
   string       creator = 1;
@@ -328,23 +303,6 @@ message MsgSubmitHardwareDiff {
 }
 
 message MsgSubmitHardwareDiffResponse {}
-
-message MsgClaimTrainingTaskForAssignment {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  uint64 task_id = 2;
-}
-
-message MsgClaimTrainingTaskForAssignmentResponse {}
-
-message MsgAssignTrainingTask {
-  option (cosmos.msg.v1.signer) = "creator";
-  string               creator = 1;
-  uint64               task_id = 2;
-  repeated TrainingTaskAssignee assignees = 3;
-}
-
-message MsgAssignTrainingTaskResponse {}
 
 message MsgCreatePartialUpgrade {
   option (cosmos.msg.v1.signer) = "authority";
@@ -355,67 +313,6 @@ message MsgCreatePartialUpgrade {
 }
 
 message MsgCreatePartialUpgradeResponse {}
-
-message MsgSubmitTrainingKvRecord {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  uint64 taskId = 2;
-  string participant = 3;
-  string key = 4;
-  string value = 5;
-}
-
-message MsgSubmitTrainingKvRecordResponse {}
-
-message MsgJoinTraining {
-  option (cosmos.msg.v1.signer) = "creator";
-  string              creator = 1;
-  JoinTrainingRequest req = 2;
-}
-
-message MsgJoinTrainingResponse {
-  MLNodeTrainStatus status = 1;
-}
-
-message MsgTrainingHeartbeat {
-  option (cosmos.msg.v1.signer) = "creator";
-  string           creator = 1;
-  HeartbeatRequest req = 2;
-}
-
-message MsgTrainingHeartbeatResponse {
-  HeartbeatResponse resp = 1;
-}
-
-message MsgSetBarrier {
-  option (cosmos.msg.v1.signer) = "creator";
-  string            creator = 1;
-  SetBarrierRequest req = 2;
-}
-
-message MsgSetBarrierResponse {
-  SetBarrierResponse resp = 1;
-}
-
-message MsgJoinTrainingStatus {
-  option (cosmos.msg.v1.signer) = "creator";
-  string              creator = 1;
-  JoinTrainingRequest req = 2;
-}
-
-message MsgJoinTrainingStatusResponse {
-  MLNodeTrainStatus status = 1;
-}
-
-message MsgCreateDummyTrainingTask {
-  option (cosmos.msg.v1.signer) = "creator";
-  string       creator = 1;
-  TrainingTask task = 2;
-}
-
-message MsgCreateDummyTrainingTaskResponse {
-  TrainingTask task = 1;
-}
 
 message MsgBridgeExchange {
   option (cosmos.msg.v1.signer) = "validator";
@@ -433,38 +330,6 @@ message MsgBridgeExchange {
 message MsgBridgeExchangeResponse {
   string id = 1; // Unique bridge transaction ID (originChain_blockNumber_receiptIndex)
 }
-
-message MsgAddUserToTrainingAllowList {
-  option (cosmos.msg.v1.signer) = "authority";
-  string authority = 1;
-  string address = 2;
-  TrainingRole role = 3;
-}
-
-enum TrainingRole {
-  ROLE_EXEC = 0;
-  ROLE_START = 1;
-}
-
-message MsgAddUserToTrainingAllowListResponse {}
-
-message MsgRemoveUserFromTrainingAllowList {
-  option (cosmos.msg.v1.signer) = "authority";
-  string authority = 1;
-  string address = 2;
-  TrainingRole role = 3;
-}
-
-message MsgRemoveUserFromTrainingAllowListResponse {}
-
-message MsgSetTrainingAllowList {
-  option (cosmos.msg.v1.signer) = "authority";
-  string authority = 1;
-  repeated string addresses = 2;
-  TrainingRole role = 3;
-}
-
-message MsgSetTrainingAllowListResponse {}
 
 // MsgAddParticipantsToAllowList adds addresses to the participant epoch-formation allowlist.
 // Recommended max 500 addresses per message to stay within tx size limits.

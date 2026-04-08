@@ -4,10 +4,6 @@ import "context"
 
 // MLNodeClient defines the interface for interacting with ML nodes
 type MLNodeClient interface {
-	// Training operations
-	StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error
-	GetTrainingStatus(ctx context.Context) error
-
 	// Node state operations
 	Stop(ctx context.Context) error
 	NodeState(ctx context.Context) (*StateResponse, error)

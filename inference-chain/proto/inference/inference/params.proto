@@ -329,6 +329,14 @@ message TransferAgentAccessParams {
   repeated string allowed_transfer_addresses = 1;
 }
 
+// SubnetApprovedVersion describes a single approved subnet binary.
+message SubnetApprovedVersion {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  string binary = 2;
+  string sha256 = 3;
+}
+
 // SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
 message SubnetEscrowParams {
   option (gogoproto.equal) = true;
@@ -338,4 +346,5 @@ message SubnetEscrowParams {
   uint32 group_size = 4;
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
+  repeated SubnetApprovedVersion approved_versions = 7;
 }

@@ -79,8 +79,6 @@ func NewServer(
 
 	g.POST("bls/request", s.postRequestThresholdSignature)
 
-	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
-
 	// Export DB state (human-readable JSON) for admin purposes
 	g.GET("export/db", s.exportDb)
 

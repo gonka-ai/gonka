@@ -79,61 +79,13 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgRegisterModel int = 100
 
-	opWeightMsgCreateTrainingTask = "op_weight_msg_create_training_task"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgCreateTrainingTask int = 100
-
 	opWeightMsgSubmitHardwareDiff = "op_weight_msg_submit_hardware_diff"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgSubmitHardwareDiff int = 100
 
-	opWeightMsgClaimTrainingTaskForAssignment = "op_weight_msg_claim_training_task_for_assignment"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgClaimTrainingTaskForAssignment int = 100
-
-	opWeightMsgAssignTrainingTask = "op_weight_msg_assign_training_task"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgAssignTrainingTask int = 100
-
 	opWeightMsgCreatePartialUpgrade = "op_weight_msg_create_partial_upgrade"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgCreatePartialUpgrade int = 100
-
-	opWeightMsgSubmitTrainingKvRecord = "op_weight_msg_submit_training_kv_record"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgSubmitTrainingKvRecord int = 100
-
-	opWeightMsgJoinTraining = "op_weight_msg_join_training"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgJoinTraining int = 100
-
-	opWeightMsgTrainingHeartbeat = "op_weight_msg_training_heartbeat"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgTrainingHeartbeat int = 100
-
-	opWeightMsgSetBarrier = "op_weight_msg_set_barrier"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgSetBarrier int = 100
-
-	opWeightMsgJoinTrainingStatus = "op_weight_msg_join_training_status"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgJoinTrainingStatus int = 100
-
-	opWeightMsgCreateDummyTrainingTask = "op_weight_msg_create_dummy_training_task"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgCreateDummyTrainingTask int = 100
-
-	opWeightMsgAddUserToTrainingAllowList = "op_weight_msg_add_user_to_training_allow_list"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgAddUserToTrainingAllowList int = 100
-
-	opWeightMsgRemoveUserFromTrainingAllowList = "op_weight_msg_remove_user_from_training_allow_list"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgRemoveUserFromTrainingAllowList int = 100
-
-	opWeightMsgSetTrainingAllowList = "op_weight_msg_set_training_allow_list"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgSetTrainingAllowList int = 100
 
 	// this line is used by starport scaffolding # simapp/module/const
 )
@@ -301,17 +253,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgRegisterModel(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
-	var weightMsgCreateTrainingTask int
-	simState.AppParams.GetOrGenerate(opWeightMsgCreateTrainingTask, &weightMsgCreateTrainingTask, nil,
-		func(_ *rand.Rand) {
-			weightMsgCreateTrainingTask = defaultWeightMsgCreateTrainingTask
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgCreateTrainingTask,
-		inferencesimulation.SimulateMsgCreateTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
 	var weightMsgSubmitHardwareDiff int
 	simState.AppParams.GetOrGenerate(opWeightMsgSubmitHardwareDiff, &weightMsgSubmitHardwareDiff, nil,
 		func(_ *rand.Rand) {
@@ -323,28 +264,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgSubmitHardwareDiff(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
-	var weightMsgClaimTrainingTaskForAssignment int
-	simState.AppParams.GetOrGenerate(opWeightMsgClaimTrainingTaskForAssignment, &weightMsgClaimTrainingTaskForAssignment, nil,
-		func(_ *rand.Rand) {
-			weightMsgClaimTrainingTaskForAssignment = defaultWeightMsgClaimTrainingTaskForAssignment
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgClaimTrainingTaskForAssignment,
-		inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgAssignTrainingTask int
-	simState.AppParams.GetOrGenerate(opWeightMsgAssignTrainingTask, &weightMsgAssignTrainingTask, nil,
-		func(_ *rand.Rand) {
-			weightMsgAssignTrainingTask = defaultWeightMsgAssignTrainingTask
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgAssignTrainingTask,
-		inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
 	var weightMsgCreatePartialUpgrade int
 	simState.AppParams.GetOrGenerate(opWeightMsgCreatePartialUpgrade, &weightMsgCreatePartialUpgrade, nil,
 		func(_ *rand.Rand) {
@@ -354,105 +273,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 	operations = append(operations, simulation.NewWeightedOperation(
 		weightMsgCreatePartialUpgrade,
 		inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgSubmitTrainingKvRecord int
-	simState.AppParams.GetOrGenerate(opWeightMsgSubmitTrainingKvRecord, &weightMsgSubmitTrainingKvRecord, nil,
-		func(_ *rand.Rand) {
-			weightMsgSubmitTrainingKvRecord = defaultWeightMsgSubmitTrainingKvRecord
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSubmitTrainingKvRecord,
-		inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgJoinTraining int
-	simState.AppParams.GetOrGenerate(opWeightMsgJoinTraining, &weightMsgJoinTraining, nil,
-		func(_ *rand.Rand) {
-			weightMsgJoinTraining = defaultWeightMsgJoinTraining
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgJoinTraining,
-		inferencesimulation.SimulateMsgJoinTraining(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgTrainingHeartbeat int
-	simState.AppParams.GetOrGenerate(opWeightMsgTrainingHeartbeat, &weightMsgTrainingHeartbeat, nil,
-		func(_ *rand.Rand) {
-			weightMsgTrainingHeartbeat = defaultWeightMsgTrainingHeartbeat
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgTrainingHeartbeat,
-		inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgSetBarrier int
-	simState.AppParams.GetOrGenerate(opWeightMsgSetBarrier, &weightMsgSetBarrier, nil,
-		func(_ *rand.Rand) {
-			weightMsgSetBarrier = defaultWeightMsgSetBarrier
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSetBarrier,
-		inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgJoinTrainingStatus int
-	simState.AppParams.GetOrGenerate(opWeightMsgJoinTrainingStatus, &weightMsgJoinTrainingStatus, nil,
-		func(_ *rand.Rand) {
-			weightMsgJoinTrainingStatus = defaultWeightMsgJoinTrainingStatus
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgJoinTrainingStatus,
-		inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgCreateDummyTrainingTask int
-	simState.AppParams.GetOrGenerate(opWeightMsgCreateDummyTrainingTask, &weightMsgCreateDummyTrainingTask, nil,
-		func(_ *rand.Rand) {
-			weightMsgCreateDummyTrainingTask = defaultWeightMsgCreateDummyTrainingTask
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgCreateDummyTrainingTask,
-		inferencesimulation.SimulateMsgCreateDummyTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgAddUserToTrainingAllowList int
-	simState.AppParams.GetOrGenerate(opWeightMsgAddUserToTrainingAllowList, &weightMsgAddUserToTrainingAllowList, nil,
-		func(_ *rand.Rand) {
-			weightMsgAddUserToTrainingAllowList = defaultWeightMsgAddUserToTrainingAllowList
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgAddUserToTrainingAllowList,
-		inferencesimulation.SimulateMsgAddUserToTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgRemoveUserFromTrainingAllowList int
-	simState.AppParams.GetOrGenerate(opWeightMsgRemoveUserFromTrainingAllowList, &weightMsgRemoveUserFromTrainingAllowList, nil,
-		func(_ *rand.Rand) {
-			weightMsgRemoveUserFromTrainingAllowList = defaultWeightMsgRemoveUserFromTrainingAllowList
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgRemoveUserFromTrainingAllowList,
-		inferencesimulation.SimulateMsgRemoveUserFromTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgSetTrainingAllowList int
-	simState.AppParams.GetOrGenerate(opWeightMsgSetTrainingAllowList, &weightMsgSetTrainingAllowList, nil,
-		func(_ *rand.Rand) {
-			weightMsgSetTrainingAllowList = defaultWeightMsgSetTrainingAllowList
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSetTrainingAllowList,
-		inferencesimulation.SimulateMsgSetTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
 	// this line is used by starport scaffolding # simapp/module/operation
@@ -568,14 +388,6 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			},
 		),
 		simulation.NewWeightedProposalMsg(
-			opWeightMsgCreateTrainingTask,
-			defaultWeightMsgCreateTrainingTask,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgCreateTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
 			opWeightMsgSubmitHardwareDiff,
 			defaultWeightMsgSubmitHardwareDiff,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
@@ -584,98 +396,10 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			},
 		),
 		simulation.NewWeightedProposalMsg(
-			opWeightMsgClaimTrainingTaskForAssignment,
-			defaultWeightMsgClaimTrainingTaskForAssignment,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgAssignTrainingTask,
-			defaultWeightMsgAssignTrainingTask,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
 			opWeightMsgCreatePartialUpgrade,
 			defaultWeightMsgCreatePartialUpgrade,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgSubmitTrainingKvRecord,
-			defaultWeightMsgSubmitTrainingKvRecord,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgJoinTraining,
-			defaultWeightMsgJoinTraining,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgJoinTraining(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgTrainingHeartbeat,
-			defaultWeightMsgTrainingHeartbeat,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgSetBarrier,
-			defaultWeightMsgSetBarrier,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgJoinTrainingStatus,
-			defaultWeightMsgJoinTrainingStatus,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgCreateDummyTrainingTask,
-			defaultWeightMsgCreateDummyTrainingTask,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgCreateDummyTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgAddUserToTrainingAllowList,
-			defaultWeightMsgAddUserToTrainingAllowList,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgAddUserToTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgRemoveUserFromTrainingAllowList,
-			defaultWeightMsgRemoveUserFromTrainingAllowList,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgRemoveUserFromTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgSetTrainingAllowList,
-			defaultWeightMsgSetTrainingAllowList,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSetTrainingAllowList(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

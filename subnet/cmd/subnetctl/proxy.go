@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -509,4 +510,33 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	inferenceID := r.Header.Get("X-Inference-Id")
+	if inferenceID == "" {
+		http.Error(w, "X-Inference-Id required", http.StatusBadRequest)
+		return
+	}
+
+	parsedID, err := strconv.ParseUint(inferenceID, 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid inference ID %s: %v", inferenceID, err), http.StatusBadRequest)
+		return
+	}
+
+	st := p.sm.SnapshotState()
+	inference, found := st.Inferences[parsedID]
+	if !found {
+		http.Error(w, fmt.Sprintf("inference not found for inference ID: %s", inferenceID), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(inference)
 }

@@ -313,15 +313,6 @@ data class ApplicationAPI(
         return postRawJson(url, "admin/v1/tx/send", json)
     }
 
-    fun startTrainingTask(training: StartTrainingDto): String = wrapLog("StartTrainingTask", true) {
-        val url = urlFor(SERVER_TYPE_PUBLIC)
-        postWithStringResponse(url, "v1/training/tasks", training)
-    }
-
-    fun getTrainingTask(taskId: ULong): String = wrapLog("GetTrainingTask", true) {
-        val url = urlFor(SERVER_TYPE_PUBLIC)
-        get(url, "v1/training/tasks/$taskId")
-    }
 
     fun getLatestEpoch(): EpochResponse {
         val url = urlFor(SERVER_TYPE_PUBLIC)

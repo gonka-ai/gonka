@@ -20,11 +20,8 @@ import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
-import "inference/inference/training_task.proto";
-import "inference/inference/training_task_sync.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
-import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/stats_developer.proto";
 import "inference/inference/epoch.proto";
@@ -223,12 +220,6 @@ service Query {
 
   }
 
-  // Queries a list of TrainingTask items.
-  rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_task";
-
-  }
-
   // Queries a list of HardwareNodes items.
   rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
@@ -238,18 +229,6 @@ service Query {
   // Queries a list of HardwareNodesAll items.
   rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
-
-  }
-
-  // Queries a list of QueuedTrainingTasks items.
-  rpc QueuedTrainingTasks (QueryQueuedTrainingTasksRequest) returns (QueryQueuedTrainingTasksResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
-
-  }
-
-  // Queries a list of TrainingTaskAll items.
-  rpc TrainingTaskAll (QueryTrainingTaskAllRequest) returns (QueryTrainingTaskAllResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_task_all";
 
   }
 
@@ -300,12 +279,6 @@ service Query {
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
-
-  }
-
-  // Queries a list of InProgressTrainingTasks items.
-  rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
 
   }
 
@@ -366,30 +339,6 @@ service Query {
 
   }
 
-  // Queries a list of TrainingKvRecord items.
-  rpc TrainingKvRecord (QueryTrainingKvRecordRequest) returns (QueryTrainingKvRecordResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{key}";
-
-  }
-
-  // Queries a list of ListTrainingKvRecordKeys items.
-  rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}";
-
-  }
-
-  // Queries a list of TrainingBarrier items.
-  rpc TrainingBarrier (QueryTrainingBarrierRequest) returns (QueryTrainingBarrierResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_barrier";
-
-  }
-
-  // Queries a list of TrainingAliveNodes items.
-  rpc TrainingAliveNodes (QueryTrainingAliveNodesRequest) returns (QueryTrainingAliveNodesResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
-
-  }
-
   // Queries a list of EpochInfo items.
   rpc EpochInfo (QueryEpochInfoRequest) returns (QueryEpochInfoResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_info";
@@ -435,12 +384,6 @@ service Query {
   // Queries the current MLNode version.
   rpc MLNodeVersion (QueryGetMLNodeVersionRequest) returns (QueryGetMLNodeVersionResponse) {
     option (google.api.http).get = "/productscience/inference/inference/mlnode_version";
-
-  }
-
-  // Queries a list of TrainingAllowList items.
-  rpc TrainingAllowList (QueryTrainingAllowListRequest) returns (QueryTrainingAllowListResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_allow_list";
 
   }
 
@@ -822,14 +765,6 @@ message QueryAllEpochPerformanceSummaryResponse {
            cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 
-message QueryTrainingTaskRequest {
-  uint64 id = 1;
-}
-
-message QueryTrainingTaskResponse {
-  TrainingTask task = 1;
-}
-
 message QueryHardwareNodesRequest {
   string participant = 1;
 }
@@ -842,18 +777,6 @@ message QueryHardwareNodesAllRequest {}
 
 message QueryHardwareNodesAllResponse {
   repeated HardwareNodes nodes = 1;
-}
-
-message QueryQueuedTrainingTasksRequest {}
-
-message QueryQueuedTrainingTasksResponse {
-  repeated TrainingTask tasks = 1;
-}
-
-message QueryTrainingTaskAllRequest {}
-
-message QueryTrainingTaskAllResponse {
-  repeated TrainingTask tasks = 1;
 }
 
 message QueryGetParticipantCurrentStatsRequest {
@@ -972,12 +895,6 @@ message QueryGetMinimumValidationAverageResponse {
   uint64 block_height               = 3;
 }
 
-message QueryInProgressTrainingTasksRequest {}
-
-message QueryInProgressTrainingTasksResponse {
-  repeated TrainingTask tasks = 1;
-}
-
 message QueryGetPartialUpgradeRequest {
   uint64 height = 1;
 }
@@ -993,39 +910,6 @@ message QueryAllPartialUpgradeRequest {
 message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
-}
-
-message QueryTrainingKvRecordRequest {
-  uint64 taskId = 1;
-  string key    = 2;
-}
-
-message QueryTrainingKvRecordResponse {
-  TrainingTaskKVRecord record = 1;
-}
-
-message QueryListTrainingKvRecordKeysRequest {
-  uint64 taskId = 1;
-}
-
-message QueryListTrainingKvRecordKeysResponse {
-  repeated string keys = 1;
-}
-
-message QueryTrainingBarrierRequest {
-  GetBarrierStatusRequest req = 1;
-}
-
-message QueryTrainingBarrierResponse {
-  GetBarrierStatusResponse resp = 2;
-}
-
-message QueryTrainingAliveNodesRequest {
-  GetAliveNodesRequest req = 1;
-}
-
-message QueryTrainingAliveNodesResponse {
-  GetAliveNodesResponse resp = 2;
 }
 
 message QueryGetBridgeTransactionRequest {
@@ -1181,14 +1065,6 @@ message Grantee {
 
 message QueryGranteesByMessageTypeResponse {
   repeated Grantee grantees = 1;
-}
-
-message QueryTrainingAllowListRequest {
-  int32 role = 1;
-}
-
-message QueryTrainingAllowListResponse {
-  repeated string addresses = 1;
 }
 
 message QueryParticipantAllowListRequest {}

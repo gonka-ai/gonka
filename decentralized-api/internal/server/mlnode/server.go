@@ -1,10 +1,12 @@
 package mlnode
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/poc/artifacts"
+	"net/http"
 
 	"github.com/labstack/echo/v4"
 )
@@ -14,6 +16,7 @@ type Server struct {
 	recorder      cosmos_client.CosmosMessageClient
 	broker        *broker.Broker
 	artifactStore *artifacts.ManagedArtifactStore
+	configManager *apiconfig.ConfigManager
 }
 
 // ServerOption configures optional Server dependencies.
@@ -23,6 +26,13 @@ type ServerOption func(*Server)
 func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 	return func(s *Server) {
 		s.artifactStore = store
+	}
+}
+
+// WithConfigManager enables serving subnet versions from chain params.
+func WithConfigManager(cm *apiconfig.ConfigManager) ServerOption {
+	return func(s *Server) {
+		s.configManager = cm
 	}
 }
 
@@ -45,7 +55,18 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 
 	e.POST("/v2/poc-batches/generated", s.postGeneratedArtifactsV2)
 	e.POST("/v2/poc-batches/validated", s.postValidatedArtifactsV2)
+
+	// Subnet version list from chain params
+	e.GET("/versions", s.getVersions)
+
 	return s
+}
+
+func (s *Server) getVersions(c echo.Context) error {
+	if s.configManager == nil {
+		return c.JSON(http.StatusOK, apiconfig.SubnetVersionsCache{Versions: []apiconfig.SubnetVersion{}})
+	}
+	return c.JSON(http.StatusOK, s.configManager.GetSubnetVersions())
 }
 
 func (s *Server) Start(addr string) {

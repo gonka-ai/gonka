@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 
@@ -318,6 +319,28 @@ func (p *SubnetEscrowParams) Validate() error {
 	}
 	if p.GroupSize == 0 {
 		return fmt.Errorf("subnet escrow group_size must be positive")
+	}
+	seen := make(map[string]struct{}, len(p.ApprovedVersions))
+	for i, v := range p.ApprovedVersions {
+		if v.Name == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: name cannot be empty", i)
+		}
+		if v.Binary == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: binary cannot be empty", i)
+		}
+		if v.Sha256 == "" {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 cannot be empty", i)
+		}
+		if len(v.Sha256) != 64 {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 must be 64 hex characters, got %d", i, len(v.Sha256))
+		}
+		if _, err := hex.DecodeString(v.Sha256); err != nil {
+			return fmt.Errorf("subnet_escrow_params.approved_versions[%d]: sha256 is not valid hex: %w", i, err)
+		}
+		if _, dup := seen[v.Name]; dup {
+			return fmt.Errorf("subnet_escrow_params.approved_versions: duplicate name %q", v.Name)
+		}
+		seen[v.Name] = struct{}{}
 	}
 	return nil
 }

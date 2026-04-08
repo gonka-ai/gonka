@@ -29,12 +29,6 @@ var permissionCheckers = map[Permission]permissionChecker{
 	PreviousActiveParticipantPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkActiveParticipantPermission(ctx, signer, 1)
 	},
-	TrainingExecPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
-		return k.checkTrainingExecPermission(ctx, signer)
-	},
-	TrainingStartPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
-		return k.checkTrainingStartPermission(ctx, signer)
-	},
 	CurrentActiveParticipantPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkCurrentActiveParticipantPermission(ctx, signer)
 	},
@@ -59,10 +53,6 @@ var permissionCheckers = map[Permission]permissionChecker{
 const (
 	// GovernancePermission allows only the module authority signer.
 	GovernancePermission Permission = "governance"
-	// TrainingExecPermission allows users in the training-exec allow list.
-	TrainingExecPermission Permission = "training_execution"
-	// TrainingStartPermission allows users in the training-start allow list.
-	TrainingStartPermission Permission = "training_start"
 	// ParticipantPermission allows registered participants.
 	ParticipantPermission Permission = "participant"
 	// ActiveParticipantPermission allows participants active in the current epoch.
@@ -87,9 +77,6 @@ const (
 // this entire list as a source of truth for message permissions.
 var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgUpdateParams)(nil)):                    {GovernancePermission},
-	reflect.TypeOf((*types.MsgSetTrainingAllowList)(nil)):            {GovernancePermission},
-	reflect.TypeOf((*types.MsgAddUserToTrainingAllowList)(nil)):      {GovernancePermission},
-	reflect.TypeOf((*types.MsgRemoveUserFromTrainingAllowList)(nil)): {GovernancePermission},
 	reflect.TypeOf((*types.MsgAddParticipantsToAllowList)(nil)):      {GovernancePermission},
 	reflect.TypeOf((*types.MsgRemoveParticipantsFromAllowList)(nil)): {GovernancePermission},
 	reflect.TypeOf((*types.MsgApproveBridgeTokenForTrading)(nil)):    {GovernancePermission},
@@ -125,16 +112,6 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {NoPermission},
 	reflect.TypeOf((*types.MsgSubmitSeed)(nil)):                       {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitUnitOfComputePriceProposal)(nil)): {ActiveParticipantPermission},
-
-	reflect.TypeOf((*types.MsgSubmitTrainingKvRecord)(nil)):         {TrainingExecPermission},
-	reflect.TypeOf((*types.MsgJoinTraining)(nil)):                   {TrainingExecPermission},
-	reflect.TypeOf((*types.MsgJoinTrainingStatus)(nil)):             {TrainingExecPermission},
-	reflect.TypeOf((*types.MsgSetBarrier)(nil)):                     {TrainingExecPermission},
-	reflect.TypeOf((*types.MsgTrainingHeartbeat)(nil)):              {TrainingExecPermission},
-	reflect.TypeOf((*types.MsgAssignTrainingTask)(nil)):             {TrainingStartPermission},
-	reflect.TypeOf((*types.MsgClaimTrainingTaskForAssignment)(nil)): {TrainingStartPermission},
-	reflect.TypeOf((*types.MsgCreateDummyTrainingTask)(nil)):        {TrainingStartPermission},
-	reflect.TypeOf((*types.MsgCreateTrainingTask)(nil)):             {TrainingStartPermission},
 
 	reflect.TypeOf((*types.MsgStartInference)(nil)): {ActiveParticipantPermission},
 	// Finish could happen after a new epoch has started
@@ -239,28 +216,6 @@ func (k msgServer) checkCurrentActiveParticipantPermission(ctx context.Context, 
 	}
 	if has {
 		return types.ErrParticipantNotFound
-	}
-	return nil
-}
-
-func (k msgServer) checkTrainingExecPermission(ctx context.Context, signer sdk.AccAddress) error {
-	allowed, err := k.TrainingExecAllowListSet.Has(ctx, signer)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return types.ErrTrainingNotAllowed
-	}
-	return nil
-}
-
-func (k msgServer) checkTrainingStartPermission(ctx context.Context, signer sdk.AccAddress) error {
-	allowed, err := k.TrainingStartAllowListSet.Has(ctx, signer)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return types.ErrTrainingNotAllowed
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build versiond-build-docker testapp-server-build-docker
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -13,7 +13,7 @@ endif
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
@@ -35,6 +35,14 @@ proxy-ssl-build-docker:
 
 bridge-build-docker:
 	@make -C bridge build-docker SET_LATEST=1
+
+versiond-build-docker:
+	@echo "Building versiond docker image..."
+	@docker build -t versiond:latest -f versioned/Dockerfile versioned
+
+testapp-server-build-docker:
+	@echo "Building testapp-server docker image..."
+	@docker build -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
 release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release
 	@git tag $(TAG_NAME)

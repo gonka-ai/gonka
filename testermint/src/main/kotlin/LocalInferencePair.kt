@@ -773,6 +773,14 @@ data class LocalInferencePair(
         } catch (_: Exception) { /* ignore */ }
     }
 
+    fun getSubnetInferenceState(proxyUrl: String, inferenceId: Long): String {
+        val result = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl -sf $proxyUrl/v1/inference -H 'X-Inference-Id: $inferenceId'"
+        ), null)
+        return result.joinToString("")
+    }
+
     fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
         val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
         val result = api.executor.exec(listOf(

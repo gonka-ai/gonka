@@ -213,9 +213,6 @@ type CosmosMessageClient interface {
 	SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
-	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
-	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
-	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *types.MsgBridgeExchange) error
 	GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error)
@@ -410,42 +407,6 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
-}
-
-func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error) {
-	transaction.Creator = icc.Address
-	msg := &inference.MsgCreateTrainingTaskResponse{}
-
-	if err := icc.SendTransactionSyncNoRetry(transaction, msg); err != nil {
-		return nil, err
-	}
-	return msg, nil
-}
-
-func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
-	transaction.Creator = icc.Address
-	msg := &inference.MsgClaimTrainingTaskForAssignmentResponse{}
-	if err := icc.SendTransactionSyncNoRetry(transaction, msg); err != nil {
-		return nil, err
-	}
-	return msg, nil
-}
-
-func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
-	transaction.Creator = icc.Address
-	result, err := icc.manager.SendTransactionSyncNoRetry(transaction)
-	if err != nil {
-		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
-		return nil, err
-	}
-
-	msg := &inference.MsgAssignTrainingTaskResponse{}
-	err = tx_manager.ParseMsgResponse(result.TxResult.Data, 0, msg)
-	if err != nil {
-		logging.Error("Failed to parse message response", types.Messages, "error", err)
-		return nil, err
-	}
-	return msg, err
 }
 
 func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExchange) error {

@@ -11,7 +11,6 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
-	"decentralized-api/training"
 	"net/http"
 	"time"
 
@@ -26,7 +25,6 @@ type Server struct {
 	nodeBroker          *broker.Broker
 	configManager       *apiconfig.ConfigManager
 	recorder            cosmosclient.CosmosMessageClient
-	trainingExecutor    *training.Executor
 	blockQueue          *BridgeQueue
 	bandwidthLimiter    *internal.BandwidthLimiter
 	identityCache       *identityCache
@@ -59,7 +57,6 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
-	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	payloadStorage payloadstorage.PayloadStorage,
@@ -75,7 +72,6 @@ func NewServer(
 		nodeBroker:          nodeBroker,
 		configManager:       configManager,
 		recorder:            recorder,
-		trainingExecutor:    trainingExecutor,
 		blockQueue:          blockQueue,
 		identityCache:       newIdentityCache(),
 		payloadStorage:      payloadStorage,
@@ -104,11 +100,6 @@ func NewServer(
 	g.GET("participants/:address", s.getAccountByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
-
-	g.POST("training/tasks", s.postTrainingTask)
-	g.GET("training/tasks", s.getTrainingTasks)
-	g.GET("training/tasks/:id", s.getTrainingTask)
-	g.POST("training/lock-nodes", s.lockTrainingNodes)
 
 	g.POST("verify-proof", s.postVerifyProof)
 	g.POST("verify-block", s.postVerifyBlock)

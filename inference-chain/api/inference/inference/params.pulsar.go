@@ -15564,6 +15564,554 @@ func (x *fastReflection_TransferAgentAccessParams) ProtoMethods() *protoiface.Me
 	}
 }
 
+var (
+	md_SubnetApprovedVersion        protoreflect.MessageDescriptor
+	fd_SubnetApprovedVersion_name   protoreflect.FieldDescriptor
+	fd_SubnetApprovedVersion_binary protoreflect.FieldDescriptor
+	fd_SubnetApprovedVersion_sha256 protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_params_proto_init()
+	md_SubnetApprovedVersion = File_inference_inference_params_proto.Messages().ByName("SubnetApprovedVersion")
+	fd_SubnetApprovedVersion_name = md_SubnetApprovedVersion.Fields().ByName("name")
+	fd_SubnetApprovedVersion_binary = md_SubnetApprovedVersion.Fields().ByName("binary")
+	fd_SubnetApprovedVersion_sha256 = md_SubnetApprovedVersion.Fields().ByName("sha256")
+}
+
+var _ protoreflect.Message = (*fastReflection_SubnetApprovedVersion)(nil)
+
+type fastReflection_SubnetApprovedVersion SubnetApprovedVersion
+
+func (x *SubnetApprovedVersion) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_SubnetApprovedVersion)(x)
+}
+
+func (x *SubnetApprovedVersion) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_params_proto_msgTypes[18]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_SubnetApprovedVersion_messageType fastReflection_SubnetApprovedVersion_messageType
+var _ protoreflect.MessageType = fastReflection_SubnetApprovedVersion_messageType{}
+
+type fastReflection_SubnetApprovedVersion_messageType struct{}
+
+func (x fastReflection_SubnetApprovedVersion_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_SubnetApprovedVersion)(nil)
+}
+func (x fastReflection_SubnetApprovedVersion_messageType) New() protoreflect.Message {
+	return new(fastReflection_SubnetApprovedVersion)
+}
+func (x fastReflection_SubnetApprovedVersion_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_SubnetApprovedVersion
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_SubnetApprovedVersion) Descriptor() protoreflect.MessageDescriptor {
+	return md_SubnetApprovedVersion
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_SubnetApprovedVersion) Type() protoreflect.MessageType {
+	return _fastReflection_SubnetApprovedVersion_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_SubnetApprovedVersion) New() protoreflect.Message {
+	return new(fastReflection_SubnetApprovedVersion)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_SubnetApprovedVersion) Interface() protoreflect.ProtoMessage {
+	return (*SubnetApprovedVersion)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_SubnetApprovedVersion) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Name != "" {
+		value := protoreflect.ValueOfString(x.Name)
+		if !f(fd_SubnetApprovedVersion_name, value) {
+			return
+		}
+	}
+	if x.Binary != "" {
+		value := protoreflect.ValueOfString(x.Binary)
+		if !f(fd_SubnetApprovedVersion_binary, value) {
+			return
+		}
+	}
+	if x.Sha256 != "" {
+		value := protoreflect.ValueOfString(x.Sha256)
+		if !f(fd_SubnetApprovedVersion_sha256, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_SubnetApprovedVersion) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		return x.Name != ""
+	case "inference.inference.SubnetApprovedVersion.binary":
+		return x.Binary != ""
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		return x.Sha256 != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_SubnetApprovedVersion) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		x.Name = ""
+	case "inference.inference.SubnetApprovedVersion.binary":
+		x.Binary = ""
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		x.Sha256 = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_SubnetApprovedVersion) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		value := x.Name
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.SubnetApprovedVersion.binary":
+		value := x.Binary
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		value := x.Sha256
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_SubnetApprovedVersion) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		x.Name = value.Interface().(string)
+	case "inference.inference.SubnetApprovedVersion.binary":
+		x.Binary = value.Interface().(string)
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		x.Sha256 = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_SubnetApprovedVersion) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		panic(fmt.Errorf("field name of message inference.inference.SubnetApprovedVersion is not mutable"))
+	case "inference.inference.SubnetApprovedVersion.binary":
+		panic(fmt.Errorf("field binary of message inference.inference.SubnetApprovedVersion is not mutable"))
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		panic(fmt.Errorf("field sha256 of message inference.inference.SubnetApprovedVersion is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_SubnetApprovedVersion) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.SubnetApprovedVersion.name":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.SubnetApprovedVersion.binary":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.SubnetApprovedVersion.sha256":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetApprovedVersion"))
+		}
+		panic(fmt.Errorf("message inference.inference.SubnetApprovedVersion does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_SubnetApprovedVersion) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.SubnetApprovedVersion", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_SubnetApprovedVersion) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_SubnetApprovedVersion) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_SubnetApprovedVersion) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_SubnetApprovedVersion) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*SubnetApprovedVersion)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Name)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Binary)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Sha256)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*SubnetApprovedVersion)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Sha256) > 0 {
+			i -= len(x.Sha256)
+			copy(dAtA[i:], x.Sha256)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Sha256)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if len(x.Binary) > 0 {
+			i -= len(x.Binary)
+			copy(dAtA[i:], x.Binary)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Binary)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.Name) > 0 {
+			i -= len(x.Name)
+			copy(dAtA[i:], x.Name)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Name)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*SubnetApprovedVersion)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: SubnetApprovedVersion: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: SubnetApprovedVersion: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Name = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Binary", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Binary = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Sha256", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Sha256 = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 var _ protoreflect.List = (*_SubnetEscrowParams_5_list)(nil)
 
 type _SubnetEscrowParams_5_list struct {
@@ -15610,6 +16158,57 @@ func (x *_SubnetEscrowParams_5_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_SubnetEscrowParams_7_list)(nil)
+
+type _SubnetEscrowParams_7_list struct {
+	list *[]*SubnetApprovedVersion
+}
+
+func (x *_SubnetEscrowParams_7_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_SubnetEscrowParams_7_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_SubnetEscrowParams_7_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*SubnetApprovedVersion)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_SubnetEscrowParams_7_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*SubnetApprovedVersion)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_SubnetEscrowParams_7_list) AppendMutable() protoreflect.Value {
+	v := new(SubnetApprovedVersion)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_SubnetEscrowParams_7_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_SubnetEscrowParams_7_list) NewElement() protoreflect.Value {
+	v := new(SubnetApprovedVersion)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_SubnetEscrowParams_7_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_SubnetEscrowParams                           protoreflect.MessageDescriptor
 	fd_SubnetEscrowParams_min_amount                protoreflect.FieldDescriptor
@@ -15618,6 +16217,7 @@ var (
 	fd_SubnetEscrowParams_group_size                protoreflect.FieldDescriptor
 	fd_SubnetEscrowParams_allowed_creator_addresses protoreflect.FieldDescriptor
 	fd_SubnetEscrowParams_token_price               protoreflect.FieldDescriptor
+	fd_SubnetEscrowParams_approved_versions         protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -15629,6 +16229,7 @@ func init() {
 	fd_SubnetEscrowParams_group_size = md_SubnetEscrowParams.Fields().ByName("group_size")
 	fd_SubnetEscrowParams_allowed_creator_addresses = md_SubnetEscrowParams.Fields().ByName("allowed_creator_addresses")
 	fd_SubnetEscrowParams_token_price = md_SubnetEscrowParams.Fields().ByName("token_price")
+	fd_SubnetEscrowParams_approved_versions = md_SubnetEscrowParams.Fields().ByName("approved_versions")
 }
 
 var _ protoreflect.Message = (*fastReflection_SubnetEscrowParams)(nil)
@@ -15640,7 +16241,7 @@ func (x *SubnetEscrowParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *SubnetEscrowParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[18]
+	mi := &file_inference_inference_params_proto_msgTypes[19]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15732,6 +16333,12 @@ func (x *fastReflection_SubnetEscrowParams) Range(f func(protoreflect.FieldDescr
 			return
 		}
 	}
+	if len(x.ApprovedVersions) != 0 {
+		value := protoreflect.ValueOfList(&_SubnetEscrowParams_7_list{list: &x.ApprovedVersions})
+		if !f(fd_SubnetEscrowParams_approved_versions, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -15759,6 +16366,8 @@ func (x *fastReflection_SubnetEscrowParams) Has(fd protoreflect.FieldDescriptor)
 		return len(x.AllowedCreatorAddresses) != 0
 	case "inference.inference.SubnetEscrowParams.token_price":
 		return x.TokenPrice != uint64(0)
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		return len(x.ApprovedVersions) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetEscrowParams"))
@@ -15787,6 +16396,8 @@ func (x *fastReflection_SubnetEscrowParams) Clear(fd protoreflect.FieldDescripto
 		x.AllowedCreatorAddresses = nil
 	case "inference.inference.SubnetEscrowParams.token_price":
 		x.TokenPrice = uint64(0)
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		x.ApprovedVersions = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetEscrowParams"))
@@ -15824,6 +16435,12 @@ func (x *fastReflection_SubnetEscrowParams) Get(descriptor protoreflect.FieldDes
 	case "inference.inference.SubnetEscrowParams.token_price":
 		value := x.TokenPrice
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		if len(x.ApprovedVersions) == 0 {
+			return protoreflect.ValueOfList(&_SubnetEscrowParams_7_list{})
+		}
+		listValue := &_SubnetEscrowParams_7_list{list: &x.ApprovedVersions}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetEscrowParams"))
@@ -15858,6 +16475,10 @@ func (x *fastReflection_SubnetEscrowParams) Set(fd protoreflect.FieldDescriptor,
 		x.AllowedCreatorAddresses = *clv.list
 	case "inference.inference.SubnetEscrowParams.token_price":
 		x.TokenPrice = value.Uint()
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		lv := value.List()
+		clv := lv.(*_SubnetEscrowParams_7_list)
+		x.ApprovedVersions = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetEscrowParams"))
@@ -15883,6 +16504,12 @@ func (x *fastReflection_SubnetEscrowParams) Mutable(fd protoreflect.FieldDescrip
 			x.AllowedCreatorAddresses = []string{}
 		}
 		value := &_SubnetEscrowParams_5_list{list: &x.AllowedCreatorAddresses}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		if x.ApprovedVersions == nil {
+			x.ApprovedVersions = []*SubnetApprovedVersion{}
+		}
+		value := &_SubnetEscrowParams_7_list{list: &x.ApprovedVersions}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.SubnetEscrowParams.min_amount":
 		panic(fmt.Errorf("field min_amount of message inference.inference.SubnetEscrowParams is not mutable"))
@@ -15920,6 +16547,9 @@ func (x *fastReflection_SubnetEscrowParams) NewField(fd protoreflect.FieldDescri
 		return protoreflect.ValueOfList(&_SubnetEscrowParams_5_list{list: &list})
 	case "inference.inference.SubnetEscrowParams.token_price":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.SubnetEscrowParams.approved_versions":
+		list := []*SubnetApprovedVersion{}
+		return protoreflect.ValueOfList(&_SubnetEscrowParams_7_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.SubnetEscrowParams"))
@@ -16010,6 +16640,12 @@ func (x *fastReflection_SubnetEscrowParams) ProtoMethods() *protoiface.Methods {
 		if x.TokenPrice != 0 {
 			n += 1 + runtime.Sov(uint64(x.TokenPrice))
 		}
+		if len(x.ApprovedVersions) > 0 {
+			for _, e := range x.ApprovedVersions {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -16038,6 +16674,22 @@ func (x *fastReflection_SubnetEscrowParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ApprovedVersions) > 0 {
+			for iNdEx := len(x.ApprovedVersions) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.ApprovedVersions[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x3a
+			}
 		}
 		if x.TokenPrice != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.TokenPrice))
@@ -16249,6 +16901,40 @@ func (x *fastReflection_SubnetEscrowParams) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ApprovedVersions", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ApprovedVersions = append(x.ApprovedVersions, &SubnetApprovedVersion{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ApprovedVersions[len(x.ApprovedVersions)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -17982,24 +18668,77 @@ func (x *TransferAgentAccessParams) GetAllowedTransferAddresses() []string {
 	return nil
 }
 
+// SubnetApprovedVersion describes a single approved subnet binary.
+type SubnetApprovedVersion struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Name   string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Binary string `protobuf:"bytes,2,opt,name=binary,proto3" json:"binary,omitempty"`
+	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+}
+
+func (x *SubnetApprovedVersion) Reset() {
+	*x = SubnetApprovedVersion{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_params_proto_msgTypes[18]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *SubnetApprovedVersion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubnetApprovedVersion) ProtoMessage() {}
+
+// Deprecated: Use SubnetApprovedVersion.ProtoReflect.Descriptor instead.
+func (*SubnetApprovedVersion) Descriptor() ([]byte, []int) {
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SubnetApprovedVersion) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SubnetApprovedVersion) GetBinary() string {
+	if x != nil {
+		return x.Binary
+	}
+	return ""
+}
+
+func (x *SubnetApprovedVersion) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
 // SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
 type SubnetEscrowParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	MinAmount               uint64   `protobuf:"varint,1,opt,name=min_amount,json=minAmount,proto3" json:"min_amount,omitempty"`
-	MaxAmount               uint64   `protobuf:"varint,2,opt,name=max_amount,json=maxAmount,proto3" json:"max_amount,omitempty"`
-	MaxEscrowsPerEpoch      uint32   `protobuf:"varint,3,opt,name=max_escrows_per_epoch,json=maxEscrowsPerEpoch,proto3" json:"max_escrows_per_epoch,omitempty"`
-	GroupSize               uint32   `protobuf:"varint,4,opt,name=group_size,json=groupSize,proto3" json:"group_size,omitempty"`
-	AllowedCreatorAddresses []string `protobuf:"bytes,5,rep,name=allowed_creator_addresses,json=allowedCreatorAddresses,proto3" json:"allowed_creator_addresses,omitempty"`
-	TokenPrice              uint64   `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	MinAmount               uint64                   `protobuf:"varint,1,opt,name=min_amount,json=minAmount,proto3" json:"min_amount,omitempty"`
+	MaxAmount               uint64                   `protobuf:"varint,2,opt,name=max_amount,json=maxAmount,proto3" json:"max_amount,omitempty"`
+	MaxEscrowsPerEpoch      uint32                   `protobuf:"varint,3,opt,name=max_escrows_per_epoch,json=maxEscrowsPerEpoch,proto3" json:"max_escrows_per_epoch,omitempty"`
+	GroupSize               uint32                   `protobuf:"varint,4,opt,name=group_size,json=groupSize,proto3" json:"group_size,omitempty"`
+	AllowedCreatorAddresses []string                 `protobuf:"bytes,5,rep,name=allowed_creator_addresses,json=allowedCreatorAddresses,proto3" json:"allowed_creator_addresses,omitempty"`
+	TokenPrice              uint64                   `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	ApprovedVersions        []*SubnetApprovedVersion `protobuf:"bytes,7,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
 }
 
 func (x *SubnetEscrowParams) Reset() {
 	*x = SubnetEscrowParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[18]
+		mi := &file_inference_inference_params_proto_msgTypes[19]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -18013,7 +18752,7 @@ func (*SubnetEscrowParams) ProtoMessage() {}
 
 // Deprecated: Use SubnetEscrowParams.ProtoReflect.Descriptor instead.
 func (*SubnetEscrowParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{18}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SubnetEscrowParams) GetMinAmount() uint64 {
@@ -18056,6 +18795,13 @@ func (x *SubnetEscrowParams) GetTokenPrice() uint64 {
 		return x.TokenPrice
 	}
 	return 0
+}
+
+func (x *SubnetEscrowParams) GetApprovedVersions() []*SubnetApprovedVersion {
+	if x != nil {
+		return x.ApprovedVersions
+	}
+	return nil
 }
 
 var File_inference_inference_params_proto protoreflect.FileDescriptor
@@ -18696,36 +19442,48 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x5f, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73,
 	0x73, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x09, 0x52, 0x18, 0x61, 0x6c, 0x6c, 0x6f, 0x77,
 	0x65, 0x64, 0x54, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73,
-	0x73, 0x65, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x87, 0x02, 0x0a, 0x12, 0x53, 0x75,
-	0x62, 0x6e, 0x65, 0x74, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x69, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x69, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12,
-	0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x78, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x31,
-	0x0a, 0x15, 0x6d, 0x61, 0x78, 0x5f, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x5f, 0x70, 0x65,
-	0x72, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x6d,
-	0x61, 0x78, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x50, 0x65, 0x72, 0x45, 0x70, 0x6f, 0x63,
-	0x68, 0x12, 0x1d, 0x0a, 0x0a, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x18,
-	0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x09, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x53, 0x69, 0x7a, 0x65,
-	0x12, 0x3a, 0x0a, 0x19, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x5f, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18, 0x05, 0x20,
-	0x03, 0x28, 0x09, 0x52, 0x17, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12, 0x1f, 0x0a, 0x0b,
-	0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0a, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x50, 0x72, 0x69, 0x63, 0x65, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
-	0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24,
-	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42,
-	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x73, 0x65, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x61, 0x0a, 0x15, 0x53, 0x75, 0x62,
+	0x6e, 0x65, 0x74, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69,
+	0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x12, 0x16,
+	0x0a, 0x06, 0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06,
+	0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xe0, 0x02, 0x0a,
+	0x12, 0x53, 0x75, 0x62, 0x6e, 0x65, 0x74, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x61, 0x72,
+	0x61, 0x6d, 0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x69, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e,
+	0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x69, 0x6e, 0x41, 0x6d, 0x6f, 0x75,
+	0x6e, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x78, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78, 0x41, 0x6d, 0x6f, 0x75, 0x6e,
+	0x74, 0x12, 0x31, 0x0a, 0x15, 0x6d, 0x61, 0x78, 0x5f, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73,
+	0x5f, 0x70, 0x65, 0x72, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d,
+	0x52, 0x12, 0x6d, 0x61, 0x78, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x50, 0x65, 0x72, 0x45,
+	0x70, 0x6f, 0x63, 0x68, 0x12, 0x1d, 0x0a, 0x0a, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x73, 0x69,
+	0x7a, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x09, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x53,
+	0x69, 0x7a, 0x65, 0x12, 0x3a, 0x0a, 0x19, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x5f, 0x63,
+	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73,
+	0x18, 0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x17, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43,
+	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12,
+	0x1f, 0x0a, 0x0b, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x06,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x50, 0x72, 0x69, 0x63, 0x65,
+	0x12, 0x57, 0x0a, 0x11, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x76, 0x65, 0x72,
+	0x73, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x53, 0x75, 0x62, 0x6e, 0x65, 0x74, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64,
+	0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x52, 0x10, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65,
+	0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42,
+	0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72,
+	0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
+	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
+	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x33,
 }
 
 var (
@@ -18740,7 +19498,7 @@ func file_inference_inference_params_proto_rawDescGZIP() []byte {
 	return file_inference_inference_params_proto_rawDescData
 }
 
-var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_inference_inference_params_proto_goTypes = []interface{}{
 	(*Params)(nil),                    // 0: inference.inference.Params
 	(*GenesisOnlyParams)(nil),         // 1: inference.inference.GenesisOnlyParams
@@ -18760,7 +19518,8 @@ var file_inference_inference_params_proto_goTypes = []interface{}{
 	(*DeveloperAccessParams)(nil),     // 15: inference.inference.DeveloperAccessParams
 	(*ParticipantAccessParams)(nil),   // 16: inference.inference.ParticipantAccessParams
 	(*TransferAgentAccessParams)(nil), // 17: inference.inference.TransferAgentAccessParams
-	(*SubnetEscrowParams)(nil),        // 18: inference.inference.SubnetEscrowParams
+	(*SubnetApprovedVersion)(nil),     // 18: inference.inference.SubnetApprovedVersion
+	(*SubnetEscrowParams)(nil),        // 19: inference.inference.SubnetEscrowParams
 }
 var file_inference_inference_params_proto_depIdxs = []int32{
 	3,  // 0: inference.inference.Params.epoch_params:type_name -> inference.inference.EpochParams
@@ -18776,7 +19535,7 @@ var file_inference_inference_params_proto_depIdxs = []int32{
 	15, // 10: inference.inference.Params.developer_access_params:type_name -> inference.inference.DeveloperAccessParams
 	16, // 11: inference.inference.Params.participant_access_params:type_name -> inference.inference.ParticipantAccessParams
 	17, // 12: inference.inference.Params.transfer_agent_access_params:type_name -> inference.inference.TransferAgentAccessParams
-	18, // 13: inference.inference.Params.subnet_escrow_params:type_name -> inference.inference.SubnetEscrowParams
+	19, // 13: inference.inference.Params.subnet_escrow_params:type_name -> inference.inference.SubnetEscrowParams
 	8,  // 14: inference.inference.GenesisOnlyParams.max_individual_power_percentage:type_name -> inference.inference.Decimal
 	8,  // 15: inference.inference.GenesisOnlyParams.genesis_guardian_multiplier:type_name -> inference.inference.Decimal
 	8,  // 16: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
@@ -18824,11 +19583,12 @@ var file_inference_inference_params_proto_depIdxs = []int32{
 	8,  // 58: inference.inference.BandwidthLimitsParams.kb_per_output_token:type_name -> inference.inference.Decimal
 	8,  // 59: inference.inference.ConfirmationPoCParams.alpha_threshold:type_name -> inference.inference.Decimal
 	8,  // 60: inference.inference.ConfirmationPoCParams.slash_fraction:type_name -> inference.inference.Decimal
-	61, // [61:61] is the sub-list for method output_type
-	61, // [61:61] is the sub-list for method input_type
-	61, // [61:61] is the sub-list for extension type_name
-	61, // [61:61] is the sub-list for extension extendee
-	0,  // [0:61] is the sub-list for field type_name
+	18, // 61: inference.inference.SubnetEscrowParams.approved_versions:type_name -> inference.inference.SubnetApprovedVersion
+	62, // [62:62] is the sub-list for method output_type
+	62, // [62:62] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }
@@ -19054,6 +19814,18 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[18].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*SubnetApprovedVersion); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_params_proto_msgTypes[19].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*SubnetEscrowParams); i {
 			case 0:
 				return &v.state
@@ -19072,7 +19844,7 @@ func file_inference_inference_params_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_params_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

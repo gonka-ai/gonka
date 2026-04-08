@@ -31,7 +31,6 @@ type MockClient struct {
 	NodeStateError        error
 	InferenceHealthError  error
 	InferenceUpError      error
-	StartTrainingError    error
 	GetGPUDevicesError    error
 	GetGPUDriverError     error
 	CheckModelStatusError error
@@ -45,7 +44,6 @@ type MockClient struct {
 	NodeStateCalled        int
 	InferenceHealthCalled  int
 	InferenceUpCalled      int
-	StartTrainingCalled    int
 	GetGPUDevicesCalled    int
 	GetGPUDriverCalled     int
 	CheckModelStatusCalled int
@@ -64,16 +62,8 @@ type MockClient struct {
 	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
 	// Capture parameters
-	LastInferenceModel string
-	LastInferenceArgs  []string
-	LastTrainingParams struct {
-		TaskId         uint64
-		Participant    string
-		NodeId         string
-		MasterNodeAddr string
-		Rank           int
-		WorldSize      int
-	}
+	LastInferenceModel   string
+	LastInferenceArgs    []string
 	LastModelStatusCheck *Model
 	LastModelDownload    *Model
 	LastModelDelete      *Model
@@ -149,7 +139,6 @@ func (m *MockClient) Reset() {
 	m.NodeStateError = nil
 	m.InferenceHealthError = nil
 	m.InferenceUpError = nil
-	m.StartTrainingError = nil
 	m.GetGPUDevicesError = nil
 	m.GetGPUDriverError = nil
 	m.CheckModelStatusError = nil
@@ -162,7 +151,6 @@ func (m *MockClient) Reset() {
 	m.NodeStateCalled = 0
 	m.InferenceHealthCalled = 0
 	m.InferenceUpCalled = 0
-	m.StartTrainingCalled = 0
 	m.GetGPUDevicesCalled = 0
 	m.GetGPUDriverCalled = 0
 	m.CheckModelStatusCalled = 0
@@ -177,14 +165,6 @@ func (m *MockClient) Reset() {
 
 	m.LastInferenceModel = ""
 	m.LastInferenceArgs = nil
-	m.LastTrainingParams = struct {
-		TaskId         uint64
-		Participant    string
-		NodeId         string
-		MasterNodeAddr string
-		Rank           int
-		WorldSize      int
-	}{}
 	m.LastModelStatusCheck = nil
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
@@ -247,30 +227,6 @@ func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
 		return []string{m.LastInferenceModel}, nil
 	}
 	return nil, nil
-}
-
-func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	m.StartTrainingCalled++
-	m.LastTrainingParams.TaskId = taskId
-	m.LastTrainingParams.Participant = participant
-	m.LastTrainingParams.NodeId = nodeId
-	m.LastTrainingParams.MasterNodeAddr = masterNodeAddr
-	m.LastTrainingParams.Rank = rank
-	m.LastTrainingParams.WorldSize = worldSize
-	if m.StartTrainingError != nil {
-		return m.StartTrainingError
-	}
-	m.CurrentState = MlNodeState_TRAIN
-	return nil
-}
-
-func (m *MockClient) GetTrainingStatus(ctx context.Context) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	// Not implemented for now
-	return nil
 }
 
 // GPU operations
