@@ -22,6 +22,9 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return nil, err
 	}
+	if err := validateOpenAICompatRequestMap(requestMap); err != nil {
+		return nil, err
+	}
 
 	if err := validateMessageContents(requestMap); err != nil {
 		return nil, err
