@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"subnet/signing"
 	"subnet/state"
 	"subnet/stub"
+	"subnet/transport"
 	"subnet/types"
 	"subnet/user"
 )
@@ -81,20 +83,31 @@ func TestHasMsgFinish(t *testing.T) {
 // --- Test infrastructure for proxy-level tests ---
 
 // killableClient wraps a HostClient. Kill/Revive toggle availability.
+// KillFatal simulates a non-retryable HTTP 4xx response from the host
+// (for example a 403 "sender not in group" from the auth layer).
 type killableClient struct {
 	inner  user.HostClient
 	killed atomic.Bool
+	fatal  atomic.Bool
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
+	if c.fatal.Load() {
+		return nil, &transport.HTTPStatusError{
+			StatusCode: http.StatusForbidden,
+			Path:       "/sessions/escrow-proxy/chat/completions",
+			Body:       "sender not in group",
+		}
+	}
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
 	return c.inner.Send(ctx, req)
 }
 
-func (c *killableClient) Kill()   { c.killed.Store(true) }
-func (c *killableClient) Revive() { c.killed.Store(false) }
+func (c *killableClient) Kill()      { c.killed.Store(true) }
+func (c *killableClient) Revive()    { c.killed.Store(false) }
+func (c *killableClient) KillFatal() { c.fatal.Store(true) }
 
 // verifierClient wraps killableClient and implements user.TimeoutVerifier.
 // This allows session.TimeoutVerifiers() to discover it.
@@ -337,3 +350,62 @@ func TestHandleTimeout_InsufficientVotes(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.StatusPending, rec.Status)
 }
+
+// TestRunInference_FatalHTTPErrorReturnsImmediately reproduces the behavior
+// described in #1019: when the host rejects an inference with a fatal 4xx
+// status (for example 403 "sender not in group" from the auth layer), the
+// proxy must surface that error immediately instead of blocking on
+// RefusalTimeout / ExecutionTimeout and then falling into timeout-vote
+// collection.
+//
+// Before the fix, sendAndProcess swallowed SendOnly errors whenever the
+// response was nil, so runInference waited through two deadline cycles and
+// eventually returned a misleading "insufficient timeout votes" / "timed
+// out" error. After the fix, 4xx statuses are propagated so the caller can
+// return 4xx/502 to the OpenAI client without the minute-long wait.
+func TestRunInference_FatalHTTPErrorReturnsImmediately(t *testing.T) {
+	zeroTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	ctx := context.Background()
+
+	// Nonce 1 routes to host 1 % 3 = 1. Put that host in fatal mode so
+	// Send returns *transport.HTTPStatusError{StatusCode: 403}.
+	env.killables[1].KillFatal()
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	elapsed := time.Since(start)
+
+	// The fatal HTTP error must be surfaced — not converted into a timeout.
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "host rejected inference",
+		"fatal HTTP errors must be propagated with a clear cause")
+	require.Contains(t, err.Error(), "403",
+		"status code must be preserved in the error chain")
+	require.NotContains(t, err.Error(), "timed out",
+		"fatal errors must not be reported as timeouts")
+	require.NotContains(t, err.Error(), "insufficient votes",
+		"fatal errors must not reach the timeout vote path")
+
+	// The cause must also be inspectable via errors.As for future callers
+	// that want to map status codes to HTTP responses.
+	require.True(t, transport.IsFatalHTTPError(err),
+		"error must unwrap to *transport.HTTPStatusError with a fatal status")
+
+	// Duration sanity: with zeroTimeoutBuffer the RefusalTimeout is 1s and
+	// ExecutionTimeout is 1s, so the old swallow-then-wait behavior burns
+	// at least ~2s before returning. A correct implementation returns in
+	// the low-millisecond range.
+	require.Less(t, elapsed, 500*time.Millisecond,
+		"fatal HTTP errors must fail fast, not block on refusal/execution timeouts")
+
+	// The inference must NOT be marked as timed out — the timeout machinery
+	// was correctly bypassed.
+	st := env.sm.SnapshotState()
+	rec, ok := st.Inferences[1]
+	require.True(t, ok, "inference 1 should exist from PrepareInference")
+	require.Equal(t, types.StatusPending, rec.Status,
+		"inference must remain pending — fatal errors must not trigger timeout state transitions")
+}
+

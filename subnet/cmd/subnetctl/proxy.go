@@ -14,6 +14,7 @@ import (
 
 	"subnet/host"
 	"subnet/state"
+	"subnet/transport"
 	"subnet/types"
 	"subnet/user"
 )
@@ -190,9 +191,18 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 // sendAndProcess sends the prepared inference and processes the response.
 // Returns finished=true when MsgFinishInference is in the host's mempool.
 // confirmedAt is the executor's receipt timestamp (0 if no receipt received).
+//
+// Fatal HTTP errors from the host (4xx other than 429) are propagated
+// immediately so the caller fails fast with a clear cause instead of
+// waiting through refusal/execution timeouts. Retryable errors (5xx,
+// 429, network failures) keep the existing behavior: no receipt is
+// returned and runInference falls through to its deadline-based retry.
 func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64) (finished bool, confirmedAt int64, err error) {
 	resp, sendErr := p.session.SendOnly(ctx, prepared)
 	if sendErr != nil && resp == nil {
+		if transport.IsFatalHTTPError(sendErr) {
+			return false, 0, fmt.Errorf("host rejected inference: %w", sendErr)
+		}
 		return false, 0, nil
 	}
 
