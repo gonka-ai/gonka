@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"net"
 	"net/url"
 	"strings"
@@ -23,6 +24,23 @@ func ValidateBase64RSig64(fieldName, sigB64 string) error {
 	}
 	if len(b) != 64 {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must decode to 64 bytes (r||s), got %d bytes", fieldName, len(b))
+	}
+	return nil
+}
+
+// ValidateHexRSig64 validates that the provided string is hex-encoded
+// and decodes to exactly 64 bytes, representing r||s concatenated signature bytes.
+func ValidateHexRSig64(fieldName, sigHex string) error {
+	if len(sigHex) == 0 {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s is required", fieldName)
+	}
+	// A 64-byte hex string must be 128 characters long.
+	if len(sigHex) != 128 {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must be 128 characters (64 bytes in hex), got %d characters", fieldName, len(sigHex))
+	}
+	_, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "%s must be hex: %v", fieldName, err)
 	}
 	return nil
 }
@@ -130,4 +148,15 @@ func isPrivateIP(ip net.IP) bool {
 	}
 
 	return false
+}
+
+func ValidateNodeId(nodeId string) error {
+	if nodeId == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node_id cannot be blank")
+	}
+	if len(nodeId) > 256 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node_id is too long")
+	}
+
+	return nil
 }

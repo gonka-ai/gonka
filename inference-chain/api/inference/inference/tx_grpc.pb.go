@@ -29,7 +29,6 @@ const (
 	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
-	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
 	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
 	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
 	Msg_MLNodeWeightDistribution_FullMethodName         = "/inference.inference.Msg/MLNodeWeightDistribution"
@@ -72,7 +71,6 @@ type MsgClient interface {
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
-	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error)
 	// PoC v2 off-chain commit messages
@@ -193,15 +191,6 @@ func (c *msgClient) ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts 
 func (c *msgClient) SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error) {
 	out := new(MsgSubmitPocBatchResponse)
 	err := c.cc.Invoke(ctx, Msg_SubmitPocBatch_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error) {
-	out := new(MsgSubmitPocValidationResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitPocValidation_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +429,6 @@ type MsgServer interface {
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
-	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error)
 	// PoC v2 off-chain commit messages
@@ -503,9 +491,6 @@ func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*
 }
 func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocBatch not implemented")
-}
-func (UnimplementedMsgServer) SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidation not implemented")
 }
 func (UnimplementedMsgServer) SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidationsV2 not implemented")
@@ -768,24 +753,6 @@ func _Msg_SubmitPocBatch_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SubmitPocBatch(ctx, req.(*MsgSubmitPocBatch))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_SubmitPocValidation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitPocValidation)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SubmitPocValidation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SubmitPocValidation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitPocValidation(ctx, req.(*MsgSubmitPocValidation))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1268,10 +1235,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPocBatch",
 			Handler:    _Msg_SubmitPocBatch_Handler,
-		},
-		{
-			MethodName: "SubmitPocValidation",
-			Handler:    _Msg_SubmitPocValidation_Handler,
 		},
 		{
 			MethodName: "SubmitPocValidationsV2",

@@ -40,7 +40,6 @@ func (msg *MsgSubmitNewUnfundedParticipant) GetSignersStrings() []string {
 	return []string{msg.Creator}
 }
 func (msg *MsgSubmitPocBatch) GetSignersStrings() []string           { return []string{msg.Creator} }
-func (msg *MsgSubmitPocValidation) GetSignersStrings() []string      { return []string{msg.Creator} }
 func (msg *MsgSubmitPocValidationsV2) GetSignersStrings() []string   { return []string{msg.Creator} }
 func (msg *MsgPoCV2StoreCommit) GetSignersStrings() []string         { return []string{msg.Creator} }
 func (msg *MsgMLNodeWeightDistribution) GetSignersStrings() []string { return []string{msg.Creator} }

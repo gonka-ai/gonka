@@ -49,32 +49,6 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 		)
 		return inferencetypes.ErrDeprecated
 
-	case *inferencetypes.MsgSubmitPocValidation:
-		params, err := ppd.inferenceKeeper.GetParams(ctx)
-		if err != nil {
-			return err
-		}
-		if !params.PocParams.PocV2Enabled {
-			if err := ppd.inferenceKeeper.CheckPoCMessageTooLate(ctx, m.PocStageStartBlockHeight, inferencemodulekeeper.PoCWindowValidation); err != nil {
-				ppd.inferenceKeeper.LogDebug(
-					"AnteHandle: PocPeriodValidation - rejecting MsgSubmitPocValidation as too late",
-					inferencetypes.PoC,
-					"msg_type_url", sdk.MsgTypeURL(msg),
-					"pocStageStartBlockHeight", m.PocStageStartBlockHeight,
-					"currentBlockHeight", ctx.BlockHeight(),
-					"error", err,
-				)
-				return err
-			}
-			return nil
-		}
-		ppd.inferenceKeeper.LogDebug(
-			"AnteHandle: PocPeriodValidation - rejecting deprecated MsgSubmitPocValidation",
-			inferencetypes.PoC,
-			"msg_type_url", sdk.MsgTypeURL(msg),
-		)
-		return inferencetypes.ErrDeprecated
-
 	case *inferencetypes.MsgSubmitPocValidationsV2:
 		params, err := ppd.inferenceKeeper.GetParams(ctx)
 		if err != nil {
@@ -156,7 +130,7 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
-	case *inferencetypes.MsgSubmitPocBatch, *inferencetypes.MsgSubmitPocValidation,
+	case *inferencetypes.MsgSubmitPocBatch,
 		*inferencetypes.MsgSubmitPocValidationsV2,
 		*inferencetypes.MsgPoCV2StoreCommit, *inferencetypes.MsgMLNodeWeightDistribution:
 		return ppd.checkPocMessageTooLate(ctx, msg)
