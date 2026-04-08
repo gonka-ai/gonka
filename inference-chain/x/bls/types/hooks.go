@@ -1,6 +1,10 @@
 package types
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
 const (
 	ThresholdSigningFailedPostActionNone       = false
@@ -25,24 +29,26 @@ func NewMultiBlsHooks(hooks ...BlsHooks) MultiBlsHooks {
 }
 
 func (h MultiBlsHooks) AfterThresholdSigningCompleted(ctx context.Context, requestID []byte, currentEpochID uint64) error {
+	var errs []error
 	for i := range h {
 		if err := h[i].AfterThresholdSigningCompleted(ctx, requestID, currentEpochID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("after threshold signing completed hook[%d] %T: %w", i, h[i], err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (h MultiBlsHooks) AfterThresholdSigningFailed(ctx context.Context, requestID []byte, currentEpochID uint64, reason string) (bool, error) {
 	closeRetry := ThresholdSigningFailedPostActionNone
+	var errs []error
 	for i := range h {
 		hookCloseRetry, err := h[i].AfterThresholdSigningFailed(ctx, requestID, currentEpochID, reason)
-		if err != nil {
-			return closeRetry, err
-		}
 		if hookCloseRetry {
 			closeRetry = ThresholdSigningFailedPostActionCloseRetry
 		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("after threshold signing failed hook[%d] %T: %w", i, h[i], err))
+		}
 	}
-	return closeRetry, nil
+	return closeRetry, errors.Join(errs...)
 }

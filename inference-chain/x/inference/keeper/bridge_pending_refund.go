@@ -98,6 +98,11 @@ func (k Keeper) refundPendingBridgeWithdrawalByMint(ctx sdk.Context, pendingWith
 		return fmt.Errorf("invalid bridge withdrawal amount %q", pendingWithdrawal.Amount)
 	}
 
+	// Defensive check: refund should mint only through a currently registered wrapped contract
+	if _, found := k.GetWrappedTokenContractByWrappedAddress(ctx, pendingWithdrawal.Creator); !found {
+		return fmt.Errorf("wrapped token contract %q is not registered", pendingWithdrawal.Creator)
+	}
+
 	if k.mintTokensFn != nil {
 		return k.mintTokensFn(ctx, pendingWithdrawal.Creator, recipientAddr.String(), pendingWithdrawal.Amount)
 	}

@@ -9,8 +9,10 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
+	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -152,6 +154,47 @@ func TestMsgServer_CancelBridgeOperation_WithdrawalUserAllowed(t *testing.T) {
 
 	_, err = k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
 	require.NoError(t, err)
+}
+
+func TestMsgServer_CancelBridgeOperation_CompletedSigningRejected(t *testing.T) {
+	k, _, ctx, mocks := setupKeeperWithMocks(t)
+	requestID := "req_cancel_completed"
+	requestHash := hashBridgeRequestIDForCancelTest(requestID)
+	requestKey := hex.EncodeToString(requestHash)
+
+	require.NoError(t, k.BridgeMintRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeMint{
+		Creator:            testutil.Creator,
+		Amount:             "1000",
+		DestinationAddress: "0xabc",
+		ChainId:            "ethereum",
+	}))
+
+	creatorAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creatorAddr).Return(true).Times(1)
+
+	blsMock := keepertest.NewMockBlsKeeper(gomock.NewController(t))
+	blsMock.EXPECT().
+		GetSigningStatus(gomock.Any(), requestHash).
+		Return(&blstypes.ThresholdSigningRequest{
+			Status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED,
+		}, nil).
+		Times(1)
+
+	k.BlsKeeper = blsMock
+	ms := inferencekeeper.NewMsgServerImpl(k)
+
+	_, err = ms.CancelBridgeOperation(sdk.WrapSDKContext(ctx), &types.MsgCancelBridgeOperation{
+		Creator:   testutil.Creator,
+		RequestId: requestID,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to cancel threshold signing request")
+	require.Contains(t, err.Error(), "threshold signing already completed")
+
+	stillPending, getErr := k.BridgeMintRefundsMap.Get(ctx, requestKey)
+	require.NoError(t, getErr)
+	require.Equal(t, testutil.Creator, stillPending.Creator)
 }
 
 func hashBridgeRequestIDForCancelTest(requestID string) []byte {

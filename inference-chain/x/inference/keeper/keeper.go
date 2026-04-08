@@ -543,10 +543,6 @@ func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
 	return k.getWasmKeeper()
 }
 
-func (k *Keeper) SetMintTokensFnForTesting(mintTokensFn func(ctx sdk.Context, contractAddr, recipient, amount string) error) {
-	k.mintTokensFn = mintTokensFn
-}
-
 // GetCollateralKeeper returns the collateral keeper.
 func (k Keeper) GetCollateralKeeper() types.CollateralKeeper {
 	return k.collateralKeeper

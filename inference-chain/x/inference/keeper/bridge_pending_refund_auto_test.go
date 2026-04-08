@@ -3,6 +3,8 @@ package keeper_test
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
+	"strings"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -118,6 +120,16 @@ func TestProcessAutoRefundForFailedBridgeOperation_Withdrawal(t *testing.T) {
 		Amount:             "1000",
 		DestinationAddress: "0xabc",
 	}))
+	wrappedRef := types.BridgeTokenReference{
+		ChainId:         "ethereum",
+		ContractAddress: "0xabc",
+	}
+	require.NoError(t, k.WrappedContractReverseIndex.Set(expiryCtx, strings.ToLower(testutil.Creator), wrappedRef))
+	require.NoError(t, k.WrappedTokenContractsMap.Set(expiryCtx, collections.Join(wrappedRef.ChainId, strings.ToLower(wrappedRef.ContractAddress)), types.BridgeWrappedTokenContract{
+		ChainId:                wrappedRef.ChainId,
+		ContractAddress:        wrappedRef.ContractAddress,
+		WrappedContractAddress: testutil.Creator,
+	}))
 
 	var mintCalls int
 	k.SetMintTokensFnForTesting(func(_ sdk.Context, contractAddr, recipient, amount string) error {
@@ -157,4 +169,66 @@ func TestProcessAutoRefundForFailedBridgeOperation_NoPendingContext(t *testing.T
 	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
 	require.NoError(t, err)
 	require.False(t, closeRetry)
+}
+
+func TestProcessAutoRefundForFailedBridgeOperation_MintRefundFailure(t *testing.T) {
+	k, _, ctx, mocks := setupKeeperWithMocks(t)
+	requestID := bytes.Repeat([]byte{0x67}, 32)
+	requestKey := hex.EncodeToString(requestID)
+
+	require.NoError(t, k.BridgeMintRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeMint{
+		Creator:            testutil.Creator,
+		Amount:             "1000",
+		DestinationAddress: "0xabc",
+		ChainId:            "ethereum",
+	}))
+
+	creatorAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	refundCoins := sdk.NewCoins(sdk.NewCoin(types.BaseCoin, math.NewInt(1000)))
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.BridgeEscrowAccName, creatorAddr, refundCoins, "bridge_release").
+		Return(errors.New("insufficient funds")).
+		Times(1)
+
+	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to auto-refund pending bridge mint request")
+	require.False(t, closeRetry)
+
+	stillPending, getErr := k.BridgeMintRefundsMap.Get(ctx, requestKey)
+	require.NoError(t, getErr)
+	require.Equal(t, testutil.Creator, stillPending.Creator)
+
+	foundAutoRefundEvent := false
+	for _, event := range ctx.EventManager().Events() {
+		if event.Type == "bridge_operation_auto_refunded" {
+			foundAutoRefundEvent = true
+			break
+		}
+	}
+	require.False(t, foundAutoRefundEvent)
+}
+
+func TestProcessAutoRefundForFailedBridgeOperation_WithdrawalContractNotRegistered(t *testing.T) {
+	k, _, ctx, _ := setupKeeperWithMocks(t)
+	requestID := bytes.Repeat([]byte{0x68}, 32)
+	requestKey := hex.EncodeToString(requestID)
+
+	require.NoError(t, k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeWithdrawal{
+		Creator:            testutil.Creator,
+		UserAddress:        testutil.Requester,
+		Amount:             "1000",
+		DestinationAddress: "0xabc",
+	}))
+
+	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "wrapped token contract")
+	require.Contains(t, err.Error(), "is not registered")
+	require.False(t, closeRetry)
+
+	stillPending, getErr := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
+	require.NoError(t, getErr)
+	require.Equal(t, testutil.Creator, stillPending.Creator)
 }
