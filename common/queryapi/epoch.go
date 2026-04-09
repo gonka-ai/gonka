@@ -21,7 +21,11 @@ import (
 	"common/queryapi/gen"
 )
 
-func (h *Handlers) GetEpoch(ctx echo.Context, _ string) error {
+// Ported from decentralized-api/internal/server/public/get_epoch.go:28
+func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
+	if epoch != "latest" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Only getting info for current epoch is supported at the moment")
+	}
 	epochInfo, err := h.chain.InferenceQueryClient().EpochInfo(
 		ctx.Request().Context(),
 		&inferencetypes.QueryEpochInfoRequest{},
@@ -47,6 +51,10 @@ func (h *Handlers) GetEpoch(ctx echo.Context, _ string) error {
 	})
 }
 
+// Ported from decentralized-api/internal/server/public/get_participants_handler.go:102
+// Changes:
+//   - Chain query uses CometServiceClient.ABCIQuery (gRPC) instead of the old Tendermint RPC helper.
+//   - Participant addresses are returned as bech32 consensus addresses instead of hex-uppercase.
 func (h *Handlers) GetEpochParticipants(ctx echo.Context, epochString string) error {
 	qc := h.chain.InferenceQueryClient()
 	epoch, err := getEpochFromParam(ctx.Request().Context(), epochString, qc)
@@ -56,7 +64,7 @@ func (h *Handlers) GetEpochParticipants(ctx echo.Context, epochString string) er
 	}
 	resp, err := h.getEpochParticipants(ctx.Request().Context(), epoch)
 	if err != nil {
-		return err
+		return grpcErrorToHTTP(err)
 	}
 	return ctx.JSON(http.StatusOK, resp)
 }
@@ -75,7 +83,7 @@ func getEpochFromParam(ctx context.Context, e string, qc chain.InferenceClient) 
 	currEpoch, err := qc.GetCurrentEpoch(ctx, &inferencetypes.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		logging.Error("Failed to get current epoch", inferencetypes.Participants, "error", err)
-		return 0, err
+		return 0, grpcErrorToHTTP(err)
 	}
 	logging.Info("Current epoch resolved.", inferencetypes.Participants, "epoch", currEpoch.Epoch)
 	return currEpoch.Epoch, nil

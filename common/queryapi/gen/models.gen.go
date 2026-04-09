@@ -9,7 +9,7 @@ import (
 
 // AccountDto defines model for AccountDto.
 type AccountDto struct {
-	Balance int    `json:"balance"`
+	Balance Int64  `json:"balance"`
 	Denom   string `json:"denom"`
 	Pubkey  string `json:"pubkey"`
 }
@@ -25,17 +25,24 @@ type ActiveParticipantWithProof struct {
 	Validators              []RawProtoJson        `json:"validators"`
 }
 
+// ApiVersion defines model for ApiVersion.
+type ApiVersion struct {
+	ApplicationName string `json:"application_name"`
+	Commit          string `json:"commit"`
+	Version         string `json:"version"`
+}
+
 // BLSEpochResponse defines model for BLSEpochResponse.
 type BLSEpochResponse struct {
-	EpochData                          map[string]interface{} `json:"epoch_data"`
-	GroupPublicKeyUncompressed256      *[]byte                `json:"group_public_key_uncompressed_256,omitempty"`
-	ValidationSignatureUncompressed128 *[]byte                `json:"validation_signature_uncompressed_128,omitempty"`
+	EpochData                          RawProtoJson `json:"epoch_data"`
+	GroupPublicKeyUncompressed256      *[]byte      `json:"group_public_key_uncompressed_256,omitempty"`
+	ValidationSignatureUncompressed128 *[]byte      `json:"validation_signature_uncompressed_128,omitempty"`
 }
 
 // BLSSignatureResponse defines model for BLSSignatureResponse.
 type BLSSignatureResponse struct {
-	SigningRequest           *map[string]interface{} `json:"signing_request,omitempty"`
-	UncompressedSignature128 *[]byte                 `json:"uncompressed_signature_128,omitempty"`
+	SigningRequest           *RawProtoJson `json:"signing_request,omitempty"`
+	UncompressedSignature128 *[]byte       `json:"uncompressed_signature_128,omitempty"`
 }
 
 // BridgeAddressesResponse defines model for BridgeAddressesResponse.
@@ -66,8 +73,8 @@ type ExcludedParticipant struct {
 
 // GovernanceModelsResponse Legacy response shape used by old dashboard — field is "model" not "models"
 type GovernanceModelsResponse struct {
-	Models     []RawProtoJson          `json:"models"`
-	Pagination *map[string]interface{} `json:"pagination,omitempty"`
+	Models     []RawProtoJson `json:"models"`
+	Pagination *RawProtoJson  `json:"pagination,omitempty"`
 }
 
 // Int64 defines model for Int64.
@@ -90,8 +97,8 @@ type ModelPriceDto struct {
 
 // ModelsLegacyResponse Legacy response shape used by old dashboard — field is "model" not "models"
 type ModelsLegacyResponse struct {
-	Model      []RawProtoJson          `json:"model"`
-	Pagination *map[string]interface{} `json:"pagination,omitempty"`
+	Model      []RawProtoJson `json:"model"`
+	Pagination *RawProtoJson  `json:"pagination,omitempty"`
 }
 
 // ModelsResponse defines model for ModelsResponse.
@@ -99,20 +106,25 @@ type ModelsResponse struct {
 	Models []RawProtoJson `json:"models"`
 }
 
+// NodeVersion defines model for NodeVersion.
+type NodeVersion struct {
+	ApplicationName string `json:"application_name"`
+	Commit          string `json:"commit"`
+	Version         string `json:"version"`
+}
+
 // ParticipantDto defines model for ParticipantDto.
 type ParticipantDto struct {
-	Balance     int      `json:"balance"`
-	CoinsOwed   *int     `json:"coins_owed,omitempty"`
-	Id          string   `json:"id"`
-	RefundsOwed *int     `json:"refunds_owed,omitempty"`
-	Reputation  *float32 `json:"reputation,omitempty"`
-	Url         string   `json:"url"`
-	VotingPower int      `json:"voting_power"`
+	Balance     Int64  `json:"balance"`
+	CoinsOwed   Int64  `json:"coins_owed"`
+	Id          string `json:"id"`
+	Url         string `json:"url"`
+	VotingPower Int64  `json:"voting_power"`
 }
 
 // ParticipantsResponse defines model for ParticipantsResponse.
 type ParticipantsResponse struct {
-	BlockHeight  int              `json:"block_height"`
+	BlockHeight  Int64            `json:"block_height"`
 	Participants []ParticipantDto `json:"participants"`
 }
 
@@ -125,10 +137,10 @@ type PricingDto struct {
 
 // ProofVerificationRequest defines model for ProofVerificationRequest.
 type ProofVerificationRequest struct {
-	AppHash  string                 `json:"app_hash"`
-	Epoch    int                    `json:"epoch"`
-	ProofOps map[string]interface{} `json:"proof_ops"`
-	Value    string                 `json:"value"`
+	AppHash  string       `json:"app_hash"`
+	Epoch    int          `json:"epoch"`
+	ProofOps RawProtoJson `json:"proof_ops"`
+	Value    string       `json:"value"`
 }
 
 // RawProtoJson defines model for RawProtoJson.
@@ -144,26 +156,18 @@ type Uint64 = uint64
 
 // VerifyBlockRequest defines model for VerifyBlockRequest.
 type VerifyBlockRequest struct {
-	Block      map[string]interface{} `json:"block"`
+	Block      RawProtoJson `json:"block"`
 	Validators []struct {
 		PubKey      string `json:"pub_key"`
-		VotingPower int    `json:"voting_power"`
+		VotingPower Int64  `json:"voting_power"`
 	} `json:"validators"`
 }
 
 // VersionsResponse defines model for VersionsResponse.
 type VersionsResponse struct {
-	ApiVersion struct {
-		ApplicationName string `json:"application_name"`
-		Commit          string `json:"commit"`
-		Version         string `json:"version"`
-	} `json:"api_version"`
-	NodeVersion struct {
-		ApplicationName string `json:"application_name"`
-		Commit          string `json:"commit"`
-		Version         string `json:"version"`
-	} `json:"node_version"`
-	Timestamp time.Time `json:"timestamp"`
+	ApiVersion  ApiVersion  `json:"api_version"`
+	NodeVersion NodeVersion `json:"node_version"`
+	Timestamp   time.Time   `json:"timestamp"`
 }
 
 // GetBridgeAddressesParams defines parameters for GetBridgeAddresses.

@@ -63,9 +63,6 @@ func grpcErrorToHTTP(err error) error {
 	}
 }
 
-// ptr returns a pointer to v. Used for optional fields in generated structs.
-func ptr[T any](v T) *T { return &v }
-
 // balanceNGonka extracts the ngonka balance from a coin list.
 func balanceNGonka(coins []sdktypes.Coin) int64 {
 	for _, c := range coins {
@@ -74,38 +71,4 @@ func balanceNGonka(coins []sdktypes.Coin) int64 {
 		}
 	}
 	return 0
-}
-
-// -- stub handlers (not yet implemented) --
-
-func (h *Handlers) GetStatus(ctx echo.Context) error {
-	return ctx.JSON(http.StatusNotImplemented, gen.StatusResponse{})
-}
-
-func (h *Handlers) GetVersions(ctx echo.Context) error {
-	return ctx.JSON(http.StatusNotImplemented, gen.VersionsResponse{})
-}
-
-func (h *Handlers) GetBridgeAddresses(ctx echo.Context, params gen.GetBridgeAddressesParams) error {
-	return ctx.JSON(http.StatusNotImplemented, gen.BridgeAddressesResponse{})
-}
-
-func (h *Handlers) GetPoCBatches(ctx echo.Context, epoch int) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}
-
-func (h *Handlers) PostVerifyProof(ctx echo.Context) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}
-
-func (h *Handlers) PostVerifyBlock(ctx echo.Context) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}
-
-func (h *Handlers) DebugPubKeyToAddr(ctx echo.Context, pubkey string) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}
-
-func (h *Handlers) DebugVerifyBlockSignatures(ctx echo.Context, height int) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
 }

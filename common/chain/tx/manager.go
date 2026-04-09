@@ -28,7 +28,7 @@ type TxManagerConfig struct {
 	// KeyringPassword is read from KEYRING_PASSWORD env var, not config file.
 }
 
-// Manager signs and broadcasts MsgSettleSubnetEscrow.
+// Manager signs and broadcasts MsgSettleDevshardEscrow.
 // No batching, no retry — caller handles retry if needed.
 type Manager struct {
 	conn     grpc.ClientConnInterface
@@ -62,7 +62,7 @@ func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address string, cfg 
 	}, nil
 }
 
-// SettleEscrow signs and broadcasts MsgSettleSubnetEscrow synchronously.
+// SettleEscrow signs and broadcasts MsgSettleDevshardEscrow synchronously.
 func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot []byte, nonce uint64) error {
 	accNum, seq, err := m.accountInfo(ctx)
 	if err != nil {
@@ -88,15 +88,15 @@ func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot [
 
 	txBuilder, err := factory.BuildUnsignedTx(msg)
 	if err != nil {
-		return fmt.Errorf("tx: build MsgSettleSubnetEscrow: %w", err)
+		return fmt.Errorf("tx: build MsgSettleDevshardEscrow: %w", err)
 	}
 	if err := clienttx.Sign(ctx, factory, m.signer, txBuilder, true); err != nil {
-		return fmt.Errorf("tx: sign MsgSettleSubnetEscrow: %w", err)
+		return fmt.Errorf("tx: sign MsgSettleDevshardEscrow: %w", err)
 	}
 
 	raw, err := m.txConfig.TxEncoder()(txBuilder.GetTx())
 	if err != nil {
-		return fmt.Errorf("tx: encode MsgSettleSubnetEscrow: %w", err)
+		return fmt.Errorf("tx: encode MsgSettleDevshardEscrow: %w", err)
 	}
 
 	svc := txtypes.NewServiceClient(m.conn)
@@ -105,10 +105,10 @@ func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot [
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
 	})
 	if err != nil {
-		return fmt.Errorf("tx: broadcast MsgSettleSubnetEscrow: %w", err)
+		return fmt.Errorf("tx: broadcast MsgSettleDevshardEscrow: %w", err)
 	}
 	if resp.TxResponse.Code != 0 {
-		return fmt.Errorf("tx: MsgSettleSubnetEscrow failed code=%d log=%s", resp.TxResponse.Code, resp.TxResponse.RawLog)
+		return fmt.Errorf("tx: MsgSettleDevshardEscrow failed code=%d log=%s", resp.TxResponse.Code, resp.TxResponse.RawLog)
 	}
 	return nil
 }

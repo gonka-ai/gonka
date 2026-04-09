@@ -1,8 +1,8 @@
-package cosmosclient
+package utils
 
 import (
+	"common/logging"
 	"crypto/sha256"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"

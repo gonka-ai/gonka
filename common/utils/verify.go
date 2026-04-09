@@ -1,9 +1,10 @@
-package merkleproof
+package utils
 
 import (
 	"context"
-	"cosmossdk.io/store/rootmulti"
 	"fmt"
+
+	"cosmossdk.io/store/rootmulti"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
@@ -33,7 +34,7 @@ func VerifyBlockSignatures(address string, height int64) error {
 	valSet := valSetRes.Validators
 
 	// Step 4: Verify the signatures
-	err = VerifyCommit(block.Header.ChainID, commit, &block.Header, valSet)
+	err = VerifyCommit(block.Header.ChainID, commit, block.Header.Height, valSet)
 	if err != nil {
 		return fmt.Errorf("block signature verification failed: %v", err)
 	}
@@ -42,15 +43,11 @@ func VerifyBlockSignatures(address string, height int64) error {
 	return nil
 }
 
-func VerifyCommit(chainID string, commit *comettypes.Commit, header *comettypes.Header, validators []*comettypes.Validator) error {
-	// Reconstruct the validator set
+func VerifyCommit(chainID string, commit *comettypes.Commit, height int64, validators []*comettypes.Validator) error {
 	valSet := comettypes.NewValidatorSet(validators)
-
-	// Verify the commit signatures against the validator set
-	if err := valSet.VerifyCommit(chainID, commit.BlockID, header.Height-1, commit); err != nil {
+	if err := valSet.VerifyCommit(chainID, commit.BlockID, height-1, commit); err != nil {
 		return fmt.Errorf("invalid commit signatures")
 	}
-
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"common/queryapi/gen"
 )
 
+// Ported from decentralized-api/internal/server/public/get_participants_handler.go:264
 func (h *Handlers) GetParticipants(ctx echo.Context) error {
 	var participants []gen.ParticipantDto
 	var blockHeight int64
@@ -33,8 +34,9 @@ func (h *Handlers) GetParticipants(ctx echo.Context) error {
 			participants = append(participants, gen.ParticipantDto{
 				Id:          pwb.Participant.Address,
 				Url:         pwb.Participant.InferenceUrl,
-				Balance:     int(balance),
-				VotingPower: int(pwb.Participant.Weight),
+				CoinsOwed:   pwb.Participant.CoinBalance,
+				Balance:     balance,
+				VotingPower: int64(pwb.Participant.Weight),
 			})
 		}
 		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
@@ -45,10 +47,12 @@ func (h *Handlers) GetParticipants(ctx echo.Context) error {
 
 	return ctx.JSON(http.StatusOK, gen.ParticipantsResponse{
 		Participants: participants,
-		BlockHeight:  int(blockHeight),
+		BlockHeight:  blockHeight,
 	})
 }
 
+// Ported from decentralized-api/internal/server/public/get_participants_handler.go:75
+// Change: nil-response guard removed; a nil response without an error cannot occur over gRPC.
 func (h *Handlers) GetParticipant(ctx echo.Context, address string) error {
 	resp, err := h.chain.InferenceQueryClient().AccountByAddress(
 		ctx.Request().Context(),
@@ -59,7 +63,7 @@ func (h *Handlers) GetParticipant(ctx echo.Context, address string) error {
 	}
 	return ctx.JSON(http.StatusOK, gen.AccountDto{
 		Pubkey:  resp.Pubkey,
-		Balance: int(resp.Balance),
+		Balance: resp.Balance,
 		Denom:   resp.Denom,
 	})
 }

@@ -1,10 +1,10 @@
 package public
 
 import (
+	"common/utils"
 	"context"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
-	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
@@ -250,12 +250,12 @@ func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, bl
 	verKey := "/inference/" + url.PathEscape(string(dataKey))
 	// verKey2 := string(result.Response.Key)
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
-	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	err := utils.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
-	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
+	err = utils.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
