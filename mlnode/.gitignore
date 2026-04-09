@@ -163,3 +163,4 @@ cython_debug/
 
 **/*.jsonl
 **/*.sqlite
+*.DS_Store

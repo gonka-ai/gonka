@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping, Sequence
 
 from validation.utils import distance2
 from validation import stats
@@ -145,7 +145,20 @@ def find_optimal_bounds_parallel(distances_val, distances_quant, step=0.0001, n_
     return optimal_lower, optimal_upper
 
 
-def plot_classification_results(distances, classifications, lower_bound, upper_bound, title_prefix=""):
+def plot_classification_results(
+    distances,
+    classifications,
+    lower_bound,
+    upper_bound,
+    title_prefix="",
+    point_hue: Sequence[Hashable] | None = None,
+):
+    """
+    If ``point_hue`` is None (default), scatter colors follow classification only (legacy).
+
+    If ``point_hue`` is set, it must have the same length as ``distances``; each unique
+    label gets a distinct color (tab20) and classification is shown via marker shape.
+    """
     classification_counts = Counter(classifications)
 
     plt.figure(figsize=(14, 6))
@@ -158,19 +171,49 @@ def plot_classification_results(distances, classifications, lower_bound, upper_b
 
     plt.subplot(1, 2, 2)
     color_map = {'accepted': 'green', 'questionable': 'orange', 'fraud': 'red'}
-    for classification in classification_counts:
-        idxs = [i for i, c in enumerate(classifications) if c == classification]
-        plt.scatter(
-            idxs, [distances[i] for i in idxs],
-            c=color_map[classification], alpha=0.5,
-            label=f"{classification.capitalize()} ({classification_counts[classification]})"
-        )
+    class_markers = {'accepted': 'o', 'questionable': 's', 'fraud': 'X'}
+
+    if point_hue is None:
+        for classification in classification_counts:
+            idxs = [i for i, c in enumerate(classifications) if c == classification]
+            plt.scatter(
+                idxs, [distances[i] for i in idxs],
+                c=color_map.get(classification, 'gray'), alpha=0.5,
+                label=f"{classification.capitalize()} ({classification_counts[classification]})"
+            )
+    else:
+        if len(point_hue) != len(distances):
+            raise ValueError(
+                f"point_hue length ({len(point_hue)}) must match distances ({len(distances)})"
+            )
+        unique_hues = list(dict.fromkeys(point_hue))
+        cmap = plt.get_cmap("tab20")
+        hue_colors = {h: cmap(i % 20) for i, h in enumerate(unique_hues)}
+        for classification in classification_counts:
+            marker = class_markers.get(classification, "o")
+            for hue in unique_hues:
+                idxs = [
+                    i
+                    for i, c in enumerate(classifications)
+                    if c == classification and point_hue[i] == hue
+                ]
+                if not idxs:
+                    continue
+                plt.scatter(
+                    idxs,
+                    [distances[i] for i in idxs],
+                    c=[hue_colors[hue]],
+                    marker=marker,
+                    alpha=0.5,
+                    label=f"{classification} | {hue} ({len(idxs)})",
+                )
 
     plt.axhline(lower_bound, color='blue', linestyle='--', label='Bound')
     plt.title(f"{title_prefix}\nDistances Classification")
     plt.xlabel("Item Index")
     plt.ylabel("Distance")
-    plt.legend()
+    _leg_kw = {"fontsize": 7, "loc": "best"} if point_hue is not None else {"loc": "best"}
+    plt.legend(**_leg_kw)
 
     plt.tight_layout()
     plt.show()
@@ -200,8 +243,16 @@ def plot_length_vs_distance_comparison(
     fraud_distances,
     bounds=None,
     save_to=None,
+    hue_by_series: bool = False,
 ):
-    """Create combined length vs distance plot for comparison"""
+    """Create combined length vs distance plot for comparison.
+
+    If ``hue_by_series`` is False (default), honest points are blue and fraud points are red.
+
+    If ``hue_by_series`` is True, each top-level series (dict key) gets its own color (tab20);
+    honest series use marker ``o``, fraud series use marker ``^``. Only supported when
+    ``honest_items`` / ``honest_distances`` (and fraud side) are dicts aligned by key.
+    """
     def _flatten_items_and_distances(items, distances):
         if isinstance(items, Mapping) and isinstance(distances, Mapping):
             flat_items = []
@@ -244,20 +295,78 @@ def plot_length_vs_distance_comparison(
 
     plt.figure(figsize=(10, 6))
 
-    honest_flat = _flatten_items_and_distances(honest_items, honest_distances)
-    honest_items_seq, honest_dist_vals = honest_flat
-    honest_lengths = [_get_item_text_length(item) for item in honest_items_seq]
+    if hue_by_series:
+        if not isinstance(honest_items, Mapping) or not isinstance(fraud_items, Mapping):
+            raise TypeError(
+                "hue_by_series=True requires honest_items and fraud_items to be dicts."
+            )
+        if not isinstance(honest_distances, Mapping) or not isinstance(fraud_distances, Mapping):
+            raise TypeError(
+                "hue_by_series=True requires honest_distances and fraud_distances to be dicts "
+                "(same keys as the corresponding items dicts)."
+            )
+        series_keys = list(dict.fromkeys(list(honest_distances.keys()) + list(fraud_distances.keys())))
+        cmap = plt.get_cmap("tab20")
+        series_colors = {k: cmap(i % 20) for i, k in enumerate(series_keys)}
 
-    fraud_flat = _flatten_items_and_distances(fraud_items, fraud_distances)
-    fraud_items_seq, fraud_dist_vals = fraud_flat
-    fraud_lengths = [_get_item_text_length(item) for item in fraud_items_seq]
+        for k in honest_distances.keys():
+            if k not in honest_items:
+                continue
+            subitems = honest_items[k]
+            subdist = honest_distances[k]
+            if isinstance(subitems, Mapping):
+                raise TypeError(
+                    "hue_by_series=True: expected honest_items[k] to be a list, got Mapping"
+                )
+            lengths = [_get_item_text_length(item) for item in subitems]
+            plt.scatter(
+                lengths,
+                list(subdist),
+                alpha=0.5,
+                color=series_colors[k],
+                marker="o",
+                label=f"honest: {k}",
+                s=10,
+            )
 
-    plt.scatter(honest_lengths, honest_dist_vals, alpha=0.5, color='blue', label='Honest Items', s=10)
-    plt.scatter(fraud_lengths, fraud_dist_vals, alpha=0.5, color='red', label='Fraud Items', s=10)
+        for k in fraud_distances.keys():
+            if k not in fraud_items:
+                continue
+            subitems = fraud_items[k]
+            subdist = fraud_distances[k]
+            if isinstance(subitems, Mapping):
+                raise TypeError(
+                    "hue_by_series=True: expected fraud_items[k] to be a list, got Mapping"
+                )
+            lengths = [_get_item_text_length(item) for item in subitems]
+            plt.scatter(
+                lengths,
+                list(subdist),
+                alpha=0.5,
+                color=series_colors[k],
+                marker="^",
+                label=f"fraud: {k}",
+                s=10,
+            )
+    else:
+        honest_flat = _flatten_items_and_distances(honest_items, honest_distances)
+        honest_items_seq, honest_dist_vals = honest_flat
+        honest_lengths = [_get_item_text_length(item) for item in honest_items_seq]
+
+        fraud_flat = _flatten_items_and_distances(fraud_items, fraud_distances)
+        fraud_items_seq, fraud_dist_vals = fraud_flat
+        fraud_lengths = [_get_item_text_length(item) for item in fraud_items_seq]
+
+        plt.scatter(honest_lengths, honest_dist_vals, alpha=0.5, color='blue', label='Honest Items', s=10)
+        plt.scatter(fraud_lengths, fraud_dist_vals, alpha=0.5, color='red', label='Fraud Items', s=10)
+
     plt.title(f'{name} - Length vs Distance Comparison')
     plt.xlabel('Length (characters)')
     plt.ylabel('Distance')
-    plt.legend()
+    if hue_by_series:
+        plt.legend(fontsize=7)
+    else:
+        plt.legend()
     plt.grid(True, alpha=0.3)
 
     if bounds is not None:
