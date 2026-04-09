@@ -1,6 +1,7 @@
 package state
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,21 +33,109 @@ func TestDeriveSeed_TooShort(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrSeedTooShort)
 }
 
-func TestDeterministicFloat_Range(t *testing.T) {
-	for seed := int64(1); seed <= 100; seed++ {
-		for id := uint64(1); id <= 100; id++ {
-			f := DeterministicFloat(seed, id)
-			require.True(t, f >= 0 && f < 1, "float %f out of range for seed=%d id=%d", f, seed, id)
+func TestUint64ProbabilityScale32(t *testing.T) {
+	// 5000/10000 = 0.5 -> scale 32 is 2^31
+	half := uint64ProbabilityScale32(5000, 10000)
+	require.Equal(t, uint64(1)<<31, half)
+
+	// 10000/10000 = 1.0 -> clamped to 2^32
+	full := uint64ProbabilityScale32(10000, 10000)
+	require.Equal(t, uint64(1)<<32, full)
+
+	// 0 -> 0
+	require.Equal(t, uint64(0), uint64ProbabilityScale32(0, 1))
+
+	// Percent-style numerators: same as floor(n * 2^32 / 100) for n <= 100.
+	require.Equal(t, uint64ProbabilityScale32(50, 100), (uint64(1<<32)*50)/100)   // 50% of 2^32
+	require.Equal(t, uint64ProbabilityScale32(98, 100), (uint64(1<<32)*98)/100)   // 98% of 2^32
+	require.Equal(t, uint64ProbabilityScale32(100, 100), (uint64(1<<32)*100)/100) // 100% of 2^32
+	// Clamped to 2^32
+	require.Equal(t, uint64ProbabilityScale32(105, 100), uint64ProbabilityScale32(100, 100)) // 100%
+
+	// Oversized ratio: clamp to 2^32 (same as old ShouldValidate cap)
+	clamped := uint64ProbabilityScale32(20000, 10000)
+	require.Equal(t, uint64(1)<<32, clamped)
+
+	// Numerator > 2^32-1: naive (numerator << 32) would wrap; 128-bit path must match the ratio.
+	largeNum := uint64(1) << 40
+	largeDen := uint64(1) << 41
+	got := uint64ProbabilityScale32(largeNum, largeDen)
+	require.Equal(t, uint64(1)<<31, got, "expect floor(2^40*2^32/2^41)=2^31")
+}
+
+func TestUint32CeilScaledSum32(t *testing.T) {
+	cases := []struct {
+		sum  uint64
+		want uint32
+	}{
+		{0, 0},
+		{1, 1},
+		{1<<32 - 1, 1},
+		{1 << 32, 1},
+		{1<<32 + 1, 2},
+		{(1 << 32) * 5, 5},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, uint32CeilScaledSum32(tc.sum), "sum=%d", tc.sum)
+	}
+}
+
+// legacyPenalizeRequiredFloat matches pre-#893 penalizeUnrevealedSeeds: per-term
+// probability capped at 1.0, then sum, then math.Ceil (test reference only).
+func legacyPenalizeRequiredFloat(contributions []struct{ v, d uint64 }) uint32 {
+	rate := float64(penaltyValidationRate) / 10000.0
+	var probSum float64
+	for _, c := range contributions {
+		p := rate * float64(c.v) / float64(c.d)
+		if p > 1.0 {
+			p = 1.0
+		}
+		probSum += p
+	}
+	return uint32(math.Ceil(probSum))
+}
+
+func penalizeRequiredFromScaledTerms(contributions []struct{ v, d uint64 }) uint32 {
+	var sumScaled uint64
+	for _, c := range contributions {
+		sumScaled += penalizePerInferenceScaled32(uint64(penaltyValidationRate), c.v, c.d)
+	}
+	return uint32CeilScaledSum32(sumScaled)
+}
+
+func TestPenalizePerInferenceMatchesLegacyFloatReference(t *testing.T) {
+	// Single-inference cases: integer fixed-point path matches legacy float + Ceil.
+	for d := uint64(1); d <= 64; d++ {
+		for v := uint64(0); v <= 64; v++ {
+			cs := []struct{ v, d uint64 }{{v: v, d: d}}
+			leg := legacyPenalizeRequiredFloat(cs)
+			got := penalizeRequiredFromScaledTerms(cs)
+			require.Equal(t, leg, got, "v=%d d=%d", v, d)
 		}
 	}
 }
 
-func TestDeterministicFloat_Deterministic(t *testing.T) {
-	a := DeterministicFloat(42, 100)
-	b := DeterministicFloat(42, 100)
-	require.Equal(t, a, b)
+func TestPenalizeRequiredMultiTermMatchesLegacyFloatReference(t *testing.T) {
+	// Same aggregation order as machine.penalizeUnrevealedSeeds: sum scaled terms, then ceil.
+	cases := [][]struct{ v, d uint64 }{
+		{{1, 3}, {1, 3}},
+		{{3, 7}, {2, 5}},
+		{{1, 2}, {1, 3}, {2, 7}},
+		{{10, 11}, {9, 10}, {1, 100}},
+	}
+	for i, cs := range cases {
+		leg := legacyPenalizeRequiredFloat(cs)
+		got := penalizeRequiredFromScaledTerms(cs)
+		require.Equal(t, leg, got, "case %d", i)
+	}
+}
 
-	c := DeterministicFloat(42, 101)
+func TestDeterministicHash_Deterministic(t *testing.T) {
+	a := deterministicHash(42, 100)
+	b := deterministicHash(42, 100)
+	require.Equal(t, a, b, "same input must produce same output")
+
+	c := deterministicHash(42, 101)
 	require.NotEqual(t, a, c, "different inputs should produce different outputs")
 }
 

@@ -993,6 +993,7 @@ func (sm *StateMachine) recomputeCompliance() {
 
 // penalizeUnrevealedSeeds sets RequiredValidations for unrevealed hosts.
 // Mirrors applyRevealSeed with penaltyValidationRate. CompletedValidations stays 0.
+// Uses integer math only (no float64/math.Ceil) to avoid architecture-dependent state root splits.
 func (sm *StateMachine) penalizeUnrevealedSeeds() {
 	revealedAddrs := make(map[string]bool, len(sm.state.RevealedSeeds))
 	for slot := range sm.state.RevealedSeeds {
@@ -1005,8 +1006,7 @@ func (sm *StateMachine) penalizeUnrevealedSeeds() {
 		}
 
 		validatorSlotCount := sm.addressToSlotCount[addr]
-		rate := float64(penaltyValidationRate) / 10000.0
-		var probSum float64
+		var probSumScaled uint64
 		for _, infID := range slices.Sorted(maps.Keys(sm.state.Inferences)) {
 			rec := sm.state.Inferences[infID]
 			switch rec.Status {
@@ -1022,14 +1022,11 @@ func (sm *StateMachine) penalizeUnrevealedSeeds() {
 			if sm.totalSlots <= executorSlotCount {
 				continue
 			}
-			p := rate * float64(validatorSlotCount) / float64(sm.totalSlots-executorSlotCount)
-			if p > 1.0 {
-				p = 1.0
-			}
-			probSum += p
+			denom := uint64(sm.totalSlots - executorSlotCount)
+			probSumScaled += penalizePerInferenceScaled32(uint64(penaltyValidationRate), uint64(validatorSlotCount), denom)
 		}
 
-		required := uint32(math.Ceil(probSum))
+		required := uint32CeilScaledSum32(probSumScaled)
 		for _, slot := range slots {
 			if hs, ok := sm.state.HostStats[slot]; ok {
 				hs.RequiredValidations = required
