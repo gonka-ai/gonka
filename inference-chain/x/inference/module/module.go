@@ -415,7 +415,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	// 2. IsSetNewValidatorsStage: Switch validators and activate epoch (onSetNewValidatorsStage)
 	// This separation ensures clean boundaries between epoch preparation and validator switching
 	// and allow time for api nodes to load models on ml nodes.
-
+	//
+	// NOTE: Validator activation is intentionally delayed by two blocks: the new validator
+	// set becomes active at H+2, not H+1. This provides a buffer for nodes to
+	// prepare before the validator set rotates.
+	
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
 		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
@@ -427,6 +431,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
+		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
+			types.Stages,
+			"blockHeight", blockHeight,
+			"expectedActivation", blockHeight+2,
+		)
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
@@ -451,7 +460,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
 	}
-
+	
 	// Capture validation snapshot at poc_validation_start for deterministic sampling
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -462,6 +471,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// Intentionally operates on the previous epoch's group here; the new group
+	// triggers SetComputeValidators on the next block. See activation note above.
 	if currentEpochGroup.IsChanged(ctx) {
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight)
 		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
@@ -619,6 +630,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 // all epoch formation logic has completed in onEndOfPoCValidationStage.
 // The stage focuses solely on validator switching, with all epoch preparation
 // handled by the previous stage for clean separation of concerns.
+// The new validator set becomes active at H+2.
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 
