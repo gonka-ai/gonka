@@ -123,6 +123,13 @@ type Broker struct {
 	lastEpochPhase       types.EpochPhase
 	statusQueryTrigger   chan statusQuerySignal
 	configManager        *apiconfig.ConfigManager
+	lockMap              map[string]lockEntry
+	lockMapMu            sync.Mutex
+}
+
+type lockEntry struct {
+	nodeID    string
+	createdAt time.Time
 }
 
 // GetParticipantAddress returns the current participant's address if available.
@@ -306,6 +313,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		reconcileTrigger:     make(chan struct{}, 1),
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
+		lockMap:              make(map[string]lockEntry),
 	}
 
 	// Initialize NodeWorkGroup
@@ -809,6 +817,7 @@ func (b *Broker) reconcilerLoop() {
 			b.reconcileIfSynced("Reconciliation triggered by timer")
 			// Check for version changes and refresh clients if needed
 			b.checkAndRefreshClientsIfNeeded()
+			b.evictExpiredLocks()
 		}
 	}
 }

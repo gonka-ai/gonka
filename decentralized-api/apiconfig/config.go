@@ -6,19 +6,19 @@ import (
 )
 
 type Config struct {
-	Api                 ApiConfig             `koanf:"api" json:"api"`
-	Nodes               []InferenceNodeConfig `koanf:"nodes" json:"nodes"`
-	NodeConfigIsMerged  bool                  `koanf:"merged_node_config" json:"merged_node_config"`
-	ChainNode           ChainNodeConfig       `koanf:"chain_node" json:"chain_node"`
-	UpcomingSeed        SeedInfo              `koanf:"upcoming_seed" json:"upcoming_seed"`
-	CurrentSeed         SeedInfo              `koanf:"current_seed" json:"current_seed"`
-	PreviousSeed        SeedInfo              `koanf:"previous_seed" json:"previous_seed"`
-	CurrentHeight       int64                 `koanf:"current_height" json:"current_height"`
-	LastProcessedHeight int64                 `koanf:"last_processed_height" json:"last_processed_height"`
-	UpgradePlan         UpgradePlan           `koanf:"upgrade_plan" json:"upgrade_plan"`
-	MLNodeKeyConfig     MLNodeKeyConfig       `koanf:"ml_node_key_config" json:"ml_node_key_config"`
-	Nats                NatsServerConfig      `koanf:"nats" json:"nats"`
-	TxBatching          TxBatchingConfig      `koanf:"tx_batching" json:"tx_batching"`
+	Api                      ApiConfig                `koanf:"api" json:"api"`
+	Nodes                    []InferenceNodeConfig    `koanf:"nodes" json:"nodes"`
+	NodeConfigIsMerged       bool                     `koanf:"merged_node_config" json:"merged_node_config"`
+	ChainNode                ChainNodeConfig          `koanf:"chain_node" json:"chain_node"`
+	UpcomingSeed             SeedInfo                 `koanf:"upcoming_seed" json:"upcoming_seed"`
+	CurrentSeed              SeedInfo                 `koanf:"current_seed" json:"current_seed"`
+	PreviousSeed             SeedInfo                 `koanf:"previous_seed" json:"previous_seed"`
+	CurrentHeight            int64                    `koanf:"current_height" json:"current_height"`
+	LastProcessedHeight      int64                    `koanf:"last_processed_height" json:"last_processed_height"`
+	UpgradePlan              UpgradePlan              `koanf:"upgrade_plan" json:"upgrade_plan"`
+	MLNodeKeyConfig          MLNodeKeyConfig          `koanf:"ml_node_key_config" json:"ml_node_key_config"`
+	Nats                     NatsServerConfig         `koanf:"nats" json:"nats"`
+	TxBatching               TxBatchingConfig         `koanf:"tx_batching" json:"tx_batching"`
 	CurrentNodeVersion       string                   `koanf:"current_node_version" json:"current_node_version"`
 	LastUsedVersion          string                   `koanf:"last_used_version" json:"last_used_version"`
 	ValidationParams         ValidationParamsCache    `koanf:"validation_params" json:"validation_params"`
@@ -57,15 +57,17 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port                  int    `koanf:"port" json:"port"`
-	PoCCallbackUrl        string `koanf:"poc_callback_url" json:"poc_callback_url"`
-	MlGrpcCallbackAddress string `koanf:"ml_grpc_callback_address" json:"ml_grpc_callback_address"`
-	PublicUrl             string `koanf:"public_url" json:"public_url"`
-	PublicServerPort      int    `koanf:"public_server_port" json:"public_server_port"`
-	MLServerPort          int    `koanf:"ml_server_port" json:"ml_server_port"`
-	AdminServerPort       int    `koanf:"admin_server_port" json:"admin_server_port"`
-	MlGrpcServerPort      int    `koanf:"ml_grpc_server_port" json:"ml_grpc_server_port"`
-	TestMode              bool   `koanf:"test_mode" json:"test_mode"`
+	Port                      int    `koanf:"port" json:"port"`
+	PoCCallbackUrl            string `koanf:"poc_callback_url" json:"poc_callback_url"`
+	MlGrpcCallbackAddress     string `koanf:"ml_grpc_callback_address" json:"ml_grpc_callback_address"`
+	PublicUrl                 string `koanf:"public_url" json:"public_url"`
+	PublicServerPort          int    `koanf:"public_server_port" json:"public_server_port"`
+	MLServerPort              int    `koanf:"ml_server_port" json:"ml_server_port"`
+	AdminServerPort           int    `koanf:"admin_server_port" json:"admin_server_port"`
+	MlGrpcServerPort          int    `koanf:"ml_grpc_server_port" json:"ml_grpc_server_port"`
+	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
+	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
+	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
 }
 
 type ChainNodeConfig struct {

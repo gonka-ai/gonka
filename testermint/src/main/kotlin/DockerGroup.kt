@@ -47,6 +47,7 @@ data class DockerGroup(
     val mlPort: Int,
     val adminPort: Int,
     val natsPort: Int,
+    val nodeManagerGrpcPort: Int,
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val mockExternalPort: Int,
@@ -255,6 +256,7 @@ data class DockerGroup(
             put("ML_SERVER_PORT", mlPort.toString())
             put("ADMIN_SERVER_PORT", adminPort.toString())
             put("NATS_SERVER_PORT", natsPort.toString())
+            put("NODE_MANAGER_GRPC_PORT", nodeManagerGrpcPort.toString())
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", mockExternalPort.toString())
@@ -386,6 +388,7 @@ fun createDockerGroup(
         mlPort = 9001 + iteration,
         adminPort = 9002 + iteration,
         natsPort = 9004 + iteration,
+        nodeManagerGrpcPort = 9400 + iteration,
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         mockExternalPort = 8090 + iteration,
