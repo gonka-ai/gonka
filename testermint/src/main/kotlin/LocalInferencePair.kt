@@ -111,6 +111,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             SERVER_TYPE_ML to getUrlForPrivatePort(portMap, 9100),
             SERVER_TYPE_ADMIN to getUrlForPrivatePort(portMap, 9200)
         )
+        val nodeManagerGrpcHostPort = portMap[9400]?.publicPort
 
         Logger.info("Creating local inference pair for $name")
         Logger.info("API URLs for ${apiContainer.names.first()}:")
@@ -141,6 +142,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             },
             name = name,
             config = configWithName,
+            nodeManagerGrpcHostPort = nodeManagerGrpcHostPort,
         )
     }
 }
@@ -221,6 +223,7 @@ data class LocalInferencePair(
     val mock: IInferenceMock?, // Primary mock for backward compatibility
     val name: String,
     override val config: ApplicationConfig,
+    val nodeManagerGrpcHostPort: Int? = null,
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
