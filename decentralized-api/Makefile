@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy test generate
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -139,6 +139,13 @@ download-linux-deps:
 	@ln -sf libwasmvm_muslc.x86_64.a build/deps/libwasmvm_muslc.a
 	@echo "API dependencies downloaded to ./build/deps/"
 
+generate:
+	@echo "--> running go generate"
+	@go generate ./...
+
+test:
+	@echo "--> running tests"
+	@go test ./... -timeout 120s
 #################################################
 # CROSS-COMPILATION SECTION
 #################################################
