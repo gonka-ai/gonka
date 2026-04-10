@@ -166,9 +166,10 @@ type Hardware struct {
 }
 
 type ValidationParamsCache struct {
-	TimestampExpiration int64 `koanf:"timestamp_expiration" json:"timestamp_expiration"`
-	TimestampAdvance    int64 `koanf:"timestamp_advance" json:"timestamp_advance"`
-	ExpirationBlocks    int64 `koanf:"expiration_blocks" json:"expiration_blocks"`
+	TimestampExpiration int64  `koanf:"timestamp_expiration" json:"timestamp_expiration"`
+	TimestampAdvance    int64  `koanf:"timestamp_advance" json:"timestamp_advance"`
+	ExpirationBlocks    int64  `koanf:"expiration_blocks" json:"expiration_blocks"`
+	LogprobsMode        string `koanf:"logprobs_mode" json:"logprobs_mode"`
 }
 
 type BandwidthParamsCache struct {

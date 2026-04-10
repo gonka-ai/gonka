@@ -23,6 +23,7 @@ import (
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	streamvestingkeeper "github.com/productscience/inference/x/streamvesting/keeper"
@@ -76,7 +77,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	)
 
 	// Create a BLS keeper for testing (similar to testutil/keeper/inference.go)
-	blsStoreKey := storetypes.NewKVStoreKey("bls")
+	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	blsKeeper := blskeeper.NewKeeper(
 		cdc,
@@ -140,7 +141,7 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 	// Mock expectations for vesting flow (escrow payment goes through inference module)
 	expectedWorkCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(workAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedWorkCoins, &workVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedWorkCoins, &workVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from escrow
@@ -153,7 +154,7 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from top reward pool module
@@ -281,7 +282,7 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "reward-payment", &rewardVestingPeriod)
@@ -318,7 +319,7 @@ func TestVestingIntegration_ErrorHandling(t *testing.T) {
 
 	// Test case 2: Vesting keeper failure should be handled
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
 		Return(fmt.Errorf("invalid request"))
 
 	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)

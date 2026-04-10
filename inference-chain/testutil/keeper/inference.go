@@ -89,6 +89,8 @@ func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
 }
 
 func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Context, validators []stakingtypes.Validator) {
+	inference.IgnoreDuplicateDenomRegistration = true
+
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.BridgeEscrowAccName)
 	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code

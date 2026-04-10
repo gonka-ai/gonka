@@ -67,3 +67,44 @@ func TestMsgServer_RequestBridgeWithdrawal_Permissions(t *testing.T) {
 	err = keeper.CheckPermission(msPassed, wctx, msg, keeper.ContractPermission)
 	require.NoError(t, err)
 }
+
+func TestMsgServer_RequestBridgeWithdrawal_Behavior(t *testing.T) {
+	k, _, ctx, _ := setupKeeperWithMocks(t)
+
+	creator := sdk.AccAddress([]byte("contract_addr______")).String()
+	destAddress := "0x3333333333333333333333333333333333333333"
+	destBridgeAddress := "0x2222222222222222222222222222222222222222"
+	chainID := "ethereum"
+
+	// Mock valid contract info
+	mockWK := mockWasmKeeper{
+		GetContractInfoFn: func(ctx context.Context, contractAddress sdk.AccAddress) *wasmtypes.ContractInfo {
+			return &wasmtypes.ContractInfo{
+				CodeID:  1,
+				Creator: creator,
+				Admin:   creator,
+				Label:   "test",
+			}
+		},
+	}
+	ms := keeper.NewMsgServerWithWasmKeeper(k, mockWK)
+
+	// Mock wrapped token exists
+	wrappedToken := types.BridgeWrappedTokenContract{
+		ChainId:                chainID,
+		ContractAddress:        "0x4444444444444444444444444444444444444444",
+		WrappedContractAddress: creator,
+	}
+	k.SetWrappedTokenContract(sdk.UnwrapSDKContext(ctx), wrappedToken)
+
+	msg := &types.MsgRequestBridgeWithdrawal{
+		Creator:                  creator,
+		Amount:                   "500",
+		DestinationAddress:       destAddress,
+		DestinationBridgeAddress: destBridgeAddress,
+	}
+
+	// 1. Invalid bridge address should be rejected
+	_, err := ms.RequestBridgeWithdrawal(ctx, msg)
+	require.Error(t, err)
+}

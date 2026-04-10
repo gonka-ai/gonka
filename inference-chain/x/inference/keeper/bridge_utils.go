@@ -22,55 +22,63 @@ func keccak256Hash(data []byte) [32]byte {
 }
 
 // ethereumAddressToBytes converts an Ethereum hex address string to 20 bytes
-// Handles addresses with or without 0x prefix and preserves case (matching Solidity abi.encodePacked behavior)
-func ethereumAddressToBytes(address string) []byte {
-	// Remove 0x prefix if present
+// Enforces strict validation: strips 0x if present, requires exactly 40 hex characters,
+// decodes with hex.DecodeString, and returns an error on any length/hex failure.
+func ethereumAddressToBytes(address string) ([]byte, error) {
+	// Remove 0x or 0X prefix if present
 	addr := address
-	if len(addr) >= 2 && addr[:2] == "0x" {
+	if len(addr) >= 2 && (addr[:2] == "0x" || addr[:2] == "0X") {
 		addr = addr[2:]
 	}
 
-	// Convert hex string to 20 bytes using encoding/hex
-	// Truncate to at most 40 hex chars and ensure even length (ignore dangling nibble)
-	maxLen := 40
-	n := len(addr)
-	if n > maxLen {
-		n = maxLen
-	}
-	if n%2 == 1 {
-		n--
+	// Must be exactly 40 hex characters (20 bytes)
+	if len(addr) != 40 {
+		return nil, fmt.Errorf("invalid ethereum address length: expected 40 hex characters, got %d", len(addr))
 	}
 
-	addrBytes := make([]byte, 20)
-	if n <= 0 {
-		return addrBytes
+	// Convert hex string to 20 bytes using encoding/hex
+	addrBytes, err := hex.DecodeString(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ethereum address hex format: %v", err)
 	}
-	decoded := make([]byte, n/2)
-	if _, err := hex.Decode(decoded, []byte(addr[:n])); err != nil {
-		return addrBytes
-	}
-	copy(addrBytes, decoded)
-	return addrBytes
+
+	return addrBytes, nil
 }
 
 // chainIdToBytes32 converts a numeric chain ID string to bytes32 format (uint256)
-func chainIdToBytes32(chainId string) []byte {
+func chainIdToBytes32(chainId string) ([]byte, error) {
 	chainIdBytes := make([]byte, 32)
-	if chainIdInt, ok := math.NewIntFromString(chainId); ok {
-		chainIdBigInt := chainIdInt.BigInt()
-		chainIdBigInt.FillBytes(chainIdBytes) // Big endian format
+	chainIdInt, ok := math.NewIntFromString(chainId)
+	if !ok {
+		return nil, fmt.Errorf("invalid chain ID format: %s", chainId)
 	}
-	return chainIdBytes
+	if chainIdInt.IsNegative() {
+		return nil, fmt.Errorf("chain ID cannot be negative: %s", chainId)
+	}
+	bigInt := chainIdInt.BigInt()
+	if bigInt.BitLen() > 256 {
+		return nil, fmt.Errorf("chain ID exceeds 256 bits: %s", chainId)
+	}
+	bigInt.FillBytes(chainIdBytes) // Big endian format
+	return chainIdBytes, nil
 }
 
 // amountToBytes32 converts an amount string to bytes32 format (uint256)
-func amountToBytes32(amount string) []byte {
+func amountToBytes32(amount string) ([]byte, error) {
 	amountBytes := make([]byte, 32)
-	if amountInt, ok := math.NewIntFromString(amount); ok {
-		amountBigInt := amountInt.BigInt()
-		amountBigInt.FillBytes(amountBytes) // Big endian format
+	amountInt, ok := math.NewIntFromString(amount)
+	if !ok {
+		return nil, fmt.Errorf("invalid amount format: %s", amount)
 	}
-	return amountBytes
+	if amountInt.IsNegative() {
+		return nil, fmt.Errorf("amount cannot be negative: %s", amount)
+	}
+	bigInt := amountInt.BigInt()
+	if bigInt.BitLen() > 256 {
+		return nil, fmt.Errorf("amount exceeds 256 bits: %s", amount)
+	}
+	bigInt.FillBytes(amountBytes) // Big endian format
+	return amountBytes, nil
 }
 
 // generateSecureBridgeTransactionKey creates a content-based key for bridge transactions

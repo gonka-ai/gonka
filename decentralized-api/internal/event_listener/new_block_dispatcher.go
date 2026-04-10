@@ -188,12 +188,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
 				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
 				ExpirationBlocks:    params.Params.ValidationParams.ExpirationBlocks,
+				LogprobsMode:        params.Params.ValidationParams.LogprobsMode,
 			}
 
 			logging.Debug("Updating validation parameters", types.Validation,
 				"timestampExpiration", validationParams.TimestampExpiration,
 				"timestampAdvance", validationParams.TimestampAdvance,
-				"expirationBlocks", validationParams.ExpirationBlocks)
+				"expirationBlocks", validationParams.ExpirationBlocks,
+				"logprobsMode", validationParams.LogprobsMode)
 
 			err = d.configManager.SetValidationParams(validationParams)
 			if err != nil {

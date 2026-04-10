@@ -57,6 +57,12 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 		return err
 	}
 	params.XXX_DiscardUnknown()
+
+	if params.ValidationParams == nil {
+		params.ValidationParams = types.DefaultValidationParams()
+	}
+	params.ValidationParams.LogprobsMode = types.DefaultLogprobsMode
+
 	err = k.SetParams(ctx, params)
 	if err != nil {
 		return err

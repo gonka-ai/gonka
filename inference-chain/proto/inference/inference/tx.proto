@@ -381,6 +381,7 @@ message MsgRequestBridgeWithdrawal {
   string user_address = 2; // User address that triggered the withdrawal
   string amount = 3; // Amount to withdraw (as string to handle large numbers)
   string destination_address = 4; // Ethereum address to receive tokens
+  string destination_bridge_address = 5; // The specific bridge contract to process the withdrawal
 }
 
 message MsgRequestBridgeWithdrawalResponse {
@@ -396,6 +397,7 @@ message MsgRequestBridgeMint {
   string amount = 2; // Amount of native Gonka to bridge (as string to handle large numbers)
   string destination_address = 3; // Ethereum address to receive WGNK tokens
   string chain_id = 4; // Target chain identifier (e.g., "ethereum", "sepolia")
+  string destination_bridge_address = 5; // The specific bridge contract to process the mint
 }
 
 message MsgRequestBridgeMintResponse {

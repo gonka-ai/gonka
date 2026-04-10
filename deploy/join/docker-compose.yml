@@ -107,7 +107,7 @@ services:
       - NGINX_MODE=${NGINX_MODE:-http}
       - SERVER_NAME=${SERVER_NAME:-}
       - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs
+      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet
       - GONKA_API_BLOCKED_ROUTES=poc-batches training
       - CHAIN_RPC_PORT=26657
       - CHAIN_API_PORT=1317

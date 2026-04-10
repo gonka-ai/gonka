@@ -233,20 +233,20 @@ func (am AppModule) expireInferences(
 	return nil
 }
 
-// expireInferenceAndIssueRefund marks an inference as expired and issues a refund
-// Returns the updated inference
+// expireInferenceAndIssueRefund marks an inference as expired and issues a refund.
+// Returns the updated inference.
 func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference types.Inference) types.Inference {
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
 
 	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
 	if err != nil {
-		am.LogError("Error issuing refund", types.Inferences, "error", err)
+		am.LogError("Error issuing refund", types.Inferences, "error", err, "inferenceId", inference.InferenceId)
 	}
 
 	err = am.keeper.SetInference(ctx, inference)
 	if err != nil {
-		am.LogError("Error updating inference", types.Inferences, "error", err)
+		am.LogError("Error updating inference", types.Inferences, "error", err, "inferenceId", inference.InferenceId)
 	}
 
 	return inference
@@ -326,6 +326,21 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 }
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
+//
+// Error handling philosophy:
+//   - UNRECOVERABLE (return err, halts chain): Missing params (line 357), failed epoch
+//     state writes -- SetEffectiveEpochIndex (line 443), SetEpoch (line 452),
+//     CreateEpochGroup (line 459), CreateGroup (line 464). These mean the chain cannot
+//     advance to the next epoch and would be in an inconsistent state if we continued.
+//   - RECOVERABLE (log + continue): Inference expiry failures, pruning errors, upgrade
+//     tracking errors, compute result errors, confirmation PoC failures. These affect
+//     individual operations but the chain can safely continue without them.
+//   - CROSS-MODULE (log + continue): Collateral AdvanceEpoch, StreamVesting AdvanceEpoch,
+//     BLS key generation. Failures here should not block the inference module's epoch
+//     transition.
+//
+// Sub-functions (onEndOfPoCValidationStage, onSetNewValidatorsStage) handle errors
+// internally with log+return patterns. They do NOT propagate errors to EndBlock.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
@@ -341,6 +356,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
+		// UNRECOVERABLE: Missing params means chain state is corrupt or uninitialized.
+		// Cannot proceed with epoch processing without params.
 		return err
 	}
 	epochParams := params.EpochParams
@@ -419,7 +436,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	// NOTE: Validator activation is intentionally delayed by two blocks: the new validator
 	// set becomes active at H+2, not H+1. This provides a buffer for nodes to
 	// prepare before the validator set rotates.
-	
+
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
 		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
@@ -428,6 +445,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("StartStage:onSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
+		// UNRECOVERABLE: Failed to set effective epoch index means the chain would
+		// continue on the old epoch indefinitely, processing stale data.
 		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
@@ -440,6 +459,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		upcomingEpoch := createNewEpoch(*currentEpoch, blockHeight)
+		// UNRECOVERABLE: SetEpoch failure means the upcoming epoch cannot be persisted.
+		// Without a valid epoch record, all subsequent epoch processing would be invalid.
 		err = am.keeper.SetEpoch(ctx, upcomingEpoch)
 		if err != nil {
 			am.LogError("Unable to set upcoming epoch", types.EpochGroup, "error", err.Error())
@@ -447,11 +468,15 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 
 		am.LogInfo("StartStage:PocStart", types.Stages, "blockHeight", blockHeight)
+		// UNRECOVERABLE: CreateEpochGroup failure means the DKG/BLS group for the new
+		// epoch cannot be formed. Validators would have no group to sign under.
 		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight), upcomingEpoch.Index)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		// UNRECOVERABLE: CreateGroup failure means the DKG group record cannot be
+		// persisted. The epoch group exists but has no underlying signing group.
 		err = newGroup.CreateGroup(ctx)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
@@ -460,7 +485,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
 	}
-	
+
 	// Capture validation snapshot at poc_validation_start for deterministic sampling
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -529,6 +554,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
 		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onEndOfPoCValidationStage: Unable to advance collateral epoch", types.Tokenomics, "error", err.Error())
+			sdkCtx := sdk.UnwrapSDKContext(ctx)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"epoch_error",
+				sdk.NewAttribute("stage", "advance_collateral_epoch"),
+				sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+				sdk.NewAttribute("error_category", "cross_module"),
+			))
 		}
 	} else {
 		am.LogError("collateral keeper is null", types.Tokenomics)
@@ -551,6 +583,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -573,6 +612,12 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
 		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
 		// which means participants will proceed with their unadjusted PotentialWeight.
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "adjust_weights_by_collateral"),
+			sdk.NewAttribute("error_category", "cross_module"),
+		))
 	}
 
 	// Apply universal power capping to epoch powers

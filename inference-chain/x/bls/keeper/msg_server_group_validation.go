@@ -66,10 +66,12 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			// Emit a searchable event and continue using current epoch data as fallback
 			ms.Keeper.LogWarn("Previous epoch not found - using current epoch for validation", "previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId)
-			ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
+			if err := ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
 				NewEpochId: msg.NewEpochId,
 				Reason:     fmt.Sprintf("previous_epoch_missing_fallback:%d", previousEpochId),
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("failed to emit group key validation failed event for new epoch %d: %w", msg.NewEpochId, err)
+			}
 
 			previousEpochBLSData = newEpochBLSData
 		} else {
@@ -104,11 +106,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 
 	// Check or create GroupKeyValidationState
 	var validationState *types.GroupKeyValidationState
-	validationStateKey := fmt.Sprintf("group_validation_%d", msg.NewEpochId)
+	validationStateKey := types.GroupValidationKey(msg.NewEpochId)
 
 	// Try to get existing validation state
 	store := ms.storeService.OpenKVStore(ctx)
-	bz, err := store.Get([]byte(validationStateKey))
+	bz, err := store.Get(validationStateKey)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get validation state: %w", err)
@@ -193,7 +195,10 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	// Update slots covered
 	validationState.SlotsCovered += uint32(len(filteredSlots))
 
-	// Use the previous epoch DKG threshold t+1 for readiness.
+	// Check if we have sufficient participation (previous epoch DKG threshold t+1).
+	// For a polynomial of degree t (TSlotsDegree), we need at least t + 1 valid signature shares
+	// to successfully reconstruct the group signature using Lagrange interpolation.
+	// Note that TSlotsDegree is configurable per epoch, making this threshold dynamic.
 	requiredSlots := previousEpochBLSData.TSlotsDegree + 1
 	ms.Keeper.LogInfo("Checking for signature readiness", "required_slots", requiredSlots, "slots_covered", validationState.SlotsCovered)
 	if validationState.SlotsCovered >= requiredSlots {
@@ -242,7 +247,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal validation state: %w", err)
 	}
-	err = store.Set([]byte(validationStateKey), bz)
+	err = store.Set(validationStateKey, bz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)
 	}

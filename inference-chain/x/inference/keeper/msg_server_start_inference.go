@@ -336,7 +336,9 @@ func (k msgServer) processInferencePayments(
 		}
 		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
-			k.LogError("Unable to Issue Refund for started inference", types.Payments, err)
+			k.LogError("Unable to Issue Refund for started inference", types.Payments,
+				"error", err, "inferenceId", inference.InferenceId)
+			return nil, sdkerrors.Wrapf(types.ErrIllegalState, "refund failed for inference %s: %v", inference.InferenceId, err)
 		}
 	}
 	if payments.ExecutorPayment > 0 {

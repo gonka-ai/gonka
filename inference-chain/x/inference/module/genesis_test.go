@@ -37,6 +37,9 @@ func TestGenesis(t *testing.T) {
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
 	require.NotNil(t, got)
+	currentSigningEpochID, found := k.BlsKeeper.GetCurrentSigningEpochID(ctx)
+	require.True(t, found)
+	require.Equal(t, uint64(0), currentSigningEpochID)
 
 	nullify.Fill(&genesisState)
 	nullify.Fill(got)
