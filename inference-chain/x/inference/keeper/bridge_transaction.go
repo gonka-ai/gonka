@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"cosmossdk.io/collections"
@@ -95,8 +96,13 @@ func (k Keeper) GetBridgeTransactionsByReceipt(ctx context.Context, chainId, blo
 }
 
 // CleanupOldBridgeTransactions removes bridge transactions older than the specified block number
-// This is efficient because block numbers are included in the key prefix
+// Note: This currently performs a full scan over chainId because block numbers are stored as strings and cannot be used in a lexicographical range query effectively.
 func (k Keeper) CleanupOldBridgeTransactions(ctx context.Context, chainId string, maxBlockNumber string) (int, error) {
+	maxBlockNum, err := strconv.ParseUint(maxBlockNumber, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid maxBlockNumber %s: %w", maxBlockNumber, err)
+	}
+
 	iter, err := k.BridgeTransactionsMap.Iterate(ctx, collections.NewPrefixedTripleRange[string, string, string](chainId))
 	if err != nil {
 		return 0, err
@@ -111,7 +117,13 @@ func (k Keeper) CleanupOldBridgeTransactions(ctx context.Context, chainId string
 	var deletedCount int
 	var firstErr error
 	for _, tx := range values {
-		if tx.BlockNumber < maxBlockNumber {
+		txBlockNum, err := strconv.ParseUint(tx.BlockNumber, 10, 64)
+		if err != nil {
+			// Skip transactions with invalid block numbers
+			continue
+		}
+
+		if txBlockNum < maxBlockNum {
 			if err := k.removeBridgeTransactionByID(ctx, tx.Id); err != nil {
 				if firstErr == nil {
 					firstErr = err

@@ -350,6 +350,10 @@ func evaluatePolynomial(polynomial []*fr.Element, x uint32) *fr.Element {
 		return new(fr.Element).SetZero()
 	}
 
+	if len(polynomial) == 1 {
+		return new(fr.Element).Set(polynomial[0])
+	}
+
 	// Convert x to fr.Element
 	xFr := new(fr.Element).SetUint64(uint64(x))
 

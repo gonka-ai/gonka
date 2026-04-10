@@ -65,7 +65,9 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 		return fmt.Errorf("failed to get verification result: %w", err)
 	}
 
-	if !result.IsParticipant {
+	// result can be nil if the VerificationResult was evicted from the cache before retrieval,
+	// or if the participation check failed and returned an empty result entirely.
+	if result == nil || !result.IsParticipant {
 		logging.Debug(thresholdSigningLogTag+"Not a participant in this epoch, skipping", inferenceTypes.BLS, "epoch_id", epochId)
 		return nil
 	}

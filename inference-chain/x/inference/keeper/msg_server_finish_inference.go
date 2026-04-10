@@ -134,22 +134,37 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, true, &executor)
+	// FinishInference returns nil error to the SDK regardless of internal failures.
+	// This is intentional: returning an error would revert the entire transaction,
+	// but the caller has already paid gas and expects an ErrorMessage response.
+	// CacheContext ensures that if ANY mutation below fails, ALL mutations roll back,
+	// preventing partial state (e.g., escrow moved but inference not updated,
+	// or participant stats incremented but inference not marked completed).
+	cacheCtx, writeFn := ctx.CacheContext()
+
+	finalInference, err := k.processInferencePayments(cacheCtx, inference, payments, true, &executor)
 	if err != nil {
-		return failedFinish(ctx, err, msg), nil
+		k.LogError("FinishInference: payment processing failed", types.Inferences,
+			"inferenceId", msg.InferenceId, "error", err)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrIllegalState, "payment processing failed"), msg), nil
 	}
 	if finalInference.IsCompleted() {
-		k.handleInferenceCompleted(ctx, finalInference, &executor)
+		k.handleInferenceCompleted(cacheCtx, finalInference, &executor)
 	}
 	if shouldPersistParticipant(finalInference, payments, &executor) {
-		if err := k.SetParticipant(ctx, executor); err != nil {
+		if err := k.SetParticipant(cacheCtx, executor); err != nil {
 			return failedFinish(ctx, err, msg), nil
 		}
 	}
-	err = k.SetInference(ctx, *finalInference)
+	err = k.SetInference(cacheCtx, *finalInference)
 	if err != nil {
-		return failedFinish(ctx, err, msg), nil
+		k.LogError("FinishInference: SetInference failed", types.Inferences,
+			"inferenceId", msg.InferenceId, "error", err)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrIllegalState, "failed to persist inference"), msg), nil
 	}
+
+	// All mutations succeeded -- commit to parent store.
+	writeFn()
 
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
 }

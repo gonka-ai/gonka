@@ -62,73 +62,65 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
-	// TODO: Optimization: Payout claim should be done in one transaction
 	ms.LogInfo("Issuing rewards", types.Claims, "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
+
+	// Use CacheContext so all payout mutations are atomic.
+	// If any payment fails, nothing is committed and the settle record
+	// persists for retry.
+	cacheCtx, writeFn := ctx.CacheContext()
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
-	params, err := ms.GetParams(ctx)
+	params, err := ms.GetParams(cacheCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(ctx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.handleUnderfundedWork(ctx, err, settleAmount)
+			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
 				Amount: 0,
-				Result: "Insufficient funds for paying participant for work! Unpaid settlement",
+				Result: "Insufficient funds for paying participant for work, claim can be retried",
 			}, err
 		}
-		ms.LogError("Error paying participant from escrow", types.Claims, "error", err)
+		ms.LogError("Error paying participant from escrow, claim can be retried", types.Claims, "error", err)
 		return &types.MsgClaimRewardsResponse{
 			Amount: 0,
-			Result: "Error paying participant from escrow",
+			Result: "Error paying participant from escrow, claim can be retried",
 		}, err
 	}
-	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
+	if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
+		ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
+	}
 
 	// Pay rewards from module
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(ctx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
-			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
+			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
-			ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
+			ms.LogError("Error paying participant for rewards, claim can be retried", types.Claims, "error", err)
 		}
-		ms.finishSettle(ctx, settleAmount)
 		return &types.MsgClaimRewardsResponse{
-			Amount: settleAmount.GetWorkCoins(),
-			Result: "Work paid, but rewards failed.",
+			Amount: 0,
+			Result: "Reward payment failed, claim can be retried",
 		}, err
 	}
 
-	ms.finishSettle(ctx, settleAmount)
+	ms.finishSettle(cacheCtx, settleAmount)
 	// impossible, but check anyhow
 	if settleAmount.GetTotalCoins() < 0 {
 		return nil, types.ErrNegativeRewardAmount
 	}
+
+	// All payout operations succeeded -- commit atomically.
+	writeFn()
+
 	return &types.MsgClaimRewardsResponse{
 		Amount: uint64(settleAmount.GetTotalCoins()),
 		Result: "Rewards claimed successfully",
 	}, nil
-}
-
-func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmount *types.SettleAmount) {
-	ms.LogError("Insufficient funds for paying participant for work! Unpaid settlement", types.Claims, "error", err, "settleAmount", settleAmount)
-
-	spendable, required := ms.parseBalanceError(err.Error())
-	ms.LogError("Balance details", types.Claims, "spendable", spendable, "required", required)
-
-	ms.finishSettle(ctx, settleAmount)
-}
-
-func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
-	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dngonka", &spendable, &required)
-	if err != nil {
-		return 0, 0
-	}
-	return spendable, required
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
@@ -486,7 +478,25 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
-		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPowerForModel.Weight), uint32(executorPower.Weight),
+		safeTotalWeight, err := safeUint32FromInt64(totalWeight)
+		if err != nil {
+			k.LogError("Weight overflow in validation sampling", types.Claims,
+				"totalWeight", totalWeight, "error", err, "inference", inference.InferenceId)
+			continue // Skip this inference -- can't compute validation probability safely
+		}
+		safeValidatorWeight, err := safeUint32FromInt64(validatorPowerForModel.Weight)
+		if err != nil {
+			k.LogError("Weight overflow in validation sampling", types.Claims,
+				"validatorWeight", validatorPowerForModel.Weight, "error", err, "inference", inference.InferenceId)
+			continue
+		}
+		safeExecutorWeight, err := safeUint32FromInt64(executorPower.Weight)
+		if err != nil {
+			k.LogError("Weight overflow in validation sampling", types.Claims,
+				"executorWeight", executorPower.Weight, "error", err, "inference", inference.InferenceId)
+			continue
+		}
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, safeTotalWeight, safeValidatorWeight, safeExecutorWeight,
 			params.ValidationParams, false)
 		k.LogDebug(s, types.Claims, "inference", inference.InferenceId, "seed", msg.Seed, "model", modelId, "validator", msg.Creator)
 		if shouldValidate {

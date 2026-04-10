@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
-Inference-only runner for OpenAI-compatible vLLM endpoints.
+Inference-only runner for OpenAI-compatible endpoints.
+
+The --url should point to the mlnode API (port 8080), which proxies /v1/*
+requests to vLLM backends with least-connections load-balancing. This ensures
+all backends are utilised. Pointing directly at a single vLLM backend port
+(e.g. 5001) also works but bypasses load-balancing.
 
 Multilingual mixed run template (uses script defaults for sampling/retry/workers):
     python scripts/inference_validation/inference.py \
       --exp-name <experiment_name> \
-      --url <vllm_base_url> \
+      --url http://<HOST>:<API_PORT> \
       --model <served_model_id> \
       --n-prompts 1000 \
       --multilingual \
@@ -144,7 +149,7 @@ def _resolve_model_name(configured: str, served_ids: List[str], *, base_url: str
 def _make_exp_dir(out_base: Path, exp_name: str) -> Path:
     out_base.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    exp_dir = out_base / f"{exp_name}__{ts}"
+    exp_dir = out_base / f"{exp_name}_{ts}"
     exp_dir.mkdir(parents=True, exist_ok=True)
     return exp_dir
 
@@ -198,11 +203,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run INFERENCE ONLY against an already running OpenAI-compatible vLLM server. "
-            "Saves a pure inference artifact and inference config under data/inference_validation/<exp>__<timestamp>/."
+            "Saves a pure inference artifact and inference config under data/experiments/<exp>_<timestamp>/."
         )
     )
-    parser.add_argument("--exp-name", required=True, help="Experiment name (required).")
-    parser.add_argument("--url", required=True, help="vLLM base URL, e.g. http://HOST:8000")
+    parser.add_argument("--exp-name", default="inference", help="Experiment name prefix (used when --exp-dir is not set).")
+    parser.add_argument("--exp-dir", type=Path, default=None, help="Write into an existing experiment directory instead of creating a new one.")
+    parser.add_argument("--url", required=True, help="Server URL (mlnode API recommended for load-balancing across backends, e.g. http://HOST:8080)")
     parser.add_argument("--model", default="", help="Model id to use; default: first served id from /v1/models.")
     parser.add_argument("--n-prompts", type=int, default=1000, help="Number of prompts to run.")
     parser.add_argument("--prompts-file", type=Path, default=None, help="Optional text file with one prompt per line.")
@@ -225,8 +231,12 @@ def main() -> None:
     args = parser.parse_args()
 
     benchmarks_dir = Path(__file__).resolve().parents[2]
-    out_base = benchmarks_dir / "data" / "inference_validation"
-    exp_dir = _make_exp_dir(out_base=out_base, exp_name=args.exp_name)
+    if args.exp_dir:
+        exp_dir = args.exp_dir.resolve()
+        exp_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_base = benchmarks_dir / "data" / "experiments"
+        exp_dir = _make_exp_dir(out_base=out_base, exp_name=args.exp_name)
     inference_artifact_path = exp_dir / "inference_results.jsonl"
     inference_cfg_path = exp_dir / "inference_config.json"
 

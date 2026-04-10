@@ -204,6 +204,8 @@ data class ValidationParams(
     val binomTestP0: Decimal?,
     @SerializedName("claim_validation_enabled")
     val claimValidationEnabled: Boolean = false,
+    @SerializedName("logprobs_mode")
+    val logprobsMode: String = "",
 )
 
 data class BandwidthLimitsParams(

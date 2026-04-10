@@ -366,9 +366,14 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "no executors available for model")
 	}
 
+	selectedLogprobsMode := s.configManager.GetValidationParams().LogprobsMode
+	if selectedLogprobsMode == "" {
+		selectedLogprobsMode = types.DefaultLogprobsMode
+	}
+
 	seed := rand.Int31()
 	inferenceUUID := request.AuthKey
-	inferenceRequest, err := createInferenceStartRequest(s, request, seed, request.AuthKey, executor, s.configManager.GetCurrentNodeVersion(), promptTokenCount)
+	inferenceRequest, err := createInferenceStartRequest(s, request, seed, request.AuthKey, executor, s.configManager.GetCurrentNodeVersion(), promptTokenCount, selectedLogprobsMode)
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		return err
@@ -568,7 +573,11 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		return echo.ErrBadRequest
 	}
 
-	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, int32(seed))
+	logprobsMode := s.configManager.GetValidationParams().LogprobsMode
+	if logprobsMode == "" {
+		logprobsMode = types.DefaultLogprobsMode
+	}
+	modifiedRequestBody, err := completionapi.ModifyRequestBodyWithLogprobsMode(request.Body, int32(seed), logprobsMode)
 	if err != nil {
 		logging.Warn("Unable to modify request body", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid chat completion request: "+err.Error())
@@ -926,8 +935,8 @@ func getModifiedPromptHash(requestBytes []byte) (string, []byte, error) {
 	return promptHash, []byte(canonicalJSON), nil
 }
 
-func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string, promptTokenCount int) (*inference.MsgStartInference, error) {
-	modifiedRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
+func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string, promptTokenCount int, logprobsMode string) (*inference.MsgStartInference, error) {
+	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(request.Body, seed, logprobsMode)
 	if err != nil {
 		logging.Warn("Unable to normalize request body for inference start", types.Inferences, "error", err)
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid chat completion request: "+err.Error())
