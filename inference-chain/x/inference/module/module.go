@@ -436,7 +436,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	// NOTE: Validator activation is intentionally delayed by two blocks: the new validator
 	// set becomes active at H+2, not H+1. This provides a buffer for nodes to
 	// prepare before the validator set rotates.
-	
+
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
 		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
@@ -447,7 +447,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
 		// UNRECOVERABLE: Failed to set effective epoch index means the chain would
 		// continue on the old epoch indefinitely, processing stale data.
-		if err := am.keeper.SetEffectiveEpochIndex(sdkCtx, getNextEpochIndex(*currentEpoch)); err != nil {
+		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
@@ -485,7 +485,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
 	}
-	
+
 	// Capture validation snapshot at poc_validation_start for deterministic sampling
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
