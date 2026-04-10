@@ -326,7 +326,16 @@ fun generateLogProbs(content: String): Logprobs {
     return Logprobs(
         content.split(" ").mapIndexed { index, word ->
             val tokenId = (index + 1000).toString()
-            Content(word.toByteArray().toList().map { it.toInt() }, 0.9, tokenId, listOf())
+            Content(
+                word.toByteArray().toList().map { it.toInt() },
+                0.9,
+                tokenId,
+                listOf(
+                    TopLogprob(tokenId.toByteArray().toList().map { it.toInt() }, 0.0, tokenId),
+                    TopLogprob(listOf(49), -9999.0, "1"),
+                    TopLogprob(listOf(51), -9999.0, "3"),
+                )
+            )
         }
     )
 }
