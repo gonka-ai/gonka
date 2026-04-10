@@ -108,31 +108,10 @@ func (k Keeper) TransitionToVerifyingPhase(ctx sdk.Context, epochBLSData *types.
 
 	} else {
 		// Insufficient participation - mark as FAILED
-		epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
-
-		// Store updated epoch data
-		if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
-			return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
-		}
-
-		// Clear active epoch since DKG process is complete (failed)
-		k.ClearActiveEpochID(ctx)
-
-		// Emit event for DKG failure
 		failureReason := fmt.Sprintf("Insufficient participation in dealing phase: %d slots with dealer parts out of %d total slots (required: >%d)",
 			slotsWithDealerParts, epochBLSData.ITotalSlots, epochBLSData.ITotalSlots/2)
 
-		if err := ctx.EventManager().EmitTypedEvent(&types.EventDKGFailed{
-			EpochId:   epochBLSData.EpochId,
-			Reason:    failureReason,
-			EpochData: *epochBLSData,
-		}); err != nil {
-			return fmt.Errorf("failed to emit EventDKGFailed for epoch %d: %w", epochBLSData.EpochId, err)
-		}
-
-		k.Logger().Info("DKG marked as FAILED due to insufficient participation",
-			"epochId", epochBLSData.EpochId,
-			"reason", failureReason)
+		return k.MarkDKGAsFailed(ctx, epochBLSData, failureReason)
 	}
 
 	return nil
@@ -176,12 +155,34 @@ func (k Keeper) transitionFromVerifyingToDisputing(ctx sdk.Context, epochBLSData
 	if slotsWithVerification <= epochBLSData.ITotalSlots/2 {
 		failureReason := fmt.Sprintf("Insufficient participation in verification phase: %d slots with verification vectors out of %d total slots (required: >%d)",
 			slotsWithVerification, epochBLSData.ITotalSlots, epochBLSData.ITotalSlots/2)
-		return k.failDKG(ctx, epochBLSData, failureReason)
+		return k.MarkDKGAsFailed(ctx, epochBLSData, failureReason)
 	}
 
 	candidateValidDealers, err := k.DetermineValidDealersWithConsensus(epochBLSData)
 	if err != nil {
-		return fmt.Errorf("failed to determine candidate valid dealers for epoch %d: %w", epochBLSData.EpochId, err)
+		k.Logger().Error("DKG failed", "epochId", epochBLSData.EpochId, "error", err)
+		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to determine candidate valid dealers: %v", err))
+	}
+
+	// Calculate total slots covered by candidate valid dealers
+	var candidateDealerSlots uint32 = 0
+	for i, participant := range epochBLSData.Participants {
+		if i < len(candidateValidDealers) && candidateValidDealers[i] {
+			participantSlots := participant.SlotEndIndex - participant.SlotStartIndex + 1
+			candidateDealerSlots += participantSlots
+		}
+	}
+
+	k.Logger().Info("Checking candidate valid dealers slots",
+		"epochId", epochBLSData.EpochId,
+		"candidateDealerSlots", candidateDealerSlots,
+		"totalSlots", epochBLSData.ITotalSlots,
+		"requiredSlots", epochBLSData.ITotalSlots/2)
+
+	if candidateDealerSlots <= epochBLSData.ITotalSlots/2 {
+		failureReason := fmt.Sprintf("Insufficient candidate valid dealer slots: %d slots out of %d total slots (required: >%d)",
+			candidateDealerSlots, epochBLSData.ITotalSlots, epochBLSData.ITotalSlots/2)
+		return k.MarkDKGAsFailed(ctx, epochBLSData, failureReason)
 	}
 
 	params, err := k.GetParams(ctx)
@@ -250,12 +251,33 @@ func (k Keeper) finalizeDisputingPhase(ctx sdk.Context, epochBLSData *types.Epoc
 	var err error
 	finalValidDealers, err = k.applyDealerComplaintOutcomes(epochBLSData, finalValidDealers)
 	if err != nil {
-		return k.failDKG(ctx, epochBLSData, fmt.Sprintf("failed to apply complaint outcomes: %v", err))
+		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to apply complaint outcomes: %v", err))
+	}
+
+	// Calculate total slots covered by final valid dealers
+	var finalDealerSlots uint32 = 0
+	for i, participant := range epochBLSData.Participants {
+		if i < len(finalValidDealers) && finalValidDealers[i] {
+			participantSlots := participant.SlotEndIndex - participant.SlotStartIndex + 1
+			finalDealerSlots += participantSlots
+		}
+	}
+
+	k.Logger().Info("Checking final valid dealers slots",
+		"epochId", epochBLSData.EpochId,
+		"finalDealerSlots", finalDealerSlots,
+		"totalSlots", epochBLSData.ITotalSlots,
+		"requiredSlots", epochBLSData.ITotalSlots/2)
+
+	if finalDealerSlots <= epochBLSData.ITotalSlots/2 {
+		failureReason := fmt.Sprintf("Insufficient final valid dealer slots: %d slots out of %d total slots (required: >%d)",
+			finalDealerSlots, epochBLSData.ITotalSlots, epochBLSData.ITotalSlots/2)
+		return k.MarkDKGAsFailed(ctx, epochBLSData, failureReason)
 	}
 
 	groupPublicKey, err := k.ComputeGroupPublicKey(epochBLSData, finalValidDealers)
 	if err != nil {
-		return k.failDKG(ctx, epochBLSData, fmt.Sprintf("failed to compute group public key: %v", err))
+		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to compute group public key: %v", err))
 	}
 
 	epochBLSData.GroupPublicKey = groupPublicKey
@@ -264,7 +286,7 @@ func (k Keeper) finalizeDisputingPhase(ctx sdk.Context, epochBLSData *types.Epoc
 
 	slotPublicKeys, err := k.PrecomputeSlotPublicKeysBlst(epochBLSData)
 	if err != nil {
-		return k.failDKG(ctx, epochBLSData, fmt.Sprintf("failed to precompute slot public keys: %v", err))
+		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to precompute slot public keys: %v", err))
 	}
 	epochBLSData.SlotPublicKeys = slotPublicKeys
 
@@ -293,7 +315,7 @@ func (k Keeper) finalizeDisputingPhase(ctx sdk.Context, epochBLSData *types.Epoc
 	return nil
 }
 
-func (k Keeper) failDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData, failureReason string) error {
+func (k Keeper) MarkDKGAsFailed(ctx sdk.Context, epochBLSData *types.EpochBLSData, failureReason string) error {
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_FAILED
 
 	if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
@@ -473,3 +495,4 @@ func (k Keeper) ComputeGroupPublicKey(epochBLSData *types.EpochBLSData, validDea
 
 	return groupPublicKeyBytes, nil
 }
+

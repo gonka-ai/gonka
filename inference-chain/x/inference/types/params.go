@@ -88,6 +88,12 @@ func WindowBlocksToSize(windowBlocks uint64) int64 {
 }
 
 const (
+	LogprobsModeProcessed = "processed_logprobs"
+	LogprobsModeRaw       = "raw_logprobs"
+	DefaultLogprobsMode   = LogprobsModeProcessed
+)
+
+const (
 	DefaultSubnetEscrowMinAmount    uint64 = 5_000_000_000
 	DefaultSubnetEscrowMaxAmount    uint64 = 10_000_000_000
 	DefaultSubnetMaxEscrowsPerEpoch uint32 = 100
@@ -203,6 +209,7 @@ func DefaultValidationParams() *ValidationParams {
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
 		ClaimValidationEnabled:         false,
+		LogprobsMode:                   DefaultLogprobsMode,
 	}
 }
 
@@ -589,6 +596,12 @@ func (p *ValidationParams) Validate() error {
 	}
 	if p.TimestampAdvance <= 0 {
 		return fmt.Errorf("timestamp advance must be positive")
+	}
+	switch p.LogprobsMode {
+	case LogprobsModeProcessed, LogprobsModeRaw:
+		// ok
+	default:
+		return fmt.Errorf("invalid logprobs_mode: %q, must be %q or %q", p.LogprobsMode, LogprobsModeProcessed, LogprobsModeRaw)
 	}
 	return nil
 }

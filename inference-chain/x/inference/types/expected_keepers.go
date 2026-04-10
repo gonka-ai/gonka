@@ -136,8 +136,13 @@ type BlsKeeper interface {
 	// DKG methods
 	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
 	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, error)
+	// ActiveEpochID tracks the epoch that is currently undergoing the DKG process
 	SetActiveEpochID(ctx sdk.Context, epochID uint64)
 	GetActiveEpochID(ctx sdk.Context) (uint64, bool)
+	
+	// CurrentSigningEpochID tracks the active epoch used for threshold signing requests
+	SetCurrentSigningEpochID(ctx sdk.Context, epochID uint64)
+	GetCurrentSigningEpochID(ctx sdk.Context) (uint64, bool)
 
 	// Threshold signing methods
 	RequestThresholdSignature(ctx sdk.Context, signingData blstypes.SigningData) error

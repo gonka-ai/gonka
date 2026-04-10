@@ -504,6 +504,12 @@ func (k Keeper) MigrateAllWrappedTokenContracts(ctx sdk.Context, newCodeID uint6
 
 func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contractAddress string) (string, error) {
 	wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
+	if k.IsBridgeContractAddress(ctx, chainId, contractAddress) {
+		return "", fmt.Errorf(
+			"address %s (chain %s) is a registered bridge contract address and cannot be used as a wrapped token",
+			contractAddress, chainId,
+		)
+	}
 	// Check if mapping already exists
 	contract, found := k.GetWrappedTokenContract(ctx, chainId, contractAddress)
 	if found {

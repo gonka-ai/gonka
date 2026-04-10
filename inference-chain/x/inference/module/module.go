@@ -447,7 +447,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
 		// UNRECOVERABLE: Failed to set effective epoch index means the chain would
 		// continue on the old epoch indefinitely, processing stale data.
-		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
+		if err := am.keeper.SetEffectiveEpochIndex(sdkCtx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",

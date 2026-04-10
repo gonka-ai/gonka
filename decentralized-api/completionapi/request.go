@@ -18,6 +18,10 @@ type ModifiedRequest struct {
 }
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
+	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
+}
+
+func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, logprobsMode string) (*ModifiedRequest, error) {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return nil, err
@@ -63,6 +67,11 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 				requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
 			}
 		}
+	}
+
+	if logprobsMode != "" {
+		delete(requestMap, "logprobs_mode")
+		requestMap["logprobs_mode"] = logprobsMode
 	}
 
 	modifiedRequestBytes, err := json.Marshal(requestMap)

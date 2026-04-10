@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/binary"
+	"fmt"
 )
 
 const (
@@ -20,6 +21,7 @@ var (
 	EpochBLSDataPrefix            = []byte("epoch_bls_data")
 	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
 	ExpirationIndexPrefix         = []byte("expiration_index")
+	GroupValidationPrefix         = []byte("group_validation_")
 )
 
 func KeyPrefix(p string) []byte {
@@ -64,4 +66,9 @@ func ExpirationIndexPrefixForBlock(blockHeight int64) []byte {
 	copy(prefix, ExpirationIndexPrefix)
 	copy(prefix[len(ExpirationIndexPrefix):], deadlineBytes)
 	return prefix
+}
+
+// GroupValidationKey generates a key for the group validation state by epoch ID
+func GroupValidationKey(epochID uint64) []byte {
+	return []byte(fmt.Sprintf("%s%d", GroupValidationPrefix, epochID))
 }

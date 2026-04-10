@@ -25,7 +25,8 @@ type (
 )
 
 const (
-	ActiveEpochIDKey = "active_epoch_id"
+	ActiveEpochIDKey         = "active_epoch_id"
+	CurrentSigningEpochIDKey = "current_signing_epoch_id"
 )
 
 func NewKeeper(
@@ -91,4 +92,27 @@ func (k Keeper) ClearActiveEpochID(ctx sdk.Context) {
 	if err != nil {
 		k.Logger().Error("Failed to clear active epoch ID", "error", err)
 	}
+}
+
+// SetCurrentSigningEpochID sets the epoch ID that external threshold-signing requests must use.
+// This is expected to track the inference module's effective epoch.
+func (k Keeper) SetCurrentSigningEpochID(ctx sdk.Context, epochID uint64) {
+	store := k.storeService.OpenKVStore(ctx)
+	key := []byte(CurrentSigningEpochIDKey)
+	value := make([]byte, 8)
+	binary.BigEndian.PutUint64(value, epochID)
+	store.Set(key, value)
+}
+
+// GetCurrentSigningEpochID returns the epoch ID that external threshold-signing requests must use.
+func (k Keeper) GetCurrentSigningEpochID(ctx sdk.Context) (uint64, bool) {
+	store := k.storeService.OpenKVStore(ctx)
+	key := []byte(CurrentSigningEpochIDKey)
+
+	value, err := store.Get(key)
+	if err != nil || value == nil {
+		return 0, false
+	}
+
+	return binary.BigEndian.Uint64(value), true
 }

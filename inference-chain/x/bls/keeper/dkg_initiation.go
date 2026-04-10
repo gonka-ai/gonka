@@ -79,7 +79,9 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 		Participants: blsParticipants,
 	}
 
-	ctx.EventManager().EmitTypedEvent(&event)
+	if err := ctx.EventManager().EmitTypedEvent(&event); err != nil {
+		return fmt.Errorf("failed to emit key generation initiated event for epoch %d: %w", epochID, err)
+	}
 
 	k.Logger().Info(
 		"DKG initiated for epoch",
@@ -220,8 +222,14 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 
 		startIndex := currentSlot
 		endIndex := startIndex + uint32(slotCount) - 1
+
+		// Older versions clamped endIndex to totalSlots - 1 as a
+		// defensive fallback. The assignment uses fixed-point decimals (LegacyDec),
+		// not floating-point math. With the current checks (including checkTotal
+		// above), this branch should be unreachable, so we fail fast instead of
+		// masking a logic bug with silent clamping.
 		if endIndex >= totalSlots {
-			endIndex = totalSlots - 1
+			return nil, fmt.Errorf("slot assignment overflow: ending slot index %d exceeds total slots %d", endIndex, totalSlots)
 		}
 
 		blsParticipant := types.BLSParticipantInfo{

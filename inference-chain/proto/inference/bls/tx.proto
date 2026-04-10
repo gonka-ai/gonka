@@ -227,4 +227,7 @@ message MsgRequestThresholdSignature {
 
 // MsgRequestThresholdSignatureResponse defines the response structure for executing a
 // MsgRequestThresholdSignature message.
-message MsgRequestThresholdSignatureResponse {}
+message MsgRequestThresholdSignatureResponse {
+  // derived_request_id is the actual request ID used for KVStore lookups, derived as keccak256(creator || request_id)
+  bytes derived_request_id = 1;
+}
