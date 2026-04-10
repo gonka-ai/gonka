@@ -1,5 +1,5 @@
 from typing import Optional
-from importlib.metadata import version as pkg_version
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -16,6 +16,12 @@ import api.proxy as proxy_module
 
 logger = create_logger(__name__)
 
+_MLNODE_VERSION = "unknown"
+try:
+    _MLNODE_VERSION = pkg_version("mlnode-api")
+except PackageNotFoundError:
+    logger.warning("mlnode-api package metadata not found, version will be reported as 'unknown'")
+
 router = APIRouter(
     tags=["API v1"],
 )
@@ -23,7 +29,7 @@ router = APIRouter(
 
 class StateResponse(BaseModel):
     state: ServiceState
-    version: str = pkg_version("mlnode-api")
+    version: str = _MLNODE_VERSION
     poc_status: Optional[str] = None          # "IDLE" | "GENERATING" | "VALIDATING" | "MIXED" | "NO_BACKENDS"
     inference_healthy: Optional[bool] = None  # True when ≥1 vLLM backend is up
     loaded_model: Optional[str] = None        # Model the current vLLM process was started with

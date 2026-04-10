@@ -209,6 +209,7 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion   string     `json:"ml_node_version"`
 
 	// Epoch-specific data, populated from the chain
@@ -1289,13 +1290,16 @@ func nodeStatusQueryWorker(broker *Broker) {
 					"currentStatus", queryStatusResult.CurrentStatus.String())
 			}
 
-			statusUpdates = append(statusUpdates, StatusUpdate{
-				NodeId:        nodeResp.Node.Id,
-				PrevStatus:    queryStatusResult.PrevStatus,
-				NewStatus:     queryStatusResult.CurrentStatus,
-				Timestamp:     timestamp,
-				MlNodeVersion: queryStatusResult.MlNodeVersion,
-			})
+			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus ||
+				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion {
+				statusUpdates = append(statusUpdates, StatusUpdate{
+					NodeId:        nodeResp.Node.Id,
+					PrevStatus:    queryStatusResult.PrevStatus,
+					NewStatus:     queryStatusResult.CurrentStatus,
+					Timestamp:     timestamp,
+					MlNodeVersion: queryStatusResult.MlNodeVersion,
+				})
+			}
 		}
 
 		if len(statusUpdates) > 0 {
@@ -1327,7 +1331,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	nodeId := node.Id
 	prevStatus := state.CurrentStatus
 	var currentStatus types.HardwareNodeStatus
-	var mlNodeVersion string
+	mlNodeVersion := state.MlNodeVersion
 	if err != nil {
 		logging.Error("queryNodeStatus. Failed to query node status. Assuming currentStatus = FAILED", types.Nodes,
 			"nodeId", nodeId, "error", err)
