@@ -11,38 +11,42 @@ import (
 )
 
 func TestGenesis(t *testing.T) {
+	params := types.DefaultParams()
+	params.MaxSigningAttempts = 1
+
 	genesisState := types.GenesisState{
-		Params: types.DefaultParams(),
-		ActiveEpochId: 2,
+		Params:                params,
+		ActiveEpochId:         2,
 		CurrentSigningEpochId: 2,
 		BlsDataList: []types.EpochBLSData{
 			{
-				EpochId: 1,
+				EpochId:     1,
 				ITotalSlots: 10,
 				Participants: []types.BLSParticipantInfo{
 					{
-						Address: "testing_address",
+						Address:        "testing_address",
 						SlotStartIndex: 1,
-						SlotEndIndex: 10,
+						SlotEndIndex:   10,
 					},
 				},
 			},
 		},
 		SigningRequests: []types.ThresholdSigningRequest{
 			{
-				RequestId: []byte("request1"),
-				CurrentEpochId: 1,
-				ChainId: []byte("chain1"),
-				Data: [][]byte{[]byte("data1")},
-				Status: types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES,
+				RequestId:           []byte("request1"),
+				CurrentEpochId:      1,
+				ChainId:             []byte("chain1"),
+				Data:                [][]byte{[]byte("data1")},
+				Status:              types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES,
 				DeadlineBlockHeight: 100,
+				Attempt:             1,
 			},
 		},
 		GroupValidationStates: []types.GroupKeyValidationState{
 			{
-				NewEpochId: 2,
+				NewEpochId:      2,
 				PreviousEpochId: 1,
-				Status: types.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
+				Status:          types.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
 			},
 		},
 		// this line is used by starport scaffolding # genesis/test/state
@@ -63,7 +67,7 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.GroupValidationStates, got.GroupValidationStates)
 
 	// Test behavioral rebuilding of the Expiration Index
-	// Force advance block height to exactly the deadline (100) 
+	// Force advance block height to exactly the deadline (100)
 	// because ProcessThresholdSigningDeadlines scans exactly the current block height
 	ctx = ctx.WithBlockHeight(100)
 	err := k.ProcessThresholdSigningDeadlines(ctx)

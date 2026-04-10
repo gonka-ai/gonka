@@ -7,6 +7,8 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -16,6 +18,7 @@ func CreateUpgradeHandler(
 	configurator module.Configurator,
 	k keeper.Keeper,
 	distrKeeper distrkeeper.Keeper,
+	blsKeeper blskeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -40,6 +43,12 @@ func CreateUpgradeHandler(
 		if err != nil {
 			return nil, err
 		}
+
+		err = adjustBLSParameters(ctx, blsKeeper)
+		if err != nil {
+			return nil, err
+		}
+
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
 			return toVM, err
@@ -78,6 +87,26 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 		return err
 	}
 	return nil
+}
+
+func adjustBLSParameters(ctx context.Context, blsKeeper blskeeper.Keeper) error {
+	params, err := blsKeeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	defaults := blstypes.DefaultParams()
+	if params.ITotalSlots == 0 {
+		params = defaults
+	}
+	if params.DisputePhaseDurationBlocks <= 0 {
+		params.DisputePhaseDurationBlocks = defaults.DisputePhaseDurationBlocks
+	}
+	if params.MaxSigningAttempts == 0 {
+		params.MaxSigningAttempts = defaults.MaxSigningAttempts
+	}
+
+	return blsKeeper.SetParams(ctx, params)
 }
 
 func removeTopMiner(ctx context.Context, k keeper.Keeper) error {

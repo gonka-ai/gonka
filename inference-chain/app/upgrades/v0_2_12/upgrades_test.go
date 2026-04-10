@@ -6,6 +6,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -54,4 +55,39 @@ func TestClearTrainingState(t *testing.T) {
 	} {
 		require.Nil(t, store.Get(key), "expected key %q to be deleted", string(key))
 	}
+}
+
+func TestAdjustBLSParameters_SetsDefaultsForZeroValues(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DisputePhaseDurationBlocks = 0
+	params.MaxSigningAttempts = 0
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, adjustBLSParameters(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	defaults := blstypes.DefaultParams()
+	require.Equal(t, defaults.DisputePhaseDurationBlocks, updated.DisputePhaseDurationBlocks)
+	require.Equal(t, defaults.MaxSigningAttempts, updated.MaxSigningAttempts)
+}
+
+func TestAdjustBLSParameters_PreservesExplicitValues(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DisputePhaseDurationBlocks = 17
+	params.MaxSigningAttempts = 7
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, adjustBLSParameters(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(17), updated.DisputePhaseDurationBlocks)
+	require.Equal(t, uint32(7), updated.MaxSigningAttempts)
 }
