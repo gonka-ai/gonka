@@ -2086,7 +2086,9 @@ type HardwareNode struct {
 	Hardware []*Hardware        `protobuf:"bytes,4,rep,name=hardware,proto3" json:"hardware,omitempty"`
 	Host     string             `protobuf:"bytes,5,opt,name=host,proto3" json:"host,omitempty"`
 	Port     string             `protobuf:"bytes,6,opt,name=port,proto3" json:"port,omitempty"`
-	Version  string             `protobuf:"bytes,7,opt,name=version,proto3" json:"version,omitempty"`
+	// Self-reported by the node via its /state endpoint. Informational only —
+	// do not use for authorization or capability gating without independent verification.
+	Version string `protobuf:"bytes,7,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *HardwareNode) Reset() {
