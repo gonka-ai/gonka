@@ -27,10 +27,21 @@ const (
 	POC_VALIDATE_GET_NODES_RETRY_DELAY = 5 * time.Second
 )
 
+// proofFetcher abstracts proof retrieval so it can be stubbed in tests.
+type proofFetcher interface {
+	FetchAndVerifyProofs(ctx context.Context, participantUrl string, req ProofRequest) ([]VerifiedArtifact, error)
+}
+
+// nodeBrokerFacade is the subset of broker.Broker used by OffChainValidator.
+type nodeBrokerFacade interface {
+	NewNodeClient(node *broker.Node) mlnodeclient.MLNodeClient
+	GetNodes() ([]broker.NodeResponse, error)
+}
+
 // OffChainValidator handles off-chain PoC validation using MMR proofs.
 type OffChainValidator struct {
 	recorder         cosmosclient.CosmosMessageClient
-	nodeBroker       *broker.Broker
+	nodeBroker       nodeBrokerFacade
 	phaseTracker     *chainphase.ChainPhaseTracker
 	callbackUrl      string
 	pubKey           string
@@ -112,7 +123,7 @@ func isPorosityTooHigh(artifacts []VerifiedArtifact, totalCount uint32) (maxNonc
 // NewOffChainValidator creates a new off-chain validator.
 func NewOffChainValidator(
 	recorder cosmosclient.CosmosMessageClient,
-	nodeBroker *broker.Broker,
+	nodeBroker nodeBrokerFacade,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	callbackUrl string,
 	pubKey string,
@@ -367,7 +378,7 @@ func (v *OffChainValidator) worker(
 	cancel context.CancelFunc,
 	workerID int,
 	workChan chan participantWork,
-	proofClient *ProofClient,
+	proofClient proofFetcher,
 	nodes []broker.NodeResponse,
 	pocHeight int64,
 	samplingBlockHash string,
@@ -470,7 +481,7 @@ func (v *OffChainValidator) worker(
 func (v *OffChainValidator) validateParticipant(
 	workerID int,
 	work participantWork,
-	proofClient *ProofClient,
+	proofClient proofFetcher,
 	nodes []broker.NodeResponse,
 	nodeCounter *int,
 	pocHeight int64,
