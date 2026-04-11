@@ -157,12 +157,19 @@ class StreamingInferenceTests : TestermintTest() {
             ChatMessage("user", content)
         )))
 
+        // Wait for the inference to leave VOTING status so coinsOwed is settled
+        if (inferenceResult.inference.statusEnum == com.productscience.data.InferenceStatus.VOTING) {
+            Logger.info("Inference is in VOTING status, waiting for voting to resolve...")
+            genesis.node.waitForNextBlock(5)
+        }
+
         logSection("Verifying some payment was made despite interruption")
         val afterBalances = genesis.api.getParticipants()
 
-        // Log the inference status and other details for debugging
-        Logger.info("Inference status: ${inferenceResult.inference.status}")
-        Logger.info("Inference actual cost: ${inferenceResult.inference.actualCost}")
+        // Re-fetch inference to get updated status after voting
+        val finalInference = genesis.api.getInference(inferenceResult.inference.inferenceId)
+        Logger.info("Inference status: ${finalInference.status}")
+        Logger.info("Inference actual cost: ${finalInference.actualCost}")
 
         // Get the executor (assignedTo) from the inference result
         val executor = inferenceResult.inference.assignedTo
