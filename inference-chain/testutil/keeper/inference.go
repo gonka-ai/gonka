@@ -201,13 +201,15 @@ func InferenceKeeperWithMock(
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	// Create BLS keeper for testing
 	blsKeeper := blskeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(blsStoreKey),
 		PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 	)
 
 	k := keeper.NewKeeper(
@@ -215,7 +217,7 @@ func InferenceKeeperWithMock(
 		runtime.NewKVStoreService(storeKey),
 		runtime.NewTransientStoreService(transientStoreKey),
 		PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		bankMock,
 		bankViewMock,
 		groupMock,

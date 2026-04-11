@@ -17,11 +17,12 @@ const (
 )
 
 var (
-	ParamsKey                     = []byte("p_bls")
-	EpochBLSDataPrefix            = []byte("epoch_bls_data")
-	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
-	ExpirationIndexPrefix         = []byte("expiration_index")
-	GroupValidationPrefix         = []byte("group_validation_")
+	ParamsKey                       = []byte("p_bls")
+	EpochBLSDataPrefix              = []byte("epoch_bls_data")
+	ThresholdSigningRequestPrefix   = []byte("threshold_signing_request")
+	ExpirationIndexPrefix           = []byte("expiration_index")
+	GroupValidationPrefix           = []byte("group_validation_")
+	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
 )
 
 func KeyPrefix(p string) []byte {
@@ -71,4 +72,11 @@ func ExpirationIndexPrefixForBlock(blockHeight int64) []byte {
 // GroupValidationKey generates a key for the group validation state by epoch ID
 func GroupValidationKey(epochID uint64) []byte {
 	return []byte(fmt.Sprintf("%s%d", GroupValidationPrefix, epochID))
+}
+
+func CompletedPostProcessRetryKey(requestID []byte) []byte {
+	key := make([]byte, len(CompletedPostProcessRetryPrefix)+len(requestID))
+	copy(key, CompletedPostProcessRetryPrefix)
+	copy(key[len(CompletedPostProcessRetryPrefix):], requestID)
+	return key
 }

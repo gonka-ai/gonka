@@ -1342,6 +1342,20 @@ func (mr *MockBlsKeeperMockRecorder) ListActiveSigningRequests(ctx, currentEpoch
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActiveSigningRequests", reflect.TypeOf((*MockBlsKeeper)(nil).ListActiveSigningRequests), ctx, currentEpochID)
 }
 
+// CancelThresholdSignature mocks base method.
+func (m *MockBlsKeeper) CancelThresholdSignature(ctx types1.Context, requestID []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelThresholdSignature", ctx, requestID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CancelThresholdSignature indicates an expected call of CancelThresholdSignature.
+func (mr *MockBlsKeeperMockRecorder) CancelThresholdSignature(ctx, requestID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelThresholdSignature", reflect.TypeOf((*MockBlsKeeper)(nil).CancelThresholdSignature), ctx, requestID)
+}
+
 // RequestThresholdSignature mocks base method.
 func (m *MockBlsKeeper) RequestThresholdSignature(ctx types1.Context, signingData types4.SigningData) error {
 	m.ctrl.T.Helper()

@@ -140,6 +140,12 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		return nil, fmt.Errorf("failed to request BLS signature: %v", err)
 	}
 
+	err = k.setBridgeMintPendingRefund(goCtx, requestIdHash[:], msg)
+	if err != nil {
+		k.LogError("Bridge mint: Failed to persist pending refund context", types.Messages, "error", err)
+		return nil, fmt.Errorf("failed to persist bridge mint pending refund context: %v", err)
+	}
+
 	// Generate BLS request ID for tracking (use request ID for simplicity)
 	blsRequestId := requestID
 
