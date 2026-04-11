@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/product-science/vllm:v0.15.1-alpha1 AS base
+FROM ghcr.io/product-science/vllm:v0.15.1-alpha3 AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \

@@ -162,7 +162,7 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	dto := inferenceUpDto{
 		Model: model,
-		Dtype: "float16",
+		Dtype: "auto",
 		Args:  args,
 	}
 
