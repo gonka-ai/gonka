@@ -19,7 +19,7 @@ import (
 
 	"common/chain"
 	"common/chain/events"
-	"common/signing"
+	"subnet/signing"
 
 	"subnet/storage"
 )
