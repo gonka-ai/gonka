@@ -14,3 +14,5 @@
 ## Status
 
 **Draft** — open for discussion; requires **approved protocol design** and migration plan before any code changes.
+
+**Design proposal (analysis + options):** [`../proposals/VALIDATION_PROTOCOL_RANDOMNESS_PROPOSAL.md`](../proposals/VALIDATION_PROTOCOL_RANDOMNESS_PROPOSAL.md).

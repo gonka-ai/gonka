@@ -2,7 +2,7 @@
 
 ## Summary
 
-This document is now the umbrella pointer for user-fraud dispute work. The original equivocation analysis remains valid, but implementation is split into focused issues for protocol spec, detection scope, and runtime wiring.
+This document is the umbrella pointer for user-fraud dispute work. It is split into focused issues for protocol spec, detection scope, and runtime wiring.
 
 ## Split issues
 
