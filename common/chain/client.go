@@ -60,7 +60,6 @@ func NewFromConn(conn grpc.ClientConnInterface) (*Client, error) {
 }
 
 // Conn returns the underlying gRPC connection.
-// Used by tx.Manager to share the connection.
 func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
 
 // InferenceQueryClient returns a query client for the inference module.

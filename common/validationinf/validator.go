@@ -8,10 +8,10 @@ import (
 
 // claimStore is the narrow interface validator needs from storage.Storage.
 type claimStore interface {
-	Claim(ctx context.Context, inferenceID string, epochID uint64, instanceAddress string) (bool, error)
-	ReclaimOneStale(ctx context.Context, instanceAddress, ttlInterval string) (string, error)
-	SetTxHash(ctx context.Context, inferenceID, txHash string) error
-	DeleteClaimsByEpoch(ctx context.Context, beforeEpochID uint64) error
+	Claim(ctx context.Context, escrowId, inferenceID string, epochID uint64, instanceAddress string) (bool, error)
+	ReclaimOneStale(ctx context.Context, escrowId, instanceAddress string, ttl time.Duration) (string, error)
+	SetTxHash(ctx context.Context, escrowId, inferenceID, txHash string) error
+	DeleteByEpoch(ctx context.Context, beforeEpochID uint64) error
 }
 
 // chainBridge is the narrow interface validator needs from the chain client.
@@ -22,6 +22,8 @@ type chainBridge interface {
 
 // Config holds tunable parameters for the validator.
 type Config struct {
+	// EscrowId is the subnet escrow this validator operates for.
+	EscrowId string
 	// InstanceAddress is this instance's warm key address, used as the claim identity.
 	InstanceAddress string
 	// ClaimTTL is how long a claim can be held before it is considered stale.
@@ -58,7 +60,7 @@ func (v *Validator) HandleInferenceFinished(ctx context.Context, inferenceID str
 		return
 	}
 
-	won, err := v.claims.Claim(ctx, inferenceID, epochID, v.cfg.InstanceAddress)
+	won, err := v.claims.Claim(ctx, v.cfg.EscrowId, inferenceID, epochID, v.cfg.InstanceAddress)
 	if err != nil {
 		slog.Error("validation: claim failed", "inference_id", inferenceID, "error", err)
 		return
@@ -76,7 +78,7 @@ func (v *Validator) HandleEpochChanged(ctx context.Context, newEpochID uint64) {
 	if newEpochID < 2 {
 		return
 	}
-	if err := v.claims.DeleteClaimsByEpoch(ctx, newEpochID-2); err != nil {
+	if err := v.claims.DeleteByEpoch(ctx, newEpochID-2); err != nil {
 		slog.Error("validation: cleanup failed", "epoch_id", newEpochID, "error", err)
 	}
 }
@@ -84,9 +86,8 @@ func (v *Validator) HandleEpochChanged(ctx context.Context, newEpochID uint64) {
 // RunStaleRecovery scans for stale claims and re-runs validation for each.
 // Intended to be called on a timer (RetryInterval).
 func (v *Validator) RunStaleRecovery(ctx context.Context) {
-	ttl := v.cfg.ClaimTTL.String()
 	for {
-		inferenceID, err := v.claims.ReclaimOneStale(ctx, v.cfg.InstanceAddress, ttl)
+		inferenceID, err := v.claims.ReclaimOneStale(ctx, v.cfg.EscrowId, v.cfg.InstanceAddress, v.cfg.ClaimTTL)
 		if err != nil {
 			slog.Error("validation: stale reclaim failed", "error", err)
 			return
@@ -119,7 +120,7 @@ func (v *Validator) runValidation(ctx context.Context, inferenceID string, epoch
 	// TODO: submit MsgValidation
 
 	// Stub: mark as done with a placeholder tx hash
-	if err := v.claims.SetTxHash(ctx, inferenceID, "stub-tx-hash"); err != nil {
+	if err := v.claims.SetTxHash(ctx, v.cfg.EscrowId, inferenceID, "stub-tx-hash"); err != nil {
 		slog.Error("validation: set tx hash failed", "inference_id", inferenceID, "error", err)
 	}
 }

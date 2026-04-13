@@ -31,7 +31,7 @@ type TxManagerConfig struct {
 // Manager signs and broadcasts MsgSettleDevshardEscrow.
 // No batching, no retry — caller handles retry if needed.
 type Manager struct {
-	conn     grpc.ClientConnInterface
+	client   grpc.ClientConnInterface
 	keyring  keyring.Keyring
 	txConfig client.TxConfig
 	registry codectypes.InterfaceRegistry
@@ -42,7 +42,7 @@ type Manager struct {
 
 // New creates a Manager. kr must already contain the key named by cfg.SignerKeyName.
 // address is the bech32 address corresponding to that key.
-func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address string, cfg TxManagerConfig) (*Manager, error) {
+func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address, signerKeyName string) (*Manager, error) {
 	registry := codectypes.NewInterfaceRegistry()
 	cryptocodec.RegisterInterfaces(registry)
 	authtypes.RegisterInterfaces(registry)
@@ -52,13 +52,12 @@ func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address string, cfg 
 	txConfig := authtx.NewTxConfig(cdc, []signingtypes.SignMode{signingtypes.SignMode_SIGN_MODE_DIRECT})
 
 	return &Manager{
-		conn:     conn,
+		client:   conn,
 		keyring:  kr,
 		txConfig: txConfig,
 		registry: registry,
-		signer:   cfg.SignerKeyName,
+		signer:   signerKeyName,
 		address:  address,
-		chainID:  cfg.ChainID,
 	}, nil
 }
 
@@ -99,7 +98,7 @@ func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot [
 		return fmt.Errorf("tx: encode MsgSettleDevshardEscrow: %w", err)
 	}
 
-	svc := txtypes.NewServiceClient(m.conn)
+	svc := txtypes.NewServiceClient(m.client)
 	resp, err := svc.BroadcastTx(ctx, &txtypes.BroadcastTxRequest{
 		TxBytes: raw,
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
@@ -120,7 +119,7 @@ func (m *Manager) accountInfo(ctx context.Context) (accNum, seq uint64, err erro
 		return 0, 0, fmt.Errorf("invalid address %q: %w", m.address, err)
 	}
 
-	qc := authtypes.NewQueryClient(m.conn)
+	qc := authtypes.NewQueryClient(m.client)
 	res, err := qc.Account(ctx, &authtypes.QueryAccountRequest{Address: addr.String()})
 	if err != nil {
 		return 0, 0, err

@@ -12,7 +12,7 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
-const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
+const warmKeyMsgTypeGRPC = "/inference.inference.MsgSettleSubnetEscrow"
 
 // Submitter broadcasts dispute state to the chain.
 // Implemented by the wiring layer (e.g. common/chain/tx.Manager).
@@ -20,9 +20,9 @@ type Submitter interface {
 	SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
 }
 
-// GRPCBridge implements MainnetBridge using common/chain for all queries and actions.
+// ChainBridge implements MainnetBridge using common/chain for all queries and actions.
 // Notifications are dispatched to registered callbacks.
-type GRPCBridge struct {
+type ChainBridge struct {
 	client    *chain.Client
 	submitter Submitter
 
@@ -33,29 +33,29 @@ type GRPCBridge struct {
 	warmCache sync.Map // warmCacheKey -> bool
 }
 
-// NewGRPCBridge creates a GRPCBridge. submitter may be nil if SubmitDisputeState is not needed.
-func NewGRPCBridge(client *chain.Client, submitter Submitter) *GRPCBridge {
-	return &GRPCBridge{client: client, submitter: submitter}
+// NewChainBridge creates a ChainBridge. submitter may be nil if SubmitDisputeState is not needed.
+func NewChainBridge(client *chain.Client, submitter Submitter) *ChainBridge {
+	return &ChainBridge{client: client, submitter: submitter}
 }
 
 // OnEscrowCreatedHandler registers the callback for escrow creation events.
-func (b *GRPCBridge) OnEscrowCreatedHandler(fn func(EscrowInfo) error) {
+func (b *ChainBridge) OnEscrowCreatedHandler(fn func(EscrowInfo) error) {
 	b.onEscrowCreated = fn
 }
 
 // OnSettlementProposedHandler registers the callback for settlement proposal events.
-func (b *GRPCBridge) OnSettlementProposedHandler(fn func(escrowID string, stateRoot []byte, nonce uint64) error) {
+func (b *ChainBridge) OnSettlementProposedHandler(fn func(escrowID string, stateRoot []byte, nonce uint64) error) {
 	b.onSettlementProposed = fn
 }
 
 // OnSettlementFinalizedHandler registers the callback for settlement finalization events.
-func (b *GRPCBridge) OnSettlementFinalizedHandler(fn func(escrowID string) error) {
+func (b *ChainBridge) OnSettlementFinalizedHandler(fn func(escrowID string) error) {
 	b.onSettlementFinalized = fn
 }
 
 // -- MainnetBridge query methods --
 
-func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
+func (b *ChainBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	id, err := strconv.ParseUint(escrowID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid escrow id %q: %w", escrowID, err)
@@ -86,7 +86,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	}, nil
 }
 
-func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
+func (b *ChainBridge) GetHostInfo(address string) (*HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
@@ -99,7 +99,7 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	}, nil
 }
 
-func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
+func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
 	key := warmCacheKey{host: validatorAddress, warm: warmAddress}
 	if cached, ok := b.warmCache.Load(key); ok {
 		return cached.(bool), nil
@@ -127,21 +127,21 @@ func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, 
 
 // -- MainnetBridge notification methods --
 
-func (b *GRPCBridge) OnEscrowCreated(escrow EscrowInfo) error {
+func (b *ChainBridge) OnEscrowCreated(escrow EscrowInfo) error {
 	if b.onEscrowCreated == nil {
 		return nil
 	}
 	return b.onEscrowCreated(escrow)
 }
 
-func (b *GRPCBridge) OnSettlementProposed(escrowID string, stateRoot []byte, nonce uint64) error {
+func (b *ChainBridge) OnSettlementProposed(escrowID string, stateRoot []byte, nonce uint64) error {
 	if b.onSettlementProposed == nil {
 		return nil
 	}
 	return b.onSettlementProposed(escrowID, stateRoot, nonce)
 }
 
-func (b *GRPCBridge) OnSettlementFinalized(escrowID string) error {
+func (b *ChainBridge) OnSettlementFinalized(escrowID string) error {
 	if b.onSettlementFinalized == nil {
 		return nil
 	}
@@ -150,7 +150,7 @@ func (b *GRPCBridge) OnSettlementFinalized(escrowID string) error {
 
 // -- MainnetBridge action methods --
 
-func (b *GRPCBridge) SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error {
+func (b *ChainBridge) SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error {
 	if b.submitter == nil {
 		return ErrNotImplemented
 	}

@@ -3,6 +3,7 @@ package validationinf
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,23 +23,23 @@ type stubClaimStore struct {
 	deleteClaimsErr      error
 }
 
-func (s *stubClaimStore) Claim(_ context.Context, _ string, _ uint64, _ string) (bool, error) {
+func (s *stubClaimStore) Claim(_ context.Context, _, _ string, _ uint64, _ string) (bool, error) {
 	return s.claimWon, s.claimErr
 }
 
-func (s *stubClaimStore) ReclaimOneStale(_ context.Context, _ string, _ string) (string, error) {
+func (s *stubClaimStore) ReclaimOneStale(_ context.Context, _, _ string, _ time.Duration) (string, error) {
 	id := s.reclaimStaleID
 	s.reclaimStaleID = "" // return empty on next call so loop terminates
 	return id, s.reclaimStaleErr
 }
 
-func (s *stubClaimStore) SetTxHash(_ context.Context, inferenceID, _ string) error {
+func (s *stubClaimStore) SetTxHash(_ context.Context, _, inferenceID, _ string) error {
 	s.setTxHashCalled = true
 	s.setTxHashInferenceID = inferenceID
 	return s.setTxHashErr
 }
 
-func (s *stubClaimStore) DeleteClaimsByEpoch(_ context.Context, beforeEpochID uint64) error {
+func (s *stubClaimStore) DeleteByEpoch(_ context.Context, beforeEpochID uint64) error {
 	s.deleteClaimsCalled = true
 	s.deleteClaimsEpochID = beforeEpochID
 	return s.deleteClaimsErr

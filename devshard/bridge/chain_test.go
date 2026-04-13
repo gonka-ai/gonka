@@ -13,7 +13,7 @@ import (
 	"devshard/bridge"
 )
 
-func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.GRPCBridge {
+func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge {
 	t.Helper()
 	// grpc.NewClient is non-blocking — safe to use with an unreachable address in unit tests.
 	conn, err := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -23,7 +23,7 @@ func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.GRPCBridge 
 	client, err := chain.NewFromConn(conn)
 	require.NoError(t, err)
 
-	return bridge.NewGRPCBridge(client, submitter)
+	return bridge.NewChainBridge(client, submitter)
 }
 
 func TestBridge_NotificationsDispatchToHandlers(t *testing.T) {

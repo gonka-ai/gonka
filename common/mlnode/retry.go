@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"common/logging"
 	"common/mlnode/gen"
 )
 
@@ -35,9 +36,12 @@ func DoWithNode(
 	ctx context.Context,
 	lock NodeLock,
 	model string,
-	maxAttempts int,
+	maxAttempts uint,
 	do func(ctx context.Context, endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
+	if maxAttempts == 0 {
+		return nil, errors.New("mlnode: maxAttempts must be > 0")
+	}
 	var excludedNodeIDs []string
 	seen := make(map[string]struct{})
 	var lastErr error
@@ -54,7 +58,7 @@ func DoWithNode(
 		// does not prevent the server-side lock from being freed.
 		if releaseErr := lock.Release(context.WithoutCancel(ctx), lease.LockId, outcome); releaseErr != nil {
 			// Non-fatal: the server will evict the lock via TTL, but log for observability.
-			fmt.Printf("mlnode: release lock %s: %v\n", lease.LockId, releaseErr)
+			logging.Error("mlnode: release lock", "lock_id", lease.LockId, "err", releaseErr)
 		}
 
 		if err == nil {
@@ -91,6 +95,7 @@ func runAttempt(
 	resp, err = do(ctx, endpoint)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			logging.Error("mlnode: context error during attempt", "endpoint", endpoint, "err", err)
 			return nil, gen.ReleaseOutcome_TIMEOUT, err
 		}
 		return nil, gen.ReleaseOutcome_TRANSPORT_ERROR, err
@@ -98,10 +103,12 @@ func runAttempt(
 
 	switch {
 	case resp.StatusCode >= 500:
-		return resp, gen.ReleaseOutcome_TRANSPORT_ERROR, fmt.Errorf("engine: node returned HTTP %d", resp.StatusCode)
+		return resp, gen.ReleaseOutcome_TRANSPORT_ERROR, fmt.Errorf("mlnode: node returned HTTP %d", resp.StatusCode)
 	case resp.StatusCode >= 400:
-		return resp, gen.ReleaseOutcome_APPLICATION_ERROR, fmt.Errorf("engine: node returned HTTP %d", resp.StatusCode)
-	default:
+		return resp, gen.ReleaseOutcome_APPLICATION_ERROR, fmt.Errorf("mlnode: node returned HTTP %d", resp.StatusCode)
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return resp, gen.ReleaseOutcome_SUCCESS, nil
+	default:
+		return resp, gen.ReleaseOutcome_APPLICATION_ERROR, fmt.Errorf("mlnode: node returned HTTP %d", resp.StatusCode)
 	}
 }
