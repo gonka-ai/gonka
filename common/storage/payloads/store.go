@@ -1,12 +1,16 @@
 package payloads
 
 import (
+	"common/logging"
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // ErrNotFound is returned when a requested payload does not exist.
@@ -25,7 +29,8 @@ CREATE TABLE IF NOT EXISTS payload_storage (
 
 // Store holds a shared connection pool for the payload_storage table.
 type Store struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	knownEpochs sync.Map
 }
 
 // New creates a Store and ensures the payload_storage table exists.
@@ -34,6 +39,34 @@ func New(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
 		return nil, fmt.Errorf("payloads: ensure schema: %w", err)
 	}
 	return &Store{pool: pool}, nil
+}
+
+// ensurePartition creates the epoch partition if it does not already exist.
+// Note: concurrent writes to the same epoch may race on the CREATE TABLE — this is
+// acceptable since IF NOT EXISTS makes it idempotent and any error is retried by the caller.
+func (s *Store) ensurePartition(ctx context.Context, epochId uint64) error {
+	if _, ok := s.knownEpochs.Load(epochId); ok {
+		return nil
+	}
+	name := fmt.Sprintf("payload_storage_epoch_%d", epochId)
+	_, err := s.pool.Exec(ctx, fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s
+		 PARTITION OF payload_storage
+		 FOR VALUES FROM (%d) TO (%d)`,
+		name, epochId, epochId+1,
+	))
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
+			s.knownEpochs.Store(epochId, true)
+			return nil
+		}
+		return fmt.Errorf("payloads: ensure partition epoch %d: %w", epochId, err)
+	}
+	s.knownEpochs.Store(epochId, true)
+	logging.Debug("Created partition", types.PayloadStorage, "epochId", epochId)
+
+	return nil
 }
 
 // Store persists the prompt and response payloads for an inference.
@@ -50,23 +83,6 @@ func (s *Store) Store(ctx context.Context, escrowId, inferenceId string, epochId
 	)
 	if err != nil {
 		return fmt.Errorf("payloads: store: %w", err)
-	}
-	return nil
-}
-
-// ensurePartition creates the epoch partition if it does not already exist.
-// Note: concurrent writes to the same epoch may race on the CREATE TABLE — this is
-// acceptable since IF NOT EXISTS makes it idempotent and any error is retried by the caller.
-func (s *Store) ensurePartition(ctx context.Context, epochId uint64) error {
-	name := fmt.Sprintf("payload_storage_epoch_%d", epochId)
-	_, err := s.pool.Exec(ctx, fmt.Sprintf(
-		`CREATE TABLE IF NOT EXISTS %s
-		 PARTITION OF payload_storage
-		 FOR VALUES FROM (%d) TO (%d)`,
-		name, epochId, epochId+1,
-	))
-	if err != nil {
-		return fmt.Errorf("payloads: ensure partition epoch %d: %w", epochId, err)
 	}
 	return nil
 }
@@ -90,12 +106,15 @@ func (s *Store) Retrieve(ctx context.Context, escrowId, inferenceId string, epoc
 
 // PruneEpoch removes all payloads where epoch_id < epochId (i.e., all epochs before the given one). Idempotent.
 func (s *Store) PruneEpoch(ctx context.Context, epochId uint64) error {
-	_, err := s.pool.Exec(ctx,
-		`DELETE FROM payload_storage WHERE epoch_id < $1`,
-		epochId,
-	)
+	tableName := fmt.Sprintf("payload_storage_epoch_%d", epochId)
+	query := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
+
+	_, err := s.pool.Exec(ctx, query)
 	if err != nil {
-		return fmt.Errorf("payloads: prune epoch %d: %w", epochId, err)
+		return fmt.Errorf("drop partition %s: %w", tableName, err)
 	}
+
+	s.knownEpochs.Delete(epochId)
+	logging.Info("Pruned epoch partition", types.PayloadStorage, "epochId", epochId)
 	return nil
 }

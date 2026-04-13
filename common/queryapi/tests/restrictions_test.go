@@ -23,10 +23,10 @@ func (s *stubRestrictionsServer) TransferRestrictionStatus(
 	_ *restrictionstypes.QueryTransferRestrictionStatusRequest,
 ) (*restrictionstypes.QueryTransferRestrictionStatusResponse, error) {
 	return &restrictionstypes.QueryTransferRestrictionStatusResponse{
-		IsActive:             true,
-		RestrictionEndBlock:  1000,
-		CurrentBlockHeight:   500,
-		RemainingBlocks:      500,
+		IsActive:            true,
+		RestrictionEndBlock: 1000,
+		CurrentBlockHeight:  500,
+		RemainingBlocks:     500,
 	}, nil
 }
 
@@ -122,20 +122,4 @@ func TestGetRestrictionsExemptionUsage_Returns404OnNotFound(t *testing.T) {
 	err := s.GetRestrictionsExemptionUsage(ctx, "ex1", "addr1")
 	require.Error(t, err)
 	_ = rec
-}
-
-// -- GetTrainingTasks / GetTrainingTask (not yet implemented) --
-
-func TestGetTrainingTasks_ReturnsNotImplemented(t *testing.T) {
-	s := newHandlers(&fakeChain{})
-	ctx, rec := echoContext(t, http.MethodGet, "/v1/training/tasks")
-	require.NoError(t, s.GetTrainingTasks(ctx))
-	assert.Equal(t, http.StatusNotImplemented, rec.Code)
-}
-
-func TestGetTrainingTask_ReturnsNotImplemented(t *testing.T) {
-	s := newHandlers(&fakeChain{})
-	ctx, rec := echoContext(t, http.MethodGet, "/v1/training/tasks/1")
-	require.NoError(t, s.GetTrainingTask(ctx, 1))
-	assert.Equal(t, http.StatusNotImplemented, rec.Code)
 }

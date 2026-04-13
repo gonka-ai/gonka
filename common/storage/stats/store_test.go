@@ -1,11 +1,13 @@
-package storage
+package stats_test
 
 import (
+	"common/storage/stats"
 	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -13,12 +15,11 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func setupStorage(t *testing.T) *Storage {
+func setupStore(t *testing.T) *stats.Store {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping storage tests in -short mode (requires Docker)")
 	}
-
 	ctx := context.Background()
 	container, err := postgres.Run(ctx,
 		"postgres:18.1-bookworm",
@@ -40,20 +41,22 @@ func setupStorage(t *testing.T) *Storage {
 	require.NoError(t, err)
 
 	dsn := fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb", host, port.Port())
-	s, err := New(ctx, dsn)
+	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
-	t.Cleanup(s.Close)
+	t.Cleanup(pool.Close)
 
-	return s
+	store, err := stats.New(ctx, pool)
+	require.NoError(t, err)
+	return store
 }
 
 // --- Stats ---
 
 func TestStorage_UpsertStats(t *testing.T) {
-	s := setupStorage(t)
+	s := setupStore(t)
 	ctx := context.Background()
 
-	stats := InferenceRecord{
+	stats := stats.InferenceRecord{
 		InferenceID:          "inf-001",
 		EpochID:              10,
 		RequestedBy:          "dev-addr",
@@ -61,7 +64,7 @@ func TestStorage_UpsertStats(t *testing.T) {
 		PromptTokenCount:     100,
 		CompletionTokenCount: 200,
 		TotalTokenCount:      300,
-		InferenceTimestamp:   UnixMillis(time.Now().UTC().UnixMilli()),
+		InferenceTimestamp:   stats.UnixMillis(time.Now().UTC().UnixMilli()),
 	}
 	require.NoError(t, s.UpsertStats(ctx, stats))
 
@@ -73,17 +76,12 @@ func TestStorage_UpsertStats(t *testing.T) {
 
 // --- Error paths (closed pool) ---
 
-func TestStorage_New_BadDSN(t *testing.T) {
-	_, err := New(context.Background(), "postgres://bad:bad@localhost:1/nodb?connect_timeout=1")
-	require.Error(t, err)
-}
-
 func TestStorage_UpsertStats_ClosedPool(t *testing.T) {
-	s := setupStorage(t)
+	s := setupStore(t)
 	ctx := context.Background()
 
 	// Close the pool — all subsequent operations should error.
 	s.Close()
 
-	assert.Error(t, s.UpsertStats(ctx, InferenceRecord{InferenceID: "inf-001", EpochID: 10, RequestedBy: "d", Model: "m"}))
+	assert.Error(t, s.UpsertStats(ctx, stats.InferenceRecord{InferenceID: "inf-001", EpochID: 10, RequestedBy: "d", Model: "m"}))
 }

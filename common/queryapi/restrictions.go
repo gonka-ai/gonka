@@ -45,11 +45,3 @@ func (h *Handlers) GetRestrictionsExemptionUsage(ctx echo.Context, id string, ac
 	}
 	return ctx.JSON(http.StatusOK, response)
 }
-
-func (h *Handlers) GetTrainingTasks(ctx echo.Context) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}
-
-func (h *Handlers) GetTrainingTask(ctx echo.Context, id int) error {
-	return ctx.JSON(http.StatusNotImplemented, nil)
-}

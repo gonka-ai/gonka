@@ -139,18 +139,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/PricingDto'
 
-  /v1/governance/pricing:
-    get:
-      operationId: GetGovernancePricing
-      summary: Pricing for all governance models, with optional dynamic pricing and utilization data
-      responses:
-        "200":
-          description: Governance pricing info
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PricingDto'
-
   # ── Restrictions ──────────────────────────────────────────────────────────
   /v1/restrictions/status:
     get:
@@ -312,39 +300,6 @@ paths:
                 $ref: '#/components/schemas/RawProtoJson'
         "400": { description: Invalid epoch }
         "404": { description: PoC batches not found }
-
-  # ── Training (read-only) ──────────────────────────────────────────────────
-  /v1/training/tasks:
-    get:
-      operationId: GetTrainingTasks
-      summary: List all training tasks from chain
-      responses:
-        "200":
-          description: Training tasks (raw proto JSON)
-          content:
-            application/json:
-              # TODO: QueryTrainingTaskAllResponse
-              schema:
-                $ref: '#/components/schemas/RawProtoJson'
-
-  /v1/training/tasks/{id}:
-    get:
-      operationId: GetTrainingTask
-      summary: Get a training task by ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
-      responses:
-        "200":
-          description: Training task (raw proto JSON)
-          content:
-            application/json:
-              # TODO: QueryTrainingTaskResponse
-              schema:
-                $ref: '#/components/schemas/RawProtoJson'
-        "404": { description: Not found }
 
   # ── Stateless computation ─────────────────────────────────────────────────
   /v1/verify-proof:

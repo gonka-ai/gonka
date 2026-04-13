@@ -1,11 +1,13 @@
-package storage
+package stats
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const statsSchema = `
+const schema = `
 CREATE TABLE IF NOT EXISTS inference_stats (
     inference_id           TEXT    PRIMARY KEY,
     requested_by           TEXT    NOT NULL,
@@ -29,11 +31,21 @@ CREATE INDEX IF NOT EXISTS inference_stats_model_time_idx        ON inference_st
 CREATE INDEX IF NOT EXISTS inference_stats_inference_time_idx    ON inference_stats (inference_timestamp);
 `
 
-func (s *Storage) ensureStatsSchema(ctx context.Context) error {
-	if _, err := s.pool.Exec(ctx, statsSchema); err != nil {
-		return fmt.Errorf("storage: ensure inference_stats schema: %w", err)
+// Store holds a shared connection pool for the inference_stats table.
+type Store struct {
+	pool *pgxpool.Pool
+}
+
+// New creates a Store and ensures the inference_stats table exists.
+func New(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
+	if _, err := pool.Exec(ctx, schema); err != nil {
+		return nil, fmt.Errorf("payloads: ensure schema: %w", err)
 	}
-	return nil
+	return &Store{pool: pool}, nil
+}
+
+func (s *Store) Close() {
+	s.pool.Close()
 }
 
 type UnixMillis int64
@@ -44,10 +56,10 @@ type InferenceRecord struct {
 	RequestedBy          string
 	Model                string
 	Status               string
-	EpochID              uint64
-	PromptTokenCount     uint64
-	CompletionTokenCount uint64
-	TotalTokenCount      uint64
+	EpochID              int64
+	PromptTokenCount     int64
+	CompletionTokenCount int64
+	TotalTokenCount      int64
 	ActualCostInCoins    int64
 	StartBlockTimestamp  UnixMillis
 	EndBlockTimestamp    UnixMillis
@@ -55,8 +67,11 @@ type InferenceRecord struct {
 }
 
 // UpsertStats inserts or updates a row in inference_stats.
-func (s *Storage) UpsertStats(ctx context.Context, stats InferenceRecord) error {
-	inferenceTimestamp := stats.EndBlockTimestamp
+func (s *Store) UpsertStats(ctx context.Context, stats InferenceRecord) error {
+	inferenceTimestamp := stats.InferenceTimestamp
+	if inferenceTimestamp == 0 {
+		inferenceTimestamp = stats.EndBlockTimestamp
+	}
 	if inferenceTimestamp == 0 {
 		inferenceTimestamp = stats.StartBlockTimestamp
 	}
