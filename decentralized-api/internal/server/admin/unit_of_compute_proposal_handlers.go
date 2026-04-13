@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"fmt"
 	"net/http"
 

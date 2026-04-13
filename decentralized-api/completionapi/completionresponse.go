@@ -1,7 +1,7 @@
 package completionapi
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/utils"
 	"encoding/json"
 	"errors"

@@ -1,12 +1,12 @@
 package cosmosclient
 
 import (
+	"common/logging"
 	"context"
 	"crypto/rand"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
-	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"errors"
 	"fmt"

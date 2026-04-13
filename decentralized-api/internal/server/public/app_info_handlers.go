@@ -1,13 +1,14 @@
 package public
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
+	"net/http"
+	"time"
+
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/version"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
-	"time"
 )
 
 func (s *Server) getVersions(ctx echo.Context) error {

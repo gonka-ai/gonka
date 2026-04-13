@@ -26,9 +26,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"common/logging"
 	internaldevshard "decentralized-api/internal/devshard"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 	"decentralized-api/participant"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"

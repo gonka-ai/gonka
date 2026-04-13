@@ -1,9 +1,9 @@
 package validation
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
 	"encoding/json"

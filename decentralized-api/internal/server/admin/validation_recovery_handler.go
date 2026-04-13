@@ -1,9 +1,9 @@
 package admin
 
 import (
+	"common/logging"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/seed"
-	"decentralized-api/logging"
 	"net/http"
 	"strconv"
 

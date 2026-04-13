@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"common/logging"
 	"decentralized-api/broker"
-	"decentralized-api/logging"
 	"decentralized-api/nodemanager/gen"
 
 	"github.com/productscience/inference/x/inference/types"

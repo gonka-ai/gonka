@@ -1,10 +1,10 @@
 package public
 
 import (
+	"common/logging"
 	"common/utils"
 	"context"
 	cosmos_client "decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"

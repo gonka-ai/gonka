@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -9,7 +10,6 @@ import (
 	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
-	"decentralized-api/logging"
 	"encoding/json"
 	"errors"
 	"fmt"

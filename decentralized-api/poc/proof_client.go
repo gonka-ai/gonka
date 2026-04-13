@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"time"
 
+	"common/logging"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/utils"
 

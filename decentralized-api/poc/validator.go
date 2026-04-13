@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"common/logging"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 
 	"github.com/productscience/inference/x/inference/calculations"

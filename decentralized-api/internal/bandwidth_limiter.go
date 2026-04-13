@@ -1,10 +1,10 @@
 package internal
 
 import (
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"sync"
 	"time"
 

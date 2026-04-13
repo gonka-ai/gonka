@@ -1,10 +1,10 @@
 package upgrade
 
 import (
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/logging"
 	"encoding/json"
 	"os"
 	"path/filepath"

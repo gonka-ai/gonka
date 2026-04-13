@@ -1,12 +1,13 @@
 package public
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"fmt"
-	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"strconv"
+
+	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (s *Server) getPoCBatches(c echo.Context) error {

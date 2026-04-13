@@ -2,8 +2,8 @@ package utils
 
 import (
 	"bytes"
+	"common/logging"
 	"context"
-	"decentralized-api/logging"
 	"encoding/json"
 	"net/http"
 	"time"

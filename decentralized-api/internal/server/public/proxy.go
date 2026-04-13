@@ -2,8 +2,8 @@ package public
 
 import (
 	"bufio"
+	"common/logging"
 	"decentralized-api/completionapi"
-	"decentralized-api/logging"
 	"fmt"
 	"io"
 	"net"

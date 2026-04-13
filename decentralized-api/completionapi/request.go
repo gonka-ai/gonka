@@ -8,7 +8,7 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 
-	"decentralized-api/logging"
+	"common/logging"
 )
 
 type ModifiedRequest struct {
