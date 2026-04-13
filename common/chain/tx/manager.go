@@ -50,7 +50,7 @@ func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address, signerKeyNa
 
 	cdc := codec.NewProtoCodec(registry)
 	txConfig := authtx.NewTxConfig(cdc, []signingtypes.SignMode{signingtypes.SignMode_SIGN_MODE_DIRECT})
-
+	// TODO: get chainId from chain itself?
 	return &Manager{
 		client:   conn,
 		keyring:  kr,
