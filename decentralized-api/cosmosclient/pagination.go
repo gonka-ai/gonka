@@ -1,4 +1,4 @@
-package utils
+package cosmosclient
 
 import (
 	"fmt"

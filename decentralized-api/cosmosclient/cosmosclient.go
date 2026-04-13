@@ -7,7 +7,6 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
-	"decentralized-api/utils"
 	"errors"
 	"fmt"
 	"log"
@@ -500,7 +499,7 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*inferencetypes.QueryAll
 	// Recommended: ensure icc.ctx is already pinned to a single height via metadata
 	// (caller can wrap icc.ctx with metadata.Pairs(grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10))).
 
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]inferencetypes.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]inferencetypes.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := icc.NewInferenceQueryClient().PartialUpgradeAll(icc.ctx, &inferencetypes.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err

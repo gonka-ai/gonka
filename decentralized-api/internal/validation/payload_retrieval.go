@@ -2,10 +2,10 @@ package validation
 
 import (
 	"common/logging"
+	"common/utils"
 	"context"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/payloadstorage"
-	apiutils "decentralized-api/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,10 +60,10 @@ func FetchPayloadsHTTP(
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set(apiutils.XValidatorAddressHeader, validatorAddress)
-	req.Header.Set(apiutils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
-	req.Header.Set(apiutils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
-	req.Header.Set(apiutils.AuthorizationHeader, signature)
+	req.Header.Set(utils.XValidatorAddressHeader, validatorAddress)
+	req.Header.Set(utils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
+	req.Header.Set(utils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
+	req.Header.Set(utils.AuthorizationHeader, signature)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -317,8 +317,8 @@ func VerifyExecutorPayloadSignature(
 		return fmt.Errorf("executor signature is empty")
 	}
 
-	promptHash := apiutils.GenerateSHA256HashBytes(promptPayload)
-	responseHash := apiutils.GenerateSHA256HashBytes(responsePayload)
+	promptHash := utils.GenerateSHA256HashBytes(promptPayload)
+	responseHash := utils.GenerateSHA256HashBytes(responsePayload)
 	payload := inferenceId + promptHash + responseHash
 
 	components := calculations.SignatureComponents{

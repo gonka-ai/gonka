@@ -1,7 +1,7 @@
 package validation
 
 import (
-	"decentralized-api/completionapi"
+	"common/completionapi"
 	"encoding/json"
 	"os"
 	"testing"

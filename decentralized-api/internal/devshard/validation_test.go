@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"decentralized-api/completionapi"
+	"common/completionapi"
 	"decentralized-api/internal/validation"
 
 	"github.com/stretchr/testify/assert"
@@ -84,10 +84,10 @@ func TestEnforcedTokensExtraction(t *testing.T) {
 
 func TestValidationRequestBodyConstruction(t *testing.T) {
 	requestMap := map[string]interface{}{
-		"model":            "test-model",
-		"messages":         []interface{}{},
-		"stream":           true,
-		"stream_options":   map[string]interface{}{"include_usage": true},
+		"model":               "test-model",
+		"messages":            []interface{}{},
+		"stream":              true,
+		"stream_options":      map[string]interface{}{"include_usage": true},
 		"skip_special_tokens": false,
 	}
 

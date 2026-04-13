@@ -2,12 +2,12 @@ package validation
 
 import (
 	"bytes"
+	"common/completionapi"
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"encoding/json"

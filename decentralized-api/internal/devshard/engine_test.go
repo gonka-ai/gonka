@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
-	"decentralized-api/completionapi"
-	"decentralized-api/utils"
+	"common/completionapi"
+	"common/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
