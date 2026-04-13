@@ -12,7 +12,7 @@ Related proposal: `[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_
 
 ## Goals
 
-1. Keep all participants close to the same latest-heilistght view.
+1. Keep **user** and **hosts** on the **same latest mainnet height** and align it between host on next **nonces**.
 2. Make timeout triggers auditable and cryptographically provable.
 3. Provide consistent chain-height source for validation and finalization randomness and trigger checks.
 4. Keep **height/proof attestation** cryptographically separate from the **application message** (second section).
