@@ -17,7 +17,6 @@ Related proposal: `[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_
 3. Provide consistent chain-height source for validation and finalization randomness and trigger checks.
 4. Keep **height/proof attestation** cryptographically separate from the **application message** (second section).
 5. Ensure height is trusted only if the CometBFT proof verifies under mainnet consensus rules.
-6. Avoid oversized or fragmented HTTP headers; carry `LightBlock` as **raw bytes** inside section 1 when using protobuf.
 
 ## High-level protocol (request / response and height alignment)
 
