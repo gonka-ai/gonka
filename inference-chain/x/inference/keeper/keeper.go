@@ -98,6 +98,7 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Subnet escrow collections
+		// Subnet escrow collections
 		SubnetEscrows           collections.Map[uint64, types.SubnetEscrow]
 		SubnetEscrowCounter     collections.Item[uint64]
 		SubnetEscrowEpochCount  collections.Map[uint64, uint64]

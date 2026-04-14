@@ -64,6 +64,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
+	// Note: FeeParams are NOT set at genesis. Fee enforcement is enabled via
+	// the v0.2.12 upgrade handler on existing chains.
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)

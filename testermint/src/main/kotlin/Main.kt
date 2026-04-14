@@ -335,8 +335,6 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
             pair.addSelfAsParticipant(listOf(defaultModel))
         }
     }
-//    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
-//    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock(2)
     pairs.forEach { pair ->

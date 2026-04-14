@@ -25,6 +25,7 @@ message Params {
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
   SubnetEscrowParams subnet_escrow_params = 14;
+  FeeParams fee_params = 15;
 }
 
 message GenesisOnlyParams {
@@ -349,4 +350,16 @@ message SubnetEscrowParams {
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
   repeated SubnetApprovedVersion approved_versions = 7;
+}
+
+// FeeParams defines governance-controlled parameters for consensus-level
+// transaction fee enforcement. Adjustable via MsgUpdateParams governance proposal.
+message FeeParams {
+  option (gogoproto.equal) = true;
+  // Minimum gas price in ngonka enforced at consensus level.
+  uint64 min_gas_price_ngonka = 1;
+  // Extra gas consumed on the first MsgPoCV2StoreCommit per participant per epoch.
+  uint64 base_validation_gas = 2;
+  // Additional gas consumed per unit of Count delta in MsgPoCV2StoreCommit.
+  uint64 gas_per_poc_count = 3;
 }

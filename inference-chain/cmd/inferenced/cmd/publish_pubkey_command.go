@@ -15,7 +15,12 @@ func PublishPubKeyCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish-pubkey",
 		Short: "Publish local account pubkey on-chain",
-		Long:  "Sends a minimal self-transfer (1ngonka) from the selected account to itself, which stores the account pubkey on-chain.",
+		Long: `Sends a minimal self-transfer (1ngonka) from the selected account to itself, which stores the account pubkey on-chain.
+
+Use --gas-prices 10ngonka (or higher) to set transaction fees.
+
+Example:
+  inferenced publish-pubkey --from gonka-account-key --gas-prices 10ngonka --node http://node2.gonka.ai:8000/chain-rpc/`,
 		RunE:  publishPubKey,
 	}
 

@@ -3,6 +3,7 @@ vue/dist
 release/
 .idea/
 .vscode/
+/.claude
 .cursor/
 .DS_Store
 *.dot

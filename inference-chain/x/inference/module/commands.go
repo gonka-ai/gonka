@@ -19,24 +19,41 @@ import (
 func GrantMLOpsPermissionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "grant-ml-ops-permissions <account-key-name> <ml-operational-address>",
-		Short: "Grant ML operations permissions from account key to ML operational key",
-		Long: `Grant all ML operations permissions from account key to ML operational key.
+		Short: "Grant ML operations permissions and a fee allowance from account key to ML operational key",
+		Long: `Grant all ML operations permissions AND a fee allowance from account key to ML operational key.
 
-This allows the ML operational key to perform automated ML operations on behalf of the account key.
-The account key retains full control and can revoke these permissions at any time.
+This single transaction does TWO things:
+
+  1. Grants authz permissions for all ML ops message types — the warm key can
+     submit start/finish inference, validations, PoC commits, BLS DKG messages,
+     reward claims, etc. on behalf of the cold account.
+
+  2. Grants a feegrant fee allowance from cold to warm — when the warm key
+     signs a transaction, it sets the cold account as the fee_granter so fees
+     are deducted from the cold account's balance. The warm key never needs
+     to hold tokens.
+
+The default fee allowance is 10 GNK, which covers many months of routine DAPI
+operation. When depleted, simply re-run this command to refresh both the authz
+grants and the fee allowance.
+
+The account key retains full control and can revoke either the permissions or
+the fee allowance at any time.
 
 Arguments:
   account-key-name         Name of the account key in keyring (cold wallet)
-  ml-operational-address   Bech32 address of the ML operational key (hot wallet)
+  ml-operational-address   Bech32 address of the ML operational key (warm wallet)
 
 Example:
   inferenced tx inference grant-ml-ops-permissions \
     gonka-account-key \
     gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm \
     --from gonka-account-key \
+    --gas-prices 10ngonka \
     --node http://node2.gonka.ai:8000/chain-rpc/
 
-Note: Chain ID will be auto-detected from the chain if not specified with --chain-id`,
+Note: Chain ID will be auto-detected from the chain if not specified with --chain-id.
+      Use --gas-prices 10ngonka (or higher) to set transaction fees.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)

@@ -572,6 +572,15 @@ data class LocalInferencePair(
         }
     }
 
+    fun submitTransactionWithFees(args: List<String>, fees: String, waitForProcessed: Boolean = true): TxResponse {
+        val submittedTransaction = this.node.sendTransactionWithFees(args, fees)
+        return if (waitForProcessed && submittedTransaction.code == 0) {
+            this.node.waitForTxProcessed(submittedTransaction.txhash)
+        } else {
+            submittedTransaction
+        }
+    }
+
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
         val sourceAccount = this.node.getKeys()[0].address
         val destAccount = destinationNode.getKeys()[0].address

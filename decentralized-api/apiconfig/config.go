@@ -79,6 +79,36 @@ type ChainNodeConfig struct {
 	KeyringBackend   string `koanf:"keyring_backend" json:"keyring_backend"`
 	KeyringDir       string `koanf:"keyring_dir" json:"keyring_dir"`
 	KeyringPassword  string `json:"-"`
+	// MinGasPriceNgonka is the gas price in ngonka used for transaction fee calculation.
+	//
+	// When set to a non-zero value, the DAPI uses it as-is (this is an override
+	// for hosts who want to pay more than the on-chain minimum, e.g. for faster
+	// inclusion under load).
+	//
+	// When unset (zero), the DAPI auto-discovers the correct value at startup
+	// by querying the chain for FeeParams.MinGasPriceNgonka (see
+	// NewInferenceCosmosClient in cosmosclient/cosmosclient.go). This means
+	// hosts upgrading from v0.2.11 to v0.2.12 do not need to update their
+	// config.env — the DAPI picks up the on-chain default automatically when
+	// cosmovisor restarts it with the new binary.
+	//
+	// See docs/host_onboarding.md §1.5 and §6 for details.
+	MinGasPriceNgonka int64 `koanf:"min_gas_price_ngonka" json:"min_gas_price_ngonka"`
+}
+
+// DefaultMinGasPriceNgonka is the gas price used when the config field is unset
+// AND the chain query in NewInferenceCosmosClient does not return a non-zero
+// value (e.g., chain has FeeParams nil, or the query failed). Zero means no
+// fees are attached to transactions, matching pre-v0.2.12 behavior on chains
+// without fee enforcement.
+const DefaultMinGasPriceNgonka int64 = 0
+
+// GetMinGasPriceNgonka returns the configured gas price (zero if unset).
+// Callers must handle the zero case by querying the chain directly — this
+// accessor does not perform that query. See queryChainMinGasPrice in
+// cosmosclient/cosmosclient.go.
+func (c ChainNodeConfig) GetMinGasPriceNgonka() int64 {
+	return c.MinGasPriceNgonka
 }
 
 type MLNodeKeyConfig struct {

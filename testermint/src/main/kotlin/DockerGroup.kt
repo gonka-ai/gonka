@@ -22,6 +22,25 @@ import kotlin.io.path.deleteRecursively
 import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
+
+/**
+ * Retry container lookup with exponential backoff.
+ * Docker containers may not be immediately visible after `docker compose up`.
+ */
+fun retryGetCli(config: ApplicationConfig, pairName: String, maxAttempts: Int = 5): ApplicationCLI {
+    var delay = 2000L // start at 2s
+    for (attempt in 1..maxAttempts) {
+        val containers = getRawContainers(config)
+        val cli = containers.getCli(pairName)
+        if (cli != null) return cli
+        if (attempt < maxAttempts) {
+            Logger.warn("Container not found for keyName={}, retrying in {}ms (attempt {}/{})", pairName, delay, attempt, maxAttempts)
+            Thread.sleep(delay)
+            delay = (delay * 2).coerceAtMost(15000L)
+        }
+    }
+    error("Could not find node container for keyName=$pairName after $maxAttempts attempts")
+}
 const val LOCAL_TEST_NET_DIR = "local-test-net"
 val DNS_COMPOSE_FILES = listOf(
     "$LOCAL_TEST_NET_DIR/docker-compose.dns.yml",
@@ -169,9 +188,7 @@ data class DockerGroup(
         if (!isGenesis) {
             Thread.sleep(Duration.ofSeconds(10))
 
-            val containers = getRawContainers(config)
-            val node =
-                containers.getCli(this.pairName) ?: error("Could not find node container for keyName=${this.pairName}")
+            val node = retryGetCli(config, this.pairName)
             val validatorDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
             var validatorKey: String? = null
             while (validatorKey == null) {
@@ -437,8 +454,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         allGroups.forEach { it.tearDownExisting() }
         genesisGroup.init()
         Thread.sleep(Duration.ofSeconds(30L))
-        val genesisNode = getRawContainers(config).getCli(genesisGroup.pairName)
-            ?: error("Could not find node container for keyName=${genesisGroup.pairName}")
+        val genesisNode = retryGetCli(config, genesisGroup.pairName)
         Logger.info("Waiting for genesis RPC readiness", "")
         val readinessDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
         while (true) {

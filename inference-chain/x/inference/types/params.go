@@ -526,6 +526,12 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.FeeParams != nil {
+		if err := p.FeeParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
