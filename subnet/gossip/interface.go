@@ -22,12 +22,12 @@ type GossipSig struct {
 
 // DiffFetcher retrieves diffs from a peer (backed by HTTPClient).
 type DiffFetcher interface {
-	GetDiffs(ctx context.Context, fromNonce, toNonce uint64) ([]types.Diff, error)
+	GetDiffs(ctx context.Context, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
 }
 
 // StateUpdater applies recovered diffs and signs them (backed by Host).
 type StateUpdater interface {
-	ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]GossipSig, error)
+	ApplyRecoveredDiffs(ctx context.Context, diffs []types.DiffRecord) ([]GossipSig, error)
 }
 
 // SigAccumulator receives gossip signatures for nonces that are already applied locally.

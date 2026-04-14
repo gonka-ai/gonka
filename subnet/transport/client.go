@@ -303,10 +303,11 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 }
 
 // GetDiffs fetches stored diffs from a peer.
-func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error) {
+func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.DiffRecord, error) {
 	type diffRecordJSON struct {
 		DiffJSON  `json:"diff"`
-		StateHash []byte `json:"state_hash"`
+		StateHash    []byte            `json:"state_hash"`
+		WarmKeyDelta map[uint32]string `json:"warm_key_delta,omitempty"`
 	}
 	var records []diffRecordJSON
 	path := fmt.Sprintf("/sessions/%s/diffs?from=%d&to=%d", c.escrowID, from, to)
@@ -314,13 +315,17 @@ func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Dif
 		return nil, fmt.Errorf("get diffs: %w", err)
 	}
 
-	diffs := make([]types.Diff, len(records))
+	diffs := make([]types.DiffRecord, len(records))
 	for i, rec := range records {
 		d, err := DiffFromJSON(rec.DiffJSON)
 		if err != nil {
 			return nil, fmt.Errorf("decode diff %d: %w", i, err)
 		}
-		diffs[i] = d
+		diffs[i] = types.DiffRecord{
+			Diff:         d,
+			StateHash:    rec.StateHash,
+			WarmKeyDelta: rec.WarmKeyDelta,
+		}
 	}
 	return diffs, nil
 }

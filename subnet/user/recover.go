@@ -62,9 +62,17 @@ func RecoverSession(
 	}
 
 	for _, rec := range records {
-		sm.InjectWarmKeys(rec.WarmKeyDelta)
+		var warmSnap map[uint32]string
+		if len(rec.WarmKeyDelta) > 0 {
+			warmSnap = sm.WarmKeys()
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+		}
+		nonceBefore := sm.LatestNonce()
 		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
 		if applyErr != nil {
+			if len(rec.WarmKeyDelta) > 0 && sm.LatestNonce() == nonceBefore {
+				sm.RestoreWarmKeys(warmSnap)
+			}
 			return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 		}
 		if len(rec.StateHash) > 0 && len(root) > 0 {

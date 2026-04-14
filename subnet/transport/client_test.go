@@ -106,6 +106,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, diffs, 1)
 	require.Equal(t, uint64(1), diffs[0].Nonce)
+	require.NotNil(t, diffs[0].StateHash)
 }
 
 func TestHTTPClient_GetMempool(t *testing.T) {

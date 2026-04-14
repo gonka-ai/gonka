@@ -1118,6 +1118,20 @@ func (sm *StateMachine) InjectWarmKeys(delta map[uint32]string) {
 	}
 }
 
+// RestoreWarmKeys replaces the warm key map with a copy of snap (typically from WarmKeys
+// taken before InjectWarmKeys). Used to roll back injection when replay fails before the
+// diff is committed. A nil or empty snap clears bindings.
+func (sm *StateMachine) RestoreWarmKeys(snap map[uint32]string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if len(snap) == 0 {
+		sm.state.WarmKeys = make(map[uint32]string)
+		return
+	}
+	sm.state.WarmKeys = make(map[uint32]string, len(snap))
+	maps.Copy(sm.state.WarmKeys, snap)
+}
+
 // CheckWarmKey checks if warmAddr is authorized to act on behalf of coldAddr
 // without caching the result in state. Use for slot discovery at host startup
 // to avoid mutating state before any diffs are applied.

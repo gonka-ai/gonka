@@ -2909,6 +2909,24 @@ func TestInjectWarmKeys(t *testing.T) {
 	require.Equal(t, "warm-2", wk[2])
 }
 
+func TestRestoreWarmKeys(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+
+	sm.InjectWarmKeys(map[uint32]string{0: "warm-0"})
+	warmSnap := sm.WarmKeys()
+	sm.InjectWarmKeys(map[uint32]string{1: "warm-1"})
+	require.Len(t, sm.WarmKeys(), 2)
+
+	sm.RestoreWarmKeys(warmSnap)
+	wk := sm.WarmKeys()
+	require.Len(t, wk, 1)
+	require.Equal(t, "warm-0", wk[0])
+
+	sm.RestoreWarmKeys(nil)
+	require.Empty(t, sm.WarmKeys())
+}
+
 func TestApplyLocal_WithInjectedWarmKeys(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)

@@ -646,8 +646,9 @@ func (s *Server) HandleGetDiffs(c echo.Context) error {
 
 	// Convert to JSON-friendly format.
 	type diffRecordJSON struct {
-		DiffJSON  `json:"diff"`
-		StateHash []byte `json:"state_hash"`
+		DiffJSON     `json:"diff"`
+		StateHash    []byte            `json:"state_hash"`
+		WarmKeyDelta map[uint32]string `json:"warm_key_delta,omitempty"`
 	}
 
 	result := make([]diffRecordJSON, len(records))
@@ -656,7 +657,7 @@ func (s *Server) HandleGetDiffs(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("encode diff %d: %v", rec.Nonce, err))
 		}
-		result[i] = diffRecordJSON{DiffJSON: dj, StateHash: rec.StateHash}
+		result[i] = diffRecordJSON{DiffJSON: dj, StateHash: rec.StateHash, WarmKeyDelta: rec.WarmKeyDelta}
 	}
 
 	return writeJSON(c, http.StatusOK, result)

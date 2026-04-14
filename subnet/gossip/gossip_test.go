@@ -96,11 +96,11 @@ func (m *mockSigAccumulator) getCalls() []sigAccCall {
 
 // mockDiffFetcher returns pre-configured diffs.
 type mockDiffFetcher struct {
-	diffs []types.Diff
+	diffs []types.DiffRecord
 	err   error
 }
 
-func (m *mockDiffFetcher) GetDiffs(_ context.Context, _, _ uint64) ([]types.Diff, error) {
+func (m *mockDiffFetcher) GetDiffs(_ context.Context, _, _ uint64) ([]types.DiffRecord, error) {
 	return m.diffs, m.err
 }
 
@@ -110,7 +110,7 @@ type mockStateUpdater struct {
 	err  error
 }
 
-func (m *mockStateUpdater) ApplyRecoveredDiffs(_ context.Context, _ []types.Diff) ([]GossipSig, error) {
+func (m *mockStateUpdater) ApplyRecoveredDiffs(_ context.Context, _ []types.DiffRecord) ([]GossipSig, error) {
 	return m.sigs, m.err
 }
 
@@ -285,9 +285,9 @@ func TestHighestSeen(t *testing.T) {
 }
 
 func TestRecovery_TriggersWhenBehind(t *testing.T) {
-	fetchedDiffs := []types.Diff{
-		{Nonce: 4, UserSig: []byte("sig4")},
-		{Nonce: 5, UserSig: []byte("sig5")},
+	fetchedDiffs := []types.DiffRecord{
+		{Diff: types.Diff{Nonce: 4, UserSig: []byte("sig4")}},
+		{Diff: types.Diff{Nonce: 5, UserSig: []byte("sig5")}},
 	}
 	recoveredSigs := []GossipSig{
 		{Nonce: 4, StateHash: []byte("h4"), Sig: []byte("s4"), SlotID: 0},
@@ -437,9 +437,9 @@ func TestRecovery_UpdatesWatermark(t *testing.T) {
 		{Nonce: 5, StateHash: []byte("h5"), Sig: []byte("s5"), SlotID: 0},
 	}
 
-	fetcher := &mockDiffFetcher{diffs: []types.Diff{
-		{Nonce: 4, UserSig: []byte("sig4")},
-		{Nonce: 5, UserSig: []byte("sig5")},
+	fetcher := &mockDiffFetcher{diffs: []types.DiffRecord{
+		{Diff: types.Diff{Nonce: 4, UserSig: []byte("sig4")}},
+		{Diff: types.Diff{Nonce: 5, UserSig: []byte("sig5")}},
 	}}
 	updater := &mockStateUpdater{sigs: recoveredSigs}
 

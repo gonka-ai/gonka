@@ -821,16 +821,46 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 }
 
 // ApplyRecoveredDiffs applies diffs fetched during gossip recovery.
+// For each nonce, if F is the BFT-finalized nonce from local signatures
+// (see computeFinalizedNonce), nonces at or below F may trust WarmKeyDelta from
+// the wire without mainnet resolution; nonces above F fall back to ResolveWarmKey.
 // Returns GossipSig for each successfully applied nonce.
-func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]gossip.GossipSig, error) {
+func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.DiffRecord) ([]gossip.GossipSig, error) {
+	_ = ctx // interface hook; recovery is synchronous under h.mu today
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	var latestNonce uint64
+	for _, rec := range diffs {
+		if rec.Nonce > latestNonce {
+			latestNonce = rec.Nonce
+		}
+	}
+
+	var finalized uint64
+	if h.store != nil {
+		finalized = computeFinalizedNonce(h.store, h.escrowID, latestNonce, h.group)
+	}
+
 	var sigs []gossip.GossipSig
 
-	for _, diff := range diffs {
-		if err := h.applyAndPersist(diff); err != nil {
-			return sigs, fmt.Errorf("apply recovered diff nonce %d: %w", diff.Nonce, err)
+	for _, rec := range diffs {
+		// InjectWarmKeys only when we will actually apply this nonce; otherwise a no-op
+		// apply would still leave poisoned warm keys. If apply fails before the nonce
+		// advances, roll back injection so retries are not stuck with bad bindings.
+		var warmSnap map[uint32]string
+		needInject := rec.Nonce <= finalized && len(rec.WarmKeyDelta) > 0 && rec.Nonce > h.sm.LatestNonce()
+		if needInject {
+			warmSnap = h.sm.WarmKeys()
+			h.sm.InjectWarmKeys(rec.WarmKeyDelta)
+		}
+		nonceBefore := h.sm.LatestNonce()
+		if err := h.applyAndPersist(rec.Diff); err != nil {
+			if needInject && h.sm.LatestNonce() == nonceBefore {
+				h.sm.RestoreWarmKeys(warmSnap)
+			}
+			return sigs, fmt.Errorf("apply recovered diff nonce %d: %w", rec.Nonce, err)
 		}
 
 		// Sign state with acceptance check (same path as HandleRequest).
