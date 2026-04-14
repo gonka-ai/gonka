@@ -3,8 +3,10 @@ package v0_2_12
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
@@ -73,7 +75,9 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 	params.ValidationParams.LogprobsMode = types.DefaultLogprobsMode
 
 	// Append new Transfer Agent address to the whitelist.
-	appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+	if err := appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s"); err != nil {
+		return err
+	}
 
 	err = k.SetParams(ctx, params)
 	if err != nil {
@@ -134,15 +138,24 @@ func clearTrainingState(ctx context.Context, k keeper.Keeper) error {
 }
 
 // appendTransferAgent adds an address to the TA whitelist if not already present.
-func appendTransferAgent(params *types.Params, addr string) {
-	if params.TransferAgentAccessParams == nil {
-		params.TransferAgentAccessParams = &types.TransferAgentAccessParams{}
+// It is a no-op when the whitelist is nil/empty (i.e. unrestricted) to avoid
+// accidentally enabling TA restriction with a single address.
+// The address is validated as a valid bech32 account address before appending.
+func appendTransferAgent(params *types.Params, addr string) error {
+	if _, err := sdk.AccAddressFromBech32(addr); err != nil {
+		return fmt.Errorf("invalid transfer agent address %q: %w", addr, err)
 	}
+
+	if params.TransferAgentAccessParams == nil || len(params.TransferAgentAccessParams.AllowedTransferAddresses) == 0 {
+		return nil
+	}
+
 	for _, existing := range params.TransferAgentAccessParams.AllowedTransferAddresses {
 		if existing == addr {
-			return
+			return nil
 		}
 	}
 	params.TransferAgentAccessParams.AllowedTransferAddresses = append(
 		params.TransferAgentAccessParams.AllowedTransferAddresses, addr)
+	return nil
 }

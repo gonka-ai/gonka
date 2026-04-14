@@ -1,6 +1,7 @@
 package v0_2_12
 
 import (
+	"os"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -11,6 +12,12 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	cfg := sdk.GetConfig()
+	cfg.SetBech32PrefixForAccount("gonka", "gonkapub")
+	os.Exit(m.Run())
+}
 
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.12", UpgradeName)
@@ -55,6 +62,62 @@ func TestClearTrainingState(t *testing.T) {
 	} {
 		require.Nil(t, store.Get(key), "expected key %q to be deleted", string(key))
 	}
+}
+
+func TestAppendTransferAgent_AppendsToExistingWhitelist(t *testing.T) {
+	params := inferencetypes.Params{
+		TransferAgentAccessParams: &inferencetypes.TransferAgentAccessParams{
+			AllowedTransferAddresses: []string{"gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le"},
+		},
+	}
+	err := appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+		"gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s",
+	}, params.TransferAgentAccessParams.AllowedTransferAddresses)
+}
+
+func TestAppendTransferAgent_NoDuplicates(t *testing.T) {
+	params := inferencetypes.Params{
+		TransferAgentAccessParams: &inferencetypes.TransferAgentAccessParams{
+			AllowedTransferAddresses: []string{"gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s"},
+		},
+	}
+	err := appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+	require.NoError(t, err)
+	require.Len(t, params.TransferAgentAccessParams.AllowedTransferAddresses, 1)
+}
+
+func TestAppendTransferAgent_SkipsWhenWhitelistNil(t *testing.T) {
+	params := inferencetypes.Params{}
+	err := appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+	require.NoError(t, err)
+	require.Nil(t, params.TransferAgentAccessParams)
+}
+
+func TestAppendTransferAgent_SkipsWhenWhitelistEmpty(t *testing.T) {
+	params := inferencetypes.Params{
+		TransferAgentAccessParams: &inferencetypes.TransferAgentAccessParams{
+			AllowedTransferAddresses: []string{},
+		},
+	}
+	err := appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+	require.NoError(t, err)
+	require.Empty(t, params.TransferAgentAccessParams.AllowedTransferAddresses)
+}
+
+func TestAppendTransferAgent_RejectsInvalidAddress(t *testing.T) {
+	params := inferencetypes.Params{
+		TransferAgentAccessParams: &inferencetypes.TransferAgentAccessParams{
+			AllowedTransferAddresses: []string{"gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le"},
+		},
+	}
+	err := appendTransferAgent(&params, "not-a-valid-bech32")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid transfer agent address")
+	// Original list unchanged
+	require.Len(t, params.TransferAgentAccessParams.AllowedTransferAddresses, 1)
 }
 
 func TestAdjustBLSParameters_SetsDefaultsForZeroValues(t *testing.T) {
