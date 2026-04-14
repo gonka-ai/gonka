@@ -72,6 +72,9 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 	}
 	params.ValidationParams.LogprobsMode = types.DefaultLogprobsMode
 
+	// Append new Transfer Agent address to the whitelist.
+	appendTransferAgent(&params, "gonka14c9hpwcxnls0kt300qs96877x25a8mw65ctr8s")
+
 	err = k.SetParams(ctx, params)
 	if err != nil {
 		return err
@@ -128,4 +131,18 @@ func removeTopMiner(ctx context.Context, k keeper.Keeper) error {
 
 func clearTrainingState(ctx context.Context, k keeper.Keeper) error {
 	return k.ClearTrainingState(ctx)
+}
+
+// appendTransferAgent adds an address to the TA whitelist if not already present.
+func appendTransferAgent(params *types.Params, addr string) {
+	if params.TransferAgentAccessParams == nil {
+		params.TransferAgentAccessParams = &types.TransferAgentAccessParams{}
+	}
+	for _, existing := range params.TransferAgentAccessParams.AllowedTransferAddresses {
+		if existing == addr {
+			return
+		}
+	}
+	params.TransferAgentAccessParams.AllowedTransferAddresses = append(
+		params.TransferAgentAccessParams.AllowedTransferAddresses, addr)
 }
