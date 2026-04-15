@@ -480,7 +480,11 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 		totalWeight := modelTotalWeights[modelId]
 
-		if k.OverlapsWithPoC(&inference, epochContext) && !k.isActiveDuringPoC(&validatorPowerForModel) {
+		overlapsWithPoC, err := k.OverlapsWithPoC(&inference, epochContext)
+		if err != nil {
+			return mustBeValidated, types.ErrInvalidValidationDetails.Wrapf("claim rewards: failed PoC overlap check for inference %s: %v", inference.InferenceId, err)
+		}
+		if overlapsWithPoC && !k.isActiveDuringPoC(&validatorPowerForModel) {
 			skipped++
 			continue
 		}
@@ -503,22 +507,19 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	return mustBeValidated, nil
 }
 
-func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) bool {
+func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) (bool, error) {
 	if inferenceDetails == nil {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
+		return false, types.ErrInvalidValidationDetails.Wrap("OverlapsWithPoC: inference details is nil")
 	}
 
 	if inferenceDetails.CreatedAtBlockHeight == 0 {
-		k.LogWarn("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
+		return false, types.ErrInvalidValidationDetails.Wrap("OverlapsWithPoC: CreatedAtBlockHeight is not set")
 	} else if inferenceDetails.CreatedAtBlockHeight < 0 {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
+		return false, types.ErrInvalidValidationDetails.Wrap("OverlapsWithPoC: CreatedAtBlockHeight is negative")
 	}
 
 	happenedAfterCutoff := inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
-	return happenedAfterCutoff
+	return happenedAfterCutoff, nil
 }
 
 func (k msgServer) isActiveDuringPoC(weight *types.ValidationWeight) bool {
