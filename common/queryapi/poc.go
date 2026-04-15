@@ -25,7 +25,8 @@ func (h *Handlers) GetPoCBatches(ctx echo.Context, epoch int64) error {
 		return err
 	}
 	if resp == nil || len(resp.PocBatch) == 0 {
-		return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("PoC batches batches not found. epoch = %d", epoch))
+		// StatusForbidden to match dapi error code
+		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("PoC batches batches not found. epoch = %d", epoch))
 	}
 	return ctx.JSON(http.StatusOK, resp)
 }

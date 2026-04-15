@@ -3,6 +3,12 @@ info:
   title: query-api
   version: "0.1.0"
 
+servers:
+  - url: http://localhost:18080
+    description: Local dev server
+  - url: http://node1.gonka.ai:8000/api
+    description: Node 1 dapi
+
 paths:
   # ── Status ────────────────────────────────────────────────────────────────
   /v1/status:
@@ -448,16 +454,19 @@ components:
 
     ParticipantDto:
       type: object
-      required: [id, url, coins_owed, refunds_owed, balance, voting_power]
+      required: [id, url, coins_owed, refunds_owed, balance, voting_power, reputation]
       properties:
         id:           { type: string }
         url:          { type: string }
         coins_owed:
             $ref: '#/components/schemas/Int64'
+        refunds_owed:
+            $ref: '#/components/schemas/Int64'
         balance:
             $ref: '#/components/schemas/Int64'
         voting_power:
             $ref: '#/components/schemas/Int64'
+        reputation: { type: number }
 
     AccountDto:
       type: object
@@ -588,7 +597,7 @@ components:
     # ── BLS ──────────────────────────────────────────────────────────────────
     BLSEpochResponse:
       type: object
-      required: [epoch_data]
+      required: [epoch_data, group_public_key_uncompressed_256, validation_signature_uncompressed_128]
       properties:
         # TODO: EpochBLSData
         epoch_data:
@@ -596,11 +605,9 @@ components:
         group_public_key_uncompressed_256:
           type: string
           format: byte
-          nullable: true
         validation_signature_uncompressed_128:
           type: string
           format: byte
-          nullable: true
 
     BLSSignatureResponse:
       type: object

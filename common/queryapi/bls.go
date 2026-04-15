@@ -6,10 +6,10 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	blst "github.com/supranational/blst/bindings/go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"common/queryapi/gen"
 )
@@ -57,7 +57,7 @@ func decompressG2To256(key []byte) ([]byte, error) {
 	return out, nil
 }
 
-// Ported from decentralized-api/internal/server/public/bls_handlers.go:17
+// See: decentralized-api/internal/server/public/bls_handlers.go:17
 func (h *Handlers) GetBLSEpoch(ctx echo.Context, id uint64) error {
 	res, err := h.chain.BLSQueryClient().EpochBLSData(
 		ctx.Request().Context(),
@@ -67,18 +67,14 @@ func (h *Handlers) GetBLSEpoch(ctx echo.Context, id uint64) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to query BLS epoch data: "+err.Error())
 	}
 
-	var uncompressedG2 *[]byte
+	var uncompressedG2 []byte
 	if len(res.EpochData.GroupPublicKey) == 96 {
-		if b, e := decompressG2To256(res.EpochData.GroupPublicKey); e == nil {
-			uncompressedG2 = &b
-		}
+		uncompressedG2, _ = decompressG2To256(res.EpochData.GroupPublicKey)
 	}
 
-	var uncompressedValSig *[]byte
+	var uncompressedValSig []byte
 	if len(res.EpochData.ValidationSignature) == 48 {
-		if b, e := decompressG1To128(res.EpochData.ValidationSignature); e == nil {
-			uncompressedValSig = &b
-		}
+		uncompressedValSig, _ = decompressG1To128(res.EpochData.ValidationSignature)
 	}
 
 	return ctx.JSON(http.StatusOK, gen.BLSEpochResponse{
@@ -88,7 +84,7 @@ func (h *Handlers) GetBLSEpoch(ctx echo.Context, id uint64) error {
 	})
 }
 
-// Ported from decentralized-api/internal/server/public/bls_handlers.go:17
+// See: decentralized-api/internal/server/public/bls_handlers.go:17
 func (h *Handlers) GetBLSEpochs(ctx echo.Context, id uint64) error {
 	return h.GetBLSEpoch(ctx, id)
 }

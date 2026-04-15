@@ -10,7 +10,7 @@ import (
 	"common/queryapi/gen"
 )
 
-// Ported from decentralized-api/internal/server/public/get_participants_handler.go:264
+// See: decentralized-api/internal/server/public/get_participants_handler.go:264
 func (h *Handlers) GetParticipants(ctx echo.Context) error {
 	var participants []gen.ParticipantDto
 	var blockHeight int64
@@ -37,6 +37,9 @@ func (h *Handlers) GetParticipants(ctx echo.Context) error {
 				CoinsOwed:   pwb.Participant.CoinBalance,
 				Balance:     balance,
 				VotingPower: int64(pwb.Participant.Weight),
+				// TODO: to match dapi response, should it be really here?
+				RefundsOwed: 0,
+				Reputation:  0,
 			})
 		}
 		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
@@ -51,7 +54,7 @@ func (h *Handlers) GetParticipants(ctx echo.Context) error {
 	})
 }
 
-// Ported from decentralized-api/internal/server/public/get_participants_handler.go:75
+// See: decentralized-api/internal/server/public/get_participants_handler.go:75
 // Change: nil-response guard removed; a nil response without an error cannot occur over gRPC.
 func (h *Handlers) GetParticipant(ctx echo.Context, address string) error {
 	resp, err := h.chain.InferenceQueryClient().AccountByAddress(

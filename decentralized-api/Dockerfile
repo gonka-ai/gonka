@@ -3,7 +3,7 @@
 ################################################################################
 # Build the application
 ################################################################################
-FROM golang:1.24.2-alpine3.20 AS builder
+FROM golang:1.25.9-alpine3.23 AS builder
 
 ARG GOOS
 ARG GOARCH
@@ -40,6 +40,7 @@ RUN if [ "$GOARCH" = "arm64" ]; then \
 
 COPY inference-chain/ /app/inference-chain
 COPY devshard/ /app/devshard
+COPY common/ /app/common
 
 WORKDIR /app/decentralized-api
 COPY decentralized-api/go.mod decentralized-api/go.sum ./

@@ -21,7 +21,7 @@ import (
 	"common/queryapi/gen"
 )
 
-// Ported from decentralized-api/internal/server/public/get_epoch.go:28
+// See: decentralized-api/internal/server/public/get_epoch.go:28
 func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 	if epoch != "latest" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Only getting info for current epoch is supported at the moment")

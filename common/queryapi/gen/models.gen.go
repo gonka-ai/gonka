@@ -35,8 +35,8 @@ type ApiVersion struct {
 // BLSEpochResponse defines model for BLSEpochResponse.
 type BLSEpochResponse struct {
 	EpochData                          RawProtoJson `json:"epoch_data"`
-	GroupPublicKeyUncompressed256      *[]byte      `json:"group_public_key_uncompressed_256,omitempty"`
-	ValidationSignatureUncompressed128 *[]byte      `json:"validation_signature_uncompressed_128,omitempty"`
+	GroupPublicKeyUncompressed256      []byte       `json:"group_public_key_uncompressed_256"`
+	ValidationSignatureUncompressed128 []byte       `json:"validation_signature_uncompressed_128"`
 }
 
 // BLSSignatureResponse defines model for BLSSignatureResponse.
@@ -115,11 +115,13 @@ type NodeVersion struct {
 
 // ParticipantDto defines model for ParticipantDto.
 type ParticipantDto struct {
-	Balance     Int64  `json:"balance"`
-	CoinsOwed   Int64  `json:"coins_owed"`
-	Id          string `json:"id"`
-	Url         string `json:"url"`
-	VotingPower Int64  `json:"voting_power"`
+	Balance     Int64   `json:"balance"`
+	CoinsOwed   Int64   `json:"coins_owed"`
+	Id          string  `json:"id"`
+	RefundsOwed Int64   `json:"refunds_owed"`
+	Reputation  float32 `json:"reputation"`
+	Url         string  `json:"url"`
+	VotingPower Int64   `json:"voting_power"`
 }
 
 // ParticipantsResponse defines model for ParticipantsResponse.

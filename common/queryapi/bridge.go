@@ -10,7 +10,7 @@ import (
 	"common/queryapi/gen"
 )
 
-// Ported from decentralized-api/internal/server/public/bridge_handlers.go:375
+// See: decentralized-api/internal/server/public/bridge_handlers.go:375
 func (h *Handlers) GetBridgeAddresses(ctx echo.Context, params gen.GetBridgeAddressesParams) error {
 	resp, err := h.chain.InferenceQueryClient().BridgeAddressesByChain(
 		ctx.Request().Context(),
@@ -19,7 +19,8 @@ func (h *Handlers) GetBridgeAddresses(ctx echo.Context, params gen.GetBridgeAddr
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to get addresses for chain '%s': %v", params.Chain, err))
 	}
-	addresses := make([]string, 0, len(resp.Addresses))
+
+	var addresses []string
 	for _, a := range resp.Addresses {
 		addresses = append(addresses, a.Address)
 	}
