@@ -38,7 +38,7 @@ func (k Keeper) AggregateSubnetHostStats(ctx context.Context, epochIndex uint64,
 	existing.Invalid += slotStats.Invalid
 
 	if existing.Cost > math.MaxUint64-slotStats.Cost {
-		return fmt.Errorf("cost overflow aggregating subnet host stats")
+		return fmt.Errorf("cost overflow aggregating subnet host stats: existing=%d add=%d", existing.Cost, slotStats.Cost)
 	}
 	existing.Cost += slotStats.Cost
 

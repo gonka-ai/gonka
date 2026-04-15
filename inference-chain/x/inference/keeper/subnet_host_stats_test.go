@@ -150,3 +150,41 @@ func TestAggregateSubnetHostStats_HappyPath(t *testing.T) {
 	require.Equal(t, uint32(100), stats.RequiredValidations)
 	require.Equal(t, uint32(95), stats.CompletedValidations)
 }
+
+func TestAggregateSubnetHostStats_LargeButNotOverflow(t *testing.T) {
+	// MaxUint32/2 + MaxUint32/2 should succeed because the sum equals MaxUint32 (no wrap).
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	participant := hostStatsParticipant(0x08)
+	epochIndex := uint64(1)
+
+	half := math.MaxUint32 / 2
+	err := k.SubnetHostEpochStatsMap.Set(ctx, collections.Join(epochIndex, participant), types.SubnetHostEpochStats{
+		Participant:          participant.String(),
+		EpochIndex:           epochIndex,
+		Missed:               half,
+		Invalid:              half,
+		RequiredValidations:  half,
+		CompletedValidations: half,
+		Cost:                 math.MaxUint64 / 2,
+	})
+	require.NoError(t, err)
+
+	err = k.AggregateSubnetHostStats(ctx, epochIndex, participant, types.SubnetSettlementHostStats{
+		Missed:               half,
+		Invalid:              half,
+		Cost:                 math.MaxUint64/2 + 1,
+		RequiredValidations:  half,
+		CompletedValidations: half,
+	})
+	require.NoError(t, err, "MaxUint32/2 + MaxUint32/2 should not overflow")
+
+	stats, found := k.GetSubnetHostEpochStats(ctx, epochIndex, participant)
+	require.True(t, found)
+	require.Equal(t, uint32(math.MaxUint32), stats.Missed)
+	require.Equal(t, uint32(math.MaxUint32), stats.Invalid)
+	require.Equal(t, uint32(math.MaxUint32), stats.RequiredValidations)
+	require.Equal(t, uint32(math.MaxUint32), stats.CompletedValidations)
+	// Cost: MaxUint64/2 + (MaxUint64/2 + 1) = MaxUint64
+	require.Equal(t, uint64(math.MaxUint64), stats.Cost)
+}
