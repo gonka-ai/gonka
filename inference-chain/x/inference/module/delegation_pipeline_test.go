@@ -1041,3 +1041,210 @@ func TestGetEffectiveValidationBaseState_ExcludesRemovedMembers(t *testing.T) {
 	// Clean up
 	stub.excludedMembers = nil
 }
+
+// --- Voting power cap tests ---
+
+// nopCapLogger satisfies votingPowerCapLogger without touching any real logger.
+type nopCapLogger struct{}
+
+func (nopCapLogger) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
+func (nopCapLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
+
+func sumVP(m map[string]int64) int64 {
+	var s int64
+	for _, v := range m {
+		s += v
+	}
+	return s
+}
+
+func TestCapPerModelVotingPowers_NoCapNeeded(t *testing.T) {
+	vp := map[string]int64{
+		"a": 100,
+		"b": 100,
+		"c": 100,
+	}
+	capPct := sdkmath.LegacyNewDecWithPrec(50, 2) // 50%
+	before := sumVP(vp)
+
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	require.Equal(t, int64(100), vp["a"])
+	require.Equal(t, int64(100), vp["b"])
+	require.Equal(t, int64(100), vp["c"])
+	require.Equal(t, before, sumVP(vp), "total VP must be conserved")
+}
+
+func TestCapPerModelVotingPowers_CapsAndRedistributes(t *testing.T) {
+	vp := map[string]int64{
+		"whale":  800, // 80% of group
+		"small1": 100, // 10%
+		"small2": 100, // 10%
+	}
+	capPct := sdkmath.LegacyNewDecWithPrec(50, 2) // 50% cap
+	before := sumVP(vp)
+
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	// Total conservation
+	require.Equal(t, before, sumVP(vp), "total VP must be conserved")
+
+	// Whale must be at or below cap.
+	require.LessOrEqual(t, vp["whale"], before/2,
+		"whale should not exceed 50%% of total")
+
+	// Small participants should have grown.
+	require.Greater(t, vp["small1"], int64(100))
+	require.Greater(t, vp["small2"], int64(100))
+}
+
+func TestCapPerModelVotingPowers_ConvergesInMultipleIterations(t *testing.T) {
+	// Extreme case: one whale at 90% of total.
+	vp := map[string]int64{
+		"whale": 900,
+		"small": 100,
+	}
+	capPct := sdkmath.LegacyNewDecWithPrec(30, 2) // 30% cap
+
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	// With only 2 participants and 30% cap, whale must be capped and
+	// the redistribution cannot route back to whale, so small absorbs
+	// all the excess.
+	require.LessOrEqual(t, vp["whale"], sumVP(vp)*30/100+1,
+		"whale should be at or near 30%% cap")
+}
+
+func TestCapPerModelVotingPowers_ZeroCapIsDisabled(t *testing.T) {
+	vp := map[string]int64{
+		"whale": 900,
+		"small": 100,
+	}
+	capPct := sdkmath.LegacyZeroDec()
+	before := make(map[string]int64, len(vp))
+	for k, v := range vp {
+		before[k] = v
+	}
+
+	// capPct=0 should never be called by production code, but defensively
+	// verify the inner helper no-ops when cap is 0. It iterates but capVP=0
+	// so no host is over-cap and the loop exits immediately.
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	for k, v := range before {
+		require.Equal(t, v, vp[k], "map unchanged when cap is zero")
+	}
+}
+
+func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
+	vp := map[string]int64{"solo": 1000}
+	capPct := sdkmath.LegacyNewDecWithPrec(10, 2) // 10%
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+	require.Equal(t, int64(1000), vp["solo"],
+		"single-host groups must be left alone since there is no one to redistribute to")
+}
+
+func TestCapAggregatedVotingPowers_NoCapNeeded(t *testing.T) {
+	pvp := map[string][]*types.ModelVotingPower{
+		"a": {
+			{ModelId: "m1", VotingPower: 100},
+			{ModelId: "m2", VotingPower: 100},
+		},
+		"b": {
+			{ModelId: "m1", VotingPower: 100},
+			{ModelId: "m2", VotingPower: 100},
+		},
+	}
+
+	capPct := sdkmath.LegacyNewDecWithPrec(60, 2) // 60%
+	capAggregatedVotingPowers(pvp, capPct, nopCapLogger{})
+
+	// Each host has 50% of aggregated VP, well below 60% cap.
+	require.Equal(t, int64(100), pvp["a"][0].VotingPower)
+	require.Equal(t, int64(100), pvp["a"][1].VotingPower)
+	require.Equal(t, int64(100), pvp["b"][0].VotingPower)
+	require.Equal(t, int64(100), pvp["b"][1].VotingPower)
+}
+
+func TestCapAggregatedVotingPowers_CapsAndRedistributes(t *testing.T) {
+	// Whale sits at the per-model cap (50%) in every model simultaneously,
+	// giving it an aggregated share that the per-model cap couldn't catch.
+	pvp := map[string][]*types.ModelVotingPower{
+		"whale": {
+			{ModelId: "m1", VotingPower: 500},
+			{ModelId: "m2", VotingPower: 500},
+		},
+		"small1": {
+			{ModelId: "m1", VotingPower: 100},
+		},
+		"small2": {
+			{ModelId: "m2", VotingPower: 100},
+		},
+	}
+	// Total: 1200. Whale has 1000/1200 = 83.3%.
+	capPct := sdkmath.LegacyNewDecWithPrec(50, 2) // 50% aggregated cap
+
+	capAggregatedVotingPowers(pvp, capPct, nopCapLogger{})
+
+	// Whale's aggregated VP should be at or below 50% of total.
+	whaleAgg := pvp["whale"][0].VotingPower + pvp["whale"][1].VotingPower
+	total := whaleAgg +
+		pvp["small1"][0].VotingPower +
+		pvp["small2"][0].VotingPower
+	require.LessOrEqual(t, whaleAgg, total/2+1,
+		"whale aggregated VP should not exceed 50%% of total")
+
+	// Small hosts must have absorbed the freed voting power in their
+	// respective model groups.
+	require.Greater(t, pvp["small1"][0].VotingPower, int64(100))
+	require.Greater(t, pvp["small2"][0].VotingPower, int64(100))
+}
+
+func TestCapAggregatedVotingPowers_ProportionalAcrossModels(t *testing.T) {
+	// Whale has unbalanced per-model VP. When aggregated cap scales it
+	// down, the reduction must be proportional across its models.
+	pvp := map[string][]*types.ModelVotingPower{
+		"whale": {
+			{ModelId: "m1", VotingPower: 800},
+			{ModelId: "m2", VotingPower: 200},
+		},
+		"recipient": {
+			{ModelId: "m1", VotingPower: 100},
+			{ModelId: "m2", VotingPower: 100},
+		},
+	}
+	// Total: 1200. Whale has 1000/1200 = 83.3%.
+	capPct := sdkmath.LegacyNewDecWithPrec(50, 2)
+
+	capAggregatedVotingPowers(pvp, capPct, nopCapLogger{})
+
+	whaleAgg := pvp["whale"][0].VotingPower + pvp["whale"][1].VotingPower
+
+	// After capping, whale's m1:m2 ratio should still be roughly 4:1.
+	// Before: m1=800, m2=200. After scaling by (cap/original), the ratio
+	// is preserved.
+	if pvp["whale"][1].VotingPower > 0 {
+		ratio := float64(pvp["whale"][0].VotingPower) / float64(pvp["whale"][1].VotingPower)
+		require.InDelta(t, 4.0, ratio, 0.5,
+			"whale's per-model ratio should be preserved by the scaling")
+	}
+
+	// Cap is observed.
+	total := whaleAgg +
+		pvp["recipient"][0].VotingPower +
+		pvp["recipient"][1].VotingPower
+	require.LessOrEqual(t, whaleAgg, total/2+1)
+}
+
+func TestCapAggregatedVotingPowers_ZeroCapIsDisabled(t *testing.T) {
+	pvp := map[string][]*types.ModelVotingPower{
+		"whale": {{ModelId: "m1", VotingPower: 1000}},
+		"small": {{ModelId: "m1", VotingPower: 100}},
+	}
+	capPct := sdkmath.LegacyZeroDec()
+
+	capAggregatedVotingPowers(pvp, capPct, nopCapLogger{})
+
+	require.Equal(t, int64(1000), pvp["whale"][0].VotingPower)
+	require.Equal(t, int64(100), pvp["small"][0].VotingPower)
+}

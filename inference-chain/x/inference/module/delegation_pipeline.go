@@ -659,13 +659,58 @@ func ComputeModelVotingPowers(
 	return modelVotingPowers
 }
 
+// VotingPowerCapParams carries the two optional concentration caps applied
+// to per-model voting powers after delegation is resolved.
+//
+//   - PerModel is the max fraction of voting power any single host can hold
+//     within a single model group. Applied independently to each model.
+//     Zero means disabled.
+//   - Aggregated is the max fraction of the sum of voting powers any single
+//     host can hold across all eligible model groups combined. Applied after
+//     the per-model cap. Zero means disabled.
+//
+// The per-model cap protects validation integrity: in slot-based validation,
+// a host that attracts enough delegations could single-handedly push a model
+// group past its supermajority threshold. The aggregated cap is a second-layer
+// defense against delegation-driven concentration that might slip through the
+// per-model cap (e.g. a host that sits just under the per-model cap in every
+// model simultaneously).
+type VotingPowerCapParams struct {
+	PerModel   mathsdk.LegacyDec
+	Aggregated mathsdk.LegacyDec
+}
+
+// delegationVotingPowerCapParams extracts the voting-power caps from governance
+// params. Returns zero-dec for any field that is not set, which disables that
+// cap.
+func (am AppModule) delegationVotingPowerCapParams(params types.Params) VotingPowerCapParams {
+	if params.DelegationParams == nil {
+		return VotingPowerCapParams{
+			PerModel:   mathsdk.LegacyZeroDec(),
+			Aggregated: mathsdk.LegacyZeroDec(),
+		}
+	}
+	return VotingPowerCapParams{
+		PerModel:   protoDecToLegacy(params.DelegationParams.MaxModelVotingPowerPercentage),
+		Aggregated: protoDecToLegacy(params.DelegationParams.MaxAggregatedVotingPowerPercentage),
+	}
+}
+
 // computeAndSetVotingPowers computes per-group voting powers from final weights
 // and writes them to each participant's VotingPowers field for visibility.
+//
+// Applies the per-model concentration cap first (if configured), then the
+// aggregated concentration cap (if configured). Both caps use a proportional
+// redistribution algorithm: any excess over the cap is removed from the capped
+// host, and the remaining uncapped hosts absorb it in proportion to their
+// existing share. Hosts that are themselves at or above the cap are skipped
+// during redistribution so excess cannot be routed back to them.
 func (am AppModule) computeAndSetVotingPowers(
 	activeParticipants []*types.ActiveParticipant,
 	dwc *DelegationWeightCalculator,
 	eligibleModels []string,
 	participationByModel map[string]map[string]ParticipationMode,
+	caps VotingPowerCapParams,
 ) {
 	finalWeights := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
@@ -680,6 +725,12 @@ func (am AppModule) computeAndSetVotingPowers(
 			continue
 		}
 		vpMap := dwc.ComputeGroupVotingPowers(modelID, modes, finalWeights)
+
+		// Per-model cap: scale down any single host that exceeds the cap.
+		if !caps.PerModel.IsZero() {
+			capPerModelVotingPowers(vpMap, caps.PerModel, modelID, am)
+		}
+
 		for _, addr := range sortedKeys(vpMap) {
 			vp := vpMap[addr]
 			if vp > 0 {
@@ -691,6 +742,15 @@ func (am AppModule) computeAndSetVotingPowers(
 		}
 	}
 
+	// Aggregated cap: sum each host's per-model voting powers and scale down
+	// any host whose aggregated share exceeds the cap. Excess is absorbed by
+	// the other model groups each capped host participates in — we reduce the
+	// capped host's contribution in each model proportionally, and the freed
+	// voting power accrues to the other hosts in each of those model groups.
+	if !caps.Aggregated.IsZero() {
+		capAggregatedVotingPowers(participantVP, caps.Aggregated, am)
+	}
+
 	for _, p := range activeParticipants {
 		vps := participantVP[p.Index]
 		if len(vps) > 0 {
@@ -699,6 +759,243 @@ func (am AppModule) computeAndSetVotingPowers(
 			})
 			p.VotingPowers = vps
 		}
+	}
+}
+
+// votingPowerCapLogger is a minimal interface for the cap helpers' logging.
+// The real production type (AppModule) satisfies it; tests can pass a nop
+// implementation or capture logs directly.
+type votingPowerCapLogger interface {
+	LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{})
+	LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{})
+}
+
+// capPerModelVotingPowers scales down any host whose voting power in vpMap
+// exceeds capPct of the group total, proportionally redistributing the excess
+// to the remaining hosts that are below the cap. Applied in-place.
+//
+// The redistribution can push previously-uncapped hosts above the cap, so the
+// loop runs until either no host exceeds the cap or no redistribution target
+// remains. `numIterationsLimit` bounds worst-case runtime in degenerate inputs.
+func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, modelID string, logger votingPowerCapLogger) {
+	const numIterationsLimit = 32
+
+	if len(vpMap) < 2 {
+		return // nothing to cap or redistribute
+	}
+
+	for iter := 0; iter < numIterationsLimit; iter++ {
+		totalVP := int64(0)
+		for _, vp := range vpMap {
+			totalVP += vp
+		}
+		if totalVP == 0 {
+			return
+		}
+
+		// Cap in voting-power units: floor(totalVP * capPct).
+		capVP := capPct.MulInt64(totalVP).TruncateInt64()
+		if capVP <= 0 {
+			return
+		}
+
+		// Find the most over-capped host.
+		var overAddr string
+		var overVP int64
+		for _, addr := range sortedKeys(vpMap) {
+			vp := vpMap[addr]
+			if vp > capVP && vp > overVP {
+				overAddr = addr
+				overVP = vp
+			}
+		}
+		if overAddr == "" {
+			return // no host over the cap
+		}
+
+		excess := overVP - capVP
+		vpMap[overAddr] = capVP
+
+		// Redistribute the excess proportionally to hosts that are strictly
+		// below the cap. Hosts at or above the cap are skipped so excess
+		// cannot be routed back to them.
+		recipientTotal := int64(0)
+		for _, addr := range sortedKeys(vpMap) {
+			if addr == overAddr {
+				continue
+			}
+			if vpMap[addr] < capVP {
+				recipientTotal += vpMap[addr]
+			}
+		}
+		if recipientTotal == 0 {
+			// No room to redistribute; excess is effectively burned from the
+			// group's voting power. This should only happen in tiny groups
+			// where every other host is already at the cap.
+			logger.LogWarn("per-model voting power cap: no redistribution room, excess dropped",
+				types.EpochGroup,
+				"modelId", modelID,
+				"cappedHost", overAddr,
+				"excess", excess,
+			)
+			return
+		}
+
+		distributed := int64(0)
+		for _, addr := range sortedKeys(vpMap) {
+			if addr == overAddr || vpMap[addr] >= capVP {
+				continue
+			}
+			share := (excess * vpMap[addr]) / recipientTotal
+			vpMap[addr] += share
+			distributed += share
+		}
+		// Give any rounding remainder to the first recipient below cap, so
+		// the total is conserved exactly.
+		remainder := excess - distributed
+		if remainder > 0 {
+			for _, addr := range sortedKeys(vpMap) {
+				if addr == overAddr || vpMap[addr] >= capVP {
+					continue
+				}
+				vpMap[addr] += remainder
+				break
+			}
+		}
+
+		logger.LogInfo("per-model voting power cap applied",
+			types.EpochGroup,
+			"modelId", modelID,
+			"cappedHost", overAddr,
+			"originalVP", overVP,
+			"capVP", capVP,
+			"redistributed", excess,
+		)
+	}
+}
+
+// capAggregatedVotingPowers scales down any host whose aggregated voting power
+// across all model groups exceeds capPct of the global voting power total. The
+// capped host's contribution is scaled down proportionally across every model
+// it participates in, and the freed voting power in each model is redistributed
+// to that model's other hosts in proportion to their existing share.
+//
+// This is the global second-layer defense: it runs after the per-model cap and
+// catches hosts that manage to sit just under the per-model cap in every
+// model simultaneously.
+func capAggregatedVotingPowers(
+	participantVP map[string][]*types.ModelVotingPower,
+	capPct mathsdk.LegacyDec,
+	logger votingPowerCapLogger,
+) {
+	const numIterationsLimit = 32
+
+	if len(participantVP) < 2 {
+		return
+	}
+
+	for iter := 0; iter < numIterationsLimit; iter++ {
+		totalVP := int64(0)
+		hostTotals := make(map[string]int64, len(participantVP))
+		for addr, vps := range participantVP {
+			sum := int64(0)
+			for _, mvp := range vps {
+				sum += mvp.VotingPower
+			}
+			hostTotals[addr] = sum
+			totalVP += sum
+		}
+		if totalVP == 0 {
+			return
+		}
+
+		capVP := capPct.MulInt64(totalVP).TruncateInt64()
+		if capVP <= 0 {
+			return
+		}
+
+		// Find the most over-capped host.
+		var overAddr string
+		var overVP int64
+		for _, addr := range sortedKeys(hostTotals) {
+			vp := hostTotals[addr]
+			if vp > capVP && vp > overVP {
+				overAddr = addr
+				overVP = vp
+			}
+		}
+		if overAddr == "" {
+			return
+		}
+
+		// Scale down the capped host's contribution in every model it
+		// participates in, proportionally. Integer arithmetic: ratio = capVP / overVP.
+		// We compute the new per-model value as floor(original * capVP / overVP)
+		// and accumulate the freed voting power per model to redistribute.
+		freedPerModel := make(map[string]int64)
+		for _, mvp := range participantVP[overAddr] {
+			newVP := (mvp.VotingPower * capVP) / overVP
+			freed := mvp.VotingPower - newVP
+			if freed > 0 {
+				freedPerModel[mvp.ModelId] += freed
+			}
+			mvp.VotingPower = newVP
+		}
+
+		// Redistribute freed voting power in each affected model to the
+		// other hosts in that model, proportional to their current VP.
+		for modelID, freed := range freedPerModel {
+			if freed <= 0 {
+				continue
+			}
+			// Collect other hosts with a stake in this model.
+			type recipient struct {
+				addr string
+				mvp  *types.ModelVotingPower
+			}
+			recipients := make([]recipient, 0)
+			recipientTotal := int64(0)
+			for _, addr := range sortedKeys(participantVP) {
+				if addr == overAddr {
+					continue
+				}
+				for _, mvp := range participantVP[addr] {
+					if mvp.ModelId == modelID && mvp.VotingPower > 0 {
+						recipients = append(recipients, recipient{addr: addr, mvp: mvp})
+						recipientTotal += mvp.VotingPower
+					}
+				}
+			}
+			if recipientTotal == 0 {
+				// Nobody else in this model — the freed voting power is
+				// effectively burned from this model's slot allocation.
+				logger.LogWarn("aggregated voting power cap: no redistribution room in model, excess dropped",
+					types.EpochGroup,
+					"modelId", modelID,
+					"cappedHost", overAddr,
+					"excess", freed,
+				)
+				continue
+			}
+			distributed := int64(0)
+			for _, r := range recipients {
+				share := (freed * r.mvp.VotingPower) / recipientTotal
+				r.mvp.VotingPower += share
+				distributed += share
+			}
+			// Rounding remainder goes to the first recipient.
+			if remainder := freed - distributed; remainder > 0 && len(recipients) > 0 {
+				recipients[0].mvp.VotingPower += remainder
+			}
+		}
+
+		logger.LogInfo("aggregated voting power cap applied",
+			types.EpochGroup,
+			"cappedHost", overAddr,
+			"originalAggregatedVP", overVP,
+			"capVP", capVP,
+			"totalVP", totalVP,
+		)
 	}
 }
 

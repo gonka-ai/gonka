@@ -710,12 +710,16 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// Apply universal power capping to epoch powers
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
-	// Write per-model voting powers to ActiveParticipant for visibility
+	// Write per-model voting powers to ActiveParticipant for visibility.
+	// Pass the two governance-controlled concentration caps (per-model and
+	// aggregated). Both default to zero (disabled) until governance sets a
+	// concrete value.
 	am.computeAndSetVotingPowers(
 		activeParticipants,
 		participationState.calculator,
 		participationState.eligibleModels,
 		participationState.participationByModel,
+		am.delegationVotingPowerCapParams(params),
 	)
 
 	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)

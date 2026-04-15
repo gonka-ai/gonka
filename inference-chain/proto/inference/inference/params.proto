@@ -355,6 +355,17 @@ message DelegationParams {
   int64 v_min = 6; // min hosts with non-zero consensus weight
   Decimal cap_factor = 7; // max group weight as multiple of members' weight in other groups
   string initial_model_id = 8; // model exempt from group cap; set during migration to the founding model
+  // Max fraction of voting power any single host can hold within a single
+  // model group (after delegation is resolved). Prevents a host that
+  // attracts many delegations from unilaterally controlling validation
+  // within a model's slot allocation. Zero means disabled.
+  Decimal max_model_voting_power_percentage = 9;
+  // Max fraction of aggregated voting power any single host can hold across
+  // all eligible model groups combined. Applied after per-model caps. This
+  // is a second-layer defense against delegation-driven concentration that
+  // survives the per-model cap (e.g. a host dominates every model at just
+  // under the per-model cap). Zero means disabled.
+  Decimal max_aggregated_voting_power_percentage = 10;
 }
 
 // DevshardApprovedVersion describes a single approved devshard binary.
