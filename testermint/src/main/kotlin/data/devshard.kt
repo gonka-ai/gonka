@@ -12,6 +12,8 @@ data class DevshardEscrow(
     val creator: String,
     val amount: String,
     val slots: List<String>,
+    @SerializedName("model_id")
+    val modelId: String,
     @SerializedName("epoch_index")
     val epochIndex: String,
     @SerializedName("app_hash")

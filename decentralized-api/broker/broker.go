@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,7 +213,9 @@ type NodeState struct {
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion   string     `json:"ml_node_version"`
 
-	// Epoch-specific data, populated from the chain
+	// Epoch data for this node, keyed by model_id.
+	// We currently expect one item in each map.
+	// EpochMLNodes stores this node's own MLNodeInfo, not all epoch ML nodes.
 	EpochModels  map[string]types.Model      `json:"epoch_models"`
 	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
 }
@@ -790,8 +793,7 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 type pocParams struct {
 	startPoCBlockHeight int64
 	startPoCBlockHash   string
-	modelId             string
-	seqLen              int64
+	models              map[string]apiconfig.PoCModelConfigCache
 	pocStrongerRng      bool
 }
 
@@ -941,79 +943,8 @@ func (b *Broker) reconcileIfSynced(triggerMsg string) {
 		return
 	}
 
-	b.enforceSingleModelOnAllNodes()
-
 	logging.Info(triggerMsg, types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
 	b.reconcile(*epochPhaseInfo)
-}
-
-func (b *Broker) enforceSingleModelOnAllNodes() {
-	modelId, args := getEnforcedModel()
-	if modelId == "" {
-		return
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for id, node := range b.nodes {
-		if existingArgs, ok := node.Node.Models[modelId]; ok {
-			if len(node.Node.Models) == 1 {
-				continue
-			}
-			node.Node.Models = map[string]ModelArgs{
-				modelId: existingArgs,
-			}
-		} else {
-			node.Node.Models = map[string]ModelArgs{
-				modelId: {Args: args},
-			}
-		}
-		logging.Info("Enforced model on node", types.Nodes, "node_id", id)
-	}
-}
-
-// enforceModelToEpochStates enforces the configured model to all nodes' EpochModels.
-// Called after populating from chain to ensure correct model is used.
-// queryNodeStatus will detect model mismatch and trigger redeploy.
-func (b *Broker) enforceModelToEpochStates() {
-	enforcedModelId, enforcedArgs := getEnforcedModel()
-	if enforcedModelId == "" {
-		return
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	for id, node := range b.nodes {
-		if _, hasModel := node.State.EpochModels[enforcedModelId]; !hasModel {
-			node.State.EpochModels = map[string]types.Model{
-				enforcedModelId: {Id: enforcedModelId, ModelArgs: enforcedArgs},
-			}
-			logging.Info("Enforced model to node state", types.Upgrades, "node_id", id)
-		}
-	}
-}
-
-// enforceModelToSingleNode enforces the configured model to a single node's EpochModels.
-// Called after populating a single node from chain.
-// queryNodeStatus will detect model mismatch and trigger redeploy.
-func (b *Broker) enforceModelToSingleNode(nodeId string) {
-	enforcedModelId, enforcedArgs := getEnforcedModel()
-	if enforcedModelId == "" {
-		return
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if node, ok := b.nodes[nodeId]; ok {
-		if _, hasModel := node.State.EpochModels[enforcedModelId]; !hasModel {
-			node.State.EpochModels = map[string]types.Model{
-				enforcedModelId: {Id: enforcedModelId, ModelArgs: enforcedArgs},
-			}
-			logging.Info("Enforced model to node state", types.Upgrades, "node_id", nodeId)
-		}
-	}
 }
 
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
@@ -1100,7 +1031,15 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		// TODO: we should make reindexing as some indexes might be skipped
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command
-		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, int(totalNumNodes), epochState.ActiveConfirmationPoCEvent)
+		cmd := b.getCommandForState(
+			id,
+			&node.State,
+			node.Node.Models,
+			currentPoCParams,
+			pocParamsErr,
+			int(totalNumNodes),
+			epochState.ActiveConfirmationPoCEvent,
+		)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -1145,7 +1084,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
 			}
-			b.enrichWithPocParams(params)
+			b.loadPoCModels(params)
 			return params, nil
 		}
 
@@ -1160,8 +1099,8 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 }
 
-// enrichWithPocParams fetches PoC params from chain and enriches pocParams.
-func (b *Broker) enrichWithPocParams(params *pocParams) {
+// loadPoCModels fetches current PoC model configs into params.models.
+func (b *Broker) loadPoCModels(params *pocParams) {
 	paramsResp, err := b.chainBridge.GetParams()
 	if err != nil {
 		logging.Warn("Failed to query chain params", types.Nodes, "error", err)
@@ -1169,15 +1108,89 @@ func (b *Broker) enrichWithPocParams(params *pocParams) {
 	}
 
 	if paramsResp.Params.PocParams != nil {
-		params.modelId = paramsResp.Params.PocParams.ModelId
-		params.seqLen = paramsResp.Params.PocParams.SeqLen
+		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams.GetModelConfigs())
+		params.models = make(map[string]apiconfig.PoCModelConfigCache, len(cachedParams.Models))
+		for _, modelConfig := range cachedParams.Models {
+			params.models[modelConfig.ModelId] = modelConfig
+		}
+		if b.configManager != nil {
+			_ = b.configManager.SetPoCParams(cachedParams)
+		}
 		params.pocStrongerRng = paramsResp.Params.PocParams.PocStrongerRngEnabled
 		logging.Info("Using PoC params", types.PoC,
-			"model_id", params.modelId, "seq_len", params.seqLen, "poc_stronger_rng", params.pocStrongerRng)
+			"models_count", len(cachedParams.Models),
+			"poc_stronger_rng", params.pocStrongerRng)
 	}
 }
 
-func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int, confirmationEvent *types.ConfirmationPoCEvent) NodeWorkerCommand {
+func (b *Broker) resolvePoCModelForNode(
+	nodeState *NodeState,
+	nodeModels map[string]ModelArgs,
+	params *pocParams,
+) (apiconfig.PoCModelConfigCache, bool) {
+	if nodeState == nil || params == nil || len(params.models) == 0 {
+		return apiconfig.PoCModelConfigCache{}, false
+	}
+
+	if len(nodeState.EpochMLNodes) == 1 {
+		for modelID := range nodeState.EpochMLNodes {
+			modelConfig, ok := params.models[modelID]
+			if ok {
+				return modelConfig, true
+			}
+		}
+		return apiconfig.PoCModelConfigCache{}, false
+	}
+
+	if len(nodeState.EpochMLNodes) > 1 {
+		return apiconfig.PoCModelConfigCache{}, false
+	}
+
+	modelIDs := make([]string, 0, len(nodeModels))
+	for modelID := range nodeModels {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+	for _, modelID := range modelIDs {
+		modelConfig, ok := params.models[modelID]
+		if ok {
+			return modelConfig, true
+		}
+	}
+	return apiconfig.PoCModelConfigCache{}, false
+}
+
+func ResolveNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
+	if len(epochMLNodes) == 1 {
+		for modelID := range epochMLNodes {
+			return modelID, true
+		}
+	}
+	if len(epochMLNodes) > 1 {
+		return "", false
+	}
+	// Fresh node, no epoch assignment -- fallback to first model supported by this node.
+	// Used by inference deployment and model-check paths.
+	modelIDs := make([]string, 0, len(nodeModels))
+	for modelID := range nodeModels {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+	if len(modelIDs) == 0 {
+		return "", false
+	}
+	return modelIDs[0], true
+}
+
+func (b *Broker) getCommandForState(
+	nodeId string,
+	nodeState *NodeState,
+	nodeModels map[string]ModelArgs,
+	pocGenParams *pocParams,
+	pocGenErr error,
+	totalNodes int,
+	confirmationEvent *types.ConfirmationPoCEvent,
+) NodeWorkerCommand {
 	switch nodeState.IntendedStatus {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
@@ -1185,15 +1198,20 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 		switch nodeState.PocIntendedStatus {
 		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
+				modelConfig, ok := b.resolvePoCModelForNode(nodeState, nodeModels, pocGenParams)
+				if !ok {
+					logging.Warn("Skipping PoC scheduling without resolvable model", types.PoC, "node_id", nodeId)
+					return nil
+				}
 				return StartPoCNodeCommandV2{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
-					BlockHash:   pocGenParams.startPoCBlockHash,
-					PubKey:      b.participantInfo.GetPubKey(),
-					CallbackUrl: GetPoCCallbackBaseURLV2(b.callbackUrl),
-					TotalNodes:  totalNodes,
-					Model:       pocGenParams.modelId,
-					SeqLen:      pocGenParams.seqLen,
-					PocStrongerRng:    pocGenParams.pocStrongerRng,
+					BlockHash:      pocGenParams.startPoCBlockHash,
+					PubKey:         b.participantInfo.GetPubKey(),
+					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
+					TotalNodes:     totalNodes,
+					Model:          modelConfig.ModelId,
+					SeqLen:         modelConfig.SeqLen,
+					PocStrongerRng: pocGenParams.pocStrongerRng,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1224,7 +1242,7 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		startPoCBlockHash:   hash,
 	}
 
-	b.enrichWithPocParams(params)
+	b.loadPoCModels(params)
 	return params, nil
 }
 
@@ -1366,12 +1384,8 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		}
 		// Model check only if still INFERENCE (healthy)
 		if currentStatus == types.HardwareNodeStatus_INFERENCE {
-			var expectedModel string
-			for modelId := range state.EpochModels {
-				expectedModel = modelId
-				break
-			}
-			if expectedModel != "" {
+			expectedModel, ok := ResolveNodeModelID(state.EpochMLNodes, node.Models)
+			if ok && expectedModel != "" {
 				mctx, mcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
 				defer mcancel()
 				if loadedModels, err := client.GetLoadedModels(mctx); err != nil {
@@ -1413,10 +1427,6 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		return nil // No change, no need to update
 	}
 
-	// Update the broker's last known state
-	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
-	b.lastEpochPhase = epochState.CurrentPhase
-
 	logging.Info("Epoch or phase change detected, updating node data with epoch info.", types.Nodes,
 		"old_epoch", b.lastEpochIndex, "new_epoch", epochState.LatestEpoch.EpochIndex,
 		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
@@ -1431,7 +1441,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		logging.Error("Parent epoch group data is nil", types.Nodes, "epoch_index", epochState.LatestEpoch.EpochIndex, "epoch_poc_start_block_height", epochState.LatestEpoch.PocStartBlockHeight, "epoch_group_data_poc_start_block_height")
 		return nil
 	}
-	if len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 {
+	if len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 || parentGroupResp.EpochGroupData.TotalWeight == 0 {
 		logging.Warn("Parent epoch group SubGroupModels are empty", types.Nodes, "epoch_index", epochState.LatestEpoch.EpochIndex, "epoch_poc_start_block_height", epochState.LatestEpoch.PocStartBlockHeight, "epoch_group_data_poc_start_block_height", parentGroupResp.EpochGroupData.PocStartBlockHeight)
 		return nil
 	}
@@ -1486,13 +1496,13 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 	b.mu.RUnlock()
 
 	for _, nodeId := range nodeIds {
-		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
-			logging.Warn("Failed to populate governance models for node not in epoch", types.Nodes, "node_id", nodeId, "error", err)
+		if err := b.populateNodeWithConfiguredModel(nodeId); err != nil {
+			logging.Warn("Failed to populate configured model for node not in epoch", types.Nodes, "node_id", nodeId, "error", err)
 		}
 	}
 
-	// Enforce model on all node states after populating from chain
-	b.enforceModelToEpochStates()
+	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+	b.lastEpochPhase = epochState.CurrentPhase
 
 	return nil
 }
@@ -1506,6 +1516,18 @@ func (b *Broker) clearNodeEpochData() {
 		node.State.EpochModels = make(map[string]types.Model)
 		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
 	}
+}
+
+func (b *Broker) clearSingleNodeEpochData(nodeId string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, ok := b.nodes[nodeId]
+	if !ok {
+		return
+	}
+	node.State.EpochModels = make(map[string]types.Model)
+	node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
 }
 
 func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string, modelSnapshot types.Model) {
@@ -1523,7 +1545,8 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 
 // PopulateSingleNodeEpochData populates epoch data for a specific node.
 // If the node is found in current epoch data, it uses that data.
-// If not found (new node not yet assigned), it populates with governance model snapshots.
+// Otherwise it falls back to the node's deterministic configured model, but only
+// if that model exists in the current epoch subgroup set.
 func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 	if b.phaseTracker == nil {
 		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
@@ -1535,6 +1558,8 @@ func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 		return fmt.Errorf("epoch state not synced")
 	}
 
+	b.clearSingleNodeEpochData(nodeId)
+
 	// Get the parent epoch group to find all subgroup models
 	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(epochState.LatestEpoch.EpochIndex, "")
 	if err != nil {
@@ -1542,11 +1567,7 @@ func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 		return err
 	}
 	if parentGroupResp == nil || len(parentGroupResp.EpochGroupData.SubGroupModels) == 0 {
-		logging.Warn("Parent epoch group data is empty, will use governance models", types.Nodes, "node_id", nodeId)
-		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
-			return err
-		}
-		b.enforceModelToSingleNode(nodeId)
+		logging.Warn("Parent epoch group data is empty, leaving node without epoch model assignment", types.Nodes, "node_id", nodeId)
 		return nil
 	}
 
@@ -1586,49 +1607,48 @@ func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 		}
 	}
 
-	// If node not found in epoch data, populate with governance models
+	// If node not found in epoch data, populate a deterministic configured model
 	if !foundInEpoch {
-		logging.Info("Node not found in current epoch data, populating with governance models", types.Nodes, "node_id", nodeId)
-		if err := b.populateNodeWithGovernanceModels(nodeId); err != nil {
+		logging.Info("Node not found in current epoch data, populating deterministic configured model", types.Nodes, "node_id", nodeId)
+		if err := b.populateNodeWithConfiguredModel(nodeId); err != nil {
 			return err
 		}
 	}
 
-	// Enforce model on this node's state
-	b.enforceModelToSingleNode(nodeId)
-
 	return nil
 }
 
-// populateNodeWithGovernanceModels populates a node's EpochModels with governance model snapshots
-// for all models the node registered with. This is used for new nodes not yet in epoch data.
-func (b *Broker) populateNodeWithGovernanceModels(nodeId string) error {
+func (b *Broker) populateNodeWithConfiguredModel(nodeId string) error {
 	b.mu.RLock()
 	node, exists := b.nodes[nodeId]
 	if !exists {
 		b.mu.RUnlock()
 		return fmt.Errorf("node not found: %s", nodeId)
 	}
-	nodeModelIds := make([]string, 0, len(node.Node.Models))
-	for modelId := range node.Node.Models {
-		nodeModelIds = append(nodeModelIds, modelId)
-	}
+	selectedModelID, ok := ResolveNodeModelID(node.State.EpochMLNodes, node.Node.Models)
 	b.mu.RUnlock()
+	if !ok || selectedModelID == "" {
+		return nil
+	}
 
-	// Get governance models
 	govModels, err := b.chainBridge.GetGovernanceModels()
 	if err != nil {
 		logging.Error("Failed to get governance models for node", types.Nodes, "node_id", nodeId, "error", err)
 		return err
 	}
 
-	// Create a map of governance models for quick lookup
-	govModelMap := make(map[string]types.Model)
-	for _, model := range govModels.Model {
-		govModelMap[model.Id] = model
+	var selectedModel *types.Model
+	for i := range govModels.Model {
+		if govModels.Model[i].Id == selectedModelID {
+			selectedModel = &govModels.Model[i]
+			break
+		}
+	}
+	if selectedModel == nil {
+		logging.Warn("Configured model not found in governance models", types.Nodes, "node_id", nodeId, "model_id", selectedModelID)
+		return nil
 	}
 
-	// Populate EpochModels with governance model snapshots
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -1636,16 +1656,8 @@ func (b *Broker) populateNodeWithGovernanceModels(nodeId string) error {
 	if !exists {
 		return fmt.Errorf("node not found: %s", nodeId)
 	}
-
-	for _, modelId := range nodeModelIds {
-		if govModel, ok := govModelMap[modelId]; ok {
-			node.State.EpochModels[modelId] = govModel
-			logging.Info("Populated node with governance model", types.Nodes, "node_id", nodeId, "model_id", modelId)
-		} else {
-			logging.Warn("Model not found in governance models", types.Nodes, "node_id", nodeId, "model_id", modelId)
-		}
-	}
-
+	node.State.EpochModels[selectedModelID] = *selectedModel
+	logging.Info("Populated node with deterministic configured model", types.Nodes, "node_id", nodeId, "model_id", selectedModelID)
 	return nil
 }
 

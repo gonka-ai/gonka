@@ -46,7 +46,14 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 	}
 
 	testNode := broker.NodeResponse{
-		Node: broker.Node{Host: "127.0.0.1", PoCPort: 8080, NodeNum: 1},
+		Node: broker.Node{
+			Host:    "127.0.0.1",
+			PoCPort: 8080,
+			NodeNum: 1,
+			Models: map[string]broker.ModelArgs{
+				"test-model": {},
+			},
+		},
 	}
 
 	// Stub returns one artifact; nonce=1, count=100 → porosity=0.01, well below threshold.
@@ -54,12 +61,24 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 		artifacts: []VerifiedArtifact{{LeafIndex: 0, Nonce: 1, VectorB64: ""}},
 	}
 
-	work := participantWork{address: "cosmos1test", pubKey: "testpubkey", count: 100, url: "http://participant"}
+	work := participantWork{
+		address: "cosmos1test",
+		modelId: "test-model",
+		pubKey:  "testpubkey",
+		count:   100,
+		url:     "http://participant",
+	}
 
 	pocParams := &types.PocParams{
-		ModelId:               "test-model",
-		SeqLen:                256,
 		PocStrongerRngEnabled: pocStrongerRng,
+		Models: []*types.PoCModelConfig{
+			{
+				ModelId:           "test-model",
+				SeqLen:            256,
+				StatTest:          types.DefaultPoCStatTestParams(),
+				WeightScaleFactor: types.DecimalFromFloat(1.0),
+			},
+		},
 	}
 
 	nodeCounter := 0

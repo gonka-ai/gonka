@@ -47,6 +47,9 @@ message ValidationWeight {
   repeated MLNodeInfo ml_nodes = 4;
   // confirmation_weight is the final confirmed weight for epoch (from confirmation PoC events)
   int64 confirmation_weight = 5;
+  // voting_power is the delegation-resolved voting power for this model.
+  // Only meaningful in model subgroups. Root group entries have voting_power = 0.
+  int64 voting_power = 6;
 }
 
 message SeedSignature {

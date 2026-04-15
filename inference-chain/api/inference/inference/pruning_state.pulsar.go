@@ -13,12 +13,16 @@ import (
 )
 
 var (
-	md_PruningState                                      protoreflect.MessageDescriptor
-	fd_PruningState_poc_batches_pruned_epoch             protoreflect.FieldDescriptor
-	fd_PruningState_poc_validations_pruned_epoch         protoreflect.FieldDescriptor
-	fd_PruningState_inference_pruned_epoch               protoreflect.FieldDescriptor
-	fd_PruningState_epoch_group_validations_pruned_epoch protoreflect.FieldDescriptor
-	fd_PruningState_devshard_pruned_epoch                protoreflect.FieldDescriptor
+	md_PruningState                                          protoreflect.MessageDescriptor
+	fd_PruningState_poc_batches_pruned_epoch                 protoreflect.FieldDescriptor
+	fd_PruningState_poc_validations_pruned_epoch             protoreflect.FieldDescriptor
+	fd_PruningState_inference_pruned_epoch                   protoreflect.FieldDescriptor
+	fd_PruningState_epoch_group_validations_pruned_epoch     protoreflect.FieldDescriptor
+	fd_PruningState_devshard_pruned_epoch                    protoreflect.FieldDescriptor
+	fd_PruningState_poc_v2_store_commits_pruned_epoch        protoreflect.FieldDescriptor
+	fd_PruningState_mlnode_weight_distributions_pruned_epoch protoreflect.FieldDescriptor
+	fd_PruningState_poc_validations_v2_pruned_epoch          protoreflect.FieldDescriptor
+	fd_PruningState_poc_validation_snapshots_pruned_epoch    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -29,6 +33,10 @@ func init() {
 	fd_PruningState_inference_pruned_epoch = md_PruningState.Fields().ByName("inference_pruned_epoch")
 	fd_PruningState_epoch_group_validations_pruned_epoch = md_PruningState.Fields().ByName("epoch_group_validations_pruned_epoch")
 	fd_PruningState_devshard_pruned_epoch = md_PruningState.Fields().ByName("devshard_pruned_epoch")
+	fd_PruningState_poc_v2_store_commits_pruned_epoch = md_PruningState.Fields().ByName("poc_v2_store_commits_pruned_epoch")
+	fd_PruningState_mlnode_weight_distributions_pruned_epoch = md_PruningState.Fields().ByName("mlnode_weight_distributions_pruned_epoch")
+	fd_PruningState_poc_validations_v2_pruned_epoch = md_PruningState.Fields().ByName("poc_validations_v2_pruned_epoch")
+	fd_PruningState_poc_validation_snapshots_pruned_epoch = md_PruningState.Fields().ByName("poc_validation_snapshots_pruned_epoch")
 }
 
 var _ protoreflect.Message = (*fastReflection_PruningState)(nil)
@@ -126,6 +134,30 @@ func (x *fastReflection_PruningState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if x.PocV2StoreCommitsPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocV2StoreCommitsPrunedEpoch)
+		if !f(fd_PruningState_poc_v2_store_commits_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.MlnodeWeightDistributionsPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.MlnodeWeightDistributionsPrunedEpoch)
+		if !f(fd_PruningState_mlnode_weight_distributions_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.PocValidationsV2PrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocValidationsV2PrunedEpoch)
+		if !f(fd_PruningState_poc_validations_v2_pruned_epoch, value) {
+			return
+		}
+	}
+	if x.PocValidationSnapshotsPrunedEpoch != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocValidationSnapshotsPrunedEpoch)
+		if !f(fd_PruningState_poc_validation_snapshots_pruned_epoch, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -151,6 +183,14 @@ func (x *fastReflection_PruningState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.EpochGroupValidationsPrunedEpoch != int64(0)
 	case "inference.inference.PruningState.devshard_pruned_epoch":
 		return x.DevshardPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		return x.PocV2StoreCommitsPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		return x.MlnodeWeightDistributionsPrunedEpoch != int64(0)
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		return x.PocValidationsV2PrunedEpoch != int64(0)
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
+		return x.PocValidationSnapshotsPrunedEpoch != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -177,6 +217,14 @@ func (x *fastReflection_PruningState) Clear(fd protoreflect.FieldDescriptor) {
 		x.EpochGroupValidationsPrunedEpoch = int64(0)
 	case "inference.inference.PruningState.devshard_pruned_epoch":
 		x.DevshardPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		x.PocV2StoreCommitsPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		x.MlnodeWeightDistributionsPrunedEpoch = int64(0)
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		x.PocValidationsV2PrunedEpoch = int64(0)
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
+		x.PocValidationSnapshotsPrunedEpoch = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -208,6 +256,18 @@ func (x *fastReflection_PruningState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.PruningState.devshard_pruned_epoch":
 		value := x.DevshardPrunedEpoch
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		value := x.PocV2StoreCommitsPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		value := x.MlnodeWeightDistributionsPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		value := x.PocValidationsV2PrunedEpoch
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
+		value := x.PocValidationSnapshotsPrunedEpoch
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -238,6 +298,14 @@ func (x *fastReflection_PruningState) Set(fd protoreflect.FieldDescriptor, value
 		x.EpochGroupValidationsPrunedEpoch = value.Int()
 	case "inference.inference.PruningState.devshard_pruned_epoch":
 		x.DevshardPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		x.PocV2StoreCommitsPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		x.MlnodeWeightDistributionsPrunedEpoch = value.Int()
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		x.PocValidationsV2PrunedEpoch = value.Int()
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
+		x.PocValidationSnapshotsPrunedEpoch = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -268,6 +336,14 @@ func (x *fastReflection_PruningState) Mutable(fd protoreflect.FieldDescriptor) p
 		panic(fmt.Errorf("field epoch_group_validations_pruned_epoch of message inference.inference.PruningState is not mutable"))
 	case "inference.inference.PruningState.devshard_pruned_epoch":
 		panic(fmt.Errorf("field devshard_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		panic(fmt.Errorf("field poc_v2_store_commits_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		panic(fmt.Errorf("field mlnode_weight_distributions_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		panic(fmt.Errorf("field poc_validations_v2_pruned_epoch of message inference.inference.PruningState is not mutable"))
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
+		panic(fmt.Errorf("field poc_validation_snapshots_pruned_epoch of message inference.inference.PruningState is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PruningState"))
@@ -290,6 +366,14 @@ func (x *fastReflection_PruningState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.PruningState.epoch_group_validations_pruned_epoch":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.PruningState.devshard_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.poc_v2_store_commits_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.mlnode_weight_distributions_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.poc_validations_v2_pruned_epoch":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PruningState.poc_validation_snapshots_pruned_epoch":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -375,6 +459,18 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 		if x.DevshardPrunedEpoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.DevshardPrunedEpoch))
 		}
+		if x.PocV2StoreCommitsPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocV2StoreCommitsPrunedEpoch))
+		}
+		if x.MlnodeWeightDistributionsPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.MlnodeWeightDistributionsPrunedEpoch))
+		}
+		if x.PocValidationsV2PrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocValidationsV2PrunedEpoch))
+		}
+		if x.PocValidationSnapshotsPrunedEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocValidationSnapshotsPrunedEpoch))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -403,6 +499,26 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.PocValidationSnapshotsPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocValidationSnapshotsPrunedEpoch))
+			i--
+			dAtA[i] = 0x48
+		}
+		if x.PocValidationsV2PrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocValidationsV2PrunedEpoch))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.MlnodeWeightDistributionsPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.MlnodeWeightDistributionsPrunedEpoch))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.PocV2StoreCommitsPrunedEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocV2StoreCommitsPrunedEpoch))
+			i--
+			dAtA[i] = 0x30
 		}
 		if x.DevshardPrunedEpoch != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.DevshardPrunedEpoch))
@@ -573,6 +689,82 @@ func (x *fastReflection_PruningState) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocV2StoreCommitsPrunedEpoch", wireType)
+				}
+				x.PocV2StoreCommitsPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocV2StoreCommitsPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MlnodeWeightDistributionsPrunedEpoch", wireType)
+				}
+				x.MlnodeWeightDistributionsPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.MlnodeWeightDistributionsPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocValidationsV2PrunedEpoch", wireType)
+				}
+				x.PocValidationsV2PrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocValidationsV2PrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocValidationSnapshotsPrunedEpoch", wireType)
+				}
+				x.PocValidationSnapshotsPrunedEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocValidationSnapshotsPrunedEpoch |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -626,11 +818,15 @@ type PruningState struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocBatchesPrunedEpoch            int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
-	PocValidationsPrunedEpoch        int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
-	InferencePrunedEpoch             int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
-	EpochGroupValidationsPrunedEpoch int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
-	DevshardPrunedEpoch              int64 `protobuf:"varint,5,opt,name=devshard_pruned_epoch,json=devshardPrunedEpoch,proto3" json:"devshard_pruned_epoch,omitempty"`
+	PocBatchesPrunedEpoch                int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
+	PocValidationsPrunedEpoch            int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
+	InferencePrunedEpoch                 int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
+	EpochGroupValidationsPrunedEpoch     int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
+	DevshardPrunedEpoch                  int64 `protobuf:"varint,5,opt,name=devshard_pruned_epoch,json=devshardPrunedEpoch,proto3" json:"devshard_pruned_epoch,omitempty"`
+	PocV2StoreCommitsPrunedEpoch         int64 `protobuf:"varint,6,opt,name=poc_v2_store_commits_pruned_epoch,json=pocV2StoreCommitsPrunedEpoch,proto3" json:"poc_v2_store_commits_pruned_epoch,omitempty"`
+	MlnodeWeightDistributionsPrunedEpoch int64 `protobuf:"varint,7,opt,name=mlnode_weight_distributions_pruned_epoch,json=mlnodeWeightDistributionsPrunedEpoch,proto3" json:"mlnode_weight_distributions_pruned_epoch,omitempty"`
+	PocValidationsV2PrunedEpoch          int64 `protobuf:"varint,8,opt,name=poc_validations_v2_pruned_epoch,json=pocValidationsV2PrunedEpoch,proto3" json:"poc_validations_v2_pruned_epoch,omitempty"`
+	PocValidationSnapshotsPrunedEpoch    int64 `protobuf:"varint,9,opt,name=poc_validation_snapshots_pruned_epoch,json=pocValidationSnapshotsPrunedEpoch,proto3" json:"poc_validation_snapshots_pruned_epoch,omitempty"`
 }
 
 func (x *PruningState) Reset() {
@@ -688,14 +884,42 @@ func (x *PruningState) GetDevshardPrunedEpoch() int64 {
 	return 0
 }
 
+func (x *PruningState) GetPocV2StoreCommitsPrunedEpoch() int64 {
+	if x != nil {
+		return x.PocV2StoreCommitsPrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetMlnodeWeightDistributionsPrunedEpoch() int64 {
+	if x != nil {
+		return x.MlnodeWeightDistributionsPrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetPocValidationsV2PrunedEpoch() int64 {
+	if x != nil {
+		return x.PocValidationsV2PrunedEpoch
+	}
+	return 0
+}
+
+func (x *PruningState) GetPocValidationSnapshotsPrunedEpoch() int64 {
+	if x != nil {
+		return x.PocValidationSnapshotsPrunedEpoch
+	}
+	return 0
+}
+
 var File_inference_inference_pruning_state_proto protoreflect.FileDescriptor
 
 var file_inference_inference_pruning_state_proto_rawDesc = []byte{
 	0x0a, 0x27, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x74,
 	0x61, 0x74, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xd7,
-	0x02, 0x0a, 0x0c, 0x50, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x90,
+	0x05, 0x0a, 0x0c, 0x50, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12,
 	0x37, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x5f, 0x62, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x5f, 0x70,
 	0x72, 0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x03, 0x52, 0x15, 0x70, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x50, 0x72, 0x75,
@@ -715,21 +939,40 @@ var file_inference_inference_pruning_state_proto_rawDesc = []byte{
 	0x32, 0x0a, 0x15, 0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x70, 0x72, 0x75, 0x6e,
 	0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13,
 	0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70,
-	0x6f, 0x63, 0x68, 0x52, 0x13, 0x73, 0x75, 0x62, 0x6e, 0x65, 0x74, 0x5f, 0x70, 0x72, 0x75, 0x6e,
-	0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x42, 0xbf, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61,
-	0x74, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
-	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2,
-	0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
-	0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
-	0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x6f, 0x63, 0x68, 0x12, 0x47, 0x0a, 0x21, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x32, 0x5f, 0x73, 0x74,
+	0x6f, 0x72, 0x65, 0x5f, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e,
+	0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1c,
+	0x70, 0x6f, 0x63, 0x56, 0x32, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74,
+	0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x56, 0x0a, 0x28,
+	0x6d, 0x6c, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x64, 0x69,
+	0x73, 0x74, 0x72, 0x69, 0x62, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e,
+	0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x24,
+	0x6d, 0x6c, 0x6e, 0x6f, 0x64, 0x65, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x44, 0x69, 0x73, 0x74,
+	0x72, 0x69, 0x62, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45,
+	0x70, 0x6f, 0x63, 0x68, 0x12, 0x44, 0x0a, 0x1f, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x76, 0x32, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65,
+	0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1b, 0x70,
+	0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x56, 0x32, 0x50,
+	0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x50, 0x0a, 0x25, 0x70, 0x6f,
+	0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x6e, 0x61,
+	0x70, 0x73, 0x68, 0x6f, 0x74, 0x73, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x21, 0x70, 0x6f, 0x63, 0x56, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74,
+	0x73, 0x50, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x52, 0x13, 0x73, 0x75,
+	0x62, 0x6e, 0x65, 0x74, 0x5f, 0x70, 0x72, 0x75, 0x6e, 0x65, 0x64, 0x5f, 0x65, 0x70, 0x6f, 0x63,
+	0x68, 0x42, 0xbf, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50,
+	0x72, 0x75, 0x6e, 0x69, 0x6e, 0x67, 0x53, 0x74, 0x61, 0x74, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

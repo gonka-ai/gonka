@@ -1,6 +1,6 @@
 import com.productscience.*
-import com.productscience.data.*
-import kotlin.test.assertNotNull
+import com.productscience.data.DevshardInferencePayload
+import com.productscience.data.DevshardInferenceStatus
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -12,6 +12,8 @@ import java.util.concurrent.Executors
 import kotlin.test.assertNotNull
 
 class DevshardTests : TestermintTest() {
+    private val devshardEscrowModel = defaultModel
+
     private val noRestrictionsConfig = inferenceConfig.copy(
         genesisSpec = inferenceConfig.genesisSpec?.merge(devshardNoRestrictionsSpec) ?: devshardNoRestrictionsSpec
     )
@@ -42,7 +44,7 @@ class DevshardTests : TestermintTest() {
 
         logSection("Creating devshard escrow")
         val escrowAmount = 7_000_000_000L  // 7 GNK
-        val txResponse = genesis.createDevshardEscrow(escrowAmount)
+        val txResponse = genesis.createDevshardEscrow(escrowAmount, modelId = devshardEscrowModel)
         assertThat(txResponse.code).isEqualTo(0)
 
         logSection("Querying devshard escrow")
@@ -71,7 +73,7 @@ class DevshardTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy")
         val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
@@ -102,7 +104,7 @@ class DevshardTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy")
         val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
@@ -112,7 +114,8 @@ class DevshardTests : TestermintTest() {
             logSection("Sending streaming chat completions via proxy")
             val numInferences = 20L
             for (i in 0 until numInferences) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
+                val response =
+                    genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
                 assertThat(response).isNotEmpty()
                 assertThat(response).contains("data:")
             }
@@ -158,7 +161,8 @@ class DevshardTests : TestermintTest() {
 
         val sessions = users.mapIndexed { i, user ->
             logSection("Creating escrow for user $i")
-            val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+            val escrowId =
+                genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
             SessionSetup(user.keyName, user.address, escrowId)
         }
 
@@ -229,7 +233,7 @@ class DevshardTests : TestermintTest() {
 
         logSection("Creating devshard escrow")
         val escrowAmount = 7_000_000_000L  // 7 GNK
-        val txResponse = genesis.createDevshardEscrow(escrowAmount)
+        val txResponse = genesis.createDevshardEscrow(escrowAmount, modelId = devshardEscrowModel)
         assertThat(txResponse.code).isEqualTo(0)
 
         logSection("Query devshard mempool -- triggers lazy session creation")
@@ -258,7 +262,7 @@ class DevshardTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy")
         val handle = genesis.startDevshardProxy(escrowId, keyName = user.keyName)

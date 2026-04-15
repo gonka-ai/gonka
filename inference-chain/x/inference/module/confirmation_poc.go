@@ -273,7 +273,7 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 	// GENERATION -> VALIDATION transition
 	if event.ShouldTransitionToValidation(blockHeight, epochParams) {
-		am.captureValidationSnapshot(ctx, blockHeight, event.TriggerHeight, "confirmation PoC")
+		am.captureConfirmationValidationSnapshot(ctx, blockHeight, event.TriggerHeight)
 
 		event.Phase = types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION
 		updated = true
@@ -380,9 +380,8 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	if err != nil {
 		return fmt.Errorf("failed to get params: %w", err)
 	}
-	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
 
-	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, weightScaleFactor)
+	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, params.PocParams)
 
 	return nil
 }
@@ -392,9 +391,14 @@ func (am AppModule) evaluateConfirmation(
 	event *types.ConfirmationPoCEvent,
 	epochGroupData *types.EpochGroupData,
 	currentValidatorWeights map[string]int64,
-	weightScaleFactor mathsdk.LegacyDec,
+	pocParams *types.PocParams,
 ) {
-	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, currentValidatorWeights, weightScaleFactor)
+	coefficients := ModelCoefficients(pocParams)
+	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event)
+	// Apply model coefficients (same aggregation as main PoC path)
+	for _, p := range confirmationParticipants {
+		p.Weight = AggregateConsensusWeight(ExtractModelWeights(p), coefficients)
+	}
 
 	confirmationWeights := make(map[string]int64)
 	for _, cp := range confirmationParticipants {
@@ -404,7 +408,7 @@ func (am AppModule) evaluateConfirmation(
 	am.LogInfo("evaluateConfirmation: Confirmation weights", types.PoC,
 		"confirmationWeights", confirmationWeights)
 
-	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex)
+	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex, coefficients)
 	if err != nil {
 		am.LogError("evaluateConfirmation: Failed to get not preserved weights", types.PoC, "error", err)
 	}
@@ -440,15 +444,13 @@ func (am AppModule) evaluateConfirmation(
 			"epochIndex", event.EpochIndex)
 	}
 
-	am.checkConfirmationSlashing(ctx, epochGroupData)
+	am.checkConfirmationSlashing(ctx, epochGroupData, coefficients)
 }
 
 // updateConfirmationWeightsV2 calculates confirmation weights using off-chain store commits
 func (am AppModule) updateConfirmationWeightsV2(
 	ctx context.Context,
 	event *types.ConfirmationPoCEvent,
-	currentValidatorWeights map[string]int64,
-	weightScaleFactor mathsdk.LegacyDec,
 ) []*types.ActiveParticipant {
 	// Get off-chain store commits using trigger_height as key
 	storeCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, event.TriggerHeight)
@@ -474,11 +476,13 @@ func (am AppModule) updateConfirmationWeightsV2(
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
 
-	for participantAddress := range storeCommits {
+	for key := range storeCommits {
+		participantAddress := key.ParticipantAddress
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
 			am.LogWarn("updateConfirmationWeightsV2: Participant not found", types.PoC,
-				"address", participantAddress)
+				"address", participantAddress,
+				"modelId", key.ModelID)
 			continue
 		}
 		participants[participantAddress] = participant
@@ -548,23 +552,27 @@ func (am AppModule) updateConfirmationWeightsV2(
 		)
 	}
 
-	weightsForCalculator := currentValidatorWeights
-	if snapshotFound && validationSlots > 0 && len(snapshot.ValidatorWeights) > 0 {
-		weightsForCalculator = validatorWeightsSliceToMap(snapshot.ValidatorWeights)
-		am.LogInfo("updateConfirmationWeightsV2: Using snapshot weights for calculator", types.PoC,
-			"numValidators", len(weightsForCalculator))
+	// Load per-model voting powers from snapshot
+	modelVotingPowers := make(map[string]map[string]int64)
+	totalNetworkWeight := int64(0)
+	if snapshotFound {
+		for _, mvw := range snapshot.ModelVotingPowers {
+			modelVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
+		}
+		totalNetworkWeight = snapshot.TotalNetworkWeight
 	}
 
-	calculator := NewWeightCalculator(
-		weightsForCalculator,
+	calculator := NewPoCWeightCalculator(
+		modelVotingPowers,
+		totalNetworkWeight,
 		storeCommits,
 		weightDistributions,
 		validationsV2,
+		params.PocParams,
 		participants,
 		seeds,
 		event.TriggerHeight,
 		am,
-		weightScaleFactor,
 		timeNormalizationFactor,
 		guardianEnabled,
 		guardianSet,
@@ -577,12 +585,12 @@ func (am AppModule) updateConfirmationWeightsV2(
 }
 
 // checkConfirmationSlashing checks if participants should be slashed based on confirmation PoC results
-// Stub implementation - slashing logic not yet implemented
 func (am AppModule) checkConfirmationSlashing(
 	ctx context.Context,
 	epochGroupData *types.EpochGroupData,
+	coefficients map[string]mathsdk.LegacyDec,
 ) error {
-	notPreservedTotalWeight, err := am.GetNotPreservedTotalWeightByParticipant(ctx, epochGroupData.EpochIndex)
+	notPreservedTotalWeight, err := am.GetNotPreservedTotalWeightByParticipant(ctx, epochGroupData.EpochIndex, coefficients)
 	if err != nil {
 		return fmt.Errorf("failed to get not preserved total weight by participant: %w", err)
 	}
@@ -614,26 +622,36 @@ func (am AppModule) checkConfirmationSlashing(
 	return nil
 }
 
-func (am AppModule) GetNotPreservedTotalWeightByParticipant(ctx context.Context, epochId uint64) (map[string]int64, error) {
+func (am AppModule) GetNotPreservedTotalWeightByParticipant(ctx context.Context, epochId uint64, coefficients map[string]mathsdk.LegacyDec) (map[string]int64, error) {
 	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
 	if !found {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Active participants not found", types.PoC, "epochId", epochId)
-		return nil, errors.New("GetPreviousEpochMLNodesWithInferenceAllocation: active participant not found. epochId: " + strconv.FormatUint(epochId, 10))
+		am.LogError("GetNotPreservedTotalWeightByParticipant: Active participants not found", types.PoC, "epochId", epochId)
+		return nil, errors.New("GetNotPreservedTotalWeightByParticipant: active participant not found. epochId: " + strconv.FormatUint(epochId, 10))
 	}
 
 	result := make(map[string]int64)
 
 	for _, p := range participants.Participants {
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation. GetPreservedNodesByParticipant: Processing participant", types.PoC,
-			"participantAddress", p.Index, "len(p.MlNodes)", len(p.MlNodes))
-
 		totalWeight := int64(0)
-		for _, nodeArray := range p.MlNodes {
+		for i, nodeArray := range p.MlNodes {
+			if nodeArray == nil {
+				continue
+			}
+			if i >= len(p.Models) || p.Models[i] == "" {
+				continue
+			}
+			modelId := p.Models[i]
+			coeff, ok := coefficients[modelId]
+			if !ok {
+				coeff = mathsdk.LegacyOneDec()
+			}
+			rawModel := int64(0)
 			for _, mlNode := range nodeArray.MlNodes {
-				if len(mlNode.TimeslotAllocation) > 1 && !mlNode.TimeslotAllocation[1] {
-					totalWeight += mlNode.PocWeight
+				if mlNode != nil && len(mlNode.TimeslotAllocation) > 1 && !mlNode.TimeslotAllocation[1] {
+					rawModel += mlNode.PocWeight
 				}
 			}
+			totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
 		}
 		result[p.Index] = totalWeight
 	}

@@ -27,6 +27,7 @@ message Params {
   DevshardEscrowParams devshard_escrow_params = 14;
   reserved "subnet_escrow_params";
   FeeParams fee_params = 15;
+  DelegationParams delegation_params = 16;
 }
 
 message GenesisOnlyParams {
@@ -134,21 +135,31 @@ message PoCStatTestParams {
   Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
 }
 
+message PoCModelConfig {
+  option (gogoproto.equal) = true;
+  string model_id = 1;
+  int64 seq_len = 2;
+  PoCStatTestParams stat_test = 3;
+  Decimal weight_scale_factor = 4;
+  uint64 penalty_start_epoch = 5;
+}
+
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
-  Decimal weight_scale_factor = 4;
+  Decimal weight_scale_factor = 4 [deprecated = true]; // Deprecated: use models[*].weight_scale_factor
   PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
-  string model_id = 6;  // Model identifier for PoC generation/validation
-  int64 seq_len = 7;    // Sequence length for PoC generation/validation
+  string model_id = 6 [deprecated = true];  // Deprecated: use models[*].model_id
+  int64 seq_len = 7 [deprecated = true];    // Deprecated: use models[*].seq_len
   bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
   bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
-  PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
+  PoCStatTestParams stat_test = 10 [deprecated = true];  // Deprecated: use models[*].stat_test
   uint32 validation_slots = 11;  // Number of slots sampled per participant (0 = disabled)
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
   bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
+  repeated PoCModelConfig models = 14;
 }
 
 message Decimal {
@@ -331,6 +342,19 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+}
+
+// DelegationParams defines parameters for PoC delegation in the multi-model system.
+message DelegationParams {
+  option (gogoproto.equal) = true;
+  int64 deploy_window = 1; // blocks before start_poc for delegation snapshot
+  Decimal refusal_penalty = 2; // REFUSE penalty applied per model after penalty_start_epoch
+  Decimal no_participation_penalty = 3; // NONE penalty applied per model after penalty_start_epoch
+  Decimal delegation_share = 4; // DELEGATE share transferred per model after penalty_start_epoch
+  Decimal w_threshold = 5; // min fraction of total weight from members for eligibility
+  int64 v_min = 6; // min hosts with non-zero consensus weight
+  Decimal cap_factor = 7; // max group weight as multiple of members' weight in other groups
+  string initial_model_id = 8; // model exempt from group cap; set during migration to the founding model
 }
 
 // DevshardApprovedVersion describes a single approved devshard binary.

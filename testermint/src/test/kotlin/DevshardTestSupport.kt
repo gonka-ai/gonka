@@ -122,9 +122,10 @@ fun LocalInferencePair.createFundedDevshardUser(
 fun LocalInferencePair.createDevshardEscrowForUser(
     escrowAmount: Long,
     userKeyName: String,
+    modelId: String,
 ): Long {
     logSection("Creating devshard escrow from user account")
-    val txResp = createDevshardEscrow(escrowAmount, from = userKeyName)
+    val txResp = createDevshardEscrow(escrowAmount, from = userKeyName, modelId = modelId)
     assertThat(txResp.code).isEqualTo(0)
     return txResp.getEscrowId() ?: 1L
 }

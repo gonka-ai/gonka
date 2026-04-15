@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -8,6 +9,8 @@ import (
 	"math/rand"
 	"slices"
 
+	mathsdk "cosmossdk.io/math"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -23,6 +26,20 @@ func sortedKeys[K ~string, V any](m map[K]V) []K {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
+	return keys
+}
+
+func sortedStoreCommitKeys[V any](m map[types.PoCParticipantModelKey]V) []types.PoCParticipantModelKey {
+	keys := make([]types.PoCParticipantModelKey, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b types.PoCParticipantModelKey) int {
+		return cmp.Or(
+			cmp.Compare(a.ModelID, b.ModelID),
+			cmp.Compare(a.ParticipantAddress, b.ParticipantAddress),
+		)
+	})
 	return keys
 }
 
@@ -51,21 +68,55 @@ func (e *EpochMLNodeData) Append(modelId, participantAddr string, node *types.ML
 	e.data[modelId][participantAddr] = append(e.data[modelId][participantAddr], node)
 }
 
+// GetForModel returns a copy of the participant->nodes map for the given
+// model. The outer map and the inner slice headers are fresh, but the
+// *MLNodeInfo pointers are shared with the source so callers that mutate
+// fields on a node (e.g. TimeslotAllocation) still see the change in any
+// future call. Callers cannot accidentally mutate the source by appending
+// to or reassigning the returned slices.
 func (e *EpochMLNodeData) GetForModel(modelId string) map[string][]*types.MLNodeInfo {
-	return e.data[modelId]
+	src := e.data[modelId]
+	if src == nil {
+		return nil
+	}
+	out := make(map[string][]*types.MLNodeInfo, len(src))
+	for addr, nodes := range src {
+		out[addr] = slices.Clone(nodes)
+	}
+	return out
 }
 
+// GetForParticipant returns a sorted copy of the node slice for a given
+// (model, participant). The clone is sorted in-place; the source slice is
+// untouched. Pointer identity per *MLNodeInfo is preserved.
 func (e *EpochMLNodeData) GetForParticipant(modelId, participantAddr string) []*types.MLNodeInfo {
 	if e.data[modelId] == nil {
 		return nil
 	}
-	nodes := e.data[modelId][participantAddr]
+	nodes := slices.Clone(e.data[modelId][participantAddr])
 	sortMLNodesByNodeId(nodes)
 	return nodes
 }
 
 func (e *EpochMLNodeData) Models() []string {
 	return sortedKeys(e.data)
+}
+
+// ForModel returns a single-model copy of the data.
+// Threshold calculations use this to avoid comparing weights across models.
+// The returned EpochMLNodeData has its own outer/inner maps and slice
+// headers; *MLNodeInfo pointers are shared with the source so node-field
+// mutations remain visible.
+func (e *EpochMLNodeData) ForModel(modelId string) *EpochMLNodeData {
+	view := NewEpochMLNodeData()
+	if modelData, ok := e.data[modelId]; ok {
+		modelDataCopy := make(map[string][]*types.MLNodeInfo, len(modelData))
+		for addr, nodes := range modelData {
+			modelDataCopy[addr] = slices.Clone(nodes)
+		}
+		view.data[modelId] = modelDataCopy
+	}
+	return view
 }
 
 func sortMLNodesByNodeId(nodes []*types.MLNodeInfo) {
@@ -258,6 +309,19 @@ func (e *EpochMLNodeData) GetParticipantWeight(participantAddr string) int64 {
 	return weight
 }
 
+// GetParticipantModelNodes returns model-grouped nodes for one participant.
+// Shape matches keeper.CoefficientAdjustedWeight input.
+func (e *EpochMLNodeData) GetParticipantModelNodes(participantAddr string) map[string][]*types.MLNodeInfo {
+	result := make(map[string][]*types.MLNodeInfo)
+	for _, modelId := range sortedKeys(e.data) {
+		modelData := e.data[modelId]
+		if nodes, ok := modelData[participantAddr]; ok {
+			result[modelId] = nodes
+		}
+	}
+	return result
+}
+
 type ModelAssigner struct {
 	types.InferenceLogger
 	keeper KeeperForModelAssigner
@@ -295,16 +359,30 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 	for _, p := range participants {
 		ma.LogInfo("Processing participant", types.Allocation, "flow_context", FlowContext, "step", "participant_loop_start", "participant_index", p.Index)
 		hardwareNodes, found := ma.keeper.GetHardwareNodes(ctx, p.Index)
+		// TODO: should we do that? does it makes sense to rely on hardware nodes in general?
+		// Seems like makes pipeline complicated
 		if !found {
-			ma.LogInfo("No hardware nodes found for participant, skipping model assignment.", types.Allocation, "flow_context", FlowContext, "step", "no_hardware_nodes", "participant_index", p.Index)
-			p.Models = make([]string, 0)
-			p.MlNodes = make([]*types.ModelMLNodes, 0)
+			// Hardware not registered yet (e.g. genesis bootstrap race).
+			// Keep per-model assignments from Calculator -- the participant proved
+			// compute for those models. Only initialize TimeslotAllocation.
+			ma.LogInfo("No hardware nodes found, keeping Calculator assignments", types.Allocation,
+				"flow_context", FlowContext, "step", "no_hardware_nodes",
+				"participant_index", p.Index, "models", p.Models)
+			for _, modelNodes := range p.MlNodes {
+				if modelNodes != nil {
+					for _, mlNode := range modelNodes.MlNodes {
+						mlNode.TimeslotAllocation = []bool{true, false}
+					}
+				}
+			}
 			continue
 		}
 
 		var originalMLNodes []*types.MLNodeInfo
-		if len(p.MlNodes) > 0 && p.MlNodes[0] != nil {
-			originalMLNodes = p.MlNodes[0].MlNodes
+		for _, modelNodes := range p.MlNodes {
+			if modelNodes != nil {
+				originalMLNodes = append(originalMLNodes, modelNodes.MlNodes...)
+			}
 		}
 		ma.LogInfo("Original MLNodes", types.Allocation, "flow_context", FlowContext, "step", "pre_legacy_distribution", "participant_index", p.Index, "ml_nodes", originalMLNodes)
 
@@ -318,9 +396,6 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 				"participant_index", p.Index,
 			)
 			originalMLNodes = dedupedNodes
-			if len(p.MlNodes) > 0 && p.MlNodes[0] != nil {
-				p.MlNodes[0].MlNodes = dedupedNodes
-			}
 		}
 
 		for _, mlNode := range originalMLNodes {
@@ -333,7 +408,8 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		var newMLNodeArrays []*types.ModelMLNodes
 
 		supportedModelsByNode := supportedModelsByNode(hardwareNodes, governanceModels)
-		for nodeId, supportedModels := range supportedModelsByNode {
+		for _, nodeId := range sortedKeys(supportedModelsByNode) {
+			supportedModels := supportedModelsByNode[nodeId]
 			ma.LogInfo("Supported models by node", types.Allocation, "flow_context", FlowContext, "step", "supported_models_by_node", "node_id", nodeId, "supported_models", supportedModels)
 		}
 
@@ -374,7 +450,6 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 
 		p.MlNodes = newMLNodeArrays
 		p.Models = supportedModels
-		p.Weight = RecalculateWeight(p)
 		ma.LogInfo("Participant models and ML nodes updated", types.Allocation, "flow_context", FlowContext, "step", "participant_updated", "participant_index", p.Index, "supported_models", p.Models, "ml_nodes", p.MlNodes)
 	}
 	ma.LogInfo("Finished model assignment for all participants", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete")
@@ -468,9 +543,11 @@ func (ma *ModelAssigner) AllocateMLNodesForPoC(ctx context.Context, upcomingEpoc
 	}
 	ma.LogInfo("Built current epoch data map", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "build_current_epoch_data", "num_models", len(currentEpochData.Models()))
 
+	coefficients := ModelCoefficients(params.PocParams)
+
 	// Participants not in previousEpochData (no nodes in previous epoch for a model) cannot be selected as eligible:
 	// sampleEligibleParticipantsWithHistory only appends participants that have previousEpochData.GetForParticipant(modelId, addr) != nil.
-	eligibleNodesData := ma.filterEligibleMLNodes(upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight)
+	eligibleNodesData := ma.filterEligibleMLNodes(upcomingEpoch, previousEpochData, currentEpochData, totalCurrentEpochWeight, coefficients)
 	ma.LogInfo("Filtered eligible nodes for all models", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "filter_all_eligible", "num_models", len(eligibleNodesData.Models()))
 
 	for _, modelId := range sortedModelIds {
@@ -515,22 +592,6 @@ func filterNodesByThresholds(nodes []*types.MLNodeInfo, participantAddr string, 
 	return filterNodesByWeightAndCount(nodes, threshold, targetCount)
 }
 
-func buildEligibleParticipantSet(currentEpochData *EpochMLNodeData, thresholds thresholdSet) map[string]bool {
-	eligibleParticipantAddrs := make(map[string]bool)
-	for _, modelData := range currentEpochData.data {
-		for participantAddr, nodes := range modelData {
-			if eligibleParticipantAddrs[participantAddr] {
-				continue
-			}
-			filteredNodes := filterNodesByThresholds(nodes, participantAddr, thresholds)
-			if len(filteredNodes) > 0 {
-				eligibleParticipantAddrs[participantAddr] = true
-			}
-		}
-	}
-	return eligibleParticipantAddrs
-}
-
 // filterEligibleMLNodes filters which nodes are eligible for POC_SLOT=true allocation across all models.
 //
 // PURPOSE:
@@ -567,33 +628,34 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 	previousEpochData *EpochMLNodeData,
 	currentEpochData *EpochMLNodeData,
 	totalCappedWeight int64,
+	coefficients map[string]mathsdk.LegacyDec,
 ) *EpochMLNodeData {
 	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
 
-	// Step 1: Calculate all thresholds (75% + 25% rule, IQR outlier detection)
-	thresholds := ma.calculateThresholds(currentEpochData)
-
-	// Step 2: Build set of eligible participants (those with nodes passing weight thresholds)
-	eligibleParticipantAddrs := buildEligibleParticipantSet(currentEpochData, thresholds)
-	for participantAddr, eligible := range eligibleParticipantAddrs {
-		ma.LogInfo("Eligible participant", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "eligible_participant", "participant", participantAddr, "eligible", eligible)
-	}
-	ma.LogInfo("Eligible participants", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "participant_min_node_weights", thresholds.participantMinNodeWeights, "global_max_node_weight", thresholds.globalMaxNodeWeight)
-
-	// Step 3: Calculate Phase 3 voting constraint (max 34% non-voting weight)
+	// Step 1: Calculate Phase 3 voting constraint (max 34% non-voting weight)
 	maxAllowedNonVotingWeight := decimal.NewFromInt(34).Div(decimal.NewFromInt(100)).Mul(decimal.NewFromInt(totalCappedWeight)).IntPart()
 	totalNonVotingWeight := int64(0)
 	ma.LogInfo("Calculated voting constraint threshold", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_voting_constraint", "max_allowed_non_voting_weight", maxAllowedNonVotingWeight, "total_capped_weight", totalCappedWeight)
 
-	// Step 4: Apply thresholds and sample participants per model
+	// Step 2: Apply thresholds and sample participants per model.
+	// Thresholds are computed per model -- raw PocWeights from different models are not comparable.
 	eligibleNodesData := NewEpochMLNodeData()
 	for _, modelId := range currentEpochData.Models() {
+		modelView := currentEpochData.ForModel(modelId)
+		thresholds := ma.calculateThresholds(modelView)
+		ma.LogInfo("Calculated per-model thresholds", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
+			"step", "per_model_thresholds", "model_id", modelId,
+			"participant_min_node_weights", thresholds.participantMinNodeWeights,
+			"global_max_node_weight", thresholds.globalMaxNodeWeight)
+
 		participantNodes := currentEpochData.GetForModel(modelId)
 		sortedParticipantAddrs := sortedKeys(participantNodes)
 
+		// Build eligible set for this model using per-model thresholds
 		var filteredParticipantAddrs []string
 		for _, addr := range sortedParticipantAddrs {
-			if eligibleParticipantAddrs[addr] {
+			nodes := filterNodesByThresholds(participantNodes[addr], addr, thresholds)
+			if len(nodes) > 0 {
 				filteredParticipantAddrs = append(filteredParticipantAddrs, addr)
 			}
 		}
@@ -611,11 +673,20 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 			currentNodes := participantNodes[participantAddr]
 			filteredNodes := filterNodesByThresholds(currentNodes, participantAddr, thresholds)
 
-			// Add nodes with Phase 3 voting constraint check
-			totalParticipantWeight := currentEpochData.GetParticipantWeight(participantAddr)
+			// Add nodes with Phase 3 voting constraint check.
+			// Both sides use coefficient-adjusted weight so the comparison with
+			// maxAllowedNonVotingWeight (derived from capped consensus weight) is consistent.
+			totalParticipantWeight := keeper.CoefficientAdjustedWeight(
+				currentEpochData.GetParticipantModelNodes(participantAddr), coefficients, nil)
 			for _, node := range filteredNodes {
-				currentParticipantWeight := eligibleNodesData.GetParticipantWeight(participantAddr)
-				eligibleNodesWeightIfAdded := currentParticipantWeight + node.PocWeight
+				currentParticipantWeight := keeper.CoefficientAdjustedWeight(
+					eligibleNodesData.GetParticipantModelNodes(participantAddr), coefficients, nil)
+				coeff, ok := coefficients[modelId]
+				if !ok {
+					coeff = mathsdk.LegacyOneDec()
+				}
+				adjustedNodeWeight := coeff.MulInt64(node.PocWeight).TruncateInt64()
+				eligibleNodesWeightIfAdded := currentParticipantWeight + adjustedNodeWeight
 
 				// Phase 3: Check if adding this node would violate voting constraints
 				canAllocate, updatedWeight := canAllocateParticipantNode(
@@ -905,12 +976,12 @@ func calculatePerParticipantThreshold(epochData *EpochMLNodeData, participantWei
 	uniqueParticipants := make(map[string]bool)
 	for _, modelId := range sortedKeys(epochData.data) {
 		modelData := epochData.data[modelId]
-		for participantAddr := range modelData {
+		for _, participantAddr := range sortedKeys(modelData) {
 			uniqueParticipants[participantAddr] = true
 		}
 	}
 
-	for participantAddr := range uniqueParticipants {
+	for _, participantAddr := range sortedKeys(uniqueParticipants) {
 		participantWeight := epochData.GetParticipantWeight(participantAddr)
 
 		if participantWeight < participantWeightThreshold {

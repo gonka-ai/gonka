@@ -159,6 +159,7 @@ func DefaultParams() Params {
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
+		DelegationParams:   DefaultDelegationParams(),
 	}
 }
 
@@ -223,6 +224,7 @@ func DefaultPocParams() *PocParams {
 		ModelId:                      "",                      // Model identifier for PoC
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
+		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
 	}
 }
 
@@ -231,6 +233,16 @@ func DefaultPoCStatTestParams() *PoCStatTestParams {
 		DistThreshold:   DecimalFromFloat(0.4),
 		PMismatch:       DecimalFromFloat(0.1),
 		PValueThreshold: DecimalFromFloat(0.05),
+	}
+}
+
+func DefaultPoCModelConfig() *PoCModelConfig {
+	return &PoCModelConfig{
+		ModelId:           "",
+		SeqLen:            256,
+		StatTest:          DefaultPoCStatTestParams(),
+		WeightScaleFactor: DecimalFromFloat(1.0),
+		PenaltyStartEpoch: 0,
 	}
 }
 
@@ -348,6 +360,34 @@ func (p *DevshardEscrowParams) Validate() error {
 			return fmt.Errorf("devshard_escrow_params.approved_versions: duplicate name %q", v.Name)
 		}
 		seen[v.Name] = struct{}{}
+	}
+	return nil
+}
+
+func DefaultDelegationParams() *DelegationParams {
+	return &DelegationParams{
+		DeployWindow:           1,
+		RefusalPenalty:         DecimalFromFloat(0.1),
+		NoParticipationPenalty: DecimalFromFloat(0.25),
+		DelegationShare:        DecimalFromFloat(0.1),
+		WThreshold:             DecimalFromFloat(0.3),
+		VMin:                   3,
+		CapFactor:              DecimalFromFloat(1),
+		InitialModelId:         "",
+	}
+}
+
+// validateDecimalFraction checks that a Decimal is in [0, 1]. Nil is allowed (treated as 0).
+func validateDecimalFraction(d *Decimal, name string) error {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return nil
+	}
+	dec, err := d.ToLegacyDec()
+	if err != nil {
+		return fmt.Errorf("%s: invalid decimal: %w", name, err)
+	}
+	if dec.IsNegative() || dec.GT(sdkmath.LegacyOneDec()) {
+		return fmt.Errorf("%s must be between 0 and 1, got %s", name, dec.String())
 	}
 	return nil
 }
@@ -526,6 +566,49 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.DelegationParams != nil {
+		if p.DelegationParams.DeployWindow < 0 {
+			return fmt.Errorf("delegation deploy_window cannot be negative")
+		}
+		if p.DelegationParams.VMin < 0 {
+			return fmt.Errorf("delegation v_min cannot be negative")
+		}
+		if err := validateDecimalFraction(p.DelegationParams.RefusalPenalty, "delegation refusal_penalty"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.NoParticipationPenalty, "delegation no_participation_penalty"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.DelegationShare, "delegation delegation_share"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.WThreshold, "delegation w_threshold"); err != nil {
+			return err
+		}
+		if p.DelegationParams.CapFactor != nil {
+			dec, err := p.DelegationParams.CapFactor.ToLegacyDec()
+			if err != nil {
+				return fmt.Errorf("delegation cap_factor: invalid decimal: %w", err)
+			}
+			if dec.IsNegative() {
+				return fmt.Errorf("delegation cap_factor must be non-negative, got %s", dec.String())
+			}
+		}
+	}
+
+	if p.DelegationParams != nil && p.DelegationParams.InitialModelId != "" && p.PocParams != nil {
+		found := false
+		for _, model := range p.PocParams.GetModelConfigs() {
+			if model != nil && model.ModelId == p.DelegationParams.InitialModelId {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("delegation initial_model_id %q not found in poc_params models", p.DelegationParams.InitialModelId)
+		}
+	}
+
 	if p.FeeParams != nil {
 		if err := p.FeeParams.Validate(); err != nil {
 			return err
@@ -539,8 +622,20 @@ func (p *PocParams) Validate() error {
 	if p == nil {
 		return nil
 	}
-	if p.SeqLen < 0 {
-		return fmt.Errorf("poc_params.seq_len cannot be negative")
+	seen := make(map[string]bool)
+	for _, model := range p.GetModelConfigs() {
+		if model == nil {
+			return fmt.Errorf("poc_params.models cannot contain nil entries")
+		}
+		if model.ModelId != "" {
+			if seen[model.ModelId] {
+				return fmt.Errorf("poc_params.models contains duplicate model_id %q", model.ModelId)
+			}
+			seen[model.ModelId] = true
+		}
+		if model.SeqLen < 0 {
+			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
+		}
 	}
 	return nil
 }
@@ -1065,8 +1160,40 @@ func DecimalFromFloat32(f float32) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
+func (p *PocParams) GetModelConfigs() []*PoCModelConfig {
+	if p == nil {
+		return nil
+	}
+	return p.Models
+}
+
+func (p *PocParams) GetPrimaryModelConfig() *PoCModelConfig {
+	configs := p.GetModelConfigs()
+	if len(configs) == 0 || configs[0] == nil {
+		return DefaultPoCModelConfig()
+	}
+	return configs[0]
+}
+
+func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {
+	configs := p.GetModelConfigs()
+	if len(configs) == 0 {
+		return nil, false
+	}
+	for _, config := range configs {
+		if config != nil && config.ModelId == modelID {
+			return config, true
+		}
+	}
+	return nil, false
+}
+
 func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
+	return p.GetPrimaryModelConfig().GetWeightScaleFactorDec()
+}
+
+func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
+	if p == nil || p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
 		return sdkmath.LegacyOneDec()
 	}
 	dec, err := p.WeightScaleFactor.ToLegacyDec()

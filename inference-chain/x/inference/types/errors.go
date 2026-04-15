@@ -74,4 +74,6 @@ var (
 	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
 	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create devshard escrows for devshards")
 	ErrEpochIndexOutOfRange                  = sdkerrors.Register(ModuleName, 1174, "epoch index can only be current or upcoming epoch")
+	ErrSelfDelegation                        = sdkerrors.Register(ModuleName, 1175, "self-delegation not allowed")
+	ErrInvalidDelegateTarget                 = sdkerrors.Register(ModuleName, 1176, "invalid delegation target")
 )

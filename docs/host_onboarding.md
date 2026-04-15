@@ -41,10 +41,6 @@ governance-adjustable via `MsgUpdateParams` without a chain upgrade.
 | `base_validation_gas` | `500_000` | Extra gas charged on first PoC commit per epoch |
 | `gas_per_poc_count` | `100` | Extra gas charged per claimed PoC count (delta-based) |
 
-At ~80 000 gas per typical transaction, the minimum fee is **800 000 ngonka
-≈ $0.00046** at GNK = $0.57. Negligible for legitimate users; meaningful at
-spam volumes.
-
 ### 1.2 Fee-exempt protocol-duty messages
 
 The following message types are **always free**, regardless of the on-chain

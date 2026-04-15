@@ -267,12 +267,12 @@ data class ApplicationAPI(
 
     fun getPriceProposal(): GetUnitOfComputePriceProposalDto = wrapLog("SubmitPriceProposal", true) {
         val url = urlFor(SERVER_TYPE_ADMIN)
-        get<GetUnitOfComputePriceProposalDto>(url, "admin/v1/unit-of-compute-price-proposal")
+        get(url, "admin/v1/unit-of-compute-price-proposal")
     }
 
     fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
-        get<GetPricingDto>(url, "v1/pricing")
+        get(url, "v1/pricing")
     }
 
     fun getStatsModels(timeFrom: Long, timeTo: Long): StatsModelsResponse = wrapLog("GetStatsModels", true) {
@@ -401,10 +401,10 @@ data class ApplicationAPI(
      * Gets the current artifact store state for a given epoch.
      * Returns count and root_hash for building proof requests.
      */
-    fun getPocArtifactsState(pocStageStartBlockHeight: Long): PocArtifactsStateResponse =
+    fun getPocArtifactsState(pocStageStartBlockHeight: Long, modelId: String): PocArtifactsStateResponse =
         wrapLog("GetPocArtifactsState", true) {
             val url = urlFor(SERVER_TYPE_PUBLIC)
-            get(url, "v1/poc/artifacts/state?height=$pocStageStartBlockHeight")
+            get(url, "v1/poc/artifacts/state?height=$pocStageStartBlockHeight&model_id=${URLEncoder.encode(modelId, "UTF-8")}")
         }
 
     /**
@@ -488,7 +488,7 @@ data class ApplicationAPI(
      */
     fun getConfig(): ApiConfig = wrapLog("GetConfig", false) {
         val url = urlFor(SERVER_TYPE_ADMIN)
-        get<ApiConfig>(url, "admin/v1/config")
+        get(url, "admin/v1/config")
     }
 
     fun getDevshardMempool(escrowId: Long): DevshardMempoolResponse = wrapLog("GetDevshardMempool", false) {

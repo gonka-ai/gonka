@@ -12,6 +12,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/devshard_escrow.proto";
+import "inference/inference/poc_delegation.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -59,6 +60,9 @@ service Msg {
   rpc RegisterIbcTokenMetadata         (MsgRegisterIbcTokenMetadata) returns (MsgRegisterIbcTokenMetadataResponse);
   rpc CreateDevshardEscrow               (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
   rpc SettleDevshardEscrow               (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
+  rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
+  rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
+  rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -212,7 +216,7 @@ message MsgSubmitPocValidationsV2 {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   int64 poc_stage_start_block_height = 2;
-  repeated PoCValidationPayloadV2 validations = 3;
+  repeated PoCValidationEntryV2 validations = 3;
 }
 
 message MsgSubmitPocValidationsV2Response {}
@@ -222,8 +226,9 @@ message MsgPoCV2StoreCommit {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   int64 poc_stage_start_block_height = 2;
-  uint32 count = 3;
-  bytes root_hash = 4;
+  uint32 count = 3 [deprecated = true];
+  bytes root_hash = 4 [deprecated = true];
+  repeated PoCV2CommitEntry entries = 5;
 }
 
 message MsgPoCV2StoreCommitResponse {}
@@ -233,7 +238,8 @@ message MsgMLNodeWeightDistribution {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   int64 poc_stage_start_block_height = 2;
-  repeated MLNodeWeight weights = 3;
+  repeated MLNodeWeight weights = 3 [deprecated = true];
+  repeated MLNodeDistributionEntry entries = 4;
 }
 
 message MsgMLNodeWeightDistributionResponse {}
@@ -478,6 +484,7 @@ message MsgCreateDevshardEscrow {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   uint64 amount = 2;
+  string model_id = 3;
 }
 
 message MsgCreateDevshardEscrowResponse {

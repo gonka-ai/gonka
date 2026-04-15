@@ -29,6 +29,22 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 }
 
+func TestNewPoCParamsCache(t *testing.T) {
+	cache := apiconfig.NewPoCParamsCache([]*types.PoCModelConfig{
+		nil,
+		{ModelId: "", SeqLen: 128},
+		{ModelId: "model-a", SeqLen: 256},
+		{ModelId: "model-b", SeqLen: 512},
+	})
+
+	require.Equal(t, apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-a", SeqLen: 256},
+			{ModelId: "model-b", SeqLen: 512},
+		},
+	}, cache)
+}
+
 func TestNodeVersion(t *testing.T) {
 	testManager := &apiconfig.ConfigManager{
 		KoanProvider:   rawbytes.Provider([]byte(testYaml)),

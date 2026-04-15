@@ -93,6 +93,7 @@ const (
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
+	Query_PoCDelegation_FullMethodName                             = "/inference.inference.Query/PoCDelegation"
 )
 
 // QueryClient is the client API for Query service.
@@ -223,6 +224,7 @@ type QueryClient interface {
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
 	DevshardHostEpochStats(ctx context.Context, in *QueryGetDevshardHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetDevshardHostEpochStatsResponse, error)
+	PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error)
 }
 
 type queryClient struct {
@@ -899,6 +901,15 @@ func (c *queryClient) DevshardHostEpochStats(ctx context.Context, in *QueryGetDe
 	return out, nil
 }
 
+func (c *queryClient) PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error) {
+	out := new(QueryPoCDelegationResponse)
+	err := c.cc.Invoke(ctx, Query_PoCDelegation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1027,6 +1038,7 @@ type QueryServer interface {
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
 	DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error)
+	PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1255,6 +1267,9 @@ func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshar
 }
 func (UnimplementedQueryServer) DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardHostEpochStats not implemented")
+}
+func (UnimplementedQueryServer) PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PoCDelegation not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2601,6 +2616,24 @@ func _Query_DevshardHostEpochStats_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PoCDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPoCDelegationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PoCDelegation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PoCDelegation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PoCDelegation(ctx, req.(*QueryPoCDelegationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2903,6 +2936,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DevshardHostEpochStats",
 			Handler:    _Query_DevshardHostEpochStats_Handler,
+		},
+		{
+			MethodName: "PoCDelegation",
+			Handler:    _Query_PoCDelegation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

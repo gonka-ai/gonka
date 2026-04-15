@@ -306,13 +306,14 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodes: Boolean = true): L
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         val params = it.getParams()
         
-        // Sanity check: verify PoC v2 is enabled (model_id set in poc_params)
+        // Sanity check: verify PoC v2 is enabled and has at least one active PoC model config
         val pocParams = params.pocParams
-        if (pocParams.modelId.isNullOrEmpty()) {
-            Logger.warn("PoC v2 is NOT enabled! Chain params show poc_params.model_id is empty. " +
+        val primaryPoCModel = pocParams.primaryModelConfig()
+        if (primaryPoCModel?.modelId.isNullOrEmpty()) {
+            Logger.warn("PoC v2 is NOT enabled! Chain params show no active poc_params.models entry. " +
                 "Tests may be using old PoC v1 implementation. Check genesis spec configuration.")
         } else {
-            Logger.info("PoC v2 enabled: modelId={}, seqLen={}", pocParams.modelId, pocParams.seqLen)
+            Logger.info("PoC v2 enabled: modelId={}, seqLen={}", primaryPoCModel?.modelId, primaryPoCModel?.seqLen)
         }
         
         it.node.getColdAddress()
@@ -490,10 +491,18 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[DynamicPricingParams::gracePeriodEndEpoch] = 0L   // Disable grace period
                 this[DynamicPricingParams::gracePeriodPerTokenPrice] = 0L
             }
-            // Enable PoC v2 by setting model_id and seq_len in poc_params
+            this[InferenceParams::delegationParams] = spec<DelegationParams> {
+                this[DelegationParams::deployWindow] = 1L
+                this[DelegationParams::initialModelId] = defaultModel
+            }
+            // Enable PoC v2 using the phase-1 models list in poc_params
             this[InferenceParams::pocParams] = spec<PocParams> {
-                this[PocParams::modelId] = defaultModel
-                this[PocParams::seqLen] = 256L
+                this[PocParams::models] = listOf(
+                    PoCModelConfig(
+                        modelId = defaultModel,
+                        seqLen = 256L,
+                    )
+                )
                 this[PocParams::pocV2Enabled] = true
                 this[PocParams::validationSlots] = 2L
                 this[PocParams::pocNormalizationEnabled] = false

@@ -13,6 +13,7 @@ message DevshardEscrow {
   string app_hash = 6;
   bool settled = 7;
   uint64 token_price = 8;
+  string model_id = 9;
 }
 
 message DevshardHostEpochStats {

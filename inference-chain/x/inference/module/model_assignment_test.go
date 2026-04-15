@@ -2128,3 +2128,66 @@ func TestAllocateMLNodesForPoC_DedupesBeforeAllocation(t *testing.T) {
 	})
 	require.Equal(t, int64(50), participants[0].MlNodes[0].MlNodes[0].PocWeight)
 }
+
+// Source isolation tests for the EpochMLNodeData accessors. Each verifies
+// that mutating the returned slice/map does NOT mutate the source data.
+// Pointer identity per *MLNodeInfo is intentionally preserved because the
+// allocator depends on it (see model_assignment.go:773).
+
+func TestGetForModelReturnsCopy(t *testing.T) {
+	e := NewEpochMLNodeData()
+	e.Append("m1", "p1", &types.MLNodeInfo{NodeId: "n1"})
+
+	out := e.GetForModel("m1")
+	out["p1"] = append(out["p1"], &types.MLNodeInfo{NodeId: "n2"})
+	out["p2"] = []*types.MLNodeInfo{{NodeId: "n3"}}
+
+	require.Len(t, e.data["m1"]["p1"], 1, "source p1 slice mutated via GetForModel")
+	require.NotContains(t, e.data["m1"], "p2", "source map gained a key via GetForModel")
+}
+
+func TestGetForParticipantReturnsCopy(t *testing.T) {
+	e := NewEpochMLNodeData()
+	e.Append("m1", "p1", &types.MLNodeInfo{NodeId: "b"})
+	e.Append("m1", "p1", &types.MLNodeInfo{NodeId: "a"})
+
+	out := e.GetForParticipant("m1", "p1")
+	require.Equal(t, []string{"a", "b"}, []string{out[0].NodeId, out[1].NodeId},
+		"returned slice should be sorted by NodeId")
+
+	// Source order must NOT change because GetForParticipant sorts the clone.
+	require.Equal(t, []string{"b", "a"},
+		[]string{e.data["m1"]["p1"][0].NodeId, e.data["m1"]["p1"][1].NodeId},
+		"source order mutated by GetForParticipant in-place sort")
+
+	// Appending to the returned slice must not mutate the source.
+	out = append(out, &types.MLNodeInfo{NodeId: "c"})
+	require.Len(t, e.data["m1"]["p1"], 2, "source slice grew via GetForParticipant")
+}
+
+func TestGetForParticipantPreservesPointerIdentity(t *testing.T) {
+	// Mutating a *MLNodeInfo field via the returned slice MUST be visible
+	// to subsequent reads from the same source. The allocator depends on
+	// this exact behavior (TimeslotAllocation marking).
+	e := NewEpochMLNodeData()
+	e.Append("m1", "p1", &types.MLNodeInfo{NodeId: "n1", TimeslotAllocation: []bool{false, false}})
+
+	out := e.GetForParticipant("m1", "p1")
+	out[0].TimeslotAllocation[1] = true
+
+	out2 := e.GetForParticipant("m1", "p1")
+	require.True(t, out2[0].TimeslotAllocation[1],
+		"node-field mutation must remain visible across calls (pointer identity)")
+}
+
+func TestForModelReturnsCopy(t *testing.T) {
+	e := NewEpochMLNodeData()
+	e.Append("m1", "p1", &types.MLNodeInfo{NodeId: "n1"})
+
+	view := e.ForModel("m1")
+	view.Append("m1", "p1", &types.MLNodeInfo{NodeId: "n2"})
+	view.Set("m1", "p2", []*types.MLNodeInfo{{NodeId: "n3"}})
+
+	require.Len(t, e.data["m1"]["p1"], 1, "source p1 slice mutated via ForModel view")
+	require.NotContains(t, e.data["m1"], "p2", "source gained a participant via ForModel view")
+}

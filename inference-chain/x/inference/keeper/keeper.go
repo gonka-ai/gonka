@@ -42,9 +42,9 @@ type (
 		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// PoC v2 collections
-		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidationV2]
-		PoCV2StoreCommits         collections.Map[collections.Pair[int64, sdk.AccAddress], types.PoCV2StoreCommit]
-		MLNodeWeightDistributions collections.Map[collections.Pair[int64, sdk.AccAddress], types.MLNodeWeightDistribution]
+		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
+		PoCV2StoreCommits         collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
+		MLNodeWeightDistributions collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap                collections.Map[string, uint64]
 		ModelCapacityMap                    collections.Map[string, uint64]
@@ -103,6 +103,12 @@ type (
 		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// PoC delegation collections
+		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
 	}
 )
 
@@ -184,21 +190,21 @@ func NewKeeper(
 			sb,
 			types.PoCValidationV2Prefix,
 			"poc_validation_v2",
-			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.PairKeyCodec(collections.StringKey, sdk.AccAddressKey)),
 			codec.CollValue[types.PoCValidationV2](cdc),
 		),
 		PoCV2StoreCommits: collections.NewMap(
 			sb,
 			types.PoCV2StoreCommitPrefix,
 			"poc_v2_store_commit",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
 			codec.CollValue[types.PoCV2StoreCommit](cdc),
 		),
 		MLNodeWeightDistributions: collections.NewMap(
 			sb,
 			types.MLNodeWeightDistributionPrefix,
 			"mlnode_weight_distribution",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
 			codec.CollValue[types.MLNodeWeightDistribution](cdc),
 		),
 		// dynamic pricing collections
@@ -529,6 +535,38 @@ func NewKeeper(
 			"devshard_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		// PoC delegation collections
+		PoCDelegations: collections.NewMap(
+			sb,
+			types.PoCDelegationPrefix,
+			"poc_delegation",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			codec.CollValue[types.PoCDelegation](cdc),
+		),
+		PoCRefusals: collections.NewKeySet(
+			sb,
+			types.PoCRefusalPrefix,
+			"poc_refusal",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+		),
+		PoCDirectIntents: collections.NewKeySet(
+			sb,
+			types.PoCDirectIntentPrefix,
+			"poc_direct_intent",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+		),
+		DelegationSnapshot: collections.NewItem(
+			sb,
+			types.DelegationSnapshotPrefix,
+			"delegation_snapshot",
+			codec.CollValue[types.DelegationSnapshot](cdc),
+		),
+		BootstrapDelegationSnapshot: collections.NewItem(
+			sb,
+			types.BootstrapDelegationSnapshotPrefix,
+			"bootstrap_delegation_snapshot",
+			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
 	}
 	// Build the collections schema

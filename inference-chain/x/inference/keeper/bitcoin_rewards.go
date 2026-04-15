@@ -7,6 +7,7 @@ import (
 	"math/bits"
 
 	"cosmossdk.io/log"
+	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -31,7 +32,8 @@ func GetBitcoinSettleAmounts(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
-	participantMLNodes map[string][]*types.MLNodeInfo,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
 	collateralAdjustmentActive bool,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -61,6 +63,7 @@ func GetBitcoinSettleAmounts(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
+		coefficients,
 		collateralAdjustmentActive,
 		logger,
 	)
@@ -195,28 +198,36 @@ func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData
 	return 0
 }
 
-// RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights
-// This allows integration of confirmation_weight for nodes subject to verification
-func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, mlNodes []*types.MLNodeInfo) int64 {
-	preservedWeight := int64(0) // Sum POC_SLOT=true nodes only
-
-	// Use provided mlNodes if available (from model subgroups), otherwise fall back to vw.MlNodes
-	nodesToUse := mlNodes
-	if len(nodesToUse) == 0 {
-		nodesToUse = vw.MlNodes
-	}
-
-	for _, mlNode := range nodesToUse {
-		if mlNode == nil || len(mlNode.TimeslotAllocation) < 2 {
-			continue
+// CoefficientAdjustedWeight computes sum(coeff_i * sum(PocWeight for model_i)) for nodes
+// matching the filter. Pass nil filter to include all nodes.
+func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec, filter func(*types.MLNodeInfo) bool) int64 {
+	total := int64(0)
+	for modelId, nodes := range modelNodes {
+		coeff, ok := coefficients[modelId]
+		if !ok {
+			coeff = mathsdk.LegacyOneDec()
 		}
-
-		if mlNode.TimeslotAllocation[1] { // POC_SLOT=true
-			preservedWeight += mlNode.PocWeight
+		rawModel := int64(0)
+		for _, mlNode := range nodes {
+			if mlNode == nil {
+				continue
+			}
+			if filter == nil || filter(mlNode) {
+				rawModel += mlNode.PocWeight
+			}
 		}
+		total += coeff.MulInt64(rawModel).TruncateInt64()
 	}
+	return total
+}
 
-	// ConfirmationWeight always initialized - holds verified weight for POC_SLOT=false nodes
+// RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights.
+// Both preservedWeight and ConfirmationWeight are in coefficient-adjusted space.
+func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec) int64 {
+	preservedWeight := CoefficientAdjustedWeight(modelNodes, coefficients, func(n *types.MLNodeInfo) bool {
+		return len(n.TimeslotAllocation) >= 2 && n.TimeslotAllocation[1] // POC_SLOT=true
+	})
+	// ConfirmationWeight is coefficient-adjusted (initialized and updated in same space)
 	return preservedWeight + vw.ConfirmationWeight
 }
 
@@ -565,7 +576,8 @@ func CalculateParticipantBitcoinRewards(
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
-	participantMLNodes map[string][]*types.MLNodeInfo,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
 	collateralAdjustmentActive bool,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -633,32 +645,22 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Recompute effective weight from MLNodes (includes confirmation capping)
-		mlNodes := participantMLNodes[participant.Address]
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, mlNodes)
+		// Recompute effective weight from MLNodes (includes confirmation capping).
+		// Both preserved weight and ConfirmationWeight are coefficient-adjusted.
+		modelNodes := participantMLNodes[participant.Address]
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, modelNodes, coefficients)
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
 		}
 
 		if collateralAdjustmentActive {
-			// When collateral adjustment is active, mlNode.PocWeight values remain raw while
-			// vw.Weight already reflects collateral-adjusted voting power. Scale the
-			// confirmation-recomputed effective weight back into the same adjusted space.
-			rawTotalWeight := int64(0)
-			rawNodes := mlNodes
-			if len(rawNodes) == 0 {
-				rawNodes = vw.MlNodes
-			}
-			for _, mlNode := range rawNodes {
-				if mlNode != nil {
-					rawTotalWeight += mlNode.PocWeight
-				}
-			}
-			if rawTotalWeight > 0 && vw.Weight < rawTotalWeight {
-				// Use big.Int to prevent overflow: effectiveWeight * vw.Weight can exceed int64
+			// vw.Weight reflects collateral+capping adjusted consensus weight.
+			// Compute coefficient-adjusted total (pre-collateral) as denominator.
+			adjustedTotalWeight := CoefficientAdjustedWeight(modelNodes, coefficients, nil)
+			if adjustedTotalWeight > 0 && vw.Weight < adjustedTotalWeight {
 				ewBig := big.NewInt(effectiveWeight)
 				ewBig = ewBig.Mul(ewBig, big.NewInt(vw.Weight))
-				ewBig = ewBig.Div(ewBig, big.NewInt(rawTotalWeight))
+				ewBig = ewBig.Div(ewBig, big.NewInt(adjustedTotalWeight))
 				effectiveWeight = ewBig.Int64()
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -17,7 +18,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -82,12 +82,26 @@ const (
 // participantWork represents a single participant to validate.
 type participantWork struct {
 	address    string
+	modelId    string
 	url        string
 	pubKey     string
 	count      uint32
 	rootHash   []byte
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
+}
+
+type modelSamplingData struct {
+	entries     []calculations.WeightEntry
+	totalWeight int64
+}
+
+func hasModelList(snapshotFound bool, modelSampling map[string]*modelSamplingData) bool {
+	return snapshotFound && len(modelSampling) > 0
+}
+
+func buildValidationCallbackURL(callbackBase, modelID string) string {
+	return callbackBase + "/v2/poc-batches/" + url.PathEscape(url.PathEscape(modelID))
 }
 
 // absInt32 returns the absolute value of an int32 as int64,
@@ -216,46 +230,76 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	logging.Info("OffChainValidator: found participants with commits", types.PoC,
 		"count", len(commitsResp.Commits))
 
-	// Query validation snapshot for sampling (if enabled)
+	// Query validation snapshot for per-model sampling and authoritative model gating.
+	// An empty model set is treated as non-authoritative so bootstrap/startup epochs
+	// do not accidentally exclude all validation work.
 	validationSlots := int(pocParams.ValidationSlots)
-	var snapshotWeights map[string]int64
 	var snapshotAppHash string
-	var sortedValidatorEntries []calculations.WeightEntry
-	var validatorTotalWeight int64
-	if validationSlots > 0 {
-		snapshotResp, err := queryClient.PoCValidationSnapshot(context.Background(),
-			&types.QueryPoCValidationSnapshotRequest{
-				PocStageStartHeight: pocStageStartBlockHeight,
-			})
-		if err != nil {
+	var snapshotTotalNetworkWeight int64
+	snapshotFound := false
+	modelSampling := make(map[string]*modelSamplingData)
+	snapshotResp, err := queryClient.PoCValidationSnapshot(context.Background(),
+		&types.QueryPoCValidationSnapshotRequest{
+			PocStageStartHeight: pocStageStartBlockHeight,
+		})
+	if err != nil {
+		if validationSlots > 0 {
 			logging.Warn("OffChainValidator: failed to query validation snapshot, falling back to O(N^2)", types.PoC,
 				"error", err)
-			validationSlots = 0 // Disable sampling on error
-		} else if snapshotResp.Found && snapshotResp.Snapshot != nil && snapshotResp.Snapshot.ValidatorWeights != nil {
-			snapshotWeights = validatorWeightsSliceToMap(snapshotResp.Snapshot.ValidatorWeights)
-			snapshotAppHash = snapshotResp.Snapshot.AppHash
-			sortedValidatorEntries, validatorTotalWeight = calculations.PrepareSortedEntries(snapshotWeights)
-			logging.Info("OffChainValidator: using validation snapshot for sampling", types.PoC,
+			validationSlots = 0
+		}
+	} else if snapshotResp.Found && snapshotResp.Snapshot != nil {
+		snapshotFound = true
+		snapshotAppHash = snapshotResp.Snapshot.AppHash
+		snapshotTotalNetworkWeight = snapshotResp.Snapshot.TotalNetworkWeight
+		for _, mvw := range snapshotResp.Snapshot.ModelVotingPowers {
+			weights := types.VotingPowerSliceToMap(mvw.VotingPowers)
+			entries, total := calculations.PrepareSortedEntries(weights)
+			modelSampling[mvw.ModelId] = &modelSamplingData{entries: entries, totalWeight: total}
+		}
+		if validationSlots > 0 {
+			logging.Info("OffChainValidator: using per-model validation snapshot for sampling", types.PoC,
 				"appHash", snapshotAppHash,
 				"validationSlots", validationSlots,
-				"numValidators", len(snapshotWeights),
+				"numModels", len(modelSampling),
 			)
-		} else {
-			logging.Warn("OffChainValidator: validation snapshot not found, falling back to O(N^2)", types.PoC)
-			validationSlots = 0 // Disable sampling
 		}
+	} else if validationSlots > 0 {
+		logging.Warn("OffChainValidator: validation snapshot not found, falling back to O(N^2)", types.PoC)
+		validationSlots = 0
 	}
 
 	// Build work items with participant URLs
 	workItems := make([]participantWork, 0, len(commitsResp.Commits))
 	skippedNotAssigned := 0
+	skippedExcludedModel := 0
+	authoritativeModelAllowlist := hasModelList(snapshotFound, modelSampling)
 	for _, commit := range commitsResp.Commits {
-		// If sampling is enabled, check if we're assigned to validate this participant
-		if validationSlots > 0 && sortedValidatorEntries != nil {
-			assignedValidators := calculations.GetSlotsFromSorted(snapshotAppHash, commit.ParticipantAddress, sortedValidatorEntries, validatorTotalWeight, validationSlots)
-			if !slices.Contains(assignedValidators, v.validatorAddress) {
-				skippedNotAssigned++
+		if authoritativeModelAllowlist {
+			if _, allowed := modelSampling[commit.ModelId]; !allowed {
+				skippedExcludedModel++
 				continue
+			}
+		}
+
+		// If sampling is enabled, check if we're assigned to validate this participant-model pair.
+		// Only the model-local share of slots is sampled; the remainder behaves as abstention.
+		if validationSlots > 0 {
+			sampling, hasSampling := modelSampling[commit.ModelId]
+			if hasSampling {
+				sampledSlots := calculations.ComputeSampledSlotCount(sampling.totalWeight, snapshotTotalNetworkWeight, validationSlots)
+				assignedValidators := calculations.GetSlotsFromSorted(
+					snapshotAppHash,
+					commit.ParticipantAddress,
+					commit.ModelId,
+					sampling.entries,
+					sampling.totalWeight,
+					sampledSlots,
+				)
+				if !slices.Contains(assignedValidators, v.validatorAddress) {
+					skippedNotAssigned++
+					continue
+				}
 			}
 		}
 
@@ -283,6 +327,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 
 		workItems = append(workItems, participantWork{
 			address:  commit.ParticipantAddress,
+			modelId:  commit.ModelId,
 			url:      participantResp.Participant.InferenceUrl,
 			pubKey:   commit.HexPubKey,
 			count:    commit.Count,
@@ -290,11 +335,12 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		})
 	}
 
-	if validationSlots > 0 {
-		logging.Info("OffChainValidator: filtered work items by sampling", types.PoC,
+	if validationSlots > 0 || snapshotFound {
+		logging.Info("OffChainValidator: filtered work items before validation", types.PoC,
 			"totalCommits", len(commitsResp.Commits),
 			"assignedToUs", len(workItems),
 			"skippedNotAssigned", skippedNotAssigned,
+			"skippedExcludedModel", skippedExcludedModel,
 		)
 	}
 
@@ -420,7 +466,8 @@ func (v *OffChainValidator) worker(
 				sampleSize,
 			)
 
-			var reportAddr string
+			var reportParticipant string
+			var reportModelID string
 
 			statsMu.Lock()
 			switch result {
@@ -432,7 +479,8 @@ func (v *OffChainValidator) worker(
 				*pendingCount--
 				// Report participant as invalid to chain
 				// Uncomment when stabilized
-				reportAddr = work.address
+				reportParticipant = work.address
+				reportModelID = work.modelId
 			case validateFailRetry:
 				// Re-queue for retry if under max attempts
 				if work.attempt < v.config.MaxRetries-1 {
@@ -462,8 +510,8 @@ func (v *OffChainValidator) worker(
 			done := *pendingCount <= 0
 			statsMu.Unlock()
 
-			if reportAddr != "" {
-				v.reportInvalidParticipant(pocHeight, reportAddr)
+			if reportParticipant != "" {
+				v.reportInvalidParticipant(pocHeight, reportParticipant, reportModelID)
 			}
 
 			if done {
@@ -491,16 +539,23 @@ func (v *OffChainValidator) validateParticipant(
 	sampleSize int,
 ) validateResult {
 	ctx := context.Background()
+	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
+	if len(modelNodes) == 0 {
+		logging.Warn("OffChainValidator: no validation executors for model", types.PoC,
+			"participant", work.address, "modelId", work.modelId)
+		return validateFailRetry
+	}
 
 	logging.Debug("OffChainValidator: validating participant", types.PoC,
 		"worker", workerID, "participant", work.address, "count", work.count, "attempt", work.attempt)
 
 	// Sample leaf indices using fresh hash (anti-cheat: prevents validators from predicting sample)
-	leafIndices := sampleLeafIndices(v.pubKey, samplingBlockHash, pocHeight, work.count, sampleSize)
+	leafIndices := sampleLeafIndices(v.pubKey, samplingBlockHash, pocHeight, work.modelId, work.count, sampleSize)
 
 	// Fetch and verify proofs
 	verified, err := proofClient.FetchAndVerifyProofs(ctx, work.url, ProofRequest{
 		PocStageStartBlockHeight: pocHeight,
+		ModelId:                  work.modelId,
 		RootHash:                 work.rootHash,
 		Count:                    work.count,
 		LeafIndices:              leafIndices,
@@ -546,27 +601,33 @@ func (v *OffChainValidator) validateParticipant(
 
 	// Send to ML node for statistical validation
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
-	validationCallbackUrl := v.callbackUrl + "/v2/poc-batches"
+	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	modelConfig, ok := pocParams.GetModelConfig(work.modelId)
+	if !ok {
+		logging.Warn("OffChainValidator: missing model config for validation work", types.PoC,
+			"participant", work.address, "modelId", work.modelId)
+		return validateFailPermanent
+	}
 	validationReq := mlnodeclient.PoCGenerateRequestV2{
 		BlockHash:   pocStartBlockHash, // Must match the hash used during generation
 		BlockHeight: pocHeight,
 		PublicKey:   work.pubKey,
-		NodeCount:   len(nodes),
+		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
 		Params: mlnodeclient.PoCParamsV2{
-			Model:  pocParams.ModelId,
-			SeqLen: pocParams.SeqLen,
+			Model:  modelConfig.ModelId,
+			SeqLen: modelConfig.SeqLen,
 		},
 		URL: validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},
-		StatTest:       mlnodeclient.StatTestParamsFromChain(pocParams.StatTest),
+		StatTest:       mlnodeclient.StatTestParamsFromChain(modelConfig.StatTest),
 		PocStrongerRng: pocParams.PocStrongerRngEnabled,
 	}
 
 	// Try sending to ML node (single attempt per call - retries handled by queue)
-	node := nodes[*nodeCounter%len(nodes)]
+	node := modelNodes[*nodeCounter%len(modelNodes)]
 	*nodeCounter++
 
 	validationReq.NodeId = int(node.Node.NodeNum)
@@ -586,7 +647,7 @@ func (v *OffChainValidator) validateParticipant(
 
 // sampleLeafIndices generates deterministic leaf indices using lazy Fisher-Yates.
 // Important: count comes from on-chain commits and can be very large - must stay O(sampleSize).
-func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int64, count uint32, sampleSize int) []uint32 {
+func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int64, modelId string, count uint32, sampleSize int) []uint32 {
 	if count == 0 {
 		return nil
 	}
@@ -603,7 +664,7 @@ func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int
 		return indices
 	}
 
-	seedInput := fmt.Sprintf("%s:%s:%d", validatorPubKey, blockHash, blockHeight)
+	seedInput := fmt.Sprintf("%s:%s:%d:%s", validatorPubKey, blockHash, blockHeight, modelId)
 	hash := sha256.Sum256([]byte(seedInput))
 	seed := int64(binary.BigEndian.Uint64(hash[:8]))
 
@@ -816,14 +877,34 @@ func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, c
 	return filtered
 }
 
+func filterValidationNodesForModel(nodes []broker.NodeResponse, modelID string) []broker.NodeResponse {
+	filtered := make([]broker.NodeResponse, 0, len(nodes))
+	for _, node := range nodes {
+		if len(node.State.EpochMLNodes) > 0 {
+			if _, ok := node.State.EpochMLNodes[modelID]; ok {
+				filtered = append(filtered, node)
+			}
+			continue
+		}
+		// No epoch assignment yet (first epoch or node just joined).
+		// Fall back to first node-supported model.
+		nodeModelID, ok := broker.ResolveNodeModelID(node.State.EpochMLNodes, node.Node.Models)
+		if ok && nodeModelID == modelID {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
+}
+
 // reportInvalidParticipant submits a validation result with ValidatedWeight=-1 (invalid) to chain.
 // This is called when validation fails permanently (e.g., retry exhaustion).
-func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress string) {
-	msg := &inference.MsgSubmitPocValidationsV2{
+func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress, modelID string) {
+	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: pocHeight,
-		Validations: []*inference.PoCValidationPayloadV2{
+		Validations: []*types.PoCValidationEntryV2{
 			{
 				ParticipantAddress: participantAddress,
+				ModelId:            modelID,
 				ValidatedWeight:    -1, // Invalid
 			},
 		},
@@ -835,12 +916,4 @@ func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participan
 		logging.Info("OffChainValidator: reported participant as invalid", types.PoC,
 			"participant", participantAddress)
 	}
-}
-
-func validatorWeightsSliceToMap(weights []*types.ValidatorWeight) map[string]int64 {
-	result := make(map[string]int64, len(weights))
-	for _, w := range weights {
-		result[w.Address] = w.Weight
-	}
-	return result
 }

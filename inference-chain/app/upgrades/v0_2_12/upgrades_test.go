@@ -3,6 +3,7 @@ package v0_2_12
 import (
 	"testing"
 
+	"cosmossdk.io/store/prefix"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
@@ -55,6 +56,422 @@ func TestClearTrainingState(t *testing.T) {
 	} {
 		require.Nil(t, store.Get(key), "expected key %q to be deleted", string(key))
 	}
+}
+
+// legacyPrefixes is the ordered list of store prefixes whose key codec changed
+// in v0.2.12 and whose old data must be wiped by clearLegacyPoCv2Data.
+var legacyPrefixes = [][]byte{
+	inferencetypes.LegacyPoCValidationV2Prefix,
+	inferencetypes.LegacyPoCV2StoreCommitPrefix,
+	inferencetypes.LegacyMLNodeWeightDistributionPrefix,
+}
+
+func countPrefixEntries(t *testing.T, store *prefix.Store, pfx []byte) int {
+	t.Helper()
+	sub := prefix.NewStore(store, pfx)
+	iter := sub.Iterator(nil, nil)
+	defer iter.Close()
+	count := 0
+	for ; iter.Valid(); iter.Next() {
+		count++
+	}
+	return count
+}
+
+func TestClearLegacyPoCv2Data(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	store := inferencekeeper.EmptyPrefixStore(ctx, &k)
+
+	// Write 3 raw entries under each legacy prefix. Key shape is arbitrary --
+	// clearLegacyPoCv2Data iterates raw bytes and does not decode keys.
+	for i, pfx := range legacyPrefixes {
+		for j := 0; j < 3; j++ {
+			key := append(append([]byte{}, pfx...), []byte{byte(i), byte(j)}...)
+			store.Set(key, []byte("v"))
+		}
+		require.Equal(t, 3, countPrefixEntries(t, store, pfx),
+			"expected 3 entries under legacy prefix %d before clear", i)
+	}
+
+	// Canary: unrelated prefix must be untouched.
+	canaryKey := append(append([]byte{}, inferencetypes.PocV2EnabledEpochPrefix...), []byte("canary")...)
+	store.Set(canaryKey, []byte("keep"))
+
+	require.NoError(t, clearLegacyPoCv2Data(ctx, k))
+
+	for i, pfx := range legacyPrefixes {
+		require.Equal(t, 0, countPrefixEntries(t, store, pfx),
+			"expected legacy prefix %d to be empty after clear", i)
+	}
+	require.Equal(t, []byte("keep"), store.Get(canaryKey), "canary entry should survive clear")
+}
+
+func TestMigrateParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// InferenceKeeperReturningMocks already sets DefaultParams() which has
+	// Models populated. Overwrite to simulate pre-upgrade state.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.ModelId = "founding-model"
+	params.PocParams.SeqLen = 512
+	params.PocParams.WeightScaleFactor = inferencetypes.DecimalFromFloat(0.75)
+	params.PocParams.StatTest = inferencetypes.DefaultPoCStatTestParams()
+	params.PocParams.Models = nil
+	params.DelegationParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.PocParams.Models, 1)
+	m := got.PocParams.Models[0]
+	require.Equal(t, "founding-model", m.ModelId)
+	require.Equal(t, int64(512), m.SeqLen)
+	require.NotNil(t, m.WeightScaleFactor)
+	wsf, err := m.WeightScaleFactor.ToLegacyDec()
+	require.NoError(t, err)
+	require.Equal(t, "0.750000000000000000", wsf.String())
+	require.NotNil(t, m.StatTest)
+	require.Equal(t, uint64(0), m.PenaltyStartEpoch)
+
+	require.NotNil(t, got.DelegationParams)
+	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
+	defaults := inferencetypes.DefaultDelegationParams()
+	require.Equal(t, defaults.DeployWindow, got.DelegationParams.DeployWindow)
+	require.Equal(t, defaults.VMin, got.DelegationParams.VMin)
+	require.Equal(t, defaults.WThreshold, got.DelegationParams.WThreshold)
+	require.Equal(t, defaults.CapFactor, got.DelegationParams.CapFactor)
+	require.Equal(t, defaults.DelegationShare, got.DelegationParams.DelegationShare)
+	require.Equal(t, defaults.RefusalPenalty, got.DelegationParams.RefusalPenalty)
+	require.Equal(t, defaults.NoParticipationPenalty, got.DelegationParams.NoParticipationPenalty)
+
+	// Idempotency: a second run must not duplicate models or alter values.
+	require.NoError(t, migrateParams(ctx, k))
+	got2, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got2.PocParams.Models, 1)
+	require.Equal(t, "founding-model", got2.PocParams.Models[0].ModelId)
+	require.Equal(t, int64(512), got2.PocParams.Models[0].SeqLen)
+}
+
+func setupBackfillFixture(t *testing.T, k inferencekeeper.Keeper, ctx sdk.Context, modelID string, addr1, addr2 string) {
+	t.Helper()
+
+	// Set a primary model in PocParams so backfillVotingPower can discover it.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
+		{ModelId: modelID, SeqLen: 256, StatTest: inferencetypes.DefaultPoCStatTestParams(),
+			WeightScaleFactor: inferencetypes.DecimalFromFloat(1.0)},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 1, PocStartBlockHeight: 100}))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+
+	ap := inferencetypes.ActiveParticipants{
+		EpochId: 1,
+		Participants: []*inferencetypes.ActiveParticipant{
+			{Index: addr1, Weight: 100},
+			{Index: addr2, Weight: 200},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{
+		EpochIndex: 1,
+		ModelId:    modelID,
+		ValidationWeights: []*inferencetypes.ValidationWeight{
+			{MemberAddress: addr1, Weight: 100},
+			{MemberAddress: addr2, Weight: 200},
+		},
+	})
+}
+
+func TestBackfillVotingPower(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	addr1 := sample.AccAddress()
+	addr2 := sample.AccAddress()
+	const modelID = "m1"
+	setupBackfillFixture(t, k, ctx, modelID, addr1, addr2)
+
+	require.NoError(t, backfillVotingPower(ctx, k))
+
+	ap, found := k.GetActiveParticipants(ctx, 1)
+	require.True(t, found)
+	require.Len(t, ap.Participants, 2)
+	for _, p := range ap.Participants {
+		require.Len(t, p.VotingPowers, 1, "participant %s should have one voting power entry", p.Index)
+		require.Equal(t, modelID, p.VotingPowers[0].ModelId)
+		require.Equal(t, p.Weight, p.VotingPowers[0].VotingPower)
+	}
+
+	egd, found := k.GetEpochGroupData(ctx, 1, modelID)
+	require.True(t, found)
+	require.Len(t, egd.ValidationWeights, 2)
+	for _, vw := range egd.ValidationWeights {
+		require.Equal(t, vw.Weight, vw.VotingPower,
+			"voting_power should equal weight for member %s", vw.MemberAddress)
+	}
+}
+
+func TestBackfillVotingPower_EdgeCases(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	addrZero := sample.AccAddress()
+	addrPreset := sample.AccAddress()
+	const modelID = "m1"
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{ModelId: modelID}}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 1, PocStartBlockHeight: 100}))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+
+	// Participant with Weight=0 and participant with pre-existing VotingPowers.
+	preset := []*inferencetypes.ModelVotingPower{{ModelId: modelID, VotingPower: 999}}
+	ap := inferencetypes.ActiveParticipants{
+		EpochId: 1,
+		Participants: []*inferencetypes.ActiveParticipant{
+			{Index: addrZero, Weight: 0},
+			{Index: addrPreset, Weight: 50, VotingPowers: preset},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{
+		EpochIndex: 1,
+		ModelId:    modelID,
+		ValidationWeights: []*inferencetypes.ValidationWeight{
+			{MemberAddress: addrZero, Weight: 0},                      // weight 0 -> voting_power stays 0
+			{MemberAddress: addrPreset, Weight: 50, VotingPower: 777}, // already set -> unchanged
+		},
+	})
+
+	require.NoError(t, backfillVotingPower(ctx, k))
+
+	got, found := k.GetActiveParticipants(ctx, 1)
+	require.True(t, found)
+	for _, p := range got.Participants {
+		switch p.Index {
+		case addrZero:
+			// Weight was 0, so backfill still writes [{modelID, 0}] because
+			// the code only skips when VotingPowers is non-empty. That's the
+			// expected behavior; we pin it here so regressions are visible.
+			require.Len(t, p.VotingPowers, 1)
+			require.Equal(t, int64(0), p.VotingPowers[0].VotingPower)
+		case addrPreset:
+			require.Equal(t, preset, p.VotingPowers,
+				"pre-existing voting powers must not be overwritten")
+		}
+	}
+
+	egd, found := k.GetEpochGroupData(ctx, 1, modelID)
+	require.True(t, found)
+	for _, vw := range egd.ValidationWeights {
+		switch vw.MemberAddress {
+		case addrZero:
+			require.Equal(t, int64(0), vw.VotingPower, "weight-0 entry should stay 0")
+		case addrPreset:
+			require.Equal(t, int64(777), vw.VotingPower, "pre-existing voting_power should be preserved")
+		}
+	}
+}
+
+func TestBackfillVotingPower_SafeSkips(t *testing.T) {
+	// Each sub-case represents a pre-upgrade state where backfill should
+	// silently skip rather than fail the upgrade.
+	t.Run("no effective epoch", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		require.NoError(t, backfillVotingPower(ctx, k))
+	})
+
+	t.Run("empty models list", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.PocParams.Models = nil
+		require.NoError(t, k.SetParams(ctx, params))
+		require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+		require.NoError(t, backfillVotingPower(ctx, k))
+	})
+
+	t.Run("empty primary model id", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.PocParams.Models = []*inferencetypes.PoCModelConfig{{ModelId: ""}}
+		require.NoError(t, k.SetParams(ctx, params))
+		require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+		require.NoError(t, backfillVotingPower(ctx, k))
+	})
+
+	t.Run("no active participants for epoch", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.PocParams.Models = []*inferencetypes.PoCModelConfig{{ModelId: "m1"}}
+		require.NoError(t, k.SetParams(ctx, params))
+		require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+		// No SetActiveParticipants and no SetEpochGroupData.
+		require.NoError(t, backfillVotingPower(ctx, k))
+	})
+
+	t.Run("no subgroup epoch group data", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.PocParams.Models = []*inferencetypes.PoCModelConfig{{ModelId: "m1"}}
+		require.NoError(t, k.SetParams(ctx, params))
+		require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+		// AP exists but the (epoch=1, model="m1") subgroup does not.
+		require.NoError(t, k.SetActiveParticipants(ctx, inferencetypes.ActiveParticipants{
+			EpochId: 1,
+			Participants: []*inferencetypes.ActiveParticipant{
+				{Index: sample.AccAddress(), Weight: 100},
+			},
+		}))
+		require.NoError(t, backfillVotingPower(ctx, k))
+	})
+}
+
+func TestInitNewPruningState(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 42))
+	require.NoError(t, k.PruningState.Set(ctx, inferencetypes.PruningState{
+		PocBatchesPrunedEpoch:            10,
+		PocValidationsPrunedEpoch:        10,
+		InferencePrunedEpoch:             10,
+		EpochGroupValidationsPrunedEpoch: 10,
+		DevshardPrunedEpoch:              10,
+		// New markers left at 0 to simulate pre-upgrade state.
+	}))
+
+	require.NoError(t, initNewPruningState(ctx, k))
+
+	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), state.PocValidationsV2PrunedEpoch)
+	require.Equal(t, int64(42), state.PocV2StoreCommitsPrunedEpoch)
+	require.Equal(t, int64(42), state.MlnodeWeightDistributionsPrunedEpoch)
+	require.Equal(t, int64(42), state.PocValidationSnapshotsPrunedEpoch)
+	// Pre-existing markers for other collections must be preserved.
+	require.Equal(t, int64(10), state.PocBatchesPrunedEpoch)
+	require.Equal(t, int64(10), state.PocValidationsPrunedEpoch)
+	require.Equal(t, int64(10), state.InferencePrunedEpoch)
+	require.Equal(t, int64(10), state.EpochGroupValidationsPrunedEpoch)
+	require.Equal(t, int64(10), state.DevshardPrunedEpoch)
+}
+
+func TestInitNewPruningState_DoesNotLowerMarkers(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 42))
+	require.NoError(t, k.PruningState.Set(ctx, inferencetypes.PruningState{
+		PocValidationsV2PrunedEpoch: 100, // already above current epoch
+	}))
+
+	require.NoError(t, initNewPruningState(ctx, k))
+
+	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), state.PocValidationsV2PrunedEpoch,
+		"should not lower an already-advanced marker")
+}
+
+func TestMigrationSequence(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	store := inferencekeeper.EmptyPrefixStore(ctx, &k)
+
+	// Legacy-prefix data to clear.
+	for i, pfx := range legacyPrefixes {
+		key := append(append([]byte{}, pfx...), []byte{byte(i)}...)
+		store.Set(key, []byte("v"))
+	}
+
+	// Pre-upgrade params: singular fields only, no Models, no DelegationParams.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.ModelId = "founding-model"
+	params.PocParams.SeqLen = 256
+	params.PocParams.WeightScaleFactor = inferencetypes.DecimalFromFloat(1.0)
+	params.PocParams.StatTest = inferencetypes.DefaultPoCStatTestParams()
+	params.PocParams.Models = nil
+	params.DelegationParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	// Epoch + ActiveParticipants + subgroup EpochGroupData with unset voting_power.
+	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 5, PocStartBlockHeight: 500}))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+
+	addr1 := sample.AccAddress()
+	addr2 := sample.AccAddress()
+	require.NoError(t, k.SetActiveParticipants(ctx, inferencetypes.ActiveParticipants{
+		EpochId: 5,
+		Participants: []*inferencetypes.ActiveParticipant{
+			{Index: addr1, Weight: 100},
+			{Index: addr2, Weight: 200},
+		},
+	}))
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{
+		EpochIndex: 5,
+		ModelId:    "founding-model",
+		ValidationWeights: []*inferencetypes.ValidationWeight{
+			{MemberAddress: addr1, Weight: 100},
+			{MemberAddress: addr2, Weight: 200},
+		},
+	})
+
+	// Pruning state starts fresh.
+	require.NoError(t, k.PruningState.Set(ctx, inferencetypes.PruningState{}))
+
+	// Run the four migration functions in the same order as CreateUpgradeHandler.
+	require.NoError(t, clearLegacyPoCv2Data(ctx, k))
+	require.NoError(t, migrateParams(ctx, k))
+	require.NoError(t, backfillVotingPower(ctx, k))
+	require.NoError(t, initNewPruningState(ctx, k))
+
+	// Legacy prefixes empty.
+	for i, pfx := range legacyPrefixes {
+		require.Equal(t, 0, countPrefixEntries(t, store, pfx),
+			"legacy prefix %d should be cleared", i)
+	}
+
+	// Params migrated.
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.PocParams.Models, 1)
+	require.Equal(t, "founding-model", got.PocParams.Models[0].ModelId)
+	require.NotNil(t, got.DelegationParams)
+	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
+
+	// Backfill picked up the migrated model id (proves ordering dependency).
+	ap, found := k.GetActiveParticipants(ctx, 5)
+	require.True(t, found)
+	for _, p := range ap.Participants {
+		require.Len(t, p.VotingPowers, 1)
+		require.Equal(t, "founding-model", p.VotingPowers[0].ModelId)
+		require.Equal(t, p.Weight, p.VotingPowers[0].VotingPower)
+	}
+	egd, found := k.GetEpochGroupData(ctx, 5, "founding-model")
+	require.True(t, found)
+	for _, vw := range egd.ValidationWeights {
+		require.Equal(t, vw.Weight, vw.VotingPower)
+	}
+
+	// Pruning markers seeded.
+	pstate, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), pstate.PocValidationsV2PrunedEpoch)
+	require.Equal(t, int64(5), pstate.PocV2StoreCommitsPrunedEpoch)
+	require.Equal(t, int64(5), pstate.MlnodeWeightDistributionsPrunedEpoch)
+	require.Equal(t, int64(5), pstate.PocValidationSnapshotsPrunedEpoch)
 }
 
 func TestAdjustBLSParameters_SetsDefaultsForZeroValues(t *testing.T) {

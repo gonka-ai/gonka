@@ -390,9 +390,9 @@ data class LocalInferencePair(
         )
     }
 
-    fun createDevshardEscrow(amount: Long): TxResponse {
+    fun createDevshardEscrow(amount: Long, modelId: String): TxResponse {
         return this.submitTransaction(
-            listOf("inference", "create-devshard-escrow", amount.toString())
+            listOf("inference", "create-devshard-escrow", amount.toString(), modelId)
         )
     }
 
@@ -945,9 +945,9 @@ data class LocalInferencePair(
             }
         }
 
-    fun createDevshardEscrow(amount: Long, from: String): TxResponse {
+    fun createDevshardEscrow(amount: Long, from: String, modelId: String = defaultModel): TxResponse {
         val txResp = node.sendTransactionDirectly(
-            listOf("inference", "create-devshard-escrow", amount.toString()),
+            listOf("inference", "create-devshard-escrow", amount.toString(), modelId),
             from
         )
         return node.waitForTxProcessed(txResp.txhash)

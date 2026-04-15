@@ -62,13 +62,13 @@ type MockClient struct {
 	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
 	// Capture parameters
-	LastInferenceModel   string
-	LastInferenceArgs    []string
+	LastInferenceModel    string
+	LastInferenceArgs     []string
+	LastInitGenerateV2Req *PoCInitGenerateRequestV2
+	LastGenerateV2Req     *PoCGenerateRequestV2
 	LastModelStatusCheck *Model
-	LastModelDownload      *Model
-	LastModelDelete        *Model
-	LastInitGenerateV2Req  *PoCInitGenerateRequestV2
-	LastGenerateV2Req      *PoCGenerateRequestV2
+	LastModelDownload    *Model
+	LastModelDelete      *Model
 }
 
 // NewMockClient creates a new mock client with default values
@@ -167,6 +167,8 @@ func (m *MockClient) Reset() {
 
 	m.LastInferenceModel = ""
 	m.LastInferenceArgs = nil
+	m.LastInitGenerateV2Req = nil
+	m.LastGenerateV2Req = nil
 	m.LastModelStatusCheck = nil
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
@@ -403,7 +405,8 @@ func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequ
 	defer m.Mu.Unlock()
 
 	m.InitGenerateV2Called++
-	m.LastInitGenerateV2Req = &req
+	reqCopy := req
+	m.LastInitGenerateV2Req = &reqCopy
 
 	// Update mock state: node is now in PoC generation mode, not inference
 	m.CurrentState = MlNodeState_POW
@@ -422,7 +425,8 @@ func (m *MockClient) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (
 	defer m.Mu.Unlock()
 
 	m.GenerateV2Called++
-	m.LastGenerateV2Req = &req
+	reqCopy := req
+	m.LastGenerateV2Req = &reqCopy
 
 	// Default success response
 	return &PoCGenerateResponseV2{

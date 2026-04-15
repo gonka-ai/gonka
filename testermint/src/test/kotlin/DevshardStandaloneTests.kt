@@ -1,7 +1,6 @@
+import com.github.kittinunf.fuel.Fuel
 import com.productscience.*
 import com.productscience.data.*
-import com.github.kittinunf.fuel.Fuel
-import kotlin.test.assertNotNull
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -9,8 +8,6 @@ import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import java.io.InputStream
-import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -20,6 +17,7 @@ import java.util.concurrent.Executors
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.test.assertNotNull
 
 /**
  * Mirror of DevshardTests but routed through versiond -> devshardd instead of
@@ -43,6 +41,7 @@ import java.util.zip.ZipOutputStream
  */
 class DevshardStandaloneTests : TestermintTest() {
     private val standaloneTestVersionName = "v0.2.11"
+    private val devshardEscrowModel = defaultModel
 
     private data class PreparedDevsharddArtifact(
         val approvedVersion: DevshardApprovedVersion,
@@ -113,7 +112,7 @@ class DevshardStandaloneTests : TestermintTest() {
 
         logSection("Creating devshard escrow")
         val escrowAmount = 7_000_000_000L
-        val txResponse = genesis.createDevshardEscrow(escrowAmount)
+        val txResponse = genesis.createDevshardEscrow(escrowAmount, modelId = devshardEscrowModel)
         assertThat(txResponse.code).isEqualTo(0)
 
         logSection("Querying devshard escrow")
@@ -163,15 +162,15 @@ class DevshardStandaloneTests : TestermintTest() {
         waitUntil("downloaded binary and install metadata exist on every pair", timeoutSeconds = 120) {
             cluster.allPairs.all { pair ->
                 pair.versiondBinaryExists(preparedArtifact.approvedVersion.name, "devshardd") &&
-                    pair.readVersiondInstallMetadata(preparedArtifact.approvedVersion.name)?.archiveSha256 ==
-                    preparedArtifact.approvedVersion.sha256
+                        pair.readVersiondInstallMetadata(preparedArtifact.approvedVersion.name)?.archiveSha256 ==
+                        preparedArtifact.approvedVersion.sha256
             }
         }
         cluster.allPairs.forEach { pair ->
             assertThat(pair.versiondBinaryExists(preparedArtifact.approvedVersion.name, "devshardd"))
                 .withFailMessage(
                     "Expected ${pair.name} versiond to download " +
-                        pair.versiondBinaryPath(preparedArtifact.approvedVersion.name, "devshardd")
+                            pair.versiondBinaryPath(preparedArtifact.approvedVersion.name, "devshardd")
                 )
                 .isTrue()
             val installMetadata = assertNotNull(pair.readVersiondInstallMetadata(preparedArtifact.approvedVersion.name))
@@ -211,7 +210,7 @@ class DevshardStandaloneTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy against devshardd")
         val handle = genesis.startDevshardProxy(
@@ -254,7 +253,7 @@ class DevshardStandaloneTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy against devshardd")
         val handle = genesis.startDevshardProxy(
@@ -268,7 +267,8 @@ class DevshardStandaloneTests : TestermintTest() {
             logSection("Sending streaming chat completions via proxy")
             val numInferences = 20L
             for (i in 0 until numInferences) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
+                val response =
+                    genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
                 assertThat(response).isNotEmpty()
                 assertThat(response).contains("data:")
             }
@@ -321,7 +321,8 @@ class DevshardStandaloneTests : TestermintTest() {
 
         val sessions = users.mapIndexed { i, user ->
             logSection("Creating escrow for user $i")
-            val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+            val escrowId =
+                genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
             SessionSetup(user.keyName, user.address, escrowId)
         }
 
@@ -411,7 +412,7 @@ class DevshardStandaloneTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
 
         val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName)
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy against devshardd")
         val handle = genesis.startDevshardProxy(
@@ -551,19 +552,19 @@ class DevshardStandaloneTests : TestermintTest() {
             StandardOpenOption.WRITE,
         ).buffered().use { output ->
             ZipOutputStream(output).use { zip ->
-            val entry = ZipEntry(binaryName).apply {
-                method = ZipEntry.STORED
-                time = 946684800000L // 2000-01-01T00:00:00Z
-                size = binaryMetadata.size
-                compressedSize = binaryMetadata.size
-                crc = binaryMetadata.crc32
-            }
-            zip.putNextEntry(entry)
+                val entry = ZipEntry(binaryName).apply {
+                    method = ZipEntry.STORED
+                    time = 946684800000L // 2000-01-01T00:00:00Z
+                    size = binaryMetadata.size
+                    compressedSize = binaryMetadata.size
+                    crc = binaryMetadata.crc32
+                }
+                zip.putNextEntry(entry)
                 Files.newInputStream(sourceBinary).buffered().use { input ->
                     input.copyTo(zip)
                 }
-            zip.closeEntry()
-        }
+                zip.closeEntry()
+            }
         }
     }
 
@@ -601,8 +602,8 @@ class DevshardStandaloneTests : TestermintTest() {
         return generateSequence(cwd) { it.parent }
             .firstOrNull { candidate ->
                 Files.isDirectory(candidate.resolve("testermint")) &&
-                    Files.isDirectory(candidate.resolve("local-test-net")) &&
-                    Files.isDirectory(candidate.resolve("versioned"))
+                        Files.isDirectory(candidate.resolve("local-test-net")) &&
+                        Files.isDirectory(candidate.resolve("versioned"))
             }
             ?: error("Repository root not found from $cwd")
     }

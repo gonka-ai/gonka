@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"cosmossdk.io/log"
+	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -63,29 +64,30 @@ func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) 
 	return reward
 }
 
-// AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their aggregated MLNodes
-// by collecting MLNode data from all model-specific EpochGroup subgroups for the given epoch.
-func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string][]*types.MLNodeInfo {
-	participantMLNodes := make(map[string][]*types.MLNodeInfo)
+// AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their
+// per-model MLNodes by collecting MLNode data from all model-specific subgroups.
+// Model identity is preserved so callers can apply per-model coefficients.
+func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string]map[string][]*types.MLNodeInfo {
+	participantMLNodes := make(map[string]map[string][]*types.MLNodeInfo)
 	allEpochGroups := k.GetAllEpochGroupData(ctx)
 
 	for _, vw := range validationWeights {
-		aggregated := make([]*types.MLNodeInfo, 0)
+		modelNodes := make(map[string][]*types.MLNodeInfo)
 		for _, subgroup := range allEpochGroups {
 			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
 				continue // Skip wrong epoch or parent group
 			}
 			for _, subVw := range subgroup.ValidationWeights {
 				if subVw.MemberAddress == vw.MemberAddress {
-					aggregated = append(aggregated, subVw.MlNodes...)
+					modelNodes[subgroup.ModelId] = subVw.MlNodes
 					break
 				}
 			}
 		}
-		participantMLNodes[vw.MemberAddress] = aggregated
+		participantMLNodes[vw.MemberAddress] = modelNodes
 		k.LogInfo("Settlement: Aggregated MLNodes for participant", types.Settle,
 			"participant", vw.MemberAddress,
-			"numMLNodes", len(aggregated))
+			"numModels", len(modelNodes))
 	}
 
 	return participantMLNodes
@@ -147,6 +149,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
+	// Extract per-model coefficients for cross-model weight aggregation
+	coefficients := modelCoefficients(params.PocParams)
+
 	// Check if this is a grace epoch and override BinomTestP0 if so
 	validationParams := params.ValidationParams
 	if validationParams == nil {
@@ -171,6 +176,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		validationParams,
 		settleParameters,
 		participantMLNodes,
+		coefficients,
 		collateralAdjustmentActive,
 		k.Logger(),
 	)
@@ -318,4 +324,19 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 type SettleResult struct {
 	Settle *types.SettleAmount
 	Error  error
+}
+
+// modelCoefficients extracts per-model weight_scale_factor from PocParams.
+// Mirrors module.ModelCoefficients but lives in keeper to avoid circular imports.
+func modelCoefficients(pocParams *types.PocParams) map[string]mathsdk.LegacyDec {
+	coeffs := make(map[string]mathsdk.LegacyDec)
+	if pocParams == nil {
+		return coeffs
+	}
+	for _, config := range pocParams.GetModelConfigs() {
+		if config != nil && config.ModelId != "" {
+			coeffs[config.ModelId] = config.GetWeightScaleFactorDec()
+		}
+	}
+	return coeffs
 }

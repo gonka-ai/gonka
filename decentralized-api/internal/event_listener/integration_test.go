@@ -35,6 +35,8 @@ var defaultEpochParams = types.EpochParams{
 	PocValidationDuration: 10,
 }
 
+const integrationTestModelID = keeper.GenesisModelsTest_QWQ
+
 var defaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
 		BlockInterval: 50,
@@ -248,18 +250,18 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
 			PocStartBlockHeight: 100,
-			SubGroupModels:      []string{"test-model"},
+			SubGroupModels:      []string{integrationTestModelID},
 		},
 	}, nil)
 	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "").Return(&types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
 			PocStartBlockHeight: 100,
-			SubGroupModels:      []string{"test-model"},
+			SubGroupModels:      []string{integrationTestModelID},
 		},
 	}, nil)
-	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), integrationTestModelID).Return(&types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
-			ModelSnapshot: &types.Model{Id: "test-model"},
+			ModelSnapshot: &types.Model{Id: integrationTestModelID},
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "some-address",
@@ -273,7 +275,14 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	}, nil)
 	mockChainBridge.On("GetParams").Return(&types.QueryParamsResponse{
 		Params: types.Params{
-			PocParams: types.DefaultPocParams(),
+			PocParams: &types.PocParams{
+				Models: []*types.PoCModelConfig{
+					{
+						ModelId: integrationTestModelID,
+						SeqLen:  256,
+					},
+				},
+			},
 		},
 	}, nil)
 

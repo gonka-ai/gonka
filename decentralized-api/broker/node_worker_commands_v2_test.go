@@ -111,6 +111,8 @@ func TestStartPoCNodeCommandV2_Success(t *testing.T) {
 	assert.Equal(t, 1, mockClient.GetPowStatusV2Called, "GetPowStatusV2() should be called for idempotency check")
 	assert.Equal(t, 0, mockClient.StopPowV2Called, "StopPowV2() should NOT be called (status is IDLE)")
 	assert.Equal(t, 1, mockClient.InitGenerateV2Called, "InitGenerateV2() should be called once")
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, "http://localhost:8080/callback/test-model", mockClient.LastInitGenerateV2Req.URL)
 }
 
 // TestStartPoCNodeCommandV2_AlreadyGenerating verifies idempotency - if already generating, return success without restart.
@@ -143,6 +145,30 @@ func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	assert.Equal(t, 1, mockClient.GetPowStatusV2Called, "GetPowStatusV2() should be called for idempotency check")
 	assert.Equal(t, 0, mockClient.StopPowV2Called, "StopPowV2() should NOT be called")
 	assert.Equal(t, 0, mockClient.InitGenerateV2Called, "InitGenerateV2() should NOT be called (already generating)")
+}
+
+func TestStartPoCNodeCommandV2_EncodesCallbackModelID(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	broker := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, broker)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 1000,
+		BlockHash:   "test-block-hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "org/model-b",
+		SeqLen:      256,
+	}
+
+	result := cmd.Execute(context.Background(), worker)
+
+	assert.True(t, result.Succeeded)
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, "http://localhost:8080/callback/org%252Fmodel-b", mockClient.LastInitGenerateV2Req.URL)
 }
 
 // TestStopPowV2_MockBehavior verifies the mock StopPowV2 works correctly.

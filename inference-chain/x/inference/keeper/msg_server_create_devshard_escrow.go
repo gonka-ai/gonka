@@ -16,6 +16,10 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, err
 	}
 
+	if msg.ModelId == "" {
+		return nil, fmt.Errorf("model_id is required")
+	}
+
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	ep := k.GetDevshardEscrowParams(goCtx)
@@ -34,12 +38,12 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, fmt.Errorf("epoch %d already has %d escrows (max %d)", epochIndex, epochCount, ep.MaxEscrowsPerEpoch)
 	}
 
-	epochGroup, err := k.GetCurrentEpochGroup(goCtx)
+	epochGroup, err := k.GetEpochGroup(goCtx, epochIndex, msg.ModelId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current epoch group: %w", err)
+		return nil, fmt.Errorf("failed to get epoch group for model %q: %w", msg.ModelId, err)
 	}
 	if epochGroup.GroupData == nil || len(epochGroup.GroupData.ValidationWeights) == 0 {
-		return nil, fmt.Errorf("no validation weights in current epoch group")
+		return nil, fmt.Errorf("no validation weights in epoch group for model %q", msg.ModelId)
 	}
 
 	weights := make(map[string]int64)
@@ -64,7 +68,14 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	}
 	nextID := counter + 1
 
-	slots := calculations.GetSlotsFromSorted(appHash, fmt.Sprintf("devshard_escrow:%d", nextID), sortedEntries, totalWeight, int(ep.GroupSize))
+	slots := calculations.GetSlotsFromSorted(
+		appHash,
+		fmt.Sprintf("devshard_escrow:%d", nextID),
+		msg.ModelId,
+		sortedEntries,
+		totalWeight,
+		int(ep.GroupSize),
+	)
 
 	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
@@ -88,6 +99,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		AppHash:    appHash,
 		Settled:    false,
 		TokenPrice: ep.TokenPrice,
+		ModelId:    msg.ModelId,
 	}
 
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)
@@ -101,6 +113,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		sdk.NewAttribute("creator", msg.Creator),
 		sdk.NewAttribute("amount", fmt.Sprint(msg.Amount)),
 		sdk.NewAttribute("epoch_index", fmt.Sprint(epochIndex)),
+		sdk.NewAttribute("model_id", msg.ModelId),
 	))
 
 	return &types.MsgCreateDevshardEscrowResponse{EscrowId: id}, nil

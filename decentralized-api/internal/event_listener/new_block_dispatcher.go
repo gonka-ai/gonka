@@ -238,6 +238,11 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					"enabled", cache.IsEnabled, "count", len(addresses))
 			}
 
+			// Update PoC params cache for multi-model support
+			if params.Params.PocParams != nil {
+				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
+			}
+
 			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
 				versions := make([]apiconfig.DevshardVersion, len(params.Params.DevshardEscrowParams.ApprovedVersions))

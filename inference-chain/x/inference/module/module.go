@@ -482,14 +482,26 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		err = am.initializeUpcomingEpochModelGroups(ctx, newGroup)
+		if err != nil {
+			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
+			return err
+		}
 
 		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
+	}
+
+	// Capture the pre-eligibility snapshot at start_poc - deploy_window.
+	if params.DelegationParams != nil &&
+		epochContext.IsDelegationSnapshotHeight(blockHeight, params.DelegationParams.DeployWindow) {
+		am.captureBootstrapDelegationSnapshot(ctx, blockHeight)
 	}
 
 	// Capture validation snapshot at poc_validation_start for deterministic sampling
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 		if found && upcomingEpoch != nil {
+			am.captureDelegationSnapshot(ctx, blockHeight)
 			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
 		} else {
 			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
@@ -525,6 +537,34 @@ func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 		Index:               getNextEpochIndex(prevEpoch),
 		PocStartBlockHeight: int64(blockHeight),
 	}
+}
+
+func (am AppModule) initializeUpcomingEpochModelGroups(ctx context.Context, parentGroup *epochgroup.EpochGroup) error {
+	if parentGroup == nil {
+		return nil
+	}
+
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, modelConfig := range params.PocParams.GetModelConfigs() {
+		if modelConfig == nil || modelConfig.ModelId == "" {
+			continue
+		}
+
+		model, found := am.keeper.GetGovernanceModel(ctx, modelConfig.ModelId)
+		if !found || model == nil {
+			return fmt.Errorf("poc model %q missing from governance models", modelConfig.ModelId)
+		}
+
+		if _, err := parentGroup.CreateSubGroup(ctx, model); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
@@ -607,6 +647,53 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err)
+		return
+	}
+
+	participationState, err := am.prepareEpochParticipationState(
+		ctx,
+		activeParticipants,
+		params,
+		upcomingEpoch.PocStartBlockHeight,
+	)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
+		return
+	}
+
+	// Compute consensus weights with caps applied and write to participants
+	consensusWeights := participationState.calculator.ComputeConsensusWeights(participationState.eligibleModels)
+	for _, p := range activeParticipants {
+		p.Weight = consensusWeights[p.Index]
+	}
+
+	// Delegation and bootstrap penalties are accumulated additively across all
+	// models and applied once, capped at 1.0.
+	adjParams := am.delegationAdjustmentParams(params)
+	penaltyStartEpochByModel := modelPenaltyStartEpochs(params.PocParams)
+	acc := NewPenaltyAccumulator(activeParticipants)
+	AccumulateDelegationPenalties(
+		acc,
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	AccumulateBootstrapPenalties(
+		acc,
+		participationState.bootstrapPenaltyByModel,
+		participationState.eligibleModels,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	acc.Apply(activeParticipants)
+
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
 	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
 		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
@@ -622,6 +709,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Apply universal power capping to epoch powers
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
+
+	// Write per-model voting powers to ActiveParticipant for visibility
+	am.computeAndSetVotingPowers(
+		activeParticipants,
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+	)
 
 	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
 	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
@@ -663,6 +758,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Call BLS module to initiate key generation for the new epoch
 	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
+
+	// Cleanup: delete consumed PoCRefusal and PoCDirectIntent entries
+	if err := am.keeper.DeleteAllPoCRefusals(ctx); err != nil {
+		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC refusals", types.PoC, "error", err)
+	}
+	if err := am.keeper.DeleteAllPoCDirectIntents(ctx); err != nil {
+		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC direct intents", types.PoC, "error", err)
+	}
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -726,19 +829,225 @@ func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTi
 		"generationStartTimestamp", blockTime)
 }
 
-// captureValidationSnapshot stores validator weights and app_hash at validation phase start
+// captureValidationSnapshot stores per-model voting powers and app_hash at validation phase start
 // for deterministic sampling synchronization between chain and DAPI.
-// Used by both regular PoC and confirmation PoC.
+//
+// For regular PoC:
+// - models already present in AP(N).voting_powers reuse those voting powers
+// - new models derive voting powers from bootstrap delegation + AP(N).weight + store commits
+// DIRECT = who submitted store commits for the new-model branch.
+//
+// For confirmation PoC: voting powers come from AP(N).voting_powers (already delegation-resolved
+// at epoch formation). DIRECT = who was assigned models in AP(N).
 func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
+	baseState := am.getEffectiveValidationBaseState(ctx)
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, snapshotKey, logContext)
+	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, logContext, modelWeights, totalWeight)
+}
+
+// captureConfirmationValidationSnapshot is like captureValidationSnapshot but uses
+// stored voting powers instead of computing from store commits. Uses the filtered
+// path to exclude members removed mid-epoch.
+func (am AppModule) captureConfirmationValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64) {
+	baseState := am.getEffectiveValidationBaseState(ctx)
+	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, "confirmation PoC",
+		baseState.existingModelVotingPowers, baseState.totalWeight)
+}
+
+type effectiveValidationBaseState struct {
+	participants              []*types.ActiveParticipant
+	weights                   map[string]int64
+	totalWeight               int64
+	existingModelVotingPowers []*types.ModelVotingPowers
+	perModelPocWeights        map[string]map[string]int64 // model_id -> member -> raw pocWeight from N-1
+}
+
+// getEffectiveValidationBaseState reads consensus weights and per-model voting
+// powers from EpochGroupData, filtered by SDK group membership. Members removed
+// mid-epoch (weight set to 0 in SDK group) are excluded because GetGroupMembers
+// does not return them.
+//
+// Epoch 0 has no model-aware voting powers yet.
+//
+// TODO: upgrade handler must populate ValidationWeight.voting_power in existing
+// EpochGroupData from AP.VotingPowers so the first post-upgrade epoch reads
+// correct values.
+func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effectiveValidationBaseState {
+	epochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return emptyValidationBaseState()
+	}
+
+	if epochIndex == 0 {
+		return am.getEpochZeroValidationBaseState(ctx)
+	}
+
+	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil || currentGroup == nil {
+		am.LogError("getEffectiveValidationBaseState: failed to get current epoch group", types.PoC, "error", err)
+		return emptyValidationBaseState()
+	}
+
+	rootMembers, err := currentGroup.GetGroupMembers(ctx)
+	if err != nil {
+		am.LogError("getEffectiveValidationBaseState: failed to get root group members", types.PoC, "error", err)
+		return emptyValidationBaseState()
+	}
+	liveMemberSet := make(map[string]bool, len(rootMembers))
+	for _, m := range rootMembers {
+		liveMemberSet[m.Member.Address] = true
+	}
+
+	rootGroupData := currentGroup.GroupData
+	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
+	totalWeight := int64(0)
+	participants := make([]*types.ActiveParticipant, 0, len(rootGroupData.ValidationWeights))
+	for _, vw := range rootGroupData.ValidationWeights {
+		if vw == nil || !liveMemberSet[vw.MemberAddress] {
+			continue
+		}
+		consensusWeights[vw.MemberAddress] = vw.Weight
+		totalWeight += vw.Weight
+		participants = append(participants, &types.ActiveParticipant{
+			Index:  vw.MemberAddress,
+			Weight: vw.Weight,
+		})
+	}
+
+	modelVPMap := make(map[string]map[string]int64)
+	perModelPocWeights := make(map[string]map[string]int64)
+	for _, modelID := range rootGroupData.SubGroupModels {
+		subGroup, err := currentGroup.GetSubGroup(ctx, modelID)
+		if err != nil || subGroup == nil {
+			continue
+		}
+		subMembers, err := subGroup.GetGroupMembers(ctx)
+		if err != nil {
+			continue
+		}
+		liveSubSet := make(map[string]bool, len(subMembers))
+		for _, m := range subMembers {
+			liveSubSet[m.Member.Address] = true
+		}
+		for _, vw := range subGroup.GroupData.ValidationWeights {
+			if vw == nil || !liveSubSet[vw.MemberAddress] {
+				continue
+			}
+			if vw.VotingPower > 0 {
+				if modelVPMap[modelID] == nil {
+					modelVPMap[modelID] = make(map[string]int64)
+				}
+				modelVPMap[modelID][vw.MemberAddress] = vw.VotingPower
+			}
+			if vw.Weight > 0 {
+				if perModelPocWeights[modelID] == nil {
+					perModelPocWeights[modelID] = make(map[string]int64)
+				}
+				perModelPocWeights[modelID][vw.MemberAddress] = vw.Weight
+			}
+		}
+	}
+
+	return effectiveValidationBaseState{
+		participants:              participants,
+		weights:                   consensusWeights,
+		totalWeight:               totalWeight,
+		existingModelVotingPowers: modelVPMapToSlice(modelVPMap),
+		perModelPocWeights:        perModelPocWeights,
+	}
+}
+
+func modelVPMapToSlice(modelVPMap map[string]map[string]int64) []*types.ModelVotingPowers {
+	modelWeights := make([]*types.ModelVotingPowers, 0, len(modelVPMap))
+	for modelID, vps := range modelVPMap {
+		modelWeights = append(modelWeights, &types.ModelVotingPowers{
+			ModelId:      modelID,
+			VotingPowers: types.VotingPowerMapToSlice(vps),
+		})
+	}
+	slices.SortFunc(modelWeights, func(a, b *types.ModelVotingPowers) int {
+		return cmp.Compare(a.ModelId, b.ModelId)
+	})
+	return modelWeights
+}
+
+func emptyValidationBaseState() effectiveValidationBaseState {
+	return effectiveValidationBaseState{
+		weights: map[string]int64{},
+	}
+}
+
+// computeStoreCommitVotingPowers builds validation-time voting powers by combining:
+// - existing model voting powers from the provided base state
+// - bootstrap-model voting powers derived from bootstrap delegation + consensus weights + store commits
+func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseState effectiveValidationBaseState, snapshotKey int64, logContext string) ([]*types.ModelVotingPowers, int64) {
+	consensusWeights := baseState.weights
+	totalNetworkWeight := baseState.totalWeight
+	if totalNetworkWeight == 0 {
+		return nil, 0
+	}
+
+	mergedValidationVotingPowers := make(map[string]map[string]int64, len(baseState.existingModelVotingPowers))
+	for _, mvw := range baseState.existingModelVotingPowers {
+		mergedValidationVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
+	}
+
+	_, bootstrapDelegations, _, found := am.loadBootstrapSnapshotState(ctx)
+	if !found {
+		am.LogError("computeStoreCommitVotingPowers: bootstrap delegation snapshot not found", types.PoC,
+			"context", logContext)
+		bootstrapDelegations = map[string]map[string]string{}
+	}
+
+	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, snapshotKey)
+	if err != nil {
+		am.LogError("computeStoreCommitVotingPowers: Failed to get store commits", types.PoC,
+			"context", logContext, "error", err)
+		return nil, totalNetworkWeight
+	}
+	// Bootstrap intent is frozen at start_poc - deploy_window. If a participant
+	// switches from intent to delegation after that snapshot, the late delegation
+	// is intentionally ignored for the current bootstrap-model validation path.
+	bootstrapModelStoreCommitKeys := make([]types.PoCParticipantModelKey, 0, len(allStoreCommits))
+	for _, key := range sortedStoreCommitKeys(allStoreCommits) {
+		if _, alreadyActive := mergedValidationVotingPowers[key.ModelID]; alreadyActive {
+			continue
+		}
+		bootstrapModelStoreCommitKeys = append(bootstrapModelStoreCommitKeys, key)
+	}
+
+	bootstrapModelVotingPowers := ComputeModelVotingPowers(bootstrapModelStoreCommitKeys, consensusWeights, bootstrapDelegations)
+	for _, modelID := range sortedKeys(bootstrapModelVotingPowers) {
+		vps := bootstrapModelVotingPowers[modelID]
+		mergedValidationVotingPowers[modelID] = vps
+	}
+	if len(allStoreCommits) > 0 && len(mergedValidationVotingPowers) == 0 {
+		am.LogError("computeStoreCommitVotingPowers: store commits exist but validation snapshot has no models", types.PoC,
+			"context", logContext,
+			"numStoreCommits", len(allStoreCommits),
+		)
+	}
+
+	var modelWeights []*types.ModelVotingPowers
+	for modelID, vps := range mergedValidationVotingPowers {
+		modelWeights = append(modelWeights, &types.ModelVotingPowers{
+			ModelId:      modelID,
+			VotingPowers: types.VotingPowerMapToSlice(vps),
+		})
+	}
+	slices.SortFunc(modelWeights, func(a, b *types.ModelVotingPowers) int {
+		return cmp.Compare(a.ModelId, b.ModelId)
+	})
+	return modelWeights, totalNetworkWeight
+}
+
+// writeValidationSnapshot writes a PoCValidationSnapshot with the given voting powers.
+func (am AppModule) writeValidationSnapshot(
+	ctx context.Context, blockHeight, snapshotKey int64, logContext string,
+	modelWeights []*types.ModelVotingPowers, totalWeight int64,
+) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockTime := sdkCtx.BlockTime().Unix()
-
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
-	if err != nil {
-		am.LogError("captureValidationSnapshot: Failed to get validator weights", types.PoC,
-			"context", logContext, "error", err)
-		return
-	}
 
 	var generationStartTimestamp int64
 	existingSnapshot, found, _ := am.keeper.GetPoCValidationSnapshot(ctx, snapshotKey)
@@ -750,36 +1059,26 @@ func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, 
 		PocStageStartHeight:      snapshotKey,
 		SnapshotHeight:           blockHeight,
 		AppHash:                  hex.EncodeToString(sdkCtx.HeaderInfo().AppHash),
-		ValidatorWeights:         validatorWeightsMapToSlice(currentValidatorWeights),
+		ModelVotingPowers:        modelWeights,
+		TotalNetworkWeight:       totalWeight,
 		GenerationStartTimestamp: generationStartTimestamp,
 		ExchangeEndTimestamp:     blockTime,
 	}
 
 	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
-		am.LogError("captureValidationSnapshot: Failed to store snapshot", types.PoC,
+		am.LogError("writeValidationSnapshot: Failed to store", types.PoC,
 			"context", logContext, "error", err)
 		return
 	}
 
-	am.LogInfo("captureValidationSnapshot: Stored validation snapshot", types.PoC,
+	am.LogInfo("writeValidationSnapshot: Stored validation snapshot", types.PoC,
 		"context", logContext,
 		"snapshotKey", snapshotKey,
 		"snapshotHeight", blockHeight,
-		"numValidators", len(currentValidatorWeights),
-		"generationStartTimestamp", generationStartTimestamp,
+		"numModels", len(modelWeights),
+		"totalNetworkWeight", totalWeight,
 		"exchangeEndTimestamp", blockTime,
 	)
-}
-
-func validatorWeightsMapToSlice(weights map[string]int64) []*types.ValidatorWeight {
-	result := make([]*types.ValidatorWeight, 0, len(weights))
-	for addr, w := range weights {
-		result = append(result, &types.ValidatorWeight{Address: addr, Weight: w})
-	}
-	slices.SortFunc(result, func(a, b *types.ValidatorWeight) int {
-		return cmp.Compare(a.Address, b.Address)
-	})
-	return result
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
@@ -789,6 +1088,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		return
 	}
 	validationParams := params.ValidationParams
+	coefficients := ModelCoefficients(params.PocParams)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -802,7 +1102,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			continue
 		}
 
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, 0)
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, 0, coefficients)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())

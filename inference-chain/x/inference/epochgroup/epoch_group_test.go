@@ -65,6 +65,7 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 }
 
 func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
+	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -82,13 +83,14 @@ func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
 	// Should be 0 since all nodes have POC_SLOT=true
 	require.Equal(t, int64(0), weight)
 }
 
 func TestCalculatePocParticipatingNodesWeight_NoneServeInference(t *testing.T) {
+	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -106,14 +108,14 @@ func TestCalculatePocParticipatingNodesWeight_NoneServeInference(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
-	// Should be sum of all weights since all have POC_SLOT=false,
-	//  meaning no nodes serve inference during PoC
+	// Should be sum of all weights since all have POC_SLOT=false
 	require.Equal(t, int64(300), weight)
 }
 
 func TestCalculatePocParticipatingNodesWeight_Mixed(t *testing.T) {
+	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -141,14 +143,14 @@ func TestCalculatePocParticipatingNodesWeight_Mixed(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
 	// Should be 100 + 300 = 400 (only POC_SLOT=false nodes)
 	require.Equal(t, int64(400), weight)
 }
 
 func TestCalculatePocParticipatingNodesWeight_EmptySlots(t *testing.T) {
-	// Nodes with empty or short TimeslotAllocation arrays
+	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -171,14 +173,14 @@ func TestCalculatePocParticipatingNodesWeight_EmptySlots(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
 	// Should be 300 (only node3 has valid POC_SLOT at index 1)
 	require.Equal(t, int64(300), weight)
 }
 
 func TestCalculatePocParticipatingNodesWeight_NilNodes(t *testing.T) {
-	// Test handling of nil nodes
+	models := []string{"model-a", "model-b"}
 	mlNodes := []*types.ModelMLNodes{
 		nil, // Nil model nodes
 		{
@@ -193,7 +195,7 @@ func TestCalculatePocParticipatingNodesWeight_NilNodes(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
 	// Should handle nils gracefully and count only valid node
 	require.Equal(t, int64(100), weight)
@@ -213,7 +215,7 @@ func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
 }
 
 func TestCalculatePocParticipatingNodesWeight_MultipleModelArrays(t *testing.T) {
-	// Multiple model arrays (though typically there's only one)
+	models := []string{"model-a", "model-b"}
 	mlNodes := []*types.ModelMLNodes{
 		{
 			MlNodes: []*types.MLNodeInfo{
@@ -235,9 +237,9 @@ func TestCalculatePocParticipatingNodesWeight_MultipleModelArrays(t *testing.T) 
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(mlNodes)
+	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
 
-	// Should sum across all model arrays
+	// Should sum across all model arrays (coeff=1.0 for each when nil)
 	require.Equal(t, int64(300), weight)
 }
 
@@ -248,6 +250,7 @@ func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightInitialization(t 
 		Index:        "test-participant",
 		ValidatorKey: "test-pubkey",
 		Weight:       450,
+		Models:       []string{"model-a"},
 		MlNodes: []*types.ModelMLNodes{
 			{
 				MlNodes: []*types.MLNodeInfo{
@@ -272,7 +275,7 @@ func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightInitialization(t 
 	}
 
 	// Call with confirmationWeight = 0 to trigger initialization
-	member := NewEpochMemberFromActiveParticipant(p, 1, 0)
+	member := NewEpochMemberFromActiveParticipant(p, 1, 0, nil)
 
 	// Should sum only POC_SLOT=false weights: 100 + 150 = 250
 	require.Equal(t, int64(250), member.ConfirmationWeight, "confirmation_weight should equal sum of POC_SLOT=false weights")
@@ -285,6 +288,7 @@ func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightProvided(t *testi
 		Index:        "test-participant",
 		ValidatorKey: "test-pubkey",
 		Weight:       450,
+		Models:       []string{"model-a"},
 		MlNodes: []*types.ModelMLNodes{
 			{
 				MlNodes: []*types.MLNodeInfo{
@@ -304,7 +308,7 @@ func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightProvided(t *testi
 	}
 
 	// Call with confirmationWeight already provided (e.g., from previous confirmation PoC)
-	member := NewEpochMemberFromActiveParticipant(p, 1, 180)
+	member := NewEpochMemberFromActiveParticipant(p, 1, 180, nil)
 
 	// Should use the provided value (180), not recalculate (which would be 250)
 	require.Equal(t, int64(180), member.ConfirmationWeight, "confirmation_weight should use provided value")
@@ -316,6 +320,7 @@ func TestNewEpochMemberFromActiveParticipant_AllPreservedNodes(t *testing.T) {
 		Index:        "test-participant",
 		ValidatorKey: "test-pubkey",
 		Weight:       300,
+		Models:       []string{"model-a"},
 		MlNodes: []*types.ModelMLNodes{
 			{
 				MlNodes: []*types.MLNodeInfo{
@@ -334,7 +339,7 @@ func TestNewEpochMemberFromActiveParticipant_AllPreservedNodes(t *testing.T) {
 		},
 	}
 
-	member := NewEpochMemberFromActiveParticipant(p, 1, 0)
+	member := NewEpochMemberFromActiveParticipant(p, 1, 0, nil)
 
 	// Should be 0 since no nodes available for confirmation PoC
 	require.Equal(t, int64(0), member.ConfirmationWeight, "confirmation_weight should be 0 when all nodes preserved")

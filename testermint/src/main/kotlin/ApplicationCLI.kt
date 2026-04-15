@@ -764,7 +764,7 @@ data class ApplicationCLI(
         ).count
     }
 
-    fun getPoCV2StoreCommit(epochStartHeight: Long, participantAddress: String): PoCV2StoreCommitResponse =
+    fun getPoCV2StoreCommit(epochStartHeight: Long, participantAddress: String, modelId: String = defaultModel): PoCV2StoreCommitResponse =
         wrapLog("getPoCV2StoreCommit", infoLevel = false) {
             execAndParse(
                 listOf(
@@ -772,12 +772,14 @@ data class ApplicationCLI(
                     "inference",
                     "poc-v2-store-commit",
                     epochStartHeight.toString(),
-                    participantAddress
+                    participantAddress,
+                    "--model-id",
+                    modelId
                 )
             )
         }
 
-    fun getMLNodeWeightDistribution(epochStartHeight: Long, participantAddress: String): MLNodeWeightDistributionResponse =
+    fun getMLNodeWeightDistribution(epochStartHeight: Long, participantAddress: String, modelId: String = defaultModel): MLNodeWeightDistributionResponse =
         wrapLog("getMLNodeWeightDistribution", infoLevel = false) {
             execAndParse(
                 listOf(
@@ -785,7 +787,9 @@ data class ApplicationCLI(
                     "inference",
                     "mlnode-weight-distribution",
                     epochStartHeight.toString(),
-                    participantAddress
+                    participantAddress,
+                    "--model-id",
+                    modelId
                 )
             )
         }
@@ -890,6 +894,8 @@ data class ApplicationCLI(
         @JsonProperty("participant_address")
         val participantAddress: String = "",
         val count: Long = 0,
+        @JsonProperty("model_id")
+        val modelId: String = "",
         @JsonProperty("root_hash")
         val rootHash: String? = null
     )

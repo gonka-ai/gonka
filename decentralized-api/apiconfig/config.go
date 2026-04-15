@@ -3,6 +3,8 @@ package apiconfig
 import (
 	"fmt"
 	"strings"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type Config struct {
@@ -23,6 +25,7 @@ type Config struct {
 	LastUsedVersion          string                   `koanf:"last_used_version" json:"last_used_version"`
 	ValidationParams         ValidationParamsCache    `koanf:"validation_params" json:"validation_params"`
 	BandwidthParams          BandwidthParamsCache     `koanf:"bandwidth_params" json:"bandwidth_params"`
+	PoCParams                PoCParamsCache           `koanf:"poc_params" json:"poc_params"`
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
 	DevshardVersionsCache      DevshardVersionsCache      `koanf:"-" json:"-"` // not persisted, synced from chain
 }
@@ -207,6 +210,44 @@ type BandwidthParamsCache struct {
 	KbPerInputToken           float64 `koanf:"kb_per_input_token" json:"kb_per_input_token"`
 	KbPerOutputToken          float64 `koanf:"kb_per_output_token" json:"kb_per_output_token"`
 	MaxInferencesPerBlock     uint64  `koanf:"max_inferences_per_block" json:"max_inferences_per_block"`
+}
+type PoCModelConfigCache struct {
+	ModelId string `koanf:"model_id" json:"model_id"`
+	SeqLen  int64  `koanf:"seq_len" json:"seq_len"`
+}
+
+type PoCParamsCache struct {
+	Models []PoCModelConfigCache `koanf:"models" json:"models"`
+}
+
+func NewPoCParamsCache(modelConfigs []*types.PoCModelConfig) PoCParamsCache {
+	models := make([]PoCModelConfigCache, 0, len(modelConfigs))
+	for _, modelConfig := range modelConfigs {
+		if modelConfig == nil || modelConfig.ModelId == "" {
+			continue
+		}
+		models = append(models, PoCModelConfigCache{
+			ModelId: modelConfig.ModelId,
+			SeqLen:  modelConfig.SeqLen,
+		})
+	}
+	return PoCParamsCache{Models: models}
+}
+
+func (p PoCParamsCache) PrimaryModel() *PoCModelConfigCache {
+	if len(p.Models) == 0 {
+		return nil
+	}
+	return &p.Models[0]
+}
+
+func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, bool) {
+	for _, model := range p.Models {
+		if model.ModelId == modelID {
+			return model, true
+		}
+	}
+	return PoCModelConfigCache{}, false
 }
 
 // DevshardVersionsCache holds approved devshard versions synced from chain params.
