@@ -144,7 +144,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 	if finalInference.IsCompleted() {
-		k.handleInferenceCompleted(ctx, finalInference, &executor)
+		if err := k.handleInferenceCompleted(ctx, finalInference, &executor); err != nil {
+			return failedFinish(ctx, err, msg), nil
+		}
 	}
 	if shouldPersistParticipant(finalInference, payments, &executor) {
 		if err := k.SetParticipant(ctx, executor); err != nil {
@@ -297,9 +299,9 @@ func (k msgServer) compareFinishModelField(msg *types.MsgFinishInference, infere
 	return nil
 }
 
-func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.Inference, executor *types.Participant) {
+func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.Inference, executor *types.Participant) error {
 	if executor == nil {
-		k.LogWarn("handleInferenceCompleted: executor not loaded, skipping participant updates", types.Inferences, "executed_by", inference.ExecutedBy)
+		return sdkerrors.Wrapf(types.ErrParticipantNotFound, "handleInferenceCompleted: executor not loaded for %s", inference.ExecutedBy)
 	} else {
 		ensureParticipantEpochStats(executor)
 		executor.CurrentEpochStats.InferenceCount++
@@ -308,13 +310,10 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.In
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
 	if !found {
-		k.LogWarn("handleInferenceCompleted: effective epoch not found, defaulting epoch fields to zero", types.EpochGroup)
-		inference.EpochPocStartBlockHeight = 0
-		inference.EpochId = 0
-	} else {
-		inference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
-		inference.EpochId = effectiveEpoch.Index
+		return sdkerrors.Wrap(types.ErrEpochNotFound, "handleInferenceCompleted: effective epoch not found")
 	}
+	inference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
+	inference.EpochId = effectiveEpoch.Index
 	ctx.EventManager().EmitEvent(sdk.NewEvent(
 		"inference_finished",
 		buildInferenceFinishedEventAttributes(inference)...,
@@ -322,7 +321,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.In
 
 	if err := k.EnqueueFinishedInference(ctx, inference.InferenceId); err != nil {
 		k.LogError("Unable to enqueue pending inference validation", types.Validation, "inference_id", inference.InferenceId, "block_height", ctx.BlockHeight(), "err", err)
-		return
+		return err
 	}
 
 	k.LogDebug("Queued inference for deferred validation details processing", types.Validation,
@@ -330,6 +329,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, inference *types.In
 		"epoch_id", inference.EpochId,
 		"block_height", ctx.BlockHeight(),
 	)
+	return nil
 }
 
 // buildInferenceFinishedEventAttributes emits only fields required for dev-stats off-chain migration.
