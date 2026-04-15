@@ -33,25 +33,8 @@ class NodeDisableInferenceTests : TestermintTest() {
         val participants = genesis.api.getActiveParticipants().activeParticipants
         assertThat(participants.participants).hasSize(3)
 
-        genesis.waitForBlock(maxBlocks = 25) { pair ->
-            pair.api.getNodes().any { node ->
-                node.state.epochMlNodes?.values?.any { allocation ->
-                    allocation.timeslotAllocation.any { it }
-                } == true
-            }
-        }
-
         val genesisRegisteredNodes = genesis.api.getNodes()
         assertThat(genesisRegisteredNodes).hasSize(2)
-        assertThat(
-            genesisRegisteredNodes.any { node ->
-                node.state.epochMlNodes?.values?.any { allocation ->
-                    allocation.timeslotAllocation.any { it }
-                } == true
-            }
-        )
-            .isTrue()
-            .`as`("At least one Genesis ML node should have inference timeslot allocation")
 
         val genesisParticipant = participants.getParticipant(genesis)
         assertThat(genesisParticipant).isNotNull

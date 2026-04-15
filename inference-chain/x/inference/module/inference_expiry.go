@@ -11,6 +11,7 @@ import (
 type PoCTimeRange struct {
 	StartBlock int64
 	EndBlock   int64
+	AnchorHeight int64
 	IsActive   bool
 	IsCPoC     bool // true if this is a Confirmation PoC, false if regular PoC
 }
@@ -40,10 +41,11 @@ func (am AppModule) GetLatestPoCOrCPoCRangeWithData(
 		// Return range from start of next PoC to current block
 		nextPoCStart := epochContext.NextPoCStart()
 		return &PoCTimeRange{
-			StartBlock: nextPoCStart,
-			EndBlock:   blockHeight, // Can't predict future, use current block
-			IsActive:   true,
-			IsCPoC:     false,
+			StartBlock:   nextPoCStart,
+			EndBlock:     blockHeight, // Can't predict future, use current block
+			AnchorHeight: nextPoCStart,
+			IsActive:     true,
+			IsCPoC:       false,
 		}, nil
 	}
 
@@ -68,19 +70,21 @@ func (am AppModule) GetLatestPoCOrCPoCRangeWithData(
 
 		isActive := blockHeight >= latestCPoC.GenerationStartHeight && blockHeight <= cpocEndBlock
 		return &PoCTimeRange{
-			StartBlock: latestCPoC.GenerationStartHeight,
-			EndBlock:   cpocEndBlock,
-			IsActive:   isActive,
-			IsCPoC:     true,
+			StartBlock:   latestCPoC.GenerationStartHeight,
+			EndBlock:     cpocEndBlock,
+			AnchorHeight: latestCPoC.TriggerHeight,
+			IsActive:     isActive,
+			IsCPoC:       true,
 		}, nil
 	}
 
 	// 3. No active PoC or CPoC - return current epoch's PoC range as default
 	return &PoCTimeRange{
-		StartBlock: epochContext.StartOfPoC(),
-		EndBlock:   epochContext.EndOfPoCValidation(),
-		IsActive:   false,
-		IsCPoC:     false,
+		StartBlock:   epochContext.StartOfPoC(),
+		EndBlock:     epochContext.EndOfPoCValidation(),
+		AnchorHeight: epochContext.PocStartBlockHeight,
+		IsActive:     false,
+		IsCPoC:       false,
 	}, nil
 }
 
@@ -196,6 +200,7 @@ func (am AppModule) HasNodeForModel(
 	modelId string,
 	checkPreserveNode bool,
 	activeParticipants *types.ActiveParticipants,
+	preservedSnapshot *types.PreservedNodesSnapshot,
 ) bool {
 	if activeParticipants == nil {
 		return false
@@ -235,11 +240,12 @@ func (am AppModule) HasNodeForModel(
 
 	// Check if participant has the model
 	if checkPreserveNode {
-		// Check preserve nodes (POC_SLOT = true, which is index 1 in TimeslotAllocation)
+		preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelId)
 		for _, mlNode := range modelMLNodes.MlNodes {
-			// Check if this is a preserve node (POC_SLOT = true)
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
+			if mlNode != nil {
+				if _, isPreserved := preservedNodeSet[mlNode.NodeId]; isPreserved {
 				return true
+				}
 			}
 		}
 		return false

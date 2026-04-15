@@ -2,7 +2,6 @@ package inference
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -544,7 +543,22 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+	if err != nil {
+		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes snapshot", types.PoC,
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+			"episodeAnchorHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return nil
+	}
+	if !found {
+		am.LogWarn("GetPreviousEpochMLNodesWithInferenceAllocation: Preserved nodes snapshot not found", types.PoC,
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+			"episodeAnchorHeight", upcomingEpoch.PocStartBlockHeight)
+		return nil
+	}
+
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, &preservedSnapshot)
 	if err != nil {
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes by participant", types.PoC, "error", err)
 		return nil
@@ -566,10 +580,11 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 			continue
 		}
 
+		participantAddress = participantRecordAddress(participant)
+
 		// Build per-model MlNodes arrays with Models populated
 		var models []string
 		var mlNodeArrays []*types.ModelMLNodes
-		totalWeight := int64(0)
 
 		// Sort model IDs for deterministic order
 		sortedModelIds := make([]string, 0, len(modelBuckets))
@@ -584,7 +599,6 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 			for _, node := range nodes {
 				if node.NodeId != "" {
 					filtered = append(filtered, node)
-					totalWeight += node.PocWeight
 				}
 			}
 			if len(filtered) > 0 {
@@ -598,20 +612,20 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		}
 
 		activeParticipant := &types.ActiveParticipant{
-			Index:        participant.Address,
+			Index:        participantAddress,
 			ValidatorKey: participant.ValidatorKey,
-			Weight:       totalWeight,
 			InferenceUrl: participant.InferenceUrl,
 			Seed:         nil,
 			Models:       models,
 			MlNodes:      mlNodeArrays,
 		}
+		activeParticipant.Weight = RecalculateWeight(activeParticipant)
 
 		preservedParticipants[participantAddress] = activeParticipant
 
 		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
 			"participantAddress", participantAddress,
-			"totalWeight", totalWeight,
+			"totalWeight", activeParticipant.Weight,
 			"models", models)
 	}
 
@@ -641,52 +655,66 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 func (am AppModule) GetPreservedNodesByParticipant(
 	ctx context.Context,
 	epochId uint64,
+	preservedSnapshot *types.PreservedNodesSnapshot,
 ) (map[string]map[string][]*types.MLNodeInfo, error) {
-	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
-	if !found {
-		am.LogError("GetPreservedNodesByParticipant: Active participants not found",
-			types.PoC, "epochId", epochId)
-		return nil, fmt.Errorf("GetPreservedNodesByParticipant: active participant not found. epochId: %d", epochId)
+	result := make(map[string]map[string][]*types.MLNodeInfo)
+	if preservedSnapshot == nil {
+		return result, nil
 	}
 
-	result := make(map[string]map[string][]*types.MLNodeInfo)
+	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
+		if modelNodes == nil || modelNodes.ModelId == "" || len(modelNodes.PreservedNodeIds) == 0 {
+			continue
+		}
 
-	for _, p := range participants.Participants {
-		am.LogInfo("GetPreservedNodesByParticipant: Processing participant", types.PoC,
-			"participantAddress", p.Index, "len(p.MlNodes)", len(p.MlNodes), "models", p.Models)
+		subgroupData, found := am.keeper.GetEpochGroupData(ctx, epochId, modelNodes.ModelId)
+		if !found {
+			am.LogWarn("GetPreservedNodesByParticipant: Model subgroup not found for preserved snapshot", types.PoC,
+				"epochId", epochId,
+				"modelId", modelNodes.ModelId)
+			continue
+		}
 
-		modelNodes := make(map[string][]*types.MLNodeInfo)
-		for i, nodeArray := range p.MlNodes {
-			if i >= len(p.Models) || p.Models[i] == "" {
+		preservedNodeSet := make(map[string]struct{}, len(modelNodes.PreservedNodeIds))
+		for _, nodeID := range modelNodes.PreservedNodeIds {
+			if nodeID == "" {
 				continue
 			}
-			modelId := p.Models[i]
-			for _, mlNode := range nodeArray.MlNodes {
-				if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
-					preservedMLNode := &types.MLNodeInfo{
-						NodeId:             mlNode.NodeId,
-						Throughput:         mlNode.Throughput,
-						PocWeight:          mlNode.PocWeight,
-						TimeslotAllocation: []bool{true, false}, // Reset for new epoch
-					}
-					modelNodes[modelId] = append(modelNodes[modelId], preservedMLNode)
-				}
-			}
+			preservedNodeSet[nodeID] = struct{}{}
 		}
-		if len(modelNodes) > 0 {
-			result[p.Index] = modelNodes
-			totalNodes := 0
-			for _, nodes := range modelNodes {
-				totalNodes += len(nodes)
+		if len(preservedNodeSet) == 0 {
+			continue
+		}
+
+		for _, validationWeight := range subgroupData.ValidationWeights {
+			if validationWeight == nil || validationWeight.MemberAddress == "" {
+				continue
 			}
-			am.LogInfo("GetPreservedNodesByParticipant: Found preserved MLNodes", types.PoC,
-				"participantAddress", p.Index,
-				"numModels", len(modelNodes),
-				"totalNodes", totalNodes)
+			for _, node := range validationWeight.MlNodes {
+				if node == nil || node.NodeId == "" {
+					continue
+				}
+				if _, ok := preservedNodeSet[node.NodeId]; !ok {
+					continue
+				}
+				if _, ok := result[validationWeight.MemberAddress]; !ok {
+					result[validationWeight.MemberAddress] = make(map[string][]*types.MLNodeInfo)
+				}
+				copyNode := *node
+				copyNode.TimeslotAllocation = append([]bool(nil), node.TimeslotAllocation...)
+				result[validationWeight.MemberAddress][modelNodes.ModelId] = append(result[validationWeight.MemberAddress][modelNodes.ModelId], &copyNode)
+			}
 		}
 	}
 
 	return result, nil
+}
+
+func participantRecordAddress(participant types.Participant) string {
+	if participant.Address != "" {
+		return participant.Address
+	}
+	return participant.Index
 }
 
 func findParticipantByAddress(participants []*types.ActiveParticipant, address string) *types.ActiveParticipant {
@@ -781,7 +809,7 @@ func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*ty
 	return []*types.ModelMLNodes{{MlNodes: allNodes}}
 }
 
-// getInferenceServingNodeIds returns a set of node IDs that have POC_SLOT = true in the current epoch
+// getInferenceServingNodeIds returns node IDs preserved for the current episode snapshot.
 func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]bool {
 	inferenceServingNodeIds := make(map[string]bool)
 
@@ -790,22 +818,24 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 		return inferenceServingNodeIds
 	}
 
-	// Get current epoch group data
-	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
 	if err != nil {
-		am.LogError("getInferenceServingNodeIds: Unable to get current epoch group", types.PoC, "error", err.Error())
+		am.LogError("getInferenceServingNodeIds: Unable to get preserved nodes snapshot", types.PoC, "error", err.Error())
+		return inferenceServingNodeIds
+	}
+	if !found {
 		return inferenceServingNodeIds
 	}
 
-	// Find all nodes with POC_SLOT = true
-	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
-		for _, mlNode := range validationWeight.MlNodes {
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
-				inferenceServingNodeIds[mlNode.NodeId] = true
-				am.LogInfo("getInferenceServingNodeIds: Found inference-serving node", types.PoC,
-					"nodeId", mlNode.NodeId,
-					"participantAddress", validationWeight.MemberAddress)
-			}
+	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
+		if modelNodes == nil {
+			continue
+		}
+		for _, nodeID := range modelNodes.PreservedNodeIds {
+			inferenceServingNodeIds[nodeID] = true
+			am.LogInfo("getInferenceServingNodeIds: Found inference-serving node", types.PoC,
+				"nodeId", nodeID,
+				"modelId", modelNodes.ModelId)
 		}
 	}
 

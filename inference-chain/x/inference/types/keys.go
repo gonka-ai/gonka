@@ -92,6 +92,7 @@ var (
 	BridgeMintRefundsPrefix         = collections.NewPrefix(61)
 	BridgeWithdrawalRefundsPrefix   = collections.NewPrefix(62)
 	BridgeWithdrawalTokenRefsPrefix = collections.NewPrefix(63)
+	PreservedNodesSnapshotPrefix    = collections.NewPrefix(64)
 	ParamsKey                       = []byte("p_inference")
 )
 

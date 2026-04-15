@@ -99,15 +99,15 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		"epoch_index", effectiveEpoch.Index, "latest_epoch_index", epochContext.EpochIndex,
 		"block_height", sdkCtx.BlockHeight(), "set_new_validators_block_height", epochContext.SetNewValidators())
 
-	_, isActive, err := k.GetActiveConfirmationPoCEvent(goCtx)
+	activeEvent, isActive, err := k.GetActiveConfirmationPoCEvent(goCtx)
 	if err != nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: failed to check confirmation PoC",
 			"model_id", modelId, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if isActive {
-		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
+	if isActive && activeEvent != nil {
+		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId, activeEvent.TriggerHeight)
 	}
 
 	if currentPhase == types.InferencePhase && sdkCtx.BlockHeight() > epochContext.SetNewValidators() {
@@ -116,12 +116,22 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		}, nil
 	}
 
-	return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
+	upcomingEpoch, found := k.GetUpcomingEpoch(goCtx)
+	if !found || upcomingEpoch == nil {
+		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: no upcoming epoch found")
+	}
+
+	return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId, upcomingEpoch.PocStartBlockHeight)
 }
 
-func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId uint64, modelId string) (func(members []*group.GroupMember) []*group.GroupMember, error) {
+func (k Keeper) createIsAvailableDuringPoCFilterFn(
+	ctx context.Context,
+	epochId uint64,
+	modelId string,
+	episodeAnchorHeight int64,
+) (func(members []*group.GroupMember) []*group.GroupMember, error) {
 	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Starting PoC availability filter creation",
-		"epoch_id", epochId, "model_id", modelId)
+		"epoch_id", epochId, "model_id", modelId, "episode_anchor_height", episodeAnchorHeight)
 
 	activeParticipants, found := k.GetActiveParticipants(ctx, epochId)
 	if !found {
@@ -139,6 +149,15 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 
 	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Found active participants",
 		"epoch_id", epochId, "model_id", modelId, "participant_count", len(activeParticipants.Participants))
+
+	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx, episodeAnchorHeight)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if !found {
+		return nil, status.Errorf(codes.Unavailable, "GetRandomExecutor: preserved nodes snapshot not found for episode anchor %d", episodeAnchorHeight)
+	}
+	preservedNodeSet := PreservedNodeSetByModel(&preservedSnapshot, modelId)
 
 	isAvailableDuringPoc := make(map[string]bool)
 	totalParticipantsChecked := 0
@@ -219,27 +238,16 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 				continue
 			}
 
-			k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Checking node timeslot allocation",
+			k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Checking node preserved membership",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
-				"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation,
-				"timeslot_length", len(node.TimeslotAllocation))
+				"node_id", node.NodeId, "episode_anchor_height", episodeAnchorHeight)
 
-			// Defensive programming: check timeslot allocation bounds and values
-			if len(node.TimeslotAllocation) <= 1 {
-				k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: invalid timeslot allocation length",
-					"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
-					"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation,
-					"expected_min_length", 2)
-				continue
-			}
-
-			// Check POC_SLOT availability (index 1)
-			if node.TimeslotAllocation[1] {
+			if _, isPreserved := preservedNodeSet[node.NodeId]; isPreserved {
 				availableNodeCount++
 				isAvailableDuringPoc[participant.Index] = true
 				k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Found node available during PoC",
 					"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
-					"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation)
+					"node_id", node.NodeId, "episode_anchor_height", episodeAnchorHeight)
 				// Break after finding first available node for this participant
 				break
 			}

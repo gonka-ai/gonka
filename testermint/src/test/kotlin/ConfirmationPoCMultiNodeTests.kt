@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
 class ConfirmationPoCMultiNodeTests : TestermintTest() {
     
-    private data class NodeAllocation(val nodeId: String, val pocSlot: Boolean, val weight: Long)
+    data class NodeAllocation(val nodeId: String, val preserved: Boolean, val weight: Long)
 
     // 16m
     @Test
@@ -55,56 +55,16 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         // We need a second cycle so join nodes' confirmation_weight gets set to 50
         genesis.waitForNextEpoch()
 
-        logSection("Querying POC_SLOT allocation for Genesis's 3 nodes")
-        genesisNodes = genesis.api.getNodes()
-        assertThat(genesisNodes).hasSize(3)
-        
-        val pocSlotAllocation = genesisNodes.mapNotNull { nodeResponse ->
-            val epochMlNodes = nodeResponse.state.epochMlNodes
-            if (!epochMlNodes.isNullOrEmpty()) {
-                val (_, mlNodeInfo) = epochMlNodes.entries.first()
-                val timeslotAllocation = mlNodeInfo.timeslotAllocation
-                val pocSlot = timeslotAllocation.getOrNull(1) ?: false  // Index 1 is POC_SLOT
-                NodeAllocation(nodeResponse.node.id, pocSlot, mlNodeInfo.pocWeight.toLong())
-            } else {
-                null
-            }
-        }
-        
-        assertThat(pocSlotAllocation).hasSize(3)
-        
-        logSection("Genesis MLNode POC_SLOT allocation:")
-        pocSlotAllocation.forEach { 
-            Logger.info("  Node ${it.nodeId}: POC_SLOT=${it.pocSlot}, weight=${it.weight}")
-        }
-        
-        val numPocSlotTrue = pocSlotAllocation.count { it.pocSlot }
-        val numPocSlotFalse = pocSlotAllocation.count { !it.pocSlot }
-        
-        // Ensure we have nodes with POC_SLOT=false for confirmation validation
-        require(numPocSlotFalse > 0) {
-            "All ${pocSlotAllocation.size} nodes were allocated POC_SLOT=true, leaving no nodes for confirmation validation. " +
-            "This test requires some nodes to remain POC_SLOT=false. Try lowering pocSlotAllocation parameter."
-        }
-
-        val confirmedWeightPerNode = 8L
-        val expectedFinalWeight = (numPocSlotTrue * 10) + (numPocSlotFalse * confirmedWeightPerNode)
-        
-        Logger.info("Genesis weight breakdown:")
-        Logger.info("  POC_SLOT=true nodes: $numPocSlotTrue × 10 = ${numPocSlotTrue * 10}")
-        Logger.info("  POC_SLOT=false nodes: $numPocSlotFalse × $confirmedWeightPerNode = ${numPocSlotFalse * confirmedWeightPerNode}")
-        Logger.info("  Expected final weight: $expectedFinalWeight")
-        
         logSection("Waiting for confirmation PoC trigger during inference phase")
         val confirmationEvent = waitForConfirmationPoCTrigger(genesis)
         assertThat(confirmationEvent).isNotNull
         Logger.info("Confirmation PoC triggered at height ${confirmationEvent!!.triggerHeight}")
+
+        val confirmedWeightPerNode = 8L
         
         logSection("Setting PoC mocks for confirmation")
         // During confirmation PoC, each POC_SLOT=false node will return weight=8 (reduced from 10)
         Logger.info("  Genesis: each node returns weight=$confirmedWeightPerNode (reduced from 10)")
-        Logger.info("    - Only $numPocSlotFalse POC_SLOT=false nodes will participate in confirmation")
-        Logger.info("    - Total confirmed weight: ${numPocSlotFalse * confirmedWeightPerNode}")
         Logger.info("  Join1: weight=50 per node (full confirmation)")
         Logger.info("  Join2: weight=50 per node (full confirmation)")
         genesis.setPocWeight(confirmedWeightPerNode)
@@ -114,6 +74,41 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         logSection("Waiting for confirmation PoC generation phase")
         waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_GENERATION)
         Logger.info("Confirmation PoC generation phase active")
+
+        logSection("Querying preserved snapshot for Genesis's 3 nodes")
+        genesisNodes = genesis.api.getNodes()
+        assertThat(genesisNodes).hasSize(3)
+
+        val preservedSnapshot = waitForPreservedSnapshot(genesis, confirmationEvent.triggerHeight)
+        val modelId = extractSingleModelId(genesisNodes)
+        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
+        val preservedAllocation = waitForNodeAllocations(genesis, preservedNodeIds, expectedCount = 3)
+        logSection("Genesis MLNode preserved allocation:")
+        preservedAllocation.forEach {
+            Logger.info("  Node ${it.nodeId}: preserved=${it.preserved}, weight=${it.weight}")
+        }
+
+        val numPreserved = preservedAllocation.count { it.preserved }
+        val numParticipating = preservedAllocation.count { !it.preserved }
+
+        require(numParticipating > 0) {
+            "All ${preservedAllocation.size} nodes were preserved, leaving no nodes for confirmation validation."
+        }
+
+        genesisNodes.forEach { nodeResponse ->
+            if (nodeResponse.node.id in preservedNodeIds) {
+                assertThat(nodeResponse.state.currentStatus).isEqualTo("INFERENCE")
+            } else {
+                assertThat(nodeResponse.state.currentStatus).isEqualTo("POC")
+            }
+        }
+
+        val expectedFinalWeight = (numPreserved * 10) + (numParticipating * confirmedWeightPerNode)
+
+        Logger.info("Genesis weight breakdown:")
+        Logger.info("  Preserved nodes: $numPreserved × 10 = ${numPreserved * 10}")
+        Logger.info("  Participating nodes: $numParticipating × $confirmedWeightPerNode = ${numParticipating * confirmedWeightPerNode}")
+        Logger.info("  Expected final weight: $expectedFinalWeight")
         
         logSection("Waiting for confirmation PoC validation phase")
         waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_VALIDATION)
@@ -154,7 +149,7 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         val join2Change = finalBalances[join2.node.getColdAddress()]!! - initialBalances[join2.node.getColdAddress()]!!
         
         Logger.info("Balance changes:")
-        Logger.info("  Genesis: $genesisChange (POC_SLOT=true: ${numPocSlotTrue}×10=${numPocSlotTrue * 10}, POC_SLOT=false: ${numPocSlotFalse}×8=${numPocSlotFalse * confirmedWeightPerNode}, final=$expectedFinalWeight)")
+        Logger.info("  Genesis: $genesisChange (preserved: ${numPreserved}×10=${numPreserved * 10}, participating: ${numParticipating}×8=${numParticipating * confirmedWeightPerNode}, final=$expectedFinalWeight)")
         Logger.info("  Join1: $join1Change (weight=50)")
         Logger.info("  Join2: $join2Change (weight=50)")
         
@@ -180,8 +175,8 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         Logger.info("  Ratio verification: ${genesisChange}/${join1Change}")
         
         logSection("TEST PASSED: Confirmation PoC correctly handles multiple MLNodes with POC_SLOT allocation")
-        Logger.info("  Test validated with $numPocSlotTrue POC_SLOT=true nodes and $numPocSlotFalse POC_SLOT=false nodes")
-        Logger.info("  Final weight: $expectedFinalWeight = (${numPocSlotTrue}×10) + (${numPocSlotFalse}×8)")
+        Logger.info("  Test validated with $numPreserved preserved nodes and $numParticipating participating nodes")
+        Logger.info("  Final weight: $expectedFinalWeight = (${numPreserved}×10) + (${numParticipating}×8)")
     }
 
     // 12 m
@@ -221,55 +216,15 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
 
-        logSection("Querying POC_SLOT allocation for Genesis's 3 nodes")
-        genesisNodes = genesis.api.getNodes()
-        assertThat(genesisNodes).hasSize(3)
-
-        val pocSlotAllocation = genesisNodes.mapNotNull { nodeResponse ->
-            val epochMlNodes = nodeResponse.state.epochMlNodes
-            if (epochMlNodes != null && epochMlNodes.isNotEmpty()) {
-                val (_, mlNodeInfo) = epochMlNodes.entries.first()
-                val timeslotAllocation = mlNodeInfo.timeslotAllocation
-                val pocSlot = timeslotAllocation.getOrNull(1) ?: false  // Index 1 is POC_SLOT
-                NodeAllocation(nodeResponse.node.id, pocSlot, mlNodeInfo.pocWeight.toLong())
-            } else {
-                null
-            }
-        }
-
-        assertThat(pocSlotAllocation).hasSize(3)
-
-        logSection("Genesis MLNode POC_SLOT allocation:")
-        pocSlotAllocation.forEach {
-            Logger.info("  Node ${it.nodeId}: POC_SLOT=${it.pocSlot}, weight=${it.weight}")
-        }
-
-        val numPocSlotTrue = pocSlotAllocation.count { it.pocSlot }
-        val numPocSlotFalse = pocSlotAllocation.count { !it.pocSlot }
-
-        // Ensure we have nodes with POC_SLOT=false for confirmation validation
-        require(numPocSlotFalse > 0) {
-            "All ${pocSlotAllocation.size} nodes were allocated POC_SLOT=true, leaving no nodes for confirmation validation. " +
-            "This test requires some nodes to remain POC_SLOT=false. Try lowering pocSlotAllocation parameter."
-        }
-
-        val expectedFinalWeight = 203L
-        val confirmedWeightPerNode = (expectedFinalWeight - 101*numPocSlotTrue) / numPocSlotFalse
-
-        Logger.info("Genesis weight breakdown:")
-        Logger.info("  POC_SLOT=true nodes: $numPocSlotTrue × 101 = ${numPocSlotTrue * 101}")
-        Logger.info("  POC_SLOT=false nodes: $numPocSlotFalse × $confirmedWeightPerNode = ${numPocSlotFalse * confirmedWeightPerNode}")
-        Logger.info("  Expected final weight: $expectedFinalWeight")
-
         logSection("Waiting for confirmation PoC trigger during inference phase")
         val confirmationEvent = waitForConfirmationPoCTrigger(genesis)
         assertThat(confirmationEvent).isNotNull
         Logger.info("Confirmation PoC triggered at height ${confirmationEvent!!.triggerHeight}")
 
+        val confirmedWeightPerNode = 51L
+
         logSection("Setting PoC mocks for confirmation")
         Logger.info("  Genesis: each node returns weight=$confirmedWeightPerNode (reduced from 30)")
-        Logger.info("    - Only $numPocSlotFalse POC_SLOT=false nodes will participate in confirmation")
-        Logger.info("    - Total confirmed weight: ${numPocSlotFalse * confirmedWeightPerNode}")
         Logger.info("  Join1: weight=200 per node (full confirmation)")
         Logger.info("  Join2: weight=250 per node (full confirmation)")
         genesis.setPocWeight(confirmedWeightPerNode)
@@ -277,6 +232,34 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         logSection("Waiting for confirmation PoC generation phase")
         waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_GENERATION)
         Logger.info("Confirmation PoC generation phase active")
+
+        logSection("Querying preserved snapshot for Genesis's 3 nodes")
+        genesisNodes = genesis.api.getNodes()
+        assertThat(genesisNodes).hasSize(3)
+
+        val preservedSnapshot = waitForPreservedSnapshot(genesis, confirmationEvent.triggerHeight)
+        val modelId = extractSingleModelId(genesisNodes)
+        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
+        val preservedAllocation = waitForNodeAllocations(genesis, preservedNodeIds, expectedCount = 3)
+
+        logSection("Genesis MLNode preserved allocation:")
+        preservedAllocation.forEach {
+            Logger.info("  Node ${it.nodeId}: preserved=${it.preserved}, weight=${it.weight}")
+        }
+
+        val numPreserved = preservedAllocation.count { it.preserved }
+        val numParticipating = preservedAllocation.count { !it.preserved }
+
+        require(numParticipating > 0) {
+            "All ${preservedAllocation.size} nodes were preserved, leaving no nodes for confirmation validation."
+        }
+
+        val expectedFinalWeight = (numPreserved * 101) + (numParticipating * confirmedWeightPerNode)
+
+        Logger.info("Genesis weight breakdown:")
+        Logger.info("  Preserved nodes: $numPreserved × 101 = ${numPreserved * 101}")
+        Logger.info("  Participating nodes: $numParticipating × $confirmedWeightPerNode = ${numParticipating * confirmedWeightPerNode}")
+        Logger.info("  Expected final weight: $expectedFinalWeight")
 
         logSection("Waiting for confirmation PoC validation phase")
         waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_VALIDATION)
@@ -330,30 +313,12 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
         val join1Ratio = join1Change / totalChange
         val join2Ratio = join2Change / totalChange
 
-        assertThat(genesisRatio).isCloseTo(0.3108728943338438, Percentage.withPercentage(1.5))
-        assertThat(join1Ratio).isCloseTo(0.30627871362940273, Percentage.withPercentage(1.5))
-        assertThat(join2Ratio).isCloseTo(0.38284839203675347, Percentage.withPercentage(1.5))
+        val totalExpectedWeight = expectedFinalWeight + 200.0 + 250.0
+        assertThat(genesisRatio).isCloseTo(expectedFinalWeight / totalExpectedWeight, Percentage.withPercentage(1.5))
+        assertThat(join1Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
+        assertThat(join2Ratio).isCloseTo(250.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
     }
 
-    private fun getConfirmationWeights(pair: LocalInferencePair): Map<String, Pair<Long, Long>> {
-        // Query active participants to get both regular weight and confirmation_weight
-        val activeParticipants = pair.api.getActiveParticipants()
-        
-        val weights = mutableMapOf<String, Pair<Long, Long>>()
-        activeParticipants.activeParticipants.participants.forEach { participant ->
-            // Regular weight is the sum of poc_weight across all ml_nodes
-            val regularWeight = participant.mlNodes.flatMap { it.mlNodes }.sumOf { it.pocWeight }
-            
-            // For confirmation weight, we need to query the epoch group data
-            // For now, we'll use the regular weight as a placeholder
-            // In a real implementation, this would query the ValidationWeight.confirmation_weight field
-            val confirmationWeight = regularWeight  // TODO: Query actual confirmation_weight from chain
-            
-            weights[participant.index] = Pair(regularWeight, confirmationWeight)
-        }
-        
-        return weights
-    }
 }
 
 // Helper functions
@@ -431,6 +396,68 @@ fun waitForConfirmationPoCPhase(
         attempts++
     }
     error("Timeout waiting for confirmation PoC phase: $targetPhase")
+}
+
+fun waitForPreservedSnapshot(
+    pair: LocalInferencePair,
+    anchorHeight: Long,
+    maxBlocks: Int = 20
+): PreservedNodesSnapshotQueryResponse {
+    repeat(maxBlocks) {
+        val snapshot = pair.node.queryPreservedNodesSnapshot(anchorHeight)
+        if (snapshot.found) {
+            return snapshot
+        }
+        pair.node.waitForNextBlock(1)
+    }
+    error("Timeout waiting for preserved snapshot at anchor $anchorHeight")
+}
+
+fun preservedNodeIdsForModel(
+    snapshot: PreservedNodesSnapshotQueryResponse,
+    modelId: String
+): Set<String> {
+    return snapshot.snapshot
+        ?.modelPreservedNodes
+        ?.firstOrNull { it.modelId == modelId }
+        ?.preservedNodeIds
+        ?.toSet()
+        ?: emptySet()
+}
+
+fun extractSingleModelId(nodes: List<NodeResponse>): String {
+    return nodes.asSequence()
+        .mapNotNull { nodeResponse -> nodeResponse.state.epochMlNodes?.keys?.singleOrNull() }
+        .firstOrNull()
+        ?: error("Could not determine single model id from node epoch data")
+}
+
+fun waitForNodeAllocations(
+    pair: LocalInferencePair,
+    preservedNodeIds: Set<String>,
+    expectedCount: Int,
+    maxBlocks: Int = 20
+): List<ConfirmationPoCMultiNodeTests.NodeAllocation> {
+    repeat(maxBlocks) {
+        val allocations = pair.api.getNodes().mapNotNull { nodeResponse ->
+            val epochMlNodes = nodeResponse.state.epochMlNodes
+            if (epochMlNodes.isNullOrEmpty()) {
+                null
+            } else {
+                val (_, mlNodeInfo) = epochMlNodes.entries.first()
+                ConfirmationPoCMultiNodeTests.NodeAllocation(
+                    nodeId = nodeResponse.node.id,
+                    preserved = nodeResponse.node.id in preservedNodeIds,
+                    weight = mlNodeInfo.pocWeight.toLong()
+                )
+            }
+        }
+        if (allocations.size == expectedCount) {
+            return allocations
+        }
+        pair.node.waitForNextBlock(1)
+    }
+    error("Timeout waiting for $expectedCount node allocations")
 }
 
 fun waitForConfirmationPoCCompletion(

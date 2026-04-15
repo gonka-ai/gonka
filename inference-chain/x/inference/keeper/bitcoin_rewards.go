@@ -34,6 +34,7 @@ func GetBitcoinSettleAmounts(
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
 	coefficients map[string]mathsdk.LegacyDec,
+	preservedByModel map[string]map[string]struct{},
 	collateralAdjustmentActive bool,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -64,6 +65,7 @@ func GetBitcoinSettleAmounts(
 		validationParams,
 		participantMLNodes,
 		coefficients,
+		preservedByModel,
 		collateralAdjustmentActive,
 		logger,
 	)
@@ -178,24 +180,47 @@ func CalculateFixedEpochReward(epochsSinceGenesis uint64, initialReward uint64, 
 	return uint64(result), nil
 }
 
-// GetPreservedWeight calculates the weight of nodes with POC_SLOT=true
-// These nodes continue serving inference during confirmation PoC and are not subject to verification
-func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData) int64 {
+// GetPreservedWeight calculates the participant's weight contributed by preserved nodes,
+// where "preserved" is defined by the regular-PoC episode snapshot passed in. Only used
+// from tests; production reward math goes through RecomputeEffectiveWeightFromMLNodes.
+func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData, preservedByModel map[string]map[string]struct{}) int64 {
 	for _, validationWeight := range epochGroupData.ValidationWeights {
-		if validationWeight.MemberAddress == participant {
-			var preservedWeight int64 = 0
-
-			// Sum weights from nodes with POC_SLOT=true (index 1)
-			for _, mlNode := range validationWeight.MlNodes {
-				if mlNode != nil && len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
-					preservedWeight += mlNode.PocWeight
-				}
-			}
-
-			return preservedWeight
+		if validationWeight.MemberAddress != participant {
+			continue
 		}
+		preserved := preservedByModel[epochGroupData.ModelId]
+		var preservedWeight int64
+		for _, mlNode := range validationWeight.MlNodes {
+			if mlNode == nil {
+				continue
+			}
+			if _, isPreserved := preserved[mlNode.NodeId]; isPreserved {
+				preservedWeight += mlNode.PocWeight
+			}
+		}
+		return preservedWeight
 	}
 	return 0
+}
+
+// PreservedByModelFromSnapshot flattens a PreservedNodesSnapshot into a
+// modelId -> set-of-nodeIds map suited for hot-path reward and weight math.
+func PreservedByModelFromSnapshot(snapshot *types.PreservedNodesSnapshot) map[string]map[string]struct{} {
+	result := make(map[string]map[string]struct{})
+	if snapshot == nil {
+		return result
+	}
+	for _, modelNodes := range snapshot.ModelPreservedNodes {
+		if modelNodes == nil {
+			continue
+		}
+		set := make(map[string]struct{}, len(modelNodes.PreservedNodeIds))
+		for _, nodeID := range modelNodes.PreservedNodeIds {
+			set[nodeID] = struct{}{}
+		}
+		result[modelNodes.ModelId] = set
+	}
+	return result
 }
 
 // CoefficientAdjustedWeight computes sum(coeff_i * sum(PocWeight for model_i)) for nodes
@@ -222,12 +247,32 @@ func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coeffi
 }
 
 // RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights.
+//
+// Reward settlement uses the regular-PoC episode's preserved snapshot as the epoch's
+// "preserved weight". Confirmation events contribute via vw.ConfirmationWeight,
+// which is slashed per-event against that event's own preserved set (see
+// GetNotPreservedTotalWeightByParticipant). The sum is fair because each event's
+// contribution is already fairly slashed and preserved nodes contribute zero to it.
 // Both preservedWeight and ConfirmationWeight are in coefficient-adjusted space.
-func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec) int64 {
-	preservedWeight := CoefficientAdjustedWeight(modelNodes, coefficients, func(n *types.MLNodeInfo) bool {
-		return len(n.TimeslotAllocation) >= 2 && n.TimeslotAllocation[1] // POC_SLOT=true
-	})
-	// ConfirmationWeight is coefficient-adjusted (initialized and updated in same space)
+func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec, preservedByModel map[string]map[string]struct{}) int64 {
+	preservedWeight := int64(0)
+	for modelId, nodes := range modelNodes {
+		coeff, ok := coefficients[modelId]
+		if !ok {
+			coeff = mathsdk.LegacyOneDec()
+		}
+		preserved := preservedByModel[modelId]
+		raw := int64(0)
+		for _, n := range nodes {
+			if n == nil {
+				continue
+			}
+			if _, isPreserved := preserved[n.NodeId]; isPreserved {
+				raw += n.PocWeight
+			}
+		}
+		preservedWeight += coeff.MulInt64(raw).TruncateInt64()
+	}
 	return preservedWeight + vw.ConfirmationWeight
 }
 
@@ -578,6 +623,7 @@ func CalculateParticipantBitcoinRewards(
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
 	coefficients map[string]mathsdk.LegacyDec,
+	preservedByModel map[string]map[string]struct{},
 	collateralAdjustmentActive bool,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
@@ -648,7 +694,7 @@ func CalculateParticipantBitcoinRewards(
 		// Recompute effective weight from MLNodes (includes confirmation capping).
 		// Both preserved weight and ConfirmationWeight are coefficient-adjusted.
 		modelNodes := participantMLNodes[participant.Address]
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, modelNodes, coefficients)
+		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, modelNodes, coefficients, preservedByModel)
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
 		}

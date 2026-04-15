@@ -42,6 +42,7 @@ type BrokerChainBridge interface {
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
+	GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -102,6 +103,14 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
 
+func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryPreservedNodesSnapshotRequest{
+		EpisodeAnchorHeight: episodeAnchorHeight,
+	}
+	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), req)
+}
+
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
@@ -122,6 +131,8 @@ type Broker struct {
 	reconcileTrigger     chan struct{}
 	lastEpochIndex       uint64
 	lastEpochPhase       types.EpochPhase
+	lastPreservedEpochIndex uint64
+	lastPreservedAnchor  int64
 	statusQueryTrigger   chan statusQuerySignal
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
@@ -216,8 +227,9 @@ type NodeState struct {
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
 	// EpochMLNodes stores this node's own MLNodeInfo, not all epoch ML nodes.
-	EpochModels  map[string]types.Model      `json:"epoch_models"`
-	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+	EpochModels      map[string]types.Model      `json:"epoch_models"`
+	EpochMLNodes     map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+	PreservedModels  map[string]bool             `json:"preserved_models"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -276,12 +288,10 @@ func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.E
 // based on its POC_SLOT timeslot allocation. Returns true if POC_SLOT is set to true
 // for any model supported by this node.
 func (s *NodeState) ShouldContinueInference() bool {
-	// Check if any MLNode for this node has POC_SLOT set to true
-	for modelId, mlNodeInfo := range s.EpochMLNodes {
-		if len(mlNodeInfo.TimeslotAllocation) > 1 && mlNodeInfo.TimeslotAllocation[1] { // index 1 = POC_SLOT
-			logging.Debug("Node should continue inference service based on POC_SLOT allocation", types.PoC,
-				"model_id", modelId,
-				"poc_slot", mlNodeInfo.TimeslotAllocation[1])
+	for modelId := range s.PreservedModels {
+		if s.PreservedModels[modelId] {
+			logging.Debug("Node should continue inference service based on preserved snapshot", types.PoC,
+				"model_id", modelId)
 			return true
 		}
 	}
@@ -1515,6 +1525,7 @@ func (b *Broker) clearNodeEpochData() {
 	for _, node := range b.nodes {
 		node.State.EpochModels = make(map[string]types.Model)
 		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+		node.State.PreservedModels = make(map[string]bool)
 	}
 }
 
@@ -1528,6 +1539,7 @@ func (b *Broker) clearSingleNodeEpochData(nodeId string) {
 	}
 	node.State.EpochModels = make(map[string]types.Model)
 	node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+	node.State.PreservedModels = make(map[string]bool)
 }
 
 func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string, modelSnapshot types.Model) {
@@ -1536,11 +1548,78 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 
 	for _, mlNodeInfo := range mlNodes {
 		if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
+			if node.State.PreservedModels == nil {
+				node.State.PreservedModels = make(map[string]bool)
+			}
 			node.State.EpochModels[modelId] = modelSnapshot
 			node.State.EpochMLNodes[modelId] = *mlNodeInfo
 			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
 		}
 	}
+}
+
+func (b *Broker) activePreservedAnchor(epochState *chainphase.EpochState) int64 {
+	if epochState == nil || epochState.IsNilOrNotSynced() {
+		return 0
+	}
+	if epochState.CurrentPhase == types.InferencePhase {
+		if epochState.ActiveConfirmationPoCEvent != nil &&
+			epochState.ActiveConfirmationPoCEvent.Phase >= types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
+			return epochState.ActiveConfirmationPoCEvent.TriggerHeight
+		}
+		return 0
+	}
+	return epochState.LatestEpoch.PocStartBlockHeight
+}
+
+func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochState) error {
+	if epochState == nil || epochState.IsNilOrNotSynced() {
+		return nil
+	}
+
+	anchor := b.activePreservedAnchor(epochState)
+	if epochState.LatestEpoch.EpochIndex == b.lastPreservedEpochIndex && anchor == b.lastPreservedAnchor {
+		return nil
+	}
+
+	var snapshotResp *types.QueryPreservedNodesSnapshotResponse
+	var err error
+	if anchor > 0 {
+		snapshotResp, err = b.chainBridge.GetPreservedNodesSnapshot(anchor)
+		if err != nil {
+			return err
+		}
+		if snapshotResp == nil || !snapshotResp.Found || snapshotResp.Snapshot == nil {
+			return nil
+		}
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, node := range b.nodes {
+		node.State.PreservedModels = make(map[string]bool)
+	}
+
+	if snapshotResp != nil && snapshotResp.Found && snapshotResp.Snapshot != nil {
+		for _, modelNodes := range snapshotResp.Snapshot.ModelPreservedNodes {
+			if modelNodes == nil {
+				continue
+			}
+			for _, nodeID := range modelNodes.PreservedNodeIds {
+				if node, ok := b.nodes[nodeID]; ok {
+					if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+						continue
+					}
+					node.State.PreservedModels[modelNodes.ModelId] = true
+				}
+			}
+		}
+	}
+
+	b.lastPreservedEpochIndex = epochState.LatestEpoch.EpochIndex
+	b.lastPreservedAnchor = anchor
+	return nil
 }
 
 // PopulateSingleNodeEpochData populates epoch data for a specific node.

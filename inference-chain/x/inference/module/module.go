@@ -286,8 +286,21 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	// Determine whether to check preserve nodes or regular mlnodes
 	checkPreserveNode := expiryCtx.ShouldCheckPreserveNode(inference)
 
+	var preservedSnapshot *types.PreservedNodesSnapshot
+	if checkPreserveNode && expiryCtx.PoCRange != nil && expiryCtx.PoCRange.AnchorHeight > 0 {
+		snapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, expiryCtx.PoCRange.AnchorHeight)
+		if err != nil {
+			am.LogWarn("Failed to get preserved nodes snapshot for expired inference check", types.Inferences,
+				"inferenceId", inference.InferenceId,
+				"anchorHeight", expiryCtx.PoCRange.AnchorHeight,
+				"error", err)
+		} else if found {
+			preservedSnapshot = &snapshot
+		}
+	}
+
 	// Check if executor has the required node for the model (using cached active participants)
-	hasNode := am.HasNodeForModel(inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants)
+	hasNode := am.HasNodeForModel(inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants, preservedSnapshot)
 
 	if !hasNode {
 		nodeType := "mlnode"
@@ -488,7 +501,19 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 
-		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
+		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
+		if err != nil {
+			am.LogError("Unable to sample preserved nodes for regular PoC", types.PoC, "error", err.Error())
+			return err
+		}
+
+		if err := am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight, &preservedSnapshot); err != nil {
+			am.LogError("Unable to store generation start snapshots for regular PoC", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+				"error", err.Error())
+			return err
+		}
 	}
 
 	// Capture the pre-eligibility snapshot at start_poc - deploy_window.
@@ -718,9 +743,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		participationState.participationByModel,
 	)
 
-	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
-	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
-
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
@@ -811,22 +833,56 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
 
-	// Clean up validation snapshot after epoch transition
-	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+	// Clean up generation-scoped snapshots after epoch transition
+	am.deleteGenerationSnapshots(ctx, upcomingEpoch.PocStartBlockHeight)
 }
 
-func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTime, pocStartBlockHeight int64) {
+func (am AppModule) captureGenerationStartTimestamp(
+	ctx context.Context,
+	blockTime, pocStartBlockHeight int64,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+) error {
+	if preservedSnapshot == nil {
+		return fmt.Errorf("preserved snapshot is required for episode anchor %d", pocStartBlockHeight)
+	}
+
 	snapshot := types.PoCValidationSnapshot{
 		PocStageStartHeight:      pocStartBlockHeight,
 		GenerationStartTimestamp: blockTime,
 	}
 	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
 		am.LogError("captureGenerationStartTimestamp: Failed to store", types.PoC, "error", err)
-		return
+		return err
 	}
 	am.LogInfo("captureGenerationStartTimestamp: Stored", types.PoC,
 		"pocStartBlockHeight", pocStartBlockHeight,
 		"generationStartTimestamp", blockTime)
+
+	if preservedSnapshot.EpisodeAnchorHeight == 0 {
+		preservedSnapshot.EpisodeAnchorHeight = pocStartBlockHeight
+	}
+
+	if err := am.keeper.SetPreservedNodesSnapshot(ctx, *preservedSnapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store preserved snapshot", types.PoC, "error", err)
+		if deleteErr := am.keeper.DeletePoCValidationSnapshot(ctx, pocStartBlockHeight); deleteErr != nil {
+			am.LogWarn("captureGenerationStartTimestamp: Failed to roll back validation snapshot after preserved snapshot write failure", types.PoC,
+				"pocStartBlockHeight", pocStartBlockHeight,
+				"error", deleteErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func (am AppModule) deleteGenerationSnapshots(ctx context.Context, pocStartBlockHeight int64) {
+	if err := am.keeper.DeletePoCValidationSnapshot(ctx, pocStartBlockHeight); err != nil {
+		am.LogWarn("deleteGenerationSnapshots: Failed to delete validation snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+	}
+	if err := am.keeper.DeletePreservedNodesSnapshot(ctx, pocStartBlockHeight); err != nil {
+		am.LogWarn("deleteGenerationSnapshots: Failed to delete preserved snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+	}
 }
 
 // captureValidationSnapshot stores per-model voting powers and app_hash at validation phase start

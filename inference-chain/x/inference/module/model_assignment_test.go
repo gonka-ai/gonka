@@ -62,6 +62,121 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 	return types.DefaultParams(), nil
 }
 
+// populateSubgroupsFromParticipants writes root and per-model subgroup data at epochIdx
+// so SamplePreservedForEpisode has a candidate pool. Mirrors what production epoch
+// formation would have produced after assigning models to participants.
+func (m *mockKeeperForModelAssigner) populateSubgroupsFromParticipants(epochIdx uint64, participants []*types.ActiveParticipant) {
+	if m.epochGroupData == nil {
+		m.epochGroupData = make(map[string]map[uint64]types.EpochGroupData)
+	}
+	if m.epochGroupData[""] == nil {
+		m.epochGroupData[""] = make(map[uint64]types.EpochGroupData)
+	}
+
+	modelSet := make(map[string]bool)
+	for _, p := range participants {
+		for _, modelId := range p.Models {
+			modelSet[modelId] = true
+		}
+	}
+	subGroupModels := make([]string, 0, len(modelSet))
+	for modelId := range modelSet {
+		subGroupModels = append(subGroupModels, modelId)
+	}
+	m.epochGroupData[""][epochIdx] = types.EpochGroupData{
+		EpochIndex:     epochIdx,
+		SubGroupModels: subGroupModels,
+	}
+
+	for modelId := range modelSet {
+		var validationWeights []*types.ValidationWeight
+		for _, p := range participants {
+			for i, pModelId := range p.Models {
+				if pModelId != modelId || i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+					continue
+				}
+				mlNodes := make([]*types.MLNodeInfo, 0, len(p.MlNodes[i].MlNodes))
+				for _, n := range p.MlNodes[i].MlNodes {
+					if n == nil {
+						continue
+					}
+					nodeCopy := *n
+					mlNodes = append(mlNodes, &nodeCopy)
+				}
+				validationWeights = append(validationWeights, &types.ValidationWeight{
+					MemberAddress: p.Index,
+					MlNodes:       mlNodes,
+				})
+			}
+		}
+		if m.epochGroupData[modelId] == nil {
+			m.epochGroupData[modelId] = make(map[uint64]types.EpochGroupData)
+		}
+		m.epochGroupData[modelId][epochIdx] = types.EpochGroupData{
+			EpochIndex:        epochIdx,
+			ModelId:           modelId,
+			ValidationWeights: validationWeights,
+		}
+	}
+}
+
+// applySnapshotToParticipants flips TimeslotAllocation[1] on each participant's ML nodes
+// to match the snapshot's preserved set per model. Test-only helper that keeps the
+// pre-migration TimeslotAllocation assertion style valid against the new sampler's
+// returned snapshot.
+func applySnapshotToParticipants(participants []*types.ActiveParticipant, snapshot types.PreservedNodesSnapshot) {
+	preservedByModel := make(map[string]map[string]struct{})
+	for _, mp := range snapshot.ModelPreservedNodes {
+		if mp == nil {
+			continue
+		}
+		set := make(map[string]struct{}, len(mp.PreservedNodeIds))
+		for _, id := range mp.PreservedNodeIds {
+			set[id] = struct{}{}
+		}
+		preservedByModel[mp.ModelId] = set
+	}
+	for _, p := range participants {
+		for i, modelId := range p.Models {
+			if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+				continue
+			}
+			preserved := preservedByModel[modelId]
+			for _, n := range p.MlNodes[i].MlNodes {
+				if n == nil {
+					continue
+				}
+				if len(n.TimeslotAllocation) < 2 {
+					n.TimeslotAllocation = []bool{true, false}
+				}
+				_, ok := preserved[n.NodeId]
+				n.TimeslotAllocation[1] = ok
+			}
+		}
+	}
+}
+
+// runSamplePreservedForEpisode is a test-only convenience that populates subgroup data
+// and invokes SamplePreservedForEpisode, mirroring the old AllocateMLNodesForPoC flow.
+// The returned snapshot is also applied back onto participants so existing
+// TimeslotAllocation[1] assertions continue to work.
+func runSamplePreservedForEpisode(
+	t *testing.T,
+	ctx context.Context,
+	assigner *ModelAssigner,
+	mock *mockKeeperForModelAssigner,
+	epoch types.Epoch,
+	participants []*types.ActiveParticipant,
+) types.PreservedNodesSnapshot {
+	t.Helper()
+	mock.populateSubgroupsFromParticipants(epoch.Index, participants)
+	anchor := int64(epoch.Index)*100 + 1
+	snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, anchor)
+	require.NoError(t, err)
+	applySnapshotToParticipants(participants, snapshot)
+	return snapshot
+}
+
 // Mock Logger
 type mockLogger struct{}
 
@@ -178,6 +293,140 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
 }
 
+func TestSamplePreservedForEpisode_MatchesSubgroupData(t *testing.T) {
+	ctx := context.Background()
+	participantAddress := "gonka1snapshotparticipant000000000000000000000000"
+	modelID := "Qwen/QwQ-32B"
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{
+			{
+				Id:                 modelID,
+				ThroughputPerNonce: 1000,
+				VRam:               32,
+			},
+		},
+		hardwareNodes: map[string]*types.HardwareNodes{
+			participantAddress: {
+				Participant: participantAddress,
+				HardwareNodes: []*types.HardwareNode{
+					{LocalId: "mlnode1", Models: []string{modelID}},
+					{LocalId: "mlnode2", Models: []string{modelID}},
+				},
+			},
+		},
+		epochGroupData: map[string]map[uint64]types.EpochGroupData{
+			modelID: {
+				0: {
+					ValidationWeights: []*types.ValidationWeight{
+						{
+							MemberAddress: participantAddress,
+							MlNodes: []*types.MLNodeInfo{
+								{NodeId: "mlnode1", PocWeight: 29},
+								{NodeId: "mlnode2", PocWeight: 28},
+							},
+						},
+					},
+				},
+			},
+		},
+		settleAmounts: map[string]types.SettleAmount{
+			participantAddress: {
+				Participant: participantAddress,
+				EpochIndex:  0,
+				RewardCoins: 1,
+			},
+		},
+		params: &types.Params{
+			EpochParams: &types.EpochParams{
+				PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1},
+			},
+		},
+	}
+
+	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  participantAddress,
+			Models: []string{modelID},
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "mlnode1", PocWeight: 29},
+						{NodeId: "mlnode2", PocWeight: 28},
+					},
+				},
+			},
+		},
+	}
+
+	modelAssigner.setModelsForParticipants(ctx, participants, epoch)
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	snapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, epoch, 777)
+	require.NoError(t, err)
+	require.Equal(t, int64(777), snapshot.EpisodeAnchorHeight)
+
+	// Sampler must not mutate TimeslotAllocation on the input participants.
+	modelGroup := participants[0].MlNodes[0]
+	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 2)
+	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
+}
+
+func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-anchor-test"
+
+	// Enough participants with multiple nodes each so the 34% non-voting constraint
+	// doesn't stop us before the shuffle matters. N/2+1 sampling drops some
+	// participants; those drops are what the anchor seed can influence.
+	participants := make([]*types.ActiveParticipant, 0, 6)
+	subgroupWeights := make([]*types.ValidationWeight, 0, 6)
+	settleAmounts := make(map[string]types.SettleAmount, 6)
+	for i := 0; i < 6; i++ {
+		addr := fmt.Sprintf("participant-%d", i)
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-n1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n2", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n3", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{
+			MemberAddress: addr,
+			MlNodes:       nodes,
+		})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		settleAmounts[addr] = types.SettleAmount{Participant: addr, EpochIndex: 0, RewardCoins: 1}
+	}
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData: map[string]map[uint64]types.EpochGroupData{
+			modelID: {0: {ValidationWeights: subgroupWeights}},
+		},
+		settleAmounts: settleAmounts,
+		params:        &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+	}
+
+	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	seen := make(map[string]bool)
+	for anchor := int64(100); anchor < 1000 && len(seen) < 2; anchor++ {
+		snap, err := modelAssigner.SamplePreservedForEpisode(ctx, epoch, anchor)
+		require.NoError(t, err)
+		key := fmt.Sprintf("%v", snap.ModelPreservedNodes)
+		seen[key] = true
+	}
+	require.GreaterOrEqual(t, len(seen), 2, "anchor height should meaningfully influence sampling")
+}
+
 // assertNodeInGroup checks if a node with the given ID exists in the list of nodes.
 func assertNodeInGroup(t *testing.T, nodes []*types.MLNodeInfo, nodeID string) {
 	t.Helper()
@@ -202,6 +451,66 @@ func assertTimeslotAllocationCount(t *testing.T, nodes []*types.MLNodeInfo, allo
 		}
 	}
 	require.Equal(t, expectedCount, count, "Expected %d nodes with timeslot allocation %v, but found %d", expectedCount, allocation, count)
+}
+
+func cloneActiveParticipants(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	cloned := make([]*types.ActiveParticipant, 0, len(participants))
+	for _, participant := range participants {
+		copyParticipant := *participant
+		copyParticipant.Models = append([]string(nil), participant.Models...)
+		copyParticipant.MlNodes = make([]*types.ModelMLNodes, 0, len(participant.MlNodes))
+		for _, modelNodes := range participant.MlNodes {
+			if modelNodes == nil {
+				copyParticipant.MlNodes = append(copyParticipant.MlNodes, nil)
+				continue
+			}
+			copyModelNodes := &types.ModelMLNodes{
+				MlNodes: make([]*types.MLNodeInfo, 0, len(modelNodes.MlNodes)),
+			}
+			for _, node := range modelNodes.MlNodes {
+				if node == nil {
+					copyModelNodes.MlNodes = append(copyModelNodes.MlNodes, nil)
+					continue
+				}
+				copyNode := *node
+				copyNode.TimeslotAllocation = append([]bool(nil), node.TimeslotAllocation...)
+				copyModelNodes.MlNodes = append(copyModelNodes.MlNodes, &copyNode)
+			}
+			copyParticipant.MlNodes = append(copyParticipant.MlNodes, copyModelNodes)
+		}
+		cloned = append(cloned, &copyParticipant)
+	}
+	return cloned
+}
+
+func snapshotFromAllocatedParticipants(anchor int64, participants []*types.ActiveParticipant) types.PreservedNodesSnapshot {
+	modelToNodeIDs := make(map[string][]string)
+	for _, participant := range participants {
+		for modelIndex, modelID := range participant.Models {
+			if modelIndex >= len(participant.MlNodes) || participant.MlNodes[modelIndex] == nil {
+				continue
+			}
+			for _, node := range participant.MlNodes[modelIndex].MlNodes {
+				if node != nil && len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+					modelToNodeIDs[modelID] = append(modelToNodeIDs[modelID], node.NodeId)
+				}
+			}
+		}
+	}
+
+	modelIDs := sortedKeys(modelToNodeIDs)
+	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelPreservedNodes = append(modelPreservedNodes, &types.ModelPreservedNodes{
+			ModelId:          modelID,
+			PreservedNodeIds: append([]string(nil), modelToNodeIDs[modelID]...),
+		})
+	}
+
+	return types.PreservedNodesSnapshot{
+		EpisodeAnchorHeight: anchor,
+		ModelPreservedNodes: modelPreservedNodes,
+	}
 }
 
 // equalBoolSlice compares two boolean slices for equality.
@@ -1096,7 +1405,7 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 
 	// Call model assignment and POC allocation
 	modelAssigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
-	modelAssigner.AllocateMLNodesForPoC(ctx, upcomingEpoch, participants)
+	runSamplePreservedForEpisode(t, ctx, modelAssigner, mockKeeper, upcomingEpoch, participants)
 
 	// Collect allocation statistics
 	type ParticipantStats struct {
@@ -1386,7 +1695,7 @@ func TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants(t *testing.T) {
 	upcomingEpoch := types.Epoch{Index: 1}
 
 	modelAssigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
-	modelAssigner.AllocateMLNodesForPoC(ctx, upcomingEpoch, participants)
+	runSamplePreservedForEpisode(t, ctx, modelAssigner, mockKeeper, upcomingEpoch, participants)
 
 	var globalTotalNodes int
 	var globalAllocatedNodes int
@@ -1771,7 +2080,7 @@ func TestAllocateMLNodesForPoC_UniformWeights(t *testing.T) {
 	upcomingEpoch := types.Epoch{Index: 1}
 
 	// Execute
-	modelAssigner.AllocateMLNodesForPoC(ctx, upcomingEpoch, participants)
+	runSamplePreservedForEpisode(t, ctx, modelAssigner, mockKeeper, upcomingEpoch, participants)
 
 	// Verify results
 	t.Logf("\n=== Uniform Weight Test Results ===")
@@ -1959,7 +2268,7 @@ func TestAllocateMLNodesForPoC_MixedUniformAndHeterogeneous(t *testing.T) {
 	upcomingEpoch := types.Epoch{Index: 1}
 
 	// Execute
-	modelAssigner.AllocateMLNodesForPoC(ctx, upcomingEpoch, participants)
+	runSamplePreservedForEpisode(t, ctx, modelAssigner, mockKeeper, upcomingEpoch, participants)
 
 	// Verify results
 	t.Logf("\n=== Mixed Uniform/Heterogeneous Test Results ===")
@@ -2071,63 +2380,10 @@ func TestSetModelsForParticipants_DedupesDuplicateNodes(t *testing.T) {
 	require.Equal(t, "dup-node", participants[0].MlNodes[0].MlNodes[0].NodeId)
 }
 
-func TestAllocateMLNodesForPoC_DedupesBeforeAllocation(t *testing.T) {
-	ctx := context.Background()
-	modelID := "model-dedup"
-
-	params := types.DefaultParams()
-	params.EpochParams.PocSlotAllocation = &types.Decimal{Value: 5, Exponent: -1}
-
-	mockKeeper := &mockKeeperForModelAssigner{
-		governanceModels: []types.Model{
-			{ProposedBy: "genesis", Id: modelID},
-		},
-		params: &params,
-		epochGroupData: map[string]map[uint64]types.EpochGroupData{
-			modelID: {
-				0: {
-					ValidationWeights: []*types.ValidationWeight{
-						{
-							MemberAddress: "participant-1",
-							MlNodes: []*types.MLNodeInfo{
-								{NodeId: "dup-node", PocWeight: 40},
-								{NodeId: "dup-node", PocWeight: 10},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	participants := []*types.ActiveParticipant{
-		{
-			Index:  "participant-1",
-			Models: []string{modelID},
-			Weight: 70,
-			MlNodes: []*types.ModelMLNodes{
-				{
-					MlNodes: []*types.MLNodeInfo{
-						{NodeId: "dup-node", PocWeight: 50, TimeslotAllocation: []bool{true, false}},
-						{NodeId: "dup-node", PocWeight: 30, TimeslotAllocation: []bool{true, false}},
-						{NodeId: "unique-node", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
-					},
-				},
-			},
-		},
-	}
-
-	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
-	modelAssigner.AllocateMLNodesForPoC(ctx, types.Epoch{Index: 1}, participants)
-
-	require.Len(t, participants[0].MlNodes, 1)
-	require.Len(t, participants[0].MlNodes[0].MlNodes, 2)
-	require.Equal(t, []string{"dup-node", "unique-node"}, []string{
-		participants[0].MlNodes[0].MlNodes[0].NodeId,
-		participants[0].MlNodes[0].MlNodes[1].NodeId,
-	})
-	require.Equal(t, int64(50), participants[0].MlNodes[0].MlNodes[0].PocWeight)
-}
+// Dedup is exercised directly by TestDedupMLNodesById. The sampler no longer mutates
+// participants, so the previous TestAllocateMLNodesForPoC_DedupesBeforeAllocation
+// assertion style (checking participants[0].MlNodes[0].MlNodes length after allocation)
+// does not map to the new surface and is intentionally removed.
 
 // Source isolation tests for the EpochMLNodeData accessors. Each verifies
 // that mutating the returned slice/map does NOT mutate the source data.

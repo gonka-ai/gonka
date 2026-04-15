@@ -11,6 +11,7 @@ import (
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -261,7 +262,15 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
-		am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight)
+		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, types.Epoch{Index: event.EpochIndex}, event.TriggerHeight)
+		if err != nil {
+			return fmt.Errorf("confirmation PoC: failed to sample preserved nodes for trigger %d: %w", event.TriggerHeight, err)
+		}
+
+		if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, &preservedSnapshot); err != nil {
+			return fmt.Errorf("confirmation PoC: failed to store generation start snapshots for trigger %d: %w", event.TriggerHeight, err)
+		}
 
 		am.LogInfo("Confirmation PoC: GRACE_PERIOD -> GENERATION", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -313,8 +322,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up validation snapshot
-			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
+			// Clean up generation-scoped snapshots
+			am.deleteGenerationSnapshots(ctx, event.TriggerHeight)
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -381,9 +390,7 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 		return fmt.Errorf("failed to get params: %w", err)
 	}
 
-	am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, params.PocParams)
-
-	return nil
+	return am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, params.PocParams)
 }
 
 func (am AppModule) evaluateConfirmation(
@@ -392,7 +399,7 @@ func (am AppModule) evaluateConfirmation(
 	epochGroupData *types.EpochGroupData,
 	currentValidatorWeights map[string]int64,
 	pocParams *types.PocParams,
-) {
+) error {
 	coefficients := ModelCoefficients(pocParams)
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event)
 	// Apply model coefficients (same aggregation as main PoC path)
@@ -408,9 +415,17 @@ func (am AppModule) evaluateConfirmation(
 	am.LogInfo("evaluateConfirmation: Confirmation weights", types.PoC,
 		"confirmationWeights", confirmationWeights)
 
-	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex, coefficients)
+	preservedSnapshot, preservedSnapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
 	if err != nil {
-		am.LogError("evaluateConfirmation: Failed to get not preserved weights", types.PoC, "error", err)
+		return fmt.Errorf("evaluateConfirmation: failed to get preserved nodes snapshot for trigger %d: %w", event.TriggerHeight, err)
+	}
+	if !preservedSnapshotFound {
+		return fmt.Errorf("evaluateConfirmation: preserved nodes snapshot not found for trigger %d", event.TriggerHeight)
+	}
+
+	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex, coefficients, &preservedSnapshot)
+	if err != nil {
+		return fmt.Errorf("evaluateConfirmation: failed to get not preserved weights: %w", err)
 	}
 
 	updated := false
@@ -444,7 +459,8 @@ func (am AppModule) evaluateConfirmation(
 			"epochIndex", event.EpochIndex)
 	}
 
-	am.checkConfirmationSlashing(ctx, epochGroupData, coefficients)
+	am.checkConfirmationSlashing(ctx, epochGroupData, coefficients, &preservedSnapshot)
+	return nil
 }
 
 // updateConfirmationWeightsV2 calculates confirmation weights using off-chain store commits
@@ -589,8 +605,9 @@ func (am AppModule) checkConfirmationSlashing(
 	ctx context.Context,
 	epochGroupData *types.EpochGroupData,
 	coefficients map[string]mathsdk.LegacyDec,
+	preservedSnapshot *types.PreservedNodesSnapshot,
 ) error {
-	notPreservedTotalWeight, err := am.GetNotPreservedTotalWeightByParticipant(ctx, epochGroupData.EpochIndex, coefficients)
+	notPreservedTotalWeight, err := am.GetNotPreservedTotalWeightByParticipant(ctx, epochGroupData.EpochIndex, coefficients, preservedSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to get not preserved total weight by participant: %w", err)
 	}
@@ -622,7 +639,12 @@ func (am AppModule) checkConfirmationSlashing(
 	return nil
 }
 
-func (am AppModule) GetNotPreservedTotalWeightByParticipant(ctx context.Context, epochId uint64, coefficients map[string]mathsdk.LegacyDec) (map[string]int64, error) {
+func (am AppModule) GetNotPreservedTotalWeightByParticipant(
+	ctx context.Context,
+	epochId uint64,
+	coefficients map[string]mathsdk.LegacyDec,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+) (map[string]int64, error) {
 	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
 	if !found {
 		am.LogError("GetNotPreservedTotalWeightByParticipant: Active participants not found", types.PoC, "epochId", epochId)
@@ -641,14 +663,17 @@ func (am AppModule) GetNotPreservedTotalWeightByParticipant(ctx context.Context,
 				continue
 			}
 			modelId := p.Models[i]
+			preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelId)
 			coeff, ok := coefficients[modelId]
 			if !ok {
 				coeff = mathsdk.LegacyOneDec()
 			}
 			rawModel := int64(0)
 			for _, mlNode := range nodeArray.MlNodes {
-				if mlNode != nil && len(mlNode.TimeslotAllocation) > 1 && !mlNode.TimeslotAllocation[1] {
+				if mlNode != nil {
+					if _, isPreserved := preservedNodeSet[mlNode.NodeId]; !isPreserved {
 					rawModel += mlNode.PocWeight
+					}
 				}
 			}
 			totalWeight += coeff.MulInt64(rawModel).TruncateInt64()

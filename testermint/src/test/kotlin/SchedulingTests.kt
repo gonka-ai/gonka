@@ -13,6 +13,22 @@ import kotlin.test.Test
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class SchedulingTests : TestermintTest() {
     @Test
+    fun preservedSnapshotQuerySmokeTest() {
+        val (cluster, genesis) = initCluster(reboot = true, resetMlNodes = false)
+        genesis.addNodes(1)
+        genesis.waitForNextEpoch()
+
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        genesis.waitForStage(EpochStage.START_OF_POC)
+
+        val regularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
+        val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot(regularAnchor)
+        assertThat(preservedSnapshot.found).isTrue()
+        assertThat(preservedSnapshot.snapshot).isNotNull
+        assertThat(preservedSnapshot.snapshot!!.episodeAnchorHeight).isEqualTo(regularAnchor)
+    }
+
+    @Test
     fun basicSchedulingTest() {
         val (cluster, genesis) = initCluster(reboot = true, resetMlNodes = false)
         genesis.addNodes(1)
@@ -24,6 +40,18 @@ class SchedulingTests : TestermintTest() {
         
         checkParticipantWeights(genesis.node, genesisParticipantKey) // Should have all participants by now
 
+        genesis.waitForStage(EpochStage.START_OF_POC)
+
+        val regularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
+        val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot(regularAnchor)
+        assertThat(preservedSnapshot.found).isTrue()
+        val modelId = extractSingleModelId(genesis.api.getNodes())
+        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
+        // Two-node cluster with the default pocSlotAllocation preserves exactly one node
+        // per PoC episode. Pinning the cardinality guards against the sampler silently
+        // returning an empty set or preserving everything.
+        assertThat(preservedNodeIds).hasSize(1)
+
         val allocatedNode = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
             nodes.forEach { node ->
@@ -32,26 +60,11 @@ class SchedulingTests : TestermintTest() {
                     assertThat(value.timeslotAllocation).hasSize(2)
                 }
             }
-            nodes.firstNotNullOf { node ->
-                val isAllocatedForInference = node.state.epochMlNodes
-                    ?.firstNotNullOf { (_, x) -> x.timeslotAllocation.getOrNull(1) == true  }
-                    ?: false
-                node.takeIf { isAllocatedForInference }
-            }
+            nodes.single { node -> node.node.id in preservedNodeIds }
         }
-
-        assertThat(allocatedNode).isNotNull
-
-        genesis.waitForStage(EpochStage.START_OF_POC)
 
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
-            nodes.forEach { node ->
-                node.state.epochMlNodes?.forEach { (_, value) ->
-                    assertThat(value.pocWeight).isEqualTo(10)
-                    assertThat(value.timeslotAllocation).hasSize(2)
-                }
-            }
             nodes.forEach { node ->
                 if (node.node.id == allocatedNode.node.id) {
                     assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
@@ -67,30 +80,28 @@ class SchedulingTests : TestermintTest() {
 
         checkParticipantWeights(genesis.node, genesisParticipantKey)
 
-        val allocatedNode2 = genesis.api.getNodes().let { nodes ->
-            assertThat(nodes).hasSize(2)
+        // After the next epoch boundary, a fresh regular-PoC snapshot exists at the new
+        // PocStartBlockHeight. Verifying it is non-empty restores the "allocation
+        // actually happened" guarantee the old TimeslotAllocation[1] proxy gave.
+        val nextRegularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
+        val nextPreservedSnapshot = genesis.node.queryPreservedNodesSnapshot(nextRegularAnchor)
+        assertThat(nextPreservedSnapshot.found).isTrue()
+        val nextPreservedNodeIds = preservedNodeIdsForModel(nextPreservedSnapshot, modelId)
+        assertThat(nextPreservedNodeIds).isNotEmpty
 
+        genesis.api.getNodes().let { nodes ->
+            assertThat(nodes).hasSize(2)
             nodes.forEach { node ->
-                node.state.epochMlNodes?.forEach { (key, value) ->
+                node.state.epochMlNodes?.forEach { (_, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
                     assertThat(value.timeslotAllocation).hasSize(2)
                 }
             }
-
             nodes.forEach { node ->
                 assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
                 assertThat(node.state.intendedStatus).isEqualTo("INFERENCE")
             }
-
-            nodes.firstNotNullOf { node ->
-                val isAllocatedForInference = node.state.epochMlNodes
-                    ?.firstNotNullOf { (_, x) -> x.timeslotAllocation.getOrNull(1) == true  }
-                    ?: false
-                node.takeIf { isAllocatedForInference }
-            }
         }
-
-        assertThat(allocatedNode2).isNotNull
     }
 }
 

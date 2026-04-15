@@ -56,7 +56,9 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 }
 
 // calculatePocParticipatingNodesWeight computes the coefficient-adjusted total weight
-// of PoC-participating nodes (POC_SLOT=false). Coefficients normalize cross-model values.
+// across all model ML nodes. Used as the initial confirmation weight at epoch formation,
+// before any episode-scoped preserved snapshot exists. Per-event slashing in
+// checkConfirmationSlashing refines this value using its own preserved snapshot.
 func calculatePocParticipatingNodesWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
 	totalWeight := int64(0)
 
@@ -79,9 +81,7 @@ func calculatePocParticipatingNodesWeight(models []string, mlNodes []*types.Mode
 			if node == nil {
 				continue
 			}
-			if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
-				rawModel += node.PocWeight
-			}
+			rawModel += node.PocWeight
 		}
 		totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
 	}

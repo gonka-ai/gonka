@@ -383,6 +383,15 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	}
 	epochContext := types.NewEpochContext(*epoch, *params.EpochParams)
 
+	// Regular-PoC preserved snapshot tells us which validator nodes were preserved for
+	// this epoch's PoC. Claims that overlap with PoC are only valid for preserved nodes.
+	preservedSnapshot, _, snapshotErr := k.GetPreservedNodesSnapshot(ctx, int64(mainEpochData.PocStartBlockHeight))
+	if snapshotErr != nil {
+		k.LogWarn("Failed to get preserved nodes snapshot for claim validation", types.Claims,
+			"epoch", mainEpochData.EpochIndex, "anchor", mainEpochData.PocStartBlockHeight, "error", snapshotErr)
+	}
+	preservedByModel := PreservedByModelFromSnapshot(&preservedSnapshot)
+
 	// Create a map to store weight maps for each model
 	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
 	modelTotalWeights := make(map[string]int64)
@@ -472,7 +481,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 		totalWeight := modelTotalWeights[modelId]
 
-		if k.OverlapsWithPoC(&inference, epochContext) && !k.isActiveDuringPoC(&validatorPowerForModel) {
+		if k.OverlapsWithPoC(&inference, epochContext) && !isActiveDuringPoC(&validatorPowerForModel, preservedByModel[modelId]) {
 			skipped++
 			continue
 		}
@@ -531,17 +540,20 @@ func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDe
 	return happenedAfterCutoff
 }
 
-func (k msgServer) isActiveDuringPoC(weight *types.ValidationWeight) bool {
+// isActiveDuringPoC reports whether this validator has any preserved node under the
+// given model's regular-PoC snapshot. Preserved nodes are the only ones that continued
+// serving inference during PoC, so claims overlapping with PoC are only valid for them.
+func isActiveDuringPoC(weight *types.ValidationWeight, preservedForModel map[string]struct{}) bool {
 	if weight == nil {
-		k.LogError("MsgClaimReward. isActiveDuringPoC. Validation weight is nil", types.Claims, "weight", weight)
 		return false
 	}
-
 	for _, n := range weight.MlNodes {
-		if n.IsActiveDuringPoC() {
+		if n == nil {
+			continue
+		}
+		if _, ok := preservedForModel[n.NodeId]; ok {
 			return true
 		}
 	}
-
 	return false
 }

@@ -33,6 +33,7 @@ import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
 import "inference/inference/devshard_escrow.proto";
+import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -427,6 +428,11 @@ service Query {
 
   rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_escrow/{id}";
+  }
+
+  // Queries preserved nodes snapshot for the active PoC episode.
+  rpc PreservedNodesSnapshot (QueryPreservedNodesSnapshotRequest) returns (QueryPreservedNodesSnapshotResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/preserved_nodes_snapshot/{episode_anchor_height}";
   }
 
   rpc DevshardHostEpochStats (QueryGetDevshardHostEpochStatsRequest) returns (QueryGetDevshardHostEpochStatsResponse) {
@@ -1153,6 +1159,15 @@ message QueryPoCValidationSnapshotRequest {
 
 message QueryPoCValidationSnapshotResponse {
   PoCValidationSnapshot snapshot = 1;
+  bool found = 2;
+}
+
+message QueryPreservedNodesSnapshotRequest {
+  int64 episode_anchor_height = 1;
+}
+
+message QueryPreservedNodesSnapshotResponse {
+  PreservedNodesSnapshot snapshot = 1;
   bool found = 2;
 }
 
