@@ -82,7 +82,10 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	// Limit request body to 10 MB to prevent OOM via unbounded reads.
+	// The transport server has maxBodySize protection but the proxy does not.
+	const maxProxyBodySize = 10 << 20 // 10 MB
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxProxyBodySize))
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
