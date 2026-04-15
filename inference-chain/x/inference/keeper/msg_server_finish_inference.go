@@ -37,6 +37,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if msg.CompletionTokenCount > types.MaxAllowedTokens {
 		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "completion_token_count exceeds limit (%d > %d)", msg.CompletionTokenCount, types.MaxAllowedTokens), msg), nil
 	}
+	if msg.CompletionTokenCount == 0 {
+		return failedFinish(ctx, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "completion_token_count must be positive (%d)", msg.CompletionTokenCount), msg), nil
+	}
+
 
 	// Developer access gating: until cutoff height only allowlisted developers may run inference flows.
 	// We gate by the original requester (developer), not the executor/TA.

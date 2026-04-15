@@ -170,7 +170,7 @@ func ProcessFinishInference(
 		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
 	}
 	if currentInference.CompletionTokenCount == 0 {
-		logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+		return nil, nil, sdkerrors.Wrapf(types.ErrTokenCountOutOfRange, "completion_token_count must be positive for finished inference (%d)", currentInference.CompletionTokenCount)
 	}
 	actualCost, err := CalculateCost(currentInference)
 	if err != nil {
