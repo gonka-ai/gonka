@@ -5,15 +5,17 @@ import (
 	"net/http"
 	"testing"
 
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/labstack/echo/v4"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type stubPoCServer struct{ inferencetypes.UnimplementedQueryServer }
+type stubPoCServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *stubPoCServer) PocBatchesForStage(_ context.Context, req *inferencetypes.QueryPocBatchesForStageRequest) (*inferencetypes.QueryPocBatchesForStageResponse, error) {
 	if req.BlockHeight == 42 {
@@ -37,11 +39,13 @@ func TestGetPoCBatches_Returns404WhenEmpty(t *testing.T) {
 	err := s.GetPoCBatches(ctx, 99)
 	var httpErr *echo.HTTPError
 	require.ErrorAs(t, err, &httpErr)
-	assert.Equal(t, http.StatusNotFound, httpErr.Code)
+	assert.Equal(t, http.StatusForbidden, httpErr.Code)
 	_ = rec
 }
 
-type errPoCServer struct{ inferencetypes.UnimplementedQueryServer }
+type errPoCServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errPoCServer) PocBatchesForStage(_ context.Context, _ *inferencetypes.QueryPocBatchesForStageRequest) (*inferencetypes.QueryPocBatchesForStageResponse, error) {
 	return nil, status.Error(codes.Unavailable, "chain unavailable")

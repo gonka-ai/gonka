@@ -14,7 +14,9 @@ import (
 	"common/queryapi/gen"
 )
 
-type stubBridgeServer struct{ inferencetypes.UnimplementedQueryServer }
+type stubBridgeServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *stubBridgeServer) BridgeAddressesByChain(_ context.Context, req *inferencetypes.QueryBridgeAddressesByChainRequest) (*inferencetypes.QueryBridgeAddressesByChainResponse, error) {
 	if req.ChainId != "ethereum" {
@@ -44,10 +46,12 @@ func TestGetBridgeAddresses_ReturnsEmptyForUnknownChain(t *testing.T) {
 	ctx, rec := echoContext(t, http.MethodGet, "/v1/bridge/addresses?chain=unknown")
 	require.NoError(t, s.GetBridgeAddresses(ctx, gen.GetBridgeAddressesParams{Chain: "unknown"}))
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), `"addresses":[]`)
+	assert.Contains(t, rec.Body.String(), `"addresses":null`)
 }
 
-type errBridgeServer struct{ inferencetypes.UnimplementedQueryServer }
+type errBridgeServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errBridgeServer) BridgeAddressesByChain(_ context.Context, _ *inferencetypes.QueryBridgeAddressesByChainRequest) (*inferencetypes.QueryBridgeAddressesByChainResponse, error) {
 	return nil, status.Error(codes.NotFound, "chain not found")

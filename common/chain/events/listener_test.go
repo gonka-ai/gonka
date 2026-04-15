@@ -15,8 +15,8 @@ func TestListener_StartWithUnreachableNode(t *testing.T) {
 	// then the context timeout cancels it. No handlers should be called.
 	l := events.NewListener("http://localhost:26657")
 
-	var created []events.SubnetEscrowCreatedEvent
-	l.OnSubnetEscrowCreated(func(_ context.Context, e events.SubnetEscrowCreatedEvent) {
+	var created []events.DevshardEscrowCreatedEvent
+	l.OnDevshardEscrowCreated(func(_ context.Context, e events.DevshardEscrowCreatedEvent) {
 		created = append(created, e)
 	})
 

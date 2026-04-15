@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"common/logging"
+	"common/nodemanager/gen"
 	"decentralized-api/broker"
-	"decentralized-api/nodemanager/gen"
 
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"

@@ -2,40 +2,35 @@ package validation
 
 import (
 	"bytes"
-	"common/completionapi"
-	"common/logging"
 	"context"
-	"decentralized-api/apiconfig"
-	"decentralized-api/broker"
-	"decentralized-api/chainphase"
-	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
-	"sort"
-	"strconv"
 	"sync"
 	"time"
+
+	"common/completionapi"
+	"common/logging"
+	commonvalidation "common/validation"
+	"decentralized-api/apiconfig"
+	"decentralized-api/broker"
+	"decentralized-api/chainphase"
+	"decentralized-api/cosmosclient"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/shopspring/decimal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
-// and the inference is post-upgrade (no on-chain fallback available).
-var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
+var zero = inference.Decimal{Value: 0, Exponent: 0}
 
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
@@ -574,17 +569,17 @@ func logInferencesToValidate(toValidate []string) {
 func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
 	promptPayload, responsePayload, err := s.retrievePayloadsWithRetry(inf)
 	if err != nil {
-		if errors.Is(err, ErrPayloadUnavailable) {
+		if errors.Is(err, commonvalidation.ErrPayloadUnavailable) {
 			// Post-upgrade inference: executor unavailable after 20 min of retries
 			s.checkAndInvalidateUnavailable(inf, transactionRecorder, revalidation)
 			return
 		}
-		if errors.Is(err, ErrHashMismatch) {
+		if errors.Is(err, commonvalidation.ErrHashMismatch) {
 			// Executor served wrong payload with valid signature - immediate invalidation
 			s.submitHashMismatchInvalidation(inf, transactionRecorder, revalidation)
 			return
 		}
-		if errors.Is(err, ErrEpochStale) {
+		if errors.Is(err, commonvalidation.ErrEpochStale) {
 			// Epoch too old - validation no longer useful, just return
 			logging.Info("Validation aborted: epoch stale", types.Validation,
 				"inferenceId", inf.InferenceId, "inferenceEpoch", inf.EpochId)
@@ -606,11 +601,11 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 	const maxRetries = 5
 	const retryInterval = 4 * time.Minute
 
-	var valResult ValidationResult
+	var valResult commonvalidation.ValidationResult
 
 	// Retry logic for LockNode operation
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		valResult, err = broker.LockNode(s.nodeBroker, inf.Model, func(node *broker.Node) (ValidationResult, error) {
+		valResult, err = broker.LockNode(s.nodeBroker, inf.Model, func(node *broker.Node) (commonvalidation.ValidationResult, error) {
 			return s.validateWithPayloads(inf, node, promptPayload, responsePayload)
 		})
 
@@ -643,7 +638,7 @@ func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Infere
 		}
 	}
 
-	msgValidation, err := ToMsgValidation(valResult)
+	msgValidation, err := commonvalidation.ToMsgValidation(valResult)
 	if err != nil {
 		logging.Error("Failed to convert to MsgValidation.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
@@ -724,7 +719,7 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 		if s.isEpochStale(inf.EpochId) {
 			logging.Info("Epoch stale, stopping payload retrieval", types.Validation,
 				"inferenceId", inf.InferenceId, "inferenceEpoch", inf.EpochId)
-			return nil, nil, ErrEpochStale
+			return nil, nil, commonvalidation.ErrEpochStale
 		}
 
 		promptPayload, responsePayload, err := RetrievePayloadsFromExecutor(
@@ -737,10 +732,10 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 		}
 
 		// Hash mismatch = executor signed wrong data = immediate invalidation (no retry)
-		if errors.Is(err, ErrHashMismatch) {
+		if errors.Is(err, commonvalidation.ErrHashMismatch) {
 			logging.Error("Hash mismatch detected, will invalidate immediately", types.Validation,
 				"inferenceId", inf.InferenceId, "attempt", attempt)
-			return nil, nil, ErrHashMismatch
+			return nil, nil, commonvalidation.ErrHashMismatch
 		}
 
 		lastErr = err
@@ -779,7 +774,7 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 	// Post-upgrade inference: no on-chain fallback available
 	logging.Warn("Retries exhausted for post-upgrade inference, will invalidate", types.Validation,
 		"inferenceId", inf.InferenceId, "lastError", lastErr)
-	return nil, nil, ErrPayloadUnavailable
+	return nil, nil, commonvalidation.ErrPayloadUnavailable
 }
 
 // checkAndInvalidateUnavailable checks if inference is already invalidated by consensus,
@@ -870,7 +865,7 @@ func (s *InferenceValidator) submitHashMismatchInvalidation(inf types.Inference,
 }
 
 // validateWithPayloads validates inference using provided payloads.
-func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inferenceNode *broker.Node, promptPayload, responsePayload []byte) (ValidationResult, error) {
+func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inferenceNode *broker.Node, promptPayload, responsePayload []byte) (commonvalidation.ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {
@@ -880,25 +875,25 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(promptPayload, &requestMap); err != nil {
-		return &InvalidInferenceResult{inference.InferenceId, "Failed to unmarshal promptPayload.", err}, nil
+		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Failed to unmarshal promptPayload.", Error: err}, nil
 	}
 
 	originalResponse, err := unmarshalResponsePayload(responsePayload)
 	if err != nil {
-		return &InvalidInferenceResult{inference.InferenceId, "Failed to unmarshal responsePayload.", err}, nil
+		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Failed to unmarshal responsePayload.", Error: err}, nil
 	}
 
 	enforcedTokens, err := originalResponse.GetEnforcedTokens()
 	if err != nil {
-		return &InvalidInferenceResult{inference.InferenceId, "Failed to get enforced string.", err}, nil
+		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Failed to get enforced string.", Error: err}, nil
 	}
 
-	isEmptySentinel := isEmptySentinelTokens(enforcedTokens)
+	isEmptySentinel := commonvalidation.IsEmptySentinelTokens(enforcedTokens)
 
-	if !isEmptySentinel && hasNonNumericTokens(enforcedTokens) {
+	if !isEmptySentinel && commonvalidation.HasNonNumericTokens(enforcedTokens) {
 		logging.Warn("Executor response contains non-numeric token strings in logprobs instead of token IDs", types.Validation,
 			"inferenceId", inference.InferenceId)
-		return &InvalidInferenceResult{inference.InferenceId, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
+		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Logprobs contain decoded text instead of numeric token IDs."}, nil
 	}
 
 	if isEmptySentinel {
@@ -946,8 +941,8 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 			"inferenceId", inference.InferenceId,
 			"status", resp.StatusCode,
 			"body", string(respBodyBytes))
-		return &SimilarityValidationResult{
-			BaseValidationResult: BaseValidationResult{
+		return &commonvalidation.SimilarityValidationResult{
+			BaseValidationResult: commonvalidation.BaseValidationResult{
 				InferenceId:   inference.InferenceId,
 				ResponseBytes: []byte{},
 			},
@@ -959,7 +954,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
 			"inferenceId", inference.InferenceId,
 			"validatorStatus", resp.StatusCode)
-		return &InvalidInferenceResult{inference.InferenceId, "Executor returned error but prompt is servable.", nil}, nil
+		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Executor returned error but prompt is servable."}, nil
 	}
 
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
@@ -971,7 +966,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
-	baseResult := BaseValidationResult{
+	baseResult := commonvalidation.BaseValidationResult{
 		InferenceId:   inference.InferenceId,
 		ResponseBytes: respBodyBytes,
 	}
@@ -980,21 +975,14 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
-	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+	return commonvalidation.CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
-	return unmarshalResponsePayload([]byte(inference.ResponsePayload))
-}
-
-// unmarshalResponsePayload parses response payload string into CompletionResponse.
 func unmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
 	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
-
 	if err != nil {
 		logging.Error("Failed to unmarshal responsePayload", types.Validation, "error", err)
 	}
-
 	switch resp.(type) {
 	case *completionapi.StreamedCompletionResponse:
 		logging.Debug("Unmarshalled responsePayload into StreamedResponse", types.Validation)
@@ -1003,266 +991,6 @@ func unmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 	default:
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
 	}
-
 	return resp, err
 }
 
-type ValidationResult interface {
-	GetInferenceId() string
-
-	GetValidationResponseBytes() []byte
-
-	IsSuccessful() bool
-}
-
-type BaseValidationResult struct {
-	InferenceId   string
-	ResponseBytes []byte
-}
-
-func (r BaseValidationResult) GetInferenceId() string {
-	return r.InferenceId
-}
-
-func (r BaseValidationResult) GetValidationResponseBytes() []byte {
-	return r.ResponseBytes
-}
-
-type DifferentLengthValidationResult struct {
-	BaseValidationResult
-}
-
-func (DifferentLengthValidationResult) IsSuccessful() bool {
-	return false
-}
-
-type DifferentTokensValidationResult struct {
-	BaseValidationResult
-}
-
-func (DifferentTokensValidationResult) IsSuccessful() bool {
-	return false
-}
-
-type SimilarityValidationResult struct {
-	BaseValidationResult
-	Value float64
-}
-
-func (r SimilarityValidationResult) IsSuccessful() bool {
-	return r.Value > 0.99
-}
-
-type InvalidInferenceResult struct {
-	InferenceId string
-	Reason      string
-	Error       error
-}
-
-func (r InvalidInferenceResult) IsSuccessful() bool {
-	return false
-}
-
-func (r InvalidInferenceResult) GetInferenceId() string {
-	return r.InferenceId
-}
-
-func (r InvalidInferenceResult) GetValidationResponseBytes() []byte {
-	return []byte{}
-}
-
-const emptySentinelToken = "<EMPTY>"
-
-func isEmptySentinelTokens(et completionapi.EnforcedTokens) bool {
-	for _, t := range et.Tokens {
-		if t.Token == emptySentinelToken {
-			return true
-		}
-	}
-	return false
-}
-
-func hasNonNumericTokens(et completionapi.EnforcedTokens) bool {
-	for _, t := range et.Tokens {
-		n, err := strconv.Atoi(t.Token)
-		if err != nil || n < 0 {
-			return true
-		}
-		for _, topToken := range t.TopTokens {
-			n, err := strconv.Atoi(topToken)
-			if err != nil || n < 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func CompareLogits(
-	originalLogits []completionapi.Logprob,
-	validationLogits []completionapi.Logprob,
-	baseComparisonResult BaseValidationResult,
-) ValidationResult {
-	if len(originalLogits) != len(validationLogits) {
-		logging.Warn("Different length of logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
-	}
-	if len(validationLogits) < len(originalLogits) {
-		logging.Warn("Validation logits are shorter than original logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
-		return &DifferentLengthValidationResult{baseComparisonResult}
-	}
-
-	for i := range originalLogits {
-		o := originalLogits[i]
-		v := validationLogits[i]
-		if o.Token != v.Token {
-			logging.Error("Different tokens in logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits)
-			return &DifferentTokensValidationResult{baseComparisonResult}
-		}
-	}
-	similarity := customSimilarity(originalLogits, validationLogits)
-
-	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
-}
-
-func customSimilarity(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) float64 {
-	distance, err := customDistance(originalLogprobs, validationLogprobs)
-	if err != nil {
-		logging.Error("Error calculating custom distance", types.Validation, "error", err)
-		return 0
-	}
-	if math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return 0
-	}
-	similarity := 1 - distance
-	if similarity < 0 {
-		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
-		return 0
-	}
-	return similarity
-}
-
-func customDistance(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) (float64, error) {
-	if len(originalLogprobs) == 0 {
-		return 0.0, nil
-	}
-	distance := 0.0
-	for i := range originalLogprobs {
-		o := originalLogprobs[i]
-		v := validationLogprobs[i]
-		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
-		if err != nil {
-			logging.Error("Error calculating position distance", types.Validation, "error", err)
-			return math.Inf(1), err
-		}
-		distance += posDistance
-	}
-	totalLogprobs := max(100, len(originalLogprobs))
-	if len(originalLogprobs[0].TopLogprobs) > 0 {
-		totalLogprobs *= len(originalLogprobs[0].TopLogprobs)
-	}
-
-	return distance / float64(totalLogprobs), nil
-}
-
-func positionDistance(
-	originalLogprobs []completionapi.TopLogprobs,
-	validationLogprobs []completionapi.TopLogprobs,
-) (float64, error) {
-	if len(originalLogprobs) == 0 || len(validationLogprobs) == 0 {
-		return 0.0, fmt.Errorf("empty logprobs provided")
-	}
-	distance := 0.0
-
-	originalLogprobMap := make(map[string]float64)
-	for _, o := range originalLogprobs {
-		originalLogprobMap[o.Token] = o.Logprob
-	}
-	sortedLogprobs := make([]float64, 0, len(originalLogprobMap))
-	for _, logprob := range originalLogprobMap {
-		sortedLogprobs = append(sortedLogprobs, logprob)
-	}
-
-	sort.Float64s(sortedLogprobs)
-
-	var minOriginalLogprob1, minOriginalLogprob2 float64
-	if len(sortedLogprobs) >= 2 {
-		minOriginalLogprob1 = sortedLogprobs[0]
-		minOriginalLogprob2 = sortedLogprobs[1]
-	} else if len(sortedLogprobs) == 1 {
-		minOriginalLogprob1 = sortedLogprobs[0]
-		minOriginalLogprob2 = minOriginalLogprob1 - 100.0
-	}
-
-	// Estimate the next logprob value (2 as fine)
-	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
-
-	for _, v := range validationLogprobs {
-		var originalLogprob float64
-		if origProb, exists := originalLogprobMap[v.Token]; exists {
-			originalLogprob = origProb
-		} else {
-			originalLogprob = nextOriginalLogprob
-		}
-
-		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
-		if math.IsNaN(denom) || denom == 0 {
-			continue
-		}
-		term := math.Abs(v.Logprob-originalLogprob) / denom / 2.0
-		if !math.IsNaN(term) {
-			distance += term
-		}
-	}
-
-	return distance, nil
-}
-
-func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
-	// Match type of result from implementations of ValidationResult
-	var simVal float64
-	switch result.(type) {
-	case *DifferentLengthValidationResult:
-		logging.Warn("Different length validation result", types.Validation)
-		simVal = 0
-	case *DifferentTokensValidationResult:
-		logging.Warn("Different tokens validation result", types.Validation)
-		simVal = 0
-	case *SimilarityValidationResult:
-		simVal = result.(*SimilarityValidationResult).Value
-		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
-	case *InvalidInferenceResult:
-		simVal = 0
-		logging.Warn("Invalid inference result", types.Validation, "reason", result.(*InvalidInferenceResult).Reason, "inferenceId", result.GetInferenceId(), "error", result.(*InvalidInferenceResult).Error)
-	default:
-		logging.Error("Unknown validation result type", types.Validation, "type", fmt.Sprintf("%T", result), "result", result)
-		return nil, errors.New("unknown validation result type")
-	}
-
-	responseHash, _, err := utils.GetResponseHash(result.GetValidationResponseBytes())
-	if err != nil {
-		logging.Error("Failed to get response hash", types.Validation, "error", err)
-		return nil, err
-	}
-
-	return &inference.MsgValidation{
-		Id:           uuid.New().String(),
-		InferenceId:  result.GetInferenceId(),
-		ResponseHash: responseHash,
-		// The conversion may not be deterministic here, but that doesn't matter as the message
-		// itself is what counts, and it WILL be deterministic
-		ValueDecimal: DecimalFromFloat(simVal),
-	}, nil
-}
-
-var zero = inference.Decimal{Value: 0, Exponent: 0}
-
-func DecimalFromFloat(f float64) *inference.Decimal {
-	d := decimal.NewFromFloat(f)
-	return &inference.Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
-}

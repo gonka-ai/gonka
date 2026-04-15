@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"common/utils"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
-	"decentralized-api/utils"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"

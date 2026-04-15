@@ -19,7 +19,7 @@ var ErrNotFound = errors.New("payloads: not found")
 const schema = `
 CREATE TABLE IF NOT EXISTS payload_storage (
     escrow_id        TEXT   NOT NULL,
-    inference_id     TEXT   NOT NULL,
+    inference_id     INT   NOT NULL,
     epoch_id         BIGINT NOT NULL,
     prompt_payload   BYTEA,
     response_payload BYTEA,
@@ -71,7 +71,7 @@ func (s *Store) ensurePartition(ctx context.Context, epochId uint64) error {
 
 // Store persists the prompt and response payloads for an inference.
 // The table is partitioned by epoch_id; partitions are created lazily on first write.
-func (s *Store) Store(ctx context.Context, escrowId, inferenceId string, epochId uint64, prompt, response []byte) error {
+func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, prompt, response []byte) error {
 	if err := s.ensurePartition(ctx, epochId); err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func (s *Store) Store(ctx context.Context, escrowId, inferenceId string, epochId
 }
 
 // Retrieve fetches the stored prompt and response for an inference.
-func (s *Store) Retrieve(ctx context.Context, escrowId, inferenceId string, epochId uint64) (prompt, response []byte, err error) {
+func (s *Store) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) (prompt, response []byte, err error) {
 	err = s.pool.QueryRow(ctx,
 		`SELECT prompt_payload, response_payload
 		 FROM payload_storage
@@ -99,22 +99,17 @@ func (s *Store) Retrieve(ctx context.Context, escrowId, inferenceId string, epoc
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrNotFound
 		}
-		return nil, nil, fmt.Errorf("payloads: retrieve %s/%s: %w", escrowId, inferenceId, err)
+		return nil, nil, fmt.Errorf("payloads: retrieve %s/%d: %w", escrowId, inferenceId, err)
 	}
 	return prompt, response, nil
 }
 
 // PruneEpoch removes all payloads where epoch_id < epochId (i.e., all epochs before the given one). Idempotent.
 func (s *Store) PruneEpoch(ctx context.Context, epochId uint64) error {
-	tableName := fmt.Sprintf("payload_storage_epoch_%d", epochId)
-	query := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
-
-	_, err := s.pool.Exec(ctx, query)
+	_, err := s.pool.Exec(ctx, `DELETE FROM payload_storage WHERE epoch_id < $1`, epochId)
 	if err != nil {
-		return fmt.Errorf("drop partition %s: %w", tableName, err)
+		return fmt.Errorf("payloads: prune epoch: %w", err)
 	}
-
-	s.knownEpochs.Delete(epochId)
-	logging.Info("Pruned epoch partition", types.PayloadStorage, "epochId", epochId)
+	logging.Info("Pruned epoch partitions", types.PayloadStorage, "before", epochId)
 	return nil
 }

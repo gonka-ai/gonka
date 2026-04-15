@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"common/nodemanager/gen"
 	"decentralized-api/broker"
-	"decentralized-api/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"

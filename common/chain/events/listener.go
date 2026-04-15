@@ -14,19 +14,19 @@ import (
 
 const (
 	defaultReconnectDelay = 5 * time.Second
-	subscriberID          = "subnetd"
+	subscriberID          = "devshardd"
 	subscriptionBuffer    = 100
 
-	querySubnetEscrowCreated = "tm.event='Tx' AND subnet_escrow_created.escrow_id EXISTS"
-	querySubnetEscrowSettled = "tm.event='Tx' AND subnet_escrow_settled.escrow_id EXISTS"
+	queryDevshardEscrowCreated = "tm.event='Tx' AND devshard_escrow_created.escrow_id EXISTS"
+	queryDevshardEscrowSettled = "tm.event='Tx' AND devshard_escrow_settled.escrow_id EXISTS"
 
-	eventTypeCreated = "subnet_escrow_created"
-	eventTypeSettled = "subnet_escrow_settled"
+	eventTypeCreated = "devshard_escrow_created"
+	eventTypeSettled = "devshard_escrow_settled"
 )
 
-// SubnetEscrowCreatedEvent carries parsed attributes from a subnet_escrow_created chain event.
-// Emitted by x/inference/keeper/msg_server_create_subnet_escrow.go.
-type SubnetEscrowCreatedEvent struct {
+// DevshardEscrowCreatedEvent carries parsed attributes from a devshard_escrow_created chain event.
+// Emitted by x/inference/keeper/msg_server_create_devshard_escrow.go.
+type DevshardEscrowCreatedEvent struct {
 	BlockHeight int64
 	EscrowID    uint64
 	Creator     string
@@ -34,9 +34,9 @@ type SubnetEscrowCreatedEvent struct {
 	EpochIndex  uint64
 }
 
-// SubnetEscrowSettledEvent carries parsed attributes from a subnet_escrow_settled chain event.
-// Emitted by x/inference/keeper/msg_server_settle_subnet_escrow.go.
-type SubnetEscrowSettledEvent struct {
+// DevshardEscrowSettledEvent carries parsed attributes from a devshard_escrow_settled chain event.
+// Emitted by x/inference/keeper/msg_server_settle_devshard_escrow.go.
+type DevshardEscrowSettledEvent struct {
 	BlockHeight int64
 	EscrowID    uint64
 	Settler     string
@@ -45,25 +45,25 @@ type SubnetEscrowSettledEvent struct {
 	Remainder   uint64
 }
 
-// SubnetEscrowCreatedHandler is called for each subnet_escrow_created event received.
-type SubnetEscrowCreatedHandler func(ctx context.Context, e SubnetEscrowCreatedEvent)
+// DevshardEscrowCreatedHandler is called for each devshard_escrow_created event received.
+type DevshardEscrowCreatedHandler func(ctx context.Context, e DevshardEscrowCreatedEvent)
 
-// SubnetEscrowSettledHandler is called for each subnet_escrow_settled event received.
-type SubnetEscrowSettledHandler func(ctx context.Context, e SubnetEscrowSettledEvent)
+// DevshardEscrowSettledHandler is called for each devshard_escrow_settled event received.
+type DevshardEscrowSettledHandler func(ctx context.Context, e DevshardEscrowSettledEvent)
 
-// Listener subscribes to subnet chain events via CometBFT WebSocket and dispatches typed events.
+// Listener subscribes to devshard chain events via CometBFT WebSocket and dispatches typed events.
 // It reconnects automatically on disconnect.
 //
 // Usage:
 //
 //	l := events.NewListener("http://localhost:26657")
-//	l.OnSubnetEscrowCreated(mgr.HandleEscrowCreated)
-//	l.OnSubnetEscrowSettled(mgr.HandleEscrowSettled)
+//	l.OnDevshardEscrowCreated(mgr.HandleEscrowCreated)
+//	l.OnDevshardEscrowSettled(mgr.HandleEscrowSettled)
 //	go l.Start(ctx)
 type Listener struct {
 	rpcURL         string
-	createdHooks   []SubnetEscrowCreatedHandler
-	settledHooks   []SubnetEscrowSettledHandler
+	createdHooks   []DevshardEscrowCreatedHandler
+	settledHooks   []DevshardEscrowSettledHandler
 	reconnectDelay time.Duration
 }
 
@@ -76,13 +76,13 @@ func NewListener(rpcURL string) *Listener {
 	}
 }
 
-// OnSubnetEscrowCreated registers a handler called for each subnet_escrow_created event.
-func (l *Listener) OnSubnetEscrowCreated(h SubnetEscrowCreatedHandler) {
+// OnDevshardEscrowCreated registers a handler called for each devshard_escrow_created event.
+func (l *Listener) OnDevshardEscrowCreated(h DevshardEscrowCreatedHandler) {
 	l.createdHooks = append(l.createdHooks, h)
 }
 
-// OnSubnetEscrowSettled registers a handler called for each subnet_escrow_settled event.
-func (l *Listener) OnSubnetEscrowSettled(h SubnetEscrowSettledHandler) {
+// OnDevshardEscrowSettled registers a handler called for each devshard_escrow_settled event.
+func (l *Listener) OnDevshardEscrowSettled(h DevshardEscrowSettledHandler) {
 	l.settledHooks = append(l.settledHooks, h)
 }
 
@@ -117,14 +117,14 @@ func (l *Listener) run(ctx context.Context) error {
 	}
 	defer client.Stop() //nolint:errcheck
 
-	created, err := client.Subscribe(ctx, subscriberID, querySubnetEscrowCreated, subscriptionBuffer)
+	created, err := client.Subscribe(ctx, subscriberID, queryDevshardEscrowCreated, subscriptionBuffer)
 	if err != nil {
-		return fmt.Errorf("subscribe subnet_escrow_created: %w", err)
+		return fmt.Errorf("subscribe devshard_escrow_created: %w", err)
 	}
 
-	settled, err := client.Subscribe(ctx, subscriberID, querySubnetEscrowSettled, subscriptionBuffer)
+	settled, err := client.Subscribe(ctx, subscriberID, queryDevshardEscrowSettled, subscriptionBuffer)
 	if err != nil {
-		return fmt.Errorf("subscribe subnet_escrow_settled: %w", err)
+		return fmt.Errorf("subscribe devshard_escrow_settled: %w", err)
 	}
 
 	for {
@@ -133,12 +133,12 @@ func (l *Listener) run(ctx context.Context) error {
 			return ctx.Err()
 		case result, ok := <-created:
 			if !ok {
-				return fmt.Errorf("subnet_escrow_created subscription closed")
+				return fmt.Errorf("devshard_escrow_created subscription closed")
 			}
 			l.dispatchCreated(ctx, result)
 		case result, ok := <-settled:
 			if !ok {
-				return fmt.Errorf("subnet_escrow_settled subscription closed")
+				return fmt.Errorf("devshard_escrow_settled subscription closed")
 			}
 			l.dispatchSettled(ctx, result)
 		}
@@ -148,7 +148,7 @@ func (l *Listener) run(ctx context.Context) error {
 func (l *Listener) dispatchCreated(ctx context.Context, result ctypes.ResultEvent) {
 	data, ok := result.Data.(cmttypes.EventDataTx)
 	if !ok {
-		slog.Warn("chain events: unexpected data type for subnet_escrow_created", "type", fmt.Sprintf("%T", result.Data))
+		slog.Warn("chain events: unexpected data type for devshard_escrow_created", "type", fmt.Sprintf("%T", result.Data))
 		return
 	}
 	height := data.TxResult.Height
@@ -157,7 +157,7 @@ func (l *Listener) dispatchCreated(ctx context.Context, result ctypes.ResultEven
 			continue
 		}
 		attrs := attrsMap(ev.Attributes)
-		e := SubnetEscrowCreatedEvent{
+		e := DevshardEscrowCreatedEvent{
 			BlockHeight: height,
 			EscrowID:    parseUint64(attrs["escrow_id"]),
 			Creator:     attrs["creator"],
@@ -173,7 +173,7 @@ func (l *Listener) dispatchCreated(ctx context.Context, result ctypes.ResultEven
 func (l *Listener) dispatchSettled(ctx context.Context, result ctypes.ResultEvent) {
 	data, ok := result.Data.(cmttypes.EventDataTx)
 	if !ok {
-		slog.Warn("chain events: unexpected data type for subnet_escrow_settled", "type", fmt.Sprintf("%T", result.Data))
+		slog.Warn("chain events: unexpected data type for devshard_escrow_settled", "type", fmt.Sprintf("%T", result.Data))
 		return
 	}
 	height := data.TxResult.Height
@@ -182,7 +182,7 @@ func (l *Listener) dispatchSettled(ctx context.Context, result ctypes.ResultEven
 			continue
 		}
 		attrs := attrsMap(ev.Attributes)
-		e := SubnetEscrowSettledEvent{
+		e := DevshardEscrowSettledEvent{
 			BlockHeight: height,
 			EscrowID:    parseUint64(attrs["escrow_id"]),
 			Settler:     attrs["settler"],

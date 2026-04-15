@@ -45,7 +45,7 @@ func TestNewSignerFromKeyring_SignRecoverRoundTrip(t *testing.T) {
 	signer, err := NewSignerFromKeyring(kr, "test")
 	require.NoError(t, err)
 
-	msg := []byte("hello subnet payload")
+	msg := []byte("hello devshard payload")
 	sig, err := signer.Sign(msg)
 	require.NoError(t, err)
 

@@ -9,7 +9,7 @@ import (
 )
 
 // NewSignerFromKeyring extracts the secp256k1 private key from a cosmos keyring
-// and returns a subnet signer that produces gonka bech32 addresses.
+// and returns a devshard signer that produces gonka bech32 addresses.
 func NewSignerFromKeyring(kr keyring.Keyring, uid string) (*Secp256k1Signer, error) {
 	armor, err := kr.ExportPrivKeyArmor(uid, "")
 	if err != nil {

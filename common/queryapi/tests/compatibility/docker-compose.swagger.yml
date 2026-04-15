@@ -6,7 +6,6 @@ services:
     environment:
       - SWAGGER_JSON=/spec/openapi.yaml
       - VALIDATOR_URL=none
-      - 'SWAGGER_UI_PARAMS={"servers": [{"url": "http://host.docker.internal:18080"}]}'
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
