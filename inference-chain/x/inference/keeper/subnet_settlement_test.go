@@ -547,3 +547,27 @@ func TestVerifySubnetSettlement_TotalCostOverflow(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "overflow")
 }
+
+func TestVerifySubnetSettlement_PerValidatorCostOverflow(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	// Use 2 slots mapped to the SAME validator address.
+	// A malicious settler could split MaxUint64 across two slots of the same validator:
+	// slot[0].Cost = MaxUint64/2, slot[1].Cost = MaxUint64/2 + 1 → validatorCosts[addr] wraps.
+	// VerifySubnetSettlement must catch this; previously it only checked totalCost overflow.
+	keys, slots := generateSubnetKeys(t, 2)
+	escrow := types.SubnetEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: math.MaxUint64, Slots: slots,
+	}
+
+	halfPlusOne := math.MaxUint64/2 + 1
+	hostStats := []*types.SubnetSettlementHostStats{
+		{SlotId: 0, Cost: math.MaxUint64 / 2, RequiredValidations: 10, CompletedValidations: 9},
+		{SlotId: 1, Cost: halfPlusOne, RequiredValidations: 10, CompletedValidations: 9},
+	}
+	msg := buildSettlementTestData(t, escrow, keys, hostStats)
+
+	err := keeper.VerifySubnetSettlement(escrow, msg, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "validator cost overflow")
+}

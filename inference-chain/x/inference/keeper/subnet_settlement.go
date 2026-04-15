@@ -107,14 +107,26 @@ func VerifySubnetSettlement(escrow types.SubnetEscrow, msg *types.MsgSettleSubne
 		return fmt.Errorf("insufficient quorum: %d slot votes, need %d", slotVotes, requiredQuorum)
 	}
 
-	// Verify total cost does not exceed escrow amount
+	// Verify per-validator and total cost do not overflow, and total does not exceed escrow amount.
+	// Per-validator overflow check mirrors SettleSubnetEscrow's validatorCosts accumulation
+	// to prevent a malicious settler from splitting MaxUint64 across two slots of the same validator:
+	// Verify would pass but Settle would reject, creating an inconsistent validation gap.
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
+	validatorCosts := make(map[string]uint64)
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
 		if seenStatSlots[hs.SlotId] {
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
+		if int(hs.SlotId) >= len(escrow.Slots) {
+			return fmt.Errorf("host_stats slot_id %d out of range", hs.SlotId)
+		}
+		addr := escrow.Slots[hs.SlotId]
+		if validatorCosts[addr] > math.MaxUint64-hs.Cost {
+			return fmt.Errorf("validator cost overflow for slot %d addr %s: existing=%d add=%d", hs.SlotId, addr, validatorCosts[addr], hs.Cost)
+		}
+		validatorCosts[addr] += hs.Cost
 		if totalCost > math.MaxUint64-hs.Cost {
 			return fmt.Errorf("total cost overflow: accumulating slot %d cost %d would exceed uint64", hs.SlotId, hs.Cost)
 		}
