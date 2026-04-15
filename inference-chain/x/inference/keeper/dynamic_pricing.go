@@ -65,9 +65,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 		// Get cached capacity for this model
 		capacity, err := k.GetCachedModelCapacity(ctx, modelId)
 		if err != nil {
-			k.LogWarn("Failed to get cached capacity for model, skipping", types.Pricing,
-				"modelId", modelId, "error", err)
-			continue
+			return fmt.Errorf("failed to get cached capacity for model %s: %w", modelId, err)
 		}
 
 		averageLoadPerBlock, found, err := k.GetModelLoadRollingAveragePerBlock(
@@ -76,9 +74,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			windowBlocks,
 		)
 		if err != nil {
-			k.LogWarn("Failed to get model load rolling average, defaulting to zero load", types.Pricing,
-				"modelId", modelId, "error", err)
-			averageLoadPerBlock = decimal.Zero
+			return fmt.Errorf("failed to get model load rolling average for model %s: %w", modelId, err)
 		}
 		if !found {
 			averageLoadPerBlock = decimal.Zero
