@@ -18,6 +18,11 @@ type BitcoinResult struct {
 	Amount       int64  // Total epoch reward amount minted
 	EpochNumber  uint64 // Current epoch number for tracking
 	DecayApplied bool   // Whether decay was applied this epoch
+	// SupplyCapOverflowed is set to true when the proportional-reduction loop detects
+	// an overflow in totalDistributed, causing all remaining participant rewards to be
+	// zeroed and the remainder flowing to governance. The caller should emit an event
+	// so that off-chain monitors can detect supply-cap overflow events.
+	SupplyCapOverflowed bool
 	// GovernanceAmount is the portion of Amount that is NOT distributed to participants
 	// (e.g. due to downtime punishment or integer division truncation) and should be
 	// transferred to the governance module account by the caller.

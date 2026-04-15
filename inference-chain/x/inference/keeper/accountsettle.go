@@ -181,6 +181,15 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		return types.ErrNegativeRewardAmount
 	}
 	k.LogInfo("Bitcoin reward amount", types.Settle, "amount", bitcoinResult.Amount)
+	if bitcoinResult.SupplyCapOverflowed {
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"bitcoin_supply_cap_overflow",
+			sdk.NewAttribute("epoch", fmt.Sprint(currentEpochIndex)),
+			sdk.NewAttribute("total_subsidy_paid", fmt.Sprint(settleParameters.TotalSubsidyPaid)),
+			sdk.NewAttribute("total_subsidy_supply", fmt.Sprint(settleParameters.TotalSubsidySupply)),
+			sdk.NewAttribute("reward_amount", fmt.Sprint(bitcoinResult.Amount)),
+		))
+	}
 	rewardAmount = bitcoinResult.Amount
 	governanceRewardAmount = bitcoinResult.GovernanceAmount
 
