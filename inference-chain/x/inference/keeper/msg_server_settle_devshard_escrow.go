@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/bits"
 
+	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -31,8 +32,16 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if len(escrow.Slots) == 0 {
 		return nil, fmt.Errorf("escrow %d has no slots", escrow.Id)
 	}
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(goCtx)
+	if !found {
+		return nil, fmt.Errorf("failed to get effective epoch index")
+	}
+	if currentEpochIndex < escrow.EpochIndex || currentEpochIndex > escrow.EpochIndex+1 {
+		return nil, fmt.Errorf("devshard settlement only supports current or previous epoch: current epoch %d, escrow epoch %d", currentEpochIndex, escrow.EpochIndex)
+	}
 
 	totalSlots := uint64(len(escrow.Slots))
+	assignedPerSlot := msg.Nonce / totalSlots
 	// How much of the total fees will be assigned to each slot
 	feePerSlot := msg.Fees / totalSlots
 	// Leftover fees; will be distributed 1 per slot
@@ -79,6 +88,11 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	var totalPayout uint64
 	paidValidators := make(map[string]bool)
 	for _, addr := range escrow.Slots {
+		recipientAddr, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
+		}
+
 		payout, hasPayout := validatorPayouts[addr]
 		if !hasPayout || payout == 0 {
 			continue
@@ -93,17 +107,18 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 		totalPayout = nextTotalPayout
 
-		recipientAddr, err := sdk.AccAddressFromBech32(addr)
+		inCurrentEpoch, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, recipientAddr))
 		if err != nil {
-			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
+			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
 		}
-		coins, err := types.GetCoins(int64(payout))
-		if err != nil {
-			return nil, fmt.Errorf("invalid payout amount: %w", err)
-		}
-		err = k.BankKeeper.SendCoinsFromModuleToAccount(goCtx, types.ModuleName, recipientAddr, coins, "devshard_escrow_payment")
-		if err != nil {
-			return nil, fmt.Errorf("failed to pay validator %s: %w", addr, err)
+		if inCurrentEpoch {
+			if err := k.addCoinsToCoinBalance(goCtx, addr, payout); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := k.payCoinsDirectly(goCtx, payout, recipientAddr); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -135,6 +150,23 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err := k.AggregateDevshardHostStats(goCtx, escrow.EpochIndex, participantAddr, *hs); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
+		inCurrentEpoch, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
+		}
+
+		if inCurrentEpoch {
+			participant, found := k.GetParticipant(goCtx, addr)
+			if !found {
+				return nil, fmt.Errorf("participant %s not found", addr)
+			}
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(&participant, *hs, assignedPerSlot); err != nil {
+				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
+			}
+			if err := k.SetParticipant(goCtx, participant); err != nil {
+				return nil, fmt.Errorf("failed to update participant %s: %w", addr, err)
+			}
+		}
 		if !seenValidators[addr] {
 			seenValidators[addr] = true
 			if err := k.IncrementDevshardHostEscrowCount(goCtx, escrow.EpochIndex, participantAddr); err != nil {
@@ -159,4 +191,25 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	))
 
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
+}
+
+func (k msgServer) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
+	coins, err := types.GetCoins(int64(payout))
+	if err != nil {
+		return fmt.Errorf("invalid payout amount: %w", err)
+	}
+	err = k.BankKeeper.SendCoinsFromModuleToAccount(goCtx, types.ModuleName, recipientAddr, coins, "devshard_escrow_payment")
+	if err != nil {
+		return fmt.Errorf("failed to pay validator %s: %w", recipientAddr.String(), err)
+	}
+	return nil
+}
+
+func (k msgServer) addCoinsToCoinBalance(goCtx context.Context, addr string, payout uint64) error {
+	participant, _ := k.GetParticipant(goCtx, addr)
+	err := k.AddToCoinBalance(goCtx, &participant, payout)
+	if err != nil {
+		return err
+	}
+	return k.SetParticipant(goCtx, participant)
 }

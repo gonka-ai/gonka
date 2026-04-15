@@ -20,6 +20,7 @@ import (
 const (
 	DevshardGroupSize   = 16
 	DevshardQuorumSlots = 2*DevshardGroupSize/3 + 1
+	DevshardMaxNonce    = 20_000
 	// DevshardSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized devshard states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -46,6 +47,9 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 	if msg.Version == "" {
 		return fmt.Errorf("version is required")
+	}
+	if msg.Nonce > DevshardMaxNonce {
+		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, DevshardMaxNonce)
 	}
 	const maxVersionLength = 128
 	if len(msg.Version) > maxVersionLength {
@@ -121,6 +125,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 
 	// Verify total cost + fees does not exceed escrow amount
+	assignedPerSlot := msg.Nonce / uint64(len(escrow.Slots))
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
@@ -128,6 +133,13 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
+		if uint64(hs.Missed) > assignedPerSlot {
+			return fmt.Errorf("slot %d missed count %d exceeds assigned per slot %d", hs.SlotId, hs.Missed, assignedPerSlot)
+		}
+		completed := assignedPerSlot - uint64(hs.Missed)
+		if uint64(hs.Invalid) > completed {
+			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
+		}
 		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
 		if carry != 0 {
 			return fmt.Errorf("total cost overflow")
