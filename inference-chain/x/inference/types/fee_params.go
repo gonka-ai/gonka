@@ -3,11 +3,11 @@ package types
 import "fmt"
 
 // DefaultFeeParams returns the default fee parameters.
-// At MinGasPriceNgonka=10 and ~80k gas per tx, fee ≈ 800,000 ngonka ≈ $0.00046 per tx
-// (at GNK=$0.57). Governance-adjustable via MsgUpdateParams.
+// At MinGasPriceNgonka=10 and ~80k gas per tx, the fee per typical transaction
+// is ~800,000 ngonka (0.0008 GNK). Governance-adjustable via MsgUpdateParams.
 func DefaultFeeParams() *FeeParams {
 	return &FeeParams{
-		MinGasPriceNgonka: 10, // per gas unit; ~$0.00046 per typical tx
+		MinGasPriceNgonka: 10, // per gas unit; ~800,000 ngonka per typical tx
 		BaseValidationGas: 500_000,
 		GasPerPocCount:    100,
 	}
