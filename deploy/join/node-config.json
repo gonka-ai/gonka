@@ -13,6 +13,32 @@
           "--gpu-memory-utilization",
           "0.8"
         ]
+      },
+      "Qwen/Qwen3-4B-Instruct-2507": {
+        "args": [
+          "--enable-auto-tool-choice",
+          "--tool-call-parser",
+          "hermes",
+          "--max-model-len",
+          "25000"
+        ]
+      },
+      "Qwen/QwQ-32B": {
+        "args": [
+          "--quantization",
+          "fp8",
+          "--kv-cache-dtype",
+          "fp8",
+          "--enable-auto-tool-choice",
+          "--tool-call-parser",
+          "hermes"
+        ]
+      },
+      "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8": {
+        "args": [
+          "--max-model-len",
+          "240000"
+        ]
       }
     }
   }
