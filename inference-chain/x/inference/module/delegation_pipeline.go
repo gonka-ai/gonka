@@ -3,6 +3,7 @@ package inference
 import (
 	"cmp"
 	"context"
+	"math"
 	"math/big"
 	"math/bits"
 	"slices"
@@ -755,12 +756,27 @@ func (am AppModule) computeAndSetVotingPowers(
 
 	for _, p := range activeParticipants {
 		vps := participantVP[p.Index]
-		if len(vps) > 0 {
-			slices.SortFunc(vps, func(a, b *types.ModelVotingPower) int {
-				return cmp.Compare(a.ModelId, b.ModelId)
-			})
-			p.VotingPowers = vps
+		if len(vps) == 0 {
+			continue
 		}
+		// Filter zero-VP entries. The per-model loop above skips zero VPs at
+		// append time, but the aggregated cap can scale a model's VP down to
+		// zero via mulDivInt64 (small per-model contribution / large
+		// aggregated total). Zero-VP entries are meaningless for consumers
+		// and would bloat the ActiveParticipant state. Drop them here.
+		filtered := vps[:0]
+		for _, mvp := range vps {
+			if mvp.VotingPower > 0 {
+				filtered = append(filtered, mvp)
+			}
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		slices.SortFunc(filtered, func(a, b *types.ModelVotingPower) int {
+			return cmp.Compare(a.ModelId, b.ModelId)
+		})
+		p.VotingPowers = filtered
 	}
 }
 
@@ -781,7 +797,7 @@ func sumInt64Safe(m map[string]int64) (int64, bool) {
 			return 0, false
 		}
 		sum, carry := bits.Add64(uint64(total), uint64(v), 0)
-		if carry != 0 || sum > uint64(int64Max) {
+		if carry != 0 || sum > uint64(math.MaxInt64) {
 			return 0, false
 		}
 		total = int64(sum)
@@ -789,19 +805,23 @@ func sumInt64Safe(m map[string]int64) (int64, bool) {
 	return total, true
 }
 
-const int64Max = int64(^uint64(0) >> 1)
-
 // mulDivInt64 computes floor(a*b/c) using math/big to avoid int64 overflow
-// in the intermediate a*b product. Both a*b and the result fit in int64
-// if a, b, c are non-negative and the caller guarantees result <= some
-// int64 bound (typically a or b).
-func mulDivInt64(a, b, c int64) int64 {
-	if c == 0 {
-		return 0
+// in the intermediate a*b product. Returns (0, false) if any input is
+// negative, if c is zero, or if the result would exceed int64. Callers
+// should treat a false return as "skip this redistribution step" — the
+// existing cap helpers guarantee result <= min(a, b) when inputs are
+// well-formed, so a false return indicates a caller bug or pathological
+// governance parameters.
+func mulDivInt64(a, b, c int64) (int64, bool) {
+	if a < 0 || b < 0 || c <= 0 {
+		return 0, false
 	}
 	num := new(big.Int).Mul(big.NewInt(a), big.NewInt(b))
 	num.Quo(num, big.NewInt(c))
-	return num.Int64()
+	if !num.IsInt64() {
+		return 0, false
+	}
+	return num.Int64(), true
 }
 
 // capPerModelVotingPowers scales down any host whose voting power in vpMap
@@ -848,6 +868,16 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 	})
 
 	// First pass: cap anyone over the cap and record total excess.
+	//
+	// Design note: the cap is applied against the ORIGINAL pre-capping total.
+	// After redistribution, recipients can end up above capVP if the group
+	// is small and the capped host's excess is large relative to recipient
+	// capacity. This is an intentional trade-off: total voting power is
+	// conserved (no burn) at the cost of strict per-host enforcement on
+	// tiny groups. Alternatives (iterate to convergence, burn excess) were
+	// considered and rejected — iteration diverged non-trivially under
+	// rounding and burning changed total VP mid-pipeline, which has
+	// knock-on effects in downstream reward and slot-sampling calculations.
 	totalExcess := int64(0)
 	for _, addr := range keys {
 		vp := vpMap[addr]
@@ -857,12 +887,12 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 		excess := vp - capVP
 		// Guard against int64 overflow when accumulating excess.
 		sum, carry := bits.Add64(uint64(totalExcess), uint64(excess), 0)
-		if carry != 0 || sum > uint64(int64Max) {
+		if carry != 0 || sum > uint64(math.MaxInt64) {
 			logger.LogWarn("per-model voting power cap: excess overflow, cap truncated",
 				types.EpochGroup,
 				"modelId", modelID,
 			)
-			totalExcess = int64Max
+			totalExcess = math.MaxInt64
 			vpMap[addr] = capVP
 			break
 		}
@@ -909,7 +939,15 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 	// share = excess * recipientVP / recipientTotal.
 	distributed := int64(0)
 	for _, addr := range recipientKeys {
-		share := mulDivInt64(totalExcess, vpMap[addr], recipientTotal)
+		share, ok := mulDivInt64(totalExcess, vpMap[addr], recipientTotal)
+		if !ok {
+			logger.LogWarn("per-model voting power cap: share overflow, skipping recipient",
+				types.EpochGroup,
+				"modelId", modelID,
+				"recipient", addr,
+			)
+			continue
+		}
 		vpMap[addr] += share
 		distributed += share
 	}
@@ -928,11 +966,6 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 // This is the global second-layer defense: it runs after the per-model cap and
 // catches hosts that manage to sit just under the per-model cap in every
 // model simultaneously.
-// capAggregatedVotingPowers scales down any host whose aggregated voting power
-// across all model groups exceeds capPct of the global voting power total. The
-// capped host's contribution is scaled down proportionally across every model
-// it participates in, and the freed voting power in each model is redistributed
-// to that model's other hosts in proportion to their existing share.
 //
 // Algorithm: single pass. Compute per-host totals once, compute global cap,
 // walk hosts in descending order of aggregated VP, cap each one over the
@@ -959,7 +992,7 @@ func capAggregatedVotingPowers(
 				continue
 			}
 			s, carry := bits.Add64(uint64(sum), uint64(mvp.VotingPower), 0)
-			if carry != 0 || s > uint64(int64Max) {
+			if carry != 0 || s > uint64(math.MaxInt64) {
 				logger.LogWarn("aggregated voting power cap: host sum overflow, cap skipped",
 					types.EpochGroup,
 					"host", addr,
@@ -970,7 +1003,7 @@ func capAggregatedVotingPowers(
 		}
 		hostTotals[addr] = sum
 		s, carry := bits.Add64(uint64(totalVP), uint64(sum), 0)
-		if carry != 0 || s > uint64(int64Max) {
+		if carry != 0 || s > uint64(math.MaxInt64) {
 			logger.LogWarn("aggregated voting power cap: total VP overflow, cap skipped",
 				types.EpochGroup,
 			)
@@ -1013,6 +1046,14 @@ func capAggregatedVotingPowers(
 	capped := make(map[string]bool)
 
 	for _, overAddr := range keys {
+		// overVP is read from the pre-capping hostTotals snapshot. This is
+		// intentional: we cap in the original descending order and don't
+		// re-evaluate whether a recipient's post-redistribution total now
+		// exceeds the cap. Same trade-off as the per-model helper:
+		// conservation beats strict enforcement on small groups. Alternative
+		// (iterate to convergence) diverged under integer rounding and
+		// added cost without a meaningful strictness gain for realistic
+		// group sizes.
 		overVP := hostTotals[overAddr]
 		if overVP <= capVP {
 			break // sorted descending; no more over-cap hosts
@@ -1022,7 +1063,19 @@ func capAggregatedVotingPowers(
 		// using safe big-int math. The per-model ratio is preserved.
 		freedPerModel := make(map[string]int64)
 		for _, mvp := range participantVP[overAddr] {
-			newVP := mulDivInt64(mvp.VotingPower, capVP, overVP)
+			newVP, ok := mulDivInt64(mvp.VotingPower, capVP, overVP)
+			if !ok {
+				// Should never hit this branch given capVP <= overVP (we
+				// only enter this block when overVP > capVP, so the
+				// result is bounded by mvp.VotingPower, which is int64).
+				// Fail safe by leaving VP untouched.
+				logger.LogWarn("aggregated voting power cap: scale overflow, skipping model",
+					types.EpochGroup,
+					"cappedHost", overAddr,
+					"modelId", mvp.ModelId,
+				)
+				continue
+			}
 			freed := mvp.VotingPower - newVP
 			if freed > 0 {
 				freedPerModel[mvp.ModelId] += freed
@@ -1062,7 +1115,15 @@ func capAggregatedVotingPowers(
 			}
 			var distributed int64
 			for _, r := range recipients {
-				share := mulDivInt64(freed, r.mvp.VotingPower, recipientTotal)
+				share, ok := mulDivInt64(freed, r.mvp.VotingPower, recipientTotal)
+				if !ok {
+					logger.LogWarn("aggregated voting power cap: share overflow, skipping recipient",
+						types.EpochGroup,
+						"modelId", modelID,
+						"recipient", r.addr,
+					)
+					continue
+				}
 				r.mvp.VotingPower += share
 				distributed += share
 			}
