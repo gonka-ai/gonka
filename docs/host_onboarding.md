@@ -314,11 +314,16 @@ authz grants were structured differently from the standard
 `grant-ml-ops-permissions` output), you can manually re-create everything.
 
 If a feegrant allowance already exists from your cold to your warm key but
-you want to refresh it, first revoke the existing one:
+you want to refresh it, first revoke the existing one. `tx feegrant revoke`
+requires BOTH the granter (cold) and the grantee (warm) addresses as
+positional arguments — `--from` alone is not enough:
 
 ```bash
-./inferenced tx feegrant revoke <warm-address> \
+./inferenced tx feegrant revoke <cold-address> <warm-address> \
     --from gonka-account-key \
+    --keyring-backend file \
+    --keyring-dir .inference \
+    --chain-id gonka-mainnet \
     --gas-prices 10ngonka \
     --node http://node2.gonka.ai:8000/chain-rpc/
 ```

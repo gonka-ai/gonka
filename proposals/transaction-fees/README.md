@@ -101,14 +101,14 @@ All messages not in the exempt set require fees. Key categories:
 
 ### 4.2. Fee Comparison Table
 
-At current market price of GNK = $0.5698, with a typical transaction consuming ~80,000 gas:
+With a typical transaction consuming ~80,000 gas:
 
-| Min Gas Price | Fee per Tx (ngonka) | Fee per Tx (USD) | 10k Spam Attack | 100k Spam Attack |
+| Min Gas Price | Fee per Tx (ngonka) | Fee per Tx (GNK) | 10k Spam Attack (GNK) | 100k Spam Attack (GNK) |
 |---|---|---|---|---|
-| 1 ngonka | 80,000 | $0.000046 | $0.46 | $4.56 |
-| **10 ngonka** | **800,000** | **$0.00046** | **$4.56** | **$45.58** |
-| 100 ngonka | 8,000,000 | $0.0046 | $45.58 | $455.84 |
-| 1,000 ngonka | 80,000,000 | $0.046 | $455.84 | $4,558.40 |
+| 1 ngonka | 80,000 | 0.00008 | 0.8 | 8 |
+| **10 ngonka** | **800,000** | **0.0008** | **8** | **80** |
+| 100 ngonka | 8,000,000 | 0.008 | 80 | 800 |
+| 1,000 ngonka | 80,000,000 | 0.08 | 800 | 8,000 |
 
 ### 4.3. Comparison to Inference Costs
 
@@ -118,16 +118,16 @@ A typical inference escrow at post-grace pricing:
 max_tokens = 5,000
 prompt_tokens = 500
 per_token_price = 100 ngonka (base price after grace period)
-escrow = (5,000 + 500) × 100 = 550,000 ngonka ≈ $0.00031
+escrow = (5,000 + 500) × 100 = 550,000 ngonka ≈ 0.00055 GNK
 ```
 
-At `10ngonka` gas price, the transaction fee (~800,000 ngonka, ~$0.00046) is comparable to the minimum inference escrow. For legitimate users making a single request, this is immaterial. For an attacker flooding 100,000 transactions, it costs ~$45.
+At `10ngonka` gas price, the transaction fee (~800,000 ngonka, ~0.0008 GNK) is comparable to the minimum inference escrow. For legitimate users making a single request, this is immaterial. For an attacker flooding 100,000 transactions, it costs ~80 GNK.
 
 ### 4.4. Recommended Initial Value
 
 `FeeParams.min_gas_price = 10ngonka`
 
-This puts individual transactions well under a cent while making sustained spam cost real money. The parameter is governance-adjustable and should be tuned based on observed mainnet behavior and GNK price movements.
+This puts individual transactions at a small fraction of one GNK while making sustained spam cost real money. The parameter is governance-adjustable and should be tuned based on observed mainnet behavior.
 
 ### 4.5. Two-Component Fee for MsgPoCV2StoreCommit
 
@@ -158,12 +158,12 @@ This ensures:
 
 At `10ngonka` base gas price, with `base_validation_gas = 500,000` and `gas_per_poc_count = 100`:
 
-| Scenario | Base Fee | Count Fee | Total Fee (ngonka) | Total Fee (USD) |
+| Scenario | Base Fee (ngonka) | Count Fee (ngonka) | Total Fee (ngonka) | Total Fee (GNK) |
 |---|---|---|---|---|
-| 1 participant, count 10,000 | 5,000,000 | 10,000,000 | 15,000,000 | $0.0085 |
-| 1 participant, count 100,000 | 5,000,000 | 100,000,000 | 105,000,000 | $0.060 |
-| 1 participant, count 1,000,000 | 5,000,000 | 1,000,000,000 | 1,005,000,000 | $0.573 |
-| 100 sybils, count 10,000 each | 500,000,000 | 1,000,000,000 | 1,500,000,000 | $0.855 |
+| 1 participant, count 10,000 | 5,000,000 | 10,000,000 | 15,000,000 | 0.015 |
+| 1 participant, count 100,000 | 5,000,000 | 100,000,000 | 105,000,000 | 0.105 |
+| 1 participant, count 1,000,000 | 5,000,000 | 1,000,000,000 | 1,005,000,000 | 1.005 |
+| 100 sybils, count 10,000 each | 500,000,000 | 1,000,000,000 | 1,500,000,000 | 1.5 |
 
 The base fee dominates at low counts, making cheap sybils expensive (each one triggers a full validation cycle). The count fee dominates at high counts, making high-weight sybils expensive. A legitimate participant with real GPU output pays a small, predictable cost per epoch.
 
@@ -483,9 +483,9 @@ No impact. `MsgStartInference` and `MsgFinishInference` are fee-exempt. Inferenc
 
 ### 9.5. Attackers
 
-**Transaction spam:** At `10ngonka` minimum gas price and ~80,000 gas per transaction, each spam transaction costs ~800,000 ngonka (~$0.00046). Flooding 10,000 transactions costs ~$4.56; 100,000 transactions costs ~$45.58.
+**Transaction spam:** At `10ngonka` minimum gas price and ~80,000 gas per transaction, each spam transaction costs ~800,000 ngonka (0.0008 GNK). Flooding 10,000 transactions costs ~8 GNK; 100,000 transactions costs ~80 GNK.
 
-**Sybil attacks:** Each sybil participant pays a base validation fee (~$0.0029) per epoch plus count-proportional fees. A sybil claiming 100,000 count pays ~$0.060 per epoch. Sustaining 100 sybils each claiming 100,000 count costs ~$6.00 per epoch ($0.29 in base fees + $5.70 in count fees). Both dimensions scale linearly, making large-scale attacks economically prohibitive.
+**Sybil attacks:** Each sybil participant pays a base validation fee (~0.005 GNK per epoch, from `base_validation_gas × min_gas_price`) plus count-proportional fees. A sybil claiming 100,000 count pays ~0.105 GNK per epoch. Sustaining 100 sybils each claiming 100,000 count costs ~10.5 GNK per epoch (0.5 GNK in base fees + 10 GNK in count fees). Both dimensions scale linearly, making large-scale attacks economically prohibitive.
 
 ## 10. Related: Minimum Inference Charge
 
@@ -503,7 +503,7 @@ escrow = max(
 Where `min_charge` is calibrated to the cost of a modest request, e.g., `cost(1000 input, 500 output)` at current per-token pricing. At post-grace base price of 100 ngonka/token:
 
 ```
-min_charge = (1000 + 500) × 100 = 150,000 ngonka ≈ $0.000085
+min_charge = (1000 + 500) × 100 = 150,000 ngonka ≈ 0.00015 GNK
 ```
 
 This is a separate governance parameter (`MinInferenceCharge` in `DynamicPricingParams`) and does not require changes to the fee or ante handler system --- it would be enforced in the `MsgStartInference` handler when calculating the escrow amount, in `inference-chain/x/inference/calculations/inference_state.go`.
