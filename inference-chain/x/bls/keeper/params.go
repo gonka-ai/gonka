@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
 
@@ -20,8 +21,14 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 	return params, err
 }
 
-// SetParams set the params
+// SetParams set the params after validating cross-parameter invariants.
+// Without validation, a governance proposal could set TSlotsDegreeOffset >= ITotalSlots,
+// causing the threshold calculation to underflow and making BLS signing impossible (DoS)
+// or reducing the threshold to near-zero (security bypass).
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
+	if err := params.Validate(); err != nil {
+		return fmt.Errorf("invalid BLS params: %w", err)
+	}
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)
 	if err != nil {
