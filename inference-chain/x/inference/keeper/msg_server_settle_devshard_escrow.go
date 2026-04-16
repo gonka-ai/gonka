@@ -181,7 +181,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
 		}
-		if err := k.AggregateDevshardHostStats(goCtx, escrow.EpochIndex, participantAddr, *hs); err != nil {
+		firstForValidator := !seenValidators[addr]
+		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
 		if activeInCurrentEpoch[addr] {
@@ -194,11 +195,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			}
 			touchedParticipants[addr] = true
 		}
-		if !seenValidators[addr] {
+		if firstForValidator {
 			seenValidators[addr] = true
-			if err := k.IncrementDevshardHostEscrowCount(goCtx, escrow.EpochIndex, participantAddr); err != nil {
-				return nil, fmt.Errorf("failed to increment escrow count: %w", err)
-			}
 		}
 	}
 	touchedAddrs := make([]string, 0, len(touchedParticipants))

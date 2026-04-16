@@ -20,6 +20,20 @@ func (k Keeper) GetDevshardHostEpochStats(ctx context.Context, epochIndex uint64
 }
 
 func (k Keeper) AggregateDevshardHostStats(ctx context.Context, epochIndex uint64, participant sdk.AccAddress, slotStats types.DevshardSettlementHostStats) error {
+	return k.UpdateDevshardHostEpochStats(ctx, epochIndex, participant, slotStats, false)
+}
+
+func (k Keeper) IncrementDevshardHostEscrowCount(ctx context.Context, epochIndex uint64, participant sdk.AccAddress) error {
+	return k.UpdateDevshardHostEpochStats(ctx, epochIndex, participant, types.DevshardSettlementHostStats{}, true)
+}
+
+func (k Keeper) UpdateDevshardHostEpochStats(
+	ctx context.Context,
+	epochIndex uint64,
+	participant sdk.AccAddress,
+	slotStats types.DevshardSettlementHostStats,
+	incrementEscrowCount bool,
+) error {
 	key := collections.Join(epochIndex, participant)
 	existing, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
 	if err != nil {
@@ -36,19 +50,9 @@ func (k Keeper) AggregateDevshardHostStats(ctx context.Context, epochIndex uint6
 	existing.Cost += slotStats.Cost
 	existing.RequiredValidations += slotStats.RequiredValidations
 	existing.CompletedValidations += slotStats.CompletedValidations
-	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
-}
-
-func (k Keeper) IncrementDevshardHostEscrowCount(ctx context.Context, epochIndex uint64, participant sdk.AccAddress) error {
-	key := collections.Join(epochIndex, participant)
-	existing, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
-	if err != nil {
-		existing = types.DevshardHostEpochStats{
-			Participant: participant.String(),
-			EpochIndex:  epochIndex,
-		}
+	if incrementEscrowCount {
+		existing.EscrowCount++
 	}
-	existing.EscrowCount++
 	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
 }
 
