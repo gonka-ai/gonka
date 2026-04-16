@@ -385,12 +385,12 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	// Regular-PoC preserved snapshot tells us which validator nodes were preserved for
 	// this epoch's PoC. Claims that overlap with PoC are only valid for preserved nodes.
+	// A missing snapshot is treated as "no nodes preserved" so we degrade gracefully.
 	preservedSnapshot, _, snapshotErr := k.GetPreservedNodesSnapshot(ctx, int64(mainEpochData.PocStartBlockHeight))
 	if snapshotErr != nil {
 		k.LogWarn("Failed to get preserved nodes snapshot for claim validation", types.Claims,
 			"epoch", mainEpochData.EpochIndex, "anchor", mainEpochData.PocStartBlockHeight, "error", snapshotErr)
 	}
-	preservedByModel := PreservedByModelFromSnapshot(&preservedSnapshot)
 
 	// Create a map to store weight maps for each model
 	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
@@ -481,7 +481,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 		totalWeight := modelTotalWeights[modelId]
 
-		if k.OverlapsWithPoC(&inference, epochContext) && !isActiveDuringPoC(&validatorPowerForModel, preservedByModel[modelId]) {
+		if k.OverlapsWithPoC(&inference, epochContext) && !isActiveDuringPoC(&validatorPowerForModel, PreservedNodeSetByModel(&preservedSnapshot, modelId)) {
 			skipped++
 			continue
 		}

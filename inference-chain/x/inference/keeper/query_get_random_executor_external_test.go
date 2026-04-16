@@ -13,7 +13,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func TestGetRandomExecutorRequiresPreservedSnapshotDuringConfirmation(t *testing.T) {
+// A missing preserved snapshot is treated as "no nodes preserved for this episode".
+// The filter then excludes every participant from the inference-during-PoC pool; the
+// downstream GetRandomMemberForModel returns a typed not-found error rather than the
+// transient codes.Unavailable the earlier hard-fail produced.
+func TestGetRandomExecutorWithoutPreservedSnapshotDoesNotHardFail(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(150)
 
@@ -43,5 +47,6 @@ func TestGetRandomExecutorRequiresPreservedSnapshotDuringConfirmation(t *testing
 
 	_, err := k.GetRandomExecutor(sdkCtx, &types.QueryGetRandomExecutorRequest{Model: "model-a"})
 	require.Error(t, err)
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.NotEqual(t, codes.Unavailable, status.Code(err),
+		"missing preserved snapshot should not surface codes.Unavailable to clients")
 }

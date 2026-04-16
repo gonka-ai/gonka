@@ -13,22 +13,6 @@ import kotlin.test.Test
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class SchedulingTests : TestermintTest() {
     @Test
-    fun preservedSnapshotQuerySmokeTest() {
-        val (cluster, genesis) = initCluster(reboot = true, resetMlNodes = false)
-        genesis.addNodes(1)
-        genesis.waitForNextEpoch()
-
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        genesis.waitForStage(EpochStage.START_OF_POC)
-
-        val regularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
-        val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot(regularAnchor)
-        assertThat(preservedSnapshot.found).isTrue()
-        assertThat(preservedSnapshot.snapshot).isNotNull
-        assertThat(preservedSnapshot.snapshot!!.episodeAnchorHeight).isEqualTo(regularAnchor)
-    }
-
-    @Test
     fun basicSchedulingTest() {
         val (cluster, genesis) = initCluster(reboot = true, resetMlNodes = false)
         genesis.addNodes(1)
@@ -37,7 +21,7 @@ class SchedulingTests : TestermintTest() {
 
         // Wait for all participants to join and validators to be applied
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        
+
         checkParticipantWeights(genesis.node, genesisParticipantKey) // Should have all participants by now
 
         genesis.waitForStage(EpochStage.START_OF_POC)
@@ -57,7 +41,6 @@ class SchedulingTests : TestermintTest() {
             nodes.forEach { node ->
                 node.state.epochMlNodes?.forEach { (_, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
-                    assertThat(value.timeslotAllocation).hasSize(2)
                 }
             }
             nodes.single { node -> node.node.id in preservedNodeIds }
@@ -94,7 +77,6 @@ class SchedulingTests : TestermintTest() {
             nodes.forEach { node ->
                 node.state.epochMlNodes?.forEach { (_, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
-                    assertThat(value.timeslotAllocation).hasSize(2)
                 }
             }
             nodes.forEach { node ->

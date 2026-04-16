@@ -265,11 +265,11 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, types.Epoch{Index: event.EpochIndex}, event.TriggerHeight)
 		if err != nil {
-			return fmt.Errorf("confirmation PoC: failed to sample preserved nodes for trigger %d: %w", event.TriggerHeight, err)
-		}
-
-		if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, &preservedSnapshot); err != nil {
-			return fmt.Errorf("confirmation PoC: failed to store generation start snapshots for trigger %d: %w", event.TriggerHeight, err)
+			am.LogError("Confirmation PoC: failed to sample preserved nodes", types.PoC,
+				"triggerHeight", event.TriggerHeight, "error", err)
+		} else if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, preservedSnapshot); err != nil {
+			am.LogError("Confirmation PoC: failed to store generation start snapshots", types.PoC,
+				"triggerHeight", event.TriggerHeight, "error", err)
 		}
 
 		am.LogInfo("Confirmation PoC: GRACE_PERIOD -> GENERATION", types.PoC,
@@ -322,8 +322,18 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up generation-scoped snapshots
-			am.deleteGenerationSnapshots(ctx, event.TriggerHeight)
+			// Clean up generation-scoped snapshots. CPoC snapshots are still deleted
+			// inline here; regular-PoC snapshots are retained until Prune reclaims them.
+			// TODO(preserved-nodes): defer CPoC preserved-snapshot deletion until Prune
+			// covers CPoC anchors; see proposals/poc/review-3.md Issue 12.
+			if err := am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight); err != nil {
+				am.LogWarn("Confirmation PoC: Failed to delete validation snapshot", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
+			if err := am.keeper.DeletePreservedNodesSnapshot(ctx, event.TriggerHeight); err != nil {
+				am.LogWarn("Confirmation PoC: Failed to delete preserved snapshot", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -379,88 +389,129 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 		return fmt.Errorf("epoch group data not found for epoch %d", event.EpochIndex)
 	}
 
-	// Get current validator weights for WeightCalculator
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get current validator weights: %w", err)
-	}
-
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get params: %w", err)
 	}
 
-	return am.evaluateConfirmation(ctx, event, &epochGroupData, currentValidatorWeights, params.PocParams)
+	return am.evaluateConfirmation(ctx, event, &epochGroupData, params.PocParams)
 }
 
+// evaluateConfirmation folds one confirmation PoC event's result into
+// ConfirmationWeight and records the per-event slashing ratio.
+//
+// For every participant the event yields a "reading":
+//
+//	reading(event) = preservedWeight(event.snapshot) + measuredNotPreservedWeight(event)
+//
+// ConfirmationWeight is the running min over readings (initial + every event).
+// Slashing for this event compares the same reading against the event-local total
+// expected weight (preserved + notPreserved from the event snapshot), so honest
+// operation produces ratio = 1 regardless of how the preserved set rotates
+// between phases.
 func (am AppModule) evaluateConfirmation(
 	ctx context.Context,
 	event *types.ConfirmationPoCEvent,
 	epochGroupData *types.EpochGroupData,
-	currentValidatorWeights map[string]int64,
 	pocParams *types.PocParams,
 ) error {
 	coefficients := ModelCoefficients(pocParams)
+
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event)
-	// Apply model coefficients (same aggregation as main PoC path)
+	// Apply model coefficients (same aggregation as main PoC path).
+	measured := make(map[string]int64, len(confirmationParticipants))
 	for _, p := range confirmationParticipants {
 		p.Weight = AggregateConsensusWeight(ExtractModelWeights(p), coefficients)
+		measured[p.Index] = p.Weight
 	}
+	am.LogInfo("evaluateConfirmation: measured participating weights", types.PoC,
+		"measured", measured)
 
-	confirmationWeights := make(map[string]int64)
-	for _, cp := range confirmationParticipants {
-		confirmationWeights[cp.Index] = cp.Weight
-	}
-
-	am.LogInfo("evaluateConfirmation: Confirmation weights", types.PoC,
-		"confirmationWeights", confirmationWeights)
-
-	preservedSnapshot, preservedSnapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
+	// Missing snapshot collapses the preserved side to zero; slashing and the
+	// min-take will then behave as if no nodes were preserved for this event.
+	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
 	if err != nil {
-		return fmt.Errorf("evaluateConfirmation: failed to get preserved nodes snapshot for trigger %d: %w", event.TriggerHeight, err)
-	}
-	if !preservedSnapshotFound {
-		return fmt.Errorf("evaluateConfirmation: preserved nodes snapshot not found for trigger %d", event.TriggerHeight)
+		am.LogWarn("evaluateConfirmation: failed to read preserved snapshot, using empty set",
+			types.PoC, "triggerHeight", event.TriggerHeight, "error", err)
+		preservedSnapshot = types.PreservedNodesSnapshot{}
+	} else if !snapshotFound {
+		am.LogWarn("evaluateConfirmation: preserved snapshot not found, using empty set",
+			types.PoC, "triggerHeight", event.TriggerHeight)
 	}
 
-	notPreservedWeights, err := am.GetNotPreservedTotalWeightByParticipant(ctx, event.EpochIndex, coefficients, &preservedSnapshot)
+	preserved, notPreserved, err := am.partitionWeightByPreservation(ctx, event.EpochIndex, coefficients, &preservedSnapshot)
 	if err != nil {
-		return fmt.Errorf("evaluateConfirmation: failed to get not preserved weights: %w", err)
+		return fmt.Errorf("evaluateConfirmation: failed to partition weights: %w", err)
 	}
 
-	updated := false
-	for i, vw := range epochGroupData.ValidationWeights {
-		if calculatedWeight, found := confirmationWeights[vw.MemberAddress]; found {
-			if calculatedWeight < vw.ConfirmationWeight {
-				previousWeight := vw.ConfirmationWeight
-				epochGroupData.ValidationWeights[i].ConfirmationWeight = calculatedWeight
-				updated = true
-				am.LogInfo("evaluateConfirmation: Updated confirmation weight", types.PoC,
-					"participant", vw.MemberAddress,
-					"previousWeight", previousWeight,
-					"newWeight", calculatedWeight)
-			}
-		} else {
-			pocWeight := notPreservedWeights[vw.MemberAddress]
-			if pocWeight > 0 && vw.ConfirmationWeight > 0 {
-				previousWeight := vw.ConfirmationWeight
-				epochGroupData.ValidationWeights[i].ConfirmationWeight = 0
-				updated = true
-				am.LogInfo("evaluateConfirmation: No batches submitted, setting weight to 0", types.PoC,
-					"participant", vw.MemberAddress,
-					"previousWeight", previousWeight)
-			}
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, notPreserved, am)
+
+	for _, vw := range epochGroupData.ValidationWeights {
+		addr := vw.MemberAddress
+		ratio, ok := ratios[addr]
+		if !ok {
+			continue
 		}
+		participant, found := am.keeper.GetParticipant(ctx, addr)
+		if !found {
+			am.LogWarn("evaluateConfirmation: participant not found for slashing record", types.PoC,
+				"address", addr)
+			continue
+		}
+		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
+		am.keeper.SetParticipant(ctx, participant)
 	}
 
 	if updated {
 		am.keeper.SetEpochGroupData(ctx, *epochGroupData)
-		am.LogInfo("evaluateConfirmation: Saved updated EpochGroupData", types.PoC,
+		am.LogInfo("evaluateConfirmation: saved updated EpochGroupData", types.PoC,
 			"epochIndex", event.EpochIndex)
 	}
 
-	am.checkConfirmationSlashing(ctx, epochGroupData, coefficients, &preservedSnapshot)
 	return nil
+}
+
+// foldEventReadings applies one confirmation event's reading (preserved + measured)
+// to every ValidationWeight in epochGroupData and returns the per-participant slashing
+// ratio for this event. Pure: no keeper reads or writes. Returns `updated=true` if any
+// ConfirmationWeight was lowered. Caller is responsible for persistence.
+func foldEventReadings(
+	epochGroupData *types.EpochGroupData,
+	measured, preserved, notPreserved map[string]int64,
+	logger types.InferenceLogger,
+) (updated bool, ratios map[string]*types.Decimal) {
+	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
+	for i, vw := range epochGroupData.ValidationWeights {
+		addr := vw.MemberAddress
+		reading := preserved[addr] + measured[addr]
+		if reading < vw.ConfirmationWeight {
+			previous := vw.ConfirmationWeight
+			epochGroupData.ValidationWeights[i].ConfirmationWeight = reading
+			updated = true
+			if logger != nil {
+				logger.LogInfo("evaluateConfirmation: updated confirmation weight", types.PoC,
+					"participant", addr,
+					"previousWeight", previous,
+					"newWeight", reading,
+					"preservedHere", preserved[addr],
+					"measured", measured[addr])
+			}
+		}
+
+		// Per-event slashing ratio uses the current event's reading, not the post-min
+		// ConfirmationWeight -- equal sets (honest operation) yield ratio = 1 regardless
+		// of how the preserved set rotates between phases.
+		totalExpected := preserved[addr] + notPreserved[addr]
+		if totalExpected == 0 {
+			ratios[addr] = types.DecimalFromDecimal(decimal.NewFromInt(1))
+			continue
+		}
+		ratio := decimal.NewFromInt(reading).Div(decimal.NewFromInt(totalExpected))
+		// pocDeviationCoeff keeps minor honest deviations at ratio = 1.
+		ratio = decimal.Min(ratio.Div(pocDeviationCoeff), decimal.NewFromInt(1))
+		ratios[addr] = types.DecimalFromDecimal(ratio)
+	}
+	return updated, ratios
 }
 
 // updateConfirmationWeightsV2 calculates confirmation weights using off-chain store commits
@@ -600,61 +651,27 @@ func (am AppModule) updateConfirmationWeightsV2(
 	return calculator.Calculate()
 }
 
-// checkConfirmationSlashing checks if participants should be slashed based on confirmation PoC results
-func (am AppModule) checkConfirmationSlashing(
-	ctx context.Context,
-	epochGroupData *types.EpochGroupData,
-	coefficients map[string]mathsdk.LegacyDec,
-	preservedSnapshot *types.PreservedNodesSnapshot,
-) error {
-	notPreservedTotalWeight, err := am.GetNotPreservedTotalWeightByParticipant(ctx, epochGroupData.EpochIndex, coefficients, preservedSnapshot)
-	if err != nil {
-		return fmt.Errorf("failed to get not preserved total weight by participant: %w", err)
-	}
-	for _, vw := range epochGroupData.ValidationWeights {
-		address := vw.MemberAddress
-		notPreservedTotalWeightValue, found := notPreservedTotalWeight[address]
-		if !found {
-			am.LogWarn("checkConfirmationSlashing: Not preserved total weight not found for participant", types.PoC,
-				"address", address)
-			continue
-		}
-		confirmationWeight := vw.ConfirmationWeight
-		participant, found := am.keeper.GetParticipant(ctx, address)
-		if !found {
-			am.LogWarn("checkConfirmationSlashing: Participant not found", types.PoC,
-				"address", address)
-			continue
-		}
-		if notPreservedTotalWeightValue == 0 {
-			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(decimal.NewFromInt(1))
-		} else {
-			ratio := decimal.NewFromInt(confirmationWeight).Div(decimal.NewFromInt(notPreservedTotalWeightValue))
-			// Use pocDeviationCoeff to avoid decreasing rewards for minor deviations
-			ratio = decimal.Min(ratio.Div(pocDeviationCoeff), decimal.NewFromInt(1))
-			participant.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromDecimal(ratio)
-		}
-		am.keeper.SetParticipant(ctx, participant)
-	}
-	return nil
-}
-
-func (am AppModule) GetNotPreservedTotalWeightByParticipant(
+// partitionWeightByPreservation splits each participant's coefficient-adjusted
+// MLNode weight into preserved / not-preserved portions based on the given
+// snapshot. The sum of the two maps equals the participant's total expected
+// weight for the episode.
+func (am AppModule) partitionWeightByPreservation(
 	ctx context.Context,
 	epochId uint64,
 	coefficients map[string]mathsdk.LegacyDec,
 	preservedSnapshot *types.PreservedNodesSnapshot,
-) (map[string]int64, error) {
+) (preserved, notPreserved map[string]int64, err error) {
 	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
 	if !found {
-		am.LogError("GetNotPreservedTotalWeightByParticipant: Active participants not found", types.PoC, "epochId", epochId)
-		return nil, errors.New("GetNotPreservedTotalWeightByParticipant: active participant not found. epochId: " + strconv.FormatUint(epochId, 10))
+		am.LogError("partitionWeightByPreservation: Active participants not found", types.PoC, "epochId", epochId)
+		return nil, nil, errors.New("partitionWeightByPreservation: active participants not found. epochId: " + strconv.FormatUint(epochId, 10))
 	}
 
-	result := make(map[string]int64)
+	preserved = make(map[string]int64, len(participants.Participants))
+	notPreserved = make(map[string]int64, len(participants.Participants))
 
 	for _, p := range participants.Participants {
-		totalWeight := int64(0)
+		var preservedTotal, notPreservedTotal int64
 		for i, nodeArray := range p.MlNodes {
 			if nodeArray == nil {
 				continue
@@ -668,18 +685,23 @@ func (am AppModule) GetNotPreservedTotalWeightByParticipant(
 			if !ok {
 				coeff = mathsdk.LegacyOneDec()
 			}
-			rawModel := int64(0)
+			var rawPreserved, rawNotPreserved int64
 			for _, mlNode := range nodeArray.MlNodes {
-				if mlNode != nil {
-					if _, isPreserved := preservedNodeSet[mlNode.NodeId]; !isPreserved {
-					rawModel += mlNode.PocWeight
-					}
+				if mlNode == nil {
+					continue
+				}
+				if _, isPreserved := preservedNodeSet[mlNode.NodeId]; isPreserved {
+					rawPreserved += mlNode.PocWeight
+				} else {
+					rawNotPreserved += mlNode.PocWeight
 				}
 			}
-			totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
+			preservedTotal += coeff.MulInt64(rawPreserved).TruncateInt64()
+			notPreservedTotal += coeff.MulInt64(rawNotPreserved).TruncateInt64()
 		}
-		result[p.Index] = totalWeight
+		preserved[p.Index] = preservedTotal
+		notPreserved[p.Index] = notPreservedTotal
 	}
 
-	return result, nil
+	return preserved, notPreserved, nil
 }

@@ -64,7 +64,7 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 	return nil, nil
 }
 
-func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
+func TestCalculateMLNodesTotalWeight_SingleModel(t *testing.T) {
 	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
@@ -75,39 +75,11 @@ func TestCalculatePocParticipatingNodesWeight_AllServeInference(t *testing.T) {
 		},
 	}
 
-	// At epoch formation time no episode-scoped preserved snapshot exists yet, so this
-	// helper returns the full participant ML-node weight as the initial confirmation
-	// weight. Per-event slashing in checkConfirmationSlashing refines the value later.
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
+	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
 	require.Equal(t, int64(300), weight)
 }
 
-func TestCalculatePocParticipatingNodesWeight_NoneServeInference(t *testing.T) {
-	models := []string{"model-a"}
-	mlNodes := []*types.ModelMLNodes{
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{
-					NodeId:             "node1",
-					PocWeight:          100,
-					TimeslotAllocation: []bool{true, false},
-				},
-				{
-					NodeId:             "node2",
-					PocWeight:          200,
-					TimeslotAllocation: []bool{false, false},
-				},
-			},
-		},
-	}
-
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
-
-	// Should be sum of all weights since all have POC_SLOT=false
-	require.Equal(t, int64(300), weight)
-}
-
-func TestCalculatePocParticipatingNodesWeight_SumsAllNodes(t *testing.T) {
+func TestCalculateMLNodesTotalWeight_SumsAllNodes(t *testing.T) {
 	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
@@ -120,11 +92,11 @@ func TestCalculatePocParticipatingNodesWeight_SumsAllNodes(t *testing.T) {
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
+	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
 	require.Equal(t, int64(1000), weight)
 }
 
-func TestCalculatePocParticipatingNodesWeight_IgnoresTimeslotShape(t *testing.T) {
+func TestCalculateMLNodesTotalWeight_IgnoresTimeslotShape(t *testing.T) {
 	models := []string{"model-a"}
 	mlNodes := []*types.ModelMLNodes{
 		{
@@ -136,31 +108,24 @@ func TestCalculatePocParticipatingNodesWeight_IgnoresTimeslotShape(t *testing.T)
 		},
 	}
 
-	// The deprecated TimeslotAllocation field has no semantic effect on this helper
-	// anymore; every non-nil node contributes its PocWeight.
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
+	// TimeslotAllocation is deprecated for scheduling; the helper sums all non-nil nodes.
+	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
 	require.Equal(t, int64(600), weight)
 }
 
-func TestCalculatePocParticipatingNodesWeight_NilNodes(t *testing.T) {
+func TestCalculateMLNodesTotalWeight_NilNodes(t *testing.T) {
 	models := []string{"model-a", "model-b"}
 	mlNodes := []*types.ModelMLNodes{
 		nil, // Nil model nodes
 		{
 			MlNodes: []*types.MLNodeInfo{
 				nil, // Nil node
-				{
-					NodeId:             "node1",
-					PocWeight:          100,
-					TimeslotAllocation: []bool{true, false},
-				},
+				{NodeId: "node1", PocWeight: 100},
 			},
 		},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
-
-	// Should handle nils gracefully and count only valid node
+	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
 	require.Equal(t, int64(100), weight)
 }
 
@@ -177,37 +142,22 @@ func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
 	require.Equal(t, "addr1", filtered[0].Member.Address)
 }
 
-func TestCalculatePocParticipatingNodesWeight_MultipleModelArrays(t *testing.T) {
+func TestCalculateMLNodesTotalWeight_MultipleModelArrays(t *testing.T) {
 	models := []string{"model-a", "model-b"}
 	mlNodes := []*types.ModelMLNodes{
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{
-					NodeId:             "node1",
-					PocWeight:          100,
-					TimeslotAllocation: []bool{true, false},
-				},
-			},
-		},
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{
-					NodeId:             "node2",
-					PocWeight:          200,
-					TimeslotAllocation: []bool{false, false},
-				},
-			},
-		},
+		{MlNodes: []*types.MLNodeInfo{{NodeId: "node1", PocWeight: 100}}},
+		{MlNodes: []*types.MLNodeInfo{{NodeId: "node2", PocWeight: 200}}},
 	}
 
-	weight := calculatePocParticipatingNodesWeight(models, mlNodes, nil)
-
-	// Should sum across all model arrays (coeff=1.0 for each when nil)
+	// Sum across all model arrays (coeff=1.0 for each when nil).
+	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
 	require.Equal(t, int64(300), weight)
 }
 
-// Test confirmation weight initialization when creating EpochMember
-func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightInitialization(t *testing.T) {
+// NewEpochMemberFromActiveParticipant now always stores the confirmationWeight the
+// caller passes; the old "if 0 then derive" sentinel is gone. Callers at epoch
+// formation precompute the initial reading via CalculateMLNodesTotalWeight.
+func TestNewEpochMemberFromActiveParticipant_UsesProvidedConfirmationWeight(t *testing.T) {
 	p := &types.ActiveParticipant{
 		Index:        "test-participant",
 		ValidatorKey: "test-pubkey",
@@ -217,66 +167,15 @@ func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightInitialization(t 
 			{
 				MlNodes: []*types.MLNodeInfo{
 					{NodeId: "node1", PocWeight: 100},
-					{NodeId: "node2", PocWeight: 200},
-					{NodeId: "node3", PocWeight: 150},
+					{NodeId: "node2", PocWeight: 150},
 				},
 			},
 		},
 	}
 
-	// Call with confirmationWeight = 0 to trigger initialization. No episode-scoped
-	// preserved snapshot exists at epoch formation, so the initial value equals the
-	// full ML-node weight; per-event confirmation slashing refines it later.
-	member := NewEpochMemberFromActiveParticipant(p, 1, 0, nil)
-
-	require.Equal(t, int64(450), member.ConfirmationWeight, "initial confirmation_weight should equal full ML-node weight")
-	require.Equal(t, int64(450), member.Weight, "total weight should remain unchanged")
-}
-
-func TestNewEpochMemberFromActiveParticipant_ConfirmationWeightProvided(t *testing.T) {
-	// Create ActiveParticipant with mixed timeslot allocations
-	p := &types.ActiveParticipant{
-		Index:        "test-participant",
-		ValidatorKey: "test-pubkey",
-		Weight:       450,
-		Models:       []string{"model-a"},
-		MlNodes: []*types.ModelMLNodes{
-			{
-				MlNodes: []*types.MLNodeInfo{
-					{
-						NodeId:             "node1",
-						PocWeight:          100,
-						TimeslotAllocation: []bool{true, false},
-					},
-					{
-						NodeId:             "node2",
-						PocWeight:          150,
-						TimeslotAllocation: []bool{true, false},
-					},
-				},
-			},
-		},
-	}
-
-	// Call with confirmationWeight already provided (e.g., from previous confirmation PoC)
-	member := NewEpochMemberFromActiveParticipant(p, 1, 180, nil)
-
-	// Should use the provided value (180), not recalculate (which would be 250)
-	require.Equal(t, int64(180), member.ConfirmationWeight, "confirmation_weight should use provided value")
-}
-
-func TestNewEpochMemberFromActiveParticipant_EmptyMLNodes(t *testing.T) {
-	// Participant with no ML node weight should initialize confirmation_weight to 0.
-	p := &types.ActiveParticipant{
-		Index:        "test-participant",
-		ValidatorKey: "test-pubkey",
-		Weight:       300,
-		Models:       []string{"model-a"},
-		MlNodes:      []*types.ModelMLNodes{{MlNodes: nil}},
-	}
-
-	member := NewEpochMemberFromActiveParticipant(p, 1, 0, nil)
-	require.Equal(t, int64(0), member.ConfirmationWeight, "confirmation_weight should be 0 when no ML nodes contribute weight")
+	member := NewEpochMemberFromActiveParticipant(p, 1, 250, nil)
+	require.Equal(t, int64(250), member.ConfirmationWeight)
+	require.Equal(t, int64(450), member.Weight)
 }
 
 func TestGetAllGroupMembersPaginated_SinglePage(t *testing.T) {

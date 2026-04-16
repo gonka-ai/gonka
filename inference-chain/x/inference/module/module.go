@@ -504,15 +504,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
 		if err != nil {
-			am.LogError("Unable to sample preserved nodes for regular PoC", types.PoC, "error", err.Error())
-			return err
-		}
-
-		if err := am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight, &preservedSnapshot); err != nil {
+			// Downstream readers (broker filter, claim validation) soft-fail on a missing
+			// preserved snapshot, so a transient sampler failure should not halt the chain.
+			am.LogError("Unable to sample preserved nodes for regular PoC", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		} else if err := am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight, preservedSnapshot); err != nil {
 			am.LogError("Unable to store generation start snapshots for regular PoC", types.PoC,
 				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 				"error", err.Error())
-			return err
 		}
 	}
 
@@ -833,56 +832,38 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
 
-	// Clean up generation-scoped snapshots after epoch transition
-	am.deleteGenerationSnapshots(ctx, upcomingEpoch.PocStartBlockHeight)
+	// The validation snapshot is only needed during PoC validation of this epoch and
+	// can be dropped now. The preserved-nodes snapshot must survive until settlement
+	// and claims for this epoch are done -- the Prune pass reclaims it later.
+	if err := am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight); err != nil {
+		am.LogWarn("onSetNewValidatorsStage: Failed to delete validation snapshot", types.PoC,
+			"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err)
+	}
 }
 
 func (am AppModule) captureGenerationStartTimestamp(
 	ctx context.Context,
 	blockTime, pocStartBlockHeight int64,
-	preservedSnapshot *types.PreservedNodesSnapshot,
+	preservedSnapshot types.PreservedNodesSnapshot,
 ) error {
-	if preservedSnapshot == nil {
-		return fmt.Errorf("preserved snapshot is required for episode anchor %d", pocStartBlockHeight)
-	}
-
-	snapshot := types.PoCValidationSnapshot{
+	validationSnapshot := types.PoCValidationSnapshot{
 		PocStageStartHeight:      pocStartBlockHeight,
 		GenerationStartTimestamp: blockTime,
 	}
-	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
-		am.LogError("captureGenerationStartTimestamp: Failed to store", types.PoC, "error", err)
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, validationSnapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store validation snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+		return err
+	}
+	if err := am.keeper.SetPreservedNodesSnapshot(ctx, preservedSnapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store preserved snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
 		return err
 	}
 	am.LogInfo("captureGenerationStartTimestamp: Stored", types.PoC,
 		"pocStartBlockHeight", pocStartBlockHeight,
 		"generationStartTimestamp", blockTime)
-
-	if preservedSnapshot.EpisodeAnchorHeight == 0 {
-		preservedSnapshot.EpisodeAnchorHeight = pocStartBlockHeight
-	}
-
-	if err := am.keeper.SetPreservedNodesSnapshot(ctx, *preservedSnapshot); err != nil {
-		am.LogError("captureGenerationStartTimestamp: Failed to store preserved snapshot", types.PoC, "error", err)
-		if deleteErr := am.keeper.DeletePoCValidationSnapshot(ctx, pocStartBlockHeight); deleteErr != nil {
-			am.LogWarn("captureGenerationStartTimestamp: Failed to roll back validation snapshot after preserved snapshot write failure", types.PoC,
-				"pocStartBlockHeight", pocStartBlockHeight,
-				"error", deleteErr)
-		}
-		return err
-	}
 	return nil
-}
-
-func (am AppModule) deleteGenerationSnapshots(ctx context.Context, pocStartBlockHeight int64) {
-	if err := am.keeper.DeletePoCValidationSnapshot(ctx, pocStartBlockHeight); err != nil {
-		am.LogWarn("deleteGenerationSnapshots: Failed to delete validation snapshot", types.PoC,
-			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
-	}
-	if err := am.keeper.DeletePreservedNodesSnapshot(ctx, pocStartBlockHeight); err != nil {
-		am.LogWarn("deleteGenerationSnapshots: Failed to delete preserved snapshot", types.PoC,
-			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
-	}
 }
 
 // captureValidationSnapshot stores per-model voting powers and app_hash at validation phase start
@@ -1158,7 +1139,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			continue
 		}
 
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, 0, coefficients)
+		// Initial ConfirmationWeight is the full coefficient-adjusted weight -- the
+		// reading the participant would produce at regular PoC under honest operation.
+		// Confirmation events can only lower it via min-take; they never raise it.
+		initialConfirmationWeight := epochgroup.CalculateMLNodesTotalWeight(p.Models, p.MlNodes, coefficients)
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight, coefficients)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())

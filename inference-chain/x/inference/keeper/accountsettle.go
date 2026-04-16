@@ -146,18 +146,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Use Bitcoin-style fixed reward system with its own parameters
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
-	// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
+	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
-	// The regular-PoC episode's preserved snapshot is the epoch's preserved set for
-	// reward math. Confirmation events' per-event slashing is already baked into
-	// vw.ConfirmationWeight; see RecomputeEffectiveWeightFromMLNodes.
-	preservedSnapshot, _, err := k.GetPreservedNodesSnapshot(ctx, int64(data.PocStartBlockHeight))
-	if err != nil {
-		k.LogWarn("Failed to get preserved nodes snapshot for settlement", types.Settle,
-			"epoch", currentEpochIndex, "anchor", data.PocStartBlockHeight, "error", err)
-	}
-	preservedByModel := PreservedByModelFromSnapshot(&preservedSnapshot)
+	// Per-episode preserved/not-preserved accounting is already baked into
+	// vw.ConfirmationWeight via evaluateConfirmation's full-reading model; settlement
+	// does not read the preserved snapshot directly.
 
 	// Extract per-model coefficients for cross-model weight aggregation
 	coefficients := modelCoefficients(params.PocParams)
@@ -187,7 +181,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		settleParameters,
 		participantMLNodes,
 		coefficients,
-		preservedByModel,
 		collateralAdjustmentActive,
 		k.Logger(),
 	)

@@ -36,12 +36,6 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		seedSignature = p.Seed.Signature
 	}
 
-	// If the confirmation weight is not provided (0), initialize it with the
-	// coefficient-adjusted weight of PoC participating nodes.
-	if confirmationWeight == 0 {
-		confirmationWeight = calculatePocParticipatingNodesWeight(p.Models, p.MlNodes, coefficients)
-	}
-
 	return EpochMember{
 		Address:            p.Index,
 		Weight:             p.Weight,
@@ -55,11 +49,10 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
-// calculatePocParticipatingNodesWeight computes the coefficient-adjusted total weight
-// across all model ML nodes. Used as the initial confirmation weight at epoch formation,
-// before any episode-scoped preserved snapshot exists. Per-event slashing in
-// checkConfirmationSlashing refines this value using its own preserved snapshot.
-func calculatePocParticipatingNodesWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
+// CalculateMLNodesTotalWeight sums every MLNode's coefficient-adjusted PocWeight. Used
+// as the initial ConfirmationWeight at epoch formation -- the full-reading value before
+// any episode-scoped event refines it.
+func CalculateMLNodesTotalWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
 	totalWeight := int64(0)
 
 	for i, modelNodes := range mlNodes {

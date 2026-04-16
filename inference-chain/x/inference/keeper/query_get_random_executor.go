@@ -150,14 +150,20 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(
 	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Found active participants",
 		"epoch_id", epochId, "model_id", modelId, "participant_count", len(activeParticipants.Participants))
 
+	// Missing snapshot is treated as "no nodes preserved for this model" -- the filter
+	// then excludes every participant, which is the correct steady-state behaviour during
+	// PoC (all participants are expected to be running PoC, none are serving inference).
+	var preservedNodeSet map[string]struct{}
 	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx, episodeAnchorHeight)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: failed to read preserved snapshot, using empty set",
+			"epoch_id", epochId, "model_id", modelId, "episode_anchor_height", episodeAnchorHeight, "error", err)
+	} else if !found {
+		k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: preserved snapshot not found, using empty set",
+			"epoch_id", epochId, "model_id", modelId, "episode_anchor_height", episodeAnchorHeight)
+	} else {
+		preservedNodeSet = PreservedNodeSetByModel(&preservedSnapshot, modelId)
 	}
-	if !found {
-		return nil, status.Errorf(codes.Unavailable, "GetRandomExecutor: preserved nodes snapshot not found for episode anchor %d", episodeAnchorHeight)
-	}
-	preservedNodeSet := PreservedNodeSetByModel(&preservedSnapshot, modelId)
 
 	isAvailableDuringPoc := make(map[string]bool)
 	totalParticipantsChecked := 0

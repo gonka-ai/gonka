@@ -10,30 +10,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func TestCaptureGenerationStartTimestampStoresPreservedNodesSnapshot(t *testing.T) {
+func TestCaptureGenerationStartTimestampStoresSnapshots(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
 
-	err := am.captureGenerationStartTimestamp(ctx, 1234, 100, &types.PreservedNodesSnapshot{})
-	require.NoError(t, err)
-
-	validationSnapshot, found, err := k.GetPoCValidationSnapshot(ctx, 100)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(1234), validationSnapshot.GenerationStartTimestamp)
-
-	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx, 100)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, int64(100), preservedSnapshot.EpisodeAnchorHeight)
-	require.Empty(t, preservedSnapshot.ModelPreservedNodes)
-}
-
-func TestCaptureGenerationStartTimestampStoresProvidedPreservedNodesSnapshot(t *testing.T) {
-	k, ctx := newMinimalInferenceKeeper(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-
-	expectedSnapshot := &types.PreservedNodesSnapshot{
+	snapshot := types.PreservedNodesSnapshot{
 		EpisodeAnchorHeight: 300,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
 			{
@@ -43,55 +24,21 @@ func TestCaptureGenerationStartTimestampStoresProvidedPreservedNodesSnapshot(t *
 		},
 	}
 
-	err := am.captureGenerationStartTimestamp(ctx, 1234, 300, expectedSnapshot)
+	err := am.captureGenerationStartTimestamp(ctx, 1234, 300, snapshot)
 	require.NoError(t, err)
+
+	validationSnapshot, found, err := k.GetPoCValidationSnapshot(ctx, 300)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(1234), validationSnapshot.GenerationStartTimestamp)
 
 	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx, 300)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, *expectedSnapshot, preservedSnapshot)
+	require.Equal(t, snapshot, preservedSnapshot)
 }
 
-func TestDeleteGenerationSnapshotsDeletesPreservedNodesSnapshot(t *testing.T) {
-	k, ctx := newMinimalInferenceKeeper(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-
-	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
-		PocStageStartHeight:      200,
-		GenerationStartTimestamp: 4567,
-	}))
-	require.NoError(t, k.SetPreservedNodesSnapshot(ctx, types.PreservedNodesSnapshot{
-		EpisodeAnchorHeight: 200,
-	}))
-
-	am.deleteGenerationSnapshots(ctx, 200)
-
-	_, found, err := k.GetPoCValidationSnapshot(ctx, 200)
-	require.NoError(t, err)
-	require.False(t, found)
-
-	_, found, err = k.GetPreservedNodesSnapshot(ctx, 200)
-	require.NoError(t, err)
-	require.False(t, found)
-}
-
-func TestCaptureGenerationStartTimestampRequiresPreservedSnapshot(t *testing.T) {
-	k, ctx := newMinimalInferenceKeeper(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-
-	err := am.captureGenerationStartTimestamp(ctx, 1234, 100, nil)
-	require.Error(t, err)
-
-	_, found, getErr := k.GetPoCValidationSnapshot(ctx, 100)
-	require.NoError(t, getErr)
-	require.False(t, found)
-
-	_, found, getErr = k.GetPreservedNodesSnapshot(ctx, 100)
-	require.NoError(t, getErr)
-	require.False(t, found)
-}
-
-func TestGetNotPreservedTotalWeightByParticipantUsesPreservedSnapshot(t *testing.T) {
+func TestPartitionWeightByPreservation(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
 
@@ -104,8 +51,8 @@ func TestGetNotPreservedTotalWeightByParticipantUsesPreservedSnapshot(t *testing
 				MlNodes: []*types.ModelMLNodes{
 					{
 						MlNodes: []*types.MLNodeInfo{
-							{NodeId: "node-1", PocWeight: 10, TimeslotAllocation: []bool{true, false}},
-							{NodeId: "node-2", PocWeight: 20, TimeslotAllocation: []bool{true, false}},
+							{NodeId: "node-1", PocWeight: 10},
+							{NodeId: "node-2", PocWeight: 20},
 						},
 					},
 				},
@@ -113,7 +60,7 @@ func TestGetNotPreservedTotalWeightByParticipantUsesPreservedSnapshot(t *testing
 		},
 	}))
 
-	weights, err := am.GetNotPreservedTotalWeightByParticipant(
+	preserved, notPreserved, err := am.partitionWeightByPreservation(
 		ctx,
 		5,
 		map[string]mathsdk.LegacyDec{"model-a": mathsdk.LegacyOneDec()},
@@ -128,7 +75,8 @@ func TestGetNotPreservedTotalWeightByParticipantUsesPreservedSnapshot(t *testing
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, int64(20), weights[testutil.Executor])
+	require.Equal(t, int64(10), preserved[testutil.Executor])
+	require.Equal(t, int64(20), notPreserved[testutil.Executor])
 }
 
 func TestGetInferenceServingNodeIdsUsesUpcomingEpochAnchor(t *testing.T) {

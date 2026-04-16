@@ -45,6 +45,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
+	err = k.GetPreservedNodesSnapshotPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
 	err = k.GetEpochGroupValidationPruner(params).Prune(ctx, k, currentEpochIndex)
 	if err != nil {
 		return err
@@ -155,6 +159,36 @@ func (k Keeper) GetPoCValidationSnapshotPruner(params types.Params) Pruner[int64
 		},
 		Remover: func(ctx context.Context, key int64) error {
 			return k.PoCValidationSnapshots.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
+// GetPreservedNodesSnapshotPruner reclaims regular-PoC preserved snapshots once their
+// epoch is past the retention window. The snapshot must outlive settlement and claim
+// validation for its own epoch, which run during the next epoch; PocDataPruningEpochThreshold
+// is conservative enough for that.
+func (k Keeper) GetPreservedNodesSnapshotPruner(params types.Params) Pruner[int64, types.PreservedNodesSnapshot] {
+	return Pruner[int64, types.PreservedNodesSnapshot]{
+		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
+		PruningMax: params.EpochParams.PocPruningMax,
+		List:       k.PreservedNodesSnapshots,
+		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[int64] {
+			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
+			if !found {
+				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
+				return new(collections.Range[int64]).Prefix(0)
+			}
+			return new(collections.Range[int64]).Prefix(epoch.PocStartBlockHeight)
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.PreservedNodesSnapshotsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.PreservedNodesSnapshotsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key int64) error {
+			return k.PreservedNodesSnapshots.Remove(ctx, key)
 		},
 		Logger: k,
 	}
