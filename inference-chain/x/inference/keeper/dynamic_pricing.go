@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	sdkerrors "cosmossdk.io/errors"
+
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -65,7 +67,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 		// Get cached capacity for this model
 		capacity, err := k.GetCachedModelCapacity(ctx, modelId)
 		if err != nil {
-			return fmt.Errorf("failed to get cached capacity for model %s: %w", modelId, err)
+			return sdkerrors.Wrapf(err, "failed to get cached capacity for model %s", modelId)
 		}
 
 		averageLoadPerBlock, found, err := k.GetModelLoadRollingAveragePerBlock(
@@ -74,7 +76,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			windowBlocks,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to get model load rolling average for model %s: %w", modelId, err)
+			return sdkerrors.Wrapf(err, "failed to get model load rolling average for model %s", modelId)
 		}
 		if !found {
 			averageLoadPerBlock = decimal.Zero
