@@ -1099,20 +1099,32 @@ func TestCapPerModelVotingPowers_CapsAndRedistributes(t *testing.T) {
 }
 
 func TestCapPerModelVotingPowers_ConvergesInMultipleIterations(t *testing.T) {
-	// Extreme case: one whale at 90% of total.
+	// Extreme case: one whale at 90% of total. With only 2 participants,
+	// the algorithm caps the whale at the initial 30% cap (floor(1000*0.3)=300),
+	// then attempts to redistribute the 600 excess to hosts below the cap.
+	// The only other host is "small" at 100, which absorbs enough to also hit
+	// the cap, and the remaining excess is dropped (warning logged) because
+	// there is no remaining recipient below the cap.
+	//
+	// Expected final: whale and small both roughly at the per-iteration cap.
+	// Neither should end up above the cap of the ORIGINAL total (300).
 	vp := map[string]int64{
 		"whale": 900,
 		"small": 100,
 	}
+	originalTotal := sumVP(vp)
 	capPct := sdkmath.LegacyNewDecWithPrec(30, 2) // 30% cap
+	originalCap := capPct.MulInt64(originalTotal).TruncateInt64()
 
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 
-	// With only 2 participants and 30% cap, whale must be capped and
-	// the redistribution cannot route back to whale, so small absorbs
-	// all the excess.
-	require.LessOrEqual(t, vp["whale"], sumVP(vp)*30/100+1,
-		"whale should be at or near 30%% cap")
+	// Whale must not exceed the cap computed against the original total.
+	require.LessOrEqual(t, vp["whale"], originalCap,
+		"whale (%d) should be at or below the original 30%% cap (%d)",
+		vp["whale"], originalCap)
+	// Small should have been redistributed UP toward the cap.
+	require.Greater(t, vp["small"], int64(100),
+		"small (%d) should have grown via redistribution", vp["small"])
 }
 
 func TestCapPerModelVotingPowers_ZeroCapIsDisabled(t *testing.T) {
