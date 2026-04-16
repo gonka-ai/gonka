@@ -102,6 +102,7 @@ const (
 	Query_MaintenanceStatus_FullMethodName                         = "/inference.inference.Query/MaintenanceStatus"
 	Query_MaintenanceConcurrency_FullMethodName                    = "/inference.inference.Query/MaintenanceConcurrency"
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
+	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 )
 
 // QueryClient is the client API for Query service.
@@ -249,6 +250,8 @@ type QueryClient interface {
 	MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error)
 	// Queries whether a proposed maintenance window is schedulable.
 	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
+	// Lists the scheduled per-epoch claim recipient overrides for a participant.
+	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 }
 
 type queryClient struct {
@@ -1006,6 +1009,15 @@ func (c *queryClient) MaintenanceSchedulability(ctx context.Context, in *QueryMa
 	return out, nil
 }
 
+func (c *queryClient) ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error) {
+	out := new(QueryListClaimRecipientsResponse)
+	err := c.cc.Invoke(ctx, Query_ListClaimRecipients_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1151,6 +1163,8 @@ type QueryServer interface {
 	MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error)
 	// Queries whether a proposed maintenance window is schedulable.
 	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
+	// Lists the scheduled per-epoch claim recipient overrides for a participant.
+	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1406,6 +1420,9 @@ func (UnimplementedQueryServer) MaintenanceConcurrency(context.Context, *QueryMa
 }
 func (UnimplementedQueryServer) MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceSchedulability not implemented")
+}
+func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListClaimRecipients not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2914,6 +2931,24 @@ func _Query_MaintenanceSchedulability_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ListClaimRecipients_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryListClaimRecipientsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ListClaimRecipients(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ListClaimRecipients_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ListClaimRecipients(ctx, req.(*QueryListClaimRecipientsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3252,6 +3287,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MaintenanceSchedulability",
 			Handler:    _Query_MaintenanceSchedulability_Handler,
+		},
+		{
+			MethodName: "ListClaimRecipients",
+			Handler:    _Query_ListClaimRecipients_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

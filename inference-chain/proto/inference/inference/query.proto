@@ -36,6 +36,7 @@ import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/claim_recipient.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -478,6 +479,11 @@ service Query {
   // Queries whether a proposed maintenance window is schedulable.
   rpc MaintenanceSchedulability (QueryMaintenanceSchedulabilityRequest) returns (QueryMaintenanceSchedulabilityResponse) {
     option (google.api.http).get = "/productscience/inference/inference/maintenance_schedulability/{participant}/{start_height}/{duration_blocks}";
+  }
+
+  // Lists the scheduled per-epoch claim recipient overrides for a participant.
+  rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1287,4 +1293,12 @@ message QueryMaintenanceSchedulabilityRequest {
 message QueryMaintenanceSchedulabilityResponse {
   bool   schedulable        = 1;
   string rejection_reason   = 2;
+}
+
+message QueryListClaimRecipientsRequest {
+  string participant = 1;
+}
+
+message QueryListClaimRecipientsResponse {
+  repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
 }
