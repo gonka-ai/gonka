@@ -52,6 +52,8 @@ func (k Keeper) IncrementDevshardHostEscrowCount(ctx context.Context, epochIndex
 	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
 }
 
+// AggregateDevshardHostStatsIntoCurrentEpochStats merges one slot's devshard
+// settlement stats into the participant's current-epoch counters.
 func AggregateDevshardHostStatsIntoCurrentEpochStats(
 	participant *types.Participant,
 	slotStats types.DevshardSettlementHostStats,

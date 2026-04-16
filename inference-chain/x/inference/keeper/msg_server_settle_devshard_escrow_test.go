@@ -319,6 +319,8 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	_, err = ms.SettleDevshardEscrow(ctx, msg)
 	require.NoError(t, err)
 
+	// assignedPerSlot = 20 / 4 = 5
+	// H1: completed = (5-1) + (5-0) = 9, validated = (4-2) + (5-1) = 6
 	participantH1, found := k.GetParticipant(ctx, addrH1)
 	require.True(t, found)
 	require.Equal(t, uint64(9), participantH1.CurrentEpochStats.InferenceCount)
@@ -326,6 +328,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	require.Equal(t, uint64(3), participantH1.CurrentEpochStats.InvalidatedInferences)
 	require.Equal(t, uint64(6), participantH1.CurrentEpochStats.ValidatedInferences)
 
+	// H2: completed = (5-2) + (5-1) = 7, validated = (3-0) + (4-1) = 6
 	participantH2, found := k.GetParticipant(ctx, addrH2)
 	require.True(t, found)
 	require.Equal(t, uint64(7), participantH2.CurrentEpochStats.InferenceCount)
@@ -390,7 +393,7 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementAllowedWithoutParticipantSt
 	}
 }
 
-func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediately(t *testing.T) {
+func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediatelyWithoutParticipantStateChange(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 

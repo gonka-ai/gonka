@@ -353,7 +353,9 @@ func (k msgServer) processInferencePayments(
 	return inference, nil
 }
 
-func (k msgServer) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64) error {
+// AddToCoinBalance adds payout to the participant's claimable work balance and
+// current-epoch earned coins, with overflow protection for both fields.
+func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64) error {
 	if participant == nil {
 		return sdkerrors.Wrap(types.ErrParticipantNotFound, "nil participant")
 	}

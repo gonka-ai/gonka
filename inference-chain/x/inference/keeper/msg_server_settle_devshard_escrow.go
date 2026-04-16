@@ -230,8 +230,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
 }
-
-func (k msgServer) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
+func (k Keeper) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
 	coins, err := types.GetCoins(int64(payout))
 	if err != nil {
 		return fmt.Errorf("invalid payout amount: %w", err)
