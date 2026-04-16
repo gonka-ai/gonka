@@ -123,6 +123,7 @@ var (
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
 	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
+	ClaimRecipientsPrefix           = collections.NewPrefix(106)
 	ParamsKey                       = []byte("p_inference")
 )
 

@@ -1,0 +1,12 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// ClaimRecipientEntry specifies, for a given epoch, where the participant's
+// claim rewards must be sent. An empty recipient removes the override (revert
+// to the participant's own creator address).
+message ClaimRecipientEntry {
+  uint64 epoch     = 1;
+  string recipient = 2;
+}

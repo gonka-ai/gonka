@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 
+	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -66,8 +67,13 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Use CacheContext so all payout mutations are atomic.
 	// If any payment fails, nothing is committed and the settle record
-	// persists for retry.
+	// + scheduled recipient persist for retry.
 	cacheCtx, writeFn := ctx.CacheContext()
+
+	// Resolve the destination once, using cacheCtx so the lookup view is
+	// consistent with the writes below. Recipient is already bech32-validated
+	// at the SetClaimRecipients write path; if not scheduled, returns msg.Creator.
+	payoutAddress := ms.resolvePayoutAddress(cacheCtx, msg.Creator, msg.EpochIndex)
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
@@ -76,7 +82,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -96,7 +102,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Pay rewards from module
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -123,7 +129,34 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	}, nil
 }
 
+// resolvePayoutAddress returns the destination address for a claim payout:
+// the on-chain scheduled recipient for (participant, epoch) when one has been
+// set by the cold key, otherwise the participant's own address. participant
+// is assumed to be a valid bech32 string — it has already been verified by
+// validateRequest / validateClaim.
+func (ms msgServer) resolvePayoutAddress(ctx context.Context, participant string, epoch uint64) string {
+	addr, err := sdk.AccAddressFromBech32(participant)
+	if err != nil {
+		return participant
+	}
+	recipient, found := ms.GetClaimRecipientForEpoch(ctx, addr, epoch)
+	if !found {
+		return participant
+	}
+	ms.LogInfo("Using scheduled claim recipient", types.Claims, "participant", participant, "epoch", epoch, "recipient", recipient)
+	return recipient
+}
+
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
+	// Consume the schedule entry after payout so per-participant state stays
+	// bounded: without removal, entries would accumulate indefinitely as
+	// epochs advance. Pairs with MaxClaimRecipientLookahead which caps writes;
+	// together they bound how many entries any one participant can hold.
+	if addr, err := sdk.AccAddressFromBech32(settleAmount.Participant); err == nil {
+		if err := ms.ClaimRecipients.Remove(ctx, collections.Join(addr, settleAmount.EpochIndex)); err != nil {
+			ms.LogError("Error removing claim recipient override", types.Claims, "error", err, "participant", settleAmount.Participant, "epoch", settleAmount.EpochIndex)
+		}
+	}
 	ms.RemoveSettleAmount(ctx, settleAmount.Participant)
 	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.EpochIndex, settleAmount.Participant)
 	if found {

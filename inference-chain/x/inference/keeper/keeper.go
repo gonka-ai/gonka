@@ -133,6 +133,15 @@ type (
 		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
 		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
+		// Set by cold key via MsgSetClaimRecipients; consumed on successful
+		// claim payout (in finishSettle).
+		//
+		// TODO(prune): orphaned entries (no successful claim — skipped, failed,
+		// abandoned) persist by design. Real-world accumulation is unlikely
+		// thanks to the ParticipantPermission collateral requirement on
+		// MsgSetClaimRecipients, not gas cost alone.
+		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 	}
 )
 
@@ -647,6 +656,13 @@ func NewKeeper(
 			types.BootstrapDelegationSnapshotPrefix,
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
+		),
+		ClaimRecipients: collections.NewMap(
+			sb,
+			types.ClaimRecipientsPrefix,
+			"claim_recipients",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			collections.StringValue,
 		),
 	}
 	// Build the collections schema
