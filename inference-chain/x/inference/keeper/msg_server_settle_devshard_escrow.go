@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/bits"
 	"slices"
 
@@ -157,8 +158,14 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	}
 
 	// Refund remainder to creator after validator costs and fee shares.
+	if totalPayout > escrow.Amount {
+		return nil, fmt.Errorf("total payout %d exceeds escrow amount %d", totalPayout, escrow.Amount)
+	}
 	remainder := escrow.Amount - totalPayout
 	if remainder > 0 {
+		if remainder > math.MaxInt64 {
+			return nil, fmt.Errorf("refund amount %d exceeds max int64", remainder)
+		}
 		creatorAddr, err := sdk.AccAddressFromBech32(escrow.Creator)
 		if err != nil {
 			return nil, fmt.Errorf("invalid creator address: %w", err)
@@ -229,6 +236,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
 }
 func (k Keeper) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
+	if payout > math.MaxInt64 {
+		return fmt.Errorf("payout amount %d exceeds max int64", payout)
+	}
 	coins, err := types.GetCoins(int64(payout))
 	if err != nil {
 		return fmt.Errorf("invalid payout amount: %w", err)

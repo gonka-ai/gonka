@@ -42,15 +42,30 @@ func (k Keeper) UpdateDevshardHostEpochStats(
 			EpochIndex:  epochIndex,
 		}
 	}
+	if existing.Missed > math.MaxUint32-slotStats.Missed {
+		return fmt.Errorf("missed overflow aggregating devshard host stats")
+	}
 	existing.Missed += slotStats.Missed
+	if existing.Invalid > math.MaxUint32-slotStats.Invalid {
+		return fmt.Errorf("invalid overflow aggregating devshard host stats")
+	}
 	existing.Invalid += slotStats.Invalid
 	if existing.Cost > math.MaxUint64-slotStats.Cost {
 		return fmt.Errorf("cost overflow aggregating devshard host stats")
 	}
 	existing.Cost += slotStats.Cost
+	if existing.RequiredValidations > math.MaxUint32-slotStats.RequiredValidations {
+		return fmt.Errorf("required validations overflow aggregating devshard host stats")
+	}
 	existing.RequiredValidations += slotStats.RequiredValidations
+	if existing.CompletedValidations > math.MaxUint32-slotStats.CompletedValidations {
+		return fmt.Errorf("completed validations overflow aggregating devshard host stats")
+	}
 	existing.CompletedValidations += slotStats.CompletedValidations
 	if incrementEscrowCount {
+		if existing.EscrowCount == math.MaxUint32 {
+			return fmt.Errorf("escrow count overflow aggregating devshard host stats")
+		}
 		existing.EscrowCount++
 	}
 	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
