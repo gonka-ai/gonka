@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/bits"
+	"slices"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -39,6 +40,38 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if currentEpochIndex < escrow.EpochIndex || currentEpochIndex > escrow.EpochIndex+1 {
 		return nil, fmt.Errorf("devshard settlement only supports current or previous epoch: current epoch %d, escrow epoch %d", currentEpochIndex, escrow.EpochIndex)
 	}
+
+	uniqueAddrs := make([]string, 0, len(escrow.Slots))
+	seenAddrs := make(map[string]bool, len(escrow.Slots))
+	for _, addr := range escrow.Slots {
+		if seenAddrs[addr] {
+			continue
+		}
+		seenAddrs[addr] = true
+		uniqueAddrs = append(uniqueAddrs, addr)
+	}
+	slices.Sort(uniqueAddrs)
+
+	participantByAddr := make(map[string]*types.Participant, len(uniqueAddrs))
+	activeInCurrentEpoch := make(map[string]bool, len(uniqueAddrs))
+	for _, addr := range uniqueAddrs {
+		participant, found := k.GetParticipant(goCtx, addr)
+		if !found {
+			return nil, fmt.Errorf("participant %s not found", addr)
+		}
+		participantByAddr[addr] = &participant
+
+		participantAddr, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
+		}
+		active, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
+		}
+		activeInCurrentEpoch[addr] = active
+	}
+	touchedParticipants := make(map[string]bool)
 
 	totalSlots := uint64(len(escrow.Slots))
 	assignedPerSlot := msg.Nonce / totalSlots
@@ -88,11 +121,6 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	var totalPayout uint64
 	paidValidators := make(map[string]bool)
 	for _, addr := range escrow.Slots {
-		recipientAddr, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
-		}
-
 		payout, hasPayout := validatorPayouts[addr]
 		if !hasPayout || payout == 0 {
 			continue
@@ -107,14 +135,20 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 		totalPayout = nextTotalPayout
 
-		inCurrentEpoch, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, recipientAddr))
+		recipientAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
+			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
 		}
+		inCurrentEpoch := activeInCurrentEpoch[addr]
 		if inCurrentEpoch {
-			if err := k.addCoinsToCoinBalance(goCtx, addr, payout); err != nil {
+			participant, found := participantByAddr[addr]
+			if !found {
+				return nil, fmt.Errorf("participant %s not found", addr)
+			}
+			if err := k.AddToCoinBalance(goCtx, participant, payout); err != nil {
 				return nil, err
 			}
+			touchedParticipants[addr] = true
 		} else {
 			if err := k.payCoinsDirectly(goCtx, payout, recipientAddr); err != nil {
 				return nil, err
@@ -150,28 +184,32 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err := k.AggregateDevshardHostStats(goCtx, escrow.EpochIndex, participantAddr, *hs); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
-		inCurrentEpoch, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
-		if err != nil {
-			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
-		}
-
-		if inCurrentEpoch {
-			participant, found := k.GetParticipant(goCtx, addr)
+		if activeInCurrentEpoch[addr] {
+			participant, found := participantByAddr[addr]
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(&participant, *hs, assignedPerSlot); err != nil {
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedPerSlot); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
-			if err := k.SetParticipant(goCtx, participant); err != nil {
-				return nil, fmt.Errorf("failed to update participant %s: %w", addr, err)
-			}
+			touchedParticipants[addr] = true
 		}
 		if !seenValidators[addr] {
 			seenValidators[addr] = true
 			if err := k.IncrementDevshardHostEscrowCount(goCtx, escrow.EpochIndex, participantAddr); err != nil {
 				return nil, fmt.Errorf("failed to increment escrow count: %w", err)
 			}
+		}
+	}
+	touchedAddrs := make([]string, 0, len(touchedParticipants))
+	for addr := range touchedParticipants {
+		touchedAddrs = append(touchedAddrs, addr)
+	}
+	slices.Sort(touchedAddrs)
+	for _, addr := range touchedAddrs {
+		participant := participantByAddr[addr]
+		if err := k.SetParticipant(goCtx, *participant); err != nil {
+			return nil, fmt.Errorf("failed to update participant %s: %w", addr, err)
 		}
 	}
 
@@ -203,13 +241,4 @@ func (k msgServer) payCoinsDirectly(goCtx context.Context, payout uint64, recipi
 		return fmt.Errorf("failed to pay validator %s: %w", recipientAddr.String(), err)
 	}
 	return nil
-}
-
-func (k msgServer) addCoinsToCoinBalance(goCtx context.Context, addr string, payout uint64) error {
-	participant, _ := k.GetParticipant(goCtx, addr)
-	err := k.AddToCoinBalance(goCtx, &participant, payout)
-	if err != nil {
-		return err
-	}
-	return k.SetParticipant(goCtx, participant)
 }

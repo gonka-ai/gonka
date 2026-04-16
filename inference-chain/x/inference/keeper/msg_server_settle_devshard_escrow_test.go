@@ -89,6 +89,9 @@ func TestSettleDevshardEscrow_FeesSplitBySlotCount(t *testing.T) {
 			return nil
 		})
 
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
 	resp, err := ms.SettleDevshardEscrow(ctx, msg)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -155,6 +158,8 @@ func TestSettleDevshardEscrow_HappyPath(t *testing.T) {
 			require.Equal(t, expectedRefund, coins[0].Amount.Uint64())
 			return nil
 		})
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	resp, err := ms.SettleDevshardEscrow(ctx, msg)
 	require.NoError(t, err)
@@ -307,6 +312,9 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	mocks.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
 		Return(nil)
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
 
 	_, err = ms.SettleDevshardEscrow(ctx, msg)
 	require.NoError(t, err)
@@ -422,6 +430,9 @@ func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediately(t *
 			require.Equal(t, expectedRefund, coins[0].Amount.Uint64())
 			return nil
 		})
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
 
 	_, err = ms.SettleDevshardEscrow(ctx, msg)
 	require.NoError(t, err)

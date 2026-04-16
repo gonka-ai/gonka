@@ -125,7 +125,11 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 
 	// Verify total cost + fees does not exceed escrow amount
-	assignedPerSlot := msg.Nonce / uint64(len(escrow.Slots))
+	slotCount := uint64(len(escrow.Slots))
+	if slotCount == 0 {
+		return fmt.Errorf("no slots in escrow")
+	}
+	assignedPerSlot := msg.Nonce / slotCount
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
