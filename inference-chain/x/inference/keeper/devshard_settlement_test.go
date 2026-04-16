@@ -284,6 +284,37 @@ func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid count")
 }
 
+func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	hostStats[1].Missed = 2 // nonce 19 => slot 1 is one of the remainder slots
+	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 19)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	require.NoError(t, err)
+}
+
+func TestVerifyDevshardSettlement_NonRemainderSlotMissedRejected(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	hostStats[0].Missed = 2 // nonce 19 => slot 0 only gets nonce 16
+	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 19)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missed count")
+}
+
 func TestVerifyDevshardSettlement_InvalidSignature(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 

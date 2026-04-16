@@ -337,6 +337,69 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	require.Equal(t, uint64(6), participantH2.CurrentEpochStats.ValidatedInferences)
 }
 
+func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keyH1, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	keyH2, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+
+	addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+	addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+	setParticipantForDevshardTest(t, k, ctx, addrH1)
+	setParticipantForDevshardTest(t, k, ctx, addrH2)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x22
+	escrow := types.DevshardEscrow{
+		Id:         1,
+		Creator:    creator.String(),
+		Amount:     5_000,
+		Slots:      []string{addrH1, addrH2, addrH1, addrH2},
+		EpochIndex: 5,
+		Settled:    false,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	hostStats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 10},
+		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20},
+		{SlotId: 2, Missed: 0, Invalid: 0, Cost: 30},
+		{SlotId: 3, Missed: 1, Invalid: 0, Cost: 40},
+	}
+	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH2, keyH1, keyH2}, hostStats, 8, 6)
+
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+		Return(nil)
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
+
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	// nonce 6 with 4 slots gives slot upper bounds: slot 0 -> 1, slot 1 -> 2, slot 2 -> 2, slot 3 -> 1.
+	participantH1, found := k.GetParticipant(ctx, addrH1)
+	require.True(t, found)
+	require.Equal(t, uint64(2), participantH1.CurrentEpochStats.InferenceCount)
+	require.Equal(t, uint64(1), participantH1.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(0), participantH1.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(2), participantH1.CurrentEpochStats.ValidatedInferences)
+
+	participantH2, found := k.GetParticipant(ctx, addrH2)
+	require.True(t, found)
+	require.Equal(t, uint64(2), participantH2.CurrentEpochStats.InferenceCount)
+	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.ValidatedInferences)
+}
+
 func TestSettleDevshardEscrow_PreviousEpochSettlementAllowedWithoutParticipantStats(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")

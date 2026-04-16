@@ -33,6 +33,27 @@ func DevshardQuorumFor(groupSize int) int {
 	return 2*groupSize/3 + 1
 }
 
+// devshardAssignedUpperBoundForSlot returns the maximum number of inference IDs
+// that could have been assigned to a slot, based on devshard's executor routing:
+// inference_id == nonce and executor_slot = inference_id % group_size.
+func devshardAssignedUpperBoundForSlot(latestNonce, slotCount uint64, slotID uint32) (uint64, error) {
+	if slotCount == 0 {
+		return 0, fmt.Errorf("slot count cannot be zero")
+	}
+	if uint64(slotID) >= slotCount {
+		return 0, fmt.Errorf("slot %d out of range for slot count %d", slotID, slotCount)
+	}
+
+	firstAssignedNonce := uint64(slotID)
+	if slotID == 0 {
+		firstAssignedNonce = slotCount
+	}
+	if latestNonce < firstAssignedNonce {
+		return 0, nil
+	}
+	return 1 + (latestNonce-firstAssignedNonce)/slotCount, nil
+}
+
 // WarmKeyChecker returns true if grantee has an authz grant from granter.
 type WarmKeyChecker func(granter, grantee string) bool
 
@@ -129,7 +150,6 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	if slotCount == 0 {
 		return fmt.Errorf("no slots in escrow")
 	}
-	assignedPerSlot := msg.Nonce / slotCount
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
@@ -137,10 +157,14 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
-		if uint64(hs.Missed) > assignedPerSlot {
-			return fmt.Errorf("slot %d missed count %d exceeds assigned per slot %d", hs.SlotId, hs.Missed, assignedPerSlot)
+		assignedToSlot, err := devshardAssignedUpperBoundForSlot(msg.Nonce, slotCount, hs.SlotId)
+		if err != nil {
+			return err
 		}
-		completed := assignedPerSlot - uint64(hs.Missed)
+		if uint64(hs.Missed) > assignedToSlot {
+			return fmt.Errorf("slot %d missed count %d exceeds assigned per slot %d", hs.SlotId, hs.Missed, assignedToSlot)
+		}
+		completed := assignedToSlot - uint64(hs.Missed)
 		if uint64(hs.Invalid) > completed {
 			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
 		}
