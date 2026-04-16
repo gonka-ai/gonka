@@ -34,8 +34,13 @@ func DevshardQuorumFor(groupSize int) int {
 }
 
 // devshardAssignedUpperBoundForSlot returns the maximum number of inference IDs
-// that could have been assigned to a slot, based on devshard's executor routing:
-// inference_id == nonce and executor_slot = inference_id % group_size.
+// that could have been assigned to a slot, based on devshard's executor routing.
+// This mirrors the devshard-side contract in `devshard/user/user.go`, where
+// diffs advance nonce from `latest+1`, and `devshard/state/machine.go`, where
+// `inference_id == nonce` is routed as `group[inference_id % len(group)]`.
+// Because nonce 0 is never used for a real inference diff, slot 0 first
+// receives work at nonce `slotCount`, while slots 1..slotCount-1 first receive
+// work at their matching nonce.
 func devshardAssignedUpperBoundForSlot(latestNonce, slotCount uint64, slotID uint32) (uint64, error) {
 	if slotCount == 0 {
 		return 0, fmt.Errorf("slot count cannot be zero")

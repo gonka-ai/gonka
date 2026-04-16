@@ -116,9 +116,20 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		return nil, fmt.Errorf("failed to allocate all remainder fees, %d left", remainderFees)
 	}
 
+	var totalPayout uint64
+	for _, payout := range validatorPayouts {
+		nextTotalPayout, carry := bits.Add64(totalPayout, payout, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("total validator payout overflow")
+		}
+		totalPayout = nextTotalPayout
+	}
+	if totalPayout > escrow.Amount {
+		return nil, fmt.Errorf("total payout %d exceeds escrow amount %d", totalPayout, escrow.Amount)
+	}
+
 	// Pay validators in slot order (deterministic iteration over escrow.Slots).
 	// Each validator receives total accumulated slot costs and fee shares.
-	var totalPayout uint64
 	paidValidators := make(map[string]bool)
 	for _, addr := range escrow.Slots {
 		payout, hasPayout := validatorPayouts[addr]
@@ -129,11 +140,6 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			continue
 		}
 		paidValidators[addr] = true
-		nextTotalPayout, carry := bits.Add64(totalPayout, payout, 0)
-		if carry != 0 {
-			return nil, fmt.Errorf("total validator payout overflow")
-		}
-		totalPayout = nextTotalPayout
 
 		recipientAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
@@ -157,9 +163,6 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	}
 
 	// Refund remainder to creator after validator costs and fee shares.
-	if totalPayout > escrow.Amount {
-		return nil, fmt.Errorf("total payout %d exceeds escrow amount %d", totalPayout, escrow.Amount)
-	}
 	remainder := escrow.Amount - totalPayout
 	if remainder > 0 {
 		if remainder > math.MaxInt64 {
@@ -187,7 +190,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
 		}
-		firstForValidator := !seenValidators[addr]
+		_, seen := seenValidators[addr]
+		firstForValidator := !seen
 		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
@@ -209,6 +213,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			seenValidators[addr] = true
 		}
 	}
+
 	touchedAddrs := make([]string, 0, len(touchedParticipants))
 	for addr := range touchedParticipants {
 		touchedAddrs = append(touchedAddrs, addr)
@@ -238,6 +243,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
 }
+
 func (k Keeper) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
 	if payout > math.MaxInt64 {
 		return fmt.Errorf("payout amount %d exceeds max int64", payout)
