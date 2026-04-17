@@ -20,6 +20,7 @@ var (
 	ParamsKey                     = []byte("p_bls")
 	EpochBLSDataPrefix            = []byte("epoch_bls_data")
 	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
+	VerificationSubmissionPrefix  = []byte("epoch_bls_verification_submission/")
 	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
 	ExpirationIndexPrefix         = []byte("expiration_index")
 	GroupValidationPrefix         = []byte("group_validation_")
@@ -79,6 +80,43 @@ func DealerPartSubKey(participantIndex uint32) []byte {
 func ParseDealerPartSubKey(sub []byte) (uint32, error) {
 	if len(sub) != 4 {
 		return 0, fmt.Errorf("invalid dealer part sub-key length %d (want 4)", len(sub))
+	}
+	return binary.BigEndian.Uint32(sub), nil
+}
+
+// VerificationSubmissionEpochPrefix returns the prefix used to iterate all
+// verification vector submissions for a given epoch ID. Same shape as
+// DealerPartEpochPrefix — a prefix.Store scoped to this prefix yields one
+// entry per participant that has submitted a verification vector, sub-keyed
+// by participant index.
+//
+// This split exists for the same reason as the dealer-part split: a single
+// EpochBLSData base struct that holds all verification submissions inline
+// grows O(N) per verifier and causes the same WritePerByte gas-scaling
+// race that kicks later verifiers out of the round.
+//
+// Full layout: {VerificationSubmissionPrefix}{epoch_id:uint64 BE}/{participant_index:uint32 BE}.
+func VerificationSubmissionEpochPrefix(epochID uint64) []byte {
+	prefix := make([]byte, len(VerificationSubmissionPrefix)+8+1)
+	copy(prefix, VerificationSubmissionPrefix)
+	binary.BigEndian.PutUint64(prefix[len(VerificationSubmissionPrefix):], epochID)
+	prefix[len(VerificationSubmissionPrefix)+8] = '/'
+	return prefix
+}
+
+// VerificationSubmissionSubKey returns the sub-key portion of a verification
+// submission entry (the bytes under VerificationSubmissionEpochPrefix).
+func VerificationSubmissionSubKey(participantIndex uint32) []byte {
+	sub := make([]byte, 4)
+	binary.BigEndian.PutUint32(sub, participantIndex)
+	return sub
+}
+
+// ParseVerificationSubmissionSubKey decodes a sub-key produced by
+// VerificationSubmissionSubKey back into a participant index.
+func ParseVerificationSubmissionSubKey(sub []byte) (uint32, error) {
+	if len(sub) != 4 {
+		return 0, fmt.Errorf("invalid verification submission sub-key length %d (want 4)", len(sub))
 	}
 	return binary.BigEndian.Uint32(sub), nil
 }
