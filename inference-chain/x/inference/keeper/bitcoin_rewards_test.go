@@ -2000,55 +2000,6 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 	})
 }
 
-// Test RecomputeEffectiveWeightFromMLNodes helper function
-// Under the full-reading model the helper returns vw.ConfirmationWeight directly;
-// preserved + measured membership is already baked into that value by
-// evaluateConfirmation. These cases pin that contract.
-func TestRecomputeEffectiveWeightFromMLNodes(t *testing.T) {
-	t.Run("Returns ConfirmationWeight", func(t *testing.T) {
-		vw := &types.ValidationWeight{
-			MemberAddress:      "participant1",
-			Weight:             450,
-			ConfirmationWeight: 380,
-		}
-
-		require.Equal(t, int64(380), RecomputeEffectiveWeightFromMLNodes(vw))
-	})
-
-	t.Run("Zero ConfirmationWeight", func(t *testing.T) {
-		vw := &types.ValidationWeight{
-			MemberAddress:      "participant1",
-			Weight:             300,
-			ConfirmationWeight: 0,
-		}
-
-		require.Equal(t, int64(0), RecomputeEffectiveWeightFromMLNodes(vw))
-	})
-}
-
-// When no confirmation PoC happens the caller leaves ConfirmationWeight at its
-// initial full-weight value; settlement should then read exactly that value.
-func TestSettlementMatchesRegularWeightWithoutConfirmation(t *testing.T) {
-	vw := &types.ValidationWeight{
-		MemberAddress:      "participant1",
-		Weight:             450,
-		ConfirmationWeight: 450,
-	}
-	require.Equal(t, vw.Weight, RecomputeEffectiveWeightFromMLNodes(vw))
-}
-
-// When a confirmation PoC lowers ConfirmationWeight the settlement read follows.
-func TestSettlementWithConfirmationCapping(t *testing.T) {
-	vw := &types.ValidationWeight{
-		MemberAddress:      "participant1",
-		Weight:             450,
-		ConfirmationWeight: 380,
-	}
-	effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw)
-	require.Equal(t, int64(380), effectiveWeight)
-	require.Less(t, effectiveWeight, vw.Weight)
-}
-
 func TestGetDynamicP0(t *testing.T) {
 	logger := createTestLogger(t)
 

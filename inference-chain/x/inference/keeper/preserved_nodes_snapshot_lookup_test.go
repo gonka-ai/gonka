@@ -32,7 +32,6 @@ func TestPreservedNodeSetByModel(t *testing.T) {
 	require.Len(t, modelBNodes, 1)
 	require.Contains(t, modelBNodes, "node-3")
 
-	require.True(t, IsPreservedNode(snapshot, "model-b", "node-3"))
-	require.False(t, IsPreservedNode(snapshot, "model-b", "node-1"))
 	require.Empty(t, PreservedNodeSetByModel(snapshot, "missing-model"))
+	require.Empty(t, PreservedNodeSetByModel(nil, "model-a"))
 }

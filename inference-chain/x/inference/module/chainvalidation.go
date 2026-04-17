@@ -663,7 +663,7 @@ func (am AppModule) GetPreservedNodesByParticipant(
 	}
 
 	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
-		if modelNodes == nil || modelNodes.ModelId == "" || len(modelNodes.PreservedNodeIds) == 0 {
+		if len(modelNodes.PreservedNodeIds) == 0 {
 			continue
 		}
 
@@ -677,21 +677,12 @@ func (am AppModule) GetPreservedNodesByParticipant(
 
 		preservedNodeSet := make(map[string]struct{}, len(modelNodes.PreservedNodeIds))
 		for _, nodeID := range modelNodes.PreservedNodeIds {
-			if nodeID == "" {
-				continue
-			}
 			preservedNodeSet[nodeID] = struct{}{}
-		}
-		if len(preservedNodeSet) == 0 {
-			continue
 		}
 
 		for _, validationWeight := range subgroupData.ValidationWeights {
-			if validationWeight == nil || validationWeight.MemberAddress == "" {
-				continue
-			}
 			for _, node := range validationWeight.MlNodes {
-				if node == nil || node.NodeId == "" {
+				if node == nil {
 					continue
 				}
 				if _, ok := preservedNodeSet[node.NodeId]; !ok {
@@ -828,16 +819,14 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	}
 
 	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
-		if modelNodes == nil {
-			continue
-		}
 		for _, nodeID := range modelNodes.PreservedNodeIds {
 			inferenceServingNodeIds[nodeID] = true
-			am.LogInfo("getInferenceServingNodeIds: Found inference-serving node", types.PoC,
-				"nodeId", nodeID,
-				"modelId", modelNodes.ModelId)
 		}
 	}
+	am.LogInfo("getInferenceServingNodeIds: preserved snapshot loaded", types.PoC,
+		"epoch", upcomingEpoch.Index,
+		"anchor", upcomingEpoch.PocStartBlockHeight,
+		"count", len(inferenceServingNodeIds))
 
 	return inferenceServingNodeIds
 }

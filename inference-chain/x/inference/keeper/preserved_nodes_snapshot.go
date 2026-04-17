@@ -32,21 +32,14 @@ func PreservedNodeSetByModel(snapshot *types.PreservedNodesSnapshot, modelId str
 	if snapshot == nil {
 		return nodeSet
 	}
-
 	for _, modelNodes := range snapshot.ModelPreservedNodes {
-		if modelNodes == nil || modelNodes.ModelId != modelId {
+		if modelNodes.ModelId != modelId {
 			continue
 		}
 		for _, nodeID := range modelNodes.PreservedNodeIds {
 			nodeSet[nodeID] = struct{}{}
 		}
-		break
+		return nodeSet
 	}
-
 	return nodeSet
-}
-
-func IsPreservedNode(snapshot *types.PreservedNodesSnapshot, modelId, nodeId string) bool {
-	_, ok := PreservedNodeSetByModel(snapshot, modelId)[nodeId]
-	return ok
 }

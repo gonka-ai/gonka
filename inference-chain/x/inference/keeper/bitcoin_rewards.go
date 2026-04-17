@@ -201,16 +201,6 @@ func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coeffi
 	return total
 }
 
-// RecomputeEffectiveWeightFromMLNodes returns the participant's effective weight for
-// reward distribution. Under the episode-scoped preservation design, vw.ConfirmationWeight
-// is already a full-weight reading -- initial value equals the sum of all MLNode weights,
-// then each confirmation event takes min(current, preserved(event) + measured(event)).
-// Preserved and measured portions are baked into that reading, so no separate preserved
-// accumulation is needed here.
-func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight) int64 {
-	return vw.ConfirmationWeight
-}
-
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
 // Note: This function is used for display/query purposes and returns original base weight.
 // For settlement, CalculateParticipantBitcoinRewards applies confirmation weight capping
@@ -628,7 +618,7 @@ func CalculateParticipantBitcoinRewards(
 		// vw.ConfirmationWeight is a full-weight reading: initial value is the total
 		// coefficient-adjusted MLNode weight, each confirmation event lowers it via
 		// min(current, preserved(event) + measured(event)). See evaluateConfirmation.
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw)
+		effectiveWeight := vw.ConfirmationWeight
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
 		}

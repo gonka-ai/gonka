@@ -27,7 +27,6 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 1},  // measured from node-B
 		map[string]int64{addr: 10}, // preservedHere
 		map[string]int64{addr: 1},  // notPreservedHere
-		nil,
 	)
 	require.False(t, updated, "honest reading equal to initial must not lower ConfirmationWeight")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -40,7 +39,6 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 10},
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 10},
-		nil,
 	)
 	require.False(t, updated, "honest reading with rotated preservation must also stay at 11")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -53,7 +51,6 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 4},
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 10},
-		nil,
 	)
 	require.True(t, updated, "dishonest event must lower ConfirmationWeight")
 	require.Equal(t, int64(5), initial.ValidationWeights[0].ConfirmationWeight)
@@ -81,7 +78,6 @@ func TestFoldEventReadings_AllPreservedZeroMeasuredIsNotPenalized(t *testing.T) 
 		map[string]int64{addr: 0},   // participant submitted nothing for this event
 		map[string]int64{addr: 100}, // every one of their nodes was preserved this event
 		map[string]int64{addr: 0},
-		nil,
 	)
 
 	require.False(t, updated)
@@ -105,7 +101,6 @@ func TestFoldEventReadings_EmptyEventKeepsRatioAtOne(t *testing.T) {
 		map[string]int64{},
 		map[string]int64{},
 		map[string]int64{},
-		nil,
 	)
 
 	// reading = 0 < 50 -> ConfirmationWeight drops to 0. But ratio stays at 1 since

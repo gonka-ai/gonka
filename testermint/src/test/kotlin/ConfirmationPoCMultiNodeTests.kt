@@ -10,173 +10,63 @@ import java.util.concurrent.TimeUnit
 
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
 class ConfirmationPoCMultiNodeTests : TestermintTest() {
-    
-    data class NodeAllocation(val nodeId: String, val preserved: Boolean, val weight: Long)
 
     // 16m
     @Test
     fun `confirmation PoC with multiple MLNodes - capped rewards with POC_SLOT allocation`() {
         logSection("=== TEST: Confirmation PoC with Multiple MLNodes - POC_SLOT Allocation ===")
-        
+
         // Initialize cluster with custom spec for confirmation PoC testing
         val confirmationSpec = createConfirmationPoCSpec(expectedConfirmationsPerEpoch = 100, pocSlotAllocation = 0.05)
         val (cluster, genesis) = initCluster(
             joinCount = 2,
             mergeSpec = confirmationSpec,
             reboot = true,
-            resetMlNodes = false  // Don't reset - we want to keep our 3-node configuration
+            resetMlNodes = false
         )
-        logSection("Setting up mock weights to avoid power capping")
         val join1 = cluster.joinPairs[0]
         val join2 = cluster.joinPairs[1]
-        // Set genesis nodes to weight=10 per node (total 30), join nodes to weight=50 to avoid power capping Genesis
-        // Genesis: 30/130 = 23% < 30% (no capping)
-        // Note: Each node generates its own nonces, so setting to 10 means each of genesis's 3 nodes generates 10, totaling 30
+
+        // Weights: genesis 3 nodes × 10 = 30, joins 1 node each at 50. 30/130 < 30% => no power cap.
         genesis.addNodes(2)
         genesis.setPocWeight(10)
         join1.setPocWeight(50)
         join2.setPocWeight(50)
-
         genesis.waitForNextEpoch()
 
-        logSection("✅ Cluster Initialized Successfully with genesis having 3 MLNodes!")
-        
-
-        logSection("Verifying genesis has 3 mock server containers")
-        // The additional mock servers should have been started by initCluster with reboot=true
-        var genesisNodes = genesis.api.getNodes()
-        Logger.info("Genesis has ${genesisNodes.size} nodes registered")
+        val genesisNodes = genesis.api.getNodes()
+        assertThat(genesisNodes).hasSize(3)
         genesisNodes.forEach { node ->
             Logger.info("  Node: ${node.node.id} at ${node.node.host}:${node.node.pocPort}")
         }
 
-        logSection("Waiting for second PoC cycle to establish confirmation_weight=50 for join nodes")
-        // The confirmation_weight is initialized from the previous epoch's weight during epoch formation
-        // We need a second cycle so join nodes' confirmation_weight gets set to 50
-        genesis.waitForNextEpoch()
+        val honestGenesisWeight = 10L
+        val dishonestGenesisWeight = 8L
 
-        logSection("Waiting for confirmation PoC trigger during inference phase")
-        val confirmationEvent = waitForConfirmationPoCTrigger(genesis)
-        assertThat(confirmationEvent).isNotNull
-        Logger.info("Confirmation PoC triggered at height ${confirmationEvent!!.triggerHeight}")
+        runConfirmationPoCScenario(
+            genesis = genesis,
+            participants = listOf(genesis, join1, join2),
+            genesisNodeIds = genesisNodes.map { it.node.id }.toSet(),
+            modelId = extractSingleModelId(genesisNodes),
+            honestGenesisWeight = honestGenesisWeight,
+            dishonestGenesisWeight = dishonestGenesisWeight,
+            assertRewards = { changes, expectedFinalWeight ->
+                val genesisChange = changes.getValue(genesis.node.getColdAddress())
+                val join1Change = changes.getValue(join1.node.getColdAddress())
+                val join2Change = changes.getValue(join2.node.getColdAddress())
 
-        val confirmedWeightPerNode = 8L
-        
-        logSection("Setting PoC mocks for confirmation")
-        // During confirmation PoC, each POC_SLOT=false node will return weight=8 (reduced from 10)
-        Logger.info("  Genesis: each node returns weight=$confirmedWeightPerNode (reduced from 10)")
-        Logger.info("  Join1: weight=50 per node (full confirmation)")
-        Logger.info("  Join2: weight=50 per node (full confirmation)")
-        genesis.setPocWeight(confirmedWeightPerNode)
-        join1.setPocWeight(50)
-        join2.setPocWeight(50)
+                assertThat(genesisChange).isGreaterThan(0)
+                assertThat(join1Change).isGreaterThan(0)
+                assertThat(join2Change).isGreaterThan(0)
+                // Both joins have identical weight -> identical reward (modulo rounding).
+                assertThat(join1Change).isCloseTo(join2Change, Offset.offset(5L))
 
-        logSection("Waiting for confirmation PoC generation phase")
-        waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_GENERATION)
-        Logger.info("Confirmation PoC generation phase active")
-
-        logSection("Querying preserved snapshot for Genesis's 3 nodes")
-        genesisNodes = genesis.api.getNodes()
-        assertThat(genesisNodes).hasSize(3)
-
-        val preservedSnapshot = waitForPreservedSnapshot(genesis, confirmationEvent.triggerHeight)
-        val modelId = extractSingleModelId(genesisNodes)
-        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
-        val preservedAllocation = waitForNodeAllocations(genesis, preservedNodeIds, expectedCount = 3)
-        logSection("Genesis MLNode preserved allocation:")
-        preservedAllocation.forEach {
-            Logger.info("  Node ${it.nodeId}: preserved=${it.preserved}, weight=${it.weight}")
-        }
-
-        val numPreserved = preservedAllocation.count { it.preserved }
-        val numParticipating = preservedAllocation.count { !it.preserved }
-
-        require(numParticipating > 0) {
-            "All ${preservedAllocation.size} nodes were preserved, leaving no nodes for confirmation validation."
-        }
-
-        genesisNodes.forEach { nodeResponse ->
-            if (nodeResponse.node.id in preservedNodeIds) {
-                assertThat(nodeResponse.state.currentStatus).isEqualTo("INFERENCE")
-            } else {
-                assertThat(nodeResponse.state.currentStatus).isEqualTo("POC")
+                val genesisRatio = genesisChange.toDouble() / join1Change.toDouble()
+                val expectedRatio = expectedFinalWeight.toDouble() / 50
+                assertThat(genesisRatio).isCloseTo(expectedRatio, Offset.offset(0.1))
+                Logger.info("Genesis reward ratio: $genesisRatio (expected: $expectedRatio)")
             }
-        }
-
-        val expectedFinalWeight = (numPreserved * 10) + (numParticipating * confirmedWeightPerNode)
-
-        Logger.info("Genesis weight breakdown:")
-        Logger.info("  Preserved nodes: $numPreserved × 10 = ${numPreserved * 10}")
-        Logger.info("  Participating nodes: $numParticipating × $confirmedWeightPerNode = ${numParticipating * confirmedWeightPerNode}")
-        Logger.info("  Expected final weight: $expectedFinalWeight")
-        
-        logSection("Waiting for confirmation PoC validation phase")
-        waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_VALIDATION)
-        Logger.info("Confirmation PoC validation phase active")
-        
-        logSection("Waiting for confirmation PoC completion")
-        waitForConfirmationPoCCompletion(genesis)
-        Logger.info("Confirmation PoC completed (event cleared)")
-        
-        // Reset mocks to full weight after confirmation
-        genesis.setPocWeight(10)
-        join1.setPocWeight(50)
-        join2.setPocWeight(50)
-
-        logSection("Waiting for NEXT epoch where confirmation weights will be applied")
-        genesis.waitForStage(EpochStage.START_OF_POC)
-        Logger.info("New epoch started, confirmation weights will be used in settlement")
-        
-        // Record balances AFTER confirmation but BEFORE settlement
-        val initialBalances = mapOf(
-            genesis.node.getColdAddress() to genesis.node.getSelfBalance(),
-            join1.node.getColdAddress() to join1.node.getSelfBalance(),
-            join2.node.getColdAddress() to join2.node.getSelfBalance()
         )
-        
-        logSection("Waiting for reward settlement with confirmation weights")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
-        
-        logSection("Verifying rewards are capped for Genesis based on POC_SLOT allocation")
-        val finalBalances = mapOf(
-            genesis.node.getColdAddress() to genesis.node.getSelfBalance(),
-            join1.node.getColdAddress() to join1.node.getSelfBalance(),
-            join2.node.getColdAddress() to join2.node.getSelfBalance()
-        )
-        
-        val genesisChange = finalBalances[genesis.node.getColdAddress()]!! - initialBalances[genesis.node.getColdAddress()]!!
-        val join1Change = finalBalances[join1.node.getColdAddress()]!! - initialBalances[join1.node.getColdAddress()]!!
-        val join2Change = finalBalances[join2.node.getColdAddress()]!! - initialBalances[join2.node.getColdAddress()]!!
-        
-        Logger.info("Balance changes:")
-        Logger.info("  Genesis: $genesisChange (preserved: ${numPreserved}×10=${numPreserved * 10}, participating: ${numParticipating}×8=${numParticipating * confirmedWeightPerNode}, final=$expectedFinalWeight)")
-        Logger.info("  Join1: $join1Change (weight=50)")
-        Logger.info("  Join2: $join2Change (weight=50)")
-        
-        // All participants should have positive rewards
-        assertThat(genesisChange).isGreaterThan(0)
-        assertThat(join1Change).isGreaterThan(0)
-        assertThat(join2Change).isGreaterThan(0)
-        Logger.info("  All participants received positive rewards")
-        
-        // Join1 and Join2 should have identical rewards (both weight=50, will be capped)
-        logSection("Verifying Join1 and Join2 receive identical rewards")
-        assertThat(join1Change).isCloseTo(join2Change, Offset.offset(5L))
-        Logger.info("  Join1 and Join2 received identical rewards: $join1Change")
-        
-        // Genesis should have rewards proportional to expectedFinalWeight
-        logSection("Verifying Genesis rewards match expected ratio based on POC_SLOT allocation")
-        val genesisRatio = genesisChange.toDouble() / join1Change.toDouble()
-        // Calculate expected ratio accounting for power capping at settlement
-        // After confirmation: Genesis=26, Join1=50, Join2=50, Total=126
-        val expectedRatio = expectedFinalWeight.toDouble() / 50
-        assertThat(genesisRatio).isCloseTo(expectedRatio, Offset.offset(0.1))
-        Logger.info("  Genesis reward ratio: $genesisRatio (expected: $expectedRatio)")
-        Logger.info("  Ratio verification: ${genesisChange}/${join1Change}")
-        
-        logSection("TEST PASSED: Confirmation PoC correctly handles multiple MLNodes with POC_SLOT allocation")
-        Logger.info("  Test validated with $numPreserved preserved nodes and $numParticipating participating nodes")
-        Logger.info("  Final weight: $expectedFinalWeight = (${numPreserved}×10) + (${numParticipating}×8)")
     }
 
     // 12 m
@@ -184,7 +74,6 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
     fun `confirmation PoC with multiple MLNodes - capped rewards with POC_SLOT allocation 2`() {
         logSection("=== TEST: Confirmation PoC with Multiple MLNodes - POC_SLOT Allocation ===")
 
-        // Initialize cluster with custom spec for confirmation PoC testing
         val confirmationSpec = createConfirmationPoCSpec(
             expectedConfirmationsPerEpoch = 100,
             alphaThreshold = 0.toDouble()
@@ -193,130 +82,56 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
             joinCount = 2,
             mergeSpec = confirmationSpec,
             reboot = true,
-            resetMlNodes = false  // Don't reset - we want to keep our 3-node configuration
+            resetMlNodes = false
         )
-        logSection("Adding two nodes for genesis and setting power for all nodes")
         val join1 = cluster.joinPairs[0]
         val join2 = cluster.joinPairs[1]
         genesis.addNodes(2)
         genesis.setPocWeight(101)
         join1.setPocWeight(200)
-        join2.setPocWeight(250)
+        join2.setPocWeight(200)
         genesis.waitForNextEpoch()
 
-        var genesisNodes = genesis.api.getNodes()
-        Logger.info("Genesis has ${genesisNodes.size} nodes registered")
+        val genesisNodes = genesis.api.getNodes()
+        assertThat(genesisNodes).hasSize(3)
         genesisNodes.forEach { node ->
             Logger.info("  Node: ${node.node.id} at ${node.node.host}:${node.node.pocPort}")
         }
 
-        logSection("Waiting for second PoC cycle to establish confirmation_weight=50 for join nodes")
-        // The confirmation_weight is initialized from the previous epoch's weight during epoch formation
-        // We need a second cycle so join nodes' confirmation_weight gets set to 50
-        genesis.waitForStage(EpochStage.START_OF_POC)
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        val honestGenesisWeight = 101L
+        val dishonestGenesisWeight = 51L
 
-        logSection("Waiting for confirmation PoC trigger during inference phase")
-        val confirmationEvent = waitForConfirmationPoCTrigger(genesis)
-        assertThat(confirmationEvent).isNotNull
-        Logger.info("Confirmation PoC triggered at height ${confirmationEvent!!.triggerHeight}")
+        runConfirmationPoCScenario(
+            genesis = genesis,
+            participants = listOf(genesis, join1, join2),
+            genesisNodeIds = genesisNodes.map { it.node.id }.toSet(),
+            modelId = extractSingleModelId(genesisNodes),
+            honestGenesisWeight = honestGenesisWeight,
+            dishonestGenesisWeight = dishonestGenesisWeight,
+            assertRewards = { changes, expectedFinalWeight ->
+                val genesisChange = changes.getValue(genesis.node.getColdAddress())
+                val join1Change = changes.getValue(join1.node.getColdAddress())
+                val join2Change = changes.getValue(join2.node.getColdAddress())
 
-        val confirmedWeightPerNode = 51L
+                assertThat(genesisChange).isGreaterThan(0)
+                assertThat(join1Change).isGreaterThan(0)
+                assertThat(join2Change).isGreaterThan(0)
 
-        logSection("Setting PoC mocks for confirmation")
-        Logger.info("  Genesis: each node returns weight=$confirmedWeightPerNode (reduced from 30)")
-        Logger.info("  Join1: weight=200 per node (full confirmation)")
-        Logger.info("  Join2: weight=250 per node (full confirmation)")
-        genesis.setPocWeight(confirmedWeightPerNode)
+                val totalChange = (genesisChange + join1Change + join2Change).toDouble()
+                val genesisRatio = genesisChange / totalChange
+                val join1Ratio = join1Change / totalChange
+                val join2Ratio = join2Change / totalChange
 
-        logSection("Waiting for confirmation PoC generation phase")
-        waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_GENERATION)
-        Logger.info("Confirmation PoC generation phase active")
-
-        logSection("Querying preserved snapshot for Genesis's 3 nodes")
-        genesisNodes = genesis.api.getNodes()
-        assertThat(genesisNodes).hasSize(3)
-
-        val preservedSnapshot = waitForPreservedSnapshot(genesis, confirmationEvent.triggerHeight)
-        val modelId = extractSingleModelId(genesisNodes)
-        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
-        val preservedAllocation = waitForNodeAllocations(genesis, preservedNodeIds, expectedCount = 3)
-
-        logSection("Genesis MLNode preserved allocation:")
-        preservedAllocation.forEach {
-            Logger.info("  Node ${it.nodeId}: preserved=${it.preserved}, weight=${it.weight}")
-        }
-
-        val numPreserved = preservedAllocation.count { it.preserved }
-        val numParticipating = preservedAllocation.count { !it.preserved }
-
-        require(numParticipating > 0) {
-            "All ${preservedAllocation.size} nodes were preserved, leaving no nodes for confirmation validation."
-        }
-
-        val expectedFinalWeight = (numPreserved * 101) + (numParticipating * confirmedWeightPerNode)
-
-        Logger.info("Genesis weight breakdown:")
-        Logger.info("  Preserved nodes: $numPreserved × 101 = ${numPreserved * 101}")
-        Logger.info("  Participating nodes: $numParticipating × $confirmedWeightPerNode = ${numParticipating * confirmedWeightPerNode}")
-        Logger.info("  Expected final weight: $expectedFinalWeight")
-
-        logSection("Waiting for confirmation PoC validation phase")
-        waitForConfirmationPoCPhase(genesis, ConfirmationPoCPhase.CONFIRMATION_POC_VALIDATION)
-        Logger.info("Confirmation PoC validation phase active")
-
-        logSection("Waiting for confirmation PoC completion")
-        waitForConfirmationPoCCompletion(genesis)
-        Logger.info("Confirmation PoC completed (event cleared)")
-
-        // Reset mocks to full weight after confirmation
-        genesis.setPocWeight(101)
-
-        logSection("Waiting for NEXT epoch where confirmation weights will be applied")
-        genesis.waitForStage(EpochStage.START_OF_POC)
-        Logger.info("New epoch started, confirmation weights will be used in settlement")
-
-        // Record balances AFTER confirmation but BEFORE settlement
-        val initialBalances = mapOf(
-            genesis.node.getColdAddress() to genesis.node.getSelfBalance(),
-            join1.node.getColdAddress() to join1.node.getSelfBalance(),
-            join2.node.getColdAddress() to join2.node.getSelfBalance()
+                // Joins are symmetric (both 200) so no single participant exceeds the
+                // 40% per-participant power cap in CalculateParticipantBitcoinRewards.
+                // With genesis folded to 153 via CPoC, shares are 27.7 / 36.2 / 36.2 --
+                // pure-proportional reward distribution holds within tolerance.
+                val totalExpectedWeight = expectedFinalWeight + 200.0 + 200.0
+                assertThat(genesisRatio).isCloseTo(expectedFinalWeight / totalExpectedWeight, Percentage.withPercentage(1.5))
+                assertThat(join1Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
+                assertThat(join2Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
+            }
         )
-
-        logSection("Waiting for reward settlement with confirmation weights")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
-
-        logSection("Verifying rewards are capped for Genesis based on POC_SLOT allocation")
-        val finalBalances = mapOf(
-            genesis.node.getColdAddress() to genesis.node.getSelfBalance(),
-            join1.node.getColdAddress() to join1.node.getSelfBalance(),
-            join2.node.getColdAddress() to join2.node.getSelfBalance()
-        )
-
-        val genesisChange = finalBalances[genesis.node.getColdAddress()]!! - initialBalances[genesis.node.getColdAddress()]!!
-        val join1Change = finalBalances[join1.node.getColdAddress()]!! - initialBalances[join1.node.getColdAddress()]!!
-        val join2Change = finalBalances[join2.node.getColdAddress()]!! - initialBalances[join2.node.getColdAddress()]!!
-
-        Logger.info("Balance changes:")
-        Logger.info("  Genesis: $genesisChange")
-        Logger.info("  Join1: $join1Change")
-        Logger.info("  Join2: $join2Change")
-
-        // All participants should have positive rewards
-        assertThat(genesisChange).isGreaterThan(0)
-        assertThat(join1Change).isGreaterThan(0)
-        assertThat(join2Change).isGreaterThan(0)
-        Logger.info("  All participants received positive rewards")
-
-        val totalChange = (genesisChange + join1Change + join2Change).toDouble()
-        val genesisRatio = genesisChange / totalChange
-        val join1Ratio = join1Change / totalChange
-        val join2Ratio = join2Change / totalChange
-
-        val totalExpectedWeight = expectedFinalWeight + 200.0 + 250.0
-        assertThat(genesisRatio).isCloseTo(expectedFinalWeight / totalExpectedWeight, Percentage.withPercentage(1.5))
-        assertThat(join1Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
-        assertThat(join2Ratio).isCloseTo(250.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
     }
 
 }
@@ -326,13 +141,8 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
 fun createConfirmationPoCSpec(
     expectedConfirmationsPerEpoch: Long,
     alphaThreshold: Double = 0.70,
-    pocSlotAllocation: Double = 0.33  // Default to 33% to ensure some nodes remain POC_SLOT=false
+    pocSlotAllocation: Double = 0.33,  // 33% preservation target
 ): Spec<AppState> {
-    // Configure epoch params and confirmation PoC params
-    // epochLength=40 provides sufficient inference phase window for confirmation PoC trigger
-    // pocStageDuration=5, pocValidationDuration=4 gives confirmation PoC enough time to complete
-    // pocSlotAllocation controls what fraction of nodes get POC_SLOT=true (serve inference during PoC)
-    // Setting lower values (e.g., 0.33) ensures nodes remain POC_SLOT=false for confirmation validation
     return spec {
         this[AppState::inference] = spec<InferenceState> {
             this[InferenceState::params] = spec<InferenceParams> {
@@ -398,21 +208,6 @@ fun waitForConfirmationPoCPhase(
     error("Timeout waiting for confirmation PoC phase: $targetPhase")
 }
 
-fun waitForPreservedSnapshot(
-    pair: LocalInferencePair,
-    anchorHeight: Long,
-    maxBlocks: Int = 20
-): PreservedNodesSnapshotQueryResponse {
-    repeat(maxBlocks) {
-        val snapshot = pair.node.queryPreservedNodesSnapshot(anchorHeight)
-        if (snapshot.found) {
-            return snapshot
-        }
-        pair.node.waitForNextBlock(1)
-    }
-    error("Timeout waiting for preserved snapshot at anchor $anchorHeight")
-}
-
 fun preservedNodeIdsForModel(
     snapshot: PreservedNodesSnapshotQueryResponse,
     modelId: String
@@ -432,34 +227,6 @@ fun extractSingleModelId(nodes: List<NodeResponse>): String {
         ?: error("Could not determine single model id from node epoch data")
 }
 
-fun waitForNodeAllocations(
-    pair: LocalInferencePair,
-    preservedNodeIds: Set<String>,
-    expectedCount: Int,
-    maxBlocks: Int = 20
-): List<ConfirmationPoCMultiNodeTests.NodeAllocation> {
-    repeat(maxBlocks) {
-        val allocations = pair.api.getNodes().mapNotNull { nodeResponse ->
-            val epochMlNodes = nodeResponse.state.epochMlNodes
-            if (epochMlNodes.isNullOrEmpty()) {
-                null
-            } else {
-                val (_, mlNodeInfo) = epochMlNodes.entries.first()
-                ConfirmationPoCMultiNodeTests.NodeAllocation(
-                    nodeId = nodeResponse.node.id,
-                    preserved = nodeResponse.node.id in preservedNodeIds,
-                    weight = mlNodeInfo.pocWeight.toLong()
-                )
-            }
-        }
-        if (allocations.size == expectedCount) {
-            return allocations
-        }
-        pair.node.waitForNextBlock(1)
-    }
-    error("Timeout waiting for $expectedCount node allocations")
-}
-
 fun waitForConfirmationPoCCompletion(
     pair: LocalInferencePair,
     maxBlocks: Int = 100
@@ -474,4 +241,122 @@ fun waitForConfirmationPoCCompletion(
         attempts++
     }
     error("Timeout waiting for confirmation PoC completion")
+}
+
+// runConfirmationPoCScenario drives a single test epoch end-to-end under the full-reading
+// semantic: regular PoC runs with honest weights, every CPoC event in the epoch measures
+// the dishonest genesis weight, and settlement rewards reflect min over all event readings.
+//
+// The caller supplies the honest/dishonest weights and a reward-assertion callback. This
+// helper collects every CPoC event from the chain, fetches each event's preserved snapshot,
+// simulates the full-reading ConfirmationWeight, cross-checks the simulation against the
+// chain-stored value, waits for settlement, and hands balance changes to the callback.
+fun runConfirmationPoCScenario(
+    genesis: LocalInferencePair,
+    participants: List<LocalInferencePair>,
+    genesisNodeIds: Set<String>,
+    modelId: String,
+    honestGenesisWeight: Long,
+    dishonestGenesisWeight: Long,
+    assertRewards: (changes: Map<String, Long>, expectedFinalWeight: Long) -> Unit,
+) {
+    logSection("Starting test epoch (honest regular PoC; CPoC events will measure dishonest weight)")
+    genesis.waitForStage(EpochStage.START_OF_POC)
+    val testEpoch = genesis.api.getLatestEpoch().latestEpoch.index
+    Logger.info("Test epoch: $testEpoch")
+
+    // Wait until regular PoC commits are frozen. Regular-PoC-mining results under honest
+    // weights; switching mocks now only affects CPoC events in the inference phase.
+    genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION)
+    genesis.setPocWeight(dishonestGenesisWeight)
+    Logger.info("Genesis mock set to dishonest weight=$dishonestGenesisWeight for epoch $testEpoch")
+
+    // Let the test epoch fully play out. All CPoC events for $testEpoch are finalized on
+    // chain by the time the next epoch's PoC starts.
+    genesis.waitForStage(EpochStage.START_OF_POC)
+    genesis.setPocWeight(honestGenesisWeight)
+    Logger.info("Genesis mock restored to honest weight=$honestGenesisWeight for next epoch")
+
+    // Simulate ConfirmationWeight from every CPoC event's snapshot.
+    val events = genesis.node.listConfirmationPoCEvents(testEpoch).events
+    require(events.isNotEmpty()) { "No CPoC events fired in epoch $testEpoch" }
+    Logger.info("Collected ${events.size} CPoC events for epoch $testEpoch")
+
+    val expectedFinalWeight = simulateConfirmationWeight(
+        pair = genesis,
+        events = events,
+        participantNodeIds = genesisNodeIds,
+        modelId = modelId,
+        initialPerNodeWeight = honestGenesisWeight,
+        eventPerNodeWeight = dishonestGenesisWeight,
+    )
+    Logger.info("Simulated expectedFinalWeight=$expectedFinalWeight over ${events.size} events")
+
+    // Cross-check simulation against chain-stored ConfirmationWeight.
+    val genesisAddr = genesis.node.getColdAddress()
+    val storedFinalWeight = genesis.node
+        .queryEpochGroupData(testEpoch, modelId = "")
+        .epochGroupData
+        .validationWeights
+        .first { it.memberAddress == genesisAddr }
+        .confirmationWeight
+    assertThat(storedFinalWeight)
+        .describedAs("simulation should match chain-stored ConfirmationWeight for genesis")
+        .isEqualTo(expectedFinalWeight)
+
+    // Record balances before settlement, wait for distribution, compare.
+    val addresses = participants.map { it.node.getColdAddress() }
+    val initialBalances = addresses.associateWith { addr ->
+        participants.first { it.node.getColdAddress() == addr }.node.getSelfBalance()
+    }
+
+    logSection("Waiting for reward settlement with confirmation weights")
+    genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+
+    val finalBalances = addresses.associateWith { addr ->
+        participants.first { it.node.getColdAddress() == addr }.node.getSelfBalance()
+    }
+    val changes = addresses.associateWith { addr ->
+        finalBalances.getValue(addr) - initialBalances.getValue(addr)
+    }
+    changes.forEach { (addr, delta) -> Logger.info("  $addr: change=$delta") }
+
+    assertRewards(changes, expectedFinalWeight)
+}
+
+// simulateConfirmationWeight applies the chain's full-reading model to a single participant
+// across all events of a single epoch and returns the min of:
+//   - initialReading = |participantNodeIds| * initialPerNodeWeight
+//   - per-event reading = preservedNodes * initialPerNodeWeight + participatingNodes * eventPerNodeWeight
+// Events that have no snapshot on chain (e.g. never reached GENERATION) are skipped.
+fun simulateConfirmationWeight(
+    pair: LocalInferencePair,
+    events: List<ConfirmationPoCEvent>,
+    participantNodeIds: Set<String>,
+    modelId: String,
+    initialPerNodeWeight: Long,
+    eventPerNodeWeight: Long,
+): Long {
+    val initialReading = participantNodeIds.size * initialPerNodeWeight
+    var minReading = initialReading
+
+    for (event in events) {
+        val snap = pair.node.queryPreservedNodesSnapshot(event.triggerHeight)
+        if (!snap.found) {
+            Logger.info("  event seq=${event.eventSequence} trigger=${event.triggerHeight}: no snapshot, skipping")
+            continue
+        }
+        val preservedForParticipant = preservedNodeIdsForModel(snap, modelId).intersect(participantNodeIds)
+        val numPreserved = preservedForParticipant.size
+        val numParticipating = participantNodeIds.size - numPreserved
+        val reading = numPreserved * initialPerNodeWeight + numParticipating * eventPerNodeWeight
+        Logger.info(
+            "  event seq=${event.eventSequence} trigger=${event.triggerHeight}: " +
+                "preserved=$numPreserved participating=$numParticipating reading=$reading"
+        )
+        if (reading < minReading) {
+            minReading = reading
+        }
+    }
+    return minReading
 }

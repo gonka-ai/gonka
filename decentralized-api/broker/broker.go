@@ -284,18 +284,10 @@ func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.E
 	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
 }
 
-// ShouldContinueInference checks if node should continue inference service
-// based on its POC_SLOT timeslot allocation. Returns true if POC_SLOT is set to true
-// for any model supported by this node.
+// ShouldContinueInference reports whether this node is in the active preserved
+// snapshot for any of its models and should keep serving inference.
 func (s *NodeState) ShouldContinueInference() bool {
-	for modelId := range s.PreservedModels {
-		if s.PreservedModels[modelId] {
-			logging.Debug("Node should continue inference service based on preserved snapshot", types.PoC,
-				"model_id", modelId)
-			return true
-		}
-	}
-	return false
+	return len(s.PreservedModels) > 0
 }
 
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
@@ -1548,9 +1540,6 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 
 	for _, mlNodeInfo := range mlNodes {
 		if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
-			if node.State.PreservedModels == nil {
-				node.State.PreservedModels = make(map[string]bool)
-			}
 			node.State.EpochModels[modelId] = modelSnapshot
 			node.State.EpochMLNodes[modelId] = *mlNodeInfo
 			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)

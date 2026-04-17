@@ -164,10 +164,10 @@ func (k Keeper) GetPoCValidationSnapshotPruner(params types.Params) Pruner[int64
 	}
 }
 
-// GetPreservedNodesSnapshotPruner reclaims regular-PoC preserved snapshots once their
-// epoch is past the retention window. The snapshot must outlive settlement and claim
-// validation for its own epoch, which run during the next epoch; PocDataPruningEpochThreshold
-// is conservative enough for that.
+// GetPreservedNodesSnapshotPruner prunes the regular-PoC anchor and every CPoC-event
+// anchor within [epoch.PocStartBlockHeight, nextEpoch.PocStartBlockHeight). Snapshots
+// must outlive settlement, claim validation, and inference-expiry reads;
+// PocDataPruningEpochThreshold provides that margin.
 func (k Keeper) GetPreservedNodesSnapshotPruner(params types.Params) Pruner[int64, types.PreservedNodesSnapshot] {
 	return Pruner[int64, types.PreservedNodesSnapshot]{
 		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
@@ -177,9 +177,21 @@ func (k Keeper) GetPreservedNodesSnapshotPruner(params types.Params) Pruner[int6
 			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
 			if !found {
 				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return new(collections.Range[int64]).Prefix(0)
+				return new(collections.Range[int64]).StartInclusive(0).EndExclusive(0)
 			}
-			return new(collections.Range[int64]).Prefix(epoch.PocStartBlockHeight)
+			nextEpoch, foundNext := k.GetEpoch(ctx, uint64(epochIndex)+1)
+			if !foundNext {
+				// No next epoch on chain (e.g. very first prune pass): fall back to
+				// the exact regular-PoC anchor only. CPoC anchors stay until next pass.
+				k.LogWarn("Next epoch not found, pruning regular-PoC anchor only",
+					types.Pruning, "epoch", epochIndex)
+				return new(collections.Range[int64]).
+					StartInclusive(epoch.PocStartBlockHeight).
+					EndInclusive(epoch.PocStartBlockHeight)
+			}
+			return new(collections.Range[int64]).
+				StartInclusive(epoch.PocStartBlockHeight).
+				EndExclusive(nextEpoch.PocStartBlockHeight)
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PreservedNodesSnapshotsPrunedEpoch

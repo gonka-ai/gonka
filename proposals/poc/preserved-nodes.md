@@ -109,6 +109,12 @@ It should use the same live-member filtering principle already used by validatio
 
 It should not read from future participant sets, draft merge state, any successor epoch data, or live `HardwareNodes` changes that happened after the current epoch state was formed.
 
+Every anchor fires right before some PoC. At that anchor the sampler reads the current epoch group (the active participants at that block) and picks preserved nodes out of them. The sampler does not care whether the PoC is regular or confirmation.
+
+The resulting snapshot is scoped to that single PoC. The next PoC gets its own anchor and its own snapshot.
+
+Claims overlapping with regular PoC read the regular-PoC snapshot to check whether a node was preserved (and therefore allowed to keep serving). Reward math reads `vw.ConfirmationWeight`, which already folds every episode's reading via min-take (see "Reward path" below).
+
 ### State model
 
 Keep `ActiveParticipants` stable for the whole epoch.
@@ -322,3 +328,5 @@ The main files for this topic are:
 - `decentralized-api/broker/state_commands.go`
 - `decentralized-api/poc/validator.go`
 - `proposals/random-poc/README.md`
+
+Note on `chainvalidation.GetPreservedNodesByParticipant`: the snapshot and the subgroup used to resolve its nodeIds come from the same active-at-anchor epoch group, so the join is always consistent. No caller needs to reason about which epoch index is "current" at that point in the flow.

@@ -149,10 +149,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
-	// Per-episode preserved/not-preserved accounting is already baked into
-	// vw.ConfirmationWeight via evaluateConfirmation's full-reading model; settlement
-	// does not read the preserved snapshot directly.
-
 	// Extract per-model coefficients for cross-model weight aggregation
 	coefficients := modelCoefficients(params.PocParams)
 

@@ -238,19 +238,18 @@ func (am AppModule) HasNodeForModel(
 		return false
 	}
 
-	// Check if participant has the model
 	if checkPreserveNode {
 		preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelId)
 		for _, mlNode := range modelMLNodes.MlNodes {
-			if mlNode != nil {
-				if _, isPreserved := preservedNodeSet[mlNode.NodeId]; isPreserved {
+			if mlNode == nil {
+				continue
+			}
+			if _, ok := preservedNodeSet[mlNode.NodeId]; ok {
 				return true
-				}
 			}
 		}
 		return false
 	} else {
-		// Any mlnode for this model is sufficient
 		return true
 	}
 }

@@ -322,16 +322,13 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up generation-scoped snapshots. CPoC snapshots are still deleted
-			// inline here; regular-PoC snapshots are retained until Prune reclaims them.
-			// TODO(preserved-nodes): defer CPoC preserved-snapshot deletion until Prune
-			// covers CPoC anchors; see proposals/poc/review-3.md Issue 12.
+			// Validation snapshot is no longer needed once the event is done. Preserved
+			// snapshot must outlive the event for settlement, claim validation, and
+			// expiry-time `HasNodeForModel` reads of inferences routed through this
+			// CPoC; the Prune pass reclaims it once the epoch is past the retention
+			// window (see GetPreservedNodesSnapshotPruner).
 			if err := am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight); err != nil {
 				am.LogWarn("Confirmation PoC: Failed to delete validation snapshot", types.PoC,
-					"triggerHeight", event.TriggerHeight, "error", err)
-			}
-			if err := am.keeper.DeletePreservedNodesSnapshot(ctx, event.TriggerHeight); err != nil {
-				am.LogWarn("Confirmation PoC: Failed to delete preserved snapshot", types.PoC,
 					"triggerHeight", event.TriggerHeight, "error", err)
 			}
 
@@ -418,25 +415,18 @@ func (am AppModule) evaluateConfirmation(
 	coefficients := ModelCoefficients(pocParams)
 
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event)
-	// Apply model coefficients (same aggregation as main PoC path).
 	measured := make(map[string]int64, len(confirmationParticipants))
 	for _, p := range confirmationParticipants {
 		p.Weight = AggregateConsensusWeight(ExtractModelWeights(p), coefficients)
 		measured[p.Index] = p.Weight
 	}
-	am.LogInfo("evaluateConfirmation: measured participating weights", types.PoC,
-		"measured", measured)
 
-	// Missing snapshot collapses the preserved side to zero; slashing and the
-	// min-take will then behave as if no nodes were preserved for this event.
-	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
+	// Missing snapshot collapses the preserved side to zero; min-take and slashing
+	// then behave as if no node was preserved for this event.
+	preservedSnapshot, _, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
 	if err != nil {
 		am.LogWarn("evaluateConfirmation: failed to read preserved snapshot, using empty set",
 			types.PoC, "triggerHeight", event.TriggerHeight, "error", err)
-		preservedSnapshot = types.PreservedNodesSnapshot{}
-	} else if !snapshotFound {
-		am.LogWarn("evaluateConfirmation: preserved snapshot not found, using empty set",
-			types.PoC, "triggerHeight", event.TriggerHeight)
 	}
 
 	preserved, notPreserved, err := am.partitionWeightByPreservation(ctx, event.EpochIndex, coefficients, &preservedSnapshot)
@@ -444,7 +434,12 @@ func (am AppModule) evaluateConfirmation(
 		return fmt.Errorf("evaluateConfirmation: failed to partition weights: %w", err)
 	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, notPreserved, am)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, notPreserved)
+	if updated {
+		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
+			"epochIndex", event.EpochIndex,
+			"triggerHeight", event.TriggerHeight)
+	}
 
 	for _, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
@@ -471,43 +466,28 @@ func (am AppModule) evaluateConfirmation(
 	return nil
 }
 
-// foldEventReadings applies one confirmation event's reading (preserved + measured)
-// to every ValidationWeight in epochGroupData and returns the per-participant slashing
-// ratio for this event. Pure: no keeper reads or writes. Returns `updated=true` if any
-// ConfirmationWeight was lowered. Caller is responsible for persistence.
+// foldEventReadings applies this event's reading (preserved + measured) to every
+// ValidationWeight via min-take and returns the per-participant slashing ratio.
+// Pure: no keeper reads, no logging. Caller persists the result.
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
 	measured, preserved, notPreserved map[string]int64,
-	logger types.InferenceLogger,
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
 	for i, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
 		reading := preserved[addr] + measured[addr]
 		if reading < vw.ConfirmationWeight {
-			previous := vw.ConfirmationWeight
 			epochGroupData.ValidationWeights[i].ConfirmationWeight = reading
 			updated = true
-			if logger != nil {
-				logger.LogInfo("evaluateConfirmation: updated confirmation weight", types.PoC,
-					"participant", addr,
-					"previousWeight", previous,
-					"newWeight", reading,
-					"preservedHere", preserved[addr],
-					"measured", measured[addr])
-			}
 		}
 
-		// Per-event slashing ratio uses the current event's reading, not the post-min
-		// ConfirmationWeight -- equal sets (honest operation) yield ratio = 1 regardless
-		// of how the preserved set rotates between phases.
 		totalExpected := preserved[addr] + notPreserved[addr]
 		if totalExpected == 0 {
 			ratios[addr] = types.DecimalFromDecimal(decimal.NewFromInt(1))
 			continue
 		}
 		ratio := decimal.NewFromInt(reading).Div(decimal.NewFromInt(totalExpected))
-		// pocDeviationCoeff keeps minor honest deviations at ratio = 1.
 		ratio = decimal.Min(ratio.Div(pocDeviationCoeff), decimal.NewFromInt(1))
 		ratios[addr] = types.DecimalFromDecimal(ratio)
 	}

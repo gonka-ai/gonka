@@ -18,15 +18,9 @@ func (k Keeper) PreservedNodesSnapshot(ctx context.Context, req *types.QueryPres
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if !found {
-		return &types.QueryPreservedNodesSnapshotResponse{
-			Snapshot: nil,
-			Found:    false,
-		}, nil
+	resp := &types.QueryPreservedNodesSnapshotResponse{Found: found}
+	if found {
+		resp.Snapshot = &snapshot
 	}
-
-	return &types.QueryPreservedNodesSnapshotResponse{
-		Snapshot: &snapshot,
-		Found:    true,
-	}, nil
+	return resp, nil
 }

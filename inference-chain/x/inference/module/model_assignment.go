@@ -745,10 +745,8 @@ func canAllocateParticipantNode(
 	return true, totalNonVotingWeight
 }
 
-// samplePreservedForModel runs the round-robin allocator against eligible nodes for a
-// single model and returns the set of preserved node IDs. It is pure: no mutation of
-// MLNodeInfo.TimeslotAllocation. Called once per model per episode by
-// SamplePreservedForEpisode.
+// samplePreservedForModel runs a round-robin allocator over eligible nodes for one
+// model and returns the preserved node IDs. Pure: no mutation of inputs.
 func (ma *ModelAssigner) samplePreservedForModel(
 	modelId string,
 	currentEpochData *EpochMLNodeData,
@@ -758,15 +756,10 @@ func (ma *ModelAssigner) samplePreservedForModel(
 	allocated := make(map[string]struct{})
 
 	totalWeight := currentEpochData.GetTotalWeightForModel(modelId)
-	fractionDecimal := fraction.ToDecimal()
-	targetPoCWeight := fractionDecimal.Mul(decimal.NewFromInt(totalWeight)).IntPart()
+	targetPoCWeight := fraction.ToDecimal().Mul(decimal.NewFromInt(totalWeight)).IntPart()
 
-	ma.LogInfo("Calculated target weight for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_target_weight", "model_id", modelId, "total_weight", totalWeight, "fraction", fractionDecimal.String(), "target_weight", targetPoCWeight)
-
-	eligibleModelNodes := eligibleNodesData.GetForModel(modelId)
-	eligibleParticipantAddrs := sortedKeys(eligibleModelNodes)
+	eligibleParticipantAddrs := sortedKeys(eligibleNodesData.GetForModel(modelId))
 	if len(eligibleParticipantAddrs) == 0 {
-		ma.LogInfo("No participants with eligible nodes for this model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "no_participants", "model_id", modelId)
 		return allocated
 	}
 
@@ -783,7 +776,6 @@ func (ma *ModelAssigner) samplePreservedForModel(
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
 			if currentParticipantIdx == 0 {
 				if !allocatedInRound {
-					ma.LogInfo("Completed full round without allocation, exiting", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "exit_no_nodes", "model_id", modelId, "current_weight", currentWeight, "target_weight", targetPoCWeight)
 					break
 				}
 				allocatedInRound = false
@@ -795,15 +787,18 @@ func (ma *ModelAssigner) samplePreservedForModel(
 		currentWeight += nextMLNode.PocWeight
 		allocatedInRound = true
 
-		ma.LogInfo("Preserved node selected", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "allocate_node", "model_id", modelId, "participant", participantAddr, "node_id", nextMLNode.NodeId, "node_weight", nextMLNode.PocWeight, "current_weight", currentWeight, "target_weight", targetPoCWeight)
-
 		currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
 		if currentParticipantIdx == 0 {
 			allocatedInRound = false
 		}
 	}
 
-	ma.LogInfo("Finished allocation for model", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "model_allocation_end", "model_id", modelId, "achieved_weight", currentWeight, "target_weight", targetPoCWeight, "total_weight", totalWeight, "num_preserved", len(allocated))
+	ma.LogInfo("samplePreservedForModel", types.Allocation,
+		"model_id", modelId,
+		"total_weight", totalWeight,
+		"target_weight", targetPoCWeight,
+		"achieved_weight", currentWeight,
+		"num_preserved", len(allocated))
 	return allocated
 }
 

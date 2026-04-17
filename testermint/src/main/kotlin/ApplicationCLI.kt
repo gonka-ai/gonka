@@ -831,6 +831,20 @@ data class ApplicationCLI(
             )
         }
 
+    fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =
+        wrapLog("queryEpochGroupData", infoLevel = false) {
+            val args = mutableListOf(
+                "query",
+                "inference",
+                "show-epoch-group-data",
+                epochIndex.toString(),
+            )
+            if (modelId.isNotEmpty()) {
+                args += listOf("--model-id", modelId)
+            }
+            execAndParse(args)
+        }
+
     fun getColdPrivateKey(): String = getPrivateKey(this.getColdAccountName())
 
     fun getPrivateKey(keyName: String): String = wrapLog("getPrivateKey($keyName)", infoLevel = false) {
