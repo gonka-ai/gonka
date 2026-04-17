@@ -94,7 +94,7 @@ type (
 		LiquidityPoolApprovedTokensMap collections.Map[collections.Pair[string, string], types.BridgeTokenReference]
 		// PoC validation sampling snapshots
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
-		PreservedNodesSnapshots collections.Map[int64, types.PreservedNodesSnapshot]
+		PreservedNodesSnapshotItem collections.Item[types.PreservedNodesSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
@@ -489,11 +489,10 @@ func NewKeeper(
 			collections.Int64Key,
 			codec.CollValue[types.PoCValidationSnapshot](cdc),
 		),
-		PreservedNodesSnapshots: collections.NewMap(
+		PreservedNodesSnapshotItem: collections.NewItem(
 			sb,
 			types.PreservedNodesSnapshotPrefix,
 			"preserved_nodes_snapshot",
-			collections.Int64Key,
 			codec.CollValue[types.PreservedNodesSnapshot](cdc),
 		),
 		PunishmentGraceEpochs: collections.NewMap(

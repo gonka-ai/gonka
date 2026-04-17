@@ -57,7 +57,7 @@ func (s stubBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mode
 	return &types.QueryGetEpochGroupDataResponse{}, nil
 }
 
-func (s stubBrokerChainBridge) GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error) {
+func (s stubBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
 	return &types.QueryPreservedNodesSnapshotResponse{Found: false}, nil
 }
 

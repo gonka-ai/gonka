@@ -11,7 +11,6 @@ import (
 type PoCTimeRange struct {
 	StartBlock int64
 	EndBlock   int64
-	AnchorHeight int64
 	IsActive   bool
 	IsCPoC     bool // true if this is a Confirmation PoC, false if regular PoC
 }
@@ -41,11 +40,10 @@ func (am AppModule) GetLatestPoCOrCPoCRangeWithData(
 		// Return range from start of next PoC to current block
 		nextPoCStart := epochContext.NextPoCStart()
 		return &PoCTimeRange{
-			StartBlock:   nextPoCStart,
-			EndBlock:     blockHeight, // Can't predict future, use current block
-			AnchorHeight: nextPoCStart,
-			IsActive:     true,
-			IsCPoC:       false,
+			StartBlock: nextPoCStart,
+			EndBlock:   blockHeight, // Can't predict future, use current block
+			IsActive:   true,
+			IsCPoC:     false,
 		}, nil
 	}
 
@@ -70,21 +68,19 @@ func (am AppModule) GetLatestPoCOrCPoCRangeWithData(
 
 		isActive := blockHeight >= latestCPoC.GenerationStartHeight && blockHeight <= cpocEndBlock
 		return &PoCTimeRange{
-			StartBlock:   latestCPoC.GenerationStartHeight,
-			EndBlock:     cpocEndBlock,
-			AnchorHeight: latestCPoC.TriggerHeight,
-			IsActive:     isActive,
-			IsCPoC:       true,
+			StartBlock: latestCPoC.GenerationStartHeight,
+			EndBlock:   cpocEndBlock,
+			IsActive:   isActive,
+			IsCPoC:     true,
 		}, nil
 	}
 
 	// 3. No active PoC or CPoC - return current epoch's PoC range as default
 	return &PoCTimeRange{
-		StartBlock:   epochContext.StartOfPoC(),
-		EndBlock:     epochContext.EndOfPoCValidation(),
-		AnchorHeight: epochContext.PocStartBlockHeight,
-		IsActive:     false,
-		IsCPoC:       false,
+		StartBlock: epochContext.StartOfPoC(),
+		EndBlock:   epochContext.EndOfPoCValidation(),
+		IsActive:   false,
+		IsCPoC:     false,
 	}, nil
 }
 
@@ -192,21 +188,21 @@ func (ec *InferenceExpiryContext) ShouldCheckPreserveNode(inference types.Infere
 	return ec.IsBlockInPoCRange(startBlock) || ec.IsBlockInPoCRange(timeoutBlock)
 }
 
-// HasNodeForModel checks if a participant has the required node for the model
-// Checks preserve nodes if in PoC, otherwise checks regular mlnodes
-// Uses cached active participants from the expiry context to avoid repeated reads
+// HasNodeForModel checks if a participant has the required node for the model.
+// If checkPreserveNode is true, reads the current preserved snapshot and requires one
+// of the participant's nodes for the model to be preserved. Otherwise any mlnode is
+// sufficient.
 func (am AppModule) HasNodeForModel(
+	ctx context.Context,
 	participantAddr string,
 	modelId string,
 	checkPreserveNode bool,
 	activeParticipants *types.ActiveParticipants,
-	preservedSnapshot *types.PreservedNodesSnapshot,
 ) bool {
 	if activeParticipants == nil {
 		return false
 	}
 
-	// Find the participant
 	var participant *types.ActiveParticipant
 	for _, p := range activeParticipants.Participants {
 		if p.Index == participantAddr {
@@ -214,12 +210,10 @@ func (am AppModule) HasNodeForModel(
 			break
 		}
 	}
-
 	if participant == nil {
 		return false
 	}
 
-	// Find the model index in the Models array
 	modelIndex := -1
 	for i, model := range participant.Models {
 		if model == modelId {
@@ -227,8 +221,6 @@ func (am AppModule) HasNodeForModel(
 			break
 		}
 	}
-
-	// Model not found in participant's models
 	if modelIndex == -1 || modelIndex >= len(participant.MlNodes) {
 		return false
 	}
@@ -238,18 +230,27 @@ func (am AppModule) HasNodeForModel(
 		return false
 	}
 
-	if checkPreserveNode {
-		preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelId)
-		for _, mlNode := range modelMLNodes.MlNodes {
-			if mlNode == nil {
-				continue
-			}
-			if _, ok := preservedNodeSet[mlNode.NodeId]; ok {
-				return true
-			}
-		}
-		return false
-	} else {
+	if !checkPreserveNode {
 		return true
 	}
+
+	snapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
+	if err != nil {
+		am.LogWarn("HasNodeForModel: failed to read preserved snapshot", types.Inferences,
+			"participant", participantAddr, "model", modelId, "error", err)
+		return false
+	}
+	if !found {
+		return false
+	}
+	preservedNodeSet := keeper.PreservedNodeSetByModel(&snapshot, modelId)
+	for _, mlNode := range modelMLNodes.MlNodes {
+		if mlNode == nil {
+			continue
+		}
+		if _, ok := preservedNodeSet[mlNode.NodeId]; ok {
+			return true
+		}
+	}
+	return false
 }

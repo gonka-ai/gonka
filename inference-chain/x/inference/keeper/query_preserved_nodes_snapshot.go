@@ -13,7 +13,7 @@ func (k Keeper) PreservedNodesSnapshot(ctx context.Context, req *types.QueryPres
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	snapshot, found, err := k.GetPreservedNodesSnapshot(ctx, req.EpisodeAnchorHeight)
+	snapshot, found, err := k.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

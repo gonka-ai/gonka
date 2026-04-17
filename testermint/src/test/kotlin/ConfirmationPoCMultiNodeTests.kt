@@ -248,7 +248,8 @@ fun waitForConfirmationPoCCompletion(
 // the dishonest genesis weight, and settlement rewards reflect min over all event readings.
 //
 // The caller supplies the honest/dishonest weights and a reward-assertion callback. This
-// helper collects every CPoC event from the chain, fetches each event's preserved snapshot,
+// helper live-captures each CPoC event's preserved snapshot as it enters GENERATION
+// (single-slot chain storage means we must observe, not fetch by trigger height later),
 // simulates the full-reading ConfirmationWeight, cross-checks the simulation against the
 // chain-stored value, waits for settlement, and hands balance changes to the callback.
 fun runConfirmationPoCScenario(
@@ -271,26 +272,23 @@ fun runConfirmationPoCScenario(
     genesis.setPocWeight(dishonestGenesisWeight)
     Logger.info("Genesis mock set to dishonest weight=$dishonestGenesisWeight for epoch $testEpoch")
 
-    // Let the test epoch fully play out. All CPoC events for $testEpoch are finalized on
-    // chain by the time the next epoch's PoC starts.
-    genesis.waitForStage(EpochStage.START_OF_POC)
-    genesis.setPocWeight(honestGenesisWeight)
-    Logger.info("Genesis mock restored to honest weight=$honestGenesisWeight for next epoch")
-
-    // Simulate ConfirmationWeight from every CPoC event's snapshot.
-    val events = genesis.node.listConfirmationPoCEvents(testEpoch).events
-    require(events.isNotEmpty()) { "No CPoC events fired in epoch $testEpoch" }
-    Logger.info("Collected ${events.size} CPoC events for epoch $testEpoch")
-
-    val expectedFinalWeight = simulateConfirmationWeight(
+    val capturedReadings = captureConfirmationPoCReadings(
         pair = genesis,
-        events = events,
+        testEpoch = testEpoch,
         participantNodeIds = genesisNodeIds,
         modelId = modelId,
         initialPerNodeWeight = honestGenesisWeight,
         eventPerNodeWeight = dishonestGenesisWeight,
     )
-    Logger.info("Simulated expectedFinalWeight=$expectedFinalWeight over ${events.size} events")
+    genesis.setPocWeight(honestGenesisWeight)
+    Logger.info("Genesis mock restored to honest weight=$honestGenesisWeight for next epoch")
+
+    require(capturedReadings.isNotEmpty()) { "No CPoC events captured in epoch $testEpoch" }
+    Logger.info("Captured ${capturedReadings.size} CPoC events for epoch $testEpoch")
+
+    val initialReading = genesisNodeIds.size * honestGenesisWeight
+    val expectedFinalWeight = capturedReadings.fold(initialReading) { acc, r -> minOf(acc, r) }
+    Logger.info("Simulated expectedFinalWeight=$expectedFinalWeight over ${capturedReadings.size} events")
 
     // Cross-check simulation against chain-stored ConfirmationWeight.
     val genesisAddr = genesis.node.getColdAddress()
@@ -324,39 +322,54 @@ fun runConfirmationPoCScenario(
     assertRewards(changes, expectedFinalWeight)
 }
 
-// simulateConfirmationWeight applies the chain's full-reading model to a single participant
-// across all events of a single epoch and returns the min of:
-//   - initialReading = |participantNodeIds| * initialPerNodeWeight
-//   - per-event reading = preservedNodes * initialPerNodeWeight + participatingNodes * eventPerNodeWeight
-// Events that have no snapshot on chain (e.g. never reached GENERATION) are skipped.
-fun simulateConfirmationWeight(
+// captureConfirmationPoCReadings runs until the test epoch ends, capturing one reading
+// per CPoC event the first block it is observed in GENERATION or later. Chain storage
+// is single-slot, so the snapshot must be read while the event is still current. Returns
+// per-event readings: preserved*initialPerNodeWeight + participating*eventPerNodeWeight.
+fun captureConfirmationPoCReadings(
     pair: LocalInferencePair,
-    events: List<ConfirmationPoCEvent>,
+    testEpoch: Long,
     participantNodeIds: Set<String>,
     modelId: String,
     initialPerNodeWeight: Long,
     eventPerNodeWeight: Long,
-): Long {
-    val initialReading = participantNodeIds.size * initialPerNodeWeight
-    var minReading = initialReading
+): List<Long> {
+    val readings = mutableListOf<Long>()
+    val capturedTriggers = mutableSetOf<Long>()
+    while (true) {
+        val latest = pair.api.getLatestEpoch().latestEpoch.index
+        if (latest != testEpoch) break
 
-    for (event in events) {
-        val snap = pair.node.queryPreservedNodesSnapshot(event.triggerHeight)
-        if (!snap.found) {
-            Logger.info("  event seq=${event.eventSequence} trigger=${event.triggerHeight}: no snapshot, skipping")
+        val epochData = try {
+            pair.getEpochData()
+        } catch (e: Exception) {
+            Logger.error("captureConfirmationPoCReadings: error fetching epoch data", e)
+            pair.node.waitForNextBlock(1)
             continue
         }
-        val preservedForParticipant = preservedNodeIdsForModel(snap, modelId).intersect(participantNodeIds)
-        val numPreserved = preservedForParticipant.size
-        val numParticipating = participantNodeIds.size - numPreserved
-        val reading = numPreserved * initialPerNodeWeight + numParticipating * eventPerNodeWeight
-        Logger.info(
-            "  event seq=${event.eventSequence} trigger=${event.triggerHeight}: " +
-                "preserved=$numPreserved participating=$numParticipating reading=$reading"
-        )
-        if (reading < minReading) {
-            minReading = reading
+
+        val ev = epochData.activeConfirmationPocEvent
+        if (ev != null &&
+            ev.phase.value >= ConfirmationPoCPhase.CONFIRMATION_POC_GENERATION.value &&
+            ev.triggerHeight !in capturedTriggers
+        ) {
+            val snap = pair.node.queryPreservedNodesSnapshot()
+            if (!snap.found) {
+                Logger.info("  event seq=${ev.eventSequence} trigger=${ev.triggerHeight}: no snapshot yet")
+            } else {
+                capturedTriggers.add(ev.triggerHeight)
+                val preservedForParticipant = preservedNodeIdsForModel(snap, modelId).intersect(participantNodeIds)
+                val numPreserved = preservedForParticipant.size
+                val numParticipating = participantNodeIds.size - numPreserved
+                val reading = numPreserved * initialPerNodeWeight + numParticipating * eventPerNodeWeight
+                readings.add(reading)
+                Logger.info(
+                    "  event seq=${ev.eventSequence} trigger=${ev.triggerHeight}: " +
+                        "preserved=$numPreserved participating=$numParticipating reading=$reading"
+                )
+            }
         }
+        pair.node.waitForNextBlock(1)
     }
-    return minReading
+    return readings
 }

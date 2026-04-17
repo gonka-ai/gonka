@@ -26,9 +26,7 @@ func TestPreservedNodesSnapshotQuery(t *testing.T) {
 
 	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, snapshot))
 
-	resp, err := keeper.PreservedNodesSnapshot(ctx, &types.QueryPreservedNodesSnapshotRequest{
-		EpisodeAnchorHeight: 100,
-	})
+	resp, err := keeper.PreservedNodesSnapshot(ctx, &types.QueryPreservedNodesSnapshotRequest{})
 	require.NoError(t, err)
 	require.True(t, resp.Found)
 	require.Equal(t, &snapshot, resp.Snapshot)
@@ -37,9 +35,7 @@ func TestPreservedNodesSnapshotQuery(t *testing.T) {
 func TestPreservedNodesSnapshotQueryNotFound(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
-	resp, err := keeper.PreservedNodesSnapshot(ctx, &types.QueryPreservedNodesSnapshotRequest{
-		EpisodeAnchorHeight: 999,
-	})
+	resp, err := keeper.PreservedNodesSnapshot(ctx, &types.QueryPreservedNodesSnapshotRequest{})
 	require.NoError(t, err)
 	require.False(t, resp.Found)
 	require.Nil(t, resp.Snapshot)
@@ -52,29 +48,27 @@ func TestPreservedNodesSnapshotQueryInvalidRequest(t *testing.T) {
 	require.ErrorIs(t, err, status.Error(codes.InvalidArgument, "invalid request"))
 }
 
-func TestPreservedNodesSnapshotCRUD(t *testing.T) {
+func TestPreservedNodesSnapshotOverwrite(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
-	snapshot := types.PreservedNodesSnapshot{
+	first := types.PreservedNodesSnapshot{
 		EpisodeAnchorHeight: 200,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
-			{
-				ModelId:          "model-b",
-				PreservedNodeIds: []string{"node-3"},
-			},
+			{ModelId: "model-b", PreservedNodeIds: []string{"node-3"}},
 		},
 	}
+	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, first))
 
-	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, snapshot))
+	second := types.PreservedNodesSnapshot{
+		EpisodeAnchorHeight: 300,
+		ModelPreservedNodes: []*types.ModelPreservedNodes{
+			{ModelId: "model-b", PreservedNodeIds: []string{"node-4"}},
+		},
+	}
+	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, second))
 
-	stored, found, err := keeper.GetPreservedNodesSnapshot(ctx, 200)
+	stored, found, err := keeper.GetPreservedNodesSnapshot(ctx)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, snapshot, stored)
-
-	require.NoError(t, keeper.DeletePreservedNodesSnapshot(ctx, 200))
-
-	_, found, err = keeper.GetPreservedNodesSnapshot(ctx, 200)
-	require.NoError(t, err)
-	require.False(t, found)
+	require.Equal(t, second, stored)
 }

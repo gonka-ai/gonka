@@ -42,7 +42,7 @@ type BrokerChainBridge interface {
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
-	GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error)
+	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -103,12 +103,9 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
 }
 
-func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error) {
+func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
-	req := &types.QueryPreservedNodesSnapshotRequest{
-		EpisodeAnchorHeight: episodeAnchorHeight,
-	}
-	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), req)
+	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), &types.QueryPreservedNodesSnapshotRequest{})
 }
 
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
@@ -131,8 +128,6 @@ type Broker struct {
 	reconcileTrigger     chan struct{}
 	lastEpochIndex       uint64
 	lastEpochPhase       types.EpochPhase
-	lastPreservedEpochIndex uint64
-	lastPreservedAnchor  int64
 	statusQueryTrigger   chan statusQuerySignal
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
@@ -1547,40 +1542,14 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 	}
 }
 
-func (b *Broker) activePreservedAnchor(epochState *chainphase.EpochState) int64 {
-	if epochState == nil || epochState.IsNilOrNotSynced() {
-		return 0
-	}
-	if epochState.CurrentPhase == types.InferencePhase {
-		if epochState.ActiveConfirmationPoCEvent != nil &&
-			epochState.ActiveConfirmationPoCEvent.Phase >= types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
-			return epochState.ActiveConfirmationPoCEvent.TriggerHeight
-		}
-		return 0
-	}
-	return epochState.LatestEpoch.PocStartBlockHeight
-}
-
 func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochState) error {
 	if epochState == nil || epochState.IsNilOrNotSynced() {
 		return nil
 	}
 
-	anchor := b.activePreservedAnchor(epochState)
-	if epochState.LatestEpoch.EpochIndex == b.lastPreservedEpochIndex && anchor == b.lastPreservedAnchor {
-		return nil
-	}
-
-	var snapshotResp *types.QueryPreservedNodesSnapshotResponse
-	var err error
-	if anchor > 0 {
-		snapshotResp, err = b.chainBridge.GetPreservedNodesSnapshot(anchor)
-		if err != nil {
-			return err
-		}
-		if snapshotResp == nil || !snapshotResp.Found || snapshotResp.Snapshot == nil {
-			return nil
-		}
+	snapshotResp, err := b.chainBridge.GetPreservedNodesSnapshot()
+	if err != nil {
+		return err
 	}
 
 	b.mu.Lock()
@@ -1590,24 +1559,22 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 		node.State.PreservedModels = make(map[string]bool)
 	}
 
-	if snapshotResp != nil && snapshotResp.Found && snapshotResp.Snapshot != nil {
-		for _, modelNodes := range snapshotResp.Snapshot.ModelPreservedNodes {
-			if modelNodes == nil {
-				continue
-			}
-			for _, nodeID := range modelNodes.PreservedNodeIds {
-				if node, ok := b.nodes[nodeID]; ok {
-					if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
-						continue
-					}
-					node.State.PreservedModels[modelNodes.ModelId] = true
-				}
-			}
-		}
+	if snapshotResp == nil || !snapshotResp.Found || snapshotResp.Snapshot == nil {
+		return nil
 	}
 
-	b.lastPreservedEpochIndex = epochState.LatestEpoch.EpochIndex
-	b.lastPreservedAnchor = anchor
+	for _, modelNodes := range snapshotResp.Snapshot.ModelPreservedNodes {
+		for _, nodeID := range modelNodes.PreservedNodeIds {
+			node, ok := b.nodes[nodeID]
+			if !ok {
+				continue
+			}
+			if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+				continue
+			}
+			node.State.PreservedModels[modelNodes.ModelId] = true
+		}
+	}
 	return nil
 }
 

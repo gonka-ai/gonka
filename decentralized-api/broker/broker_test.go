@@ -60,8 +60,8 @@ func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mod
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
-func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error) {
-	args := m.Called(episodeAnchorHeight)
+func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
+	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -405,71 +405,13 @@ func TestUpdateNodeWithEpochData_RetriesAfterEmptyParentGroup(t *testing.T) {
 	mockChainBridge.AssertExpectations(t)
 }
 
-func TestEnsurePreservedMembershipCached_UsesConfirmationAnchorDuringInference(t *testing.T) {
+func TestEnsurePreservedMembershipCached_AppliesSnapshot(t *testing.T) {
 	mockChainBridge := &MockBrokerChainBridge{}
 	broker := newTestBrokerWithChainBridge(mockChainBridge)
 
 	broker.mu.Lock()
 	broker.nodes["node-1"] = &NodeWithState{
-		Node: Node{
-			Id:     "node-1",
-			Models: map[string]ModelArgs{"model-a": {}},
-		},
-		State: NodeState{
-			EpochModels:      map[string]types.Model{},
-			EpochMLNodes:     map[string]types.MLNodeInfo{},
-			PreservedModels:  map[string]bool{},
-			AdminState:       AdminState{Enabled: true},
-		},
-	}
-	broker.mu.Unlock()
-
-	epochState := &chainphase.EpochState{
-		LatestEpoch: types.NewEpochContext(
-			types.Epoch{Index: 100, PocStartBlockHeight: 100},
-			types.EpochParams{},
-		),
-		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
-		CurrentPhase: types.InferencePhase,
-		IsSynced:     true,
-		ActiveConfirmationPoCEvent: &types.ConfirmationPoCEvent{
-			TriggerHeight: 140,
-			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
-		},
-	}
-
-	mockChainBridge.On("GetPreservedNodesSnapshot", int64(140)).Return(&types.QueryPreservedNodesSnapshotResponse{
-		Found: true,
-		Snapshot: &types.PreservedNodesSnapshot{
-			EpisodeAnchorHeight: 140,
-			ModelPreservedNodes: []*types.ModelPreservedNodes{
-				{
-					ModelId:          "model-a",
-					PreservedNodeIds: []string{"node-1"},
-				},
-			},
-		},
-	}, nil).Once()
-
-	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
-	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
-
-	broker.mu.RLock()
-	defer broker.mu.RUnlock()
-	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
-	mockChainBridge.AssertExpectations(t)
-}
-
-func TestEnsurePreservedMembershipCached_SkipsConfirmationGracePeriod(t *testing.T) {
-	mockChainBridge := &MockBrokerChainBridge{}
-	broker := newTestBrokerWithChainBridge(mockChainBridge)
-
-	broker.mu.Lock()
-	broker.nodes["node-1"] = &NodeWithState{
-		Node: Node{
-			Id:     "node-1",
-			Models: map[string]ModelArgs{"model-a": {}},
-		},
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
 		State: NodeState{
 			EpochModels:     map[string]types.Model{},
 			EpochMLNodes:    map[string]types.MLNodeInfo{},
@@ -484,80 +426,60 @@ func TestEnsurePreservedMembershipCached_SkipsConfirmationGracePeriod(t *testing
 			types.Epoch{Index: 100, PocStartBlockHeight: 100},
 			types.EpochParams{},
 		),
-		CurrentBlock: chainphase.BlockInfo{Height: 135, Hash: "hash-135"},
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
 		CurrentPhase: types.InferencePhase,
 		IsSynced:     true,
-		ActiveConfirmationPoCEvent: &types.ConfirmationPoCEvent{
-			TriggerHeight: 140,
-			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
-		},
 	}
 
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
+		Found: true,
+		Snapshot: &types.PreservedNodesSnapshot{
+			ModelPreservedNodes: []*types.ModelPreservedNodes{
+				{ModelId: "model-a", PreservedNodeIds: []string{"node-1"}},
+			},
+		},
+	}, nil)
+
 	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
+}
+
+func TestEnsurePreservedMembershipCached_ClearsWhenNotFound(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{"model-a": true},
+			AdminState:      AdminState{Enabled: true},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{Found: false}, nil)
+
 	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
 
 	broker.mu.RLock()
 	defer broker.mu.RUnlock()
 	assert.Empty(t, broker.nodes["node-1"].State.PreservedModels)
-	mockChainBridge.AssertNotCalled(t, "GetPreservedNodesSnapshot", mock.Anything)
-}
-
-func TestEnsurePreservedMembershipCached_RetriesWhenSnapshotNotReady(t *testing.T) {
-	mockChainBridge := &MockBrokerChainBridge{}
-	broker := newTestBrokerWithChainBridge(mockChainBridge)
-
-	broker.mu.Lock()
-	broker.nodes["node-1"] = &NodeWithState{
-		Node: Node{
-			Id:     "node-1",
-			Models: map[string]ModelArgs{"model-a": {}},
-		},
-		State: NodeState{
-			EpochModels:     map[string]types.Model{},
-			EpochMLNodes:    map[string]types.MLNodeInfo{},
-			PreservedModels: map[string]bool{},
-			AdminState:      AdminState{Enabled: true},
-		},
-	}
-	broker.mu.Unlock()
-
-	epochState := &chainphase.EpochState{
-		LatestEpoch: types.NewEpochContext(
-			types.Epoch{Index: 100, PocStartBlockHeight: 100},
-			types.EpochParams{},
-		),
-		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
-		CurrentPhase: types.InferencePhase,
-		IsSynced:     true,
-		ActiveConfirmationPoCEvent: &types.ConfirmationPoCEvent{
-			TriggerHeight: 140,
-			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
-		},
-	}
-
-	mockChainBridge.On("GetPreservedNodesSnapshot", int64(140)).Return(&types.QueryPreservedNodesSnapshotResponse{
-		Found: false,
-	}, nil).Once()
-	mockChainBridge.On("GetPreservedNodesSnapshot", int64(140)).Return(&types.QueryPreservedNodesSnapshotResponse{
-		Found: true,
-		Snapshot: &types.PreservedNodesSnapshot{
-			EpisodeAnchorHeight: 140,
-			ModelPreservedNodes: []*types.ModelPreservedNodes{
-				{
-					ModelId:          "model-a",
-					PreservedNodeIds: []string{"node-1"},
-				},
-			},
-		},
-	}, nil).Once()
-
-	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
-	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
-
-	broker.mu.RLock()
-	defer broker.mu.RUnlock()
-	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
-	mockChainBridge.AssertExpectations(t)
 }
 
 func TestEnsurePreservedMembershipCached_SkipsAdminDisabledNodes(t *testing.T) {
@@ -566,18 +488,12 @@ func TestEnsurePreservedMembershipCached_SkipsAdminDisabledNodes(t *testing.T) {
 
 	broker.mu.Lock()
 	broker.nodes["node-1"] = &NodeWithState{
-		Node: Node{
-			Id:     "node-1",
-			Models: map[string]ModelArgs{"model-a": {}},
-		},
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
 		State: NodeState{
 			EpochModels:     map[string]types.Model{},
 			EpochMLNodes:    map[string]types.MLNodeInfo{},
 			PreservedModels: map[string]bool{},
-			AdminState: AdminState{
-				Enabled: false,
-				Epoch:   99,
-			},
+			AdminState:      AdminState{Enabled: false, Epoch: 99},
 		},
 	}
 	broker.mu.Unlock()
@@ -590,31 +506,22 @@ func TestEnsurePreservedMembershipCached_SkipsAdminDisabledNodes(t *testing.T) {
 		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
 		CurrentPhase: types.InferencePhase,
 		IsSynced:     true,
-		ActiveConfirmationPoCEvent: &types.ConfirmationPoCEvent{
-			TriggerHeight: 140,
-			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
-		},
 	}
 
-	mockChainBridge.On("GetPreservedNodesSnapshot", int64(140)).Return(&types.QueryPreservedNodesSnapshotResponse{
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
 		Found: true,
 		Snapshot: &types.PreservedNodesSnapshot{
-			EpisodeAnchorHeight: 140,
 			ModelPreservedNodes: []*types.ModelPreservedNodes{
-				{
-					ModelId:          "model-a",
-					PreservedNodeIds: []string{"node-1"},
-				},
+				{ModelId: "model-a", PreservedNodeIds: []string{"node-1"}},
 			},
 		},
-	}, nil).Once()
+	}, nil)
 
 	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
 
 	broker.mu.RLock()
 	defer broker.mu.RUnlock()
 	assert.False(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
-	mockChainBridge.AssertExpectations(t)
 }
 
 func TestSingleNode(t *testing.T) {

@@ -381,16 +381,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	if err != nil {
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
-	epochContext := types.NewEpochContext(*epoch, *params.EpochParams)
-
-	// Regular-PoC preserved snapshot tells us which validator nodes were preserved for
-	// this epoch's PoC. Claims that overlap with PoC are only valid for preserved nodes.
-	// A missing snapshot is treated as "no nodes preserved" so we degrade gracefully.
-	preservedSnapshot, _, snapshotErr := k.GetPreservedNodesSnapshot(ctx, int64(mainEpochData.PocStartBlockHeight))
-	if snapshotErr != nil {
-		k.LogWarn("Failed to get preserved nodes snapshot for claim validation", types.Claims,
-			"epoch", mainEpochData.EpochIndex, "anchor", mainEpochData.PocStartBlockHeight, "error", snapshotErr)
-	}
 
 	// Create a map to store weight maps for each model
 	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
@@ -467,7 +457,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	)
 
 	// Run expensive ShouldValidate only on sampled inferences
-	skipped := 0
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
@@ -480,11 +469,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		totalWeight := modelTotalWeights[modelId]
-
-		if k.OverlapsWithPoC(&inference, epochContext) && !isActiveDuringPoC(&validatorPowerForModel, PreservedNodeSetByModel(&preservedSnapshot, modelId)) {
-			skipped++
-			continue
-		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
 		safeTotalWeight, err := safeUint32FromInt64(totalWeight)
@@ -515,45 +499,8 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	k.LogInfo("Must be validated inferences", types.Claims,
 		"count", len(mustBeValidated),
-		"validator_not_available_at_poc_skipped", skipped,
 		"sampled", len(sample),
 	)
 
 	return mustBeValidated, nil
-}
-
-func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) bool {
-	if inferenceDetails == nil {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
-	}
-
-	if inferenceDetails.CreatedAtBlockHeight == 0 {
-		k.LogWarn("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
-	} else if inferenceDetails.CreatedAtBlockHeight < 0 {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
-	}
-
-	happenedAfterCutoff := inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
-	return happenedAfterCutoff
-}
-
-// isActiveDuringPoC reports whether this validator has any preserved node under the
-// given model's regular-PoC snapshot. Preserved nodes are the only ones that continued
-// serving inference during PoC, so claims overlapping with PoC are only valid for them.
-func isActiveDuringPoC(weight *types.ValidationWeight, preservedForModel map[string]struct{}) bool {
-	if weight == nil {
-		return false
-	}
-	for _, n := range weight.MlNodes {
-		if n == nil {
-			continue
-		}
-		if _, ok := preservedForModel[n.NodeId]; ok {
-			return true
-		}
-	}
-	return false
 }

@@ -32,7 +32,7 @@ func TestCaptureGenerationStartTimestampStoresSnapshots(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, int64(1234), validationSnapshot.GenerationStartTimestamp)
 
-	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx, 300)
+	preservedSnapshot, found, err := k.GetPreservedNodesSnapshot(ctx)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, snapshot, preservedSnapshot)

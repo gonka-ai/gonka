@@ -99,15 +99,15 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		"epoch_index", effectiveEpoch.Index, "latest_epoch_index", epochContext.EpochIndex,
 		"block_height", sdkCtx.BlockHeight(), "set_new_validators_block_height", epochContext.SetNewValidators())
 
-	activeEvent, isActive, err := k.GetActiveConfirmationPoCEvent(goCtx)
+	_, isActive, err := k.GetActiveConfirmationPoCEvent(goCtx)
 	if err != nil {
 		k.Logger().Error("GetRandomExecutor: createFilterFn: failed to check confirmation PoC",
 			"model_id", modelId, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if isActive && activeEvent != nil {
-		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId, activeEvent.TriggerHeight)
+	if isActive {
+		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
 	}
 
 	if currentPhase == types.InferencePhase && sdkCtx.BlockHeight() > epochContext.SetNewValidators() {
@@ -116,19 +116,13 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		}, nil
 	}
 
-	upcomingEpoch, found := k.GetUpcomingEpoch(goCtx)
-	if !found || upcomingEpoch == nil {
-		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: no upcoming epoch found")
-	}
-
-	return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId, upcomingEpoch.PocStartBlockHeight)
+	return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
 }
 
 func (k Keeper) createIsAvailableDuringPoCFilterFn(
 	ctx context.Context,
 	epochId uint64,
 	modelId string,
-	episodeAnchorHeight int64,
 ) (func(members []*group.GroupMember) []*group.GroupMember, error) {
 	activeParticipants, found := k.GetActiveParticipants(ctx, epochId)
 	if !found {
@@ -141,10 +135,10 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(
 
 	// Missing snapshot collapses the preserved set to empty: no node is routable for
 	// inference during PoC, which is the expected steady state.
-	preservedSnapshot, snapshotFound, err := k.GetPreservedNodesSnapshot(ctx, episodeAnchorHeight)
+	preservedSnapshot, snapshotFound, err := k.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		k.Logger().Warn("GetRandomExecutor: failed to read preserved snapshot, using empty set",
-			"epoch_id", epochId, "model_id", modelId, "anchor", episodeAnchorHeight, "error", err)
+			"epoch_id", epochId, "model_id", modelId, "error", err)
 	}
 	var preservedNodeSet map[string]struct{}
 	if snapshotFound {
@@ -182,7 +176,7 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(
 	}
 
 	k.Logger().Info("GetRandomExecutor: PoC filter built",
-		"epoch_id", epochId, "model_id", modelId, "anchor", episodeAnchorHeight,
+		"epoch_id", epochId, "model_id", modelId,
 		"participants", len(activeParticipants.Participants),
 		"available", len(isAvailableDuringPoc))
 

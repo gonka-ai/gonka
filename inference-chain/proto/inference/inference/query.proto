@@ -432,7 +432,7 @@ service Query {
 
   // Queries preserved nodes snapshot for the active PoC episode.
   rpc PreservedNodesSnapshot (QueryPreservedNodesSnapshotRequest) returns (QueryPreservedNodesSnapshotResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/preserved_nodes_snapshot/{episode_anchor_height}";
+    option (google.api.http).get = "/productscience/inference/inference/preserved_nodes_snapshot";
   }
 
   rpc DevshardHostEpochStats (QueryGetDevshardHostEpochStatsRequest) returns (QueryGetDevshardHostEpochStatsResponse) {
@@ -1162,9 +1162,7 @@ message QueryPoCValidationSnapshotResponse {
   bool found = 2;
 }
 
-message QueryPreservedNodesSnapshotRequest {
-  int64 episode_anchor_height = 1;
-}
+message QueryPreservedNodesSnapshotRequest {}
 
 message QueryPreservedNodesSnapshotResponse {
   PreservedNodesSnapshot snapshot = 1;

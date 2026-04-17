@@ -3343,24 +3343,6 @@ func request_Query_PreservedNodesSnapshot_0(ctx context.Context, marshaler runti
 	var protoReq QueryPreservedNodesSnapshotRequest
 	var metadata runtime.ServerMetadata
 
-	var (
-		val string
-		ok  bool
-		err error
-		_   = err
-	)
-
-	val, ok = pathParams["episode_anchor_height"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "episode_anchor_height")
-	}
-
-	protoReq.EpisodeAnchorHeight, err = runtime.Int64(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "episode_anchor_height", err)
-	}
-
 	msg, err := client.PreservedNodesSnapshot(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
@@ -3369,24 +3351,6 @@ func request_Query_PreservedNodesSnapshot_0(ctx context.Context, marshaler runti
 func local_request_Query_PreservedNodesSnapshot_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryPreservedNodesSnapshotRequest
 	var metadata runtime.ServerMetadata
-
-	var (
-		val string
-		ok  bool
-		err error
-		_   = err
-	)
-
-	val, ok = pathParams["episode_anchor_height"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "episode_anchor_height")
-	}
-
-	protoReq.EpisodeAnchorHeight, err = runtime.Int64(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "episode_anchor_height", err)
-	}
 
 	msg, err := server.PreservedNodesSnapshot(ctx, &protoReq)
 	return msg, metadata, err
@@ -7006,7 +6970,7 @@ var (
 
 	pattern_Query_DevshardEscrow_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "devshard_escrow", "id"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_PreservedNodesSnapshot_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "preserved_nodes_snapshot", "episode_anchor_height"}, "", runtime.AssumeColonVerbOpt(true)))
+	pattern_Query_PreservedNodesSnapshot_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "preserved_nodes_snapshot"}, "", runtime.AssumeColonVerbOpt(true)))
 
 	pattern_Query_DevshardHostEpochStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "devshard_host_epoch_stats", "epoch_index", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 

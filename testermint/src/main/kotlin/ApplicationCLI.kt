@@ -401,17 +401,9 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
     }
 
-    fun queryPreservedNodesSnapshot(anchorHeight: Long): PreservedNodesSnapshotQueryResponse =
+    fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
         wrapLog("queryPreservedNodesSnapshot", false) {
-            execAndParse(
-                listOf(
-                    "query",
-                    "inference",
-                    "preserved-nodes-snapshot",
-                    "--episode-anchor-height",
-                    anchorHeight.toString()
-                )
-            )
+            execAndParse(listOf("query", "inference", "preserved-nodes-snapshot"))
         }
 
     // Reified type parameter to abstract out exec and then json to a particular type

@@ -26,8 +26,7 @@ class SchedulingTests : TestermintTest() {
 
         genesis.waitForStage(EpochStage.START_OF_POC)
 
-        val regularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
-        val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot(regularAnchor)
+        val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot()
         assertThat(preservedSnapshot.found).isTrue()
         val modelId = extractSingleModelId(genesis.api.getNodes())
         val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
@@ -63,11 +62,10 @@ class SchedulingTests : TestermintTest() {
 
         checkParticipantWeights(genesis.node, genesisParticipantKey)
 
-        // After the next epoch boundary, a fresh regular-PoC snapshot exists at the new
-        // PocStartBlockHeight. Verifying it is non-empty restores the "allocation
-        // actually happened" guarantee the old TimeslotAllocation[1] proxy gave.
-        val nextRegularAnchor = genesis.api.getLatestEpoch().latestEpoch.pocStartBlockHeight
-        val nextPreservedSnapshot = genesis.node.queryPreservedNodesSnapshot(nextRegularAnchor)
+        // After the next epoch boundary, a fresh regular-PoC snapshot has overwritten the
+        // single slot. Verifying it is non-empty restores the "allocation actually happened"
+        // guarantee the old TimeslotAllocation[1] proxy gave.
+        val nextPreservedSnapshot = genesis.node.queryPreservedNodesSnapshot()
         assertThat(nextPreservedSnapshot.found).isTrue()
         val nextPreservedNodeIds = preservedNodeIdsForModel(nextPreservedSnapshot, modelId)
         assertThat(nextPreservedNodeIds).isNotEmpty

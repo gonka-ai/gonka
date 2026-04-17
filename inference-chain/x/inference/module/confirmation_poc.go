@@ -423,7 +423,7 @@ func (am AppModule) evaluateConfirmation(
 
 	// Missing snapshot collapses the preserved side to zero; min-take and slashing
 	// then behave as if no node was preserved for this event.
-	preservedSnapshot, _, err := am.keeper.GetPreservedNodesSnapshot(ctx, event.TriggerHeight)
+	preservedSnapshot, _, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		am.LogWarn("evaluateConfirmation: failed to read preserved snapshot, using empty set",
 			types.PoC, "triggerHeight", event.TriggerHeight, "error", err)

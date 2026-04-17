@@ -286,21 +286,8 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	// Determine whether to check preserve nodes or regular mlnodes
 	checkPreserveNode := expiryCtx.ShouldCheckPreserveNode(inference)
 
-	var preservedSnapshot *types.PreservedNodesSnapshot
-	if checkPreserveNode && expiryCtx.PoCRange != nil && expiryCtx.PoCRange.AnchorHeight > 0 {
-		snapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, expiryCtx.PoCRange.AnchorHeight)
-		if err != nil {
-			am.LogWarn("Failed to get preserved nodes snapshot for expired inference check", types.Inferences,
-				"inferenceId", inference.InferenceId,
-				"anchorHeight", expiryCtx.PoCRange.AnchorHeight,
-				"error", err)
-		} else if found {
-			preservedSnapshot = &snapshot
-		}
-	}
-
 	// Check if executor has the required node for the model (using cached active participants)
-	hasNode := am.HasNodeForModel(inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants, preservedSnapshot)
+	hasNode := am.HasNodeForModel(ctx, inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants)
 
 	if !hasNode {
 		nodeType := "mlnode"

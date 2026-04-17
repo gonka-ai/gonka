@@ -543,18 +543,16 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes snapshot", types.PoC,
 			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
-			"episodeAnchorHeight", upcomingEpoch.PocStartBlockHeight,
 			"error", err)
 		return nil
 	}
 	if !found {
 		am.LogWarn("GetPreviousEpochMLNodesWithInferenceAllocation: Preserved nodes snapshot not found", types.PoC,
-			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
-			"episodeAnchorHeight", upcomingEpoch.PocStartBlockHeight)
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex)
 		return nil
 	}
 
@@ -809,7 +807,7 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 		return inferenceServingNodeIds
 	}
 
-	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		am.LogError("getInferenceServingNodeIds: Unable to get preserved nodes snapshot", types.PoC, "error", err.Error())
 		return inferenceServingNodeIds
@@ -825,7 +823,6 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	}
 	am.LogInfo("getInferenceServingNodeIds: preserved snapshot loaded", types.PoC,
 		"epoch", upcomingEpoch.Index,
-		"anchor", upcomingEpoch.PocStartBlockHeight,
 		"count", len(inferenceServingNodeIds))
 
 	return inferenceServingNodeIds

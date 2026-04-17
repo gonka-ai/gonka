@@ -139,8 +139,8 @@ func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mod
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
-func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot(episodeAnchorHeight int64) (*types.QueryPreservedNodesSnapshotResponse, error) {
-	args := m.Called(episodeAnchorHeight)
+func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
+	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
