@@ -374,12 +374,11 @@ func DefaultDelegationParams() *DelegationParams {
 		VMin:                   3,
 		CapFactor:              DecimalFromFloat(1),
 		InitialModelId:         "",
-		// Voting-power concentration caps are OFF by default. Governance
-		// must set concrete values via MsgUpdateParams after observing real
-		// network concentration. Zero on either field disables that cap;
-		// see computeAndSetVotingPowers for enforcement semantics.
-		MaxModelVotingPowerPercentage:      DecimalFromFloat(0),
-		MaxAggregatedVotingPowerPercentage: DecimalFromFloat(0),
+		// Per-model voting-power concentration cap is OFF by default.
+		// Governance must set a concrete value via MsgUpdateParams after
+		// observing real network concentration. Zero disables the cap; see
+		// computeAndSetVotingPowers for enforcement semantics.
+		MaxModelVotingPowerPercentage: DecimalFromFloat(0),
 	}
 }
 

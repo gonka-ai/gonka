@@ -320,12 +320,11 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 		params.DelegationParams.InitialModelId = poc.ModelId
 	}
 
-	// Voting-power concentration caps (fields 9 and 10) are new in v0.2.12.
-	// Set them explicitly to 0 (disabled) so the on-chain params struct
-	// carries the new fields from day one. Governance can raise them later
-	// via MsgUpdateParams once real network concentration is observable.
+	// Per-model voting-power concentration cap (field 9) is new in v0.2.12.
+	// Set explicitly to 0 (disabled) so the on-chain params struct carries
+	// the new field from day one. Governance can raise it later via
+	// MsgUpdateParams once real network concentration is observable.
 	params.DelegationParams.MaxModelVotingPowerPercentage = types.DecimalFromFloat(0)
-	params.DelegationParams.MaxAggregatedVotingPowerPercentage = types.DecimalFromFloat(0)
 
 	return k.SetParams(ctx, params)
 }
