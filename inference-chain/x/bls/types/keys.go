@@ -22,6 +22,7 @@ var (
 	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
 	VerificationSubmissionPrefix  = []byte("epoch_bls_verification_submission/")
 	DealerComplaintPrefix         = []byte("epoch_bls_dealer_complaint/")
+	ThresholdPartialSigPrefix     = []byte("threshold_partial_sig/")
 	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
 	ExpirationIndexPrefix         = []byte("expiration_index")
 	GroupValidationPrefix         = []byte("group_validation_")
@@ -160,6 +161,38 @@ func ParseDealerComplaintSubKey(sub []byte) (uint32, uint32, error) {
 	dealerIndex := binary.BigEndian.Uint32(sub[0:4])
 	complainerIndex := binary.BigEndian.Uint32(sub[4:8])
 	return dealerIndex, complainerIndex, nil
+}
+
+// ThresholdPartialSigRequestPrefix returns the prefix used to iterate all
+// partial signatures collected for a single threshold signing request. The
+// request ID is variable length, so it is preceded by a 4-byte length
+// prefix and followed by a '/' separator to make the prefix unambiguous
+// across requests whose ID bytes are a subset of each other.
+//
+// A prefix.Store scoped to this prefix yields one entry per submitter for
+// the given request, keyed by the submitter address bytes.
+//
+// Pre-split, ThresholdSigningRequest.PartialSignatures accumulated inline
+// and the Nth signer paid gas proportional to N prior signers. Splitting
+// per-submitter makes each write constant-cost.
+//
+// Full layout: {ThresholdPartialSigPrefix}{request_id_len:uint32 BE}{request_id}/{submitter_bytes}.
+func ThresholdPartialSigRequestPrefix(requestID []byte) []byte {
+	buf := make([]byte, len(ThresholdPartialSigPrefix)+4+len(requestID)+1)
+	pos := copy(buf, ThresholdPartialSigPrefix)
+	binary.BigEndian.PutUint32(buf[pos:], uint32(len(requestID)))
+	pos += 4
+	pos += copy(buf[pos:], requestID)
+	buf[pos] = '/'
+	return buf
+}
+
+// ThresholdPartialSigSubKey returns the sub-key portion of a threshold
+// partial signature entry. Sub-keys are the submitter's account-address
+// bytes — one submission per participant per request is enforced by the
+// handler, so the address uniquely identifies the entry.
+func ThresholdPartialSigSubKey(submitter string) []byte {
+	return []byte(submitter)
 }
 
 // ThresholdSigningRequestKey generates a key for storing ThresholdSigningRequest by request ID

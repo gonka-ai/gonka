@@ -74,6 +74,15 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 
 		// Defense-in-depth cleanup in case a stale expiration index entry remains
 		k.removeFromExpirationIndex(ctx, existing.DeadlineBlockHeight, signingData.RequestId)
+
+		// Clear any partial-sig sub-keys left over from the previous
+		// attempt. A FAILED/EXPIRED attempt may have written some
+		// submitter entries before terminating; without clearing them
+		// here, the next retry's GetSigningStatus would rehydrate stale
+		// signatures that no longer correspond to the current message.
+		if err := k.DeleteThresholdPartialSignaturesForRequest(ctx, signingData.RequestId); err != nil {
+			return fmt.Errorf("failed to clear previous-attempt partial signatures for request %x: %w", signingData.RequestId, err)
+		}
 	}
 
 	// Encode data using Ethereum-compatible abi.encodePacked format
@@ -171,7 +180,15 @@ func (k Keeper) validateThresholdSigningEpochPhase(ctx sdk.Context, epochBLSData
 	}
 }
 
-// GetSigningStatus returns the status of a threshold signing request by request_id
+// GetSigningStatus returns the status of a threshold signing request by
+// request_id. PartialSignatures are rehydrated from per-submitter sub-keys
+// so callers see the same shape they always have.
+//
+// Backward compatibility: if the base struct still has PartialSignatures
+// inline (e.g. an entry written by a pre-split handler), those serve as
+// the baseline and any sub-key entries take precedence by submitter. This
+// lets the split take effect immediately after upgrade without a separate
+// migration path for in-flight requests.
 func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.ThresholdSigningRequest, error) {
 	key := types.ThresholdSigningRequestKey(requestID)
 	kvStore := k.storeService.OpenKVStore(ctx)
@@ -189,6 +206,39 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal threshold signing request: %w", err)
 	}
+
+	// Build baseline from any inline legacy entries, keyed by submitter for
+	// quick lookup when the sub-key iterator overlays. Empty entries
+	// (ParticipantAddress == "") are dropped.
+	bySubmitter := make(map[string]int, len(request.PartialSignatures))
+	merged := make([]types.PartialSignature, 0, len(request.PartialSignatures))
+	for _, ps := range request.PartialSignatures {
+		if ps.ParticipantAddress == "" {
+			continue
+		}
+		bySubmitter[ps.ParticipantAddress] = len(merged)
+		merged = append(merged, ps)
+	}
+
+	it := k.thresholdPartialSigStore(ctx, requestID).Iterator(nil, nil)
+	defer it.Close()
+	for ; it.Valid(); it.Next() {
+		var ps types.PartialSignature
+		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
+			return nil, fmt.Errorf("unmarshal threshold partial signature: %w", err)
+		}
+		if existingIdx, ok := bySubmitter[ps.ParticipantAddress]; ok {
+			merged[existingIdx] = ps
+			continue
+		}
+		merged = append(merged, ps)
+	}
+	if len(merged) == 0 {
+		request.PartialSignatures = nil
+	} else {
+		request.PartialSignatures = merged
+	}
+
 	return &request, nil
 }
 
@@ -303,9 +353,16 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	retryReq := *request
 	retryReq.Attempt++
 	retryReq.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES
-	retryReq.PartialSignatures = []types.PartialSignature{}
+	retryReq.PartialSignatures = nil
 	retryReq.FinalSignature = []byte{}
 	retryReq.DeadlineBlockHeight = cacheCtx.BlockHeight() + signingDeadlineBlocks
+
+	// Clear any partial-sig sub-keys from the previous attempt so the new
+	// attempt starts with an empty collection. Without this, prior-attempt
+	// signatures would leak into the new attempt's rehydrated view.
+	if err := k.DeleteThresholdPartialSignaturesForRequest(cacheCtx, retryReq.RequestId); err != nil {
+		return false, fmt.Errorf("failed to clear prior-attempt partial signatures for request %x: %w", retryReq.RequestId, err)
+	}
 
 	k.removeFromExpirationIndex(cacheCtx, previousDeadlineBlockHeight, retryReq.RequestId)
 	kvStore := k.storeService.OpenKVStore(cacheCtx)
@@ -401,23 +458,41 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		return fmt.Errorf("partial signature verification failed: %w", err)
 	}
 
-	// Check if this participant already submitted (prevent double-submission)
-	for _, existingSig := range request.PartialSignatures {
-		if existingSig.ParticipantAddress == submitter {
-			return fmt.Errorf("participant %s already submitted partial signature", submitter)
-		}
+	// O(1) duplicate check via direct sub-key lookup, replacing the
+	// prior O(N) scan through request.PartialSignatures.
+	if k.HasThresholdPartialSignature(ctx, request.RequestId, submitter) {
+		return fmt.Errorf("participant %s already submitted partial signature", submitter)
 	}
 
-	// Add partial signature to request
-	request.PartialSignatures = append(request.PartialSignatures, types.PartialSignature{
+	// Persist the new partial signature to its own sub-key. Write cost is
+	// bounded by this submitter's own payload, independent of how many
+	// other signers have already submitted — that is the whole point of
+	// the split (see ThresholdPartialSigRequestPrefix doc for the
+	// gas-scaling rationale).
+	newPartial := types.PartialSignature{
 		ParticipantAddress: submitter,
 		SlotIndices:        slotIndices,
 		Signature:          partialSignature,
-	})
+	}
+	if err := k.SetThresholdPartialSignature(ctx, request.RequestId, &newPartial); err != nil {
+		return fmt.Errorf("failed to persist threshold partial signature: %w", err)
+	}
 
+	// Keep the in-memory view in sync so checkThresholdAndAggregate sees
+	// the new entry without an extra ListThresholdPartialSignatures call.
+	request.PartialSignatures = append(request.PartialSignatures, newPartial)
+
+	// Persist the base request with PartialSignatures nil'd so
+	// storeThresholdSigningRequest's sync loop doesn't redundantly
+	// rewrite every existing signer's sub-key on each submission. The
+	// entry we just added is already in its sub-key, and every other
+	// entry is already in its own sub-key from earlier txs.
+	inMemoryPartials := request.PartialSignatures
+	request.PartialSignatures = nil
 	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
 		return err
 	}
+	request.PartialSignatures = inMemoryPartials
 
 	// Check if threshold reached and aggregate
 	if err := k.checkThresholdAndAggregate(ctx, request, &epochBLSData); err != nil {
@@ -548,16 +623,142 @@ func (k Keeper) aggregatePartialSignatures(partialSigs []types.PartialSignature,
 	return k.aggregateBLSPartialSignaturesBlst(partialSigs)
 }
 
-// storeThresholdSigningRequest stores a threshold signing request
+// StoreThresholdSigningRequest exposes storeThresholdSigningRequest so
+// out-of-package migration code (e.g. the v0.2.12 upgrade handler) can
+// drive the sync-and-strip pass that splits legacy inline
+// PartialSignatures into per-submitter sub-keys. Handlers in this
+// package should continue to call storeThresholdSigningRequest directly.
+func (k Keeper) StoreThresholdSigningRequest(ctx sdk.Context, request *types.ThresholdSigningRequest) error {
+	return k.storeThresholdSigningRequest(ctx, request)
+}
+
+// storeThresholdSigningRequest stores a threshold signing request.
+//
+// PartialSignatures are persisted out-of-band under per-submitter sub-keys
+// (see SetThresholdPartialSignature and ThresholdPartialSigRequestPrefix).
+// Any non-empty entries on the in-memory request are synced to sub-keys
+// here; the base struct is persisted with PartialSignatures zeroed so
+// writes stay constant-size as signers accumulate.
+//
+// The hot path (AddPartialSignature) bypasses this sync loop by nulling
+// out PartialSignatures before calling storeThresholdSigningRequest — it
+// wrote its own sub-key entry directly and every other signer's entry is
+// already persisted from their earlier tx.
 func (k Keeper) storeThresholdSigningRequest(ctx sdk.Context, request *types.ThresholdSigningRequest) error {
+	// Sync any inline partial signatures to sub-keys. Callers that
+	// pre-populate the slice (genesis import, retry reset with a
+	// populated copy, tests) hit this path. Runtime hot-path callers
+	// should null out PartialSignatures first.
+	for i := range request.PartialSignatures {
+		ps := request.PartialSignatures[i]
+		if ps.ParticipantAddress == "" {
+			continue
+		}
+		if err := k.SetThresholdPartialSignature(ctx, request.RequestId, &ps); err != nil {
+			return fmt.Errorf("sync partial sig for submitter %s: %w", ps.ParticipantAddress, err)
+		}
+	}
+
 	key := types.ThresholdSigningRequestKey(request.RequestId)
 	kvStore := k.storeService.OpenKVStore(ctx)
 
-	requestBytes, err := k.cdc.Marshal(request)
+	// Copy so we don't mutate the caller's request.
+	baseCopy := *request
+	baseCopy.PartialSignatures = nil
+
+	requestBytes, err := k.cdc.Marshal(&baseCopy)
 	if err != nil {
 		return fmt.Errorf("failed to marshal threshold signing request: %w", err)
 	}
 	return kvStore.Set(key, requestBytes)
+}
+
+// thresholdPartialSigStore returns a prefix.Store scoped to all partial
+// signatures collected for a single threshold signing request. Sub-keys
+// within the returned store are the submitter address bytes produced by
+// types.ThresholdPartialSigSubKey.
+func (k Keeper) thresholdPartialSigStore(ctx sdk.Context, requestID []byte) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.ThresholdPartialSigRequestPrefix(requestID))
+}
+
+// SetThresholdPartialSignature writes a single partial signature under its
+// own sub-key. Cost is constant in the number of signers that already
+// submitted for this request, so every signer pays the same gas
+// regardless of submission order. This is the hot path called by
+// AddPartialSignature.
+func (k Keeper) SetThresholdPartialSignature(ctx sdk.Context, requestID []byte, ps *types.PartialSignature) error {
+	if ps == nil {
+		return fmt.Errorf("nil threshold partial signature")
+	}
+	if ps.ParticipantAddress == "" {
+		return fmt.Errorf("threshold partial signature missing participant address")
+	}
+	value, err := k.cdc.Marshal(ps)
+	if err != nil {
+		return fmt.Errorf("marshal threshold partial signature: %w", err)
+	}
+	k.thresholdPartialSigStore(ctx, requestID).Set(types.ThresholdPartialSigSubKey(ps.ParticipantAddress), value)
+	return nil
+}
+
+// GetThresholdPartialSignature reads the partial signature submitted by a
+// specific participant for the given request. Returns (nil, nil) when no
+// submission exists.
+func (k Keeper) GetThresholdPartialSignature(ctx sdk.Context, requestID []byte, submitter string) (*types.PartialSignature, error) {
+	value := k.thresholdPartialSigStore(ctx, requestID).Get(types.ThresholdPartialSigSubKey(submitter))
+	if value == nil {
+		return nil, nil
+	}
+	var ps types.PartialSignature
+	if err := k.cdc.Unmarshal(value, &ps); err != nil {
+		return nil, err
+	}
+	return &ps, nil
+}
+
+// HasThresholdPartialSignature reports whether a partial signature exists
+// for the given (request, submitter) pair without unmarshaling the value.
+// Used by AddPartialSignature for the O(1) duplicate check.
+func (k Keeper) HasThresholdPartialSignature(ctx sdk.Context, requestID []byte, submitter string) bool {
+	return k.thresholdPartialSigStore(ctx, requestID).Has(types.ThresholdPartialSigSubKey(submitter))
+}
+
+// ListThresholdPartialSignatures returns every partial signature collected
+// for a request, in ascending submitter-bytes order. Used by GetSigningStatus
+// rehydration and by the aggregation threshold check.
+func (k Keeper) ListThresholdPartialSignatures(ctx sdk.Context, requestID []byte) ([]types.PartialSignature, error) {
+	it := k.thresholdPartialSigStore(ctx, requestID).Iterator(nil, nil)
+	defer it.Close()
+
+	var out []types.PartialSignature
+	for ; it.Valid(); it.Next() {
+		var ps types.PartialSignature
+		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
+			return nil, fmt.Errorf("unmarshal threshold partial signature: %w", err)
+		}
+		out = append(out, ps)
+	}
+	return out, nil
+}
+
+// DeleteThresholdPartialSignaturesForRequest removes every partial
+// signature sub-key for a request. Called on retry reset (to clear the
+// prior attempt's accumulated sigs) and on terminal failure cleanup.
+func (k Keeper) DeleteThresholdPartialSignaturesForRequest(ctx sdk.Context, requestID []byte) error {
+	store := k.thresholdPartialSigStore(ctx, requestID)
+	it := store.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		store.Delete(key)
+	}
+	return nil
 }
 
 // emitThresholdSigningCompleted emits completion event

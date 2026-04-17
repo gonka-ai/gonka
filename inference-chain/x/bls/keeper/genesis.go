@@ -39,7 +39,9 @@ func (k Keeper) SetAllEpochBLSData(ctx sdk.Context, list []types.EpochBLSData) {
 	}
 }
 
-// GetAllThresholdSigningRequests returns all threshold signing requests
+// GetAllThresholdSigningRequests returns all threshold signing requests,
+// with PartialSignatures rehydrated from per-submitter sub-keys so the
+// exported genesis is complete.
 func (k Keeper) GetAllThresholdSigningRequests(ctx sdk.Context) []types.ThresholdSigningRequest {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	signingStore := prefix.NewStore(store, types.ThresholdSigningRequestPrefix)
@@ -52,21 +54,29 @@ func (k Keeper) GetAllThresholdSigningRequests(ctx sdk.Context) []types.Threshol
 		var val types.ThresholdSigningRequest
 		//nolint:forbidigo // Genesis code
 		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		//nolint:forbidigo // Genesis code
+		partials, err := k.ListThresholdPartialSignatures(ctx, val.RequestId)
+		if err != nil {
+			panic(fmt.Sprintf("failed to list partial sigs for request %x: %v", val.RequestId, err))
+		}
+		val.PartialSignatures = append(val.PartialSignatures, partials...)
 		list = append(list, val)
 	}
 
 	return list
 }
 
-// SetAllThresholdSigningRequests sets all threshold signing requests and rebuilds their expiration indices
+// SetAllThresholdSigningRequests sets all threshold signing requests and
+// rebuilds their expiration indices. Inline PartialSignatures from the
+// genesis payload are split into per-submitter sub-keys via
+// storeThresholdSigningRequest's sync loop, so the imported chain state
+// matches the post-v0.2.12 layout.
 func (k Keeper) SetAllThresholdSigningRequests(ctx sdk.Context, list []types.ThresholdSigningRequest) {
 	kvStore := k.storeService.OpenKVStore(ctx)
 	for _, val := range list {
-		key := types.ThresholdSigningRequestKey(val.RequestId)
+		valCopy := val
 		//nolint:forbidigo // Genesis code
-		valBytes := k.cdc.MustMarshal(&val)
-		if err := kvStore.Set(key, valBytes); err != nil {
-			//nolint:forbidigo // Genesis code
+		if err := k.storeThresholdSigningRequest(ctx, &valCopy); err != nil {
 			panic(fmt.Sprintf("failed to set signing request %x from genesis: %v", val.RequestId, err))
 		}
 

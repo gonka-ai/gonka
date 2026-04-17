@@ -99,6 +99,16 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Same migration for ThresholdSigningRequest.PartialSignatures.
+		// Pre-split, partial sigs accumulated inline on the request;
+		// post-split, AddPartialSignature writes sub-keys directly and
+		// nulls out the slice before persisting the base. Legacy inline
+		// entries must be moved to sub-keys here or they would be dropped.
+		if err := migrateThresholdSigningRequestsToSubKeys(sdk.UnwrapSDKContext(ctx), blsKeeper); err != nil {
+			k.LogError("Error migrating ThresholdSigningRequests to sub-keys for v0.2.12", types.Upgrades, "err", err)
+			return nil, err
+		}
+
 		if err := setFeeParams(ctx, k); err != nil {
 			return nil, err
 		}
@@ -291,6 +301,30 @@ func migrateEpochBLSDataToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) e
 		}
 		if err := blsKeeper.SetEpochBLSData(ctx, ebd); err != nil {
 			return fmt.Errorf("migrate EpochBLSData epoch=%d: %w", ebd.EpochId, err)
+		}
+	}
+	return nil
+}
+
+// migrateThresholdSigningRequestsToSubKeys splits legacy inline
+// ThresholdSigningRequest.PartialSignatures into per-submitter sub-keys.
+// Same rationale as migrateEpochBLSDataToSubKeys: the post-split
+// AddPartialSignature nulls out PartialSignatures before persisting the
+// base request, so legacy inline entries must be moved to sub-keys before
+// any post-upgrade tx can touch state.
+//
+// GetAllThresholdSigningRequests already rehydrates PartialSignatures
+// from sub-keys, so returning it through storeThresholdSigningRequest
+// below does the sync-and-strip pass in a single call.
+func migrateThresholdSigningRequestsToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
+	all := blsKeeper.GetAllThresholdSigningRequests(ctx)
+	for i := range all {
+		req := all[i]
+		if len(req.PartialSignatures) == 0 {
+			continue
+		}
+		if err := blsKeeper.StoreThresholdSigningRequest(ctx, &req); err != nil {
+			return fmt.Errorf("migrate ThresholdSigningRequest %x: %w", req.RequestId, err)
 		}
 	}
 	return nil
