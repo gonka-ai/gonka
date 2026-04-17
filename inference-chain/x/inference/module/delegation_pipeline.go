@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"math"
-	"math/big"
 	"math/bits"
 	"slices"
 	"strconv"
@@ -690,12 +689,11 @@ func (am AppModule) delegationVotingPowerCapParams(params types.Params) VotingPo
 // computeAndSetVotingPowers computes per-group voting powers from final weights
 // and writes them to each participant's VotingPowers field for visibility.
 //
-// Applies the per-model concentration cap (if configured). The cap uses a
-// proportional redistribution algorithm: any excess over the cap is removed
-// from the capped host, and the remaining uncapped hosts absorb it in
-// proportion to their existing share. Hosts that are themselves at or above
-// the cap are skipped during redistribution so excess cannot be routed back
-// to them.
+// Applies the per-model concentration cap (if configured). Any host whose
+// voting power exceeds the cap is clipped down to the cap and the excess is
+// burned (not redistributed). The group's post-cap total shrinks
+// accordingly; downstream per-group math is expected to operate on the
+// post-cap total. See capPerModelVotingPowers for the rationale.
 func (am AppModule) computeAndSetVotingPowers(
 	activeParticipants []*types.ActiveParticipant,
 	dwc *DelegationWeightCalculator,
@@ -738,19 +736,10 @@ func (am AppModule) computeAndSetVotingPowers(
 		if len(vps) == 0 {
 			continue
 		}
-		filtered := vps[:0]
-		for _, mvp := range vps {
-			if mvp.VotingPower > 0 {
-				filtered = append(filtered, mvp)
-			}
-		}
-		if len(filtered) == 0 {
-			continue
-		}
-		slices.SortFunc(filtered, func(a, b *types.ModelVotingPower) int {
+		slices.SortFunc(vps, func(a, b *types.ModelVotingPower) int {
 			return cmp.Compare(a.ModelId, b.ModelId)
 		})
-		p.VotingPowers = filtered
+		p.VotingPowers = vps
 	}
 }
 
@@ -783,40 +772,25 @@ func sumInt64Safe(m map[string]int64) (int64, bool) {
 	return total, true
 }
 
-// mulDivInt64 computes floor(a*b/c) using math/big to avoid int64 overflow
-// in the intermediate a*b product. Returns (0, false) if any input is
-// negative, if c is zero, or if the result would exceed int64. Callers
-// should treat a false return as "skip this redistribution step" — the
-// existing cap helpers guarantee result <= min(a, b) when inputs are
-// well-formed, so a false return indicates a caller bug or pathological
-// governance parameters.
-func mulDivInt64(a, b, c int64) (int64, bool) {
-	if a < 0 || b < 0 || c <= 0 {
-		return 0, false
-	}
-	num := new(big.Int).Mul(big.NewInt(a), big.NewInt(b))
-	num.Quo(num, big.NewInt(c))
-	if !num.IsInt64() {
-		return 0, false
-	}
-	return num.Int64(), true
-}
-
-// capPerModelVotingPowers scales down any host whose voting power in vpMap
-// exceeds capPct of the group total, redistributing the excess proportionally
-// to the remaining hosts that are below the cap. Applied in-place.
+// capPerModelVotingPowers clips any host whose voting power in vpMap exceeds
+// capPct of the ORIGINAL group total down to the cap. The excess is burned:
+// it is not redistributed to other hosts in the group. Applied in-place.
 //
-// Algorithm: single-pass after one sort. We walk hosts in descending voting
-// power order, capping each host whose VP exceeds the running cap. The cap
-// is computed against the ORIGINAL total (not the iteratively-recomputed
-// total) because the cap is a protocol threshold and should not depend on
-// how many previous hosts were capped. Excess from each capped host is
-// distributed proportionally to all hosts that remain below the cap.
+// Why burn rather than redistribute: voting power that reached a host via
+// delegation represents the delegator's explicit trust in THAT host. Moving
+// the excess to other hosts in the group would silently reassign that trust
+// to parties the delegator didn't pick. Burning is the only option that
+// respects the delegator's choice without requiring per-delegation
+// accounting through the cap path.
 //
-// Complexity: O(N log N) sort + O(N) passes. Total O(N log N).
+// The cap is applied against the original pre-capping total, so the cap
+// value is stable regardless of how many hosts end up clipped. The group's
+// post-cap total shrinks, and downstream per-group math (2/3 validation
+// quorum, per-group reward shares, slot sampling) is expected to operate on
+// the post-cap total. Consensus-weight concentration is capped separately
+// and is unaffected by this function.
 //
-// Overflow safety: intermediate products use math/big to avoid int64
-// overflow on large voting power values.
+// Complexity: O(N) single pass over vpMap.
 func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, modelID string, logger votingPowerCapLogger) {
 	if len(vpMap) < 2 {
 		return
@@ -839,43 +813,15 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 		return
 	}
 
-	// Sort hosts once, descending by VP (stable on addr for determinism).
-	keys := sortedKeys(vpMap) // ascending by addr
-	slices.SortStableFunc(keys, func(a, b string) int {
-		return cmp.Compare(vpMap[b], vpMap[a])
-	})
-
-	// First pass: cap anyone over the cap and record total excess.
-	//
-	// Design note: the cap is applied against the ORIGINAL pre-capping total.
-	// After redistribution, recipients can end up above capVP if the group
-	// is small and the capped host's excess is large relative to recipient
-	// capacity. This is an intentional trade-off: total voting power within
-	// the group is conserved (no burn) at the cost of strict per-host
-	// enforcement on tiny groups. Alternatives (iterate to convergence,
-	// burn excess) were considered and rejected. Iteration did not converge
-	// cleanly under integer rounding, and burning would shrink the group's
-	// total VP, which then shifts every other host's share in ways that
-	// ripple through reward payouts and slot sampling.
-	totalExcess := int64(0)
-	for _, addr := range keys {
+	// Iterate in sorted-address order so logged events are deterministic
+	// across nodes. The order doesn't affect the outcome since each host is
+	// clipped independently.
+	for _, addr := range sortedKeys(vpMap) {
 		vp := vpMap[addr]
 		if vp <= capVP {
-			break // hosts are sorted descending; no more over-cap hosts
+			continue
 		}
 		excess := vp - capVP
-		// Guard against int64 overflow when accumulating excess.
-		sum, carry := bits.Add64(uint64(totalExcess), uint64(excess), 0)
-		if carry != 0 || sum > uint64(math.MaxInt64) {
-			logger.LogWarn("per-model voting power cap: excess overflow, cap truncated",
-				types.EpochGroup,
-				"modelId", modelID,
-			)
-			totalExcess = math.MaxInt64
-			vpMap[addr] = capVP
-			break
-		}
-		totalExcess = int64(sum)
 		vpMap[addr] = capVP
 		logger.LogInfo("per-model voting power cap applied",
 			types.EpochGroup,
@@ -883,56 +829,8 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 			"cappedHost", addr,
 			"originalVP", vp,
 			"capVP", capVP,
-			"excess", excess,
+			"burned", excess,
 		)
-	}
-	if totalExcess == 0 {
-		return
-	}
-
-	// Second pass: collect recipients strictly below the cap, sum their VP.
-	recipientTotal := int64(0)
-	recipientKeys := make([]string, 0, len(keys))
-	for _, addr := range keys {
-		if vpMap[addr] < capVP {
-			recipientKeys = append(recipientKeys, addr)
-			// No overflow possible: all vpMap values are part of totalVP which
-			// we've already summed safely above.
-			recipientTotal += vpMap[addr]
-		}
-	}
-	// Stable order for deterministic distribution — re-sort by addr for
-	// predictable rounding-remainder assignment.
-	slices.Sort(recipientKeys)
-
-	if recipientTotal == 0 {
-		logger.LogWarn("per-model voting power cap: no redistribution room, excess dropped",
-			types.EpochGroup,
-			"modelId", modelID,
-			"excess", totalExcess,
-		)
-		return
-	}
-
-	// Third pass: distribute excess proportionally using safe big-int math.
-	// share = excess * recipientVP / recipientTotal.
-	distributed := int64(0)
-	for _, addr := range recipientKeys {
-		share, ok := mulDivInt64(totalExcess, vpMap[addr], recipientTotal)
-		if !ok {
-			logger.LogWarn("per-model voting power cap: share overflow, skipping recipient",
-				types.EpochGroup,
-				"modelId", modelID,
-				"recipient", addr,
-			)
-			continue
-		}
-		vpMap[addr] += share
-		distributed += share
-	}
-	// Rounding remainder: give to the first recipient (deterministic).
-	if remainder := totalExcess - distributed; remainder > 0 && len(recipientKeys) > 0 {
-		vpMap[recipientKeys[0]] += remainder
 	}
 }
 

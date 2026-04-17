@@ -1059,72 +1059,83 @@ func sumVP(m map[string]int64) int64 {
 }
 
 func TestCapPerModelVotingPowers_NoCapNeeded(t *testing.T) {
+	// Nobody exceeds the cap, so the map is untouched.
 	vp := map[string]int64{
 		"a": 100,
 		"b": 100,
 		"c": 100,
 	}
 	capPct := sdkmath.LegacyNewDecWithPrec(50, 2) // 50%
-	before := sumVP(vp)
 
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 
 	require.Equal(t, int64(100), vp["a"])
 	require.Equal(t, int64(100), vp["b"])
 	require.Equal(t, int64(100), vp["c"])
-	require.Equal(t, before, sumVP(vp), "total VP must be conserved")
 }
 
-func TestCapPerModelVotingPowers_CapsAndRedistributes(t *testing.T) {
+func TestCapPerModelVotingPowers_ClipsWhaleAndBurnsExcess(t *testing.T) {
+	// Whale holds 80% of the group; cap is 50%. The whale's excess is burned,
+	// not redistributed. Small participants are unchanged.
 	vp := map[string]int64{
-		"whale":  800, // 80% of group
+		"whale":  800, // 80% of original total
 		"small1": 100, // 10%
 		"small2": 100, // 10%
 	}
+	originalTotal := sumVP(vp)                    // 1000
 	capPct := sdkmath.LegacyNewDecWithPrec(50, 2) // 50% cap
-	before := sumVP(vp)
+	capVP := capPct.MulInt64(originalTotal).TruncateInt64()
 
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 
-	// Total conservation
-	require.Equal(t, before, sumVP(vp), "total VP must be conserved")
-
-	// Whale must be at or below cap.
-	require.LessOrEqual(t, vp["whale"], before/2,
-		"whale should not exceed 50%% of total")
-
-	// Small participants should have grown.
-	require.Greater(t, vp["small1"], int64(100))
-	require.Greater(t, vp["small2"], int64(100))
+	require.Equal(t, capVP, vp["whale"], "whale should be clipped to capVP")
+	require.Equal(t, int64(100), vp["small1"], "small1 must be unchanged (no redistribution)")
+	require.Equal(t, int64(100), vp["small2"], "small2 must be unchanged (no redistribution)")
+	// Total shrank by the burned amount.
+	require.Equal(t, originalTotal-(800-capVP), sumVP(vp),
+		"post-cap total should equal originalTotal minus the burned excess")
 }
 
-func TestCapPerModelVotingPowers_ConvergesInMultipleIterations(t *testing.T) {
-	// Extreme case: one whale at 90% of total. With only 2 participants,
-	// the algorithm caps the whale at the initial 30% cap (floor(1000*0.3)=300),
-	// then attempts to redistribute the 600 excess to hosts below the cap.
-	// The only other host is "small" at 100, which absorbs enough to also hit
-	// the cap, and the remaining excess is dropped (warning logged) because
-	// there is no remaining recipient below the cap.
-	//
-	// Expected final: whale and small both roughly at the per-iteration cap.
-	// Neither should end up above the cap of the ORIGINAL total (300).
+func TestCapPerModelVotingPowers_MultipleHostsOverCap(t *testing.T) {
+	// Two hosts share dominance: each holds 40% of the group and the cap is
+	// 30%. Both must be clipped independently to the cap computed against
+	// the ORIGINAL total (not the shrinking total). A regression to
+	// iterative or post-clip-recomputed behavior would produce a different
+	// capVP on the second host.
+	vp := map[string]int64{
+		"a": 400,
+		"b": 400,
+		"c": 200,
+	}
+	originalTotal := sumVP(vp)                    // 1000
+	capPct := sdkmath.LegacyNewDecWithPrec(30, 2) // 30%
+	capVP := capPct.MulInt64(originalTotal).TruncateInt64()
+
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	require.Equal(t, capVP, vp["a"], "a must be clipped to the original-total cap")
+	require.Equal(t, capVP, vp["b"], "b must be clipped to the original-total cap")
+	require.Equal(t, int64(200), vp["c"], "c is below the cap and must be unchanged")
+}
+
+func TestCapPerModelVotingPowers_TinyGroupClipsCleanly(t *testing.T) {
+	// Two-host extreme: whale at 90% in a 1000-VP group, 30% cap. Whale is
+	// clipped to 300, small stays at 100, 600 is burned. The 'converges in
+	// multiple iterations' problem from the redistribution implementation
+	// doesn't arise at all under burn — it's a single clip.
 	vp := map[string]int64{
 		"whale": 900,
 		"small": 100,
 	}
 	originalTotal := sumVP(vp)
 	capPct := sdkmath.LegacyNewDecWithPrec(30, 2) // 30% cap
-	originalCap := capPct.MulInt64(originalTotal).TruncateInt64()
+	capVP := capPct.MulInt64(originalTotal).TruncateInt64()
 
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 
-	// Whale must not exceed the cap computed against the original total.
-	require.LessOrEqual(t, vp["whale"], originalCap,
-		"whale (%d) should be at or below the original 30%% cap (%d)",
-		vp["whale"], originalCap)
-	// Small should have been redistributed UP toward the cap.
-	require.Greater(t, vp["small"], int64(100),
-		"small (%d) should have grown via redistribution", vp["small"])
+	require.Equal(t, capVP, vp["whale"], "whale should be clipped to capVP")
+	require.Equal(t, int64(100), vp["small"], "small must be unchanged")
+	require.Equal(t, int64(100)+capVP, sumVP(vp), "post-cap total = small + capVP")
 }
 
 func TestCapPerModelVotingPowers_ZeroCapIsDisabled(t *testing.T) {
@@ -1149,10 +1160,11 @@ func TestCapPerModelVotingPowers_ZeroCapIsDisabled(t *testing.T) {
 }
 
 func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
+	// Single-host groups are left alone: with only one participant, capping
+	// them would just burn VP for no protective benefit.
 	vp := map[string]int64{"solo": 1000}
 	capPct := sdkmath.LegacyNewDecWithPrec(10, 2) // 10%
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
-	require.Equal(t, int64(1000), vp["solo"],
-		"single-host groups must be left alone since there is no one to redistribute to")
+	require.Equal(t, int64(1000), vp["solo"])
 }
 
