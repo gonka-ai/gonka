@@ -790,9 +790,13 @@ type votingPowerCapLogger interface {
 
 // sumInt64Safe sums the values of a string-keyed int64 map, returning
 // (sum, true) on success or (0, false) if the sum would overflow int64.
+// Iterates over sorted keys so the accumulation order stays deterministic,
+// which keeps any future log/event added inside the loop identical across
+// nodes.
 func sumInt64Safe(m map[string]int64) (int64, bool) {
 	var total int64
-	for _, v := range m {
+	for _, k := range sortedKeys(m) {
+		v := m[k]
 		if v < 0 {
 			return 0, false
 		}
@@ -982,10 +986,13 @@ func capAggregatedVotingPowers(
 		return
 	}
 
-	// Compute per-host aggregated VP (with overflow safety).
+	// Compute per-host aggregated VP (with overflow safety). Iterate over
+	// sorted addresses so any log/event added here stays deterministic
+	// across nodes.
 	hostTotals := make(map[string]int64, len(participantVP))
 	var totalVP int64
-	for addr, vps := range participantVP {
+	for _, addr := range sortedKeys(participantVP) {
+		vps := participantVP[addr]
 		var sum int64
 		for _, mvp := range vps {
 			if mvp.VotingPower < 0 {
@@ -1084,8 +1091,10 @@ func capAggregatedVotingPowers(
 		}
 		capped[overAddr] = true
 
-		// Redistribute freed VP within each affected model group.
-		for modelID, freed := range freedPerModel {
+		// Redistribute freed VP within each affected model group. Sorted
+		// to keep log ordering deterministic across nodes.
+		for _, modelID := range sortedKeys(freedPerModel) {
+			freed := freedPerModel[modelID]
 			if freed <= 0 {
 				continue
 			}

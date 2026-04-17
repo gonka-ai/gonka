@@ -104,6 +104,10 @@ data class DelegationParams(
     val capFactor: Decimal = Decimal(0, 0),
     @SerializedName("initial_model_id")
     val initialModelId: String = "",
+    @SerializedName("max_model_voting_power_percentage")
+    val maxModelVotingPowerPercentage: Decimal = Decimal(0, 0),
+    @SerializedName("max_aggregated_voting_power_percentage")
+    val maxAggregatedVotingPowerPercentage: Decimal = Decimal(0, 0),
 )
 
 data class TokenomicsParams(
