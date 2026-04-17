@@ -29,6 +29,15 @@ func (k Keeper) verificationSubmissionsStore(ctx sdk.Context, epochID uint64) pr
 	return prefix.NewStore(store, types.VerificationSubmissionEpochPrefix(epochID))
 }
 
+// dealerComplaintsStore returns a prefix.Store scoped to all dealer
+// complaints for a single epoch. Keys within the returned store are the
+// 8-byte sub-keys produced by types.DealerComplaintSubKey (dealer index
+// then complainer index, both big-endian uint32).
+func (k Keeper) dealerComplaintsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.DealerComplaintEpochPrefix(epochID))
+}
+
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
 func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
 	// Get module parameters
@@ -322,11 +331,23 @@ func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData
 		}
 	}
 
+	// Sync any inline dealer complaints to their sub-keys. Callers that
+	// pre-populate the slice (genesis import, tests) hit this path; the
+	// hot-path verifier handler writes sub-keys directly via
+	// SetDealerComplaint and passes DealerComplaints = nil here.
+	for i := range epochBLSData.DealerComplaints {
+		complaint := epochBLSData.DealerComplaints[i]
+		if err := k.SetDealerComplaint(ctx, epochBLSData.EpochId, &complaint); err != nil {
+			return fmt.Errorf("sync dealer complaint (%d,%d): %w", complaint.DealerIndex, complaint.ComplainerIndex, err)
+		}
+	}
+
 	// Persist the base struct with the split-out fields zeroed so writes
 	// stay constant-size. We copy to avoid mutating the caller's struct.
 	baseCopy := epochBLSData
 	baseCopy.DealerParts = nil
 	baseCopy.VerificationSubmissions = nil
+	baseCopy.DealerComplaints = nil
 
 	key := types.EpochBLSDataKey(baseCopy.EpochId)
 	value, err := k.cdc.Marshal(&baseCopy)
@@ -423,6 +444,90 @@ func (k Keeper) GetVerificationSubmission(ctx sdk.Context, epochID uint64, parti
 // epoch teardown.
 func (k Keeper) DeleteVerificationSubmissionsForEpoch(ctx sdk.Context, epochID uint64) error {
 	store := k.verificationSubmissionsStore(ctx, epochID)
+	it := store.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		store.Delete(key)
+	}
+	return nil
+}
+
+// SetDealerComplaint writes a single dealer complaint under its own
+// sub-key. Cost is constant in the number of complaints already recorded
+// for the epoch, so every verifier's complaint writes cost the same gas
+// regardless of submission order.
+func (k Keeper) SetDealerComplaint(ctx sdk.Context, epochID uint64, complaint *types.DealerComplaint) error {
+	if complaint == nil {
+		return fmt.Errorf("nil dealer complaint")
+	}
+	value, err := k.cdc.Marshal(complaint)
+	if err != nil {
+		return fmt.Errorf("marshal dealer complaint: %w", err)
+	}
+	k.dealerComplaintsStore(ctx, epochID).Set(
+		types.DealerComplaintSubKey(complaint.DealerIndex, complaint.ComplainerIndex),
+		value,
+	)
+	return nil
+}
+
+// GetDealerComplaint reads a single dealer complaint by its (dealer,
+// complainer) compound key. Returns (nil, nil) if no such complaint
+// exists.
+func (k Keeper) GetDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) (*types.DealerComplaint, error) {
+	value := k.dealerComplaintsStore(ctx, epochID).Get(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+	if value == nil {
+		return nil, nil
+	}
+	var c types.DealerComplaint
+	if err := k.cdc.Unmarshal(value, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// HasDealerComplaint reports whether a complaint exists for the given
+// (dealer, complainer) pair without unmarshaling the value.
+func (k Keeper) HasDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) bool {
+	return k.dealerComplaintsStore(ctx, epochID).Has(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+}
+
+// ListDealerComplaintsForEpoch returns every dealer complaint recorded for
+// an epoch, in ascending (dealer_index, complainer_index) order. Used by
+// GetEpochBLSData's rehydration path and by phase-transition / dispute
+// paths that need the full set.
+func (k Keeper) ListDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) ([]types.DealerComplaint, error) {
+	it := k.dealerComplaintsStore(ctx, epochID).Iterator(nil, nil)
+	defer it.Close()
+
+	var out []types.DealerComplaint
+	for ; it.Valid(); it.Next() {
+		var c types.DealerComplaint
+		if err := k.cdc.Unmarshal(it.Value(), &c); err != nil {
+			return nil, fmt.Errorf("unmarshal dealer complaint: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// DeleteDealerComplaint removes a single (dealer, complainer) sub-key.
+// Used by phase transition when filtering out complaints against dealers
+// that failed candidacy.
+func (k Keeper) DeleteDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) {
+	k.dealerComplaintsStore(ctx, epochID).Delete(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+}
+
+// DeleteDealerComplaintsForEpoch removes every dealer complaint sub-key
+// for an epoch. Mirrors the other epoch-teardown helpers.
+func (k Keeper) DeleteDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) error {
+	store := k.dealerComplaintsStore(ctx, epochID)
 	it := store.Iterator(nil, nil)
 
 	var keysToDelete [][]byte
@@ -536,7 +641,42 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 		return types.EpochBLSData{}, err
 	}
 
+	// Dealer complaints rehydrate differently from the two index-positioned
+	// slices above: complaints are sparse (one per real (dealer, complainer)
+	// pair), so we append to an initially-empty slice in sub-key order
+	// rather than placing into fixed indices. Legacy inline entries in the
+	// base struct serve as the baseline; sub-key entries overlay on top
+	// when they share the same (dealer, complainer) pair.
+	legacyByPair := make(map[uint64]int, len(epochBLSData.DealerComplaints))
+	for i, c := range epochBLSData.DealerComplaints {
+		legacyByPair[dealerComplaintPairKey(c.DealerIndex, c.ComplainerIndex)] = i
+	}
+	cIt := k.dealerComplaintsStore(ctx, epochID).Iterator(nil, nil)
+	defer cIt.Close()
+	for ; cIt.Valid(); cIt.Next() {
+		dealerIdx, complainerIdx, err := types.ParseDealerComplaintSubKey(cIt.Key())
+		if err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("parse dealer complaint sub-key: %w", err)
+		}
+		var c types.DealerComplaint
+		if err := k.cdc.Unmarshal(cIt.Value(), &c); err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("unmarshal dealer complaint (%d,%d): %w", dealerIdx, complainerIdx, err)
+		}
+		if existingIdx, ok := legacyByPair[dealerComplaintPairKey(dealerIdx, complainerIdx)]; ok {
+			epochBLSData.DealerComplaints[existingIdx] = c
+			continue
+		}
+		epochBLSData.DealerComplaints = append(epochBLSData.DealerComplaints, c)
+	}
+
 	return epochBLSData, nil
+}
+
+// dealerComplaintPairKey packs a (dealer, complainer) pair into a single
+// uint64 so it can be used as a map key for fast deduplication during
+// rehydration.
+func dealerComplaintPairKey(dealerIdx, complainerIdx uint32) uint64 {
+	return (uint64(dealerIdx) << 32) | uint64(complainerIdx)
 }
 
 // rehydrateFromSubKeys scans every entry in store and, for each sub-key whose

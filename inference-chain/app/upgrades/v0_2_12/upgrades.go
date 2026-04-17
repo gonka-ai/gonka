@@ -3,6 +3,7 @@ package v0_2_12
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	sdkmath "cosmossdk.io/math"
@@ -85,6 +86,16 @@ func CreateUpgradeHandler(
 
 		err = adjustBLSParameters(ctx, blsKeeper)
 		if err != nil {
+			return nil, err
+		}
+
+		// Migrate any in-flight EpochBLSData entries from the pre-split
+		// inline layout to per-entry sub-keys. This must run before the
+		// new verifier/dealer/group-validation handlers can touch state,
+		// since they now null out split fields before SetEpochBLSData and
+		// would otherwise drop legacy inline data.
+		if err := migrateEpochBLSDataToSubKeys(sdk.UnwrapSDKContext(ctx), blsKeeper); err != nil {
+			k.LogError("Error migrating EpochBLSData to sub-keys for v0.2.12", types.Upgrades, "err", err)
 			return nil, err
 		}
 
@@ -251,6 +262,38 @@ func adjustBLSParameters(ctx context.Context, blsKeeper blskeeper.Keeper) error 
 	}
 
 	return blsKeeper.SetParams(ctx, params)
+}
+
+// migrateEpochBLSDataToSubKeys migrates every existing EpochBLSData entry
+// from the legacy "everything inline" layout to the v0.2.12 split layout
+// where DealerParts, VerificationSubmissions, and DealerComplaints live
+// under per-entry sub-keys.
+//
+// The fix that split these fields relies on the invariant that no inline
+// entries linger in the base struct after upgrade — if a verifier tx lands
+// post-upgrade and the base still has legacy inline entries, the handler
+// nulls them out before SetEpochBLSData to avoid the O(N) re-sync cost,
+// which would silently discard the legacy data. This migration runs once
+// in the upgrade block (before any user txs) to eliminate that risk.
+//
+// SetEpochBLSData itself does the work: its inline sync loops write any
+// populated entries to sub-keys, and the base is persisted with the split
+// fields zeroed. Each entry's re-Set is idempotent, so re-running the
+// migration would be a no-op.
+func migrateEpochBLSDataToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
+	all := blsKeeper.GetAllEpochBLSData(ctx)
+	for _, ebd := range all {
+		hasInline := len(ebd.DealerParts) > 0 ||
+			len(ebd.VerificationSubmissions) > 0 ||
+			len(ebd.DealerComplaints) > 0
+		if !hasInline {
+			continue
+		}
+		if err := blsKeeper.SetEpochBLSData(ctx, ebd); err != nil {
+			return fmt.Errorf("migrate EpochBLSData epoch=%d: %w", ebd.EpochId, err)
+		}
+	}
+	return nil
 }
 
 func removeTopMiner(ctx context.Context, k keeper.Keeper) error {

@@ -75,6 +75,148 @@ func TestSetEpochBLSData_StripsAndSyncsVerificationSubmissions(t *testing.T) {
 	require.Equal(t, []bool{true, false, true}, got.VerificationSubmissions[2].DealerValidity)
 }
 
+// TestSetEpochBLSData_StripsAndSyncsDealerComplaints pins the same
+// strip-and-sync invariant for DealerComplaints. The verifier handler
+// appended complaints to an inline slice pre-split, causing O(N^2) gas
+// growth; the split moves them to per-(dealer, complainer) sub-keys.
+func TestSetEpochBLSData_StripsAndSyncsDealerComplaints(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	const epochID = uint64(11)
+
+	epochData := types.EpochBLSData{
+		EpochId: epochID,
+		Participants: []types.BLSParticipantInfo{
+			{Address: "addr-0"},
+			{Address: "addr-1"},
+			{Address: "addr-2"},
+		},
+		DealerComplaints: []types.DealerComplaint{
+			{DealerIndex: 0, ComplainerIndex: 1, DisputedSlotIndex: 3, DisputedCiphertextIndex: 7},
+			{DealerIndex: 2, ComplainerIndex: 0, DisputedSlotIndex: 11, DisputedCiphertextIndex: 22, ResponseSubmitted: true},
+		},
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, epochData))
+
+	rawStore := k.storeService.OpenKVStore(ctx)
+	rawBz, err := rawStore.Get(types.EpochBLSDataKey(epochID))
+	require.NoError(t, err)
+	require.NotNil(t, rawBz)
+	var persisted types.EpochBLSData
+	require.NoError(t, k.cdc.Unmarshal(rawBz, &persisted))
+	require.Empty(t, persisted.DealerComplaints,
+		"base struct must have zero inline dealer complaints; otherwise the N^2 write-per-byte bug returns")
+
+	c01, err := k.GetDealerComplaint(ctx, epochID, 0, 1)
+	require.NoError(t, err)
+	require.NotNil(t, c01)
+	require.Equal(t, uint32(3), c01.DisputedSlotIndex)
+	require.Equal(t, uint32(7), c01.DisputedCiphertextIndex)
+
+	c20, err := k.GetDealerComplaint(ctx, epochID, 2, 0)
+	require.NoError(t, err)
+	require.NotNil(t, c20)
+	require.True(t, c20.ResponseSubmitted, "dispute-phase mutations must round-trip through sub-key storage")
+
+	// No complaint for (dealer 1, complainer 2).
+	require.False(t, k.HasDealerComplaint(ctx, epochID, 1, 2))
+
+	// GetEpochBLSData rehydrates the slice; order is ascending by
+	// (dealerIdx, complainerIdx) — (0,1) before (2,0).
+	got, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, got.DealerComplaints, 2)
+	require.Equal(t, uint32(0), got.DealerComplaints[0].DealerIndex)
+	require.Equal(t, uint32(1), got.DealerComplaints[0].ComplainerIndex)
+	require.Equal(t, uint32(2), got.DealerComplaints[1].DealerIndex)
+	require.Equal(t, uint32(0), got.DealerComplaints[1].ComplainerIndex)
+}
+
+// TestDeleteDealerComplaintsForEpoch_ClearsAllSubKeys exercises the path
+// used by phase transitions when filtering out complaints against
+// non-candidate dealers. The filter needs the sub-keys gone, otherwise
+// stale complaints would leak into the next phase.
+func TestDeleteDealerComplaintsForEpoch_ClearsAllSubKeys(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	const epochID = uint64(13)
+
+	complaints := []types.DealerComplaint{
+		{DealerIndex: 0, ComplainerIndex: 1},
+		{DealerIndex: 0, ComplainerIndex: 2},
+		{DealerIndex: 3, ComplainerIndex: 4},
+	}
+	for i := range complaints {
+		require.NoError(t, k.SetDealerComplaint(ctx, epochID, &complaints[i]))
+	}
+	before, err := k.ListDealerComplaintsForEpoch(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, before, 3)
+
+	require.NoError(t, k.DeleteDealerComplaintsForEpoch(ctx, epochID))
+	after, err := k.ListDealerComplaintsForEpoch(ctx, epochID)
+	require.NoError(t, err)
+	require.Empty(t, after)
+}
+
+// TestGetEpochBLSData_MergesLegacyInlineAndSubKeyDealerComplaints pins the
+// legacy-compat behavior for complaints: legacy inline complaints remain
+// visible after upgrade, and any sub-key entry for the same (dealer,
+// complainer) pair overrides the inline value. Critical for the dispute
+// flow — we can't silently lose a complaint just because it was written
+// before the split, and we can't serve a stale complaint after a
+// post-upgrade SetDealerComplaint updates it.
+func TestGetEpochBLSData_MergesLegacyInlineAndSubKeyDealerComplaints(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	const epochID = uint64(15)
+
+	// Pre-split-handler shape: base struct with inline DealerComplaints,
+	// no sub-keys.
+	legacy := &types.EpochBLSData{
+		EpochId: epochID,
+		Participants: []types.BLSParticipantInfo{
+			{Address: "addr-0"}, {Address: "addr-1"}, {Address: "addr-2"},
+		},
+		DealerComplaints: []types.DealerComplaint{
+			{DealerIndex: 0, ComplainerIndex: 1, DisputedSlotIndex: 5},
+			{DealerIndex: 2, ComplainerIndex: 0, DisputedSlotIndex: 9},
+		},
+	}
+	bz, err := k.cdc.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, k.storeService.OpenKVStore(ctx).Set(types.EpochBLSDataKey(epochID), bz))
+
+	// Post-split-handler writes an updated complaint for (0,1) via the
+	// sub-key path — e.g. the dispute handler mutating ResponseSubmitted.
+	require.NoError(t, k.SetDealerComplaint(ctx, epochID, &types.DealerComplaint{
+		DealerIndex:       0,
+		ComplainerIndex:   1,
+		DisputedSlotIndex: 5,
+		ResponseSubmitted: true,
+	}))
+
+	got, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, got.DealerComplaints, 2,
+		"the legacy-only (2,0) complaint must still be visible alongside the sub-key-overridden (0,1)")
+
+	// Find the (0,1) entry — sub-key override should have won.
+	var saw01, saw20 bool
+	for _, c := range got.DealerComplaints {
+		if c.DealerIndex == 0 && c.ComplainerIndex == 1 {
+			saw01 = true
+			require.True(t, c.ResponseSubmitted, "sub-key entry must override the legacy inline value")
+		}
+		if c.DealerIndex == 2 && c.ComplainerIndex == 0 {
+			saw20 = true
+			require.False(t, c.ResponseSubmitted, "legacy-only complaint must survive rehydration unchanged")
+		}
+	}
+	require.True(t, saw01)
+	require.True(t, saw20)
+}
+
 // TestGetEpochBLSData_MergesLegacyInlineAndSubKeyVerificationSubmissions
 // pins the legacy-compatibility behavior: an EpochBLSData written by a
 // pre-split handler (inline VerificationSubmissions) must continue to work

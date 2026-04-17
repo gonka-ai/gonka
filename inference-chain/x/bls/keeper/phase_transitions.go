@@ -204,6 +204,12 @@ func (k Keeper) transitionFromVerifyingToDisputing(ctx sdk.Context, epochBLSData
 			filteredComplaints = append(filteredComplaints, complaint)
 		}
 	}
+	// Wipe all existing complaint sub-keys so filtered-out entries don't
+	// linger. SetEpochBLSData below will resync the kept subset via its
+	// inline sync loop.
+	if err := k.DeleteDealerComplaintsForEpoch(ctx, epochBLSData.EpochId); err != nil {
+		return fmt.Errorf("failed to clear dealer complaint sub-keys for epoch %d: %w", epochBLSData.EpochId, err)
+	}
 	epochBLSData.DealerComplaints = filteredComplaints
 
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING

@@ -21,6 +21,7 @@ var (
 	EpochBLSDataPrefix            = []byte("epoch_bls_data")
 	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
 	VerificationSubmissionPrefix  = []byte("epoch_bls_verification_submission/")
+	DealerComplaintPrefix         = []byte("epoch_bls_dealer_complaint/")
 	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
 	ExpirationIndexPrefix         = []byte("expiration_index")
 	GroupValidationPrefix         = []byte("group_validation_")
@@ -119,6 +120,46 @@ func ParseVerificationSubmissionSubKey(sub []byte) (uint32, error) {
 		return 0, fmt.Errorf("invalid verification submission sub-key length %d (want 4)", len(sub))
 	}
 	return binary.BigEndian.Uint32(sub), nil
+}
+
+// DealerComplaintEpochPrefix returns the prefix used to iterate all dealer
+// complaints collected during an epoch's verifying phase. The sub-key within
+// the returned store is the compound (dealer_index, complainer_index) pair
+// so (dealer, complainer) uniquely identifies a complaint entry.
+//
+// Same rationale as the other splits: the verifier handler used to append
+// every complaint into a single inline slice on EpochBLSData, so the Nth
+// verifier's tx re-serialized every prior verifier's complaints. Per-entry
+// sub-keys make each complaint's write cost constant.
+//
+// Full layout: {DealerComplaintPrefix}{epoch_id:uint64 BE}/{dealer_index:uint32 BE}{complainer_index:uint32 BE}.
+func DealerComplaintEpochPrefix(epochID uint64) []byte {
+	prefix := make([]byte, len(DealerComplaintPrefix)+8+1)
+	copy(prefix, DealerComplaintPrefix)
+	binary.BigEndian.PutUint64(prefix[len(DealerComplaintPrefix):], epochID)
+	prefix[len(DealerComplaintPrefix)+8] = '/'
+	return prefix
+}
+
+// DealerComplaintSubKey returns the sub-key portion of a dealer complaint
+// entry (the bytes under DealerComplaintEpochPrefix). Fixed-width encoding
+// keeps the sort order deterministic and the parser trivial.
+func DealerComplaintSubKey(dealerIndex, complainerIndex uint32) []byte {
+	sub := make([]byte, 8)
+	binary.BigEndian.PutUint32(sub[0:4], dealerIndex)
+	binary.BigEndian.PutUint32(sub[4:8], complainerIndex)
+	return sub
+}
+
+// ParseDealerComplaintSubKey decodes a sub-key produced by
+// DealerComplaintSubKey back into (dealer_index, complainer_index).
+func ParseDealerComplaintSubKey(sub []byte) (uint32, uint32, error) {
+	if len(sub) != 8 {
+		return 0, 0, fmt.Errorf("invalid dealer complaint sub-key length %d (want 8)", len(sub))
+	}
+	dealerIndex := binary.BigEndian.Uint32(sub[0:4])
+	complainerIndex := binary.BigEndian.Uint32(sub[4:8])
+	return dealerIndex, complainerIndex, nil
 }
 
 // ThresholdSigningRequestKey generates a key for storing ThresholdSigningRequest by request ID
