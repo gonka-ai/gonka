@@ -20,6 +20,7 @@ import (
 const (
 	DevshardGroupSize   = 16
 	DevshardQuorumSlots = 2*DevshardGroupSize/3 + 1
+	DevshardMaxNonce    = 20_000
 	// DevshardSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized devshard states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -30,6 +31,32 @@ const (
 // DevshardQuorumFor returns the minimum slot votes required for a given group size.
 func DevshardQuorumFor(groupSize int) int {
 	return 2*groupSize/3 + 1
+}
+
+// devshardAssignedUpperBoundForSlot returns the maximum number of inference IDs
+// that could have been assigned to a slot, based on devshard's executor routing.
+// This mirrors the devshard-side contract in `devshard/user/user.go`, where
+// diffs advance nonce from `latest+1`, and `devshard/state/machine.go`, where
+// `inference_id == nonce` is routed as `group[inference_id % len(group)]`.
+// Because nonce 0 is never used for a real inference diff, slot 0 first
+// receives work at nonce `slotCount`, while slots 1..slotCount-1 first receive
+// work at their matching nonce.
+func devshardAssignedUpperBoundForSlot(latestNonce, slotCount uint64, slotID uint32) (uint64, error) {
+	if slotCount == 0 {
+		return 0, fmt.Errorf("slot count cannot be zero")
+	}
+	if uint64(slotID) >= slotCount {
+		return 0, fmt.Errorf("slot %d out of range for slot count %d", slotID, slotCount)
+	}
+
+	firstAssignedNonce := uint64(slotID)
+	if slotID == 0 {
+		firstAssignedNonce = slotCount
+	}
+	if latestNonce < firstAssignedNonce {
+		return 0, nil
+	}
+	return 1 + (latestNonce-firstAssignedNonce)/slotCount, nil
 }
 
 // WarmKeyChecker returns true if grantee has an authz grant from granter.
@@ -46,6 +73,9 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 	if msg.Version == "" {
 		return fmt.Errorf("version is required")
+	}
+	if msg.Nonce > DevshardMaxNonce {
+		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, DevshardMaxNonce)
 	}
 	const maxVersionLength = 128
 	if len(msg.Version) > maxVersionLength {
@@ -121,6 +151,10 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 
 	// Verify total cost + fees does not exceed escrow amount
+	slotCount := uint64(len(escrow.Slots))
+	if slotCount == 0 {
+		return fmt.Errorf("no slots in escrow")
+	}
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
@@ -128,6 +162,17 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
+		assignedToSlot, err := devshardAssignedUpperBoundForSlot(msg.Nonce, slotCount, hs.SlotId)
+		if err != nil {
+			return err
+		}
+		if uint64(hs.Missed) > assignedToSlot {
+			return fmt.Errorf("slot %d missed count %d exceeds assigned per slot %d", hs.SlotId, hs.Missed, assignedToSlot)
+		}
+		completed := assignedToSlot - uint64(hs.Missed)
+		if uint64(hs.Invalid) > completed {
+			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
+		}
 		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
 		if carry != 0 {
 			return fmt.Errorf("total cost overflow")
