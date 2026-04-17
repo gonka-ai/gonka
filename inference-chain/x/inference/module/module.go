@@ -711,9 +711,8 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
 	// Write per-model voting powers to ActiveParticipant for visibility.
-	// Pass the two governance-controlled concentration caps (per-model and
-	// aggregated). Both default to zero (disabled) until governance sets a
-	// concrete value.
+	// Pass the governance-controlled per-model concentration cap, which
+	// defaults to zero (disabled) until governance sets a concrete value.
 	am.computeAndSetVotingPowers(
 		activeParticipants,
 		participationState.calculator,

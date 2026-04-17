@@ -850,12 +850,13 @@ func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, m
 	// Design note: the cap is applied against the ORIGINAL pre-capping total.
 	// After redistribution, recipients can end up above capVP if the group
 	// is small and the capped host's excess is large relative to recipient
-	// capacity. This is an intentional trade-off: total voting power is
-	// conserved (no burn) at the cost of strict per-host enforcement on
-	// tiny groups. Alternatives (iterate to convergence, burn excess) were
-	// considered and rejected — iteration diverged non-trivially under
-	// rounding and burning changed total VP mid-pipeline, which has
-	// knock-on effects in downstream reward and slot-sampling calculations.
+	// capacity. This is an intentional trade-off: total voting power within
+	// the group is conserved (no burn) at the cost of strict per-host
+	// enforcement on tiny groups. Alternatives (iterate to convergence,
+	// burn excess) were considered and rejected. Iteration did not converge
+	// cleanly under integer rounding, and burning would shrink the group's
+	// total VP, which then shifts every other host's share in ways that
+	// ripple through reward payouts and slot sampling.
 	totalExcess := int64(0)
 	for _, addr := range keys {
 		vp := vpMap[addr]
