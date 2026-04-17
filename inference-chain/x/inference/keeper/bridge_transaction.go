@@ -10,7 +10,16 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SetBridgeTransaction stores a bridge transaction using content-based key
+// SetBridgeTransaction stores a bridge transaction.
+//
+// The Validators slice is split off into a per-validator KeySet so the
+// base BridgeTransaction value stays constant-size as more validators
+// confirm. Any inline Validators entries on the input tx are synced to
+// the KeySet here; the stored value is persisted with Validators zeroed.
+// Hot-path callers should add the new validator via
+// AddBridgeTransactionValidator directly and clear Validators on the
+// in-memory tx before calling SetBridgeTransaction to avoid redundant
+// re-sync writes on every confirmation.
 func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransaction) {
 	key, id, err := buildBridgeTransactionKey(tx)
 	if err != nil {
@@ -21,8 +30,33 @@ func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransa
 		return
 	}
 
+	// Sync any inline validator entries to the KeySet. Duplicates are a
+	// no-op at the KeySet level.
+	for _, validator := range tx.Validators {
+		if validator == "" {
+			continue
+		}
+		if err := k.BridgeTransactionValidators.Set(ctx, collections.Join4(tx.ChainId, tx.BlockNumber, tx.ReceiptIndex, validator)); err != nil {
+			k.LogError("Bridge exchange: Failed to sync validator to keyset",
+				types.Messages,
+				"chainId", tx.ChainId,
+				"blockNumber", tx.BlockNumber,
+				"receiptIndex", tx.ReceiptIndex,
+				"validator", validator,
+				"error", err,
+			)
+			return
+		}
+	}
+
+	// Persist a stripped copy so the base value stays small regardless
+	// of how many validators have confirmed. We copy to avoid mutating
+	// the caller's struct.
+	stripped := *tx
+	stripped.Id = id
+	stripped.Validators = nil
 	tx.Id = id
-	if err := k.BridgeTransactionsMap.Set(ctx, key, *tx); err != nil {
+	if err := k.BridgeTransactionsMap.Set(ctx, key, stripped); err != nil {
 		k.LogError("Bridge exchange: Failed to store bridge transaction",
 			types.Messages,
 			"chainId", tx.ChainId,
@@ -33,7 +67,47 @@ func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransa
 	}
 }
 
-// GetBridgeTransactionByContent retrieves a bridge transaction by its content hash
+// AddBridgeTransactionValidator records that `validator` confirmed the
+// transaction identified by (chainId, blockNumber, receiptIndex). Cost is
+// constant in the number of prior confirmations, so every validator's tx
+// pays the same gas regardless of confirmation order.
+func (k Keeper) AddBridgeTransactionValidator(ctx context.Context, tx *types.BridgeTransaction, validator string) error {
+	return k.BridgeTransactionValidators.Set(ctx, collections.Join4(tx.ChainId, tx.BlockNumber, tx.ReceiptIndex, validator))
+}
+
+// HasBridgeTransactionValidator reports whether `validator` has already
+// confirmed the transaction. Used by the bridge-exchange handler for its
+// O(1) duplicate check, replacing the prior O(N) slice scan.
+func (k Keeper) HasBridgeTransactionValidator(ctx context.Context, tx *types.BridgeTransaction, validator string) (bool, error) {
+	return k.BridgeTransactionValidators.Has(ctx, collections.Join4(tx.ChainId, tx.BlockNumber, tx.ReceiptIndex, validator))
+}
+
+// ListBridgeTransactionValidators returns every validator that has
+// confirmed the transaction, in ascending bech32-byte order. Used by
+// GetBridgeTransactionByContent's rehydration path and by tests.
+func (k Keeper) ListBridgeTransactionValidators(ctx context.Context, tx *types.BridgeTransaction) ([]string, error) {
+	rng := collections.NewSuperPrefixedQuadRange3[string, string, string, string](tx.ChainId, tx.BlockNumber, tx.ReceiptIndex)
+	it, err := k.BridgeTransactionValidators.Iterate(ctx, rng)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+	keys, err := it.Keys()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k.K4())
+	}
+	return out, nil
+}
+
+// GetBridgeTransactionByContent retrieves a bridge transaction by its
+// content hash. The Validators slice is rehydrated from the per-validator
+// KeySet. Any legacy inline Validators on the stored value serve as the
+// baseline and duplicate entries are de-duplicated so the returned slice
+// never carries a validator twice after mid-split migration.
 func (k Keeper) GetBridgeTransactionByContent(ctx context.Context, tx *types.BridgeTransaction) (*types.BridgeTransaction, bool) {
 	key, _, err := buildBridgeTransactionKey(tx)
 	if err != nil {
@@ -43,6 +117,27 @@ func (k Keeper) GetBridgeTransactionByContent(ctx context.Context, tx *types.Bri
 	storedTx, err := k.BridgeTransactionsMap.Get(ctx, key)
 	if err != nil {
 		return nil, false
+	}
+
+	subKeyed, err := k.ListBridgeTransactionValidators(ctx, &storedTx)
+	if err == nil && len(subKeyed) > 0 {
+		seen := make(map[string]struct{}, len(storedTx.Validators)+len(subKeyed))
+		merged := make([]string, 0, len(storedTx.Validators)+len(subKeyed))
+		for _, v := range storedTx.Validators {
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			merged = append(merged, v)
+		}
+		for _, v := range subKeyed {
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			merged = append(merged, v)
+		}
+		storedTx.Validators = merged
 	}
 	return &storedTx, true
 }
@@ -150,6 +245,23 @@ func (k Keeper) removeBridgeTransactionByID(ctx context.Context, id string) erro
 	parts := strings.SplitN(id, "_", 3)
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid bridge transaction id: %s", id)
+	}
+	// Clear any per-validator confirmation sub-keys before removing the
+	// base transaction so the split-out records don't linger in state.
+	rng := collections.NewSuperPrefixedQuadRange3[string, string, string, string](parts[0], parts[1], parts[2])
+	it, err := k.BridgeTransactionValidators.Iterate(ctx, rng)
+	if err != nil {
+		return fmt.Errorf("iterate bridge transaction validators for removal: %w", err)
+	}
+	keys, err := it.Keys()
+	it.Close()
+	if err != nil {
+		return fmt.Errorf("collect bridge transaction validator keys for removal: %w", err)
+	}
+	for _, k4 := range keys {
+		if err := k.BridgeTransactionValidators.Remove(ctx, k4); err != nil {
+			return fmt.Errorf("remove bridge transaction validator sub-key: %w", err)
+		}
 	}
 	return k.BridgeTransactionsMap.Remove(ctx, collections.Join3(parts[0], parts[1], parts[2]))
 }

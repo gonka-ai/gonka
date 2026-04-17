@@ -92,7 +92,15 @@ var (
 	BridgeMintRefundsPrefix         = collections.NewPrefix(61)
 	BridgeWithdrawalRefundsPrefix   = collections.NewPrefix(62)
 	BridgeWithdrawalTokenRefsPrefix = collections.NewPrefix(63)
-	ParamsKey                       = []byte("p_inference")
+	// BridgeTransactionValidatorsPrefix indexes per-validator confirmations
+	// for a bridge transaction. Split off of BridgeTransaction.Validators
+	// (an inline []string) so each validator's confirmation tx pays constant
+	// gas regardless of how many other validators have already confirmed.
+	// Keyed by (chainId, blockNumber, receiptIndex, validator) — the first
+	// three match BridgeTransactionsPrefix's triple, the fourth is the
+	// validator's canonical bech32 address.
+	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
+	ParamsKey                         = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

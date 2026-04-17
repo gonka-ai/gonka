@@ -109,6 +109,17 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Same split for BridgeTransaction.Validators. Pre-split, each
+		// validator's confirmation appended to the inline slice; post-split,
+		// the bridge-exchange handler writes per-validator sub-keys and
+		// nulls out Validators before SetBridgeTransaction. Move any
+		// legacy inline entries to the sub-key layout here so the hot
+		// path doesn't drop them.
+		if err := migrateBridgeTransactionValidatorsToSubKeys(ctx, k); err != nil {
+			k.LogError("Error migrating BridgeTransaction validators to sub-keys for v0.2.12", types.Upgrades, "err", err)
+			return nil, err
+		}
+
 		if err := setFeeParams(ctx, k); err != nil {
 			return nil, err
 		}
@@ -326,6 +337,37 @@ func migrateThresholdSigningRequestsToSubKeys(ctx sdk.Context, blsKeeper blskeep
 		if err := blsKeeper.StoreThresholdSigningRequest(ctx, &req); err != nil {
 			return fmt.Errorf("migrate ThresholdSigningRequest %x: %w", req.RequestId, err)
 		}
+	}
+	return nil
+}
+
+// migrateBridgeTransactionValidatorsToSubKeys splits legacy inline
+// BridgeTransaction.Validators into a per-validator KeySet. The
+// post-split bridge-exchange handler nulls out Validators before calling
+// SetBridgeTransaction to avoid re-syncing every validator on every
+// confirmation; without this migration, that null-out would drop any
+// legacy inline entries that hadn't been synced to the KeySet yet.
+//
+// Re-calling SetBridgeTransaction with the rehydrated tx drives
+// SetBridgeTransaction's own sync loop, which writes inline entries to
+// the KeySet and persists the base with Validators stripped. The
+// operation is idempotent; re-running would be a no-op.
+func migrateBridgeTransactionValidatorsToSubKeys(ctx context.Context, k keeper.Keeper) error {
+	iter, err := k.BridgeTransactionsMap.Iterate(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("iterate bridge transactions for migration: %w", err)
+	}
+	values, err := iter.Values()
+	iter.Close()
+	if err != nil {
+		return fmt.Errorf("collect bridge transactions for migration: %w", err)
+	}
+	for i := range values {
+		tx := values[i]
+		if len(tx.Validators) == 0 {
+			continue
+		}
+		k.SetBridgeTransaction(ctx, &tx)
 	}
 	return nil
 }

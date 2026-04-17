@@ -83,6 +83,11 @@ type (
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
+		// BridgeTransactionValidators records per-validator confirmations
+		// for a bridge transaction. Key is (chainId, blockNumber, receiptIndex, validator_bech32).
+		// Split off BridgeTransaction.Validators so the Nth validator's
+		// confirmation tx doesn't pay gas proportional to the first N-1.
+		BridgeTransactionValidators    collections.KeySet[collections.Quad[string, string, string, string]]
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
 		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
@@ -419,6 +424,12 @@ func NewKeeper(
 			"bridge_transactions",
 			collections.TripleKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey),
 			codec.CollValue[types.BridgeTransaction](cdc),
+		),
+		BridgeTransactionValidators: collections.NewKeySet(
+			sb,
+			types.BridgeTransactionValidatorsPrefix,
+			"bridge_transaction_validators",
+			collections.QuadKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey, collections.StringKey),
 		),
 		BridgeMintRefundsMap: collections.NewMap(
 			sb,
