@@ -70,7 +70,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
 		}
-		activeInCurrentEpoch[addr] = active
+		activeInCurrentEpoch[addr] = active && escrow.EpochIndex == currentEpochIndex
 	}
 	touchedParticipants := make(map[string]bool)
 
@@ -151,7 +151,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			if err := k.AddToCoinBalance(goCtx, participant, payout); err != nil {
+			if err := k.AddToCoinBalance(goCtx, participant, payout, "devshard_settle"); err != nil {
 				return nil, err
 			}
 			touchedParticipants[addr] = true
