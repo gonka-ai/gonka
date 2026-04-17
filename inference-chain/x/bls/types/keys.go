@@ -17,12 +17,17 @@ const (
 )
 
 var (
-	ParamsKey                       = []byte("p_bls")
-	EpochBLSDataPrefix              = []byte("epoch_bls_data")
-	DealerPartPrefix                = []byte("epoch_bls_dealer_part/")
-	ThresholdSigningRequestPrefix   = []byte("threshold_signing_request")
-	ExpirationIndexPrefix           = []byte("expiration_index")
-	GroupValidationPrefix           = []byte("group_validation_")
+	ParamsKey                     = []byte("p_bls")
+	EpochBLSDataPrefix            = []byte("epoch_bls_data")
+	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
+	ThresholdSigningRequestPrefix = []byte("threshold_signing_request")
+	ExpirationIndexPrefix         = []byte("expiration_index")
+	GroupValidationPrefix         = []byte("group_validation_")
+	// Deliberately does NOT start with GroupValidationPrefix so that a
+	// prefix.Store scoped to GroupValidationPrefix (used in genesis export
+	// and elsewhere) does not yield partial-sig entries. Keep this invariant
+	// in mind if renaming either prefix.
+	GroupValidationPartialSigPrefix = []byte("bls_partial_sig/")
 	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
 )
 
@@ -113,6 +118,45 @@ func ExpirationIndexPrefixForBlock(blockHeight int64) []byte {
 // GroupValidationKey generates a key for the group validation state by epoch ID
 func GroupValidationKey(epochID uint64) []byte {
 	return []byte(fmt.Sprintf("%s%d", GroupValidationPrefix, epochID))
+}
+
+// GroupValidationPartialSigEpochPrefix returns the prefix used to iterate all
+// per-participant partial signatures collected for a single new-epoch
+// validation round. Callers wrap the module KV store in a prefix.Store scoped
+// to this prefix, then use GroupValidationPartialSigSubKey for per-participant
+// point access.
+//
+// Storing each partial signature under its own key prevents the entire
+// GroupKeyValidationState from being rewritten on every
+// MsgSubmitGroupKeyValidationSignature. Before this change the Nth signer
+// paid gas proportional to N (because PartialSignatures accumulated inline),
+// creating the same simulate-vs-execute out-of-gas race that PR #1070 fixed
+// for dealer parts.
+//
+// Full layout: {GroupValidationPartialSigPrefix}{new_epoch_id:uint64 BE}/{participant_index:uint32 BE}.
+func GroupValidationPartialSigEpochPrefix(newEpochID uint64) []byte {
+	prefix := make([]byte, len(GroupValidationPartialSigPrefix)+8+1)
+	copy(prefix, GroupValidationPartialSigPrefix)
+	binary.BigEndian.PutUint64(prefix[len(GroupValidationPartialSigPrefix):], newEpochID)
+	prefix[len(GroupValidationPartialSigPrefix)+8] = '/'
+	return prefix
+}
+
+// GroupValidationPartialSigSubKey returns the sub-key portion of a partial
+// signature entry (the bytes under GroupValidationPartialSigEpochPrefix).
+func GroupValidationPartialSigSubKey(participantIndex uint32) []byte {
+	sub := make([]byte, 4)
+	binary.BigEndian.PutUint32(sub, participantIndex)
+	return sub
+}
+
+// ParseGroupValidationPartialSigSubKey decodes a sub-key produced by
+// GroupValidationPartialSigSubKey back into a participant index.
+func ParseGroupValidationPartialSigSubKey(sub []byte) (uint32, error) {
+	if len(sub) != 4 {
+		return 0, fmt.Errorf("invalid group validation partial sig sub-key length %d (want 4)", len(sub))
+	}
+	return binary.BigEndian.Uint32(sub), nil
 }
 
 func CompletedPostProcessRetryKey(requestID []byte) []byte {
