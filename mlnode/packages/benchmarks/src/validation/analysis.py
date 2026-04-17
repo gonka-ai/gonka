@@ -5,16 +5,32 @@ from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from collections.abc import Hashable, Mapping, Sequence
+from typing import Optional
 
 from validation.utils import distance2
 from validation import stats
 
 
-def process_data(items):
+def _truncate_position_logprobs(result, topk: Optional[int]):
+    """Return a lightweight copy of Result with per-position logprobs trimmed to topk."""
+    if topk is None:
+        return result
+
+    cloned_positions = []
+    for pos in result.results:
+        trimmed = dict(list(pos.logprobs.items())[:topk])
+        cloned_positions.append(pos.model_copy(update={"logprobs": trimmed}))
+    return result.model_copy(update={"results": cloned_positions})
+
+
+def process_data(items, topk: Optional[int] = None):
+    if topk is not None and topk <= 0:
+        raise ValueError(f"topk must be positive or None, got {topk}")
+
     distances = [
         distance2(
-            item.inference_result,
-            item.validation_result,
+            _truncate_position_logprobs(item.inference_result, topk),
+            _truncate_position_logprobs(item.validation_result, topk),
         )
         for item in items
     ]
