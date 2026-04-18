@@ -8,7 +8,17 @@ import (
 	"github.com/productscience/inference/x/bls/types"
 )
 
-// SubmitDealerPart handles the submission of dealer parts during the dealing phase of DKG
+// SubmitDealerPart handles the submission of dealer parts during the dealing phase of DKG.
+//
+// Persists the submitted dealer part under its own KV sub-key via SetDealerPart
+// rather than rewriting the entire EpochBLSData struct. Previously, each dealer
+// submission rewrote EpochBLSData with the growing DealerParts slice inline,
+// which meant the Nth dealer paid gas roughly N times the first dealer's cost.
+// Between the DAPI's simulation-time gas estimate and block execution, more
+// dealer parts could land, pushing the real write cost above the estimate and
+// failing later dealers with "out of gas" — which in turn dropped them from the
+// signing group and could cause the whole DKG round to fail. Per-sub-key writes
+// make every dealer pay the same constant gas regardless of submission order.
 func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmitDealerPart) (*types.MsgSubmitDealerPartResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -41,7 +51,9 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
 	}
 
-	// Check if this participant has already submitted their dealer part
+	// Check if this participant has already submitted their dealer part.
+	// GetEpochBLSData rehydrated DealerParts from sub-keys, so the check
+	// still works against the latest persisted state.
 	if epochBLSData.DealerParts[participantIndex] != nil && epochBLSData.DealerParts[participantIndex].DealerAddress != "" {
 		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
 	}
@@ -77,12 +89,9 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		ParticipantShares: participantShares,
 	}
 
-	// Store the dealer part
-	epochBLSData.DealerParts[participantIndex] = dealerPart
-
-	// Save the updated epoch BLS data
-	if err := ms.SetEpochBLSData(ctx, epochBLSData); err != nil {
-		return nil, fmt.Errorf("failed to save updated epoch %d BLS data: %w", msg.EpochId, err)
+	// Constant-cost write: only this dealer's sub-key is updated.
+	if err := ms.SetDealerPart(ctx, msg.EpochId, uint32(participantIndex), dealerPart); err != nil {
+		return nil, fmt.Errorf("failed to save dealer part for epoch %d, participant %d: %w", msg.EpochId, participantIndex, err)
 	}
 
 	// Emit EventDealerPartSubmitted

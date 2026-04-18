@@ -19,6 +19,7 @@ const (
 var (
 	ParamsKey                       = []byte("p_bls")
 	EpochBLSDataPrefix              = []byte("epoch_bls_data")
+	DealerPartPrefix                = []byte("epoch_bls_dealer_part/")
 	ThresholdSigningRequestPrefix   = []byte("threshold_signing_request")
 	ExpirationIndexPrefix           = []byte("expiration_index")
 	GroupValidationPrefix           = []byte("group_validation_")
@@ -35,6 +36,46 @@ func EpochBLSDataKey(epochID uint64) []byte {
 	copy(key, EpochBLSDataPrefix)
 	binary.BigEndian.PutUint64(key[len(EpochBLSDataPrefix):], epochID)
 	return key
+}
+
+// DealerPartEpochPrefix returns the prefix used to iterate all dealer parts
+// for a given epoch ID. Callers wrap the module KV store in a prefix.Store
+// scoped to this prefix, then use DealerPartSubKey for per-participant
+// point access.
+//
+// Storing each dealer part under its own key prevents the entire
+// EpochBLSData struct from being rewritten on every MsgSubmitDealerPart
+// submission. Before this change, the Nth dealer paid gas proportional to N
+// (because the dealing struct accumulated dealer parts inline), which
+// created a race where the DAPI's simulation-based gas estimate was too low
+// by the time the tx landed, pushing later dealers over the declared gas
+// limit and failing them out of the DKG entirely.
+//
+// Full layout: {DealerPartPrefix}{epoch_id:uint64 BE}/{participant_index:uint32 BE}.
+func DealerPartEpochPrefix(epochID uint64) []byte {
+	prefix := make([]byte, len(DealerPartPrefix)+8+1)
+	copy(prefix, DealerPartPrefix)
+	binary.BigEndian.PutUint64(prefix[len(DealerPartPrefix):], epochID)
+	prefix[len(DealerPartPrefix)+8] = '/'
+	return prefix
+}
+
+// DealerPartSubKey returns the sub-key portion of a dealer part entry (the
+// bytes under DealerPartEpochPrefix). This is what callers use when working
+// through a prefix.Store scoped to a single epoch.
+func DealerPartSubKey(participantIndex uint32) []byte {
+	sub := make([]byte, 4)
+	binary.BigEndian.PutUint32(sub, participantIndex)
+	return sub
+}
+
+// ParseDealerPartSubKey decodes a sub-key produced by DealerPartSubKey back
+// into a participant index.
+func ParseDealerPartSubKey(sub []byte) (uint32, error) {
+	if len(sub) != 4 {
+		return 0, fmt.Errorf("invalid dealer part sub-key length %d (want 4)", len(sub))
+	}
+	return binary.BigEndian.Uint32(sub), nil
 }
 
 // ThresholdSigningRequestKey generates a key for storing ThresholdSigningRequest by request ID
