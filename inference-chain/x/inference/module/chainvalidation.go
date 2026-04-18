@@ -511,14 +511,16 @@ func (am AppModule) getCurrentValidatorWeights(ctx context.Context) (map[string]
 	return weights, nil
 }
 
-// GetPreviousEpochMLNodesWithInferenceAllocation retrieves MLNodes from the previous epoch that have POC_SLOT = true (inference allocation)
-// and returns a map of participant addresses to their ActiveParticipant objects with preserved weights
-func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
+// PreservedParticipantsFromCurrentEpoch reads the preserved-nodes snapshot for the
+// currently-active epoch (about to be replaced by upcomingEpoch) and returns the
+// corresponding ActiveParticipant records. Used by ComputeNewWeights to carry preserved
+// weight into the next epoch.
+func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
 	preservedParticipants := make(map[string]*types.ActiveParticipant)
 
 	// Skip for first epoch or if we can't get current epoch (which is about to end)
 	if upcomingEpoch.Index <= 1 {
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Skipping for first epoch", types.PoC,
+		am.LogInfo("PreservedParticipantsFromCurrentEpoch: Skipping for first epoch", types.PoC,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 		return nil
 	}
@@ -527,17 +529,17 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 	// At this point in the flow, we're still in the current epoch - the transition happens later in onSetNewValidatorsStage
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Unable to get current epoch group", types.PoC, "error", err.Error())
 		return nil
 	}
 	if currentEpochGroup.GroupData.EpochIndex != upcomingEpoch.Index-1 {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Current epoch group does not match upcoming epoch", types.PoC,
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Current epoch group does not match upcoming epoch", types.PoC,
 			"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 		return nil
 	}
 
-	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
+	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Processing current epoch group (about to end)", types.PoC,
 		"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
@@ -545,20 +547,20 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 
 	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes snapshot", types.PoC,
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes snapshot", types.PoC,
 			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
 			"error", err)
 		return nil
 	}
 	if !found {
-		am.LogWarn("GetPreviousEpochMLNodesWithInferenceAllocation: Preserved nodes snapshot not found", types.PoC,
+		am.LogWarn("PreservedParticipantsFromCurrentEpoch: Preserved nodes snapshot not found", types.PoC,
 			"epochIndex", currentEpochGroup.GroupData.EpochIndex)
 		return nil
 	}
 
 	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, &preservedSnapshot)
 	if err != nil {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes by participant", types.PoC, "error", err)
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes by participant", types.PoC, "error", err)
 		return nil
 	}
 
@@ -573,7 +575,7 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 
 		participant, found := am.keeper.GetParticipant(ctx, participantAddress)
 		if !found {
-			am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Participant not found", types.PoC,
+			am.LogError("PreservedParticipantsFromCurrentEpoch: Participant not found", types.PoC,
 				"participantAddress", participantAddress)
 			continue
 		}
@@ -621,13 +623,13 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 
 		preservedParticipants[participantAddress] = activeParticipant
 
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
+		am.LogInfo("PreservedParticipantsFromCurrentEpoch: Created preserved participant", types.PoC,
 			"participantAddress", participantAddress,
 			"totalWeight", activeParticipant.Weight,
 			"models", models)
 	}
 
-	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Summary", types.PoC,
+	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Summary", types.PoC,
 		"totalPreservedParticipants", len(preservedParticipants))
 
 	participantsSlice := make([]*types.ActiveParticipant, 0, len(preservedParticipants))
@@ -836,7 +838,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
 	// Get preserved weights from inference-serving MLNodes
-	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
+	preservedParticipants := am.PreservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
 		"numPreservedParticipants", len(preservedParticipants))
 

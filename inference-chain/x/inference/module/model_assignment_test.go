@@ -16,8 +16,10 @@ type mockKeeperForModelAssigner struct {
 	hardwareNodes    map[string]*types.HardwareNodes
 	governanceModels []types.Model
 	epochGroupData   map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
-	settleAmounts    map[string]types.SettleAmount              // participant -> settle (optional; when set, participants count as rewarded for previous epoch)
-	params           *types.Params
+	// participant -> epochIndex -> summary. When present with RewardedCoins > 0, the participant
+	// counts as eligible-by-history for that epoch in SamplePreservedForEpisode.
+	perfSummaries map[string]map[uint64]types.EpochPerformanceSummary
+	params        *types.Params
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -46,13 +48,13 @@ func (m *mockKeeperForModelAssigner) GetEpochGroupData(ctx context.Context, epoc
 	return types.EpochGroupData{}, false
 }
 
-func (m *mockKeeperForModelAssigner) GetSettleAmount(ctx context.Context, participant string) (val types.SettleAmount, found bool) {
-	if m.settleAmounts != nil {
-		if s, ok := m.settleAmounts[participant]; ok {
+func (m *mockKeeperForModelAssigner) GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool) {
+	if byEpoch, ok := m.perfSummaries[participantId]; ok {
+		if s, ok := byEpoch[epochIndex]; ok {
 			return s, true
 		}
 	}
-	return types.SettleAmount{}, false
+	return types.EpochPerformanceSummary{}, false
 }
 
 func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Params, error) {
@@ -157,9 +159,8 @@ func applySnapshotToParticipants(participants []*types.ActiveParticipant, snapsh
 }
 
 // runSamplePreservedForEpisode is a test-only convenience that populates subgroup data
-// and invokes SamplePreservedForEpisode, mirroring the old AllocateMLNodesForPoC flow.
-// The returned snapshot is also applied back onto participants so existing
-// TimeslotAllocation[1] assertions continue to work.
+// and invokes SamplePreservedForEpisode. The returned snapshot is also applied back onto
+// participants so existing TimeslotAllocation[1] assertions continue to work.
 func runSamplePreservedForEpisode(
 	t *testing.T,
 	ctx context.Context,
@@ -288,7 +289,7 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 
 	// setModelsForParticipants only initializes nodes, doesn't allocate POC slots
 	// All nodes should be [true, false] (PRE_POC_SLOT=true, POC_SLOT=false)
-	// Actual POC allocation happens in AllocateMLNodesForPoC
+	// Actual preserved allocation happens in SamplePreservedForEpisode
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 2)
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
 }
@@ -330,12 +331,8 @@ func TestSamplePreservedForEpisode_MatchesSubgroupData(t *testing.T) {
 				},
 			},
 		},
-		settleAmounts: map[string]types.SettleAmount{
-			participantAddress: {
-				Participant: participantAddress,
-				EpochIndex:  0,
-				RewardCoins: 1,
-			},
+		perfSummaries: map[string]map[uint64]types.EpochPerformanceSummary{
+			participantAddress: {0: {ParticipantId: participantAddress, EpochIndex: 0, RewardedCoins: 1}},
 		},
 		params: &types.Params{
 			EpochParams: &types.EpochParams{
@@ -384,7 +381,7 @@ func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
 	// participants; those drops are what the anchor seed can influence.
 	participants := make([]*types.ActiveParticipant, 0, 6)
 	subgroupWeights := make([]*types.ValidationWeight, 0, 6)
-	settleAmounts := make(map[string]types.SettleAmount, 6)
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, 6)
 	for i := 0; i < 6; i++ {
 		addr := fmt.Sprintf("participant-%d", i)
 		nodes := []*types.MLNodeInfo{
@@ -401,7 +398,9 @@ func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
 			Models:  []string{modelID},
 			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
 		})
-		settleAmounts[addr] = types.SettleAmount{Participant: addr, EpochIndex: 0, RewardCoins: 1}
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
 	}
 
 	mockKeeper := &mockKeeperForModelAssigner{
@@ -409,7 +408,7 @@ func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
 		epochGroupData: map[string]map[uint64]types.EpochGroupData{
 			modelID: {0: {ValidationWeights: subgroupWeights}},
 		},
-		settleAmounts: settleAmounts,
+		perfSummaries: perfSummaries,
 		params:        &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
 	}
 
@@ -716,7 +715,7 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 
 	// setModelsForParticipants only initializes timeslot allocations
 	// All nodes are initialized to [true, false] (PRE_POC_SLOT=true, POC_SLOT=false)
-	// Actual POC slot allocation happens later in AllocateMLNodesForPoC
+	// Actual preserved allocation happens later in SamplePreservedForEpisode
 	// Model A: 3 nodes should all be [true, false]
 	// Model B: 1 node should be [true, false]
 	assertTimeslotAllocationCount(t, groupA.MlNodes, []bool{true, true}, 0)
@@ -1299,9 +1298,9 @@ func TestEligibilityFilter_DebugRandomness(t *testing.T) {
 	}
 }
 
-// TestAllocateMLNodesForPoC_FairDistribution tests that allocation is distributed fairly
-// across many participants with many nodes
-func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
+// TestSamplePreservedForEpisode_FairDistribution tests that preserved allocation is
+// distributed fairly across many participants with many nodes.
+func TestSamplePreservedForEpisode_FairDistribution(t *testing.T) {
 	const (
 		numParticipants     = 20
 		nodesPerParticipant = 10
@@ -1374,15 +1373,14 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 		0: {ValidationWeights: previousValidationWeights},
 	}
 
-	// Settle amounts for previous epoch (epoch 0): all participants rewarded so they are eligible for POC_SLOT allocation
+	// Previous-epoch performance summaries (epoch 0): all participants rewarded so they are
+	// eligible for preservation in epoch 1.
 	previousEpochIndex := uint64(0)
-	settleAmounts := make(map[string]types.SettleAmount, numParticipants)
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, numParticipants)
 	for i := 0; i < numParticipants; i++ {
 		participantID := formatParticipantID(i)
-		settleAmounts[participantID] = types.SettleAmount{
-			Participant: participantID,
-			EpochIndex:  previousEpochIndex,
-			RewardCoins: 1,
+		perfSummaries[participantID] = map[uint64]types.EpochPerformanceSummary{
+			previousEpochIndex: {ParticipantId: participantID, EpochIndex: previousEpochIndex, RewardedCoins: 1},
 		}
 	}
 
@@ -1391,7 +1389,7 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 		governanceModels: []types.Model{{Id: modelID}},
 		hardwareNodes:    hardwareNodesMap,
 		epochGroupData:   previousEpochGroupData,
-		settleAmounts:    settleAmounts,
+		perfSummaries:    perfSummaries,
 		params: &types.Params{
 			EpochParams: &types.EpochParams{
 				PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}, // 0.5
@@ -1584,13 +1582,14 @@ func TestAllocateMLNodesForPoC_FairDistribution(t *testing.T) {
 	}
 }
 
-// TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants verifies that when no participants
-// have a reward for the previous epoch, none are added to previousEpochData, so there are no
-// eligible participants and no POC_SLOT allocation. It covers three ways to be ineligible:
-// - no settle amount at all (participant not in settleAmounts)
-// - settle amount with RewardCoins == 0 (slashed / no reward)
-// - settle amount with reward but for a different epoch (EpochIndex != previousEpoch)
-func TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants(t *testing.T) {
+// TestSamplePreservedForEpisode_NoReward_NoEligibleParticipants verifies that when no
+// participants have a reward for the previous epoch, none are added to previousEpochData,
+// so there are no eligible participants and no preserved allocation. It covers three ways
+// to be ineligible:
+// - no performance summary at all for the previous epoch
+// - summary with RewardedCoins == 0 (slashed / no reward)
+// - summary stored only for a different epoch
+func TestSamplePreservedForEpisode_NoReward_NoEligibleParticipants(t *testing.T) {
 	const (
 		numParticipants     = 20
 		nodesPerParticipant = 10
@@ -1600,9 +1599,9 @@ func TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants(t *testing.T) {
 	)
 
 	// Partition participants into three ineligible groups (upcoming epoch = 1, previous = 0):
-	// - No settle: participants 0-6  -> not in settleAmounts map (GetSettleAmount returns not found)
-	// - Zero reward: 7-13           -> in map with EpochIndex=0, RewardCoins=0
-	// - Wrong epoch: 14-19          -> in map with EpochIndex=2, RewardCoins=1 (reward for wrong epoch)
+	// - No summary: participants 0-6
+	// - Zero reward: 7-13  (summary for epoch 0, RewardedCoins=0)
+	// - Wrong epoch: 14-19 (summary exists only for epoch 2; lookup for epoch 0 misses)
 	const (
 		noSettleEnd     = 7  // 0..6
 		zeroRewardEnd   = 14 // 7..13
@@ -1654,36 +1653,32 @@ func TestAllocateMLNodesForPoC_NoReward_NoEligibleParticipants(t *testing.T) {
 		0: {ValidationWeights: previousValidationWeights},
 	}
 
-	// settleAmounts is non-nil but only contains entries that still make everyone ineligible:
-	// - participants 0-6: omitted (no settle) -> GetSettleAmount returns not found
-	// - participants 7-13: EpochIndex=previousEpoch, RewardCoins=0 -> skipped (zero reward)
-	// - participants 14-19: EpochIndex=2, RewardCoins=1 -> skipped (wrong epoch)
-	settleAmounts := make(map[string]types.SettleAmount)
+	// perfSummaries is non-nil but only contains entries that still make everyone ineligible:
+	// - participants 0-6: omitted (no summary) -> GetEpochPerformanceSummary returns not found
+	// - participants 7-13: summary for previousEpoch with RewardedCoins=0 -> skipped
+	// - participants 14-19: summary only for epoch 2; lookup for previousEpoch=0 returns not found
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary)
 	for i := noSettleEnd; i < zeroRewardEnd; i++ {
 		participantID := formatParticipantID(i)
-		settleAmounts[participantID] = types.SettleAmount{
-			Participant: participantID,
-			EpochIndex:  previousEpochIndex,
-			RewardCoins: 0, // zero reward => ineligible
+		perfSummaries[participantID] = map[uint64]types.EpochPerformanceSummary{
+			previousEpochIndex: {ParticipantId: participantID, EpochIndex: previousEpochIndex, RewardedCoins: 0},
 		}
 	}
 	for i := wrongEpochStart; i < numParticipants; i++ {
 		participantID := formatParticipantID(i)
-		settleAmounts[participantID] = types.SettleAmount{
-			Participant: participantID,
-			EpochIndex:  previousEpochIndex + 2, // wrong epoch (e.g. 2 when previous is 0)
-			RewardCoins: 1,
+		perfSummaries[participantID] = map[uint64]types.EpochPerformanceSummary{
+			previousEpochIndex + 2: {ParticipantId: participantID, EpochIndex: previousEpochIndex + 2, RewardedCoins: 1},
 		}
 	}
 
-	t.Logf("Ineligible groups: no settle (0..%d), zero reward (%d..%d), wrong epoch (%d..%d)",
+	t.Logf("Ineligible groups: no summary (0..%d), zero reward (%d..%d), wrong epoch (%d..%d)",
 		noSettleEnd-1, noSettleEnd, zeroRewardEnd-1, wrongEpochStart, numParticipants-1)
 
 	mockKeeper := &mockKeeperForModelAssigner{
 		governanceModels: []types.Model{{Id: modelID}},
 		hardwareNodes:    hardwareNodesMap,
 		epochGroupData:   previousEpochGroupData,
-		settleAmounts:    settleAmounts,
+		perfSummaries:    perfSummaries,
 		params: &types.Params{
 			EpochParams: &types.EpochParams{
 				PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1},
@@ -2251,11 +2246,11 @@ func TestAllocateMLNodesForPoC_MixedUniformAndHeterogeneous(t *testing.T) {
 				},
 			},
 		},
-		// All participants rewarded in previous epoch (epoch 0) so they are eligible for POC_SLOT allocation
-		settleAmounts: map[string]types.SettleAmount{
-			"participant1": {Participant: "participant1", EpochIndex: 0, RewardCoins: 1},
-			"participant2": {Participant: "participant2", EpochIndex: 0, RewardCoins: 1},
-			"participant3": {Participant: "participant3", EpochIndex: 0, RewardCoins: 1},
+		// All participants rewarded in previous epoch (epoch 0) so they are eligible for preservation
+		perfSummaries: map[string]map[uint64]types.EpochPerformanceSummary{
+			"participant1": {0: {ParticipantId: "participant1", EpochIndex: 0, RewardedCoins: 1}},
+			"participant2": {0: {ParticipantId: "participant2", EpochIndex: 0, RewardedCoins: 1}},
+			"participant3": {0: {ParticipantId: "participant3", EpochIndex: 0, RewardedCoins: 1}},
 		},
 		params: &types.Params{
 			EpochParams: &types.EpochParams{
@@ -2381,9 +2376,9 @@ func TestSetModelsForParticipants_DedupesDuplicateNodes(t *testing.T) {
 }
 
 // Dedup is exercised directly by TestDedupMLNodesById. The sampler no longer mutates
-// participants, so the previous TestAllocateMLNodesForPoC_DedupesBeforeAllocation
-// assertion style (checking participants[0].MlNodes[0].MlNodes length after allocation)
-// does not map to the new surface and is intentionally removed.
+// participants, so the previous "dedup before allocation" assertion style (checking
+// participants[0].MlNodes[0].MlNodes length after allocation) does not map to the new
+// surface and is intentionally removed.
 
 // Source isolation tests for the EpochMLNodeData accessors. Each verifies
 // that mutating the returned slice/map does NOT mutate the source data.

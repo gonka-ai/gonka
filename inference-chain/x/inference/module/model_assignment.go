@@ -17,7 +17,7 @@ import (
 
 const (
 	FlowContext    = "model_assignment"
-	SubFlowContext = "allocate_mlnodes_for_poc"
+	SubFlowContext = "sample_preserved_for_episode"
 )
 
 func sortedKeys[K ~string, V any](m map[K]V) []K {
@@ -339,7 +339,7 @@ type KeeperForModelAssigner interface {
 	GetHardwareNodes(ctx context.Context, participantId string) (*types.HardwareNodes, bool)
 	GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool)
 	GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool)
-	GetSettleAmount(ctx context.Context, participant string) (val types.SettleAmount, found bool)
+	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
 }
 
@@ -512,9 +512,11 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 			prevSubData, foundPrev := ma.keeper.GetEpochGroupData(ctx, previousEpochIndex, modelId)
 			if foundPrev {
 				for _, vw := range prevSubData.ValidationWeights {
-					// Only rewarded participants from the previous epoch are eligible for preservation.
-					settle, foundSettle := ma.keeper.GetSettleAmount(ctx, vw.MemberAddress)
-					if !foundSettle || settle.EpochIndex != previousEpochIndex || settle.RewardCoins == 0 {
+					// EpochPerformanceSummary persists across reward claims (SettleAmount does not),
+					// so this check remains stable no matter how many blocks after settlement the
+					// sampler runs.
+					summary, found := ma.keeper.GetEpochPerformanceSummary(ctx, previousEpochIndex, vw.MemberAddress)
+					if !found || summary.RewardedCoins == 0 {
 						continue
 					}
 					dedupedNodes, _ := dedupMLNodesById(vw.MlNodes)
@@ -590,37 +592,15 @@ func filterNodesByThresholds(nodes []*types.MLNodeInfo, participantAddr string, 
 	return filterNodesByWeightAndCount(nodes, threshold, targetCount)
 }
 
-// filterEligibleMLNodes filters which nodes are eligible for POC_SLOT=true allocation across all models.
+// filterEligibleMLNodes returns the set of nodes that can be preserved, per model.
 //
-// PURPOSE:
-// Determines which ML nodes can be allocated POC_SLOT=true (serve inference during PoC phase).
-// Uses multi-phase filtering to ensure sufficient PoC validation participation while filtering outliers.
+// Thresholds are computed per model: raw PocWeights across different models are not
+// comparable, so applying a single global threshold would bias preservation toward models
+// with larger weight scales.
 //
-// FILTERING PHASES:
-//
-// Phase 1 - Top Participant Participation (75% + 25% rule):
-//
-//	Ensures participants with top 75% of weight have at least 25% of their nodes participating.
-//	Calculates per-participant minimum node weight thresholds to include their top 25% nodes.
-//
-// Phase 2 - Outlier Node Filtering (IQR method):
-//
-//	Filters out suspiciously large nodes using statistical outlier detection (Q3 + 1.5*IQR).
-//	Prevents single large nodes from dominating the eligible set.
-//
-// Phase 3 - Voting Constraint Check (<34% non-voting):
-//
-//	Ensures at least 75% of total capped weight can vote in PoC validation.
-//	Tracks participants that become "non-voting" and limits them to <34% of capped total weight.
-//
-// KEY CONCEPTS:
-//   - Eligible node: Can have POC_SLOT=true (serve inference during PoC phase)
-//   - Voting participant: Has some nodes with POC_SLOT=false (can participate in PoC validation)
-//   - Non-voting participant: All nodes have POC_SLOT=true (cannot participate in PoC validation)
-//
-// SAMPLING:
-//
-//	Selects N/2+1 participants with previous epoch history deterministically per model to rotate eligibility.
+// The non-voting cap (<34% of total capped weight) prevents preserving so many of a
+// participant's nodes that the participant has no nodes left to vote in PoC validation.
+// That cap is what keeps the PoC validation quorum >=75% of total weight.
 func (ma *ModelAssigner) filterEligibleMLNodes(
 	upcomingEpoch types.Epoch,
 	previousEpochData *EpochMLNodeData,
