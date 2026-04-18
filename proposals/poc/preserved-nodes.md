@@ -113,7 +113,7 @@ Every anchor fires right before some PoC. At that anchor the sampler reads the c
 
 The resulting snapshot is scoped to that single PoC. The next PoC gets its own anchor and its own snapshot.
 
-Claims overlapping with regular PoC read the regular-PoC snapshot to check whether a node was preserved (and therefore allowed to keep serving). Reward math reads `vw.ConfirmationWeight`, which already folds every episode's reading via min-take (see "Reward path" below).
+Reward math reads `vw.ConfirmationWeight`, which already folds every episode's contribution via min-take. Nothing on the claim path needs to consult the snapshot.
 
 ### State model
 
@@ -121,31 +121,25 @@ Keep `ActiveParticipants` stable for the whole epoch.
 
 Under the new design:
 
-- `timeslot_allocation[1]` in `ActiveParticipants` stays `false`
-- that field becomes deprecated for preserved-node scheduling semantics
-- preserved scheduling moves to a dedicated episode snapshot
+- `timeslot_allocation[1]` in `ActiveParticipants` stays `false` and is deprecated for scheduling
+- preserved scheduling moves to a single snapshot slot, overwritten at each episode
 
-Use one unified snapshot schema for both regular PoC and confirmation PoC. The difference between the two cases should be the episode anchor key, not two different storage models.
+Storage is one `collections.Item[PreservedNodesSnapshot]` in the keeper. At every episode anchor (regular PoC `upcomingEpoch.PocStartBlockHeight` or confirmation `event.TriggerHeight`) the chain samples a fresh snapshot and overwrites the slot. The payload carries `episode_anchor_height` so readers can tell which episode they are looking at, but nothing keys storage by it.
 
-The cleanest shape is a dedicated collection that reuses the existing `PoCValidationSnapshot` pattern:
+That singleton shape is enough because there is exactly one active episode at a time:
 
-- one keeper collection keyed by the episode anchor
-- regular PoC uses `upcomingEpoch.PocStartBlockHeight`
-- confirmation PoC uses `event.TriggerHeight`
-- query helpers mirror the existing snapshot getter/query pattern
+- the broker always wants the current episode's snapshot
+- the sampler always writes the next episode's snapshot immediately before the PoC starts
+- reward math reads `vw.ConfirmationWeight`, not the snapshot
 
-This should be a sibling of `PoCValidationSnapshot`, not an overload of it. `PoCValidationSnapshot` stores validation-time voting powers and app hash. The preserved snapshot should store preserved-node decisions.
-
-Because preserved status is read often, the access path must stay cheap. The authoritative record can live in its own collection, but the active snapshot should also be surfaced through existing epoch-related query paths or caches so hot readers do not need an extra remote query on every request.
-
-Existing rollover helpers that currently infer preserved carry from `POC_SLOT=true` must be updated to stop using `timeslot_allocation[1]` for scheduling semantics. Under the new design, episode snapshots do not imply an epoch-to-epoch carry bit in `ActiveParticipants`.
+Existing rollover helpers that currently infer preserved carry from `POC_SLOT=true` must stop using `timeslot_allocation[1]` for scheduling. Episode snapshots do not imply an epoch-to-epoch carry bit in `ActiveParticipants`.
 
 ### Minimal implementation shape
 
 The intended implementation should stay simple and mostly local:
 
 - reuse the current preserved-node allocation logic from `AllocateMLNodesForPoC` instead of introducing a new sampling rule
-- add one episode-scoped preserved snapshot keyed by epoch and episode anchor
+- add one singleton preserved-snapshot slot and overwrite it at each episode anchor
 - write that snapshot at the same transition that already records generation start
 - keep `ActiveParticipants` stable and keep `timeslot_allocation[1]` deprecated for this purpose
 - make the broker read the current episode snapshot instead of static epoch-long `TimeslotAllocation[1]`
@@ -226,14 +220,6 @@ That means a locally disabled node can still exist in current epoch protocol sta
 
 If an operator wants protocol obligations to change, local disable is not enough. They must also submit the chain-visible hardware removal before the next active-participant generation.
 
-## Open questions
-
-The proposal is still open on a few points:
-
-1. Exact preserved snapshot payload: per-model node bitmap only, or also participant-level summary fields.
-2. How to surface the active snapshot efficiently to frequent readers such as broker state refresh and query paths like `query_get_random_executor.go`.
-3. Migration order for old readers that still expect `timeslot_allocation[1]`, especially broker `ShouldContinueInference`, `GetRandomExecutor`, and any reward or rollover helpers still keyed off static `POC_SLOT`.
-
 ## Testermint coverage to update
 
 The current `testermint` suite already contains several tests that read `timeslotAllocation` directly or assume epoch-wide preserved membership. Those tests should be updated together with the preserved-snapshot rollout.
@@ -302,10 +288,7 @@ The current `testermint` suite already contains several tests that read `timeslo
 
 The current `testermint` helper logic often reads node epoch data from broker APIs. That is still useful for model assignment, but it is no longer sufficient for preserved scheduling after this change.
 
-At minimum, test helpers should gain one way to read the active preserved snapshot:
-
-- regular PoC snapshot by `upcomingEpoch.PocStartBlockHeight`
-- confirmation PoC snapshot by `activeConfirmationPoCEvent.triggerHeight`
+Test helpers should gain one way to read the active preserved snapshot — a single `queryPreservedNodesSnapshot()` call. The returned payload carries `episode_anchor_height` so a test can verify it came from the expected episode (regular PoC's `upcomingEpoch.PocStartBlockHeight` or a confirmation event's `triggerHeight`).
 
 This is especially important because production code also has hot-path readers that still depend on static `POC_SLOT`, such as:
 
