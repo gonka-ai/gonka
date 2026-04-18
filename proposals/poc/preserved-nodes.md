@@ -162,13 +162,19 @@ Each confirmation PoC event gets a fresh preserved sample. There is no carry-ove
 
 ### Weight behavior
 
-For each episode:
+The old model splits reward weight into two additive slices: preserved (`POC_SLOT=true`) plus confirmation-measured (`POC_SLOT=false`). That split is gone.
 
-- the preserved vs participating split is read from the snapshot fixed at that episode boundary
-- weight accounting for that episode uses that snapshot
-- the next episode is allowed to produce a different split
+Under the new model, `ConfirmationWeight` starts at the participant's full coefficient-adjusted MLNode total — as if every node were measured successfully in a confirmation event. Each confirmation event lowers it via min-take:
 
-The selection algorithm should not be a new design space. It should reuse the current preserved-node allocation logic and constraints from `model_assignment.go`, but run at episode start against the episode candidate pool.
+```
+ConfirmationWeight := min(ConfirmationWeight, preserved(event) + measured(event))
+```
+
+Where `preserved(event)` is the weight of nodes in the event's preserved snapshot, and `measured(event)` is the weight the event actually observed on non-preserved nodes. Honest operation keeps the min equal to the initial full weight; any missed/invalid readings pull it down.
+
+This means reward math reads a single `vw.ConfirmationWeight` field that already folds every episode. There is no separate "preserved weight" term in settlement.
+
+The selection algorithm itself is not a new design space: it reuses the preserved-node allocation logic and constraints from `model_assignment.go`, run at each episode anchor against the episode candidate pool. The snapshot for the next episode is allowed to produce a different split than the current one.
 
 ### Determinism requirement
 
