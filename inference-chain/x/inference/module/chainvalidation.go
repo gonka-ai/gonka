@@ -580,8 +580,6 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 			continue
 		}
 
-		participantAddress = participantRecordAddress(participant)
-
 		// Build per-model MlNodes arrays with Models populated
 		var models []string
 		var mlNodeArrays []*types.ModelMLNodes
@@ -699,13 +697,6 @@ func (am AppModule) GetPreservedNodesByParticipant(
 	}
 
 	return result, nil
-}
-
-func participantRecordAddress(participant types.Participant) string {
-	if participant.Address != "" {
-		return participant.Address
-	}
-	return participant.Index
 }
 
 func findParticipantByAddress(participants []*types.ActiveParticipant, address string) *types.ActiveParticipant {

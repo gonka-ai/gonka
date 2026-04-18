@@ -382,6 +382,8 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 
+	epochContext := types.NewEpochContext(*epoch, *params.EpochParams)
+
 	// Create a map to store weight maps for each model
 	modelWeightMaps := make(map[string]map[string]types.ValidationWeight)
 	modelTotalWeights := make(map[string]int64)
@@ -457,6 +459,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	)
 
 	// Run expensive ShouldValidate only on sampled inferences
+	skipped := 0
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
@@ -469,6 +472,14 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		totalWeight := modelTotalWeights[modelId]
+
+		// Inferences that overlap with the PoC window are not validated: the executor was
+		// not required to serve during PoC, so a missed validation there is not a slashing
+		// signal.
+		if k.OverlapsWithPoC(&inference, epochContext) {
+			skipped++
+			continue
+		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
 		safeTotalWeight, err := safeUint32FromInt64(totalWeight)
@@ -499,8 +510,19 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	k.LogInfo("Must be validated inferences", types.Claims,
 		"count", len(mustBeValidated),
+		"poc_overlap_skipped", skipped,
 		"sampled", len(sample),
 	)
 
 	return mustBeValidated, nil
+}
+
+// OverlapsWithPoC reports whether an inference was created late enough in the epoch that
+// its execution can overlap with the next PoC window. Such inferences are not required
+// to be validated.
+func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) bool {
+	if inferenceDetails == nil || inferenceDetails.CreatedAtBlockHeight <= 0 {
+		return false
+	}
+	return inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
 }

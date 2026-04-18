@@ -615,9 +615,6 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// vw.ConfirmationWeight is a full-weight reading: initial value is the total
-		// coefficient-adjusted MLNode weight, each confirmation event lowers it via
-		// min(current, preserved(event) + measured(event)). See evaluateConfirmation.
 		effectiveWeight := vw.ConfirmationWeight
 		if effectiveWeight < 0 {
 			effectiveWeight = 0

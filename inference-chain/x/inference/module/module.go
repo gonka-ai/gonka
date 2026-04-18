@@ -1126,9 +1126,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			continue
 		}
 
-		// Initial ConfirmationWeight is the full coefficient-adjusted weight -- the
-		// reading the participant would produce at regular PoC under honest operation.
-		// Confirmation events can only lower it via min-take; they never raise it.
+		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
 		initialConfirmationWeight := epochgroup.CalculateMLNodesTotalWeight(p.Models, p.MlNodes, coefficients)
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight, coefficients)
 		err = upcomingEg.AddMember(ctx, member)

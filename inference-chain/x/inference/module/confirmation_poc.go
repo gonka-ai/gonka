@@ -322,15 +322,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Validation snapshot is no longer needed once the event is done. Preserved
-			// snapshot must outlive the event for settlement, claim validation, and
-			// expiry-time `HasNodeForModel` reads of inferences routed through this
-			// CPoC; the Prune pass reclaims it once the epoch is past the retention
-			// window (see GetPreservedNodesSnapshotPruner).
-			if err := am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight); err != nil {
-				am.LogWarn("Confirmation PoC: Failed to delete validation snapshot", types.PoC,
-					"triggerHeight", event.TriggerHeight, "error", err)
-			}
+			// Clean up validation snapshot
+			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -394,18 +387,9 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	return am.evaluateConfirmation(ctx, event, &epochGroupData, params.PocParams)
 }
 
-// evaluateConfirmation folds one confirmation PoC event's result into
-// ConfirmationWeight and records the per-event slashing ratio.
-//
-// For every participant the event yields a "reading":
-//
-//	reading(event) = preservedWeight(event.snapshot) + measuredNotPreservedWeight(event)
-//
-// ConfirmationWeight is the running min over readings (initial + every event).
-// Slashing for this event compares the same reading against the event-local total
-// expected weight (preserved + notPreserved from the event snapshot), so honest
-// operation produces ratio = 1 regardless of how the preserved set rotates
-// between phases.
+// evaluateConfirmation lowers each participant's ConfirmationWeight to
+// min(current, preserved(event) + measured(event)) and records the event-local
+// slashing ratio.
 func (am AppModule) evaluateConfirmation(
 	ctx context.Context,
 	event *types.ConfirmationPoCEvent,

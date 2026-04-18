@@ -455,12 +455,8 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 	ma.LogInfo("Finished model assignment for all participants", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete")
 }
 
-// SamplePreservedForEpisode materializes the preserved-node snapshot for a single PoC
-// episode. The candidate pool comes from the current epoch's authoritative subgroup data
-// (never ActiveParticipants), and the sampler seed is mixed with the episode anchor so
-// each regular-PoC and confirmation event in the same epoch produces an independent
-// sample (late-binding). The returned snapshot carries the anchor so it can be stored
-// and queried directly by episode.
+// SamplePreservedForEpisode returns the preserved-node snapshot for a single PoC episode.
+// The seed mixes in anchorHeight so each episode in the same epoch samples independently.
 func (ma *ModelAssigner) SamplePreservedForEpisode(
 	ctx context.Context,
 	epoch types.Epoch,

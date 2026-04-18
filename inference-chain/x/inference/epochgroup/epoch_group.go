@@ -49,9 +49,6 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
-// CalculateMLNodesTotalWeight sums every MLNode's coefficient-adjusted PocWeight. Used
-// as the initial ConfirmationWeight at epoch formation -- the full-reading value before
-// any episode-scoped event refines it.
 func CalculateMLNodesTotalWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
 	totalWeight := int64(0)
 
