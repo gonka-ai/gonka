@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"math/bits"
 	"time"
 
 	"encoding/base64"
@@ -342,15 +345,36 @@ func (k msgServer) processInferencePayments(
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-		if executor == nil {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy)
+		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment))
+		if err != nil {
+			return nil, err
 		}
-		ensureParticipantEpochStats(executor)
-		executor.CoinBalance += payments.ExecutorPayment
-		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
 	}
 	return inference, nil
+}
+
+// AddToCoinBalance adds payout to the participant's claimable work balance and
+// current-epoch earned coins, with overflow protection for both fields.
+func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64) error {
+	if participant == nil {
+		return sdkerrors.Wrap(types.ErrParticipantNotFound, "nil participant")
+	}
+	if payout > math.MaxInt64 {
+		return sdkerrors.Wrap(types.ErrIntOverflowSettleAmount, "payout exceeds maximum integer value")
+	}
+	ensureParticipantEpochStats(participant)
+	nextCoinBalance := participant.CoinBalance + int64(payout)
+	if nextCoinBalance < participant.CoinBalance {
+		return fmt.Errorf("participant coin balance overflow for %s", participant.Address)
+	}
+	nextEarnedCoins, carry := bits.Add64(participant.CurrentEpochStats.EarnedCoins, payout, 0)
+	if carry != 0 {
+		return fmt.Errorf("participant earned coins overflow for %s", participant.Address)
+	}
+	participant.CoinBalance = nextCoinBalance
+	participant.CurrentEpochStats.EarnedCoins = nextEarnedCoins
+	k.SafeLogSubAccountTransaction(ctx, participant.Address, types.ModuleName, types.OwedSubAccount, participant.CoinBalance, "coin_balance_updated")
+	return nil
 }
 
 func shouldPersistParticipant(inference *types.Inference, payments *calculations.Payments, executor *types.Participant) bool {

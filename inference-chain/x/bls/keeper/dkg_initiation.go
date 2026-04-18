@@ -5,10 +5,20 @@ import (
 	"sort"
 
 	"cosmossdk.io/math"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/productscience/inference/x/bls/types"
 )
+
+// dealerPartsStore returns a prefix.Store scoped to all dealer parts for a
+// single epoch. Keys within the returned store are the sub-keys produced by
+// types.DealerPartSubKey (4-byte big-endian participant index).
+func (k Keeper) dealerPartsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.DealerPartEpochPrefix(epochID))
+}
 
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
 func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
@@ -261,18 +271,108 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 	return blsParticipants, nil
 }
 
-// SetEpochBLSData stores EpochBLSData in the state
+// SetEpochBLSData stores EpochBLSData in the state.
+//
+// DealerParts are stored out-of-band under per-participant sub-keys (see
+// SetDealerPart and the DealerPartEpochPrefix/DealerPartSubKey helpers).
+// Any non-empty dealer parts in the input struct are synced to sub-keys.
+// The base struct is persisted with DealerParts zeroed so it stays
+// constant-size. This means callers can set dealer parts via this function
+// (e.g., during DKG initialization or in tests), and the data will be
+// readable via GetEpochBLSData which rehydrates from sub-keys.
+//
+// The dealer HOT PATH (MsgSubmitDealerPart) bypasses this function
+// entirely and calls SetDealerPart directly — a single sub-key write
+// with constant gas cost regardless of how many dealers already submitted.
 func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) error {
 	store := k.storeService.OpenKVStore(ctx)
-	key := types.EpochBLSDataKey(epochBLSData.EpochId)
-	value, err := k.cdc.Marshal(&epochBLSData)
+
+	// Sync any non-empty dealer parts to their sub-keys. Empty placeholders
+	// (DealerAddress == "") are skipped — they only exist as in-memory
+	// sentinels during DKG initialization.
+	for i, dp := range epochBLSData.DealerParts {
+		if dp != nil && dp.DealerAddress != "" {
+			if err := k.SetDealerPart(ctx, epochBLSData.EpochId, uint32(i), dp); err != nil {
+				return fmt.Errorf("sync dealer part %d to sub-key: %w", i, err)
+			}
+		}
+	}
+
+	// Persist the base struct with DealerParts zeroed so writes stay
+	// constant-size. We copy to avoid mutating the caller's struct.
+	baseCopy := epochBLSData
+	baseCopy.DealerParts = nil
+
+	key := types.EpochBLSDataKey(baseCopy.EpochId)
+	value, err := k.cdc.Marshal(&baseCopy)
 	if err != nil {
 		return err
 	}
 	return store.Set(key, value)
 }
 
-// GetEpochBLSData retrieves EpochBLSData from the state
+// SetDealerPart writes a single dealer part under its own sub-key. Cost is
+// constant in the number of previously-submitted dealer parts, so every
+// dealer in a DKG round pays the same gas regardless of submission order.
+//
+// This is the hot path called by MsgSubmitDealerPart.
+func (k Keeper) SetDealerPart(ctx sdk.Context, epochID uint64, participantIndex uint32, dealerPart *types.DealerPartStorage) error {
+	if dealerPart == nil {
+		return fmt.Errorf("nil dealer part")
+	}
+	value, err := k.cdc.Marshal(dealerPart)
+	if err != nil {
+		return fmt.Errorf("marshal dealer part: %w", err)
+	}
+	k.dealerPartsStore(ctx, epochID).Set(types.DealerPartSubKey(participantIndex), value)
+	return nil
+}
+
+// GetDealerPart reads a single dealer part for a participant. Returns
+// (nil, nil) if no submission exists yet for that slot.
+func (k Keeper) GetDealerPart(ctx sdk.Context, epochID uint64, participantIndex uint32) (*types.DealerPartStorage, error) {
+	value := k.dealerPartsStore(ctx, epochID).Get(types.DealerPartSubKey(participantIndex))
+	if value == nil {
+		return nil, nil
+	}
+	var dp types.DealerPartStorage
+	if err := k.cdc.Unmarshal(value, &dp); err != nil {
+		return nil, err
+	}
+	return &dp, nil
+}
+
+// DeleteDealerPartsForEpoch removes every dealer part sub-key for an epoch.
+// Called when an epoch's DKG state is being torn down so stale dealer parts
+// don't accumulate in state. Not used on the normal phase-transition path —
+// verifying phase still needs to read dealer parts.
+func (k Keeper) DeleteDealerPartsForEpoch(ctx sdk.Context, epochID uint64) error {
+	dealerStore := k.dealerPartsStore(ctx, epochID)
+	it := dealerStore.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		// Copy the key — the iterator's key is only valid until Next().
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		dealerStore.Delete(key)
+	}
+	return nil
+}
+
+// GetEpochBLSData retrieves EpochBLSData from the state. DealerParts is
+// rehydrated from per-participant sub-keys so that callers see the same
+// shape they always have (a slice indexed by participant index, with
+// empty-string DealerAddress for slots that have not yet submitted).
+//
+// Backward compatibility: if the base struct still has DealerParts inline
+// (e.g. an EpochBLSData written by a pre-v0.2.12 dealer handler), those
+// values are used as the baseline and any sub-key entries take precedence.
+// This lets the split take effect immediately after upgrade without a
+// migration step.
 func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
 	store := k.storeService.OpenKVStore(ctx)
 	key := types.EpochBLSDataKey(epochID)
@@ -286,9 +386,48 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 	}
 
 	var epochBLSData types.EpochBLSData
-	err = k.cdc.Unmarshal(value, &epochBLSData)
-	if err != nil {
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
 		return types.EpochBLSData{}, err
 	}
+
+	// Ensure DealerParts has an entry per participant. If the base struct
+	// stored inline dealer parts (legacy writes), those serve as the
+	// starting point; otherwise we initialize empty placeholders so callers
+	// that index by participant position still work.
+	numParticipants := len(epochBLSData.Participants)
+	if len(epochBLSData.DealerParts) < numParticipants {
+		expanded := make([]*types.DealerPartStorage, numParticipants)
+		for i := range expanded {
+			if i < len(epochBLSData.DealerParts) && epochBLSData.DealerParts[i] != nil {
+				expanded[i] = epochBLSData.DealerParts[i]
+			} else {
+				expanded[i] = &types.DealerPartStorage{}
+			}
+		}
+		epochBLSData.DealerParts = expanded
+	}
+
+	// Overlay sub-key dealer parts on top of the base slice with a single
+	// prefix scan. Any participant whose sub-key entry exists takes
+	// precedence over whatever was inlined. Sub-keys for participant
+	// indices outside the current participant set are ignored (stale data
+	// should have been cleared via DeleteDealerPartsForEpoch).
+	it := k.dealerPartsStore(ctx, epochID).Iterator(nil, nil)
+	defer it.Close()
+	for ; it.Valid(); it.Next() {
+		idx, err := types.ParseDealerPartSubKey(it.Key())
+		if err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("parse dealer part sub-key: %w", err)
+		}
+		if int(idx) >= numParticipants {
+			continue
+		}
+		var dp types.DealerPartStorage
+		if err := k.cdc.Unmarshal(it.Value(), &dp); err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("unmarshal dealer part %d: %w", idx, err)
+		}
+		epochBLSData.DealerParts[idx] = &dp
+	}
+
 	return epochBLSData, nil
 }
