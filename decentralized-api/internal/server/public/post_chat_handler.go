@@ -335,8 +335,8 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	executor, err := s.getExecutorForRequest(ctx.Request().Context(), request.OpenAiRequest.Model)
 	if err != nil {
-		logging.Error("Failed to get executor", types.Inferences, "error", err)
-		return err
+		logging.Error("Failed to get executor", types.Inferences, "error", err, "model", request.OpenAiRequest.Model)
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("No executor available for model %q. The model may not be supported or no nodes are serving it.", request.OpenAiRequest.Model))
 	}
 
 	seed := rand.Int31()
