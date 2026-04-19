@@ -28,24 +28,16 @@ func TestGroupKeyValidationState_PrefixIsolation(t *testing.T) {
 		"GroupValidationPartialSigPrefix must NOT start with GroupValidationPrefix; otherwise a prefix.Store scoped to GroupValidationPrefix would yield partial-sig entries that cannot be decoded as GroupKeyValidationState (corrupt genesis export)")
 }
 
-// TestGetGroupKeyValidationState_MigratesLegacyInlinePartials exercises the
-// transparent in-flight migration path. A base state is seeded with inline
-// PartialSignatures as a pre-split handler would have written it; after
-// GetGroupKeyValidationState runs, the inline entries are expected to have
-// moved to sub-keys and the base state to have been rewritten with
-// PartialSignatures zeroed.
-//
-// Covers the correctness bug in the first version of the split, where the
-// first post-upgrade SetGroupKeyValidationState would discard legacy inline
-// entries without syncing them to sub-keys, silently dropping signatures
-// and corrupting SlotsCovered on any subsequent submission.
-func TestGetGroupKeyValidationState_MigratesLegacyInlinePartials(t *testing.T) {
+// TestGroupKeyValidationState_EagerMigrationViaSet pins the invariant that
+// SetGroupKeyValidationState syncs inline PartialSignatures to per-participant
+// sub-keys and zeroes the base, so the v0.2.12 eager migration (Walk -> Set)
+// converts legacy records without dropping entries.
+func TestGroupKeyValidationState_EagerMigrationViaSet(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 
 	const previousEpochID = uint64(1)
 	const newEpochID = uint64(2)
 
-	// Seed a previous-epoch Participants list so address→index lookup works.
 	prevEpoch := types.EpochBLSData{
 		EpochId: previousEpochID,
 		Participants: []types.BLSParticipantInfo{
@@ -58,9 +50,6 @@ func TestGetGroupKeyValidationState_MigratesLegacyInlinePartials(t *testing.T) {
 	}
 	require.NoError(t, k.SetEpochBLSData(ctx, prevEpoch))
 
-	// Write a legacy base state directly via the raw KV store: inline
-	// PartialSignatures, SlotsCovered reflecting the two inline entries.
-	// This mirrors what a pre-split handler would have written.
 	legacyBase := &types.GroupKeyValidationState{
 		NewEpochId:      newEpochID,
 		PreviousEpochId: previousEpochID,
@@ -77,15 +66,15 @@ func TestGetGroupKeyValidationState_MigratesLegacyInlinePartials(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, rawStore.Set(types.GroupValidationKey(newEpochID), bz))
 
-	// First read must transparently migrate and return the full set of
-	// partials through the sub-key path.
-	got, found, err := k.GetGroupKeyValidationState(ctx, newEpochID)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Len(t, got.PartialSignatures, 2, "both legacy partials should have surfaced via sub-keys")
+	// Walk -> Set is exactly what migrateGroupKeyValidationStatesToSubKeys
+	// runs at upgrade time.
+	require.NoError(t, k.WalkGroupKeyValidationStates(ctx, func(state types.GroupKeyValidationState) error {
+		if len(state.PartialSignatures) == 0 {
+			return nil
+		}
+		return k.SetGroupKeyValidationState(ctx, &state)
+	}))
 
-	// Base state after migration must have zero-length PartialSignatures
-	// on disk: re-read the raw bytes and check the inline field is empty.
 	rawBz, err := rawStore.Get(types.GroupValidationKey(newEpochID))
 	require.NoError(t, err)
 	var afterMigration types.GroupKeyValidationState
@@ -95,7 +84,6 @@ func TestGetGroupKeyValidationState_MigratesLegacyInlinePartials(t *testing.T) {
 	require.Equal(t, uint32(5), afterMigration.SlotsCovered,
 		"SlotsCovered must be preserved across migration")
 
-	// Sub-keys must now contain the migrated entries at the correct indices.
 	ps0, err := k.GetGroupValidationPartialSignature(ctx, newEpochID, 0)
 	require.NoError(t, err)
 	require.NotNil(t, ps0)
@@ -108,15 +96,21 @@ func TestGetGroupKeyValidationState_MigratesLegacyInlinePartials(t *testing.T) {
 	require.Equal(t, "addr-2", ps2.ParticipantAddress)
 	require.Equal(t, []uint32{10, 11, 12}, ps2.SlotIndices)
 
-	// Participant index 1 had no legacy entry; no sub-key expected.
 	ps1, err := k.GetGroupValidationPartialSignature(ctx, newEpochID, 1)
 	require.NoError(t, err)
 	require.Nil(t, ps1)
 
-	// Second read must be a no-op migration: base no longer has inline
-	// partials, so we go straight through the sub-key path.
-	got2, found2, err := k.GetGroupKeyValidationState(ctx, newEpochID)
+	got, found, err := k.GetGroupKeyValidationState(ctx, newEpochID)
 	require.NoError(t, err)
-	require.True(t, found2)
-	require.Len(t, got2.PartialSignatures, 2)
+	require.True(t, found)
+	require.Len(t, got.PartialSignatures, 2,
+		"Get must rehydrate migrated partials from sub-keys")
+
+	// Re-running the migration is a no-op: the base now has zero inline
+	// partials, so the Walk callback short-circuits.
+	require.NoError(t, k.WalkGroupKeyValidationStates(ctx, func(state types.GroupKeyValidationState) error {
+		require.Empty(t, state.PartialSignatures,
+			"idempotent re-run must observe no inline partials")
+		return nil
+	}))
 }

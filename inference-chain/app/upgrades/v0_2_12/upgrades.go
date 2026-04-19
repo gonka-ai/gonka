@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"cosmossdk.io/collections"
 	sdkmath "cosmossdk.io/math"
 	"cosmossdk.io/x/feegrant"
 	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
@@ -117,6 +118,17 @@ func CreateUpgradeHandler(
 		// path doesn't drop them.
 		if err := migrateBridgeTransactionValidatorsToSubKeys(ctx, k); err != nil {
 			k.LogError("Error migrating BridgeTransaction validators to sub-keys for v0.2.12", types.Upgrades, "err", err)
+			return nil, err
+		}
+
+		// Same split for GroupKeyValidationState.PartialSignatures.
+		// Pre-split, each validator's partial sig appended to the inline
+		// slice; post-split, SubmitGroupKeyValidationSignature writes the
+		// sub-key directly and clears the in-memory slice before
+		// SetGroupKeyValidationState. Move legacy inline entries here so
+		// the first post-upgrade submission doesn't silently drop them.
+		if err := migrateGroupKeyValidationStatesToSubKeys(sdk.UnwrapSDKContext(ctx), blsKeeper); err != nil {
+			k.LogError("Error migrating GroupKeyValidationStates to sub-keys for v0.2.12", types.Upgrades, "err", err)
 			return nil, err
 		}
 
@@ -285,91 +297,71 @@ func adjustBLSParameters(ctx context.Context, blsKeeper blskeeper.Keeper) error 
 	return blsKeeper.SetParams(ctx, params)
 }
 
-// migrateEpochBLSDataToSubKeys migrates every existing EpochBLSData entry
-// from the legacy "everything inline" layout to the v0.2.12 split layout
-// where DealerParts, VerificationSubmissions, and DealerComplaints live
-// under per-entry sub-keys.
-//
-// The fix that split these fields relies on the invariant that no inline
-// entries linger in the base struct after upgrade — if a verifier tx lands
-// post-upgrade and the base still has legacy inline entries, the handler
-// nulls them out before SetEpochBLSData to avoid the O(N) re-sync cost,
-// which would silently discard the legacy data. This migration runs once
-// in the upgrade block (before any user txs) to eliminate that risk.
-//
-// SetEpochBLSData itself does the work: its inline sync loops write any
-// populated entries to sub-keys, and the base is persisted with the split
-// fields zeroed. Each entry's re-Set is idempotent, so re-running the
-// migration would be a no-op.
+// migrateEpochBLSDataToSubKeys moves legacy inline DealerParts,
+// VerificationSubmissions, and DealerComplaints off the base struct and into
+// per-entry sub-keys. Must run before any post-upgrade handler touches
+// EpochBLSData: handlers now null the split fields before SetEpochBLSData,
+// which would silently drop unmigrated legacy entries. SetEpochBLSData's
+// sync-and-strip pass does the work; idempotent on re-run.
 func migrateEpochBLSDataToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
-	all := blsKeeper.GetAllEpochBLSData(ctx)
-	for _, ebd := range all {
+	return blsKeeper.WalkEpochBLSData(ctx, func(ebd blstypes.EpochBLSData) error {
 		hasInline := len(ebd.DealerParts) > 0 ||
 			len(ebd.VerificationSubmissions) > 0 ||
 			len(ebd.DealerComplaints) > 0
 		if !hasInline {
-			continue
+			return nil
 		}
 		if err := blsKeeper.SetEpochBLSData(ctx, ebd); err != nil {
 			return fmt.Errorf("migrate EpochBLSData epoch=%d: %w", ebd.EpochId, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
-// migrateThresholdSigningRequestsToSubKeys splits legacy inline
-// ThresholdSigningRequest.PartialSignatures into per-submitter sub-keys.
-// Same rationale as migrateEpochBLSDataToSubKeys: the post-split
-// AddPartialSignature nulls out PartialSignatures before persisting the
-// base request, so legacy inline entries must be moved to sub-keys before
-// any post-upgrade tx can touch state.
-//
-// GetAllThresholdSigningRequests already rehydrates PartialSignatures
-// from sub-keys, so returning it through storeThresholdSigningRequest
-// below does the sync-and-strip pass in a single call.
+// migrateThresholdSigningRequestsToSubKeys moves legacy inline
+// PartialSignatures on each ThresholdSigningRequest into per-submitter
+// sub-keys. Same rationale as migrateEpochBLSDataToSubKeys: must run before
+// post-split AddPartialSignature nulls out the inline slice.
 func migrateThresholdSigningRequestsToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
-	all := blsKeeper.GetAllThresholdSigningRequests(ctx)
-	for i := range all {
-		req := all[i]
+	return blsKeeper.WalkRawThresholdSigningRequests(ctx, func(req blstypes.ThresholdSigningRequest) error {
 		if len(req.PartialSignatures) == 0 {
-			continue
+			return nil
 		}
 		if err := blsKeeper.StoreThresholdSigningRequest(ctx, &req); err != nil {
 			return fmt.Errorf("migrate ThresholdSigningRequest %x: %w", req.RequestId, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
-// migrateBridgeTransactionValidatorsToSubKeys splits legacy inline
-// BridgeTransaction.Validators into a per-validator KeySet. The
-// post-split bridge-exchange handler nulls out Validators before calling
-// SetBridgeTransaction to avoid re-syncing every validator on every
-// confirmation; without this migration, that null-out would drop any
-// legacy inline entries that hadn't been synced to the KeySet yet.
-//
-// Re-calling SetBridgeTransaction with the rehydrated tx drives
-// SetBridgeTransaction's own sync loop, which writes inline entries to
-// the KeySet and persists the base with Validators stripped. The
-// operation is idempotent; re-running would be a no-op.
+// migrateBridgeTransactionValidatorsToSubKeys moves legacy inline Validators
+// on each BridgeTransaction into the per-validator KeySet. Must run before
+// the post-split bridge-exchange handler nulls out Validators. Idempotent.
 func migrateBridgeTransactionValidatorsToSubKeys(ctx context.Context, k keeper.Keeper) error {
-	iter, err := k.BridgeTransactionsMap.Iterate(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("iterate bridge transactions for migration: %w", err)
-	}
-	values, err := iter.Values()
-	iter.Close()
-	if err != nil {
-		return fmt.Errorf("collect bridge transactions for migration: %w", err)
-	}
-	for i := range values {
-		tx := values[i]
+	return k.BridgeTransactionsMap.Walk(ctx, nil, func(_ collections.Triple[string, string, string], tx types.BridgeTransaction) (bool, error) {
 		if len(tx.Validators) == 0 {
-			continue
+			return false, nil
 		}
 		k.SetBridgeTransaction(ctx, &tx)
-	}
-	return nil
+		return false, nil
+	})
+}
+
+// migrateGroupKeyValidationStatesToSubKeys moves legacy inline
+// PartialSignatures on each GroupKeyValidationState into per-participant
+// sub-keys. Same rationale as the three migrations above: must run before
+// post-split SubmitGroupKeyValidationSignature writes a base with
+// PartialSignatures nulled out. Idempotent on re-run.
+func migrateGroupKeyValidationStatesToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
+	return blsKeeper.WalkGroupKeyValidationStates(ctx, func(state blstypes.GroupKeyValidationState) error {
+		if len(state.PartialSignatures) == 0 {
+			return nil
+		}
+		if err := blsKeeper.SetGroupKeyValidationState(ctx, &state); err != nil {
+			return fmt.Errorf("migrate GroupKeyValidationState new_epoch=%d: %w", state.NewEpochId, err)
+		}
+		return nil
+	})
 }
 
 func removeTopMiner(ctx context.Context, k keeper.Keeper) error {

@@ -104,7 +104,6 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		}
 	}
 
-	// Check or create GroupKeyValidationState
 	validationState, found, err := ms.GetGroupKeyValidationState(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
@@ -240,9 +239,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		}
 	}
 
-	// Persist the updated base state (SlotsCovered, optional Status /
-	// FinalSignature on completion). PartialSignatures are zeroed inside
-	// SetGroupKeyValidationState so the on-disk base stays constant-size.
+	// Persist the updated base (SlotsCovered, optional Status /
+	// FinalSignature). Clear the in-memory cache first: sub-keys were
+	// already written above, and Set would otherwise re-sync them and
+	// double the per-participant bytes.
+	validationState.PartialSignatures = nil
 	if err := ms.SetGroupKeyValidationState(ctx, validationState); err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)
 	}

@@ -3,10 +3,22 @@ package v0_2_12
 import (
 	"testing"
 
+	"cosmossdk.io/log"
+	"cosmossdk.io/store"
+	"cosmossdk.io/store/metrics"
 	"cosmossdk.io/store/prefix"
+	storetypes "cosmossdk.io/store/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -507,4 +519,173 @@ func TestAdjustBLSParameters_PreservesExplicitValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(17), updated.DisputePhaseDurationBlocks)
 	require.Equal(t, uint32(7), updated.MaxSigningAttempts)
+}
+
+// newBlsKeeperWithRawStore returns a BLS keeper plus the codec and raw KV
+// store for seeding pre-upgrade legacy bytes. Mirrors keepertest.BlsKeeper
+// but additionally exposes the store so the migration test can write a
+// GroupKeyValidationState with inline PartialSignatures -- the exact shape
+// of state a v0.2.11 chain carries forward into v0.2.12.
+func newBlsKeeperWithRawStore(t *testing.T) (blskeeper.Keeper, sdk.Context, *codec.ProtoCodec, storetypes.KVStore) {
+	t.Helper()
+	storeKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
+	db := dbm.NewMemDB()
+	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
+	stateStore.MountStoreWithDB(storeKey, storetypes.StoreTypeIAVL, db)
+	require.NoError(t, stateStore.LoadLatestVersion())
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+
+	k := blskeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(storeKey),
+		log.NewNopLogger(),
+		authority.String(),
+	)
+	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
+	require.NoError(t, k.SetParams(ctx, blstypes.DefaultParams()))
+
+	return k, ctx, cdc, ctx.KVStore(storeKey)
+}
+
+// TestMigrateGroupKeyValidationStatesToSubKeys exercises the v0.2.12
+// GroupKeyValidationState migration end-to-end. It seeds the raw store
+// with pre-upgrade bytes (legacy inline PartialSignatures on the base
+// record), runs the migration, and asserts:
+//   - the base record is rewritten with PartialSignatures cleared and
+//     other fields (SlotsCovered, MessageHash) preserved,
+//   - each legacy partial lands under its per-participant sub-key,
+//   - participants without a legacy entry have no sub-key,
+//   - GetGroupKeyValidationState rehydrates the expected partials,
+//   - the migration is idempotent on re-run.
+func TestMigrateGroupKeyValidationStatesToSubKeys(t *testing.T) {
+	k, ctx, cdc, rawStore := newBlsKeeperWithRawStore(t)
+
+	// Previous-epoch Participants list is required for address->index
+	// resolution during the inline->sub-key sync inside SetGroupKeyValidationState.
+	const previousEpochID = uint64(10)
+	const newEpochIDA = uint64(11)
+	const newEpochIDB = uint64(12)
+
+	require.NoError(t, k.SetEpochBLSData(ctx, blstypes.EpochBLSData{
+		EpochId: previousEpochID,
+		Participants: []blstypes.BLSParticipantInfo{
+			{Address: "addr-0"},
+			{Address: "addr-1"},
+			{Address: "addr-2"},
+		},
+	}))
+
+	// Seed two independent validation rounds with inline legacy partials,
+	// written as raw bytes so we bypass the sync-in-Set path the migration
+	// is meant to trigger.
+	legacyA := blstypes.GroupKeyValidationState{
+		NewEpochId:      newEpochIDA,
+		PreviousEpochId: previousEpochID,
+		Status:          blstypes.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
+		SlotsCovered:    5,
+		MessageHash:     []byte{0xde, 0xad},
+		PartialSignatures: []blstypes.PartialSignature{
+			{ParticipantAddress: "addr-0", SlotIndices: []uint32{0, 1}, Signature: make([]byte, 96)},
+			{ParticipantAddress: "addr-2", SlotIndices: []uint32{10, 11, 12}, Signature: make([]byte, 144)},
+		},
+	}
+	legacyB := blstypes.GroupKeyValidationState{
+		NewEpochId:      newEpochIDB,
+		PreviousEpochId: previousEpochID,
+		Status:          blstypes.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_COLLECTING_SIGNATURES,
+		SlotsCovered:    2,
+		MessageHash:     []byte{0xbe, 0xef},
+		PartialSignatures: []blstypes.PartialSignature{
+			{ParticipantAddress: "addr-1", SlotIndices: []uint32{5}, Signature: make([]byte, 48)},
+		},
+	}
+	for _, st := range []blstypes.GroupKeyValidationState{legacyA, legacyB} {
+		bz, err := cdc.Marshal(&st)
+		require.NoError(t, err)
+		rawStore.Set(blstypes.GroupValidationKey(st.NewEpochId), bz)
+	}
+
+	// Sanity: pre-migration state carries inline partials as seeded.
+	for _, st := range []blstypes.GroupKeyValidationState{legacyA, legacyB} {
+		bz := rawStore.Get(blstypes.GroupValidationKey(st.NewEpochId))
+		require.NotNil(t, bz)
+		var beforeMigration blstypes.GroupKeyValidationState
+		require.NoError(t, cdc.Unmarshal(bz, &beforeMigration))
+		require.NotEmpty(t, beforeMigration.PartialSignatures,
+			"seed must carry inline partials for epoch %d", st.NewEpochId)
+	}
+
+	require.NoError(t, migrateGroupKeyValidationStatesToSubKeys(ctx, k))
+
+	// Base records must have PartialSignatures cleared, with other fields preserved.
+	for _, st := range []blstypes.GroupKeyValidationState{legacyA, legacyB} {
+		bz := rawStore.Get(blstypes.GroupValidationKey(st.NewEpochId))
+		require.NotNil(t, bz)
+		var afterMigration blstypes.GroupKeyValidationState
+		require.NoError(t, cdc.Unmarshal(bz, &afterMigration))
+		require.Empty(t, afterMigration.PartialSignatures,
+			"base record must have no inline partials after migration for epoch %d", st.NewEpochId)
+		require.Equal(t, st.SlotsCovered, afterMigration.SlotsCovered,
+			"SlotsCovered must be preserved for epoch %d", st.NewEpochId)
+		require.Equal(t, st.MessageHash, afterMigration.MessageHash,
+			"MessageHash must be preserved for epoch %d", st.NewEpochId)
+	}
+
+	// Epoch A: two participants written under their resolved sub-keys.
+	ps0, err := k.GetGroupValidationPartialSignature(ctx, newEpochIDA, 0)
+	require.NoError(t, err)
+	require.NotNil(t, ps0)
+	require.Equal(t, "addr-0", ps0.ParticipantAddress)
+	require.Equal(t, []uint32{0, 1}, ps0.SlotIndices)
+
+	ps2, err := k.GetGroupValidationPartialSignature(ctx, newEpochIDA, 2)
+	require.NoError(t, err)
+	require.NotNil(t, ps2)
+	require.Equal(t, "addr-2", ps2.ParticipantAddress)
+	require.Equal(t, []uint32{10, 11, 12}, ps2.SlotIndices)
+
+	// No entry for index 1 in epoch A.
+	ps1A, err := k.GetGroupValidationPartialSignature(ctx, newEpochIDA, 1)
+	require.NoError(t, err)
+	require.Nil(t, ps1A)
+
+	// Epoch B: single participant at index 1.
+	ps1B, err := k.GetGroupValidationPartialSignature(ctx, newEpochIDB, 1)
+	require.NoError(t, err)
+	require.NotNil(t, ps1B)
+	require.Equal(t, "addr-1", ps1B.ParticipantAddress)
+	require.Equal(t, []uint32{5}, ps1B.SlotIndices)
+
+	// GetGroupKeyValidationState rehydrates migrated partials from sub-keys.
+	gotA, found, err := k.GetGroupKeyValidationState(ctx, newEpochIDA)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, gotA.PartialSignatures, 2)
+	require.Equal(t, uint32(5), gotA.SlotsCovered)
+
+	gotB, found, err := k.GetGroupKeyValidationState(ctx, newEpochIDB)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, gotB.PartialSignatures, 1)
+	require.Equal(t, uint32(2), gotB.SlotsCovered)
+
+	// Idempotent re-run: base already has no inline partials, so the walk
+	// short-circuits and state is unchanged.
+	require.NoError(t, migrateGroupKeyValidationStatesToSubKeys(ctx, k))
+
+	gotAAgain, _, err := k.GetGroupKeyValidationState(ctx, newEpochIDA)
+	require.NoError(t, err)
+	require.Len(t, gotAAgain.PartialSignatures, 2,
+		"idempotent re-run must not duplicate or drop partials")
+}
+
+// TestMigrateGroupKeyValidationStatesToSubKeys_EmptyStore guards the
+// boundary case where no GroupKeyValidationState has ever been written
+// (e.g. the upgrade runs before the first validation round completes).
+func TestMigrateGroupKeyValidationStatesToSubKeys_EmptyStore(t *testing.T) {
+	k, ctx, _, _ := newBlsKeeperWithRawStore(t)
+	require.NoError(t, migrateGroupKeyValidationStatesToSubKeys(ctx, k))
 }
