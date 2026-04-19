@@ -54,14 +54,17 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	slices.Sort(uniqueAddrs)
 
 	participantByAddr := make(map[string]*types.Participant, len(uniqueAddrs))
-	activeInCurrentEpoch := make(map[string]bool, len(uniqueAddrs))
+	treatAsCurrentEpochSettle := make(map[string]bool, len(uniqueAddrs))
 	for _, addr := range uniqueAddrs {
 		participant, found := k.GetParticipant(goCtx, addr)
 		if !found {
 			return nil, fmt.Errorf("participant %s not found", addr)
 		}
 		participantByAddr[addr] = &participant
-
+		if escrow.EpochIndex != currentEpochIndex {
+			treatAsCurrentEpochSettle[addr] = false
+			continue
+		}
 		participantAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
@@ -70,7 +73,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
 		}
-		activeInCurrentEpoch[addr] = active
+		treatAsCurrentEpochSettle[addr] = active && escrow.EpochIndex == currentEpochIndex
 	}
 	touchedParticipants := make(map[string]bool)
 
@@ -145,13 +148,13 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
 		}
-		inCurrentEpoch := activeInCurrentEpoch[addr]
+		inCurrentEpoch := treatAsCurrentEpochSettle[addr]
 		if inCurrentEpoch {
 			participant, found := participantByAddr[addr]
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			if err := k.AddToCoinBalance(goCtx, participant, payout); err != nil {
+			if err := k.AddToCoinBalance(goCtx, participant, payout, "devshard_settle"); err != nil {
 				return nil, err
 			}
 			touchedParticipants[addr] = true
@@ -195,7 +198,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
-		if activeInCurrentEpoch[addr] {
+		if treatAsCurrentEpochSettle[addr] {
 			participant, found := participantByAddr[addr]
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)

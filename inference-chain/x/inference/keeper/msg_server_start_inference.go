@@ -345,7 +345,7 @@ func (k msgServer) processInferencePayments(
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment))
+		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment), "inference_finished")
 		if err != nil {
 			return nil, err
 		}
@@ -355,7 +355,7 @@ func (k msgServer) processInferencePayments(
 
 // AddToCoinBalance adds payout to the participant's claimable work balance and
 // current-epoch earned coins, with overflow protection for both fields.
-func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64) error {
+func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64, memo string) error {
 	if participant == nil {
 		return sdkerrors.Wrap(types.ErrParticipantNotFound, "nil participant")
 	}
@@ -373,7 +373,7 @@ func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Partici
 	}
 	participant.CoinBalance = nextCoinBalance
 	participant.CurrentEpochStats.EarnedCoins = nextEarnedCoins
-	k.SafeLogSubAccountTransaction(ctx, participant.Address, types.ModuleName, types.OwedSubAccount, participant.CoinBalance, "coin_balance_updated")
+	k.SafeLogSubAccountTransaction(ctx, participant.Address, types.ModuleName, types.OwedSubAccount, participant.CoinBalance, memo)
 	return nil
 }
 

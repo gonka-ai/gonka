@@ -456,6 +456,63 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementAllowedWithoutParticipantSt
 	}
 }
 
+func TestSettleDevshardEscrow_PreviousEpochSettlementDoesNotRollIntoCurrentEpochActiveParticipants(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	for _, addr := range slots {
+		setParticipantForDevshardTest(t, k, ctx, addr)
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 6))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 6, slots...)
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x32
+	escrow := types.DevshardEscrow{
+		Id:         1,
+		Creator:    creator.String(),
+		Amount:     7_000_000_000,
+		Slots:      slots,
+		EpochIndex: 5,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	costPerSlot := uint64(100_000_000)
+	fees := uint64(200_000_000)
+	msg := buildSettlementTestData(t, escrow, keys, makeHostStats(keeper.DevshardGroupSize, costPerSlot), fees)
+
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Eq("devshard_escrow_payment")).
+		Return(nil).
+		Times(keeper.DevshardGroupSize)
+	expectedRefund := escrow.Amount - uint64(keeper.DevshardGroupSize)*costPerSlot - fees
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+		DoAndReturn(func(_ context.Context, _ string, _ sdk.AccAddress, coins sdk.Coins, _ string) error {
+			require.Len(t, coins, 1)
+			require.Equal(t, expectedRefund, coins[0].Amount.Uint64())
+			return nil
+		})
+
+	resp, err := ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	for _, addr := range slots {
+		participant, found := k.GetParticipant(ctx, addr)
+		require.True(t, found)
+		require.Equal(t, int64(0), participant.CoinBalance)
+		require.Equal(t, uint64(0), participant.CurrentEpochStats.EarnedCoins)
+		require.Equal(t, uint64(0), participant.CurrentEpochStats.InferenceCount)
+		require.Equal(t, uint64(0), participant.CurrentEpochStats.MissedRequests)
+		require.Equal(t, uint64(0), participant.CurrentEpochStats.InvalidatedInferences)
+		require.Equal(t, uint64(0), participant.CurrentEpochStats.ValidatedInferences)
+	}
+}
+
 func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediatelyWithoutParticipantStateChange(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
