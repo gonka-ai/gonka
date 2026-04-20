@@ -63,7 +63,7 @@ func (k Keeper) SetBridgeTransaction(ctx context.Context, tx *types.BridgeTransa
 			types.Messages,
 			"chainId", tx.ChainId,
 			"blockNumber", tx.BlockNumber,
-			"receiptIndex", tx.ReceiptIndex,
+			"contentHashPart", contentHashPart,
 			"error", err,
 		)
 	}

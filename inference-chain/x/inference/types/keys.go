@@ -96,9 +96,11 @@ var (
 	// for a bridge transaction. Split off of BridgeTransaction.Validators
 	// (an inline []string) so each validator's confirmation tx pays constant
 	// gas regardless of how many other validators have already confirmed.
-	// Keyed by (chainId, blockNumber, receiptIndex, validator) — the first
-	// three match BridgeTransactionsPrefix's triple, the fourth is the
-	// validator's canonical bech32 address.
+	// Keyed by (chainId, blockNumber, contentHashPart, validator) — the
+	// first three match BridgeTransactionsPrefix's triple (content-addressed,
+	// not receipt-addressed, so conflict transactions at the same receipt
+	// location get separate validator sets), the fourth is the validator's
+	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	ParamsKey                         = []byte("p_inference")
 )
