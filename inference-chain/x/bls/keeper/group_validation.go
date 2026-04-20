@@ -176,13 +176,9 @@ func (k Keeper) SetGroupKeyValidationState(ctx sdk.Context, state *types.GroupKe
 // new-epoch validation round. PartialSignatures are rehydrated from
 // per-participant sub-keys.
 //
-// Backward compatibility: if the base struct has legacy inline
-// PartialSignatures (e.g. an in-flight validation round written by a
-// pre-split handler and not yet cleared), this function transparently
-// migrates them to sub-keys on first read and rewrites the base state
-// with PartialSignatures zeroed. The migration is idempotent and scoped
-// to the single validation round being read — it piggybacks on the hot
-// path rather than needing a chain-wide upgrade migration.
+// The upgrade handler (MigrateGroupKeyValidationStatesToSubKeys) moves
+// any pre-split inline PartialSignatures into sub-keys once at upgrade
+// time, so this function is a pure read: it never writes state.
 //
 // Returns (nil, false, nil) if no state exists for the epoch.
 func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (*types.GroupKeyValidationState, bool, error) {
@@ -202,35 +198,80 @@ func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (
 		return nil, false, err
 	}
 
-	// If legacy inline partials are present, sync them to sub-keys now so
-	// subsequent reads go through the sub-key path cleanly and the base
-	// state stays constant-size. Without this step, the first post-upgrade
-	// SetGroupKeyValidationState call would discard the legacy inline
-	// entries (zeroing PartialSignatures) without ever having written them
-	// to sub-keys, silently losing signatures and corrupting SlotsCovered
-	// on any subsequent submission.
-	legacyInline := state.PartialSignatures
+	// Defense-in-depth: any legacy inline entries that somehow survived
+	// the upgrade migration serve as the baseline so we never silently
+	// drop signatures. Sub-key entries override by participant address
+	// when both exist (sub-keys are post-split and authoritative).
+	baseline := state.PartialSignatures
 	state.PartialSignatures = nil
-	if len(legacyInline) > 0 {
-		if err := k.migrateInlinePartialsToSubKeys(ctx, state.PreviousEpochId, newEpochID, legacyInline); err != nil {
-			return nil, false, fmt.Errorf("migrate legacy inline partial sigs: %w", err)
-		}
-		// Rewrite the base state with PartialSignatures nil so future
-		// reads short-circuit the migration step. This write is small and
-		// happens at most once per validation round.
-		if err := k.setGroupKeyValidationStateBase(ctx, state); err != nil {
-			return nil, false, fmt.Errorf("clear legacy inline partial sigs: %w", err)
-		}
-	}
 
 	subKeyed, err := k.ListGroupValidationPartialSignatures(ctx, newEpochID)
 	if err != nil {
 		return nil, false, fmt.Errorf("list partial sigs: %w", err)
 	}
-	if len(subKeyed) > 0 {
-		state.PartialSignatures = subKeyed
+
+	if len(baseline) == 0 && len(subKeyed) == 0 {
+		return state, true, nil
 	}
+
+	byAddr := make(map[string]int, len(baseline)+len(subKeyed))
+	merged := make([]types.PartialSignature, 0, len(baseline)+len(subKeyed))
+	for _, ps := range baseline {
+		if ps.ParticipantAddress == "" {
+			continue
+		}
+		byAddr[ps.ParticipantAddress] = len(merged)
+		merged = append(merged, ps)
+	}
+	for _, ps := range subKeyed {
+		if existing, ok := byAddr[ps.ParticipantAddress]; ok {
+			merged[existing] = ps
+			continue
+		}
+		merged = append(merged, ps)
+	}
+	state.PartialSignatures = merged
 	return state, true, nil
+}
+
+// MigrateGroupKeyValidationStatesToSubKeys moves any pre-split inline
+// PartialSignatures on stored GroupKeyValidationState entries into
+// per-participant sub-keys, then rewrites the base state with
+// PartialSignatures zeroed. Runs once in the v0.2.12 upgrade handler so
+// the getter can stay a pure read.
+//
+// Idempotent: re-running after a successful migration is a no-op because
+// the base struct has no inline entries left to sync. Scoped to
+// validation rounds stored under the GroupValidationPrefix; sub-key
+// writes go through SetGroupValidationPartialSignature and are keyed by
+// participant index resolved from the previous epoch's Participants.
+func (k Keeper) MigrateGroupKeyValidationStatesToSubKeys(ctx sdk.Context) error {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixStore := prefix.NewStore(store, types.GroupValidationPrefix)
+
+	it := prefixStore.Iterator(nil, nil)
+	defer it.Close()
+
+	for ; it.Valid(); it.Next() {
+		var state types.GroupKeyValidationState
+		if err := k.cdc.Unmarshal(it.Value(), &state); err != nil {
+			return fmt.Errorf("unmarshal group key validation state: %w", err)
+		}
+		if len(state.PartialSignatures) == 0 {
+			continue
+		}
+		legacyInline := state.PartialSignatures
+		if err := k.migrateInlinePartialsToSubKeys(ctx, state.PreviousEpochId, state.NewEpochId, legacyInline); err != nil {
+			return fmt.Errorf("migrate inline partial sigs for epoch %d: %w", state.NewEpochId, err)
+		}
+		// Rewrite the base state with PartialSignatures nil so subsequent
+		// reads go straight through the sub-key path.
+		state.PartialSignatures = nil
+		if err := k.setGroupKeyValidationStateBase(ctx, &state); err != nil {
+			return fmt.Errorf("clear inline partial sigs for epoch %d: %w", state.NewEpochId, err)
+		}
+	}
+	return nil
 }
 
 // migrateInlinePartialsToSubKeys syncs a slice of legacy inline partial

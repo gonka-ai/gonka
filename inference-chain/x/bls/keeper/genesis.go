@@ -10,7 +10,10 @@ import (
 	"github.com/productscience/inference/x/bls/types"
 )
 
-// GetAllEpochBLSData returns all epoch BLS data
+// GetAllEpochBLSData returns all epoch BLS data with DealerParts,
+// VerificationSubmissions, and DealerComplaints rehydrated from their
+// per-entry sub-keys. Mirrors the hot-path GetEpochBLSData so the exported
+// genesis carries the full state, not just the stripped base struct.
 func (k Keeper) GetAllEpochBLSData(ctx sdk.Context) []types.EpochBLSData {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	blsDataStore := prefix.NewStore(store, types.EpochBLSDataPrefix)
@@ -20,10 +23,18 @@ func (k Keeper) GetAllEpochBLSData(ctx sdk.Context) []types.EpochBLSData {
 
 	var list []types.EpochBLSData
 	for ; iterator.Valid(); iterator.Next() {
-		var val types.EpochBLSData
+		var base types.EpochBLSData
 		//nolint:forbidigo // Genesis code
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
+		k.cdc.MustUnmarshal(iterator.Value(), &base)
+		// Re-read through GetEpochBLSData so split fields are rehydrated
+		// from sub-keys. This is an extra KV read per epoch but only runs
+		// on genesis export (not a hot path).
+		//nolint:forbidigo // Genesis code
+		full, err := k.GetEpochBLSData(ctx, base.EpochId)
+		if err != nil {
+			panic(fmt.Sprintf("failed to rehydrate epoch bls data for epoch %d: %v", base.EpochId, err))
+		}
+		list = append(list, full)
 	}
 
 	return list

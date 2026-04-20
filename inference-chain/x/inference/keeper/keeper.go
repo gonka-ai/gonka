@@ -84,9 +84,13 @@ type (
 		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
 		// BridgeTransactionValidators records per-validator confirmations
-		// for a bridge transaction. Key is (chainId, blockNumber, receiptIndex, validator_bech32).
-		// Split off BridgeTransaction.Validators so the Nth validator's
-		// confirmation tx doesn't pay gas proportional to the first N-1.
+		// for a bridge transaction. Key is (chainId, blockNumber, contentHashPart, validator_bech32),
+		// mirroring BridgeTransactionsMap's parent key so conflict txs (same
+		// chain/block/receipt but different content) get separate validator
+		// sets and removeBridgeTransactionByID's prefix-delete finds the
+		// right sub-keys. Split off BridgeTransaction.Validators so the Nth
+		// validator's confirmation tx doesn't pay gas proportional to the
+		// first N-1.
 		BridgeTransactionValidators    collections.KeySet[collections.Quad[string, string, string, string]]
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]

@@ -120,6 +120,18 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Same split for GroupKeyValidationState.PartialSignatures.
+		// Pre-split, partials accumulated inline on the validation state;
+		// post-split, SubmitGroupKeyValidationSignature writes per-participant
+		// sub-keys directly and SetGroupKeyValidationState zeroes the
+		// inline slice. Move any legacy inline entries to sub-keys here so
+		// the read path (GetGroupKeyValidationState) stays pure — it no
+		// longer does migration-on-read after this runs.
+		if err := blsKeeper.MigrateGroupKeyValidationStatesToSubKeys(sdk.UnwrapSDKContext(ctx)); err != nil {
+			k.LogError("Error migrating GroupKeyValidationStates to sub-keys for v0.2.12", types.Upgrades, "err", err)
+			return nil, err
+		}
+
 		if err := setFeeParams(ctx, k); err != nil {
 			return nil, err
 		}
@@ -357,13 +369,12 @@ func migrateBridgeTransactionValidatorsToSubKeys(ctx context.Context, k keeper.K
 	if err != nil {
 		return fmt.Errorf("iterate bridge transactions for migration: %w", err)
 	}
-	values, err := iter.Values()
-	iter.Close()
-	if err != nil {
-		return fmt.Errorf("collect bridge transactions for migration: %w", err)
-	}
-	for i := range values {
-		tx := values[i]
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		tx, err := iter.Value()
+		if err != nil {
+			return fmt.Errorf("decode bridge transaction for migration: %w", err)
+		}
 		if len(tx.Validators) == 0 {
 			continue
 		}
