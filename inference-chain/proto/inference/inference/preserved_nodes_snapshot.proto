@@ -10,5 +10,10 @@ message PreservedNodesSnapshot {
 
 message ModelPreservedNodes {
   string model_id = 1;
-  repeated string preserved_node_ids = 2;
+  repeated ParticipantPreservedNodes participants = 2;
+}
+
+message ParticipantPreservedNodes {
+  string participant_id = 1;
+  repeated string node_ids = 2;
 }

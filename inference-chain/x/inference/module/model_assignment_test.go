@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/keeper"
@@ -127,23 +128,30 @@ func (m *mockKeeperForModelAssigner) populateSubgroupsFromParticipants(epochIdx 
 // pre-migration TimeslotAllocation assertion style valid against the new sampler's
 // returned snapshot.
 func applySnapshotToParticipants(participants []*types.ActiveParticipant, snapshot types.PreservedNodesSnapshot) {
-	preservedByModel := make(map[string]map[string]struct{})
+	preservedByModel := make(map[string]map[string]map[string]struct{})
 	for _, mp := range snapshot.ModelPreservedNodes {
 		if mp == nil {
 			continue
 		}
-		set := make(map[string]struct{}, len(mp.PreservedNodeIds))
-		for _, id := range mp.PreservedNodeIds {
-			set[id] = struct{}{}
+		byParticipant := make(map[string]map[string]struct{}, len(mp.Participants))
+		for _, pp := range mp.Participants {
+			if pp == nil {
+				continue
+			}
+			set := make(map[string]struct{}, len(pp.NodeIds))
+			for _, id := range pp.NodeIds {
+				set[id] = struct{}{}
+			}
+			byParticipant[pp.ParticipantId] = set
 		}
-		preservedByModel[mp.ModelId] = set
+		preservedByModel[mp.ModelId] = byParticipant
 	}
 	for _, p := range participants {
 		for i, modelId := range p.Models {
 			if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
 				continue
 			}
-			preserved := preservedByModel[modelId]
+			preserved := preservedByModel[modelId][p.Index]
 			for _, n := range p.MlNodes[i].MlNodes {
 				if n == nil {
 					continue
@@ -483,7 +491,7 @@ func cloneActiveParticipants(participants []*types.ActiveParticipant) []*types.A
 }
 
 func snapshotFromAllocatedParticipants(anchor int64, participants []*types.ActiveParticipant) types.PreservedNodesSnapshot {
-	modelToNodeIDs := make(map[string][]string)
+	modelToParticipantNodes := make(map[string]map[string][]string)
 	for _, participant := range participants {
 		for modelIndex, modelID := range participant.Models {
 			if modelIndex >= len(participant.MlNodes) || participant.MlNodes[modelIndex] == nil {
@@ -491,18 +499,34 @@ func snapshotFromAllocatedParticipants(anchor int64, participants []*types.Activ
 			}
 			for _, node := range participant.MlNodes[modelIndex].MlNodes {
 				if node != nil && len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
-					modelToNodeIDs[modelID] = append(modelToNodeIDs[modelID], node.NodeId)
+					byParticipant, ok := modelToParticipantNodes[modelID]
+					if !ok {
+						byParticipant = make(map[string][]string)
+						modelToParticipantNodes[modelID] = byParticipant
+					}
+					byParticipant[participant.Index] = append(byParticipant[participant.Index], node.NodeId)
 				}
 			}
 		}
 	}
 
-	modelIDs := sortedKeys(modelToNodeIDs)
+	modelIDs := sortedKeys(modelToParticipantNodes)
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
+		byParticipant := modelToParticipantNodes[modelID]
+		participantIDs := sortedKeys(byParticipant)
+		entries := make([]*types.ParticipantPreservedNodes, 0, len(participantIDs))
+		for _, pid := range participantIDs {
+			nodeIDs := append([]string(nil), byParticipant[pid]...)
+			slices.Sort(nodeIDs)
+			entries = append(entries, &types.ParticipantPreservedNodes{
+				ParticipantId: pid,
+				NodeIds:       nodeIDs,
+			})
+		}
 		modelPreservedNodes = append(modelPreservedNodes, &types.ModelPreservedNodes{
-			ModelId:          modelID,
-			PreservedNodeIds: append([]string(nil), modelToNodeIDs[modelID]...),
+			ModelId:      modelID,
+			Participants: entries,
 		})
 	}
 

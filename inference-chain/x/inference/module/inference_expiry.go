@@ -248,7 +248,7 @@ func (am AppModule) HasNodeForModel(
 		if mlNode == nil {
 			continue
 		}
-		if _, ok := preservedNodeSet[mlNode.NodeId]; ok {
+		if keeper.IsPreservedNode(preservedNodeSet, participantAddr, mlNode.NodeId) {
 			return true
 		}
 	}

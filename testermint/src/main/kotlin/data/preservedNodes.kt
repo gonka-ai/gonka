@@ -17,6 +17,13 @@ data class PreservedNodesSnapshot(
 data class ModelPreservedNodes(
     @SerializedName("model_id")
     val modelId: String,
-    @SerializedName("preserved_node_ids")
-    val preservedNodeIds: List<String> = emptyList(),
+    @SerializedName("participants")
+    val participants: List<ParticipantPreservedNodes> = emptyList(),
+)
+
+data class ParticipantPreservedNodes(
+    @SerializedName("participant_id")
+    val participantId: String,
+    @SerializedName("node_ids")
+    val nodeIds: List<String> = emptyList(),
 )

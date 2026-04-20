@@ -18,8 +18,10 @@ func TestCaptureGenerationStartTimestampStoresSnapshots(t *testing.T) {
 		EpisodeAnchorHeight: 300,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
 			{
-				ModelId:          "model-a",
-				PreservedNodeIds: []string{"node-1"},
+				ModelId: "model-a",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+				},
 			},
 		},
 	}
@@ -68,8 +70,10 @@ func TestPartitionWeightByPreservation(t *testing.T) {
 			EpisodeAnchorHeight: 321,
 			ModelPreservedNodes: []*types.ModelPreservedNodes{
 				{
-					ModelId:          "model-a",
-					PreservedNodeIds: []string{"node-1"},
+					ModelId: "model-a",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+					},
 				},
 			},
 		},
@@ -87,14 +91,17 @@ func TestGetInferenceServingNodeIdsUsesUpcomingEpochAnchor(t *testing.T) {
 		EpisodeAnchorHeight: 100,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
 			{
-				ModelId:          "model-a",
-				PreservedNodeIds: []string{"node-1"},
+				ModelId: "model-a",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+				},
 			},
 		},
 	}))
 
 	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
-	require.Contains(t, inferenceServingNodeIds, "node-1")
+	require.Contains(t, inferenceServingNodeIds, testutil.Executor)
+	require.Contains(t, inferenceServingNodeIds[testutil.Executor], "node-1")
 }
 
 func TestComputeNewWeightsCarriesPreservedNodesFromRegularSnapshot(t *testing.T) {
@@ -148,8 +155,10 @@ func TestComputeNewWeightsCarriesPreservedNodesFromRegularSnapshot(t *testing.T)
 		EpisodeAnchorHeight: 100,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
 			{
-				ModelId:          "model-a",
-				PreservedNodeIds: []string{"node-1"},
+				ModelId: "model-a",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+				},
 			},
 		},
 	}))

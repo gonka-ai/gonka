@@ -210,12 +210,15 @@ fun waitForConfirmationPoCPhase(
 
 fun preservedNodeIdsForModel(
     snapshot: PreservedNodesSnapshotQueryResponse,
-    modelId: String
+    modelId: String,
+    participantId: String,
 ): Set<String> {
     return snapshot.snapshot
         ?.modelPreservedNodes
         ?.firstOrNull { it.modelId == modelId }
-        ?.preservedNodeIds
+        ?.participants
+        ?.firstOrNull { it.participantId == participantId }
+        ?.nodeIds
         ?.toSet()
         ?: emptySet()
 }
@@ -336,6 +339,7 @@ fun captureConfirmationPoCReadings(
 ): List<Long> {
     val readings = mutableListOf<Long>()
     val capturedTriggers = mutableSetOf<Long>()
+    val participantAddr = pair.node.getColdAddress()
     while (true) {
         val latest = pair.api.getLatestEpoch().latestEpoch.index
         if (latest != testEpoch) break
@@ -358,7 +362,7 @@ fun captureConfirmationPoCReadings(
                 Logger.info("  event seq=${ev.eventSequence} trigger=${ev.triggerHeight}: no snapshot yet")
             } else {
                 capturedTriggers.add(ev.triggerHeight)
-                val preservedForParticipant = preservedNodeIdsForModel(snap, modelId).intersect(participantNodeIds)
+                val preservedForParticipant = preservedNodeIdsForModel(snap, modelId, participantAddr).intersect(participantNodeIds)
                 val numPreserved = preservedForParticipant.size
                 val numParticipating = participantNodeIds.size - numPreserved
                 val reading = numPreserved * initialPerNodeWeight + numParticipating * eventPerNodeWeight

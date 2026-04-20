@@ -654,7 +654,7 @@ func (am AppModule) partitionWeightByPreservation(
 				if mlNode == nil {
 					continue
 				}
-				if _, isPreserved := preservedNodeSet[mlNode.NodeId]; isPreserved {
+				if keeper.IsPreservedNode(preservedNodeSet, p.Index, mlNode.NodeId) {
 					rawPreserved += mlNode.PocWeight
 				} else {
 					rawNotPreserved += mlNode.PocWeight

@@ -217,14 +217,14 @@ type NodeState struct {
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
-	MlNodeVersion   string     `json:"ml_node_version"`
+	MlNodeVersion string `json:"ml_node_version"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
 	// EpochMLNodes stores this node's own MLNodeInfo, not all epoch ML nodes.
-	EpochModels      map[string]types.Model      `json:"epoch_models"`
-	EpochMLNodes     map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
-	PreservedModels  map[string]bool             `json:"preserved_models"`
+	EpochModels     map[string]types.Model      `json:"epoch_models"`
+	EpochMLNodes    map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+	PreservedModels map[string]bool             `json:"preserved_models"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -1201,7 +1201,7 @@ func (b *Broker) getCommandForState(
 					return nil
 				}
 				return StartPoCNodeCommandV2{
-					BlockHeight: pocGenParams.startPoCBlockHeight,
+					BlockHeight:    pocGenParams.startPoCBlockHeight,
 					BlockHash:      pocGenParams.startPoCBlockHash,
 					PubKey:         b.participantInfo.GetPubKey(),
 					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
@@ -1552,6 +1552,11 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 		return err
 	}
 
+	participantAddr := b.GetParticipantAddress()
+	if snapshotResp != nil && snapshotResp.Found && snapshotResp.Snapshot != nil && participantAddr == "" {
+		return fmt.Errorf("participant address unavailable for preserved snapshot refresh")
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -1564,15 +1569,20 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 	}
 
 	for _, modelNodes := range snapshotResp.Snapshot.ModelPreservedNodes {
-		for _, nodeID := range modelNodes.PreservedNodeIds {
-			node, ok := b.nodes[nodeID]
-			if !ok {
+		for _, p := range modelNodes.Participants {
+			if p == nil || p.ParticipantId != participantAddr {
 				continue
 			}
-			if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
-				continue
+			for _, nodeID := range p.NodeIds {
+				node, ok := b.nodes[nodeID]
+				if !ok {
+					continue
+				}
+				if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+					continue
+				}
+				node.State.PreservedModels[modelNodes.ModelId] = true
 			}
-			node.State.PreservedModels[modelNodes.ModelId] = true
 		}
 	}
 	return nil

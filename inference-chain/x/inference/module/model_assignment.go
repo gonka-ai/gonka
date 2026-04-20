@@ -477,7 +477,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		return types.PreservedNodesSnapshot{EpisodeAnchorHeight: anchorHeight}, nil
 	}
 
-	sortedModelIds := append([]string(nil), rootData.SubGroupModels...)
+	sortedModelIds := slices.Clone(rootData.SubGroupModels)
 	slices.Sort(sortedModelIds)
 
 	currentEpochData := NewEpochMLNodeData()
@@ -531,18 +531,32 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
-		preservedIds := ma.samplePreservedForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
-		if len(preservedIds) == 0 {
+		preservedByParticipant := ma.samplePreservedForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		if len(preservedByParticipant) == 0 {
 			continue
 		}
-		nodeIds := make([]string, 0, len(preservedIds))
-		for id := range preservedIds {
-			nodeIds = append(nodeIds, id)
+		participantAddrs := make([]string, 0, len(preservedByParticipant))
+		for addr := range preservedByParticipant {
+			participantAddrs = append(participantAddrs, addr)
 		}
-		slices.Sort(nodeIds)
+		slices.Sort(participantAddrs)
+
+		participantEntries := make([]*types.ParticipantPreservedNodes, 0, len(participantAddrs))
+		for _, addr := range participantAddrs {
+			nodeIdSet := preservedByParticipant[addr]
+			nodeIds := make([]string, 0, len(nodeIdSet))
+			for id := range nodeIdSet {
+				nodeIds = append(nodeIds, id)
+			}
+			slices.Sort(nodeIds)
+			participantEntries = append(participantEntries, &types.ParticipantPreservedNodes{
+				ParticipantId: addr,
+				NodeIds:       nodeIds,
+			})
+		}
 		modelPreservedNodes = append(modelPreservedNodes, &types.ModelPreservedNodes{
-			ModelId:          modelId,
-			PreservedNodeIds: nodeIds,
+			ModelId:      modelId,
+			Participants: participantEntries,
 		})
 	}
 
@@ -722,14 +736,14 @@ func canAllocateParticipantNode(
 }
 
 // samplePreservedForModel runs a round-robin allocator over eligible nodes for one
-// model and returns the preserved node IDs. Pure: no mutation of inputs.
+// model and returns preserved node IDs grouped by participant. Pure: no mutation of inputs.
 func (ma *ModelAssigner) samplePreservedForModel(
 	modelId string,
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
 	fraction *types.Decimal,
-) map[string]struct{} {
-	allocated := make(map[string]struct{})
+) map[string]map[string]struct{} {
+	allocated := make(map[string]map[string]struct{})
 
 	totalWeight := currentEpochData.GetTotalWeightForModel(modelId)
 	targetPoCWeight := fraction.ToDecimal().Mul(decimal.NewFromInt(totalWeight)).IntPart()
@@ -740,6 +754,7 @@ func (ma *ModelAssigner) samplePreservedForModel(
 	}
 
 	var currentWeight int64
+	var totalAllocated int
 	currentParticipantIdx := 0
 	allocatedInRound := false
 
@@ -747,7 +762,7 @@ func (ma *ModelAssigner) samplePreservedForModel(
 		participantAddr := eligibleParticipantAddrs[currentParticipantIdx]
 		nodes := eligibleNodesData.GetForParticipant(modelId, participantAddr)
 
-		nextMLNode := getSmallestUnallocatedMLNode(nodes, allocated)
+		nextMLNode := getSmallestUnallocatedMLNode(nodes, allocated[participantAddr])
 		if nextMLNode == nil {
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
 			if currentParticipantIdx == 0 {
@@ -759,8 +774,14 @@ func (ma *ModelAssigner) samplePreservedForModel(
 			continue
 		}
 
-		allocated[nextMLNode.NodeId] = struct{}{}
+		participantAllocated := allocated[participantAddr]
+		if participantAllocated == nil {
+			participantAllocated = make(map[string]struct{})
+			allocated[participantAddr] = participantAllocated
+		}
+		participantAllocated[nextMLNode.NodeId] = struct{}{}
 		currentWeight += nextMLNode.PocWeight
+		totalAllocated++
 		allocatedInRound = true
 
 		currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
@@ -774,7 +795,7 @@ func (ma *ModelAssigner) samplePreservedForModel(
 		"total_weight", totalWeight,
 		"target_weight", targetPoCWeight,
 		"achieved_weight", currentWeight,
-		"num_preserved", len(allocated))
+		"num_preserved", totalAllocated)
 	return allocated
 }
 

@@ -140,7 +140,7 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(
 		k.Logger().Warn("GetRandomExecutor: failed to read preserved snapshot, using empty set",
 			"epoch_id", epochId, "model_id", modelId, "error", err)
 	}
-	var preservedNodeSet map[string]struct{}
+	var preservedNodeSet map[string]map[string]struct{}
 	if snapshotFound {
 		preservedNodeSet = PreservedNodeSetByModel(&preservedSnapshot, modelId)
 	}
@@ -168,7 +168,7 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(
 			if node == nil {
 				continue
 			}
-			if _, ok := preservedNodeSet[node.NodeId]; ok {
+			if IsPreservedNode(preservedNodeSet, participant.Index, node.NodeId) {
 				isAvailableDuringPoc[participant.Index] = true
 				break
 			}

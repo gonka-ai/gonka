@@ -661,7 +661,7 @@ func (am AppModule) GetPreservedNodesByParticipant(
 	}
 
 	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
-		if len(modelNodes.PreservedNodeIds) == 0 {
+		if len(modelNodes.Participants) == 0 {
 			continue
 		}
 
@@ -673,17 +673,28 @@ func (am AppModule) GetPreservedNodesByParticipant(
 			continue
 		}
 
-		preservedNodeSet := make(map[string]struct{}, len(modelNodes.PreservedNodeIds))
-		for _, nodeID := range modelNodes.PreservedNodeIds {
-			preservedNodeSet[nodeID] = struct{}{}
+		preservedNodeSet := make(map[string]map[string]struct{}, len(modelNodes.Participants))
+		for _, p := range modelNodes.Participants {
+			if p == nil {
+				continue
+			}
+			nodeSet := make(map[string]struct{}, len(p.NodeIds))
+			for _, nodeID := range p.NodeIds {
+				nodeSet[nodeID] = struct{}{}
+			}
+			preservedNodeSet[p.ParticipantId] = nodeSet
 		}
 
 		for _, validationWeight := range subgroupData.ValidationWeights {
+			participantNodes, ok := preservedNodeSet[validationWeight.MemberAddress]
+			if !ok {
+				continue
+			}
 			for _, node := range validationWeight.MlNodes {
 				if node == nil {
 					continue
 				}
-				if _, ok := preservedNodeSet[node.NodeId]; !ok {
+				if _, ok := participantNodes[node.NodeId]; !ok {
 					continue
 				}
 				if _, ok := result[validationWeight.MemberAddress]; !ok {
@@ -791,11 +802,12 @@ func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*ty
 	return []*types.ModelMLNodes{{MlNodes: allNodes}}
 }
 
-// getInferenceServingNodeIds returns node IDs preserved for the current episode snapshot.
-func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]bool {
-	inferenceServingNodeIds := make(map[string]bool)
+// getInferenceServingNodeIds returns preserved node IDs for the current episode snapshot,
+// keyed by participant_id -> node_id set. HardwareNode.LocalId is unique per
+// participant only, so callers must consult by (participantAddress, nodeId).
+func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]map[string]struct{} {
+	inferenceServingNodeIds := make(map[string]map[string]struct{})
 
-	// Skip for first epoch
 	if upcomingEpoch.Index <= 1 {
 		return inferenceServingNodeIds
 	}
@@ -809,14 +821,29 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 		return inferenceServingNodeIds
 	}
 
+	totalNodes := 0
 	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
-		for _, nodeID := range modelNodes.PreservedNodeIds {
-			inferenceServingNodeIds[nodeID] = true
+		for _, p := range modelNodes.Participants {
+			if p == nil {
+				continue
+			}
+			nodeSet, ok := inferenceServingNodeIds[p.ParticipantId]
+			if !ok {
+				nodeSet = make(map[string]struct{})
+				inferenceServingNodeIds[p.ParticipantId] = nodeSet
+			}
+			for _, nodeID := range p.NodeIds {
+				if _, exists := nodeSet[nodeID]; !exists {
+					nodeSet[nodeID] = struct{}{}
+					totalNodes++
+				}
+			}
 		}
 	}
 	am.LogInfo("getInferenceServingNodeIds: preserved snapshot loaded", types.PoC,
 		"epoch", upcomingEpoch.Index,
-		"count", len(inferenceServingNodeIds))
+		"participantCount", len(inferenceServingNodeIds),
+		"nodeCount", totalNodes)
 
 	return inferenceServingNodeIds
 }
@@ -1106,7 +1133,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 func (am AppModule) filterStoreCommitsFromInferenceNodes(
 	allCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
 	allDistributions map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution,
-	inferenceServingNodeIds map[string]bool,
+	inferenceServingNodeIds map[string]map[string]struct{},
 ) (map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution) {
 	filteredCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
 	filteredDistributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
@@ -1123,11 +1150,12 @@ func (am AppModule) filterStoreCommitsFromInferenceNodes(
 			continue
 		}
 
-		// Filter out inference-serving nodes from distribution
+		participantNodes := inferenceServingNodeIds[key.ParticipantAddress]
+
 		var filteredWeights []*types.MLNodeWeight
 		filteredCount := uint32(0)
 		for _, w := range distribution.Weights {
-			if inferenceServingNodeIds[w.NodeId] {
+			if _, isServing := participantNodes[w.NodeId]; isServing {
 				excludedNodeCount++
 				am.LogWarn("filterStoreCommitsFromInferenceNodes: Excluding weight from inference-serving node", types.PoC,
 					"participantAddress", key.ParticipantAddress,

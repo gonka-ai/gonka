@@ -29,7 +29,8 @@ class SchedulingTests : TestermintTest() {
         val preservedSnapshot = genesis.node.queryPreservedNodesSnapshot()
         assertThat(preservedSnapshot.found).isTrue()
         val modelId = extractSingleModelId(genesis.api.getNodes())
-        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId)
+        val genesisAddr = genesis.node.getColdAddress()
+        val preservedNodeIds = preservedNodeIdsForModel(preservedSnapshot, modelId, genesisAddr)
         // The snapshot is chain-wide; with default pocSlotAllocation=0.5 and a cluster
         // total weight of 40 (4 nodes x weight 10), we expect at least one preserved node.
         // A non-empty set guards against the sampler silently returning nothing.
@@ -57,7 +58,7 @@ class SchedulingTests : TestermintTest() {
         // guarantee the old TimeslotAllocation[1] proxy gave.
         val nextPreservedSnapshot = genesis.node.queryPreservedNodesSnapshot()
         assertThat(nextPreservedSnapshot.found).isTrue()
-        val nextPreservedNodeIds = preservedNodeIdsForModel(nextPreservedSnapshot, modelId)
+        val nextPreservedNodeIds = preservedNodeIdsForModel(nextPreservedSnapshot, modelId, genesisAddr)
         assertThat(nextPreservedNodeIds).isNotEmpty
 
         genesis.api.getNodes().let { nodes ->

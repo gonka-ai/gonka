@@ -358,8 +358,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		return
 	}
 	if err := d.nodeBroker.EnsurePreservedMembershipCached(&epochState); err != nil {
-		logging.Error("Failed to update broker preserved membership, skipping phase transitions.", types.Stages, "error", err)
-		return
+		logging.Warn("Failed to refresh preserved membership cache; continuing with cached snapshot", types.Stages, "error", err)
 	}
 
 	// Check for PoC start for the next epoch. This is the most important transition.

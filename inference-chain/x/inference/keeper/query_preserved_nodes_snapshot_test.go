@@ -18,8 +18,10 @@ func TestPreservedNodesSnapshotQuery(t *testing.T) {
 		EpisodeAnchorHeight: 100,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
 			{
-				ModelId:          "model-a",
-				PreservedNodeIds: []string{"node-1", "node-2"},
+				ModelId: "model-a",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: "p1", NodeIds: []string{"node-1", "node-2"}},
+				},
 			},
 		},
 	}
@@ -54,7 +56,12 @@ func TestPreservedNodesSnapshotOverwrite(t *testing.T) {
 	first := types.PreservedNodesSnapshot{
 		EpisodeAnchorHeight: 200,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
-			{ModelId: "model-b", PreservedNodeIds: []string{"node-3"}},
+			{
+				ModelId: "model-b",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: "p1", NodeIds: []string{"node-3"}},
+				},
+			},
 		},
 	}
 	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, first))
@@ -62,7 +69,12 @@ func TestPreservedNodesSnapshotOverwrite(t *testing.T) {
 	second := types.PreservedNodesSnapshot{
 		EpisodeAnchorHeight: 300,
 		ModelPreservedNodes: []*types.ModelPreservedNodes{
-			{ModelId: "model-b", PreservedNodeIds: []string{"node-4"}},
+			{
+				ModelId: "model-b",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: "p1", NodeIds: []string{"node-4"}},
+				},
+			},
 		},
 	}
 	require.NoError(t, keeper.SetPreservedNodesSnapshot(ctx, second))
