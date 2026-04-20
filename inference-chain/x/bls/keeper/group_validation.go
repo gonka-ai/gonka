@@ -130,35 +130,26 @@ func (k Keeper) DeleteGroupValidationPartialSignaturesForEpoch(ctx sdk.Context, 
 
 // SetGroupKeyValidationState persists the base GroupKeyValidationState.
 //
-// PartialSignatures are stored out-of-band under per-participant sub-keys
-// (see SetGroupValidationPartialSignature). Any inline entries in the input
-// struct are synced to sub-keys. The base struct is persisted with
-// PartialSignatures zeroed so writes stay constant-size even as signers
+// PartialSignatures live out-of-band under per-participant sub-keys (see
+// SetGroupValidationPartialSignature). The base is persisted with
+// PartialSignatures zeroed so writes stay constant-size as signers
 // accumulate.
 //
-// The MsgSubmitGroupKeyValidationSignature hot path bypasses this function
-// for partial-sig writes and calls SetGroupValidationPartialSignature
-// directly. This function is still used for first-state creation,
-// threshold-reached transition (status + final signature), and genesis
-// import.
+// Inline PartialSignatures on the input are first synced to sub-keys via
+// syncInlinePartialsToSubKeys, resolving addr→index from the previous
+// epoch's Participants list. This covers genesis import and the
+// upgrade-time legacy-state migration. The runtime hot path passes
+// PartialSignatures == nil and pays no sync overhead.
 func (k Keeper) SetGroupKeyValidationState(ctx sdk.Context, state *types.GroupKeyValidationState) error {
 	if state == nil {
 		return fmt.Errorf("nil group key validation state")
 	}
 
-	// Sync any inline partial signatures (e.g. from genesis import or a
-	// legacy caller) to sub-keys. Participant index comes from the position
-	// in the slice when an explicit index isn't provided — but inline
-	// entries don't carry an index, so we rely on ParticipantAddress as
-	// the identity. For genesis import this is a one-time migration; for
-	// runtime hot-path writes, PartialSignatures should be nil.
-	//
-	// We don't have a direct address→index mapping here without the
-	// corresponding previous-epoch data, so we fall through and assume the
-	// caller already wrote sub-keys when appropriate. In practice, the
-	// hot-path handler calls SetGroupValidationPartialSignature before
-	// SetGroupKeyValidationState; genesis import handles this via its own
-	// path below.
+	if len(state.PartialSignatures) > 0 {
+		if err := k.syncInlinePartialsToSubKeys(ctx, state); err != nil {
+			return fmt.Errorf("sync inline partial sigs: %w", err)
+		}
+	}
 
 	baseCopy := *state
 	baseCopy.PartialSignatures = nil
@@ -172,177 +163,69 @@ func (k Keeper) SetGroupKeyValidationState(ctx sdk.Context, state *types.GroupKe
 	return store.Set(key, value)
 }
 
-// GetGroupKeyValidationState retrieves the GroupKeyValidationState for a
-// new-epoch validation round. PartialSignatures are rehydrated from
-// per-participant sub-keys.
-//
-// The upgrade handler (MigrateGroupKeyValidationStatesToSubKeys) moves
-// any pre-split inline PartialSignatures into sub-keys once at upgrade
-// time, so this function is a pure read: it never writes state.
+// GetGroupKeyValidationState returns the validation state with
+// PartialSignatures rehydrated from per-participant sub-keys. Pure read:
+// the upgrade handler migrates any pre-split inline entries in a single
+// pass, so this function never writes state.
 //
 // Returns (nil, false, nil) if no state exists for the epoch.
 func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (*types.GroupKeyValidationState, bool, error) {
-	store := k.storeService.OpenKVStore(ctx)
-	key := types.GroupValidationKey(newEpochID)
-
-	value, err := store.Get(key)
+	value, err := k.storeService.OpenKVStore(ctx).Get(types.GroupValidationKey(newEpochID))
 	if err != nil {
 		return nil, false, err
 	}
 	if value == nil {
 		return nil, false, nil
 	}
-
 	state := &types.GroupKeyValidationState{}
 	if err := k.cdc.Unmarshal(value, state); err != nil {
 		return nil, false, err
 	}
-
-	// Defense-in-depth: any legacy inline entries that somehow survived
-	// the upgrade migration serve as the baseline so we never silently
-	// drop signatures. Sub-key entries override by participant address
-	// when both exist (sub-keys are post-split and authoritative).
-	baseline := state.PartialSignatures
-	state.PartialSignatures = nil
-
 	subKeyed, err := k.ListGroupValidationPartialSignatures(ctx, newEpochID)
 	if err != nil {
 		return nil, false, fmt.Errorf("list partial sigs: %w", err)
 	}
-
-	if len(baseline) == 0 && len(subKeyed) == 0 {
-		return state, true, nil
+	if len(subKeyed) > 0 {
+		state.PartialSignatures = subKeyed
 	}
-
-	byAddr := make(map[string]int, len(baseline)+len(subKeyed))
-	merged := make([]types.PartialSignature, 0, len(baseline)+len(subKeyed))
-	for _, ps := range baseline {
-		if ps.ParticipantAddress == "" {
-			continue
-		}
-		byAddr[ps.ParticipantAddress] = len(merged)
-		merged = append(merged, ps)
-	}
-	for _, ps := range subKeyed {
-		if existing, ok := byAddr[ps.ParticipantAddress]; ok {
-			merged[existing] = ps
-			continue
-		}
-		merged = append(merged, ps)
-	}
-	state.PartialSignatures = merged
 	return state, true, nil
 }
 
-// MigrateGroupKeyValidationStatesToSubKeys moves any pre-split inline
-// PartialSignatures on stored GroupKeyValidationState entries into
-// per-participant sub-keys, then rewrites the base state with
-// PartialSignatures zeroed. Runs once in the v0.2.12 upgrade handler so
-// the getter can stay a pure read.
-//
-// Idempotent: re-running after a successful migration is a no-op because
-// the base struct has no inline entries left to sync. Scoped to
-// validation rounds stored under the GroupValidationPrefix; sub-key
-// writes go through SetGroupValidationPartialSignature and are keyed by
-// participant index resolved from the previous epoch's Participants.
-func (k Keeper) MigrateGroupKeyValidationStatesToSubKeys(ctx sdk.Context) error {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	prefixStore := prefix.NewStore(store, types.GroupValidationPrefix)
-
-	it := prefixStore.Iterator(nil, nil)
-	defer it.Close()
-
-	for ; it.Valid(); it.Next() {
-		var state types.GroupKeyValidationState
-		if err := k.cdc.Unmarshal(it.Value(), &state); err != nil {
-			return fmt.Errorf("unmarshal group key validation state: %w", err)
-		}
-		if len(state.PartialSignatures) == 0 {
-			continue
-		}
-		legacyInline := state.PartialSignatures
-		if err := k.migrateInlinePartialsToSubKeys(ctx, state.PreviousEpochId, state.NewEpochId, legacyInline); err != nil {
-			return fmt.Errorf("migrate inline partial sigs for epoch %d: %w", state.NewEpochId, err)
-		}
-		// Rewrite the base state with PartialSignatures nil so subsequent
-		// reads go straight through the sub-key path.
-		state.PartialSignatures = nil
-		if err := k.setGroupKeyValidationStateBase(ctx, &state); err != nil {
-			return fmt.Errorf("clear inline partial sigs for epoch %d: %w", state.NewEpochId, err)
-		}
-	}
-	return nil
-}
-
-// migrateInlinePartialsToSubKeys syncs a slice of legacy inline partial
-// signatures to per-participant sub-keys, resolving each entry's
-// participant index via the previous epoch's Participants list.
-//
-// Participants whose address does not appear in the previous epoch are
-// skipped with a warning rather than panicking: we prefer losing an
-// unclaimable partial signature over halting the chain on a suspicious
-// legacy entry. In practice the pre-split handler always set
-// ParticipantAddress from msg.Creator after confirming the participant
-// was in previousEpochBLSData, so every legacy entry should resolve.
-func (k Keeper) migrateInlinePartialsToSubKeys(
-	ctx sdk.Context,
-	previousEpochID uint64,
-	newEpochID uint64,
-	inline []types.PartialSignature,
-) error {
-	prev, err := k.getPreviousEpochForMigration(ctx, previousEpochID, newEpochID)
+// syncInlinePartialsToSubKeys writes each inline PartialSignature under
+// its per-participant sub-key. Participant index is resolved via the
+// previous epoch's Participants list, falling back to the new epoch's
+// list when the previous is missing — same fallback the hot-path handler
+// uses for slot ownership. Entries with an unresolvable address are
+// skipped with a warning; dropping one unclaimable legacy partial is
+// preferable to halting an upgrade block.
+func (k Keeper) syncInlinePartialsToSubKeys(ctx sdk.Context, state *types.GroupKeyValidationState) error {
+	prev, err := k.GetEpochBLSData(ctx, state.PreviousEpochId)
 	if err != nil {
-		return err
+		prev, err = k.GetEpochBLSData(ctx, state.NewEpochId)
+		if err != nil {
+			return fmt.Errorf("resolve participants for epoch %d (fallback %d): %w",
+				state.PreviousEpochId, state.NewEpochId, err)
+		}
 	}
 	addrToIdx := make(map[string]uint32, len(prev.Participants))
 	for i, p := range prev.Participants {
 		addrToIdx[p.Address] = uint32(i)
 	}
-
-	for _, ps := range inline {
+	for _, ps := range state.PartialSignatures {
 		idx, ok := addrToIdx[ps.ParticipantAddress]
 		if !ok {
-			k.Logger().Warn("migrateInlinePartialsToSubKeys: skipping partial sig with unknown participant address",
+			k.Logger().Warn("syncInlinePartialsToSubKeys: skipping partial sig with unknown participant address",
 				"subsystem", "BLS",
 				"participant_address", ps.ParticipantAddress,
-				"previous_epoch_id", previousEpochID,
-				"new_epoch_id", newEpochID,
+				"previous_epoch_id", state.PreviousEpochId,
+				"new_epoch_id", state.NewEpochId,
 			)
 			continue
 		}
 		psCopy := ps
-		if err := k.SetGroupValidationPartialSignature(ctx, newEpochID, idx, &psCopy); err != nil {
-			return fmt.Errorf("sync legacy partial sig for participant %d: %w", idx, err)
+		if err := k.SetGroupValidationPartialSignature(ctx, state.NewEpochId, idx, &psCopy); err != nil {
+			return fmt.Errorf("sync partial sig for participant %d: %w", idx, err)
 		}
 	}
 	return nil
-}
-
-// getPreviousEpochForMigration resolves the previous-epoch BLS data used to
-// map participant addresses to slot indices. Falls back to the new epoch's
-// data when the previous epoch is missing — mirrors the same fallback the
-// hot-path handler applies when computing slot ownership.
-func (k Keeper) getPreviousEpochForMigration(ctx sdk.Context, previousEpochID, newEpochID uint64) (types.EpochBLSData, error) {
-	prev, err := k.GetEpochBLSData(ctx, previousEpochID)
-	if err == nil {
-		return prev, nil
-	}
-	// Mirror the "previous missing → use new epoch" fallback from the
-	// handler so migration doesn't fail a case the normal flow accepts.
-	return k.GetEpochBLSData(ctx, newEpochID)
-}
-
-// setGroupKeyValidationStateBase is the internal writer used by the
-// legacy-migration path inside GetGroupKeyValidationState. It persists the
-// base struct directly without re-entering the public SetGroupKeyValidationState
-// (which is identical today but kept separate to make the intent clear:
-// migration writes the zeroed base, it does NOT re-process partial sigs).
-func (k Keeper) setGroupKeyValidationStateBase(ctx sdk.Context, state *types.GroupKeyValidationState) error {
-	baseCopy := *state
-	baseCopy.PartialSignatures = nil
-	value, err := k.cdc.Marshal(&baseCopy)
-	if err != nil {
-		return err
-	}
-	return k.storeService.OpenKVStore(ctx).Set(types.GroupValidationKey(baseCopy.NewEpochId), value)
 }
