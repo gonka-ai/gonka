@@ -3,7 +3,6 @@ package keeper_test
 import (
 	"testing"
 
-	"cosmossdk.io/collections"
 	"github.com/stretchr/testify/require"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -56,11 +55,19 @@ func TestSetBridgeTransaction_StripsAndSyncsValidators(t *testing.T) {
 	// If Validators had been stored inline in the base, deleting the
 	// KeySet wouldn't clear them — catching a regression that leaves
 	// inline entries behind.
-	list, err := k.ListBridgeTransactionValidators(ctx, tx)
+	//
+	// We iterate the KeySet directly so the test removes keys under
+	// whatever schema production uses (currently chainId, blockNumber,
+	// contentHashPart, validator) without duplicating the key-derivation
+	// logic in the test.
+	iter, err := k.BridgeTransactionValidators.Iterate(ctx, nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, list)
-	for _, v := range list {
-		require.NoError(t, k.BridgeTransactionValidators.Remove(ctx, collections.Join4(tx.ChainId, tx.BlockNumber, tx.ReceiptIndex, v)))
+	keys, err := iter.Keys()
+	iter.Close()
+	require.NoError(t, err)
+	require.NotEmpty(t, keys)
+	for _, key := range keys {
+		require.NoError(t, k.BridgeTransactionValidators.Remove(ctx, key))
 	}
 	afterDelete, found := k.GetBridgeTransactionByContent(ctx, tx)
 	require.True(t, found)
