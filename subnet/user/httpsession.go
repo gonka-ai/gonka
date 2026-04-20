@@ -41,7 +41,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("get escrow: %w", err)
 	}
 
-	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
+	config := types.SessionConfigFromEscrow(len(group), escrow.TokenPrice, escrow.RefusalTimeout, escrow.ExecutionTimeout, escrow.ValidationRate)
 
 	sm := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),

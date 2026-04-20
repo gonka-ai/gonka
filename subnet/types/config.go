@@ -22,3 +22,23 @@ func SessionConfigWithPrice(groupSize int, tokenPrice uint64) SessionConfig {
 	}
 	return cfg
 }
+
+// SessionConfigFromEscrow returns a session config with governance-controlled
+// values propagated from the on-chain escrow. Zero values fall back to defaults,
+// ensuring backward compatibility with escrows created before these fields existed.
+func SessionConfigFromEscrow(groupSize int, tokenPrice uint64, refusalTimeout, executionTimeout int64, validationRate uint32) SessionConfig {
+	cfg := DefaultSessionConfig(groupSize)
+	if tokenPrice > 0 {
+		cfg.TokenPrice = tokenPrice
+	}
+	if refusalTimeout > 0 {
+		cfg.RefusalTimeout = refusalTimeout
+	}
+	if executionTimeout > 0 {
+		cfg.ExecutionTimeout = executionTimeout
+	}
+	if validationRate > 0 {
+		cfg.ValidationRate = validationRate
+	}
+	return cfg
+}

@@ -1950,6 +1950,9 @@ type SubnetEscrowParams struct {
 	GroupSize               uint32   `protobuf:"varint,4,opt,name=group_size,json=groupSize,proto3" json:"group_size,omitempty"`
 	AllowedCreatorAddresses []string `protobuf:"bytes,5,rep,name=allowed_creator_addresses,json=allowedCreatorAddresses,proto3" json:"allowed_creator_addresses,omitempty"`
 	TokenPrice              uint64   `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	RefusalTimeout          int64    `protobuf:"varint,7,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout        int64    `protobuf:"varint,8,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate          uint32   `protobuf:"varint,9,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 }
 
 func (m *SubnetEscrowParams) Reset()         { *m = SubnetEscrowParams{} }
@@ -2023,6 +2026,27 @@ func (m *SubnetEscrowParams) GetAllowedCreatorAddresses() []string {
 func (m *SubnetEscrowParams) GetTokenPrice() uint64 {
 	if m != nil {
 		return m.TokenPrice
+	}
+	return 0
+}
+
+func (m *SubnetEscrowParams) GetRefusalTimeout() int64 {
+	if m != nil {
+		return m.RefusalTimeout
+	}
+	return 0
+}
+
+func (m *SubnetEscrowParams) GetExecutionTimeout() int64 {
+	if m != nil {
+		return m.ExecutionTimeout
+	}
+	return 0
+}
+
+func (m *SubnetEscrowParams) GetValidationRate() uint32 {
+	if m != nil {
+		return m.ValidationRate
 	}
 	return 0
 }
@@ -4810,6 +4834,21 @@ func (m *SubnetEscrowParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ValidationRate != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.ValidationRate))
+		i--
+		dAtA[i] = 0x48
+	}
+	if m.ExecutionTimeout != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.ExecutionTimeout))
+		i--
+		dAtA[i] = 0x40
+	}
+	if m.RefusalTimeout != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.RefusalTimeout))
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.TokenPrice != 0 {
 		i = encodeVarintParams(dAtA, i, uint64(m.TokenPrice))
 		i--
@@ -5575,6 +5614,15 @@ func (m *SubnetEscrowParams) Size() (n int) {
 	}
 	if m.TokenPrice != 0 {
 		n += 1 + sovParams(uint64(m.TokenPrice))
+	}
+	if m.RefusalTimeout != 0 {
+		n += 1 + sovParams(uint64(m.RefusalTimeout))
+	}
+	if m.ExecutionTimeout != 0 {
+		n += 1 + sovParams(uint64(m.ExecutionTimeout))
+	}
+	if m.ValidationRate != 0 {
+		n += 1 + sovParams(uint64(m.ValidationRate))
 	}
 	return n
 }
@@ -10640,6 +10688,63 @@ func (m *SubnetEscrowParams) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.TokenPrice |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefusalTimeout", wireType)
+			}
+			m.RefusalTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.RefusalTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 8:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExecutionTimeout", wireType)
+			}
+			m.ExecutionTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ExecutionTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationRate", wireType)
+			}
+			m.ValidationRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ValidationRate |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

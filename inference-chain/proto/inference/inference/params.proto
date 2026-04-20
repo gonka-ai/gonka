@@ -337,4 +337,7 @@ message SubnetEscrowParams {
   uint32 group_size = 4;
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
+  int64 refusal_timeout = 7;
+  int64 execution_timeout = 8;
+  uint32 validation_rate = 9;
 }

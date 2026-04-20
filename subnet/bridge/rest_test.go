@@ -39,6 +39,66 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"valA", "valB", "valC"}, info.Slots)
 }
 
+func TestGetEscrow_SessionConfigFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":                "7",
+				"creator":           "inference1xyz",
+				"amount":            "1000",
+				"slots":             []string{"valA"},
+				"epoch_index":       "1",
+				"app_hash":          "aabb",
+				"settled":           false,
+				"token_price":       "42",
+				"refusal_timeout":   "30",
+				"execution_timeout": "900",
+				"validation_rate":   8000,
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	info, err := b.GetEscrow("7")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(42), info.TokenPrice)
+	assert.Equal(t, int64(30), info.RefusalTimeout)
+	assert.Equal(t, int64(900), info.ExecutionTimeout)
+	assert.Equal(t, uint32(8000), info.ValidationRate)
+}
+
+func TestGetEscrow_MissingSessionConfigFields(t *testing.T) {
+	// Backward compatibility: old escrows without new fields should parse fine.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":          "1",
+				"creator":     "inference1old",
+				"amount":      "500",
+				"slots":       []string{"valA"},
+				"epoch_index": "1",
+				"app_hash":    "cc",
+				"settled":     false,
+				"token_price": "10",
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	info, err := b.GetEscrow("1")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(10), info.TokenPrice)
+	assert.Equal(t, int64(0), info.RefusalTimeout)
+	assert.Equal(t, int64(0), info.ExecutionTimeout)
+	assert.Equal(t, uint32(0), info.ValidationRate)
+}
+
 func TestGetEscrow_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

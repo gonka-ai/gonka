@@ -81,13 +81,16 @@ func (k msgServer) CreateSubnetEscrow(goCtx context.Context, msg *types.MsgCreat
 	}
 
 	escrow := &types.SubnetEscrow{
-		Creator:    msg.Creator,
-		Amount:     msg.Amount,
-		Slots:      slots,
-		EpochIndex: epochIndex,
-		AppHash:    appHash,
-		Settled:    false,
-		TokenPrice: ep.TokenPrice,
+		Creator:          msg.Creator,
+		Amount:           msg.Amount,
+		Slots:            slots,
+		EpochIndex:       epochIndex,
+		AppHash:          appHash,
+		Settled:          false,
+		TokenPrice:       ep.TokenPrice,
+		RefusalTimeout:   ep.RefusalTimeout,
+		ExecutionTimeout: ep.ExecutionTimeout,
+		ValidationRate:   ep.ValidationRate,
 	}
 
 	id, err := k.StoreSubnetEscrow(goCtx, escrow, nextID)

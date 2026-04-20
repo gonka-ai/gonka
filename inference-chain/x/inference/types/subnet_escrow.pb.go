@@ -30,7 +30,10 @@ type SubnetEscrow struct {
 	EpochIndex uint64   `protobuf:"varint,5,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
 	AppHash    string   `protobuf:"bytes,6,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
 	Settled    bool     `protobuf:"varint,7,opt,name=settled,proto3" json:"settled,omitempty"`
-	TokenPrice uint64   `protobuf:"varint,8,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	TokenPrice       uint64   `protobuf:"varint,8,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	RefusalTimeout   int64    `protobuf:"varint,9,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout int64    `protobuf:"varint,10,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate   uint32   `protobuf:"varint,11,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 }
 
 func (m *SubnetEscrow) Reset()         { *m = SubnetEscrow{} }
@@ -118,6 +121,27 @@ func (m *SubnetEscrow) GetSettled() bool {
 func (m *SubnetEscrow) GetTokenPrice() uint64 {
 	if m != nil {
 		return m.TokenPrice
+	}
+	return 0
+}
+
+func (m *SubnetEscrow) GetRefusalTimeout() int64 {
+	if m != nil {
+		return m.RefusalTimeout
+	}
+	return 0
+}
+
+func (m *SubnetEscrow) GetExecutionTimeout() int64 {
+	if m != nil {
+		return m.ExecutionTimeout
+	}
+	return 0
+}
+
+func (m *SubnetEscrow) GetValidationRate() uint32 {
+	if m != nil {
+		return m.ValidationRate
 	}
 	return 0
 }
@@ -425,6 +449,21 @@ func (m *SubnetEscrow) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ValidationRate != 0 {
+		i = encodeVarintSubnetEscrow(dAtA, i, uint64(m.ValidationRate))
+		i--
+		dAtA[i] = 0x58
+	}
+	if m.ExecutionTimeout != 0 {
+		i = encodeVarintSubnetEscrow(dAtA, i, uint64(m.ExecutionTimeout))
+		i--
+		dAtA[i] = 0x50
+	}
+	if m.RefusalTimeout != 0 {
+		i = encodeVarintSubnetEscrow(dAtA, i, uint64(m.RefusalTimeout))
+		i--
+		dAtA[i] = 0x48
+	}
 	if m.TokenPrice != 0 {
 		i = encodeVarintSubnetEscrow(dAtA, i, uint64(m.TokenPrice))
 		i--
@@ -679,6 +718,15 @@ func (m *SubnetEscrow) Size() (n int) {
 	}
 	if m.TokenPrice != 0 {
 		n += 1 + sovSubnetEscrow(uint64(m.TokenPrice))
+	}
+	if m.RefusalTimeout != 0 {
+		n += 1 + sovSubnetEscrow(uint64(m.RefusalTimeout))
+	}
+	if m.ExecutionTimeout != 0 {
+		n += 1 + sovSubnetEscrow(uint64(m.ExecutionTimeout))
+	}
+	if m.ValidationRate != 0 {
+		n += 1 + sovSubnetEscrow(uint64(m.ValidationRate))
 	}
 	return n
 }
@@ -983,6 +1031,63 @@ func (m *SubnetEscrow) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.TokenPrice |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 9:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefusalTimeout", wireType)
+			}
+			m.RefusalTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowSubnetEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.RefusalTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExecutionTimeout", wireType)
+			}
+			m.ExecutionTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowSubnetEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ExecutionTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationRate", wireType)
+			}
+			m.ValidationRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowSubnetEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ValidationRate |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

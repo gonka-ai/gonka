@@ -18,12 +18,15 @@ type MainnetBridge interface {
 }
 
 type EscrowInfo struct {
-	EscrowID       string
-	Amount         uint64
-	CreatorAddress string
-	AppHash        []byte
-	Slots          []string // host addresses, len == SubnetGroupSize
-	TokenPrice     uint64
+	EscrowID         string
+	Amount           uint64
+	CreatorAddress   string
+	AppHash          []byte
+	Slots            []string // host addresses, len == SubnetGroupSize
+	TokenPrice       uint64
+	RefusalTimeout   int64
+	ExecutionTimeout int64
+	ValidationRate   uint32
 }
 
 type HostInfo struct {
