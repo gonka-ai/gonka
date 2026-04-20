@@ -3,6 +3,8 @@ package inference
 import (
 	"cmp"
 	"context"
+	"math"
+	"math/bits"
 	"slices"
 	"strconv"
 
@@ -659,13 +661,45 @@ func ComputeModelVotingPowers(
 	return modelVotingPowers
 }
 
+// VotingPowerCapParams carries the optional per-model concentration cap
+// applied to per-model voting powers after delegation is resolved.
+//
+// PerModel is the max fraction of voting power any single host can hold
+// within a single model group. Applied independently to each model.
+// Zero means disabled.
+//
+// The per-model cap protects validation integrity: in slot-based validation,
+// a host that attracts enough delegations could single-handedly push a model
+// group past its supermajority threshold.
+type VotingPowerCapParams struct {
+	PerModel mathsdk.LegacyDec
+}
+
+// delegationVotingPowerCapParams extracts the voting-power cap from
+// governance params. Returns zero-dec if not set, which disables the cap.
+func (am AppModule) delegationVotingPowerCapParams(params types.Params) VotingPowerCapParams {
+	if params.DelegationParams == nil {
+		return VotingPowerCapParams{PerModel: mathsdk.LegacyZeroDec()}
+	}
+	return VotingPowerCapParams{
+		PerModel: protoDecToLegacy(params.DelegationParams.MaxModelVotingPowerPercentage),
+	}
+}
+
 // computeAndSetVotingPowers computes per-group voting powers from final weights
 // and writes them to each participant's VotingPowers field for visibility.
+//
+// Applies the per-model concentration cap (if configured). Any host whose
+// voting power exceeds the cap is clipped down to the cap and the excess is
+// burned (not redistributed). The group's post-cap total shrinks
+// accordingly; downstream per-group math is expected to operate on the
+// post-cap total. See capPerModelVotingPowers for the rationale.
 func (am AppModule) computeAndSetVotingPowers(
 	activeParticipants []*types.ActiveParticipant,
 	dwc *DelegationWeightCalculator,
 	eligibleModels []string,
 	participationByModel map[string]map[string]ParticipationMode,
+	caps VotingPowerCapParams,
 ) {
 	finalWeights := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
@@ -680,6 +714,12 @@ func (am AppModule) computeAndSetVotingPowers(
 			continue
 		}
 		vpMap := dwc.ComputeGroupVotingPowers(modelID, modes, finalWeights)
+
+		// Per-model cap: scale down any single host that exceeds the cap.
+		if !caps.PerModel.IsZero() {
+			capPerModelVotingPowers(vpMap, caps.PerModel, modelID, am)
+		}
+
 		for _, addr := range sortedKeys(vpMap) {
 			vp := vpMap[addr]
 			if vp > 0 {
@@ -693,12 +733,104 @@ func (am AppModule) computeAndSetVotingPowers(
 
 	for _, p := range activeParticipants {
 		vps := participantVP[p.Index]
-		if len(vps) > 0 {
-			slices.SortFunc(vps, func(a, b *types.ModelVotingPower) int {
-				return cmp.Compare(a.ModelId, b.ModelId)
-			})
-			p.VotingPowers = vps
+		if len(vps) == 0 {
+			continue
 		}
+		slices.SortFunc(vps, func(a, b *types.ModelVotingPower) int {
+			return cmp.Compare(a.ModelId, b.ModelId)
+		})
+		p.VotingPowers = vps
+	}
+}
+
+// votingPowerCapLogger is a minimal interface for the cap helpers' logging.
+// The real production type (AppModule) satisfies it; tests can pass a nop
+// implementation or capture logs directly.
+type votingPowerCapLogger interface {
+	LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{})
+	LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{})
+}
+
+// sumInt64Safe sums the values of a string-keyed int64 map, returning
+// (sum, true) on success or (0, false) if the sum would overflow int64.
+// Iterates over sorted keys so the accumulation order stays deterministic,
+// which keeps any future log/event added inside the loop identical across
+// nodes.
+func sumInt64Safe(m map[string]int64) (int64, bool) {
+	var total int64
+	for _, k := range sortedKeys(m) {
+		v := m[k]
+		if v < 0 {
+			return 0, false
+		}
+		sum, carry := bits.Add64(uint64(total), uint64(v), 0)
+		if carry != 0 || sum > uint64(math.MaxInt64) {
+			return 0, false
+		}
+		total = int64(sum)
+	}
+	return total, true
+}
+
+// capPerModelVotingPowers clips any host whose voting power in vpMap exceeds
+// capPct of the ORIGINAL group total down to the cap. The excess is burned:
+// it is not redistributed to other hosts in the group. Applied in-place.
+//
+// Why burn rather than redistribute: voting power that reached a host via
+// delegation represents the delegator's explicit trust in THAT host. Moving
+// the excess to other hosts in the group would silently reassign that trust
+// to parties the delegator didn't pick. Burning is the only option that
+// respects the delegator's choice without requiring per-delegation
+// accounting through the cap path.
+//
+// The cap is applied against the original pre-capping total, so the cap
+// value is stable regardless of how many hosts end up clipped. The group's
+// post-cap total shrinks, and downstream per-group math (2/3 validation
+// quorum, per-group reward shares, slot sampling) is expected to operate on
+// the post-cap total. Consensus-weight concentration is capped separately
+// and is unaffected by this function.
+//
+// Complexity: O(N) single pass over vpMap.
+func capPerModelVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, modelID string, logger votingPowerCapLogger) {
+	if len(vpMap) < 2 {
+		return
+	}
+
+	totalVP, ok := sumInt64Safe(vpMap)
+	if !ok {
+		logger.LogWarn("per-model voting power cap: total VP overflow, cap skipped",
+			types.EpochGroup,
+			"modelId", modelID,
+		)
+		return
+	}
+	if totalVP == 0 {
+		return
+	}
+
+	capVP := capPct.MulInt64(totalVP).TruncateInt64()
+	if capVP <= 0 {
+		return
+	}
+
+	// Iterate in sorted-address order so logged events are deterministic
+	// across nodes. The order doesn't affect the outcome since each host is
+	// clipped independently.
+	for _, addr := range sortedKeys(vpMap) {
+		vp := vpMap[addr]
+		if vp <= capVP {
+			continue
+		}
+		excess := vp - capVP
+		vpMap[addr] = capVP
+		logger.LogInfo("per-model voting power cap applied",
+			types.EpochGroup,
+			"modelId", modelID,
+			"cappedHost", addr,
+			"originalVP", vp,
+			"capVP", capVP,
+			"burned", excess,
+		)
 	}
 }
 

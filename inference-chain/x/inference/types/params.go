@@ -159,7 +159,7 @@ func DefaultParams() Params {
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
-		DelegationParams:   DefaultDelegationParams(),
+		DelegationParams:     DefaultDelegationParams(),
 	}
 }
 
@@ -374,6 +374,11 @@ func DefaultDelegationParams() *DelegationParams {
 		VMin:                   3,
 		CapFactor:              DecimalFromFloat(1),
 		InitialModelId:         "",
+		// Per-model voting-power concentration cap is OFF by default.
+		// Governance must set a concrete value via MsgUpdateParams after
+		// observing real network concentration. Zero disables the cap; see
+		// computeAndSetVotingPowers for enforcement semantics.
+		MaxModelVotingPowerPercentage: DecimalFromFloat(0),
 	}
 }
 
