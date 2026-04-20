@@ -1,36 +1,63 @@
-# Height sync envelope proposal (structured HTTP body)
+# Height sync proposal (structured HTTP body — periodic anchors, Strong on disagreement)
 
 ## Summary
 
-User–host traffic carries a **two-section HTTP body**: **(1) height sync** — mainnet height, CometBFT `LightBlock` proof, metadata, and a **sender signature** over that section; **(2) message** — the normal application payload (which may use its own signing rules). Large proofs stay out of HTTP headers; only routing metadata (for example `Content-Type`) belongs in headers.
+User–host traffic uses a **two-section HTTP body**: **(1)** optional **mainnet attestation** (signed **`mainnet_height`** + **`BlockID.Hash`** on an **Anchor** schedule, or full **`LightBlock`** in **Strong** mode) plus session fields; **(2)** the **application message**. Large **`LightBlock`** proofs are **not** sent on the periodic **`K`**-block path.
+
+**Normative pattern:** **Anchor** messages (every **`K`** mainnet blocks, e.g. **`K = 10`**, TBD) carry **signed height + hash**, **`light_block` empty** — this is **height sync**, not Strong sync. **Between** Anchors, section 1 **MUST NOT** include **`mainnet_height`**, **`mainnet_height_hash`**, or **`light_block`** — parties rely on the **last Anchor** and each **mainnet listener**. **Strong** (`LightBlock` + verify) is required when **`|H_peer − H_local_aligned| > D`** (proposal **`D = 2`**) and for finalization/dispute evidence when policy says so.
 
 Historical note: an early draft put proofs in headers; that hits size limits. **Normative transport is the structured body below.**
 
-Related proposal: `[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)`.
+Related proposals:
+
+- [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)
+- [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md) — skip attestation, nonce binding; height in application payload between Anchors; Strong if **`> D`**
 
 ---
 
 ## Goals
 
-1. Keep **user** and **hosts** on the **same latest mainnet height** and align it between host on next **nonces**.
-2. Make timeout triggers auditable and cryptographically provable.
-3. Provide consistent chain-height source for validation and finalization randomness and trigger checks.
-4. Keep **height/proof attestation** cryptographically separate from the **application message** (second section).
-5. Ensure height is trusted only if the CometBFT proof verifies under mainnet consensus rules.
+1. Align mainnet time with **periodic Anchor** messages (`H` + `BlockID.Hash`, **signed**, **no** `LightBlock` on the **`K`**-block path), without mainnet height/hash on every envelope.
+2. Use **Strong** (`LightBlock`) **only** when **`|H_peer − H_local_aligned| > D`** (default **`D = 2`**) or when finalization/disputes require it — **not** as the default every-`K` sync.
+3. Make **timeout** and **dispute** triggers auditable: **Anchors** + **deferred** hash verification when local block **`H`** is not yet available; **Strong** when disagreement exceeds **`D`**.
+4. Keep **mainnet attestation** (when present) separate from the **application message** (section 2).
+5. **No** mainnet **`height` / `hash`** fields **between** Anchors (no per-message “trusted window” on the inference path).
+
+---
+
+## Sync modes
+
+| Mode | Section 1: `mainnet_height` / `mainnet_height_hash` | `light_block` | When |
+|------|-----------------------------------------------------|---------------|------|
+| **Omit** | **Must not** be sent | absent | **Between** Anchor messages (default) |
+| **Anchor** | Present, **signed**; hash vs local **`H`** or **deferred** | **empty** | Every **`K`** mainnet blocks (e.g. **10**) + session/escrow start per policy |
+| **Strong** | Present; must match `LightBlock` header | **non-empty**, verified | **`|H_peer − H_local_aligned| > D`** (default **`D = 2`**) or finalization/dispute |
+
+Periodic **`K`**-block sync is **Anchor** only (not Strong). **Strong** is for disagreement **> `D`**, not for each **`K`** tick.
+
+**Deferred verification (Anchor):** If block **`H`** is not local yet, enqueue **`(H, hash)`**; when synced, compare to canonical **`BlockID.Hash`**; mismatch ⇒ misrepresentation evidence.
+
+---
 
 ## High-level protocol (request / response and height alignment)
 
-Two parties exchange work over HTTP: **user** (client) and **host** (server). Every **request** and every **response** uses the same **envelope**: **section 1** (height sync + proof + sender signature) and **section 2** (message body). Parse section 1 enough to read scalars (height, chain id, nonce, signature fields) **before** heavy parsing of section 2 (DoS hygiene).
+Two parties exchange work over HTTP: **user** (client) and **host** (server). Each **request** and **response** uses **section 2** (message body). **Section 1** is present in **Anchor** / **Strong** modes (mainnet fields + signature) or reduced / omitted in **Omit** mode per proto. Parse enough of section 1 to enforce DoS hygiene and routing **before** heavy section 2 parsing.
 
-**Short-circuit (lower-or-equal height):** If `height_sync.mainnet_height` is **less than or equal to** the receiver’s **local aligned height** (the same value used in `max(receiver_aligned, H_peer)` for timeout / alignment), the sender’s height **cannot** raise aligned height or `height_seen_max`. The receiver **MAY skip CometBFT `LightBlock` verification** for that message (`VerifyCommit`, validator-set checks, etc.), since that proof will never be used for state. Implementations **SHOULD** still verify `**sender_signature`** and anti-replay rules on section 1 when they are required for session authenticity; only the **mainnet proof** path is optional in this case.
+**Periodic Anchor obligation:** At least every **`K`** mainnet blocks (and on session/escrow start per policy), the next applicable envelope **SHOULD** include **Anchor** mode (signed `mainnet_height` + `mainnet_height_hash`, **empty** `light_block`). This is **height sync**, not Strong sync.
+
+**Strong escalation:** If a peer’s claimed **`mainnet_height`** differs from the receiver’s **aligned** height by **more than `D`** (default **2**), the sender **MUST** use **Strong** (`LightBlock` verified) for that mainnet attestation, or the receiver rejects the height claim (policy: hold / `INVALID`).
+
+**Short-circuit (Strong only):** If `light_block` is present and `mainnet_height <= local_aligned_height`, the receiver **MAY** skip full `VerifyCommit` when policy treats the message as non-advancing (same spirit as earlier drafts).
+
+**Omit mode:** Between Anchors, section 1 **MUST NOT** include `mainnet_height`, `mainnet_height_hash`, or `light_block`; session nonces / replay binding may still appear in section 1 or in signed section 2 (implementation choice — see Open questions).
 
 ### How the two views converge
 
-**User → host** and **host → user** follow the same pattern: validate section 1 (signature/replay; CometBFT proof unless short-circuited), optionally raise **aligned height** to `max(local, H_peer)` when allowed, then handle section 2. Each side’s aligned height is monotone and tends toward the **max** of its own chain/RPC tip and **peer heights that verified**; stale or invalid proofs never increase it. Details: **Validation pipeline**, **Processing rules**; timeout formulas: **Timeout derivation**.
+**User → host** and **host → user**: classify each envelope as **Omit** (no mainnet fields), **Anchor** (signed `H`+hash, empty `light_block`), or **Strong** (`LightBlock` present and verified). Update **local aligned height** from the mainnet follower; update **peer anchor state** from **Anchor** (hash immediate or deferred) and from **Strong**. **Omit** does not carry peer mainnet claims. Details: **Validation pipeline**, **Processing rules**; **Timeout derivation** uses **Anchor** + **Strong** for `height_seen_max` (not bare Omit).
 
 ### Role of the host’s mainnet listener
 
-The host advances aligned height from its own chain follower. Outgoing responses should attach a **fresh `LightBlock`** for a height **at least** as high as `max(peer_aligned, local_tip)` when policy allows, so the user stays chain-anchored even if the client is behind.
+The host advances **local** aligned height from its own follower. It sends **Anchor** on the **`K`**-block schedule; it sends **Strong** when disagreeing with the peer by **`> D`** or when finalization/disputes require proof. **Between** Anchors it sends **Omit** (no mainnet height/hash in section 1). It processes the **deferred queue** for Anchor hash checks as the follower advances.
 
 ---
 
@@ -51,15 +78,17 @@ Wire type: serialized `GonkaUserHostEnvelope` (message name is illustrative; pla
 - `session_id` (`string`): session / escrow-scoped id.
 - `sender_id` (`string`): sender identity (address, slot, etc.).
 - `nonce_num` (`uint64`): monotonic message nonce for this session direction.
-- `chain_id` (`string`): must equal decoded `light_block` header `chain_id`.
-- `mainnet_height` (`uint64`): height `H` this proof attests.
-- `mainnet_height_hash` (`bytes`): CometBFT `BlockID.Hash` for block `H` (typically 32 bytes).
-- `proof_type` (`string`): must be `cometbft-light-block-v1`.
-- `light_block` (`bytes`): raw protobuf `tendermint.types.LightBlock` (not base64).
+- `chain_id` (`string`): deployment mainnet `chain_id`. If `light_block` is **non-empty**, MUST equal decoded `light_block` header `chain_id`. On **Anchor** messages (`light_block` empty, `proof_type == height-anchor-v1`), MUST equal configured deployment `chain_id`. **Omit** mode: when section 1 omits mainnet fields entirely, `chain_id` may be omitted or carried for routing only (proto TBD).
+- `mainnet_height` (`uint64`): height `H`; **required** for **Anchor** and **Strong**; **MUST NOT** be set in **Omit** mode (between anchors).
+- `mainnet_height_hash` (`bytes`): CometBFT `BlockID.Hash` for block `H` (typically 32 bytes); **required** for **Anchor** and **Strong**; **MUST NOT** be set in **Omit** mode.
+- `proof_type` (`string`): **`cometbft-light-block-v1`** when `light_block` is non-empty (**Strong**). **`height-anchor-v1`** when `light_block` is empty and height/hash are present (**Anchor**). **Omit** mode: no height attestation — use optional `height_sync` / oneof (see Open questions).
+- `light_block` (`bytes`): raw protobuf `tendermint.types.LightBlock` (not base64). **Empty** for **Anchor**; **non-empty** for **Strong**; **absent** with no height/hash for **Omit**.
 - `timestamp_unix_ms` (`uint64`): when sender built this section.
 - `direction` (`string`): `request` or `response` (or enum in proto).
 - `request_id` (`bytes`): binds this envelope to transport (unique per direction).
 - `sender_signature` (`bytes`): signature over height-sync signing payload (see Sender signature section).
+
+Implementations **SHOULD** use proto3 **`optional`** or a oneof for `light_block` presence so verifiers distinguish “omit proof” from “zero-length error.”
 
 #### HTTP mapping
 
@@ -85,9 +114,11 @@ The **height-sync signing payload** is a deterministic byte string (or its hash,
 `height_sync_signing_input = "gonka.height_sync.v1" || session_id || sender_id || nonce_num || chain_id || LE64(mainnet_height) || mainnet_height_hash || proof_type || SHA256(light_block_raw_bytes) || LE64(timestamp_unix_ms) || direction || request_id`
 
 - `LE64` = little-endian 8-byte unsigned integer encoding.
-- `light_block_raw_bytes` = contents of `height_sync.light_block` after base64 decode in JSON, or the protobuf `bytes` field directly.
+- `light_block_raw_bytes` = if `height_sync.light_block` is empty, use **32 zero bytes** as the literal input to `SHA256(...)` in the signing string (i.e. bind “no proof” explicitly). Otherwise: contents after base64 decode in JSON, or the protobuf `bytes` field directly.
 
 `sender_signature` verifies over `height_sync_signing_input` (or `SHA256(height_sync_signing_input)` if the stack signs digests only).
+
+**Note:** Alternative sentinel (e.g. ASCII `"empty"`) is allowed if all implementations agree; document the chosen rule in the repo proto.
 
 **Independence from section 2:** Application payload in `message_body` is **not** included in this input. If the application also signs its payload, that remains a separate signature (or MAC) inside section 2 conventions.
 
@@ -101,12 +132,31 @@ Cosmos chains do not expose a separate “mainnet height signature” API. Conse
 
 ## Trust model
 
-Height is trusted only if **both** hold:
+### Strong profile (full proof)
 
-1. CometBFT `LightBlock` verifies `(chain_id, height, block_hash)` (see below).
+Height/hash pair is **strongly trusted** only if **both** hold:
+
+1. CometBFT `LightBlock` verifies `(chain_id, height, block_hash)` (see **CometBFT `LightBlock` verification**).
 2. `sender_signature` verifies the height-sync signing payload for this transport context.
 
-If either fails, height must not advance aligned-height state.
+If either fails, the envelope MUST NOT advance **strong** anchor state (`H_anchor`).
+
+### Anchor profile (periodic height sync)
+
+When `proof_type == height-anchor-v1`, `light_block` is **empty**, and **`mainnet_height`** / **`mainnet_height_hash`** are present with valid `sender_signature`:
+
+- If the receiver’s block store already has height **`H`**, it **MUST** verify **`mainnet_height_hash`** equals canonical **`BlockID.Hash`** for **`H`** (or reject).
+- Otherwise it **MUST** **enqueue deferred verification** for **`(H, hash)`** when the follower reaches **`H`**.
+
+If deferred verification fails (hash mismatch), the Anchor is **invalid** for evidence / advancing peer anchor state.
+
+### Omit mode (between anchors)
+
+No mainnet attestation in section 1. Peers do not learn new height claims from the envelope; they use the **last Anchor** and their **local follower**.
+
+### Combined rule
+
+**Strong** updates consensus-grade peer height state. **Anchor** updates signed peer **`(H, hash)`** subject to immediate or deferred verification. **Omit** does not update peer mainnet state from section 1.
 
 ### Mainnet validators are not subnet hosts
 
@@ -146,14 +196,16 @@ If a product requirement is “height attestation must also cite **subnet** memb
 
 ## CometBFT `LightBlock` verification
 
-Normative when `proof_type == cometbft-light-block-v1`. Matches Cosmos SDK / CometBFT full node or light client checks for “block `H` with this `BlockID` was finalized.”
+Normative when `proof_type == cometbft-light-block-v1` **and** `height_sync.light_block` is **non-empty**. Matches Cosmos SDK / CometBFT full node or light client checks for “block `H` with this `BlockID` was finalized.”
+
+When `light_block` is **empty** and `proof_type == height-anchor-v1`, skip this section (**Anchor** uses hash check / deferred path, not `VerifyCommit`). When section 1 has **no** mainnet fields (**Omit**), skip this section.
 
 ### Inputs from `HeightSyncSection`
 
 - `chain_id_claimed` ← `height_sync.chain_id`
 - `H_claimed` ← `height_sync.mainnet_height`
 - `block_hash_claimed` ← `height_sync.mainnet_height_hash` (raw bytes; JSON: decode from hex)
-- `proof_bytes` ← `height_sync.light_block` (raw protobuf bytes)
+- `proof_bytes` ← `height_sync.light_block` (raw protobuf bytes; non-empty)
 
 ### Step 1 — Decode
 
@@ -209,8 +261,8 @@ Prefer calling CometBFT helpers (`ValidatorSet.VerifyCommit`, light client paths
 ### Outcome
 
 - All steps pass → mainnet proof **VALID**.
-- Any step fails → **INVALID**; do not update aligned height.
-- If mainnet data is invalid we should trust this as sender/replyer cheating and use `section 1` as the proof for punishment.
+- Any step fails → **INVALID**; do not update height state from this **Strong** attestation.
+- If mainnet data is invalid, treat as sender/receiver cheating and use `section 1` as evidence (Strong path). **Anchor** hash failures use **DEFERRED_FAIL** / immediate reject per **Anchor profile**.
 
 ### Liveness / “latest height” semantics
 
@@ -226,22 +278,26 @@ Otherwise classify **VALID_STALE**: do not advance timeout counters; may still a
 ## Validation pipeline (per inbound envelope)
 
 1. Parse body into envelope (protobuf or JSON).
-2. Extract `height_sync`; reject if missing required fields.
-3. Static checks: configured `chain_id`, `mainnet_height > 0`, nonce/session bounds, timestamp skew, `proof_type`.
-4. **Short-circuit:** if `mainnet_height <= local_aligned_height`, skip step 5 (CometBFT proof verification) for this envelope; aligned height is unchanged by definition. If `mainnet_height > local_aligned_height`, require step 5.
-5. Verify CometBFT proof (only when not short-circuited): `proof_bytes` and claimed scalars (**CometBFT `LightBlock` verification**, including **Step 3b** when the escrow is **epoch-bound** and the verifier can resolve **epoch participants** from mainnet).
-6. Verify `sender_signature` over `height_sync_signing_input` (or its digest), unless a documented profile waives section-1 signing for restricted test modes.
-7. Apply **recency** when updating aligned height (not when only storing evidence); when short-circuited, recency for “raising” height does not apply (height does not raise).
-8. Anti-replay: unique `request_id`, monotonic `nonce_num`, optional dedup on `(H, block_hash)`.
-9. **VALID_TRUSTED** for height state when: either short-circuit with valid signature/replay rules, or full proof verification passes and recency OK for a strictly higher `mainnet_height`.
-10. Then parse and handle **`message_body`** / `message` (section 2).
+2. Classify **Omit** vs **Anchor** vs **Strong** from presence of `mainnet_height` / `mainnet_height_hash` / `light_block` / `proof_type` (see **HeightSyncSection**).
+3. **Omit path:** no mainnet fields; verify session framing / signatures per product proto; do not run CometBFT verification; do not update peer height from section 1.
+4. **Anchor path:** `proof_type == height-anchor-v1`, `light_block` empty, height+hash present. If **`|H_claim − H_local_aligned| > D`**, **INVALID** (sender **MUST** use **Strong**, not Anchor, for that claim). Otherwise verify `sender_signature`; verify hash vs local block **`H`** if available, else **enqueue deferred** check. Do **not** run `VerifyCommit`.
+5. **Strong path:** `proof_type == cometbft-light-block-v1`, `light_block` non-empty. Run **CometBFT `LightBlock` verification** (including **Step 3b** when applicable). If the peer’s claimed height differs from local aligned by **> `D`**, absence of a verifiable Strong attestation on that message makes any height-bearing section **INVALID**.
+6. Verify `sender_signature` over the agreed signing payload (see **Sender signature**; **Omit** may use a different binding — open).
+7. Apply **recency** for **Strong** / **Anchor** when updating timeout-driving max height per policy.
+8. Anti-replay: unique `request_id`, monotonic `nonce_num`, optional dedup on `(H, block_hash)` for Anchor/Strong.
+9. Classify per **Validation result classes** below.
+10. Then parse and handle **`message_body`** / `message` (section 2) if not **INVALID**.
 
 ### Validation result classes
 
-- **VALID_TRUSTED:** section-1 signature and replay rules OK, and either **(a)** `mainnet_height <= local_aligned_height` with **proof verification skipped** (short-circuit), or **(b)** full CometBFT proof OK and recency OK for a **strictly higher** `mainnet_height` that may advance aligned height.
-- **VALID_STALE:** `mainnet_height > local_aligned_height`, proof + signature OK, but recency fails; do not advance aligned height.
-- **VALID_UNTRUSTED:** `mainnet_height > local_aligned_height`, section-1 signature OK but proof missing/invalid; no height state update.
-- **INVALID:** malformed envelope, bad signature, or replay violation → reject entire HTTP message (do not process section 2).
+- **VALID_OMIT:** no mainnet attestation; framing/signature OK; process section 2 without updating peer mainnet height from section 1.
+- **VALID_ANCHOR:** Anchor signature OK; hash verified immediately **or** deferred check enqueued successfully; may update peer anchor schedule / `height_seen_max` per policy once hash is confirmed.
+- **VALID_STRONG:** `LightBlock` verification passed (or allowed short-circuit), signature/replay OK; may advance strong anchor / aligned height.
+- **VALID_STALE:** Strong (or Anchor with proof-like recency rules if added): attestation OK but recency fails for timeout advancement.
+- **DEFERRED_FAIL:** deferred Anchor verification found hash mismatch → misrepresentation evidence.
+- **INVALID:** malformed envelope, bad signature, replay violation, Anchor hash mismatch when block **`H`** was already local, Strong proof failure, or height claim **> `D`** without valid Strong.
+
+**Deprecated:** **VALID_LIGHTWEIGHT** / per-message trusted window (removed). Map old **VALID_TRUSTED** (full proof) → **VALID_STRONG**.
 
 ---
 
@@ -250,19 +306,24 @@ Otherwise classify **VALID_STALE**: do not advance timeout counters; may still a
 ### On host receiving user request
 
 1. Run validation pipeline; if **INVALID**, reject.
-2. If **VALID_TRUSTED** and `H_u > host_aligned`, advance `host_aligned`.
-3. Process section 2 (application).
-4. Respond with an envelope whose section 1 includes host proof + host signature; section 2 carries the application response.
+2. If **VALID_STRONG** and `H_u` may advance policy, update **strong anchor** / `host_aligned` per deployment rules.
+3. If **VALID_ANCHOR**, update peer **`(H, hash)`** per Anchor rules (immediate or deferred); may contribute to **`height_seen_max`** once hash is confirmed (policy).
+4. If **VALID_OMIT**, do not update peer mainnet height from section 1.
+5. Process section 2 (application).
+6. Respond with section 1 mode: **Omit** between anchors; **Anchor** on **`K`**-block schedule; **Strong** when **`|Δ| > D`** or policy requires.
 
 ### On user receiving host response
 
-1. Same validation; if **VALID_TRUSTED** and `H_h > user_aligned`, advance `user_aligned`.
-2. Process section 2.
+1. Same validation; if **VALID_STRONG**, update user strong anchor when policy allows.
+2. If **VALID_ANCHOR**, apply Anchor + deferred rules on the user side.
+3. If **VALID_OMIT**, no peer height update from section 1.
+4. Process section 2.
 
 ### On host mainnet listener
 
-- Maintain proof cache for `[tip-K, tip]` to fill `light_block` cheaply.
-- When building responses, prefer height `max(peer_aligned, local_tip)` with fresh `LightBlock`.
+- Maintain proof cache for `[tip-K, tip]` to fill `light_block` cheaply when sending **Strong**.
+- Process **deferred verification queue** for **Anchor** as local tip advances; emit evidence on **DEFERRED_FAIL**.
+- Emit **Anchor** on **`K`**-block schedule; **Strong** only when **`|Δ| > D`** or finalization/dispute; **Omit** otherwise.
 
 ---
 
@@ -270,14 +331,14 @@ Otherwise classify **VALID_STALE**: do not advance timeout counters; may still a
 
 For a session/escrow:
 
-- `height_seen_request_max_trusted` / `height_seen_response_max_trusted` from **section 1** of validated user requests and host responses.
+- `height_seen_request_max_trusted` / `height_seen_response_max_trusted` SHOULD be derived from **VALID_STRONG** and from **VALID_ANCHOR** once the Anchor’s **`(H, hash)`** is **confirmed** (immediate local match or successful deferred check). **VALID_OMIT** does not advance peer height. **VALID_ANCHOR** with **pending** deferred hash **SHOULD NOT** advance `height_seen_max` until the check passes (policy).
 - `height_seen_max = max(height_seen_request_max_trusted, height_seen_response_max_trusted, host_chain_tip_trusted)`
 
 Timeout:
 
 - `timed_out = (current_chain_height - height_seen_max) >= timeout_blocks`
 
-Finalization timeout evidence should include **serialized section-1 blobs** (or hashes + reproducible archives), not HTTP headers.
+Finalization timeout evidence should include **serialized section-1 blobs** (or hashes + reproducible archives) for **Strong** anchors, not HTTP headers.
 
 Consumed by `[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)` (`USER_TIMEOUT` trigger).
 
@@ -287,24 +348,25 @@ Consumed by `[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLEC
 
 - `rand_seed = H(finalization_hash || finalized_height_anchor || block_hash_anchor)`
 
-Anchors should come from verifiable mainnet data near the timeout/finalization decision (same `LightBlock` / tip proofs).
+Anchors for randomness should be **Strong**-verified (`LightBlock` or full-node equivalent) near the timeout/finalization decision, or **Anchor** hashes that have been **confirmed** against local canonical blocks — not unconfirmed deferred Anchors, and not **Omit** traffic.
 
 ---
 
 ## Security properties
 
-- Avoids header size limits and proxy fragility for large proofs.
-- Timeout and alignment evidence refer to **attested section 1**, replayable by third parties.
-- Section 1 can be verified **before** expensive section 2 work.
-- Forged heights without valid `LightBlock` do not move state.
+- Avoids header size limits and proxy fragility: **Omit** + **Anchor** on inference path; **Strong** only on disagreement **> `D`** or finalization/disputes.
+- **Anchor** gives signed periodic alignment without `LightBlock` every **`K`** blocks.
+- **Strong** ties dispute-grade claims to mainnet consensus.
+- Section 1 can be parsed **before** heavy section 2 where policy requires.
+- Bad **Anchor** hashes are caught by immediate check (if block local) or **deferred** check; **> `D`** disagreement without **Strong** is rejected.
 
 ---
 
 ## Backward compatibility and rollout
 
-1. Accept envelope with section 1 optional → log-only.
-2. Soft-enforce section 1 present; warn on missing/invalid proof.
-3. Hard-reject missing or invalid section 1 for production paths.
+1. Accept legacy envelopes that put `(height, hash)` on every message → migrate to **Omit** + periodic **Anchor**.
+2. Soft-enforce **Anchor** every **`K`** blocks and **Strong** when **`|Δ| > D`**; warn on violations.
+3. Hard-reject mainnet height/hash on envelopes that should be **Omit** (between anchors) once rollout completes.
 
 ---
 
@@ -317,6 +379,22 @@ Anchors should come from verifiable mainnet data near the timeout/finalization d
 - **Canonical `sender_id` for multi-key users.** Real users may use multiple keys (rotation, devices, escrow slot keys vs wallet keys). Receivers need **one stable string per logical sender** so section-1 signatures and anti-replay (`session_id`, `nonce_num`, dedup) always refer to the same party; the spec must say whether that id is e.g. escrow participant, slot id, or mainnet account, and how signing keys map to it.
 
 - **Whether devshard allows protobuf-only or supports both JSON with protobuf.** Decide the dev/test profile: strict protobuf-only (parity with production) vs also accepting the JSON envelope for curl/tooling and mocks; that choice drives compliance tests and mock servers.
+
+- **`K`** (Anchor period, e.g. 10 mainnet blocks) and **`D`** (mandatory Strong threshold, e.g. 2 blocks) — exact scalar definitions for `|H_peer − H_local_aligned|`.
+
+- **`height_seen_max` / `USER_TIMEOUT` with pending deferred Anchors.** Whether partial credit before hash confirms (see [CPOC_PROTOCOL.md](./CPOC_PROTOCOL.md)).
+
+- **Signing input for Anchor:** `proof_type == height-anchor-v1` with empty `light_block` — confirm use of **SHA256(32 zero bytes)** for `light_block` hash slot in `height_sync_signing_input` (or a distinct **Anchor** signing domain).
+
+- **`height-anchor-v1` normative name** and JSON interop.
+
+- **Omit mode framing:** how `session_id` / `nonce` / signatures bind `message_body` when `height_sync` is absent (unified vs separate `SessionFraming` message).
+
+- **Nonce ↔ height for downstream specs:** When section 1 is often **Omit**, which diff **nonce** anchors “height at nonce **N**” for inequalities in other proposals (e.g. [cPoC skip / nonce binding](./CPOC_PROTOCOL.md)) — **first carry** of evidence vs **executor** nonce of the skip response vs other — must be defined here so height bookkeeping is unambiguous without per-message `(H, hash)`.
+
+- **`K` / `D` / prepare windows:** Exact values and whether **cPoC prepare** (or similar) phases reuse the same **Omit** / **Anchor** / **Strong** cadence as normal traffic (replaces obsolete “trusted window blocks” + “proof every N messages” wording).
+
+- **Anchor `DEFERRED_FAIL` (hash mismatch after catch-up):** Proof / punishment obligation when a signed **Anchor** `(H, hash)` disagrees with canonical mainnet after the follower reaches **`H`** — which party is accountable (user vs host), what evidence is attached to finalization / mainnet, and whether slashing applies (consumer protocols such as [cPoC](./CPOC_PROTOCOL.md) depend on this rule).
 
 ---
 
