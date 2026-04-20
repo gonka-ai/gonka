@@ -296,6 +296,28 @@ func adjustBLSParameters(ctx context.Context, blsKeeper blskeeper.Keeper) error 
 	return blsKeeper.SetParams(ctx, params)
 }
 
+// Note on the collect-first pattern used by all four migrations below.
+//
+// Each migration rewrites the SAME keys it is iterating: SetEpochBLSData,
+// StoreThresholdSigningRequest, SetGroupKeyValidationState, and
+// SetBridgeTransaction all persist back to the prefix the iterator is
+// scoped to (plus additional sub-key prefixes).
+//
+// Under Cosmos SDK's cache-kv store, write-during-iterate is in fact safe:
+// the iterator snapshots store.sortedCache via a COW Copy() at open
+// (cosmossdk.io/store/cachekv/store.go:192), so subsequent writes land in
+// the live cache without affecting the iterator's snapshot. But that
+// guarantee is an implementation detail of the cache-kv store — a Walk
+// helper called against a different backing (raw IAVL, a different cache
+// wrapper, a memdb-backed test harness) has no such guarantee, and quietly
+// relying on it is a footgun for future callers and maintainers.
+//
+// So every migration here buffers all entries first, closes the iterator,
+// then writes. Matches the DeleteGroupValidationPartialSignaturesForEpoch
+// pattern already established in x/bls/keeper/group_validation.go and
+// removes the cache-kv-specific invariant. All four migration datasets
+// are bounded (low tens of MB at most on mainnet) so buffering is cheap.
+
 // migrateEpochBLSDataToSubKeys migrates every existing EpochBLSData entry
 // from the legacy "everything inline" layout to the v0.2.12 split layout
 // where DealerParts, VerificationSubmissions, and DealerComplaints live
@@ -308,24 +330,31 @@ func adjustBLSParameters(ctx context.Context, blsKeeper blskeeper.Keeper) error 
 // which would silently discard the legacy data. This migration runs once
 // in the upgrade block (before any user txs) to eliminate that risk.
 //
-// Streams via WalkEpochBLSData so we never hold the full BLS dataset in
-// memory. SetEpochBLSData itself does the work: its inline sync loops
-// write any populated entries to sub-keys and persist the base with the
-// split fields zeroed. Re-running is a no-op because a migrated entry
-// has no inline data left to sync.
+// Buffers first, then writes (see package comment above). SetEpochBLSData
+// itself does the work: its inline sync loops write any populated entries
+// to sub-keys and persist the base with the split fields zeroed.
+// Re-running is a no-op because a migrated entry has no inline data left
+// to sync.
 func migrateEpochBLSDataToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
-	return blsKeeper.WalkEpochBLSData(ctx, func(ebd blstypes.EpochBLSData) error {
+	var toMigrate []blstypes.EpochBLSData
+	if err := blsKeeper.WalkEpochBLSData(ctx, func(ebd blstypes.EpochBLSData) error {
 		hasInline := len(ebd.DealerParts) > 0 ||
 			len(ebd.VerificationSubmissions) > 0 ||
 			len(ebd.DealerComplaints) > 0
 		if !hasInline {
 			return nil
 		}
+		toMigrate = append(toMigrate, ebd)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, ebd := range toMigrate {
 		if err := blsKeeper.SetEpochBLSData(ctx, ebd); err != nil {
 			return fmt.Errorf("migrate EpochBLSData epoch=%d: %w", ebd.EpochId, err)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // migrateThresholdSigningRequestsToSubKeys splits legacy inline
@@ -333,38 +362,54 @@ func migrateEpochBLSDataToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) e
 // Same rationale as migrateEpochBLSDataToSubKeys: the post-split
 // AddPartialSignature nulls out PartialSignatures before persisting the
 // base request, so legacy inline entries must be moved to sub-keys before
-// any post-upgrade tx can touch state. Idempotent; streams via
-// WalkRawThresholdSigningRequests so no full-dataset allocation is
-// needed.
+// any post-upgrade tx can touch state.
+//
+// Buffers first, then writes (see package comment above). Idempotent.
 func migrateThresholdSigningRequestsToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
-	return blsKeeper.WalkRawThresholdSigningRequests(ctx, func(req blstypes.ThresholdSigningRequest) error {
+	var toMigrate []blstypes.ThresholdSigningRequest
+	if err := blsKeeper.WalkRawThresholdSigningRequests(ctx, func(req blstypes.ThresholdSigningRequest) error {
 		if len(req.PartialSignatures) == 0 {
 			return nil
 		}
+		toMigrate = append(toMigrate, req)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i := range toMigrate {
+		req := toMigrate[i]
 		if err := blsKeeper.StoreThresholdSigningRequest(ctx, &req); err != nil {
 			return fmt.Errorf("migrate ThresholdSigningRequest %x: %w", req.RequestId, err)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // migrateGroupKeyValidationStatesToSubKeys splits legacy inline
 // GroupKeyValidationState.PartialSignatures into per-participant sub-keys.
 // SetGroupKeyValidationState handles the sync via syncInlinePartialsToSubKeys
 // (resolving addr→index from the previous epoch's Participants) and
-// persists the base with PartialSignatures zeroed. Streams via
-// WalkGroupKeyValidationStates; idempotent.
+// persists the base with PartialSignatures zeroed.
+//
+// Buffers first, then writes (see package comment above). Idempotent.
 func migrateGroupKeyValidationStatesToSubKeys(ctx sdk.Context, blsKeeper blskeeper.Keeper) error {
-	return blsKeeper.WalkGroupKeyValidationStates(ctx, func(state blstypes.GroupKeyValidationState) error {
+	var toMigrate []blstypes.GroupKeyValidationState
+	if err := blsKeeper.WalkGroupKeyValidationStates(ctx, func(state blstypes.GroupKeyValidationState) error {
 		if len(state.PartialSignatures) == 0 {
 			return nil
 		}
-		stateCopy := state
-		if err := blsKeeper.SetGroupKeyValidationState(ctx, &stateCopy); err != nil {
+		toMigrate = append(toMigrate, state)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i := range toMigrate {
+		state := toMigrate[i]
+		if err := blsKeeper.SetGroupKeyValidationState(ctx, &state); err != nil {
 			return fmt.Errorf("migrate GroupKeyValidationState new_epoch=%d: %w", state.NewEpochId, err)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // migrateBridgeTransactionValidatorsToSubKeys splits legacy inline
@@ -376,22 +421,29 @@ func migrateGroupKeyValidationStatesToSubKeys(ctx sdk.Context, blsKeeper blskeep
 //
 // Re-calling SetBridgeTransaction with the rehydrated tx drives
 // SetBridgeTransaction's own sync loop, which writes inline entries to
-// the KeySet and persists the base with Validators stripped. The
-// operation is idempotent; re-running would be a no-op.
+// the KeySet and persists the base with Validators stripped.
+//
+// Buffers first, then writes (see package comment above). Idempotent.
 func migrateBridgeTransactionValidatorsToSubKeys(ctx context.Context, k keeper.Keeper) error {
 	iter, err := k.BridgeTransactionsMap.Iterate(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("iterate bridge transactions for migration: %w", err)
 	}
-	defer iter.Close()
+	var toMigrate []types.BridgeTransaction
 	for ; iter.Valid(); iter.Next() {
 		tx, err := iter.Value()
 		if err != nil {
+			iter.Close()
 			return fmt.Errorf("decode bridge transaction for migration: %w", err)
 		}
 		if len(tx.Validators) == 0 {
 			continue
 		}
+		toMigrate = append(toMigrate, tx)
+	}
+	iter.Close()
+	for i := range toMigrate {
+		tx := toMigrate[i]
 		k.SetBridgeTransaction(ctx, &tx)
 	}
 	return nil
