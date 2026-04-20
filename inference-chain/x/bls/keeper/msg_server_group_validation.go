@@ -241,8 +241,16 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Persist the updated base state (SlotsCovered, optional Status /
-	// FinalSignature on completion). PartialSignatures are zeroed inside
-	// SetGroupKeyValidationState so the on-disk base stays constant-size.
+	// FinalSignature on completion). Null out PartialSignatures before the
+	// call so SetGroupKeyValidationState's sync loop does NOT re-run for
+	// every accumulated partial: the new entry is already in its sub-key
+	// (line 186 above) and every other entry is already in its own sub-key
+	// from earlier txs. Without this null-out the sync loop calls
+	// SetGroupValidationPartialSignature for every rehydrated entry, whose
+	// merge path appends SlotIndices/Signature onto the existing sub-key,
+	// corrupting state and eventually failing aggregation with "duplicate
+	// slot index".
+	validationState.PartialSignatures = nil
 	if err := ms.SetGroupKeyValidationState(ctx, validationState); err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)
 	}
