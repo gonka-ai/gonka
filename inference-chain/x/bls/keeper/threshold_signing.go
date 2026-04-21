@@ -258,12 +258,7 @@ func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) erro
 	}
 
 	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED
-	// Null PartialSignatures: the request came from GetSigningStatus
-	// (rehydrated). storeThresholdSigningRequest's sync loop would
-	// otherwise re-write every submitter's sub-key for a
-	// status-only change. The sub-key entries remain as an audit
-	// trail of what signers landed before cancellation.
-	request.PartialSignatures = nil
+	request.PartialSignatures = nil // status-only change; sub-keys already persisted
 	return k.storeThresholdSigningRequest(ctx, request)
 }
 
@@ -600,14 +595,7 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	// Remove from expiration index since it's no longer collecting signatures
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
 
-	// Persist terminal state before event emission. Null PartialSignatures
-	// first — the request arrived here via GetSigningStatus (rehydrated from
-	// sub-keys) and AddPartialSignature's append. storeThresholdSigningRequest's
-	// sync loop would otherwise rewrite every submitter's sub-key, costing
-	// O(N × per-entry-size) WritePerByte gas on top of the small terminal-
-	// state write. Entries already live in their own sub-keys from earlier
-	// txs; nothing needs to be re-synced.
-	request.PartialSignatures = nil
+	request.PartialSignatures = nil // terminal-state write; sub-keys already persisted
 	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
 		return err
 	}
@@ -855,11 +843,9 @@ func (k Keeper) finalizeFailedThresholdSigningRequest(
 ) error {
 	request.Status = status
 	request.FinalSignature = []byte{}
-	// Null PartialSignatures once, at the single failure funnel, so
-	// neither this function's storeThresholdSigningRequest call nor the
-	// subsequent one in maybeCloseRetryAfterFailedPostProcess triggers
-	// the per-submitter sync loop. Partial sigs remain in their sub-keys
-	// as an audit trail.
+	// Single failure funnel; both storeThresholdSigningRequest calls
+	// below (here and via maybeCloseRetryAfterFailedPostProcess) reuse
+	// this struct. Sub-keys stay as the submitters' audit trail.
 	request.PartialSignatures = nil
 
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)

@@ -78,12 +78,7 @@ func (ms msgServer) RespondDealerComplaints(ctx context.Context, msg *types.MsgR
 		complaint.ResponseOpeningMaterial = response.ResponseOpeningMaterial
 		epochBLSData.DealerComplaints[complaintIndex] = complaint
 
-		// Persist the updated complaint directly via its sub-key. We don't
-		// call SetEpochBLSData here because nothing on the base struct is
-		// changing — only individual complaint entries. Calling SetEpochBLSData
-		// with the rehydrated struct would trigger full sync loops for
-		// DealerParts, VerificationSubmissions, and every existing complaint,
-		// costing O(N × per-entry-size) WritePerByte gas for a small update.
+		// Per-complaint sub-key write; base struct has no changes to persist.
 		if err := ms.SetDealerComplaint(sdkCtx, msg.EpochId, &complaint); err != nil {
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store updated dealer complaint for dealer %d and complainer %d in epoch %d: %v", msg.DealerIndex, response.ComplainerIndex, msg.EpochId, err))
 		}

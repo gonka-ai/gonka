@@ -357,11 +357,24 @@ func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData
 	return store.Set(key, value)
 }
 
-// SetDealerPart writes a single dealer part under its own sub-key. Cost is
-// constant in the number of previously-submitted dealer parts, so every
-// dealer in a DKG round pays the same gas regardless of submission order.
+// SetEpochBLSDataBaseOnly persists only the base-struct fields, skipping
+// the per-entry sub-key re-sync that SetEpochBLSData normally performs for
+// DealerParts, VerificationSubmissions, and DealerComplaints. Use when the
+// caller is updating metadata (e.g. DkgPhase) on a rehydrated struct whose
+// sub-key contents are unchanged.
 //
-// This is the hot path called by MsgSubmitDealerPart.
+// epochBLSData is taken by value; the caller's in-memory copy is untouched,
+// so callers can keep using the fully-hydrated view (e.g. to emit events
+// carrying the full EpochBLSData) after this returns.
+func (k Keeper) SetEpochBLSDataBaseOnly(ctx sdk.Context, epochBLSData types.EpochBLSData) error {
+	epochBLSData.DealerParts = nil
+	epochBLSData.VerificationSubmissions = nil
+	epochBLSData.DealerComplaints = nil
+	return k.SetEpochBLSData(ctx, epochBLSData)
+}
+
+// SetDealerPart writes a single dealer part under its own sub-key. Hot path
+// for MsgSubmitDealerPart; constant gas regardless of submission order.
 func (k Keeper) SetDealerPart(ctx sdk.Context, epochID uint64, participantIndex uint32, dealerPart *types.DealerPartStorage) error {
 	if dealerPart == nil {
 		return fmt.Errorf("nil dealer part")
