@@ -20,6 +20,24 @@ func (k Keeper) dealerPartsStore(ctx sdk.Context, epochID uint64) prefix.Store {
 	return prefix.NewStore(store, types.DealerPartEpochPrefix(epochID))
 }
 
+// verificationSubmissionsStore returns a prefix.Store scoped to all
+// verification vector submissions for a single epoch. Keys within the
+// returned store are the sub-keys produced by
+// types.VerificationSubmissionSubKey (4-byte big-endian participant index).
+func (k Keeper) verificationSubmissionsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.VerificationSubmissionEpochPrefix(epochID))
+}
+
+// dealerComplaintsStore returns a prefix.Store scoped to all dealer
+// complaints for a single epoch. Keys within the returned store are the
+// 8-byte sub-keys produced by types.DealerComplaintSubKey (dealer index
+// then complainer index, both big-endian uint32).
+func (k Keeper) dealerComplaintsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.DealerComplaintEpochPrefix(epochID))
+}
+
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
 func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
 	// Get module parameters
@@ -273,17 +291,20 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 
 // SetEpochBLSData stores EpochBLSData in the state.
 //
-// DealerParts are stored out-of-band under per-participant sub-keys (see
-// SetDealerPart and the DealerPartEpochPrefix/DealerPartSubKey helpers).
-// Any non-empty dealer parts in the input struct are synced to sub-keys.
-// The base struct is persisted with DealerParts zeroed so it stays
-// constant-size. This means callers can set dealer parts via this function
+// DealerParts and VerificationSubmissions are stored out-of-band under
+// per-participant sub-keys (see SetDealerPart, SetVerificationSubmission
+// and their respective prefix/sub-key helpers). Any non-empty entries in
+// the input struct are synced to sub-keys. The base struct is persisted
+// with both fields zeroed so it stays constant-size. This means callers
+// can set dealer parts or verification submissions via this function
 // (e.g., during DKG initialization or in tests), and the data will be
 // readable via GetEpochBLSData which rehydrates from sub-keys.
 //
 // The dealer HOT PATH (MsgSubmitDealerPart) bypasses this function
-// entirely and calls SetDealerPart directly — a single sub-key write
-// with constant gas cost regardless of how many dealers already submitted.
+// entirely and calls SetDealerPart directly. The verifier HOT PATH
+// (SubmitVerificationVector) similarly calls SetVerificationSubmission
+// directly — a single sub-key write with constant gas cost regardless
+// of how many other dealers/verifiers have already submitted.
 func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) error {
 	store := k.storeService.OpenKVStore(ctx)
 
@@ -298,10 +319,35 @@ func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData
 		}
 	}
 
-	// Persist the base struct with DealerParts zeroed so writes stay
-	// constant-size. We copy to avoid mutating the caller's struct.
+	// Sync any non-empty verification submissions to their sub-keys. Empty
+	// placeholders (len(DealerValidity) == 0) are skipped — they are the
+	// in-memory sentinels created in InitiateKeyGenerationForEpoch before
+	// any verifier has submitted.
+	for i, vs := range epochBLSData.VerificationSubmissions {
+		if vs != nil && len(vs.DealerValidity) > 0 {
+			if err := k.SetVerificationSubmission(ctx, epochBLSData.EpochId, uint32(i), vs); err != nil {
+				return fmt.Errorf("sync verification submission %d to sub-key: %w", i, err)
+			}
+		}
+	}
+
+	// Sync any inline dealer complaints to their sub-keys. Callers that
+	// pre-populate the slice (genesis import, tests) hit this path; the
+	// hot-path verifier handler writes sub-keys directly via
+	// SetDealerComplaint and passes DealerComplaints = nil here.
+	for i := range epochBLSData.DealerComplaints {
+		complaint := epochBLSData.DealerComplaints[i]
+		if err := k.SetDealerComplaint(ctx, epochBLSData.EpochId, &complaint); err != nil {
+			return fmt.Errorf("sync dealer complaint (%d,%d): %w", complaint.DealerIndex, complaint.ComplainerIndex, err)
+		}
+	}
+
+	// Persist the base struct with the split-out fields zeroed so writes
+	// stay constant-size. We copy to avoid mutating the caller's struct.
 	baseCopy := epochBLSData
 	baseCopy.DealerParts = nil
+	baseCopy.VerificationSubmissions = nil
+	baseCopy.DealerComplaints = nil
 
 	key := types.EpochBLSDataKey(baseCopy.EpochId)
 	value, err := k.cdc.Marshal(&baseCopy)
@@ -363,16 +409,150 @@ func (k Keeper) DeleteDealerPartsForEpoch(ctx sdk.Context, epochID uint64) error
 	return nil
 }
 
-// GetEpochBLSData retrieves EpochBLSData from the state. DealerParts is
-// rehydrated from per-participant sub-keys so that callers see the same
-// shape they always have (a slice indexed by participant index, with
-// empty-string DealerAddress for slots that have not yet submitted).
+// SetVerificationSubmission writes a single verification vector submission
+// under its own sub-key. Cost is constant in the number of verifiers that
+// have already submitted, so every verifier pays the same gas regardless of
+// submission order. This is the hot path called by SubmitVerificationVector.
+func (k Keeper) SetVerificationSubmission(ctx sdk.Context, epochID uint64, participantIndex uint32, submission *types.VerificationVectorSubmission) error {
+	if submission == nil {
+		return fmt.Errorf("nil verification submission")
+	}
+	value, err := k.cdc.Marshal(submission)
+	if err != nil {
+		return fmt.Errorf("marshal verification submission: %w", err)
+	}
+	k.verificationSubmissionsStore(ctx, epochID).Set(types.VerificationSubmissionSubKey(participantIndex), value)
+	return nil
+}
+
+// GetVerificationSubmission reads a single verification vector submission for
+// a participant. Returns (nil, nil) if no submission exists yet.
+func (k Keeper) GetVerificationSubmission(ctx sdk.Context, epochID uint64, participantIndex uint32) (*types.VerificationVectorSubmission, error) {
+	value := k.verificationSubmissionsStore(ctx, epochID).Get(types.VerificationSubmissionSubKey(participantIndex))
+	if value == nil {
+		return nil, nil
+	}
+	var vs types.VerificationVectorSubmission
+	if err := k.cdc.Unmarshal(value, &vs); err != nil {
+		return nil, err
+	}
+	return &vs, nil
+}
+
+// DeleteVerificationSubmissionsForEpoch removes every verification
+// submission sub-key for an epoch. Mirrors DeleteDealerPartsForEpoch for
+// epoch teardown.
+func (k Keeper) DeleteVerificationSubmissionsForEpoch(ctx sdk.Context, epochID uint64) error {
+	store := k.verificationSubmissionsStore(ctx, epochID)
+	it := store.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		store.Delete(key)
+	}
+	return nil
+}
+
+// SetDealerComplaint writes a single dealer complaint under its own
+// sub-key. Cost is constant in the number of complaints already recorded
+// for the epoch, so every verifier's complaint writes cost the same gas
+// regardless of submission order.
+func (k Keeper) SetDealerComplaint(ctx sdk.Context, epochID uint64, complaint *types.DealerComplaint) error {
+	if complaint == nil {
+		return fmt.Errorf("nil dealer complaint")
+	}
+	value, err := k.cdc.Marshal(complaint)
+	if err != nil {
+		return fmt.Errorf("marshal dealer complaint: %w", err)
+	}
+	k.dealerComplaintsStore(ctx, epochID).Set(
+		types.DealerComplaintSubKey(complaint.DealerIndex, complaint.ComplainerIndex),
+		value,
+	)
+	return nil
+}
+
+// GetDealerComplaint reads a single dealer complaint by its (dealer,
+// complainer) compound key. Returns (nil, nil) if no such complaint
+// exists.
+func (k Keeper) GetDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) (*types.DealerComplaint, error) {
+	value := k.dealerComplaintsStore(ctx, epochID).Get(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+	if value == nil {
+		return nil, nil
+	}
+	var c types.DealerComplaint
+	if err := k.cdc.Unmarshal(value, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// HasDealerComplaint reports whether a complaint exists for the given
+// (dealer, complainer) pair without unmarshaling the value.
+func (k Keeper) HasDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) bool {
+	return k.dealerComplaintsStore(ctx, epochID).Has(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+}
+
+// ListDealerComplaintsForEpoch returns every dealer complaint recorded for
+// an epoch, in ascending (dealer_index, complainer_index) order. Used by
+// GetEpochBLSData's rehydration path and by phase-transition / dispute
+// paths that need the full set.
+func (k Keeper) ListDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) ([]types.DealerComplaint, error) {
+	it := k.dealerComplaintsStore(ctx, epochID).Iterator(nil, nil)
+	defer it.Close()
+
+	var out []types.DealerComplaint
+	for ; it.Valid(); it.Next() {
+		var c types.DealerComplaint
+		if err := k.cdc.Unmarshal(it.Value(), &c); err != nil {
+			return nil, fmt.Errorf("unmarshal dealer complaint: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// DeleteDealerComplaint removes a single (dealer, complainer) sub-key.
+// Used by phase transition when filtering out complaints against dealers
+// that failed candidacy.
+func (k Keeper) DeleteDealerComplaint(ctx sdk.Context, epochID uint64, dealerIndex, complainerIndex uint32) {
+	k.dealerComplaintsStore(ctx, epochID).Delete(types.DealerComplaintSubKey(dealerIndex, complainerIndex))
+}
+
+// DeleteDealerComplaintsForEpoch removes every dealer complaint sub-key
+// for an epoch. Mirrors the other epoch-teardown helpers.
+func (k Keeper) DeleteDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) error {
+	store := k.dealerComplaintsStore(ctx, epochID)
+	it := store.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		store.Delete(key)
+	}
+	return nil
+}
+
+// GetEpochBLSData retrieves EpochBLSData from the state. DealerParts and
+// VerificationSubmissions are rehydrated from per-participant sub-keys so
+// callers see the same shape they always have (slices indexed by
+// participant index, with empty-value placeholders for slots that have not
+// yet submitted).
 //
-// Backward compatibility: if the base struct still has DealerParts inline
-// (e.g. an EpochBLSData written by a pre-v0.2.12 dealer handler), those
-// values are used as the baseline and any sub-key entries take precedence.
-// This lets the split take effect immediately after upgrade without a
-// migration step.
+// Backward compatibility: if the base struct still has either field inline
+// (e.g. an EpochBLSData written by a pre-split handler), those values are
+// used as the baseline and any sub-key entries take precedence. This lets
+// the split take effect immediately after upgrade without a migration
+// step.
 func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
 	store := k.storeService.OpenKVStore(ctx)
 	key := types.EpochBLSDataKey(epochID)
@@ -390,11 +570,12 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 		return types.EpochBLSData{}, err
 	}
 
+	numParticipants := len(epochBLSData.Participants)
+
 	// Ensure DealerParts has an entry per participant. If the base struct
 	// stored inline dealer parts (legacy writes), those serve as the
 	// starting point; otherwise we initialize empty placeholders so callers
 	// that index by participant position still work.
-	numParticipants := len(epochBLSData.Participants)
 	if len(epochBLSData.DealerParts) < numParticipants {
 		expanded := make([]*types.DealerPartStorage, numParticipants)
 		for i := range expanded {
@@ -407,27 +588,121 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 		epochBLSData.DealerParts = expanded
 	}
 
+	// Same expansion for VerificationSubmissions. Placeholders have an
+	// empty DealerValidity slice, matching the sentinels created in
+	// InitiateKeyGenerationForEpoch.
+	if len(epochBLSData.VerificationSubmissions) < numParticipants {
+		expanded := make([]*types.VerificationVectorSubmission, numParticipants)
+		for i := range expanded {
+			if i < len(epochBLSData.VerificationSubmissions) && epochBLSData.VerificationSubmissions[i] != nil {
+				expanded[i] = epochBLSData.VerificationSubmissions[i]
+			} else {
+				expanded[i] = &types.VerificationVectorSubmission{DealerValidity: []bool{}}
+			}
+		}
+		epochBLSData.VerificationSubmissions = expanded
+	}
+
 	// Overlay sub-key dealer parts on top of the base slice with a single
 	// prefix scan. Any participant whose sub-key entry exists takes
 	// precedence over whatever was inlined. Sub-keys for participant
 	// indices outside the current participant set are ignored (stale data
 	// should have been cleared via DeleteDealerPartsForEpoch).
-	it := k.dealerPartsStore(ctx, epochID).Iterator(nil, nil)
+	if err := rehydrateFromSubKeys(
+		k.dealerPartsStore(ctx, epochID),
+		numParticipants,
+		types.ParseDealerPartSubKey,
+		func(idx uint32, value []byte) error {
+			var dp types.DealerPartStorage
+			if err := k.cdc.Unmarshal(value, &dp); err != nil {
+				return fmt.Errorf("unmarshal dealer part %d: %w", idx, err)
+			}
+			epochBLSData.DealerParts[idx] = &dp
+			return nil
+		},
+	); err != nil {
+		return types.EpochBLSData{}, err
+	}
+
+	// Same overlay for verification submissions.
+	if err := rehydrateFromSubKeys(
+		k.verificationSubmissionsStore(ctx, epochID),
+		numParticipants,
+		types.ParseVerificationSubmissionSubKey,
+		func(idx uint32, value []byte) error {
+			var vs types.VerificationVectorSubmission
+			if err := k.cdc.Unmarshal(value, &vs); err != nil {
+				return fmt.Errorf("unmarshal verification submission %d: %w", idx, err)
+			}
+			epochBLSData.VerificationSubmissions[idx] = &vs
+			return nil
+		},
+	); err != nil {
+		return types.EpochBLSData{}, err
+	}
+
+	// Dealer complaints rehydrate differently from the two index-positioned
+	// slices above: complaints are sparse (one per real (dealer, complainer)
+	// pair), so we append to an initially-empty slice in sub-key order
+	// rather than placing into fixed indices. Legacy inline entries in the
+	// base struct serve as the baseline; sub-key entries overlay on top
+	// when they share the same (dealer, complainer) pair.
+	legacyByPair := make(map[uint64]int, len(epochBLSData.DealerComplaints))
+	for i, c := range epochBLSData.DealerComplaints {
+		legacyByPair[dealerComplaintPairKey(c.DealerIndex, c.ComplainerIndex)] = i
+	}
+	cIt := k.dealerComplaintsStore(ctx, epochID).Iterator(nil, nil)
+	defer cIt.Close()
+	for ; cIt.Valid(); cIt.Next() {
+		dealerIdx, complainerIdx, err := types.ParseDealerComplaintSubKey(cIt.Key())
+		if err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("parse dealer complaint sub-key: %w", err)
+		}
+		var c types.DealerComplaint
+		if err := k.cdc.Unmarshal(cIt.Value(), &c); err != nil {
+			return types.EpochBLSData{}, fmt.Errorf("unmarshal dealer complaint (%d,%d): %w", dealerIdx, complainerIdx, err)
+		}
+		if existingIdx, ok := legacyByPair[dealerComplaintPairKey(dealerIdx, complainerIdx)]; ok {
+			epochBLSData.DealerComplaints[existingIdx] = c
+			continue
+		}
+		epochBLSData.DealerComplaints = append(epochBLSData.DealerComplaints, c)
+	}
+
+	return epochBLSData, nil
+}
+
+// dealerComplaintPairKey packs a (dealer, complainer) pair into a single
+// uint64 so it can be used as a map key for fast deduplication during
+// rehydration.
+func dealerComplaintPairKey(dealerIdx, complainerIdx uint32) uint64 {
+	return (uint64(dealerIdx) << 32) | uint64(complainerIdx)
+}
+
+// rehydrateFromSubKeys scans every entry in store and, for each sub-key whose
+// parsed participant index is within the current participant count, decodes
+// the value via the supplied apply callback. Sub-keys outside the participant
+// range are skipped (stale data expected to have been cleared). Close on the
+// underlying iterator is guaranteed even if apply returns an error.
+func rehydrateFromSubKeys(
+	store prefix.Store,
+	numParticipants int,
+	parseKey func([]byte) (uint32, error),
+	apply func(idx uint32, value []byte) error,
+) error {
+	it := store.Iterator(nil, nil)
 	defer it.Close()
 	for ; it.Valid(); it.Next() {
-		idx, err := types.ParseDealerPartSubKey(it.Key())
+		idx, err := parseKey(it.Key())
 		if err != nil {
-			return types.EpochBLSData{}, fmt.Errorf("parse dealer part sub-key: %w", err)
+			return fmt.Errorf("parse sub-key: %w", err)
 		}
 		if int(idx) >= numParticipants {
 			continue
 		}
-		var dp types.DealerPartStorage
-		if err := k.cdc.Unmarshal(it.Value(), &dp); err != nil {
-			return types.EpochBLSData{}, fmt.Errorf("unmarshal dealer part %d: %w", idx, err)
+		if err := apply(idx, it.Value()); err != nil {
+			return err
 		}
-		epochBLSData.DealerParts[idx] = &dp
 	}
-
-	return epochBLSData, nil
+	return nil
 }

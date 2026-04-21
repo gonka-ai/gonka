@@ -105,18 +105,13 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Check or create GroupKeyValidationState
-	var validationState *types.GroupKeyValidationState
-	validationStateKey := types.GroupValidationKey(msg.NewEpochId)
-
-	// Try to get existing validation state
-	store := ms.storeService.OpenKVStore(ctx)
-	bz, err := store.Get(validationStateKey)
+	validationState, found, err := ms.GetGroupKeyValidationState(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get validation state: %w", err)
 	}
 
-	if bz == nil {
+	if !found {
 		// First signature for this epoch - create validation state
 		validationState = &types.GroupKeyValidationState{
 			NewEpochId:      msg.NewEpochId,
@@ -133,14 +128,6 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 			return nil, fmt.Errorf("failed to compute message hash: %w", err)
 		}
 		validationState.MessageHash = messageHash
-	} else {
-		// Existing validation state
-		validationState = &types.GroupKeyValidationState{}
-		err = ms.cdc.Unmarshal(bz, validationState)
-		if err != nil {
-			ms.Keeper.LogError("Failed to unmarshal validation state", "error", err.Error())
-			return nil, fmt.Errorf("failed to unmarshal validation state: %w", err)
-		}
 	}
 
 	// Reject duplicate slots (already covered)
@@ -190,9 +177,20 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		SlotIndices:        filteredSlots,
 		Signature:          filteredSig,
 	}
-	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
+	// Persist the partial signature to its own sub-key. Cost is bounded by
+	// THIS participant's own slot coverage, independent of how many other
+	// signers already landed — which is the whole point of the split (see
+	// GroupValidationPartialSigEpochPrefix doc for the gas-scaling
+	// rationale). Resubmissions by the same participant merge into the
+	// existing sub-key entry.
+	if err := ms.SetGroupValidationPartialSignature(ctx, msg.NewEpochId, uint32(participantIndex), partialSignature); err != nil {
+		ms.Keeper.LogError("Failed to save partial signature", "new_epoch_id", msg.NewEpochId, "participant_index", participantIndex, "error", err.Error())
+		return nil, fmt.Errorf("failed to save partial signature: %w", err)
+	}
 
-	// Update slots covered
+	// Keep the in-memory view in sync so the threshold check and the
+	// aggregation path below see the newly-added signature.
+	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 	validationState.SlotsCovered += uint32(len(filteredSlots))
 
 	// Check if we have sufficient participation (previous epoch DKG threshold t+1).
@@ -242,13 +240,18 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		}
 	}
 
-	// Store updated validation state
-	bz, err = ms.cdc.Marshal(validationState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal validation state: %w", err)
-	}
-	err = store.Set(validationStateKey, bz)
-	if err != nil {
+	// Persist the updated base state (SlotsCovered, optional Status /
+	// FinalSignature on completion). Null out PartialSignatures before the
+	// call so SetGroupKeyValidationState's sync loop does NOT re-run for
+	// every accumulated partial: the new entry is already in its sub-key
+	// (line 186 above) and every other entry is already in its own sub-key
+	// from earlier txs. Without this null-out the sync loop calls
+	// SetGroupValidationPartialSignature for every rehydrated entry, whose
+	// merge path appends SlotIndices/Signature onto the existing sub-key,
+	// corrupting state and eventually failing aggregation with "duplicate
+	// slot index".
+	validationState.PartialSignatures = nil
+	if err := ms.SetGroupKeyValidationState(ctx, validationState); err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)
 	}
 

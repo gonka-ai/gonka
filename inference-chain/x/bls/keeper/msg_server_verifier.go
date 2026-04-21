@@ -73,10 +73,20 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		complaintsByDealer[complaint.DealerIndex] = complaint
 	}
 
-	// Store verification submission at participant's index (same as dealer_parts pattern)
-	epochBLSData.VerificationSubmissions[participantIndex] = &types.VerificationVectorSubmission{
+	// Persist the verification submission to its own sub-key. Write cost is
+	// bounded by this participant's own DealerValidity payload, independent
+	// of how many other verifiers have landed — the split prevents the
+	// N^2 write-per-byte growth that caused later verifiers to hit
+	// simulated-vs-actual out-of-gas in a full-sized round. The in-memory
+	// epochBLSData is still updated below so the complaint-persistence
+	// loop sees a consistent view of the current submission.
+	submission := &types.VerificationVectorSubmission{
 		DealerValidity: msg.DealerValidity,
 	}
+	if err := ms.SetVerificationSubmission(sdkCtx, msg.EpochId, uint32(participantIndex), submission); err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist verification submission for epoch %d: %v", msg.EpochId, err))
+	}
+	epochBLSData.VerificationSubmissions[participantIndex] = submission
 
 	// Persist complaint evidence alongside verification vote. One complaint per (dealer, complainer).
 	for dealerIndex, dealerValid := range msg.DealerValidity {
@@ -115,21 +125,33 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		for _, existingComplaint := range epochBLSData.DealerComplaints {
-			if existingComplaint.DealerIndex == uint32(dealerIndex) && existingComplaint.ComplainerIndex == uint32(participantIndex) {
-				return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("complaint already exists for dealer %d by participant %s", dealerIndex, msg.Creator))
-			}
+		// O(1) duplicate check via direct (dealer, complainer) sub-key
+		// lookup, replacing the prior O(N) scan through the inline slice.
+		if ms.HasDealerComplaint(sdkCtx, msg.EpochId, uint32(dealerIndex), uint32(participantIndex)) {
+			return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("complaint already exists for dealer %d by participant %s", dealerIndex, msg.Creator))
 		}
 
-		epochBLSData.DealerComplaints = append(epochBLSData.DealerComplaints, types.DealerComplaint{
+		newComplaint := types.DealerComplaint{
 			DealerIndex:             uint32(dealerIndex),
 			ComplainerIndex:         uint32(participantIndex),
 			DisputedSlotIndex:       complaint.DisputedSlotIndex,
 			DisputedCiphertextIndex: complaint.DisputedCiphertextIndex,
-		})
+		}
+		if err := ms.SetDealerComplaint(sdkCtx, msg.EpochId, &newComplaint); err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist dealer complaint (%d,%d): %v", dealerIndex, participantIndex, err))
+		}
 	}
 
-	// Store updated EpochBLSData
+	// Store updated EpochBLSData. DealerParts, VerificationSubmissions, and
+	// DealerComplaints are all already persisted in their per-entry
+	// sub-keys (this verifier just wrote their own; every other
+	// participant's entries are already in the sub-key store from their
+	// earlier tx). Null them out here so SetEpochBLSData's sync loops
+	// don't redundantly rewrite every sub-key on every verifier's tx,
+	// which would reintroduce O(N) writes per submission.
+	epochBLSData.DealerParts = nil
+	epochBLSData.VerificationSubmissions = nil
+	epochBLSData.DealerComplaints = nil
 	if err := ms.SetEpochBLSData(sdkCtx, epochBLSData); err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store updated epoch %d BLS data: %v", msg.EpochId, err))
 	}
