@@ -178,26 +178,6 @@ func CalculateFixedEpochReward(epochsSinceGenesis uint64, initialReward uint64, 
 	return uint64(result), nil
 }
 
-// GetPreservedWeight calculates the weight of nodes with POC_SLOT=true
-// These nodes continue serving inference during confirmation PoC and are not subject to verification
-func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData) int64 {
-	for _, validationWeight := range epochGroupData.ValidationWeights {
-		if validationWeight.MemberAddress == participant {
-			var preservedWeight int64 = 0
-
-			// Sum weights from nodes with POC_SLOT=true (index 1)
-			for _, mlNode := range validationWeight.MlNodes {
-				if mlNode != nil && len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
-					preservedWeight += mlNode.PocWeight
-				}
-			}
-
-			return preservedWeight
-		}
-	}
-	return 0
-}
-
 // CoefficientAdjustedWeight computes sum(coeff_i * sum(PocWeight for model_i)) for nodes
 // matching the filter. Pass nil filter to include all nodes.
 func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec, filter func(*types.MLNodeInfo) bool) int64 {
@@ -219,16 +199,6 @@ func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coeffi
 		total += coeff.MulInt64(rawModel).TruncateInt64()
 	}
 	return total
-}
-
-// RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights.
-// Both preservedWeight and ConfirmationWeight are in coefficient-adjusted space.
-func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec) int64 {
-	preservedWeight := CoefficientAdjustedWeight(modelNodes, coefficients, func(n *types.MLNodeInfo) bool {
-		return len(n.TimeslotAllocation) >= 2 && n.TimeslotAllocation[1] // POC_SLOT=true
-	})
-	// ConfirmationWeight is coefficient-adjusted (initialized and updated in same space)
-	return preservedWeight + vw.ConfirmationWeight
 }
 
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
@@ -645,10 +615,7 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Recompute effective weight from MLNodes (includes confirmation capping).
-		// Both preserved weight and ConfirmationWeight are coefficient-adjusted.
-		modelNodes := participantMLNodes[participant.Address]
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, modelNodes, coefficients)
+		effectiveWeight := vw.ConfirmationWeight
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
 		}
@@ -656,6 +623,7 @@ func CalculateParticipantBitcoinRewards(
 		if collateralAdjustmentActive {
 			// vw.Weight reflects collateral+capping adjusted consensus weight.
 			// Compute coefficient-adjusted total (pre-collateral) as denominator.
+			modelNodes := participantMLNodes[participant.Address]
 			adjustedTotalWeight := CoefficientAdjustedWeight(modelNodes, coefficients, nil)
 			if adjustedTotalWeight > 0 && vw.Weight < adjustedTotalWeight {
 				ewBig := big.NewInt(effectiveWeight)

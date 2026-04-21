@@ -146,7 +146,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Use Bitcoin-style fixed reward system with its own parameters
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
-	// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
+	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
 	// Extract per-model coefficients for cross-model weight aggregation

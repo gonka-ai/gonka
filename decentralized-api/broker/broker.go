@@ -42,6 +42,7 @@ type BrokerChainBridge interface {
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
+	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -100,6 +101,11 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 		ModelId:    modelId,
 	}
 	return queryClient.EpochGroupData(b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), &types.QueryPreservedNodesSnapshotRequest{})
 }
 
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
@@ -211,13 +217,14 @@ type NodeState struct {
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
-	MlNodeVersion   string     `json:"ml_node_version"`
+	MlNodeVersion string `json:"ml_node_version"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
 	// EpochMLNodes stores this node's own MLNodeInfo, not all epoch ML nodes.
-	EpochModels  map[string]types.Model      `json:"epoch_models"`
-	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+	EpochModels     map[string]types.Model      `json:"epoch_models"`
+	EpochMLNodes    map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
+	PreservedModels map[string]bool             `json:"preserved_models"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -272,20 +279,10 @@ func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.E
 	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
 }
 
-// ShouldContinueInference checks if node should continue inference service
-// based on its POC_SLOT timeslot allocation. Returns true if POC_SLOT is set to true
-// for any model supported by this node.
+// ShouldContinueInference reports whether this node is in the active preserved
+// snapshot for any of its models and should keep serving inference.
 func (s *NodeState) ShouldContinueInference() bool {
-	// Check if any MLNode for this node has POC_SLOT set to true
-	for modelId, mlNodeInfo := range s.EpochMLNodes {
-		if len(mlNodeInfo.TimeslotAllocation) > 1 && mlNodeInfo.TimeslotAllocation[1] { // index 1 = POC_SLOT
-			logging.Debug("Node should continue inference service based on POC_SLOT allocation", types.PoC,
-				"model_id", modelId,
-				"poc_slot", mlNodeInfo.TimeslotAllocation[1])
-			return true
-		}
-	}
-	return false
+	return len(s.PreservedModels) > 0
 }
 
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
@@ -1204,7 +1201,7 @@ func (b *Broker) getCommandForState(
 					return nil
 				}
 				return StartPoCNodeCommandV2{
-					BlockHeight: pocGenParams.startPoCBlockHeight,
+					BlockHeight:    pocGenParams.startPoCBlockHeight,
 					BlockHash:      pocGenParams.startPoCBlockHash,
 					PubKey:         b.participantInfo.GetPubKey(),
 					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
@@ -1515,6 +1512,7 @@ func (b *Broker) clearNodeEpochData() {
 	for _, node := range b.nodes {
 		node.State.EpochModels = make(map[string]types.Model)
 		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+		node.State.PreservedModels = make(map[string]bool)
 	}
 }
 
@@ -1528,6 +1526,7 @@ func (b *Broker) clearSingleNodeEpochData(nodeId string) {
 	}
 	node.State.EpochModels = make(map[string]types.Model)
 	node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+	node.State.PreservedModels = make(map[string]bool)
 }
 
 func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string, modelSnapshot types.Model) {
@@ -1541,6 +1540,52 @@ func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string
 			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
 		}
 	}
+}
+
+func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochState) error {
+	if epochState == nil || epochState.IsNilOrNotSynced() {
+		return nil
+	}
+
+	snapshotResp, err := b.chainBridge.GetPreservedNodesSnapshot()
+	if err != nil {
+		return err
+	}
+
+	participantAddr := b.GetParticipantAddress()
+	if snapshotResp != nil && snapshotResp.Found && snapshotResp.Snapshot != nil && participantAddr == "" {
+		return fmt.Errorf("participant address unavailable for preserved snapshot refresh")
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, node := range b.nodes {
+		node.State.PreservedModels = make(map[string]bool)
+	}
+
+	if snapshotResp == nil || !snapshotResp.Found || snapshotResp.Snapshot == nil {
+		return nil
+	}
+
+	for _, modelNodes := range snapshotResp.Snapshot.ModelPreservedNodes {
+		for _, p := range modelNodes.Participants {
+			if p == nil || p.ParticipantId != participantAddr {
+				continue
+			}
+			for _, nodeID := range p.NodeIds {
+				node, ok := b.nodes[nodeID]
+				if !ok {
+					continue
+				}
+				if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+					continue
+				}
+				node.State.PreservedModels[modelNodes.ModelId] = true
+			}
+		}
+	}
+	return nil
 }
 
 // PopulateSingleNodeEpochData populates epoch data for a specific node.

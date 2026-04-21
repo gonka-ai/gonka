@@ -381,6 +381,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	if err != nil {
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
+
 	epochContext := types.NewEpochContext(*epoch, *params.EpochParams)
 
 	// Create a map to store weight maps for each model
@@ -472,7 +473,10 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 		totalWeight := modelTotalWeights[modelId]
 
-		if k.OverlapsWithPoC(&inference, epochContext) && !k.isActiveDuringPoC(&validatorPowerForModel) {
+		// Inferences that overlap with the PoC window are not validated: the executor was
+		// not required to serve during PoC, so a missed validation there is not a slashing
+		// signal.
+		if k.OverlapsWithPoC(&inference, epochContext) {
 			skipped++
 			continue
 		}
@@ -506,42 +510,19 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	k.LogInfo("Must be validated inferences", types.Claims,
 		"count", len(mustBeValidated),
-		"validator_not_available_at_poc_skipped", skipped,
+		"poc_overlap_skipped", skipped,
 		"sampled", len(sample),
 	)
 
 	return mustBeValidated, nil
 }
 
+// OverlapsWithPoC reports whether an inference was created late enough in the epoch that
+// its execution can overlap with the next PoC window. Such inferences are not required
+// to be validated.
 func (k msgServer) OverlapsWithPoC(inferenceDetails *types.InferenceValidationDetails, epochContext types.EpochContext) bool {
-	if inferenceDetails == nil {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. Inference details is nil", types.Claims, "inferenceDetails", inferenceDetails)
+	if inferenceDetails == nil || inferenceDetails.CreatedAtBlockHeight <= 0 {
 		return false
 	}
-
-	if inferenceDetails.CreatedAtBlockHeight == 0 {
-		k.LogWarn("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is not set", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
-	} else if inferenceDetails.CreatedAtBlockHeight < 0 {
-		k.LogError("MsgClaimReward. OverlapsWithPoC. CreatedAtBlockHeight is negative!", types.Claims, "inferenceDetails", inferenceDetails)
-		return false
-	}
-
-	happenedAfterCutoff := inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
-	return happenedAfterCutoff
-}
-
-func (k msgServer) isActiveDuringPoC(weight *types.ValidationWeight) bool {
-	if weight == nil {
-		k.LogError("MsgClaimReward. isActiveDuringPoC. Validation weight is nil", types.Claims, "weight", weight)
-		return false
-	}
-
-	for _, n := range weight.MlNodes {
-		if n.IsActiveDuringPoC() {
-			return true
-		}
-	}
-
-	return false
+	return inferenceDetails.CreatedAtBlockHeight >= epochContext.InferenceValidationCutoff()
 }

@@ -401,6 +401,11 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
     }
 
+    fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
+        wrapLog("queryPreservedNodesSnapshot", false) {
+            execAndParse(listOf("query", "inference", "preserved-nodes-snapshot"))
+        }
+
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(
         args: List<String>,
@@ -816,6 +821,20 @@ data class ApplicationCLI(
                     epochIndex.toString()
                 )
             )
+        }
+
+    fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =
+        wrapLog("queryEpochGroupData", infoLevel = false) {
+            val args = mutableListOf(
+                "query",
+                "inference",
+                "show-epoch-group-data",
+                epochIndex.toString(),
+            )
+            if (modelId.isNotEmpty()) {
+                args += listOf("--model-id", modelId)
+            }
+            execAndParse(args)
         }
 
     fun getColdPrivateKey(): String = getPrivateKey(this.getColdAccountName())

@@ -357,6 +357,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)
 		return
 	}
+	if err := d.nodeBroker.EnsurePreservedMembershipCached(&epochState); err != nil {
+		logging.Warn("Failed to refresh preserved membership cache; continuing with cached snapshot", types.Stages, "error", err)
+	}
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfPocStage(blockHeight) {

@@ -102,6 +102,7 @@ var (
 	// location get separate validator sets), the fourth is the validator's
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
+	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
 	ParamsKey                         = []byte("p_inference")
 )
 

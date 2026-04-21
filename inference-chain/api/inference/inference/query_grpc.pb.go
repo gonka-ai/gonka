@@ -92,6 +92,7 @@ const (
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
+	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
 	Query_PoCDelegation_FullMethodName                             = "/inference.inference.Query/PoCDelegation"
 )
@@ -223,6 +224,8 @@ type QueryClient interface {
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
+	// Queries preserved nodes snapshot for the active PoC episode.
+	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(ctx context.Context, in *QueryGetDevshardHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error)
 }
@@ -892,6 +895,15 @@ func (c *queryClient) DevshardEscrow(ctx context.Context, in *QueryGetDevshardEs
 	return out, nil
 }
 
+func (c *queryClient) PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error) {
+	out := new(QueryPreservedNodesSnapshotResponse)
+	err := c.cc.Invoke(ctx, Query_PreservedNodesSnapshot_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) DevshardHostEpochStats(ctx context.Context, in *QueryGetDevshardHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetDevshardHostEpochStatsResponse, error) {
 	out := new(QueryGetDevshardHostEpochStatsResponse)
 	err := c.cc.Invoke(ctx, Query_DevshardHostEpochStats_FullMethodName, in, out, opts...)
@@ -1037,6 +1049,8 @@ type QueryServer interface {
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
+	// Queries preserved nodes snapshot for the active PoC episode.
+	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error)
 	mustEmbedUnimplementedQueryServer()
@@ -1264,6 +1278,9 @@ func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoC
 }
 func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardEscrow not implemented")
+}
+func (UnimplementedQueryServer) PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreservedNodesSnapshot not implemented")
 }
 func (UnimplementedQueryServer) DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardHostEpochStats not implemented")
@@ -2598,6 +2615,24 @@ func _Query_DevshardEscrow_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PreservedNodesSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPreservedNodesSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PreservedNodesSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PreservedNodesSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PreservedNodesSnapshot(ctx, req.(*QueryPreservedNodesSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_DevshardHostEpochStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetDevshardHostEpochStatsRequest)
 	if err := dec(in); err != nil {
@@ -2932,6 +2967,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DevshardEscrow",
 			Handler:    _Query_DevshardEscrow_Handler,
+		},
+		{
+			MethodName: "PreservedNodesSnapshot",
+			Handler:    _Query_PreservedNodesSnapshot_Handler,
 		},
 		{
 			MethodName: "DevshardHostEpochStats",

@@ -36,12 +36,6 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		seedSignature = p.Seed.Signature
 	}
 
-	// If the confirmation weight is not provided (0), initialize it with the
-	// coefficient-adjusted weight of PoC participating nodes.
-	if confirmationWeight == 0 {
-		confirmationWeight = calculatePocParticipatingNodesWeight(p.Models, p.MlNodes, coefficients)
-	}
-
 	return EpochMember{
 		Address:            p.Index,
 		Weight:             p.Weight,
@@ -55,9 +49,7 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 	}
 }
 
-// calculatePocParticipatingNodesWeight computes the coefficient-adjusted total weight
-// of PoC-participating nodes (POC_SLOT=false). Coefficients normalize cross-model values.
-func calculatePocParticipatingNodesWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
+func CalculateMLNodesTotalWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
 	totalWeight := int64(0)
 
 	for i, modelNodes := range mlNodes {
@@ -79,9 +71,7 @@ func calculatePocParticipatingNodesWeight(models []string, mlNodes []*types.Mode
 			if node == nil {
 				continue
 			}
-			if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
-				rawModel += node.PocWeight
-			}
+			rawModel += node.PocWeight
 		}
 		totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
 	}
