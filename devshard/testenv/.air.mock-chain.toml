@@ -1,0 +1,18 @@
+# air live-reload config for the mock-chain service.
+# Phase 12; see devshard/docs/testenv.md §Phase 12.
+
+root = "/workspace"
+tmp_dir = "/tmp/air/mock-chain"
+
+[build]
+  cmd = "go build -o /tmp/air/mock-chain/mockchain ./devshard/testenv/cmd/mockchain"
+  bin = "/tmp/air/mock-chain/mockchain"
+  include_ext = ["go", "yaml", "proto"]
+  exclude_dir = ["observability", "testenv/docs", "docs"]
+  delay = 500
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = true

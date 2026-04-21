@@ -1,0 +1,13 @@
+{
+  "annotations": { "list": [] },
+  "description": "Placeholder. Replace with upstream cAdvisor community dashboard during Phase 13 (see devshard/docs/testenv.md §Phase 13).",
+  "editable": true,
+  "panels": [],
+  "schemaVersion": 38,
+  "tags": ["devshard", "testenv", "cadvisor"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "devshard / cadvisor (placeholder)",
+  "uid": "devshard-cadvisor",
+  "version": 1
+}

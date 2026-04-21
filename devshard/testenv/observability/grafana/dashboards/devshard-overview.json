@@ -1,0 +1,16 @@
+{
+  "annotations": { "list": [] },
+  "description": "Devshard testenv overview dashboard. Phase 13 scaffold; panels will be populated as metrics land.",
+  "editable": true,
+  "panels": [],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "tags": ["devshard", "testenv"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "devshard / overview",
+  "uid": "devshard-overview",
+  "version": 1
+}

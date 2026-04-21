@@ -1,0 +1,13 @@
+# Loki config for the devshard testenv.
+# Phase 13; see devshard/docs/testenv.md §Phase 13.
+#
+# Intentionally minimal; will be filled in with ingester + schema once
+# Phase 13 lands.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+# TODO(phase-13): schema_config, storage_config, limits_config.

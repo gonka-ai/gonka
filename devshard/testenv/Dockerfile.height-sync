@@ -1,0 +1,9 @@
+# Phase 3: build image for the height-sync (heightsyncd) binary.
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY . /src
+RUN go build -o /out/heightsyncd ./devshard/testenv/cmd/heightsyncd
+
+FROM alpine:3.20
+COPY --from=build /out/heightsyncd /usr/local/bin/heightsyncd
+ENTRYPOINT ["/usr/local/bin/heightsyncd"]

@@ -1,0 +1,12 @@
+// Phase 2: gRPC surface for the testenv mock-chain service.
+// See devshard/docs/testenv.md §Phase 2.
+syntax = "proto3";
+
+package devshard.testenv.mockchain.v1;
+
+option go_package = "devshard/testenv/proto/mockchainpb;mockchainpb";
+
+// MockChain will expose the subset of cosmos/mainnet queries that the
+// testenv MainnetBridge needs (GetEscrow, GetHostInfo, VerifyWarmKey,
+// notifications, ...). Empty for now; filled in during Phase 2.
+service MockChain {}

@@ -1,0 +1,26 @@
+// Grafana Alloy pipeline config for the devshard testenv.
+//
+// Phase 13; see devshard/docs/testenv.md §Phase 13.
+//
+// This file is the single-source Alloy config applied to the alloy
+// container. It will be populated during Phase 13 with:
+//
+//   * prometheus.scrape  — scrape devshardd-testenv-*:9100/metrics,
+//                          cAdvisor, Node Exporter
+//   * prometheus.remote_write — push to VictoriaMetrics
+//   * loki.source.docker — collect container stdout
+//   * loki.write          — push to Loki
+//
+// Intentionally empty until Phase 13 lands; commented-out skeleton is
+// preserved to make review diffs small.
+
+// prometheus.scrape "devshardd" {
+//     targets    = [ ... ]
+//     forward_to = [ prometheus.remote_write.vm.receiver ]
+// }
+//
+// prometheus.remote_write "vm" {
+//     endpoint {
+//         url = "http://victoria-metrics:8428/api/v1/write"
+//     }
+// }

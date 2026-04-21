@@ -1,0 +1,10 @@
+# Phase 8: build image for the per-host devshardd-testenv binary.
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY . /src
+RUN go build -o /out/devshardd-testenv ./devshard/testenv/cmd/devshardd-testenv
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=build /out/devshardd-testenv /usr/local/bin/devshardd-testenv
+ENTRYPOINT ["/usr/local/bin/devshardd-testenv"]

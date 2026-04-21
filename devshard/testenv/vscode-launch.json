@@ -1,0 +1,81 @@
+{
+  "version": "0.2.0",
+  "comment": [
+    "Drop-in launch.json for VS Code. See devshard/docs/testenv.md §Phase 12.",
+    "Copy into .vscode/launch.json or merge the configurations into your own."
+  ],
+  "configurations": [
+    {
+      "name": "Attach: mock-chain",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2345,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: height-sync",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2346,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: devshardd-testenv-0",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2347,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: devshardd-testenv-1",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2348,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: devshardd-testenv-2",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2349,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: devshardd-testenv-3",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2350,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    }
+  ]
+}

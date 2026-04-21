@@ -1,0 +1,13 @@
+# Phase 9: build image for devshardctl (developer CLI proxy).
+#
+# The binary itself lives at devshard/cmd/devshardctl and is shared with
+# production. In the testenv it is run inside its own container.
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY . /src
+RUN go build -o /out/devshardctl ./devshard/cmd/devshardctl
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=build /out/devshardctl /usr/local/bin/devshardctl
+ENTRYPOINT ["/usr/local/bin/devshardctl"]

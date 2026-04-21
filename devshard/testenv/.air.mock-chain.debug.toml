@@ -1,0 +1,21 @@
+# air config for the mock-chain service under dlv.
+# Phase 12; see devshard/docs/testenv.md §Phase 12.
+#
+# Rebuilds the binary on file change, then relaunches dlv exec bound to
+# port 2345 so the IDE can re-attach.
+
+root = "/workspace"
+tmp_dir = "/tmp/air/mock-chain"
+
+[build]
+  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/mock-chain/mockchain ./devshard/testenv/cmd/mockchain"
+  bin = "dlv exec /tmp/air/mock-chain/mockchain --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue --"
+  include_ext = ["go", "yaml", "proto"]
+  exclude_dir = ["observability", "testenv/docs", "docs"]
+  delay = 500
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = true

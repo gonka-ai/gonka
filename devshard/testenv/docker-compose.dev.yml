@@ -1,0 +1,13 @@
+# Dev overlay: applied on top of docker-compose.yml to enable live-reload
+# (air) and remote debugging (dlv) inside every testenv container.
+#
+# Phase 12 (see devshard/docs/testenv.md §Phase 12) will populate this
+# file. Expected overrides:
+#   - mount the repository into each service at /workspace
+#   - replace the entrypoint with `air -c .air.<service>.toml`
+#   - expose per-service dlv ports (2345..2349)
+#   - share a module cache volume to avoid repeated go-mod-download
+#
+# Intentionally blank until Phase 12 lands.
+version: "3.9"
+services: {}

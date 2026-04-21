@@ -1,0 +1,21 @@
+# air live-reload config for devshardd-testenv hosts.
+# Phase 12; see devshard/docs/testenv.md §Phase 12.
+#
+# One container per host re-uses this file; the per-host tmp dir is
+# parameterised via the AIR_TMP env var set by docker-compose.dev.yml.
+
+root = "/workspace"
+tmp_dir = "/tmp/air/devshardd"
+
+[build]
+  cmd = "go build -o /tmp/air/devshardd/devshardd-testenv ./devshard/testenv/cmd/devshardd-testenv"
+  bin = "/tmp/air/devshardd/devshardd-testenv"
+  include_ext = ["go", "yaml", "proto"]
+  exclude_dir = ["observability", "testenv/docs", "docs"]
+  delay = 500
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = true

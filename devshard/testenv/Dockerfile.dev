@@ -1,0 +1,18 @@
+# Phase 12: shared development toolchain image (air + dlv + Go).
+#
+# All testenv services run this image in dev mode. The repository is
+# bind-mounted at /workspace; the per-service air config selects which
+# binary to watch/rebuild/run. See devshard/docs/testenv.md §Phase 12.
+FROM golang:1.24-alpine
+
+RUN apk add --no-cache git ca-certificates tzdata bash make curl \
+ && go install github.com/air-verse/air@latest \
+ && go install github.com/go-delve/delve/cmd/dlv@latest
+
+WORKDIR /workspace/devshard/testenv
+
+# Pre-warm the module cache; the actual source is bind-mounted at runtime.
+COPY devshard/go.mod devshard/go.sum /workspace/devshard/
+RUN cd /workspace/devshard && go mod download
+
+ENTRYPOINT ["air"]

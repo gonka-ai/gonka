@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning for the devshard testenv.
+# Phase 13; see devshard/docs/testenv.md §Phase 13.
+apiVersion: 1
+
+providers:
+  - name: devshard-testenv
+    orgId: 1
+    folder: devshard
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

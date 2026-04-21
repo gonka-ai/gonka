@@ -1,0 +1,33 @@
+# Testenv top-level configuration.
+#
+# Consumed by cmd/gencompose in Phase 10 to render docker-compose.yml, and
+# by cmd/mockchain / cmd/devshardd-testenv at runtime. Keys are placeholders
+# until the relevant phases land.
+
+chain:
+  id: "gonka-testenv-1"
+  block_time: "1s"
+
+height_sync:
+  url: "http://height-sync:8765"
+  # secp256k1 validator pubkey (hex). Pinned on every testenv consumer.
+  validator_pub_hex: "TODO(phase-3): fill in validator pub key"
+
+devshard:
+  group_size: 4
+  hosts:
+    - id: "devshardd-testenv-0"
+      private_key_hex: "TODO(phase-8): host 0 hex key"
+    - id: "devshardd-testenv-1"
+      private_key_hex: "TODO(phase-8): host 1 hex key"
+    - id: "devshardd-testenv-2"
+      private_key_hex: "TODO(phase-8): host 2 hex key"
+    - id: "devshardd-testenv-3"
+      private_key_hex: "TODO(phase-8): host 3 hex key"
+
+engine:
+  inference:
+    mode: "deterministic"    # deterministic | latency | error
+    seed: 42
+  validation:
+    mode: "deterministic"    # deterministic | flip | timeout

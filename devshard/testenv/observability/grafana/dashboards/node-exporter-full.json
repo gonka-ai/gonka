@@ -1,0 +1,13 @@
+{
+  "annotations": { "list": [] },
+  "description": "Placeholder. Replace with upstream node-exporter-full dashboard (grafana.com id 1860) during Phase 13 (see devshard/docs/testenv.md §Phase 13).",
+  "editable": true,
+  "panels": [],
+  "schemaVersion": 38,
+  "tags": ["devshard", "testenv", "node-exporter"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "title": "devshard / node-exporter (placeholder)",
+  "uid": "devshard-node-exporter",
+  "version": 1
+}

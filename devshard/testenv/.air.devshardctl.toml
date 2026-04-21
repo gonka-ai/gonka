@@ -1,0 +1,18 @@
+# air live-reload config for devshardctl.
+# Phase 12; see devshard/docs/testenv.md §Phase 12.
+
+root = "/workspace"
+tmp_dir = "/tmp/air/devshardctl"
+
+[build]
+  cmd = "go build -o /tmp/air/devshardctl/devshardctl ./devshard/cmd/devshardctl"
+  bin = "/tmp/air/devshardctl/devshardctl"
+  include_ext = ["go", "yaml"]
+  exclude_dir = ["observability", "testenv/docs", "docs"]
+  delay = 500
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = true

@@ -1,0 +1,18 @@
+# air live-reload config for the height-sync service.
+# Phase 12; see devshard/docs/testenv.md §Phase 12.
+
+root = "/workspace"
+tmp_dir = "/tmp/air/height-sync"
+
+[build]
+  cmd = "go build -o /tmp/air/height-sync/heightsyncd ./devshard/testenv/cmd/heightsyncd"
+  bin = "/tmp/air/height-sync/heightsyncd"
+  include_ext = ["go", "yaml"]
+  exclude_dir = ["observability", "testenv/docs", "docs"]
+  delay = 500
+
+[log]
+  main_only = false
+
+[misc]
+  clean_on_exit = true
