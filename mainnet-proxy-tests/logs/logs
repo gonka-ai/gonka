@@ -1,0 +1,176 @@
+Subnet proxy: host=9sxfuknt stages started|receipt_received|send_completed|race_completed
+2026/04/23 00:48:58 request=req-1776905338697160147-17 stage=started escrow=38 nonce=2657 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338699830967-26 stage=started escrow=35 nonce=2307 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338703870917-52 stage=started escrow=37 nonce=2299 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338703059827-44 stage=started escrow=35 nonce=2308 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338711650886-110 stage=started escrow=39 nonce=1945 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338699831067-27 stage=started escrow=39 nonce=1944 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338704692517-57 stage=started escrow=35 nonce=2311 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338708760887-70 stage=started escrow=35 nonce=2310 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338708165137-64 stage=started escrow=40 nonce=2753 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338703415617-46 stage=started escrow=40 nonce=2752 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338710713526-100 stage=started escrow=36 nonce=1704 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338704340797-56 stage=started escrow=42 nonce=1821 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338718941316-116 stage=started escrow=37 nonce=2305 host=9sxfuknt
+2026/04/23 00:48:58 request=req-1776905338718942316-117 stage=started escrow=40 nonce=2760 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338700540678-34 stage=started escrow=40 nonce=2768 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338709832566-87 stage=started escrow=35 nonce=2319 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338708521257-68 stage=started escrow=38 nonce=2673 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338709122777-76 stage=started escrow=36 nonce=1709 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338719133696-120 stage=started escrow=35 nonce=2323 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338709724617-86 stage=started escrow=40 nonce=2769 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338670341329-1 stage=started escrow=35 nonce=2324 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338696935578-13 stage=started escrow=40 nonce=2776 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338697042058-16 stage=started escrow=42 nonce=1837 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338703059827-44 stage=receipt_received escrow=35 nonce=2308 host=9sxfuknt elapsed_ms=962
+2026/04/23 00:48:59 request=req-1776905338709085737-75 stage=started escrow=37 nonce=2315 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338686443558-5 stage=started escrow=39 nonce=1960 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338705413737-60 stage=started escrow=39 nonce=1961 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338708760887-70 stage=receipt_received escrow=35 nonce=2310 host=9sxfuknt elapsed_ms=1063
+2026/04/23 00:48:59 request=req-1776905338710713526-100 stage=receipt_received escrow=36 nonce=1704 host=9sxfuknt elapsed_ms=1005
+2026/04/23 00:48:59 request=req-1776905338710562397-98 stage=started escrow=35 nonce=2326 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338708165137-64 stage=receipt_received escrow=40 nonce=2753 host=9sxfuknt elapsed_ms=1030
+2026/04/23 00:48:59 request=req-1776905338703415617-46 stage=receipt_received escrow=40 nonce=2752 host=9sxfuknt elapsed_ms=1040
+2026/04/23 00:48:59 request=req-1776905338718942316-117 stage=receipt_received escrow=40 nonce=2760 host=9sxfuknt elapsed_ms=1012
+2026/04/23 00:48:59 request=req-1776905338704692517-57 stage=receipt_received escrow=35 nonce=2311 host=9sxfuknt elapsed_ms=1181
+2026/04/23 00:48:59 request=req-1776905338710650297-99 stage=started escrow=40 nonce=2784 host=9sxfuknt
+2026/04/23 00:48:59 request=req-1776905338754810783-129 stage=started escrow=40 nonce=2785 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338708443357-65 stage=started escrow=36 nonce=1720 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338703463867-48 stage=started escrow=38 nonce=2689 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338704340797-56 stage=receipt_received escrow=42 nonce=1821 host=9sxfuknt elapsed_ms=1521
+2026/04/23 00:49:00 request=req-1776905338709832566-87 stage=receipt_received escrow=35 nonce=2319 host=9sxfuknt elapsed_ms=1054
+2026/04/23 00:49:00 request=req-1776905338709122777-76 stage=receipt_received escrow=36 nonce=1709 host=9sxfuknt elapsed_ms=1041
+2026/04/23 00:49:00 request=req-1776905338708476667-66 stage=started escrow=37 nonce=2321 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338709724617-86 stage=receipt_received escrow=40 nonce=2769 host=9sxfuknt elapsed_ms=1054
+2026/04/23 00:49:00 request=req-1776905338719133696-120 stage=receipt_received escrow=35 nonce=2323 host=9sxfuknt elapsed_ms=1132
+2026/04/23 00:49:00 request=req-1776905338700540678-34 stage=receipt_received escrow=40 nonce=2768 host=9sxfuknt elapsed_ms=1188
+2026/04/23 00:49:00 request=req-1776905338708521257-68 stage=receipt_received escrow=38 nonce=2673 host=9sxfuknt elapsed_ms=1182
+2026/04/23 00:49:00 request=req-1776905338706009717-62 stage=started escrow=40 nonce=2792 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338670341329-1 stage=receipt_received escrow=35 nonce=2324 host=9sxfuknt elapsed_ms=936
+2026/04/23 00:49:00 request=req-1776905338703870917-52 stage=receipt_received escrow=37 nonce=2299 host=9sxfuknt elapsed_ms=1893
+2026/04/23 00:49:00 request=req-1776905338718941316-116 stage=receipt_received escrow=37 nonce=2305 host=9sxfuknt elapsed_ms=1850
+2026/04/23 00:49:00 request=req-1776905338696935578-13 stage=receipt_received escrow=40 nonce=2776 host=9sxfuknt elapsed_ms=1008
+2026/04/23 00:49:00 request=req-1776905338697042058-16 stage=receipt_received escrow=42 nonce=1837 host=9sxfuknt elapsed_ms=1019
+2026/04/23 00:49:00 request=req-1776905338709085737-75 stage=receipt_received escrow=37 nonce=2315 host=9sxfuknt elapsed_ms=1017
+2026/04/23 00:49:00 request=req-1776905338710288857-94 stage=started escrow=42 nonce=1853 host=9sxfuknt
+2026/04/23 00:49:00 request=req-1776905338710562397-98 stage=receipt_received escrow=35 nonce=2326 host=9sxfuknt elapsed_ms=998
+2026/04/23 00:49:00 request=req-1776905338711650886-110 stage=receipt_received escrow=39 nonce=1945 host=9sxfuknt elapsed_ms=2095
+2026/04/23 00:49:00 request=req-1776905338697160147-17 stage=receipt_received escrow=38 nonce=2657 host=9sxfuknt elapsed_ms=2169
+2026/04/23 00:49:00 request=req-1776905338699831067-27 stage=receipt_received escrow=39 nonce=1944 host=9sxfuknt elapsed_ms=2102
+2026/04/23 00:49:00 request=req-1776905338699830967-26 stage=receipt_received escrow=35 nonce=2307 host=9sxfuknt elapsed_ms=2225
+2026/04/23 00:49:01 request=req-1776905338705413737-60 stage=receipt_received escrow=39 nonce=1961 host=9sxfuknt elapsed_ms=1203
+2026/04/23 00:49:01 request=req-1776905338686443558-5 stage=receipt_received escrow=39 nonce=1960 host=9sxfuknt elapsed_ms=1216
+2026/04/23 00:49:01 request=req-1776905338754810783-129 stage=receipt_received escrow=40 nonce=2785 host=9sxfuknt elapsed_ms=1078
+2026/04/23 00:49:01 request=req-1776905338710650297-99 stage=receipt_received escrow=40 nonce=2784 host=9sxfuknt elapsed_ms=1093
+2026/04/23 00:49:01 request=req-1776905338708443357-65 stage=receipt_received escrow=36 nonce=1720 host=9sxfuknt elapsed_ms=1039
+2026/04/23 00:49:01 request=req-1776905338708476667-66 stage=receipt_received escrow=37 nonce=2321 host=9sxfuknt elapsed_ms=935
+2026/04/23 00:49:01 request=req-1776905338703463867-48 stage=receipt_received escrow=38 nonce=2689 host=9sxfuknt elapsed_ms=1087
+2026/04/23 00:49:01 request=req-1776905338706009717-62 stage=receipt_received escrow=40 nonce=2792 host=9sxfuknt elapsed_ms=1061
+2026/04/23 00:49:01 request=req-1776905338710288857-94 stage=receipt_received escrow=42 nonce=1853 host=9sxfuknt elapsed_ms=948
+2026/04/23 00:49:02 request=req-1776905338703059827-44 stage=send_completed escrow=35 nonce=2308 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338703415617-46 stage=send_completed escrow=40 nonce=2752 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338710713526-100 stage=send_completed escrow=36 nonce=1704 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338718942316-117 stage=send_completed escrow=40 nonce=2760 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338708760887-70 stage=send_completed escrow=35 nonce=2310 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338709832566-87 stage=send_completed escrow=35 nonce=2319 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338704692517-57 stage=send_completed escrow=35 nonce=2311 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338704340797-56 stage=send_completed escrow=42 nonce=1821 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338708165137-64 stage=send_completed escrow=40 nonce=2753 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338709724617-86 stage=send_completed escrow=40 nonce=2769 host=9sxfuknt
+2026/04/23 00:49:02 request=req-1776905338709122777-76 stage=send_completed escrow=36 nonce=1709 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338700540678-34 stage=send_completed escrow=40 nonce=2768 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338719133696-120 stage=send_completed escrow=35 nonce=2323 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338718941316-116 stage=send_completed escrow=37 nonce=2305 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338696935578-13 stage=send_completed escrow=40 nonce=2776 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338670341329-1 stage=send_completed escrow=35 nonce=2324 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338709085737-75 stage=send_completed escrow=37 nonce=2315 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338699831067-27 stage=send_completed escrow=39 nonce=1944 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338700540678-34 stage=race_completed escrow=40 nonce=2768 host=9sxfuknt winner=false finished=true responsive=true output_chunks=76 content_chunks=75 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338708521257-68 stage=send_completed escrow=38 nonce=2673 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338697160147-17 stage=send_completed escrow=38 nonce=2657 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338697042058-16 stage=send_completed escrow=42 nonce=1837 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338718941316-116 stage=race_completed escrow=37 nonce=2305 host=9sxfuknt winner=false finished=true responsive=true output_chunks=15 content_chunks=14 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338697042058-16 stage=race_completed escrow=42 nonce=1837 host=9sxfuknt winner=false finished=false responsive=true output_chunks=0 content_chunks=0 content_source="" probe=false
+2026/04/23 00:49:03 request=req-1776905338699830967-26 stage=send_completed escrow=35 nonce=2307 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338710713526-100 stage=race_completed escrow=36 nonce=1704 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338703870917-52 stage=send_completed escrow=37 nonce=2299 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338710562397-98 stage=send_completed escrow=35 nonce=2326 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338686443558-5 stage=send_completed escrow=39 nonce=1960 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338754810783-129 stage=send_completed escrow=40 nonce=2785 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338704692517-57 stage=race_completed escrow=35 nonce=2311 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338708443357-65 stage=send_completed escrow=36 nonce=1720 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338718942316-117 stage=race_completed escrow=40 nonce=2760 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338710650297-99 stage=send_completed escrow=40 nonce=2784 host=9sxfuknt
+2026/04/23 00:49:03 request=req-1776905338710650297-99 stage=race_completed escrow=40 nonce=2784 host=9sxfuknt winner=false finished=true responsive=true output_chunks=15 content_chunks=14 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338699830967-26 stage=race_completed escrow=35 nonce=2307 host=9sxfuknt winner=false finished=true responsive=true output_chunks=85 content_chunks=84 content_source=delta.content probe=false
+2026/04/23 00:49:03 request=req-1776905338705413737-60 stage=send_completed escrow=39 nonce=1961 host=9sxfuknt
+2026/04/23 00:49:04 request=req-1776905338709085737-75 stage=race_completed escrow=37 nonce=2315 host=9sxfuknt winner=false finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338719133696-120 stage=race_completed escrow=35 nonce=2323 host=9sxfuknt winner=false finished=true responsive=true output_chunks=31 content_chunks=30 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338708165137-64 stage=race_completed escrow=40 nonce=2753 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338709724617-86 stage=race_completed escrow=40 nonce=2769 host=9sxfuknt winner=false finished=true responsive=true output_chunks=77 content_chunks=76 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338686443558-5 stage=race_completed escrow=39 nonce=1960 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338703870917-52 stage=race_completed escrow=37 nonce=2299 host=9sxfuknt winner=false finished=true responsive=true output_chunks=15 content_chunks=14 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338708476667-66 stage=send_completed escrow=37 nonce=2321 host=9sxfuknt
+2026/04/23 00:49:04 request=req-1776905338708443357-65 stage=race_completed escrow=36 nonce=1720 host=9sxfuknt winner=false finished=true responsive=true output_chunks=15 content_chunks=14 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338703463867-48 stage=send_completed escrow=38 nonce=2689 host=9sxfuknt
+2026/04/23 00:49:04 request=req-1776905338696935578-13 stage=race_completed escrow=40 nonce=2776 host=9sxfuknt winner=false finished=true responsive=true output_chunks=31 content_chunks=30 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338710288857-94 stage=send_completed escrow=42 nonce=1853 host=9sxfuknt
+2026/04/23 00:49:04 request=req-1776905338699831067-27 stage=race_completed escrow=39 nonce=1944 host=9sxfuknt winner=false finished=true responsive=true output_chunks=8 content_chunks=7 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338703415617-46 stage=race_completed escrow=40 nonce=2752 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338708760887-70 stage=race_completed escrow=35 nonce=2310 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338708476667-66 stage=race_completed escrow=37 nonce=2321 host=9sxfuknt winner=false finished=true responsive=true output_chunks=69 content_chunks=68 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338709832566-87 stage=race_completed escrow=35 nonce=2319 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338704340797-56 stage=race_completed escrow=42 nonce=1821 host=9sxfuknt winner=false finished=true responsive=true output_chunks=30 content_chunks=29 content_source=delta.content probe=false
+2026/04/23 00:49:04 request=req-1776905338670341329-1 stage=race_completed escrow=35 nonce=2324 host=9sxfuknt winner=false finished=true responsive=true output_chunks=76 content_chunks=75 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338710562397-98 stage=race_completed escrow=35 nonce=2326 host=9sxfuknt winner=false finished=false responsive=true output_chunks=0 content_chunks=0 content_source="" probe=false
+2026/04/23 00:49:05 request=req-1776905338703059827-44 stage=race_completed escrow=35 nonce=2308 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338711650886-110 stage=send_completed escrow=39 nonce=1945 host=9sxfuknt
+2026/04/23 00:49:05 request=req-1776905338711650886-110 stage=race_completed escrow=39 nonce=1945 host=9sxfuknt winner=false finished=true responsive=true output_chunks=30 content_chunks=29 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338709122777-76 stage=race_completed escrow=36 nonce=1709 host=9sxfuknt winner=false finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338710288857-94 stage=race_completed escrow=42 nonce=1853 host=9sxfuknt winner=false finished=true responsive=true output_chunks=38 content_chunks=37 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338754810783-129 stage=race_completed escrow=40 nonce=2785 host=9sxfuknt winner=false finished=true responsive=true output_chunks=15 content_chunks=14 content_source=delta.content probe=false
+2026/04/23 00:49:05 request=req-1776905338708521257-68 stage=race_completed escrow=38 nonce=2673 host=9sxfuknt winner=false finished=true responsive=true output_chunks=38 content_chunks=37 content_source=delta.content probe=false
+2026/04/23 00:49:06 request=req-1776905338706009717-62 stage=send_completed escrow=40 nonce=2792 host=9sxfuknt
+2026/04/23 00:49:06 request=req-1776905338706009717-62 stage=race_completed escrow=40 nonce=2792 host=9sxfuknt winner=false finished=false responsive=true output_chunks=0 content_chunks=0 content_source="" probe=false
+2026/04/23 00:49:10 request=req-1776905338705413737-60 stage=race_completed escrow=39 nonce=1961 host=9sxfuknt winner=false finished=false responsive=true output_chunks=0 content_chunks=0 content_source="" probe=false
+2026/04/23 00:49:17 request=req-1776905338703463867-48 stage=race_completed escrow=38 nonce=2689 host=9sxfuknt winner=false finished=false responsive=true output_chunks=0 content_chunks=0 content_source="" probe=false
+2026/04/23 00:49:18 request=req-1776905338697160147-17 stage=race_completed escrow=38 nonce=2657 host=9sxfuknt winner=true finished=true responsive=true output_chunks=103 content_chunks=100 content_source=delta.content probe=false
+=== end 9sxfuknt better grep ===
+
+=== 9sxfuknt better grep ===
+NGINX proxy_1: POST /v1/subnet/sessions/.../chat/completions
+2026-04-23T00:49:02.217258899Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 54650 "-" "Go-http-client/1.1" rt=3.241 uct="0.000" uht="0.699" urt="3.241"
+2026-04-23T00:49:02.337236376Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 55486 "-" "Go-http-client/1.1" rt=3.272 uct="0.001" uht="0.766" urt="3.273"
+2026-04-23T00:49:02.382641069Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/36/chat/completions HTTP/1.1" 200 55644 "-" "Go-http-client/1.1" rt=3.347 uct="0.000" uht="0.760" urt="3.347"
+2026-04-23T00:49:02.416594684Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 55423 "-" "Go-http-client/1.1" rt=3.299 uct="0.000" uht="0.766" urt="3.299"
+2026-04-23T00:49:02.420724805Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 55210 "-" "Go-http-client/1.1" rt=3.439 uct="0.000" uht="0.813" urt="3.439"
+2026-04-23T00:49:02.757819633Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 55237 "-" "Go-http-client/1.1" rt=3.251 uct="0.001" uht="0.828" urt="3.252"
+2026-04-23T00:49:02.758294832Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 56433 "-" "Go-http-client/1.1" rt=3.775 uct="0.000" uht="0.930" urt="3.775"
+2026-04-23T00:49:02.763584044Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/42/chat/completions HTTP/1.1" 200 54138 "-" "Go-http-client/1.1" rt=3.734 uct="0.000" uht="1.284" urt="3.734"
+2026-04-23T00:49:02.806075127Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 55653 "-" "Go-http-client/1.1" rt=3.768 uct="0.000" uht="0.783" urt="3.768"
+2026-04-23T00:49:02.872263671Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 55677 "-" "Go-http-client/1.1" rt=3.270 uct="0.000" uht="0.821" urt="3.269"
+2026-04-23T00:49:02.919226764Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/36/chat/completions HTTP/1.1" 200 56241 "-" "Go-http-client/1.1" rt=3.400 uct="0.000" uht="0.815" urt="3.400"
+2026-04-23T00:49:02.998711143Z 35.238.48.23 - - [23/Apr/2026:00:49:02 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 56963 "-" "Go-http-client/1.1" rt=3.515 uct="0.000" uht="0.952" urt="3.515"
+2026-04-23T00:49:03.021935789Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 55684 "-" "Go-http-client/1.1" rt=3.449 uct="0.000" uht="0.860" urt="3.449"
+2026-04-23T00:49:03.101591984Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/37/chat/completions HTTP/1.1" 200 54643 "-" "Go-http-client/1.1" rt=4.041 uct="0.001" uht="1.588" urt="4.041"
+2026-04-23T00:49:03.130985713Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 56515 "-" "Go-http-client/1.1" rt=3.271 uct="0.001" uht="0.707" urt="3.271"
+2026-04-23T00:49:03.154051307Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 55784 "-" "Go-http-client/1.1" rt=3.250 uct="0.000" uht="0.773" urt="3.250"
+2026-04-23T00:49:03.239922500Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/37/chat/completions HTTP/1.1" 200 54762 "-" "Go-http-client/1.1" rt=3.237 uct="0.000" uht="0.787" urt="3.237"
+2026-04-23T00:49:03.245926132Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/39/chat/completions HTTP/1.1" 200 54748 "-" "Go-http-client/1.1" rt=4.270 uct="0.000" uht="1.850" urt="4.270"
+2026-04-23T00:49:03.271459427Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/38/chat/completions HTTP/1.1" 200 54812 "-" "Go-http-client/1.1" rt=3.751 uct="0.000" uht="0.953" urt="3.751"
+2026-04-23T00:49:03.271941448Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/38/chat/completions HTTP/1.1" 200 54595 "-" "Go-http-client/1.1" rt=4.341 uct="0.000" uht="1.888" urt="4.341"
+2026-04-23T00:49:03.305377355Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/42/chat/completions HTTP/1.1" 200 55917 "-" "Go-http-client/1.1" rt=3.402 uct="0.000" uht="0.791" urt="3.402"
+2026-04-23T00:49:03.337098828Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 55935 "-" "Go-http-client/1.1" rt=4.401 uct="0.001" uht="1.942" urt="4.401"
+2026-04-23T00:49:03.352720061Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/37/chat/completions HTTP/1.1" 200 55676 "-" "Go-http-client/1.1" rt=4.394 uct="0.000" uht="1.640" urt="4.394"
+2026-04-23T00:49:03.406950498Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/35/chat/completions HTTP/1.1" 200 55793 "-" "Go-http-client/1.1" rt=3.367 uct="0.000" uht="0.757" urt="3.367"
+2026-04-23T00:49:03.436689903Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/39/chat/completions HTTP/1.1" 200 54826 "-" "Go-http-client/1.1" rt=3.430 uct="0.000" uht="0.986" urt="3.430"
+2026-04-23T00:49:03.499004134Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 56551 "-" "Go-http-client/1.1" rt=3.337 uct="0.000" uht="0.847" urt="3.337"
+2026-04-23T00:49:03.654352904Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/36/chat/completions HTTP/1.1" 200 56991 "-" "Go-http-client/1.1" rt=3.413 uct="0.000" uht="0.806" urt="3.413"
+2026-04-23T00:49:03.658738096Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 56607 "-" "Go-http-client/1.1" rt=3.501 uct="0.003" uht="0.861" urt="3.501"
+2026-04-23T00:49:03.819710497Z 35.238.48.23 - - [23/Apr/2026:00:49:03 +0000] "POST /v1/subnet/sessions/39/chat/completions HTTP/1.1" 200 55369 "-" "Go-http-client/1.1" rt=3.816 uct="0.000" uht="0.977" urt="3.816"
+2026-04-23T00:49:04.140461662Z 35.238.48.23 - - [23/Apr/2026:00:49:04 +0000] "POST /v1/subnet/sessions/37/chat/completions HTTP/1.1" 200 56368 "-" "Go-http-client/1.1" rt=3.565 uct="0.000" uht="0.700" urt="3.565"
+2026-04-23T00:49:04.231500965Z 35.238.48.23 - - [23/Apr/2026:00:49:04 +0000] "POST /v1/subnet/sessions/38/chat/completions HTTP/1.1" 200 54370 "-" "Go-http-client/1.1" rt=3.693 uct="0.000" uht="0.855" urt="3.693"
+2026-04-23T00:49:04.285587480Z 35.238.48.23 - - [23/Apr/2026:00:49:04 +0000] "POST /v1/subnet/sessions/42/chat/completions HTTP/1.1" 200 55019 "-" "Go-http-client/1.1" rt=3.264 uct="0.001" uht="0.718" urt="3.265"
+2026-04-23T00:49:05.109954035Z 35.238.48.23 - - [23/Apr/2026:00:49:05 +0000] "POST /v1/subnet/sessions/39/chat/completions HTTP/1.1" 200 56228 "-" "Go-http-client/1.1" rt=6.136 uct="0.000" uht="1.845" urt="6.136"
+2026-04-23T00:49:06.710900956Z 35.238.48.23 - - [23/Apr/2026:00:49:06 +0000] "POST /v1/subnet/sessions/40/chat/completions HTTP/1.1" 200 56795 "-" "Go-http-client/1.1" rt=5.987 uct="0.000" uht="0.826" urt="5.987"
+

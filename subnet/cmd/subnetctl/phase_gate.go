@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +50,17 @@ type ChainPhaseGate struct {
 	mu       sync.RWMutex
 	snapshot ChainPhaseSnapshot
 
+	// capacityState receives per-host weights and the preserved-host
+	// set on every refresh so it can keep W_tot, W(e), and the
+	// GatewayLimiter scale factor in sync with chain phase transitions.
+	// Reactive throttle is consulted live by the state itself via the
+	// availability callback wired separately (SetLiveAvailable on the
+	// state at gateway construction). Refresh-time scale propagation
+	// (e.g. ApplyScaleFactor on the GatewayLimiter) is the
+	// scaleApplyHook's responsibility.
+	capacityState  *CapacityState
+	scaleApplyHook func(scale float64)
+
 	stopCh chan struct{}
 	doneCh chan struct{}
 }
@@ -83,6 +93,7 @@ type chainActiveParticipantsGroup struct {
 type chainActiveParticipant struct {
 	Index        string              `json:"index"`
 	InferenceURL string              `json:"inference_url"`
+	Weight       jsonUint64          `json:"weight,omitempty"`
 	MLNodes      []chainModelMLNodes `json:"ml_nodes"`
 }
 
@@ -215,6 +226,33 @@ func (g *ChainPhaseGate) Snapshot() ChainPhaseSnapshot {
 	return g.snapshot
 }
 
+// SetCapacityState attaches the capacity state that should receive
+// per-host weights and the preserved-host set on every refresh.
+// scaleHook is invoked after each refresh with the new W_tot/W_ref
+// scale factor; pass nil to skip scale propagation. Reactive throttle
+// is consulted live by the state itself via the availability callback
+// wired separately (SetLiveAvailable on the state at gateway
+// construction), so we no longer push throttle snapshots through the
+// refresh loop.
+func (g *ChainPhaseGate) SetCapacityState(state *CapacityState, scaleHook func(scale float64)) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.capacityState = state
+	g.scaleApplyHook = scaleHook
+}
+
+func (g *ChainPhaseGate) capacitySinks() (*CapacityState, func(float64)) {
+	if g == nil {
+		return nil, nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.capacityState, g.scaleApplyHook
+}
+
 func (g *ChainPhaseGate) AdmissionError() error {
 	if g == nil {
 		return nil
@@ -260,22 +298,53 @@ func (g *ChainPhaseGate) refresh() {
 	snapshot := deriveChainPhaseSnapshot(resp)
 	active, _ := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
 	wasActive, _ := rawPoCBlockingState(previous.EpochPhase, previous.ConfirmationPoCPhase)
-	if active && relaxedPoCModeEnabled() && !wasActive {
-		preserved, excludedPairs, preservedErr := g.fetchPreservedParticipantKeys()
-		if preservedErr != nil {
-			g.recordError(preservedErr)
-			g.logPreservedParticipantFetchFailure(snapshot, preservedErr)
+
+	capacityState, scaleHook := g.capacitySinks()
+
+	// We need participants info for two purposes:
+	//   (a) the relaxed-PoC preserved-set update (only on active edge)
+	//   (b) feeding CapacityState weights + preserved set (every refresh,
+	//       when attached) so W(e)/W_tot/W_ref reflect the latest chain
+	//       observation.
+	// Combine the fetches so we never double-poll the chain.
+	needPreservedFetch := active && relaxedPoCModeEnabled() && !wasActive
+	if needPreservedFetch || capacityState != nil {
+		state, perr := g.fetchParticipantsState()
+		if perr != nil {
+			g.recordError(perr)
+			g.logPreservedParticipantFetchFailure(snapshot, perr)
 		} else {
-			plainKeys := make([]string, len(preserved))
-			for i, p := range preserved {
-				plainKeys[i] = p.key
+			if needPreservedFetch {
+				setPoCPreservedParticipants(state.preserved)
+				g.logPreservedParticipantsLoaded(snapshot, state.preserved, state.excluded)
 			}
-			setPoCPreservedParticipants(plainKeys)
-			g.logPreservedParticipantsLoaded(snapshot, preserved, excludedPairs)
+			if capacityState != nil {
+				// pocActive routes the observation: outside PoC it
+				// updates both fullWeights (steady-state baseline) and
+				// currentWeights, inside PoC it only nudges
+				// currentWeights so the live W_tot reflects PoC's
+				// transient drop while W_ref keeps the pre-PoC baseline.
+				capacityState.SetHostWeights(state.weights, active)
+				if active && relaxedPoCModeEnabled() {
+					capacityState.SetPoCPreserved(state.preserved)
+				} else {
+					// Outside relaxed PoC every host is "preserved"
+					// from the limiter's perspective; nil tells the
+					// state to treat the preserved set as not-yet-loaded
+					// and therefore not block anyone on PoC grounds.
+					capacityState.SetPoCPreserved(nil)
+				}
+			}
 		}
-	} else if !active {
+	}
+	if !active {
 		setPoCPreservedParticipants(nil)
 	}
+
+	if capacityState != nil && scaleHook != nil {
+		scaleHook(capacityState.ScaleFactor())
+	}
+
 	g.applySpeculativeAttemptPolicy(snapshot)
 	g.logSnapshotTransition(previous, snapshot)
 	g.storeSnapshot(snapshot)
@@ -300,66 +369,81 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	return &payload, nil
 }
 
-type participantKeyAddr struct {
-	key  string
-	addr string
+// participantsState is the parsed form of the chain participants
+// endpoint used by both the relaxed-PoC preserved-set logic and the
+// CapacityState weight ingestion. We collect everything in one fetch
+// so the gate doesn't double-poll. All keys (preserved, excluded,
+// weights map keys) are the participant's gonka address (chain
+// `Index`); the InferenceURL is intentionally NOT used as an identity
+// -- the chain address is the canonical participant key everywhere
+// downstream (CapacityState, ParticipantRequestLimiter, Session,
+// transport admission). weights holds the chain-reported w_chain(h)
+// for the moment this fetch landed; CapacityState's own
+// SetHostWeights(_, pocActive) decides whether to treat the values as
+// a steady-state baseline observation or a transient PoC-time
+// reading.
+type participantsState struct {
+	preserved []string
+	excluded  []string
+	weights   map[string]float64
 }
 
-func (p participantKeyAddr) label() string {
-	short := p.addr
-	if len(short) > 8 {
-		short = short[len(short)-8:]
-	}
-	if short == "" {
-		return p.key
-	}
-	return p.key + "(" + short + ")"
-}
-
-func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]participantKeyAddr, []participantKeyAddr, error) {
-	resp, err := g.client.Get(g.participantsEndpoint)
+func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
+	state, err := g.fetchParticipantsState()
 	if err != nil {
 		return nil, nil, err
+	}
+	return state.preserved, state.excluded, nil
+}
+
+func (g *ChainPhaseGate) fetchParticipantsState() (*participantsState, error) {
+	resp, err := g.client.Get(g.participantsEndpoint)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		return nil, nil, fmt.Errorf("current participants status %d", resp.StatusCode)
+		return nil, fmt.Errorf("current participants status %d", resp.StatusCode)
 	}
 
 	var payload chainCurrentParticipantsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	var keys, excluded []participantKeyAddr
+	state := &participantsState{
+		weights: make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+	}
 	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
 	seenExcluded := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
 	for _, participant := range payload.ActiveParticipants.Participants {
-		key := participantKeyForInferenceURL(participant.InferenceURL)
+		key := strings.TrimSpace(participant.Index)
 		if key == "" {
-			key = strings.TrimSpace(participant.Index)
-		}
-		if key == "" {
+			// A participant with no chain Index is not addressable
+			// downstream (Session/CapacityState/limiter all key by
+			// gonka address). Drop it -- there's no sensible fallback
+			// because the inference URL alone can't sign votes,
+			// receive PoC weight, or be matched against group slots.
 			continue
 		}
-		addr := strings.TrimSpace(participant.Index)
+		state.weights[key] = participantWeight(participant)
 		if !participantHasPreservedNode(participant) {
 			if _, ok := seenExcluded[key]; ok {
 				continue
 			}
 			seenExcluded[key] = struct{}{}
-			excluded = append(excluded, participantKeyAddr{key: key, addr: addr})
+			state.excluded = append(state.excluded, key)
 			continue
 		}
 		if _, ok := seenPreserved[key]; ok {
 			continue
 		}
 		seenPreserved[key] = struct{}{}
-		keys = append(keys, participantKeyAddr{key: key, addr: addr})
+		state.preserved = append(state.preserved, key)
 	}
-	return keys, excluded, nil
+	return state, nil
 }
 
 func (g *ChainPhaseGate) storeSnapshot(snapshot ChainPhaseSnapshot) {
@@ -385,20 +469,32 @@ func (g *ChainPhaseGate) logPreservedParticipantFetchFailure(snapshot ChainPhase
 	)
 }
 
-func participantKeyAddrLabels(pairs []participantKeyAddr) []string {
-	labels := make([]string, len(pairs))
-	for i, p := range pairs {
-		labels[i] = p.label()
+// participantKeyLabels returns a sorted, short-form copy of the
+// supplied gonka addresses for log compactness. Short form is the
+// last 8 characters of the bech32 string -- enough to disambiguate in
+// practice without polluting log lines.
+func participantKeyLabels(keys []string) []string {
+	labels := make([]string, len(keys))
+	for i, k := range keys {
+		labels[i] = shortParticipantKey(k)
 	}
 	sort.Strings(labels)
 	return labels
 }
 
-func (g *ChainPhaseGate) logPreservedParticipantsLoaded(snapshot ChainPhaseSnapshot, preserved []participantKeyAddr, excluded []participantKeyAddr) {
+func shortParticipantKey(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if len(trimmed) <= 8 {
+		return trimmed
+	}
+	return trimmed[len(trimmed)-8:]
+}
+
+func (g *ChainPhaseGate) logPreservedParticipantsLoaded(snapshot ChainPhaseSnapshot, preserved []string, excluded []string) {
 	if g == nil {
 		return
 	}
-	excludedLabels := participantKeyAddrLabels(excluded)
+	excludedLabels := participantKeyLabels(excluded)
 	excludedJoined := strings.Join(excludedLabels, ",")
 	if len(preserved) == 0 {
 		log.Printf(
@@ -413,7 +509,7 @@ func (g *ChainPhaseGate) logPreservedParticipantsLoaded(snapshot ChainPhaseSnaps
 		)
 		return
 	}
-	preservedLabels := participantKeyAddrLabels(preserved)
+	preservedLabels := participantKeyLabels(preserved)
 	log.Printf(
 		"chain phase gate: preserved participants loaded reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d count=%d participants=%s excluded_count=%d excluded_participants=%s",
 		snapshot.BlockReason,
@@ -593,14 +689,21 @@ func participantHasPreservedNode(participant chainActiveParticipant) bool {
 	return false
 }
 
-func participantKeyForInferenceURL(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err == nil {
-		if host := strings.TrimSpace(parsed.Host); host != "" {
-			return host
-		}
-	}
-	return strings.TrimSpace(raw)
+// participantWeight returns the chain-reported weight for one
+// participant, used by CapacityState as w_chain(h). The chain itself
+// is the authority -- during PoC the value naturally drops to reflect
+// reduced capacity, outside PoC it reflects the steady-state weight.
+// CapacityState.SetHostWeights' pocActive flag decides whether the
+// returned value is treated as a steady-state baseline observation or
+// a transient PoC-time observation; this function is phase-agnostic.
+//
+// A zero or missing weight is propagated as 0 (no synthesis from
+// MLNode counts, no fallback to 1.0); that's a real signal -- the
+// chain saying "this participant has no usable capacity right now".
+// CapacityState's own missing-key fallback (1.0) only applies to
+// hosts the gate has not yet observed at all.
+func participantWeight(participant chainActiveParticipant) float64 {
+	return float64(participant.Weight)
 }
 
 func (g *ChainPhaseGate) PoCActive() bool {

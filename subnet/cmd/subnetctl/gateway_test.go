@@ -27,17 +27,20 @@ func TestParseSubnetPath(t *testing.T) {
 }
 
 func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
+	// Load score is activeRequests / W(e). Both runtimes share W(e)=1
+	// (no capacity model wired). The picker should prefer the runtime
+	// with fewer in-flight requests.
 	a := &subnetRuntime{id: "6", model: "m"}
 	b := &subnetRuntime{id: "12", model: "m"}
-	a.reservedTokens.Store(500)
-	b.reservedTokens.Store(100)
+	a.activeRequests.Store(5)
+	b.activeRequests.Store(1)
 
 	g := NewGateway([]*subnetRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
-	require.EqualValues(t, 1, chosen.activeRequests.Load())
-	require.EqualValues(t, 105, chosen.reservedTokens.Load())
+	require.EqualValues(t, 2, chosen.activeRequests.Load())
+	require.EqualValues(t, 5, chosen.reservedTokens.Load())
 }
 
 func TestGatewayHandleSubnetRewritesInnerPath(t *testing.T) {
@@ -79,8 +82,8 @@ func TestGatewayHandlePooledChatSetsChosenSubnetHeader(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		}),
 	}
-	slow.reservedTokens.Store(1000)
-	fast.reservedTokens.Store(10)
+	slow.activeRequests.Store(10)
+	fast.activeRequests.Store(0)
 
 	g := NewGateway([]*subnetRuntime{slow, fast}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -105,31 +108,132 @@ func TestGatewayChooseRuntimeSkipsInactiveSubnet(t *testing.T) {
 }
 
 func TestGatewayChooseRuntimeSkipsParticipantLimitedSubnet(t *testing.T) {
+	// One escrow has only a throttled host (W=0 -> +Inf load), the
+	// other has a healthy host. Picker must route to the healthy one.
+	// No phase poll between the 503 and the pick - reactivity comes
+	// from the live throttle source.
 	limiter := NewParticipantRequestLimiter(1, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
 
-	limited := &subnetRuntime{id: "6", model: "m", participantKeys: []string{"shared-host"}}
-	available := &subnetRuntime{id: "12", model: "m", participantKeys: []string{"fresh-host"}}
+	limited := &subnetRuntime{
+		id: "6", model: "m",
+		participantKeys:       []string{"shared-host"},
+		participantSlotCounts: map[string]int{"shared-host": 1},
+	}
+	available := &subnetRuntime{
+		id: "12", model: "m",
+		participantKeys:       []string{"fresh-host"},
+		participantSlotCounts: map[string]int{"fresh-host": 1},
+	}
 	g := NewGateway([]*subnetRuntime{limited, available}, NewGatewayLimiter(0, 0), "m")
 	g.participantLimiter = limiter
+	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
 
+func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testing.T) {
+	// Mixed escrow with one healthy and one throttled host should not
+	// be benched entirely - it should still receive *some* traffic
+	// (its W(e) is half), just less than a fully healthy peer.
+	limiter := NewParticipantRequestLimiter(1, 10)
+	limiter.ObserveResult("dead-host", "/sessions/6/chat/completions", http.StatusServiceUnavailable)
+
+	mixed := &subnetRuntime{
+		id: "6", model: "m",
+		participantKeys:       []string{"dead-host", "live-host"},
+		participantSlotCounts: map[string]int{"dead-host": 1, "live-host": 1},
+	}
+	healthy := &subnetRuntime{
+		id: "12", model: "m",
+		participantKeys:       []string{"fresh-a", "fresh-b"},
+		participantSlotCounts: map[string]int{"fresh-a": 1, "fresh-b": 1},
+	}
+	g := NewGateway([]*subnetRuntime{mixed, healthy}, NewGatewayLimiter(0, 0), "m")
+	g.participantLimiter = limiter
+	g.capacity.SetLiveAvailable(limiter.IsAvailable)
+
+	counts := map[string]int{}
+	for i := 0; i < 60; i++ {
+		rt, err := g.reserveRuntimeForModel("m", 1)
+		require.NoError(t, err)
+		counts[rt.id]++
+	}
+	require.Greater(t, counts["12"], counts["6"], "healthy escrow should win majority: %v", counts)
+	require.Greater(t, counts["6"], 0, "partially-throttled escrow should still receive traffic: %v", counts)
+}
+
 func TestGatewayChooseRuntimeFailsWhenAllSubnetsParticipantLimited(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(1, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
 
-	a := &subnetRuntime{id: "6", model: "m", participantKeys: []string{"shared-host"}}
-	b := &subnetRuntime{id: "12", model: "m", participantKeys: []string{"shared-host"}}
+	a := &subnetRuntime{
+		id: "6", model: "m",
+		participantKeys:       []string{"shared-host"},
+		participantSlotCounts: map[string]int{"shared-host": 1},
+	}
+	b := &subnetRuntime{
+		id: "12", model: "m",
+		participantKeys:       []string{"shared-host"},
+		participantSlotCounts: map[string]int{"shared-host": 1},
+	}
 	g := NewGateway([]*subnetRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	g.participantLimiter = limiter
+	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
 	_, err := g.reserveRuntimeForModel("m", 5)
 	require.Error(t, err)
 	require.True(t, isParticipantRateLimitError(err))
+}
+
+func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
+	// 503 puts host in cooldown -> picker avoids that escrow. After
+	// enough simulated time passes for the bucket to refill above 1,
+	// the next pick must route there again - no phase-gate poll
+	// involved.
+	limiter := NewParticipantRequestLimiter(1, 60) // 1 token/sec
+	limiter.ObserveResult("a-host", "/x", http.StatusServiceUnavailable)
+
+	a := &subnetRuntime{
+		id: "a", model: "m",
+		participantKeys:       []string{"a-host"},
+		participantSlotCounts: map[string]int{"a-host": 1},
+	}
+	b := &subnetRuntime{
+		id: "b", model: "m",
+		participantKeys:       []string{"b-host"},
+		participantSlotCounts: map[string]int{"b-host": 1},
+	}
+	g := NewGateway([]*subnetRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
+	g.participantLimiter = limiter
+	g.capacity.SetLiveAvailable(limiter.IsAvailable)
+
+	// Immediately after 503: a is dead (W=0), picks must hit b only.
+	for i := 0; i < 5; i++ {
+		rt, err := g.reserveRuntimeForModel("m", 1)
+		require.NoError(t, err)
+		require.Equal(t, "b", rt.id, "iteration %d before recovery", i)
+		g.releaseRuntime(rt, 1)
+	}
+
+	// Simulate full recovery after the 503 quarantine (wall clock would be
+	// httpThrottleQuarantine; tests clear tracking directly).
+	limiter.mu.Lock()
+	delete(limiter.participants, "a-host")
+	limiter.mu.Unlock()
+
+	// Now both escrows have non-zero weight; over many picks, both
+	// should receive at least one request.
+	counts := map[string]int{}
+	for i := 0; i < 20; i++ {
+		rt, err := g.reserveRuntimeForModel("m", 1)
+		require.NoError(t, err)
+		counts[rt.id]++
+		g.releaseRuntime(rt, 1)
+	}
+	require.Greater(t, counts["a"], 0, "recovered escrow should receive traffic: %v", counts)
 }
 
 func TestGatewayExplicitRouteStillWorksForInactiveSubnet(t *testing.T) {
@@ -154,28 +258,15 @@ func TestGatewayExplicitRouteStillWorksForInactiveSubnet(t *testing.T) {
 	require.Equal(t, "12", rec.Header().Get("X-Subnet-ID"))
 }
 
-func TestGatewayExplicitChatRouteRejectsParticipantLimitedSubnet(t *testing.T) {
-	rt := &subnetRuntime{
-		id:              "12",
-		model:           "m",
-		participantKeys: []string{"shared-host"},
-		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("request should not be forwarded when subnet participant budget is exhausted")
-		}),
-	}
-	g := NewGateway([]*subnetRuntime{rt}, NewGatewayLimiter(0, 0), "m")
-	limiter := NewParticipantRequestLimiter(1, 10)
-	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusTooManyRequests)
-	g.participantLimiter = limiter
-
-	req := httptest.NewRequest(http.MethodPost, "/subnet/12/v1/chat/completions",
-		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
-	rec := httptest.NewRecorder()
-	g.handleSubnet(rec, req)
-
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Contains(t, rec.Body.String(), "participant request budget exhausted")
-}
+// TestGatewayExplicitChatRouteRejectsParticipantLimitedSubnet was removed
+// with the all-or-nothing participant gate on the per-subnet path. A
+// single throttled host no longer shuts the whole escrow down at the
+// gateway; the picker / redundancy layer handles partial (or total)
+// throttling per-nonce via IsBlocked -> ghostThrottled silent probes,
+// and the pooled path's W(e)-based routing covers the "every host gone"
+// shed via EscrowParticipantRateLimitError. See gateway.handleSubnet
+// for the per-subnet path comment and gateway.reserveRuntimeForModel
+// for the pooled path's +Inf-load rejection.
 
 func TestGatewayLimiterEnforcesConcurrentAndTokenLimits(t *testing.T) {
 	limiter := NewGatewayLimiter(1, 10)
@@ -198,13 +289,69 @@ func TestParticipantRequestLimiterUntrackedHostAlwaysAllowed(t *testing.T) {
 	require.True(t, limiter.allow("shared-host", now))
 }
 
+func TestParticipantRequestLimiterTransportShorterQuarantineThan503(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	t0 := time.Now()
+	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions")
+	require.True(t, limiter.IsBlocked("transport-host"))
+	require.True(t, limiter.allow("transport-host", t0.Add(transportFailureQuarantine+time.Second)))
+
+	limiter.ObserveResult("http-host", "/sessions/1/chat/completions", http.StatusServiceUnavailable)
+	require.True(t, limiter.IsBlocked("http-host"))
+	require.False(t, limiter.allow("http-host", t0.Add(transportFailureQuarantine+time.Second)))
+	require.True(t, limiter.allow("http-host", t0.Add(httpThrottleQuarantine+time.Second)))
+}
+
+func TestParticipantRequestLimiterInference404UsesShortQuarantine(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	t0 := time.Now()
+	limiter.ObserveResult("broken-host", "/sessions/38/chat/completions", http.StatusNotFound)
+	require.True(t, limiter.IsBlocked("broken-host"))
+	require.True(t, limiter.allow("broken-host", t0.Add(transportFailureQuarantine+time.Second)))
+}
+
+func TestParticipantRequestLimiterEmptyStreamQuarantineAfterThreeConsecutive(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	now := time.Now()
+
+	limiter.ObserveEmptyStream("empty-host")
+	require.False(t, limiter.IsBlocked("empty-host"))
+	require.NoError(t, limiter.AllowRequest("empty-host", "/sessions/12/chat/completions"))
+
+	limiter.ObserveEmptyStream("empty-host")
+	require.False(t, limiter.IsBlocked("empty-host"))
+	require.NoError(t, limiter.AllowRequest("empty-host", "/sessions/12/chat/completions"))
+
+	limiter.ObserveEmptyStream("empty-host")
+	require.True(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.allow("empty-host", now.Add(emptyStreamQuarantine+time.Second)))
+}
+
+func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	limiter.ObserveEmptyStream("empty-host")
+	limiter.ObserveEmptyStream("empty-host")
+	limiter.ObserveSuccessfulInference("empty-host")
+
+	require.False(t, limiter.IsBlocked("empty-host"))
+
+	limiter.ObserveEmptyStream("empty-host")
+	require.False(t, limiter.IsBlocked("empty-host"))
+	limiter.ObserveEmptyStream("empty-host")
+	require.False(t, limiter.IsBlocked("empty-host"))
+	limiter.ObserveEmptyStream("empty-host")
+	require.True(t, limiter.IsBlocked("empty-host"))
+}
+
 func TestParticipantRequestLimiterRecoversAfterThrottle(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(1, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
 
 	now := time.Now()
 	require.False(t, limiter.allow("shared-host", now))
-	require.True(t, limiter.allow("shared-host", now.Add(6*time.Second)))
+	after := now.Add(httpThrottleQuarantine + 2*time.Second)
+	require.True(t, limiter.allow("shared-host", after))
 }
 
 func TestParticipantRequestLimiterMarksParticipantExhaustedOn503(t *testing.T) {
@@ -223,7 +370,7 @@ func TestParticipantRequestLimiterExpiresOnFullRecovery(t *testing.T) {
 	require.Equal(t, 1, limiter.TrackedCount())
 	require.Equal(t, 1, limiter.ExhaustedCount())
 
-	now := time.Now().Add(61 * time.Second)
+	now := time.Now().Add(httpThrottleQuarantine + 2*time.Second)
 	require.True(t, limiter.allow("shared-host", now))
 	require.Equal(t, 0, limiter.TrackedCount())
 }
@@ -243,6 +390,24 @@ func TestParticipantRequestLimiterPersistsThrottleState(t *testing.T) {
 	require.Equal(t, "shared-host", rows[0].Key)
 	require.Equal(t, float64(0), rows[0].Tokens)
 	require.Equal(t, http.StatusServiceUnavailable, rows[0].Status)
+	require.Equal(t, 0, rows[0].EmptyStreamStreak)
+}
+
+func TestParticipantRequestLimiterPersistsEmptyStreamStreak(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.SetStore(store)
+	limiter.ObserveEmptyStream("shared-host")
+	limiter.ObserveEmptyStream("shared-host")
+
+	rows, err := store.LoadParticipantThrottles()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "shared-host", rows[0].Key)
+	require.Equal(t, 2, rows[0].EmptyStreamStreak)
 }
 
 func TestParticipantRequestLimiterLoadStateRecoversTokens(t *testing.T) {
@@ -259,7 +424,7 @@ func TestParticipantRequestLimiterLoadStateDeletesFullyRecovered(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	require.NoError(t, store.SaveParticipantThrottle("shared-host", 0, time.Now().Add(-time.Hour), 503))
+	require.NoError(t, store.SaveParticipantThrottle("shared-host", 0, time.Now().Add(-time.Hour), 503, time.Time{}, 0))
 
 	limiter := NewParticipantRequestLimiter(10, 10)
 	limiter.SetStore(store)
@@ -285,7 +450,7 @@ func TestParticipantRequestLimiterDeletesOnExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 
-	now := time.Now().Add(61 * time.Second)
+	now := time.Now().Add(httpThrottleQuarantine + 2*time.Second)
 	require.True(t, limiter.allow("shared-host", now))
 
 	rows, err = store.LoadParticipantThrottles()

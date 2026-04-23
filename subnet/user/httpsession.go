@@ -3,8 +3,6 @@ package user
 import (
 	"errors"
 	"fmt"
-	"net/url"
-	"strings"
 
 	"subnet/bridge"
 	"subnet/signing"
@@ -50,13 +48,20 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 	config := types.SessionConfigWithPriceAndVersion(len(group), escrow.TokenPrice, pv)
 
+	// Canonical participant key is the slot's validator address (gonka
+	// bech32 string). We deliberately do NOT key on inference URL host
+	// even though the transport dials the URL: chain-side state
+	// (weights, PoC preservation, escrow membership) is keyed by
+	// validator address, and so is the throttle limiter -- mixing
+	// schemes would cause silent map misses (see CapacityState +
+	// ParticipantRequestLimiter wiring in cmd/subnetctl).
 	clients := make([]HostClient, len(group))
 	participantKeys := make([]string, len(group))
 	clientCache := make(map[string]*transport.HTTPClient)
 	for i, slot := range group {
+		participantKeys[i] = slot.ValidatorAddress
 		if c, ok := clientCache[slot.ValidatorAddress]; ok {
 			clients[i] = c
-			participantKeys[i] = participantRequestKey(slot.ValidatorAddress, "")
 			continue
 		}
 		info, err := cfg.Bridge.GetHostInfo(slot.ValidatorAddress)
@@ -66,14 +71,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		var clientCfgs []transport.ClientConfig
 		if cfg.RequestAdmission != nil {
 			cc := transport.DefaultClientConfig()
-			cc.ParticipantKey = participantRequestKey(slot.ValidatorAddress, info.URL)
+			cc.ParticipantKey = slot.ValidatorAddress
 			cc.Admission = cfg.RequestAdmission
 			clientCfgs = append(clientCfgs, cc)
 		}
 		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
 		clientCache[slot.ValidatorAddress] = c
 		clients[i] = c
-		participantKeys[i] = participantRequestKey(slot.ValidatorAddress, info.URL)
 	}
 
 	var opts []SessionOption
@@ -128,16 +132,4 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	session.SetParticipantKeys(participantKeys)
 
 	return session, sm, nil
-}
-
-func participantRequestKey(address, rawURL string) string {
-	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
-		if host := strings.TrimSpace(parsed.Host); host != "" {
-			return host
-		}
-	}
-	if addr := strings.TrimSpace(address); addr != "" {
-		return addr
-	}
-	return strings.TrimSpace(rawURL)
 }

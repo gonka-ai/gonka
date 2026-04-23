@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"subnet/state"
@@ -24,6 +25,26 @@ func writeStreamReset(w io.Writer) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// flushResponseWriter drives a best-effort Flush on an http.ResponseWriter
+// through arbitrary middleware wrappers. It uses http.NewResponseController so
+// that even wrappers that embed http.ResponseWriter without re-exposing
+// http.Flusher (e.g. metricsResponseWriter) do not silently swallow flushes —
+// previously SSE chunks were only delivered when Go's default chunked-encoding
+// buffer happened to fill, which combined with nginx proxy_buffering caused
+// clients to see zero bytes until the handler returned.
+//
+// Returns the underlying Flush error so callers can distinguish a clean flush
+// from a kernel-level RST / EPIPE that Go surfaces only on the next write or
+// flush. Previously this error was discarded, which made it impossible to tell
+// "handler returned cleanly" from "client socket was already dead when we
+// flushed the final [DONE]".
+func flushResponseWriter(w http.ResponseWriter) error {
+	if w == nil {
+		return nil
+	}
+	return http.NewResponseController(w).Flush()
 }
 
 // Proxy is the OpenAI-compatible HTTP proxy backed by a subnet session.
@@ -161,42 +182,108 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 // deferredWriter delays WriteHeader(200) until the first Write call.
 // If runInference errors before any streaming data arrives, the proxy
 // can still return a proper HTTP error status.
+//
+// It also tracks total bytes written and the last flush error so the
+// streaming handler can emit a single proxy_response_finished record at the
+// very end with a truthful picture of whether the final [DONE] actually
+// reached the wire or whether Go's chunked encoder hit EPIPE/ECONNRESET on
+// the final flush.
 type deferredWriter struct {
-	ctx     context.Context
-	w       http.ResponseWriter
-	started bool
+	ctx            context.Context
+	w              http.ResponseWriter
+	escrow         string
+	requestID      string
+	started        bool
+	bytesWritten   int64
+	lastFlushErr   error
+	flushFailed    bool
+	disconnectOnce sync.Once
+	flushFailOnce  sync.Once
+}
+
+func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string) *deferredWriter {
+	rid, _ := requestLogFromContext(ctx)
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
 	if err := d.ctx.Err(); err != nil {
+		d.logDisconnectOnce(err, "write")
 		return 0, err
 	}
 	if !d.started {
+		if d.requestID != "" {
+			// Emit before WriteHeader so nginx sees it and the aiohttp
+			// client can read it from the response headers. This gives
+			// us a 1:1 mapping between any client-side ClientPayloadError
+			// and a specific request=<id> entry in subnetctl logs.
+			d.w.Header().Set("X-Request-Id", d.requestID)
+		}
 		d.w.Header().Set("Content-Type", "text/event-stream")
 		d.w.Header().Set("Cache-Control", "no-cache")
 		d.w.Header().Set("Connection", "keep-alive")
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	return d.w.Write(p)
+	n, err := d.w.Write(p)
+	d.bytesWritten += int64(n)
+	return n, err
 }
 
 func (d *deferredWriter) Flush() {
-	if d.ctx.Err() != nil {
-		return
+	d.flush("mid_stream")
+}
+
+// flush performs the Flush, records any error, and emits a single
+// proxy_flush_failed log entry per deferredWriter so the logs don't explode
+// if every subsequent flush fails after the first break.
+func (d *deferredWriter) flush(where string) error {
+	if err := d.ctx.Err(); err != nil {
+		d.logDisconnectOnce(err, "flush")
+		d.lastFlushErr = err
+		return err
 	}
-	if f, ok := d.w.(http.Flusher); ok {
-		f.Flush()
+	err := flushResponseWriter(d.w)
+	if err != nil {
+		d.lastFlushErr = err
+		d.logFlushFailedOnce(err, where)
 	}
+	return err
+}
+
+func (d *deferredWriter) logDisconnectOnce(err error, where string) {
+	d.disconnectOnce.Do(func() {
+		logRequestStage(d.ctx, "proxy_client_disconnected",
+			"escrow", d.escrow,
+			"where", where,
+			"started", d.started,
+			"bytes_written", d.bytesWritten,
+			"error", err,
+		)
+	})
+}
+
+func (d *deferredWriter) logFlushFailedOnce(err error, where string) {
+	d.flushFailOnce.Do(func() {
+		d.flushFailed = true
+		logRequestStage(d.ctx, "proxy_flush_failed",
+			"escrow", d.escrow,
+			"where", where,
+			"bytes_written", d.bytesWritten,
+			"error", err,
+		)
+	})
 }
 
 func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	dw := &deferredWriter{ctx: r.Context(), w: w}
+	started := time.Now()
+	dw := newDeferredWriter(r.Context(), w, p.escrowID)
 
+	var doneWriteErr error
 	err := p.redundancy.RunInference(r.Context(), params, dw)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			logRequestStage(r.Context(), "proxy_stream_terminated", "escrow", p.escrowID, "error", err)
+			logRequestStage(r.Context(), "proxy_stream_terminated", "escrow", p.escrowID, "error", err, "bytes_written", dw.bytesWritten, "elapsed_ms", time.Since(started).Milliseconds())
 			return
 		}
 		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
@@ -208,14 +295,54 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		log.Printf("inference error (mid-stream): %v", err)
-		fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
-		dw.Flush()
+		if _, werr := fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error()); werr != nil {
+			logRequestStage(r.Context(), "proxy_error_write_failed", "escrow", p.escrowID, "error", werr)
+		}
+		finalErr := dw.flush("error_final")
+		logProxyResponseFinished(r.Context(), p.escrowID, "error", dw, finalErr, werrOrNil(nil), started)
 		return
 	}
 
-	logRequestStage(r.Context(), "proxy_stream_completed", "escrow", p.escrowID)
-	fmt.Fprint(dw, "data: [DONE]\n\n")
-	dw.Flush()
+	logRequestStage(r.Context(), "proxy_stream_completed", "escrow", p.escrowID, "bytes_written", dw.bytesWritten)
+	if _, werr := fmt.Fprint(dw, "data: [DONE]\n\n"); werr != nil {
+		doneWriteErr = werr
+		logRequestStage(r.Context(), "proxy_done_write_failed", "escrow", p.escrowID, "error", werr)
+	}
+	finalErr := dw.flush("done")
+	logProxyResponseFinished(r.Context(), p.escrowID, "ok", dw, finalErr, doneWriteErr, started)
+}
+
+// werrOrNil normalizes an error so the varargs passthrough below stays tidy.
+func werrOrNil(err error) error { return err }
+
+// logProxyResponseFinished is the authoritative "request left the building"
+// log entry. It fires after the final Flush on every success/error streaming
+// path, carrying everything needed to correlate with a client-side RST:
+//
+//	outcome        ok | error
+//	bytes_written  total bytes handed to the chunked-encoding writer
+//	elapsed_ms     full streaming duration from handleStreaming entry
+//	done_write_err non-nil ⇒ the [DONE] write itself returned an error
+//	final_flush_err non-nil ⇒ Go surfaced a kernel-level error (EPIPE /
+//	                        ECONNRESET / closed network connection) on the
+//	                        final Flush, meaning the client socket was dead
+//	                        before our [DONE] made it onto the wire
+//	flush_failed   a previous mid-stream flush had already errored
+func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw *deferredWriter, finalFlushErr, doneWriteErr error, started time.Time) {
+	kv := []any{
+		"escrow", escrowID,
+		"outcome", outcome,
+		"bytes_written", dw.bytesWritten,
+		"elapsed_ms", time.Since(started).Milliseconds(),
+		"flush_failed", dw.flushFailed,
+	}
+	if doneWriteErr != nil {
+		kv = append(kv, "done_write_err", doneWriteErr)
+	}
+	if finalFlushErr != nil {
+		kv = append(kv, "final_flush_err", finalFlushErr)
+	}
+	logRequestStage(ctx, "proxy_response_finished", kv...)
 }
 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
@@ -229,6 +356,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	}
 
 	assembled := assembleSSEChunks(buf.String())
+	if rid, ok := requestLogFromContext(r.Context()); ok {
+		w.Header().Set("X-Request-Id", rid)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(assembled)
 	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)

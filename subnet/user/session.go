@@ -25,6 +25,92 @@ import (
 // passed their own deadline before the proxy fires the timeout.
 var TimeoutBuffer = 5 * time.Second
 
+// MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
+// proxy may have open against the same verifier host. When many in-flight
+// nonces time out around the same time (e.g. one executor host stops
+// responding), CollectTimeoutVotes fans out one VerifyTimeout per verifier
+// per timeout. Without this cap, M concurrent timeouts × N verifiers can
+// exhaust the per-host connection budget on every verifier in the group.
+//
+// The limit is per verifier (keyed by validator address) and is enforced
+// process-wide via SharedVerifierQueue so that different Sessions (one per
+// escrow / subnet runtime) can't collectively pile connections onto the same
+// verifier host. Different verifiers are still hit in parallel; only
+// per-verifier RPCs serialize.
+var MaxConcurrentVerifierRPCs = 1
+
+// VerifierQueueWaitTimeout bounds how long a VerifyTimeout goroutine may wait
+// for its verifier-host slot before giving up. When a verifier hangs, its
+// in-flight RPC can occupy the slot up to the transport-level VerifyTimeout
+// deadline (default 3m). Without a wait cap, every new timeout for that
+// verifier would queue indefinitely, leaking goroutines and producing stale
+// votes if we ever did dequeue. This deadline:
+//   - bounds goroutine count under persistent verifier failure
+//     (depth ≤ request_rate × VerifierQueueWaitTimeout),
+//   - and guarantees that nothing more than VerifierQueueWaitTimeout old
+//     will ever produce a VerifyTimeout RPC.
+//
+// An expired wait is reported as a verifier error and counted in the
+// CollectTimeoutVotes `errors` tally — the same way a transport-level
+// failure is reported — so the vote collection continues with the
+// remaining verifiers.
+var VerifierQueueWaitTimeout = 120 * time.Second
+
+// verifierHostQueue serializes outbound VerifyTimeout RPCs per verifier host.
+// Each verifier (keyed by validator address) gets a buffered channel acting
+// as a semaphore of capacity MaxConcurrentVerifierRPCs. Acquire is
+// ctx-aware so a cancelled timeout collection does not stay queued
+// forever.
+type verifierHostQueue struct {
+	mu    sync.Mutex
+	slots map[string]chan struct{}
+}
+
+func newVerifierHostQueue() *verifierHostQueue {
+	return &verifierHostQueue{slots: make(map[string]chan struct{})}
+}
+
+// SharedVerifierQueue is the process-wide verifier-host limiter. All Sessions
+// created with NewSession share it by default, so one proxy runtime cannot
+// open more than MaxConcurrentVerifierRPCs concurrent VerifyTimeout RPCs to a
+// single verifier across all of its escrows. Tests may inject a private
+// queue via WithVerifierQueue to keep assertions isolated.
+var SharedVerifierQueue = newVerifierHostQueue()
+
+func (q *verifierHostQueue) slot(addr string) chan struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	sem, ok := q.slots[addr]
+	if !ok {
+		capacity := MaxConcurrentVerifierRPCs
+		if capacity < 1 {
+			capacity = 1
+		}
+		sem = make(chan struct{}, capacity)
+		q.slots[addr] = sem
+	}
+	return sem
+}
+
+// acquire blocks until a slot is available for addr or ctx is cancelled.
+// Returns ctx.Err() if cancelled while waiting.
+func (q *verifierHostQueue) acquire(ctx context.Context, addr string) error {
+	sem := q.slot(addr)
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release returns one slot to addr's semaphore. Must be called exactly once
+// after a successful acquire.
+func (q *verifierHostQueue) release(addr string) {
+	sem := q.slot(addr)
+	<-sem
+}
+
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
 	confirmedAt int64
@@ -54,18 +140,52 @@ type InProcessClient struct {
 	Host *host.Host
 }
 
-func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, _ io.Writer, _ func()) (*host.HostResponse, error) {
+// writeInProcessStreamingChunk emits a minimal but valid SSE streaming
+// response body — role marker, one delta content chunk, [DONE] — so that a
+// proxy's race writer sees a content-bearing `delta.content` event. This is
+// the shape a real vLLM backend produces for stream=true; the in-process
+// client uses it instead of wrapping the canonical non-streaming body so we
+// don't accidentally mirror the exact attack pattern the proxy's content
+// detector is designed to reject.
+func writeInProcessStreamingChunk(stream io.Writer) {
+	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"content\":\"stub\"}}]}\n\n")
+	fmt.Fprintf(stream, "data: [DONE]\n\n")
+}
+
+func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	resp, err := c.Host.HandleRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
+	// Honor the HostClient contract: real HTTP clients invoke receiptHandler
+	// once the response headers come back. The in-process equivalent is "as
+	// soon as HandleRequest returns successfully". Without this, the proxy's
+	// race writer never sees a receipt and stall-detection logic cannot tell
+	// the in-process path apart from a real-world stall.
+	if receiptHandler != nil {
+		receiptHandler()
+	}
 	if resp.ExecutionJob != nil {
-		_, execErr := c.Host.RunExecution(ctx, resp.ExecutionJob)
+		result, execErr := c.Host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
 			logging.Error("deferred execution failed", "subsystem", "in_process_client", "error", execErr)
+		} else if stream != nil && result != nil && len(result.ResponseBody) > 0 {
+			// Emit a proper streaming SSE chunk so the proxy's race writer
+			// counts it as a content-bearing `delta` event, matching what a
+			// real vLLM backend emits when stream=true. We deliberately do
+			// NOT wrap the canonical non-streaming ResponseBody (which uses
+			// the `message` shape and is kept intact for on-chain hashing)
+			// — that shape is unrenderable by streaming clients and would
+			// be correctly rejected by the proxy's content detector.
+			writeInProcessStreamingChunk(stream)
 		}
 		// Re-fetch mempool after execution.
 		resp.Mempool = c.Host.MempoolTxs()
+	} else if stream != nil && len(resp.CachedResponseBody) > 0 {
+		// Reconnect path: same rationale as above — emit a streaming shape,
+		// not the cached non-streaming body.
+		writeInProcessStreamingChunk(stream)
 	}
 	return resp, nil
 }
@@ -89,6 +209,13 @@ type Session struct {
 	escrowID        string
 	group           []types.SlotAssignment
 	addrToSlots     map[string][]uint32 // validator address -> slot IDs
+	// participantKeys[i] is the canonical participant identifier for
+	// slot i: always the slot's gonka validator address (bech32). This
+	// matches the keying used by chain-side state in
+	// CapacityState/ParticipantRequestLimiter and by the transport
+	// admission controller. Multi-slot validators legitimately repeat
+	// the same key here; ParticipantKeys() de-duplicates for views
+	// that want a per-host (not per-slot) list.
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
@@ -99,6 +226,7 @@ type Session struct {
 	signatures      map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
+	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
 }
 
 // SessionOption configures optional Session behavior.
@@ -108,6 +236,17 @@ type SessionOption func(*Session)
 // When set, diffs and signatures are persisted on each state transition.
 func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
+}
+
+// WithVerifierQueue overrides the per-verifier RPC limiter. The default is
+// SharedVerifierQueue (process-wide). Tests can pass a private queue to
+// assert on concurrency without being affected by concurrent runs.
+func WithVerifierQueue(q *verifierHostQueue) SessionOption {
+	return func(sess *Session) {
+		if q != nil {
+			sess.verifierQueue = q
+		}
+	}
 }
 
 // NewSession creates a user session. clients must match group length.
@@ -144,6 +283,7 @@ func NewSession(
 		pendingTxKeys:   make(map[string]struct{}),
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
+		verifierQueue:   SharedVerifierQueue,
 	}
 	for i, slot := range group {
 		sess.participantKeys[i] = slot.ValidatorAddress
@@ -295,7 +435,35 @@ type PreparedInference struct {
 	hostIdx int
 	catchUp []types.Diff
 	params  InferenceParams
+	isProbe bool
 }
+
+// HostBinding describes the host slot that the next nonce will be
+// dispatched to. It is supplied to ParamsForHost so the chooser can make
+// its decision (probe vs real, allowed vs excluded, etc.) without calling
+// back into Session -- the chooser runs under Session.mu, so any Session
+// method that takes the same lock would deadlock.
+type HostBinding struct {
+	HostIdx        int
+	Nonce          uint64
+	ParticipantKey string
+	ValidatorAddr  string
+}
+
+// ParamsForHost returns the params (and probe flag) to use for a freshly
+// allocated nonce, given the host that will receive the diff. It is
+// invoked under Session.mu while the nonce is being assigned, so the
+// HostBinding the chooser sees is the same host the resulting
+// PreparedInference will dispatch to. This avoids the racy "peek nonce,
+// decide, then call PrepareInference" pattern where the host could change
+// between peek and commit.
+//
+// If the chooser returns a non-nil error, PrepareInferenceFn aborts
+// without consuming the nonce and propagates the error to the caller.
+// This lets policy callers (queue picker, exclude lists) decline a
+// binding that is no longer useful (e.g. the queued request was canceled
+// in the gap between wakeup and lock acquisition).
+type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err error)
 
 // composeDiffLocked builds, applies, persists, and returns a new diff.
 // extraTxs are prepended to pending txs. Caller must hold s.mu.
@@ -345,11 +513,47 @@ func (s *Session) composeDiffLocked(extraTxs []*types.SubnetTx) (types.Diff, int
 
 // PrepareInference composes a diff, applies it locally, advances nonce,
 // and returns everything needed for the HTTP send. Thread-safe.
+//
+// This is a convenience wrapper around PrepareInferenceFn for callers that
+// do not need to vary the request payload based on the actually-allocated
+// host. New callers that DO need a host-dependent decision (e.g. PoC probe
+// shaping, exclude-list handling) should use PrepareInferenceFn so the
+// decision and the nonce increment happen in the same critical section.
 func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, error) {
+	return s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return params, false, nil })
+}
+
+// PrepareInferenceFn is the atomic form of PrepareInference. The chooser is
+// invoked under s.mu after the nonce-to-host mapping is determined, so the
+// hostIdx it sees is the host the resulting PreparedInference will dispatch
+// to. This eliminates the previous race where prepareInflight peeked the
+// next host with Session.Nonce(), decided whether to send a probe, then
+// called PrepareInference in a separate critical section -- a concurrent
+// inference could grab the peeked nonce in between, leaving the probe
+// decision applied to the wrong host.
+func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference, error) {
+	if chooser == nil {
+		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	nonce := s.nonce + 1
+	hostIdx := int(nonce % uint64(len(s.group)))
+	binding := HostBinding{
+		HostIdx:        hostIdx,
+		Nonce:          nonce,
+		ParticipantKey: s.hostParticipantKeyLocked(hostIdx),
+		ValidatorAddr:  strings.TrimSpace(s.group[hostIdx].ValidatorAddress),
+	}
+	params, probe, err := chooser(binding)
+	if err != nil {
+		// Chooser declined this binding (e.g. queue empty after dropping
+		// canceled requests). Bail without consuming the nonce so the next
+		// caller of PrepareInferenceFn observes the same nonce.
+		return nil, err
+	}
+
 	promptHash, err := subnet.CanonicalPromptHash(params.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
@@ -365,9 +569,16 @@ func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, 
 		},
 	}}
 
-	diff, hostIdx, err := s.composeDiffLocked([]*types.SubnetTx{startTx})
+	diff, composedIdx, err := s.composeDiffLocked([]*types.SubnetTx{startTx})
 	if err != nil {
 		return nil, err
+	}
+	if composedIdx != hostIdx {
+		// composeDiffLocked derives hostIdx from nonce % len(group) the same
+		// way we do above; a mismatch would mean the lock didn't actually
+		// serialise the increment with our chooser, which would resurrect
+		// the very race this method exists to prevent.
+		return nil, fmt.Errorf("internal: hostIdx race detected (chooser=%d composed=%d)", hostIdx, composedIdx)
 	}
 
 	s.nonceStates[nonce] = &nonceOutcome{}
@@ -378,6 +589,7 @@ func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, 
 		hostIdx: hostIdx,
 		catchUp: catchUp,
 		params:  params,
+		isProbe: probe,
 	}, nil
 }
 
@@ -386,6 +598,10 @@ func (p *PreparedInference) Nonce() uint64 { return p.diff.Nonce }
 
 // HostIdx returns the host index this inference targets.
 func (p *PreparedInference) HostIdx() int { return p.hostIdx }
+
+// IsProbe reports whether the chooser passed to PrepareInferenceFn marked
+// this dispatch as a probe (e.g. PoC bypass for non-preserved hosts).
+func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 
 // SendOnly sends a prepared inference to the host and returns the raw response
 // without processing it. Use ProcessResponse separately to apply the response
@@ -671,8 +887,14 @@ func (s *Session) HostLabel(hostIdx int) string {
 	return shortAddress(s.group[hostIdx].ValidatorAddress)
 }
 
-// SetParticipantKeys overrides the per-slot participant identifiers used by
-// higher-level admission control. Keys should align with the session group.
+// SetParticipantKeys overrides the per-slot participant identifiers
+// used by admission control, the picker's PoC/throttle checks, and
+// CapacityState lookups. The canonical contract is that each entry is
+// the slot's gonka validator address (matching the chain's
+// participant Index). NewSession already initializes the slice this
+// way; callers should only override when the underlying group changes
+// (e.g. recovery or test wiring), and must keep the same gonka-address
+// scheme so keys align across subsystems.
 func (s *Session) SetParticipantKeys(keys []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -682,7 +904,9 @@ func (s *Session) SetParticipantKeys(keys []string) {
 	s.participantKeys = append([]string(nil), keys...)
 }
 
-// ParticipantKeys returns the unique participant identifiers for this session.
+// ParticipantKeys returns the unique participant identifiers (gonka
+// validator addresses) for this session, deduplicating multi-slot
+// validators so the result is one entry per physical participant.
 func (s *Session) ParticipantKeys() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -704,10 +928,34 @@ func (s *Session) ParticipantKeys() []string {
 	return keys
 }
 
-// HostParticipantKey returns the participant identifier associated with one host slot.
+// HostParticipantKey returns the canonical participant identifier
+// (gonka validator address) for one host slot. Multiple slots backed
+// by the same validator return the same key.
 func (s *Session) HostParticipantKey(hostIdx int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.hostParticipantKeyLocked(hostIdx)
+}
+
+// HostParticipantKeyList returns one participant identifier per slot
+// (length == group size), preserving duplicates so callers can compute
+// per-slot statistics like how many slots a single host occupies in
+// this session. Empty entries are filled in with the slot's validator
+// address as a fallback to mirror HostParticipantKey semantics.
+func (s *Session) HostParticipantKeyList() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.group))
+	for i := range s.group {
+		out[i] = s.hostParticipantKeyLocked(i)
+	}
+	return out
+}
+
+// hostParticipantKeyLocked is the lock-free body of HostParticipantKey.
+// Caller must hold s.mu. Used by PrepareInferenceFn so it can build a
+// HostBinding while still holding the nonce lock without re-entering it.
+func (s *Session) hostParticipantKeyLocked(hostIdx int) string {
 	if hostIdx < 0 || hostIdx >= len(s.group) {
 		return ""
 	}
@@ -868,6 +1116,14 @@ func (s *Session) CollectTimeoutVotes(
 	verifiers map[int]TimeoutVerifier, // hostIdx -> verifier
 	diffs []types.Diff,
 ) ([]*types.TimeoutVote, error) {
+	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
+	// waiting in the per-verifier queue) once we return — typically because
+	// the vote-weight threshold was met early. Without this, leftover
+	// goroutines would keep occupying verifier-host queue slots and consume
+	// outbound connections we no longer need.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Determine executor slot and resolve its validator address.
 	executorIdx := int(inferenceID % uint64(len(s.group)))
 	executorAddr := s.group[executorIdx].ValidatorAddress
@@ -916,6 +1172,46 @@ func (s *Session) CollectTimeoutVotes(
 	for _, av := range deduped {
 		logging.Stage(ctx, "timeout_vote_requested", logFields(av.verifierAddr)...)
 		go func(av addrVerifier) {
+			// Serialize VerifyTimeout per verifier host so a single bad
+			// executor producing many simultaneous timeouts cannot open
+			// MaxConcurrentVerifierRPCs+ connections to any one verifier.
+			// Cap the wait with VerifierQueueWaitTimeout so goroutines
+			// don't accumulate indefinitely when a verifier is hung,
+			// and so a vote that's already stale by the time it could
+			// dequeue is suppressed instead of producing a stale RPC.
+			queueStart := time.Now()
+			waitCtx, waitCancel := context.WithTimeout(ctx, VerifierQueueWaitTimeout)
+			err := s.verifierQueue.acquire(waitCtx, av.verifierAddr)
+			waitCancel()
+			if err != nil {
+				logging.Stage(ctx, "timeout_vote_queue_expired",
+					logFields(av.verifierAddr,
+						"wait_ms", time.Since(queueStart).Milliseconds(),
+						"wait_timeout_ms", VerifierQueueWaitTimeout.Milliseconds(),
+						"error", err,
+					)...,
+				)
+				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			waitMs := time.Since(queueStart).Milliseconds()
+			if waitMs > 0 {
+				logging.Stage(ctx, "timeout_vote_dequeued",
+					logFields(av.verifierAddr, "wait_ms", waitMs)...,
+				)
+			}
+			defer s.verifierQueue.release(av.verifierAddr)
+
+			// Defense-in-depth: the parent ctx may have been cancelled
+			// (e.g. CollectTimeoutVotes early-exit on vote-weight
+			// threshold met) during the final moments of the queue wait.
+			// Skip the RPC so we neither waste the verifier's time nor
+			// the slot we just acquired.
+			if err := ctx.Err(); err != nil {
+				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+
 			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}

@@ -117,3 +117,21 @@ func currentPoCPhaseReason() string {
 	defer pocModeMu.RUnlock()
 	return currentPoCReason
 }
+
+// shouldUseProbeForParticipant is the PoC-bypass policy decision keyed on
+// a participant identifier. Callers in the Session.PrepareInferenceFn
+// chooser pass the key from the HostBinding (the chooser runs under
+// Session.mu, so calling Session.HostParticipantKey there would deadlock).
+//
+// Placed here rather than on *Redundancy because it consults only PoC
+// globals defined in this file -- the receiver-as-namespace pattern was
+// misleading.
+func shouldUseProbeForParticipant(participantKey string) bool {
+	if !relaxedPoCBypassActive() {
+		return false
+	}
+	if !poCPreservedParticipantsLoaded() {
+		return false
+	}
+	return !isPoCPreservedParticipant(participantKey)
+}

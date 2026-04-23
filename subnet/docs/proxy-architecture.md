@@ -177,6 +177,37 @@ It is responsible for:
 - collecting timeout votes and sending pending diffs
 - managing the finalization protocol
 
+`CollectTimeoutVotes` fans out one `VerifyTimeout` RPC per verifier host. To
+keep one bad executor from flooding the network with simultaneous verifier
+RPCs (M concurrent timeouts × N verifiers worth of outbound connections),
+every `Session` uses a **process-wide** per-verifier semaphore
+(`user.SharedVerifierQueue`, capacity `MaxConcurrentVerifierRPCs`, default
+1) keyed by the verifier's validator address. The queue is shared by every
+`Session` in the process — one proxy running K escrows can't stack K
+simultaneous `VerifyTimeout` calls onto the same verifier just because the
+same validator appears in K groups. Each goroutine in the fan-out
+acquires its verifier's slot before issuing the RPC and releases it
+after, so at any instant at most `MaxConcurrentVerifierRPCs` calls are
+open against any single verifier across the whole proxy — regardless of
+how many in-flight `HandleTimeout`s (or Sessions) share that verifier.
+Different verifiers are still hit in parallel, so per-call latency is
+unaffected.
+
+Goroutines waiting on the queue are bounded by `VerifierQueueWaitTimeout`
+(default 120s). If a verifier hangs and holds its slot for the full
+transport-level deadline, new goroutines that cannot acquire within the
+wait cap abandon the queue and are reported as verifier errors — the
+same way a transport-level failure is reported — so vote collection
+continues with the remaining verifiers. This bounds goroutine count
+under persistent verifier failure (`depth ≤ request_rate ×
+VerifierQueueWaitTimeout`) and guarantees no RPC is ever fired for a
+timeout that has been queued more than `VerifierQueueWaitTimeout`. After
+acquiring a slot, goroutines re-check the parent ctx; if
+`CollectTimeoutVotes` has returned early (vote-weight threshold met, or
+caller cancellation), the slot is released without issuing the RPC.
+Tests may inject a private queue via `user.WithVerifierQueue` to
+isolate concurrency assertions.
+
 Important relationships:
 
 - `Redundancy` may start multiple nonces, but every nonce goes through `Session.PrepareInference()`

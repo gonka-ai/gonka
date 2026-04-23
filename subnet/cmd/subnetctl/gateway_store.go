@@ -79,10 +79,19 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		participant_key TEXT PRIMARY KEY,
 		tokens REAL NOT NULL DEFAULT 0,
 		last_refill_at TEXT NOT NULL,
-		last_throttle_status INTEGER NOT NULL DEFAULT 0
+		last_throttle_status INTEGER NOT NULL DEFAULT 0,
+		empty_stream_streak INTEGER NOT NULL DEFAULT 0
 	)`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init participant throttle table: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "empty_stream_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle streak: %w", err)
 	}
 
 	return &GatewayStore{db: db}, nil
@@ -296,21 +305,27 @@ func (s *GatewayStore) DeleteSubnet(id string) error {
 
 // ParticipantThrottleRow represents a persisted reactive throttle state for one host.
 type ParticipantThrottleRow struct {
-	Key          string
-	Tokens       float64
-	LastRefillAt time.Time
-	Status       int
+	Key               string
+	Tokens            float64
+	LastRefillAt      time.Time
+	Status            int
+	QuarantineUntil   time.Time // wall-clock end of unified quarantine; zero if unset
+	EmptyStreamStreak int
 }
 
-func (s *GatewayStore) SaveParticipantThrottle(key string, tokens float64, lastRefillAt time.Time, status int) error {
+func (s *GatewayStore) SaveParticipantThrottle(key string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, emptyStreamStreak int) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	quarStr := ""
+	if !quarantineUntil.IsZero() {
+		quarStr = quarantineUntil.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO participant_throttle_state
-			(participant_key, tokens, last_refill_at, last_throttle_status)
-		VALUES (?, ?, ?, ?)`,
-		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status)
+			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, empty_stream_streak)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, emptyStreamStreak)
 	if err != nil {
 		return fmt.Errorf("save participant throttle %s: %w", key, err)
 	}
@@ -333,7 +348,9 @@ func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, err
 		return nil, nil
 	}
 	rows, err := s.db.Query(`
-		SELECT participant_key, tokens, last_refill_at, last_throttle_status
+		SELECT participant_key, tokens, last_refill_at, last_throttle_status,
+		       IFNULL(empty_stream_streak, 0) AS empty_stream_streak,
+		       IFNULL(quarantine_until_utc, '') AS quarantine_until_utc
 		FROM participant_throttle_state`)
 	if err != nil {
 		return nil, fmt.Errorf("load participant throttles: %w", err)
@@ -343,17 +360,26 @@ func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, err
 	var result []ParticipantThrottleRow
 	for rows.Next() {
 		var row ParticipantThrottleRow
-		var lastRefillStr string
-		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status); err != nil {
+		var lastRefillStr, quarantineStr string
+		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status, &row.EmptyStreamStreak, &quarantineStr); err != nil {
 			return nil, fmt.Errorf("scan participant throttle: %w", err)
 		}
 		row.LastRefillAt, err = time.Parse(time.RFC3339Nano, lastRefillStr)
 		if err != nil {
 			return nil, fmt.Errorf("parse last_refill_at for %s: %w", row.Key, err)
 		}
+		if strings.TrimSpace(quarantineStr) != "" {
+			row.QuarantineUntil, err = time.Parse(time.RFC3339Nano, quarantineStr)
+			if err != nil {
+				return nil, fmt.Errorf("parse quarantine_until_utc for %s: %w", row.Key, err)
+			}
+		}
 		result = append(result, row)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func gatewayBoolToInt(v bool) int {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -249,6 +250,15 @@ func setSpeculativeTiming(t *testing.T, receipt time.Duration, firstTokenCap tim
 	})
 }
 
+func setInterChunkStallTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	saved := InterChunkStallTimeout
+	InterChunkStallTimeout = d
+	t.Cleanup(func() {
+		InterChunkStallTimeout = saved
+	})
+}
+
 func setupTestProxy(t *testing.T, numHosts int, engines []subnet.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
@@ -293,7 +303,8 @@ func setupTestProxy(t *testing.T, numHosts int, engines []subnet.InferenceEngine
 	require.NoError(t, err)
 
 	perf := NewPerfTracker(nil)
-	redundancy := NewRedundancy(session, perf, numHosts)
+	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
 		session:    session,
@@ -334,7 +345,8 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	require.NoError(t, err)
 
 	perf := NewPerfTracker(nil)
-	redundancy := NewRedundancy(session, perf, numHosts)
+	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
 		session:    session,
@@ -377,6 +389,102 @@ func TestRunInference_HappyPath(t *testing.T) {
 	st := env.sm.SnapshotState()
 	_, ok := st.Inferences[1]
 	require.True(t, ok, "inference 1 should exist")
+}
+
+// errSimulatedWinnerTransport is returned by streamContentThenErrClient after
+// it streams a content-bearing SSE chunk so the race crowns a winner.
+var errSimulatedWinnerTransport = errors.New("simulated winner transport failure")
+
+type streamContentThenErrClient struct{}
+
+func (streamContentThenErrClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n")
+	}
+	return nil, errSimulatedWinnerTransport
+}
+
+type streamContentThenStallClient struct{}
+
+func (streamContentThenStallClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n")
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// releaseAfterClient blocks Send until releaseCh is closed (or ctx is done),
+// then returns a minimal successful HostResponse for the request nonce.
+type releaseAfterClient struct {
+	releaseCh chan struct{}
+}
+
+func (c *releaseAfterClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	select {
+	case <-c.releaseCh:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	nid := req.Nonce
+	return &host.HostResponse{
+		Nonce: nid,
+		Mempool: []*types.SubnetTx{
+			{Tx: &types.SubnetTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: nid},
+			}},
+		},
+	}, nil
+}
+
+func TestRunInference_WinnerFailsAfterContentDoesNotWaitForLosers(t *testing.T) {
+	zeroReceiptTimeout(t)
+	env := setupTestProxy(t, 2, nil, true)
+
+	// Force immediate parallel secondary (Rule 1: primary unresponsive).
+	for i := range env.killables {
+		env.proxy.redundancy.perf.Record(RequestSample{HostIdx: i, Responsive: false})
+	}
+
+	releaseSlow := make(chan struct{})
+	env.killables[0].inner = streamContentThenErrClient{}
+	env.killables[1].inner = &releaseAfterClient{releaseCh: releaseSlow}
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, errSimulatedWinnerTransport)
+	require.Less(t, elapsed, 2*time.Second,
+		"expected immediate error once crowned winner fails; should not block on slow loser")
+
+	close(releaseSlow)
+}
+
+func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
+	setInterChunkStallTimeout(t, 50*time.Millisecond)
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	elapsed := time.Since(start)
+
+	require.ErrorContains(t, err, "winner stalled waiting for next chunk")
+	require.Less(t, elapsed, time.Second,
+		"stalled winner should fail promptly once no new chunks arrive")
+	require.Contains(t, buf.String(), `"content":"x"`,
+		"winner should still forward the first chunk before timing out")
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
@@ -488,7 +596,7 @@ func TestProxyStatusIncludesChainPhaseSnapshot(t *testing.T) {
 	require.Equal(t, "confirmation_poc", status.BlockReason)
 }
 
-func TestRunInference_RelaxedPoCUsesProbeForUnresponsiveHost(t *testing.T) {
+func TestRunInference_RelaxedPoCSilentlyBurnsNonceForUnresponsiveHost(t *testing.T) {
 	setPoCModeForTest(t, pocRequestModeRelaxed)
 
 	env := setupTestProxy(t, 2, nil, true)
@@ -498,23 +606,27 @@ func TestRunInference_RelaxedPoCUsesProbeForUnresponsiveHost(t *testing.T) {
 		RequestsBlocked: false,
 		BlockReason:     "poc",
 	})
+	// Preserve only host 0. Host 1 is PoC-required: real requests
+	// must skip it, AND in the new uniform-silent-probe regime the
+	// picker must NOT send any probe traffic to it either.
 	setPoCPreservedParticipants([]string{env.session.HostParticipantKey(0)})
-	env.killables[1].ForceError(fmt.Errorf("probe failed"))
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
 	require.NoError(t, err)
 
-	req := env.killables[1].LastRequest()
-	require.NotNil(t, req)
-	require.NotNil(t, req.Payload)
-	require.EqualValues(t, 1, req.Payload.MaxTokens)
-	require.Equal(t, pocProbePromptBody, req.Payload.Prompt)
+	require.Nil(t, env.killables[1].LastRequest(),
+		"PoC-required host must receive no traffic at all (silent ghost probe)")
 
 	st := env.sm.SnapshotState()
+	// MsgStartInference is composed and applied locally inside
+	// PrepareInferenceFn even when the dispatcher stays silent, so
+	// nonce 1's local state still shows Pending. Nonce 2 went to
+	// the preserved host and finished normally.
 	require.Contains(t, st.Inferences, uint64(1))
 	require.Contains(t, st.Inferences, uint64(2))
-	require.Equal(t, types.StatusPending, st.Inferences[1].Status)
+	require.Equal(t, types.StatusPending, st.Inferences[1].Status,
+		"silent probe still applies the local MsgStart; host just never confirms")
 	require.True(t, env.session.IsNonceFinished(2))
 }
 
@@ -530,17 +642,21 @@ func TestRunInference_RelaxedPoCImmediatelyEscalatesProbeChainToPreservedHost(t 
 	})
 
 	// Nonce routing for 3 hosts is 1 -> host 1, 2 -> host 2, 3 -> host 0.
-	// Preserve only host 0 so the first two attempts are probes and the third
-	// attempt must escalate immediately to the preserved host.
+	// Preserve only host 0 so nonces 1 and 2 are silently burned past
+	// the PoC-required hosts and the real request lands on host 0
+	// when nonce 3 binds to it.
 	setPoCPreservedParticipants([]string{env.session.HostParticipantKey(0)})
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
 	require.NoError(t, err)
 
-	require.NotNil(t, env.killables[1].LastRequest(), "first probe attempt should be sent")
-	require.NotNil(t, env.killables[2].LastRequest(), "second probe attempt should be sent immediately")
-	require.NotNil(t, env.killables[0].LastRequest(), "preserved host should be attempted after probe chain escalation")
+	require.Nil(t, env.killables[1].LastRequest(),
+		"PoC-required host 1 must receive no traffic (silent ghost probe)")
+	require.Nil(t, env.killables[2].LastRequest(),
+		"PoC-required host 2 must receive no traffic (silent ghost probe)")
+	require.NotNil(t, env.killables[0].LastRequest(),
+		"preserved host 0 should receive the real request after the picker advances past 1+2")
 
 	st := env.sm.SnapshotState()
 	require.Contains(t, st.Inferences, uint64(1))
@@ -569,15 +685,17 @@ func TestRunInference_RelaxedPoCProbeOnlyRequestsFailAndSkipPerfRecording(t *tes
 	// Empty preserved set means every host is treated as a probe.
 	setPoCPreservedParticipants([]string{})
 
+	// New design: real requests are NEVER dispatched to PoC-required
+	// hosts. With every host PoC-required, the picker's exhaustion
+	// sweep computes an empty available-host set on the first
+	// iteration, drops the request immediately with
+	// ErrNoAvailableHost, and never enqueues it for ghost-burn
+	// dispatch. PerfTracker stays clean because no real attempt ever
+	// ran.
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
-	require.EqualError(t, err, "inference: no non-probe attempt finished")
-
-	st := env.sm.SnapshotState()
-	require.Contains(t, st.Inferences, uint64(1))
-	require.Contains(t, st.Inferences, uint64(2))
-	require.True(t, env.session.IsNonceFinished(1))
-	require.True(t, env.session.IsNonceFinished(2))
+	require.ErrorIs(t, err, ErrNoAvailableHost,
+		"all-PoC-required escrow should drop the request immediately, got %v", err)
 
 	require.Empty(t, env.proxy.perf.RecentRequests(), "probe-only requests should not be recorded in request perf stats")
 	require.Empty(t, env.proxy.perf.AllStats(), "probe-only requests should not produce host perf samples")
@@ -805,4 +923,135 @@ func TestDecision_DefaultDelay(t *testing.T) {
 	require.True(t, d.RunSecondary)
 	require.Equal(t, ReceiptTimeout, d.Delay)
 	require.Equal(t, "receipt_timeout", d.Reason)
+}
+
+// slowReceiptClient wraps an inner user.HostClient and defers the receipt
+// callback by a configurable duration. This simulates a host whose TCP
+// connect completes normally but whose first response bytes are slow to
+// arrive — the exact failure shape that masks the receipt-timeout escalation
+// bug if awaitRace sees sendTime == 0 on its first iteration.
+type slowReceiptClient struct {
+	inner        user.HostClient
+	receiptDelay time.Duration
+}
+
+func (c *slowReceiptClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	wrapped := receiptHandler
+	if wrapped != nil && c.receiptDelay > 0 {
+		wrapped = func() {
+			select {
+			case <-time.After(c.receiptDelay):
+			case <-ctx.Done():
+			}
+			receiptHandler()
+		}
+	}
+	return c.inner.Send(ctx, req, stream, wrapped)
+}
+
+// TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces is a regression
+// test for the bug where `inf.sendTime` was assigned inside the send goroutine
+// rather than synchronously in startInflight. If the awaitRace loop iterated
+// before the goroutine scheduled, nextEscalationTrigger returned no candidate
+// (sendTime.IsZero() short-circuit), no escalation timer was ever scheduled,
+// and a slow primary could stall the request indefinitely — or at best waste
+// the entire receipt-delay window.
+//
+// To force the race-prone ordering we delay the primary's receipt well beyond
+// ReceiptTimeout; the fix guarantees that regardless of goroutine scheduling
+// the receipt-timeout escalation fires, a secondary is dispatched, and the
+// request succeeds via the secondary. Observable evidence: more than one
+// HostInvolvement entry gets recorded for the request.
+func TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces(t *testing.T) {
+	// Aggressive timings: 10ms receipt timeout, 200ms primary receipt delay.
+	// Any implementation that misses the escalation due to the sendTime race
+	// will either record exactly one attempt, or hang.
+	setSpeculativeTiming(t, 10*time.Millisecond, time.Second, 10*time.Millisecond, time.Minute)
+
+	numHosts := 3
+	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hostSigners {
+		hostSigners[i] = testutil.MustGenerateKey(t)
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := types.SessionConfig{
+		RefusalTimeout:   1,
+		ExecutionTimeout: 1,
+		TokenPrice:       1,
+		VoteThreshold:    uint32(numHosts) / 2,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]user.HostClient, numHosts)
+	for i := range hostSigners {
+		sm := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+		engine := stub.NewInferenceEngine()
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		kc := &killableClient{inner: &user.InProcessClient{Host: h}}
+		vc := &verifierClient{
+			killableClient: kc,
+			accept:         true,
+			signer:         hostSigners[i],
+			group:          group,
+			slotIdx:        i,
+		}
+		if i == 1 {
+			// Primary for nonce 1 resolves to host 1 (nonce % len(group)). Give this
+			// host a slow receipt so the primary *visibly* lags far past
+			// ReceiptTimeout — the escalation must still fire.
+			clients[i] = &slowReceiptClient{inner: vc, receiptDelay: 200 * time.Millisecond}
+		} else {
+			clients[i] = vc
+		}
+	}
+
+	userSM := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier)
+	require.NoError(t, err)
+	perf := NewPerfTracker(nil)
+	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(redundancy.Stop)
+
+	var buf bytes.Buffer
+	err = redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	require.NoError(t, err)
+
+	// RunInference now returns the instant the winner's stream settles; the
+	// primary's 200ms receipt delay keeps it in flight past that point, so
+	// finishRaceOutcome (and RecordRequest) run on the background finalizer.
+	// Wait briefly for the record to appear before asserting on it.
+	require.Eventually(t, func() bool {
+		return len(perf.RecentRequests()) >= 1
+	}, time.Second, 10*time.Millisecond, "background finalizer should have recorded the request")
+	records := perf.RecentRequests()
+	require.Len(t, records, 1, "one request should have been recorded")
+	rec := records[0]
+	require.GreaterOrEqual(t, len(rec.Hosts), 2,
+		"redundancy must have escalated to a second host after primary exceeded ReceiptTimeout — "+
+			"if this fails, awaitRace likely missed the receipt-timeout trigger due to sendTime race")
+}
+
+// TestRunInference_FastReceiptDoesNotSpuriouslyEscalate asserts the other
+// side of the fix: when the primary's receipt arrives comfortably BEFORE
+// ReceiptTimeout, the scheduled receipt-timeout timer is re-validated at
+// fire-time and quietly skipped, so we do NOT start a secondary we do not
+// need. Without the re-check in awaitRace, every healthy primary with
+// sendTime stamped synchronously would trigger a useless secondary.
+func TestRunInference_FastReceiptDoesNotSpuriouslyEscalate(t *testing.T) {
+	// Receipt timeout of 50ms is plenty of headroom for the in-process
+	// client's synchronous receiptHandler to fire first.
+	setSpeculativeTiming(t, 50*time.Millisecond, time.Second, 10*time.Millisecond, time.Minute)
+	env := setupTestProxy(t, 3, nil, true)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	require.NoError(t, err)
+
+	records := env.proxy.perf.RecentRequests()
+	require.Len(t, records, 1)
+	require.Len(t, records[0].Hosts, 1,
+		"healthy primary should win without any spurious secondary — if this fails, "+
+			"awaitRace is firing the receipt-timeout escalation on a stale trigger")
 }

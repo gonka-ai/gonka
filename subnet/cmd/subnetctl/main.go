@@ -81,6 +81,7 @@ var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
 	ConfigurePoCRequestMode(os.Getenv("SUBNET_POC_REQUEST_MODE"))
+	ConfigureCapacityAwareLimits(os.Getenv("SUBNET_CAPACITY_AWARE_LIMITS"))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -200,7 +201,7 @@ func mustLoadParticipantThrottleState(store *GatewayStore) {
 		return
 	}
 	for _, t := range throttles {
-		sharedParticipantRequestLimiter.LoadState(t.Key, t.Tokens, t.LastRefillAt)
+		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.EmptyStreamStreak)
 	}
 	if len(throttles) > 0 {
 		log.Printf("loaded %d persisted participant throttle state(s)", len(throttles))

@@ -58,15 +58,31 @@ type ClientConfig struct {
 	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
 	VerifyTimeout    time.Duration // verify-timeout, default 3m
 	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
-	ParticipantKey   string        // shared participant/IP identity for admission control
-	Admission        RequestAdmissionController
+	// ParticipantKey is the canonical participant identifier passed to
+	// the admission controller for both AllowRequest and ObserveResult.
+	// Callers MUST use the participant's gonka validator address
+	// (bech32, e.g. "gonka1abc..."); this is the same key used by
+	// chain-side state (CapacityState weights, PoC preservation,
+	// escrow membership) and by the higher-level
+	// ParticipantRequestLimiter. Using anything else (URL host:port,
+	// IP, hostname, etc.) silently breaks throttle/recovery because
+	// the admission controller's bucket map will not align with the
+	// keys those other subsystems use.
+	ParticipantKey string
+	Admission      RequestAdmissionController
 }
 
-// RequestAdmissionController can reject participant-bound transport requests
-// before they are sent to the remote host.
+// RequestAdmissionController can reject participant-bound transport
+// requests before they are sent to the remote host. The
+// participantKey it receives is the gonka validator address as
+// configured on ClientConfig.ParticipantKey.
 type RequestAdmissionController interface {
 	AllowRequest(participantKey, path string) error
 	ObserveResult(participantKey, path string, statusCode int)
+	// ObserveTransportFailure is called when the request never
+	// received an HTTP response (dial error, connection reset, etc.).
+	// Implementations apply a short cooldown; no-op is allowed.
+	ObserveTransportFailure(participantKey, path string)
 }
 
 type UpstreamStatusError struct {
@@ -430,6 +446,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.observeTransportFailure(path)
 		return nil, fmt.Errorf("http post %s: %w", path, err)
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -470,6 +487,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.observeTransportFailure(url)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -499,4 +517,11 @@ func (c *HTTPClient) observeResult(path string, statusCode int) {
 		return
 	}
 	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
+}
+
+func (c *HTTPClient) observeTransportFailure(path string) {
+	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return
+	}
+	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path)
 }

@@ -1,0 +1,275 @@
+{
+  "generated_at_utc": "2026-04-23T02:35:52Z",
+  "source_log": "mainnet-proxy-tests/logs/mainnet-subnetctl-multi-since-20260423T005742Z-20260423T023447Z.log",
+  "analysis_window": {
+    "since_utc": "2026-04-23T00:57:42Z",
+    "until_utc": "2026-04-23T02:34:47Z"
+  },
+  "batch_summary": {
+    "requests": 9216,
+    "attempts": 14614,
+    "extra_attempts": 5398,
+    "escalation_triggers": 5579,
+    "proxy_response_finished_total": 9214,
+    "proxy_response_finished_ok": 9214,
+    "proxy_response_finished_error": 0,
+    "proxy_response_finished_with_final_flush_err": 221,
+    "proxy_flush_failed": 0,
+    "proxy_client_disconnected": 221,
+    "nginx_rc_ok": 9032,
+    "nginx_rc_empty": 224,
+    "nginx_close_or_reset_events": 231,
+    "nginx_503_count": 0,
+    "subnetctl_503_related_events": 11
+  },
+  "taxonomy": {
+    "broken_route_404": [
+      {
+        "host": "7y0k36hv",
+        "count": 2,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "3wu9tugg",
+        "count": 1,
+        "good_finished_in_batch": 1790
+      }
+    ],
+    "pure_empty": [],
+    "hybrid_hang_empty": [
+      {
+        "host": "ss84ha7t",
+        "empty_count": 1,
+        "unfinished_count": 42,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "39vwhuk6",
+        "empty_count": 3,
+        "unfinished_count": 17,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "ua9693gl",
+        "empty_count": 1,
+        "unfinished_count": 19,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "5ec2v0jv",
+        "empty_count": 3,
+        "unfinished_count": 15,
+        "good_finished_in_batch": 0
+      }
+    ],
+    "pure_hang": [
+      {
+        "host": "v3h9d02t",
+        "unfinished_count": 35,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "anmm34cs",
+        "unfinished_count": 33,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "g2s682dl",
+        "unfinished_count": 24,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "sww66zg6",
+        "unfinished_count": 24,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "hqlnexwy",
+        "unfinished_count": 23,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "pq0p2c9e",
+        "unfinished_count": 23,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "takhyu5u",
+        "unfinished_count": 23,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "tcguyxl8",
+        "unfinished_count": 22,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "vkm0x7m2",
+        "unfinished_count": 22,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "9nzypdy7",
+        "unfinished_count": 21,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "n5ae350k",
+        "unfinished_count": 21,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "kqje6z4c",
+        "unfinished_count": 19,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "d9r5hqws",
+        "unfinished_count": 18,
+        "good_finished_in_batch": 0
+      }
+    ],
+    "mixed_quality_unfinished": [
+      {
+        "host": "3ne99p32",
+        "unfinished_count": 12,
+        "good_finished_in_batch": 1065
+      },
+      {
+        "host": "3v76jqgl",
+        "unfinished_count": 10,
+        "good_finished_in_batch": 248
+      },
+      {
+        "host": "3wu9tugg",
+        "unfinished_count": 10,
+        "good_finished_in_batch": 1790
+      },
+      {
+        "host": "64sjgtdg",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 493
+      },
+      {
+        "host": "8d4vdqnk",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 719
+      },
+      {
+        "host": "8h5sytfq",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 456
+      },
+      {
+        "host": "97fwqexu",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 965
+      },
+      {
+        "host": "995vrxr3",
+        "unfinished_count": 8,
+        "good_finished_in_batch": 19
+      },
+      {
+        "host": "9sxfuknt",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 684
+      },
+      {
+        "host": "dc66977y",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 734
+      },
+      {
+        "host": "dwv5t34f",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 2873
+      },
+      {
+        "host": "e9szfqgg",
+        "unfinished_count": 11,
+        "good_finished_in_batch": 134
+      },
+      {
+        "host": "esl6jhsz",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 1329
+      },
+      {
+        "host": "fglnkns2",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 228
+      },
+      {
+        "host": "fv6gryzk",
+        "unfinished_count": 14,
+        "good_finished_in_batch": 1738
+      },
+      {
+        "host": "gtjafj50",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 9
+      },
+      {
+        "host": "jrm8z0z9",
+        "unfinished_count": 7,
+        "good_finished_in_batch": 193
+      },
+      {
+        "host": "jt0e4a2p",
+        "unfinished_count": 11,
+        "good_finished_in_batch": 1167
+      },
+      {
+        "host": "juz92w8f",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 41
+      },
+      {
+        "host": "kdusl0xr",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 384
+      },
+      {
+        "host": "kjp5vd76",
+        "unfinished_count": 7,
+        "good_finished_in_batch": 516
+      },
+      {
+        "host": "mlwvj0jz",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 86
+      },
+      {
+        "host": "nkc4shaa",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 106
+      },
+      {
+        "host": "sqks2vm2",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 1200
+      },
+      {
+        "host": "tsdlgprt",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 349
+      },
+      {
+        "host": "u8mcr09v",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 154
+      },
+      {
+        "host": "y350vpwn",
+        "unfinished_count": 7,
+        "good_finished_in_batch": 288
+      }
+    ]
+  },
+  "notes": [
+    "This window is a true incremental slice from the advanced cursor.",
+    "nginx did not return 503 to clients in this window, but subnetctl saw upstream participant 503s.",
+    "Many rc=\"\" cases align with proxy_client_disconnected and final_flush_err=\"context canceled\" on the winner path."
+  ]
+}

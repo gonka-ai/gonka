@@ -25,6 +25,7 @@ type SubnetMetrics struct {
 	speculativeDecisions       *prometheus.CounterVec
 	speculativeAttempts        *prometheus.CounterVec
 	inferenceTimeouts          *prometheus.CounterVec
+	pickerChoices              *prometheus.CounterVec
 	hostReceiptSeconds         *prometheus.HistogramVec
 	hostFirstTokenSeconds      *prometheus.HistogramVec
 	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
@@ -97,6 +98,13 @@ func NewSubnetMetrics() *SubnetMetrics {
 			},
 			[]string{"reason"},
 		),
+		pickerChoices: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "subnet_gateway_picker_choice_total",
+				Help: "Total escrow selections by the capacity-aware gateway picker.",
+			},
+			[]string{"subnet_id", "model"},
+		),
 		hostReceiptSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "subnet_host_receipt_seconds",
@@ -140,6 +148,7 @@ func NewSubnetMetrics() *SubnetMetrics {
 		m.speculativeDecisions,
 		m.speculativeAttempts,
 		m.inferenceTimeouts,
+		m.pickerChoices,
 		m.hostReceiptSeconds,
 		m.hostFirstTokenSeconds,
 		m.hostCTTFLSecondsPerToken,
@@ -228,6 +237,13 @@ func (m *SubnetMetrics) RecordInferenceTimeout(reason string) {
 	m.inferenceTimeouts.WithLabelValues(reason).Inc()
 }
 
+func (m *SubnetMetrics) RecordPickerChoice(subnetID, model string) {
+	if m == nil {
+		return
+	}
+	m.pickerChoices.WithLabelValues(subnetID, model).Inc()
+}
+
 func (m *SubnetMetrics) ObserveRequestSample(subnetID string, sample RequestSample) {
 	if m == nil {
 		return
@@ -254,6 +270,12 @@ type gatewayMetricsCollector struct {
 
 	inflightRequestsDesc          *prometheus.Desc
 	inflightTokensDesc            *prometheus.Desc
+	effectiveMaxConcurrentDesc    *prometheus.Desc
+	effectiveMaxInputTokensDesc   *prometheus.Desc
+	capacityScaleDesc             *prometheus.Desc
+	capacityTotalDesc             *prometheus.Desc
+	capacityBaselineDesc          *prometheus.Desc
+	escrowWeightDesc              *prometheus.Desc
 	runtimeActiveDesc             *prometheus.Desc
 	runtimeRequestsDesc           *prometheus.Desc
 	runtimeReservedDesc           *prometheus.Desc
@@ -287,6 +309,42 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			"subnet_gateway_inflight_input_tokens",
 			"Current number of in-flight input tokens tracked by the gateway limiter.",
 			nil,
+			nil,
+		),
+		effectiveMaxConcurrentDesc: prometheus.NewDesc(
+			"subnet_gateway_effective_max_concurrent_requests",
+			"Currently enforced concurrent-request cap after capacity scaling.",
+			nil,
+			nil,
+		),
+		effectiveMaxInputTokensDesc: prometheus.NewDesc(
+			"subnet_gateway_effective_max_input_tokens_in_flight",
+			"Currently enforced input-token cap after capacity scaling.",
+			nil,
+			nil,
+		),
+		capacityScaleDesc: prometheus.NewDesc(
+			"subnet_gateway_capacity_scale",
+			"Ratio W_tot / W_ref currently applied to gateway-wide caps (1.0 = no scaling).",
+			nil,
+			nil,
+		),
+		capacityTotalDesc: prometheus.NewDesc(
+			"subnet_gateway_capacity_total_weight",
+			"Current gateway-wide effective host weight (W_tot).",
+			nil,
+			nil,
+		),
+		capacityBaselineDesc: prometheus.NewDesc(
+			"subnet_gateway_capacity_baseline_weight",
+			"Baseline gateway-wide host weight (W_ref) snapshotted during steady-state Inference.",
+			nil,
+			nil,
+		),
+		escrowWeightDesc: prometheus.NewDesc(
+			"subnet_gateway_escrow_weight",
+			"Per-escrow effective weight W(e) used by the capacity-aware picker.",
+			[]string{"subnet_id"},
 			nil,
 		),
 		runtimeActiveDesc: prometheus.NewDesc(
@@ -349,6 +407,12 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.inflightRequestsDesc
 	ch <- c.inflightTokensDesc
+	ch <- c.effectiveMaxConcurrentDesc
+	ch <- c.effectiveMaxInputTokensDesc
+	ch <- c.capacityScaleDesc
+	ch <- c.capacityTotalDesc
+	ch <- c.capacityBaselineDesc
+	ch <- c.escrowWeightDesc
 	ch <- c.runtimeActiveDesc
 	ch <- c.runtimeRequestsDesc
 	ch <- c.runtimeReservedDesc
@@ -369,6 +433,17 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		snapshot := c.gateway.limiter.Snapshot()
 		ch <- prometheus.MustNewConstMetric(c.inflightRequestsDesc, prometheus.GaugeValue, float64(snapshot.InFlightRequests))
 		ch <- prometheus.MustNewConstMetric(c.inflightTokensDesc, prometheus.GaugeValue, float64(snapshot.InFlightInputTokens))
+		ch <- prometheus.MustNewConstMetric(c.effectiveMaxConcurrentDesc, prometheus.GaugeValue, float64(snapshot.EffectiveMaxConcurrent))
+		ch <- prometheus.MustNewConstMetric(c.effectiveMaxInputTokensDesc, prometheus.GaugeValue, float64(snapshot.EffectiveMaxInputTokens))
+		ch <- prometheus.MustNewConstMetric(c.capacityScaleDesc, prometheus.GaugeValue, snapshot.ScaleFactor)
+	}
+	if c.gateway.capacity != nil {
+		capSnap := c.gateway.capacity.Snapshot()
+		ch <- prometheus.MustNewConstMetric(c.capacityTotalDesc, prometheus.GaugeValue, capSnap.TotalWeight)
+		ch <- prometheus.MustNewConstMetric(c.capacityBaselineDesc, prometheus.GaugeValue, capSnap.BaselineWeight)
+		for id, w := range capSnap.EscrowWeights {
+			ch <- prometheus.MustNewConstMetric(c.escrowWeightDesc, prometheus.GaugeValue, w, id)
+		}
 	}
 	if c.gateway.participantLimiter != nil {
 		ch <- prometheus.MustNewConstMetric(
@@ -426,6 +501,15 @@ type metricsResponseWriter struct {
 func (w *metricsResponseWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap exposes the inner ResponseWriter so that http.NewResponseController
+// can reach capabilities the wrapper itself does not implement (Flusher,
+// Hijacker, CloseNotifier, ...). Without this, SSE flushes from downstream
+// handlers silently no-op because *metricsResponseWriter does not satisfy
+// http.Flusher even when the underlying writer does.
+func (w *metricsResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func normalizeMetricsPath(path string) string {

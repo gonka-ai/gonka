@@ -225,6 +225,10 @@ func (s *stubAdmissionController) ObserveResult(participantKey, path string, sta
 	s.observed = append(s.observed, fmt.Sprintf("%s:%s:%d", participantKey, path, statusCode))
 }
 
+func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path string) {
+	s.observed = append(s.observed, fmt.Sprintf("%s:%s:transport", participantKey, path))
+}
+
 func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
 	client, _, userSigner, _ := setupClientTestEnv(t)
 	ctx := context.Background()

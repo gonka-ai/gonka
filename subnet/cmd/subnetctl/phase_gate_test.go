@@ -216,25 +216,29 @@ func TestChainPhaseGateFetchPreservedParticipantKeys(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
+		// Two preserved entries for the same gonka address dedupe to
+		// one in the response, mirroring how multi-slot validators
+		// appear on chain. The participant with no preserved MLNode
+		// times slots flows to the excluded list.
 		_, _ = w.Write([]byte(`{
 			"active_participants": {
 				"participants": [
 					{
-						"index": "participant-a",
+						"index": "gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
 						"inference_url": "http://preserved.example:8080",
 						"ml_nodes": [
 							{"ml_nodes": [{"timeslot_allocation": [true, true]}]}
 						]
 					},
 					{
-						"index": "participant-a-alt-port",
+						"index": "gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
 						"inference_url": "http://preserved.example:8081",
 						"ml_nodes": [
 							{"ml_nodes": [{"timeslot_allocation": [true, true]}]}
 						]
 					},
 					{
-						"index": "participant-b",
+						"index": "gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2",
 						"inference_url": "http://regular.example:8080",
 						"ml_nodes": [
 							{"ml_nodes": [{"timeslot_allocation": [true, false]}]}
@@ -251,12 +255,11 @@ func TestChainPhaseGateFetchPreservedParticipantKeys(t *testing.T) {
 
 	keys, excluded, err := gate.fetchPreservedParticipantKeys()
 	require.NoError(t, err)
-	require.Equal(t, []participantKeyAddr{
-		{key: "preserved.example:8080", addr: "participant-a"},
-		{key: "preserved.example:8081", addr: "participant-a-alt-port"},
+	require.Equal(t, []string{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
 	}, keys)
-	require.Equal(t, []participantKeyAddr{
-		{key: "regular.example:8080", addr: "participant-b"},
+	require.Equal(t, []string{
+		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2",
 	}, excluded)
 }
 
@@ -313,11 +316,13 @@ func TestChainPhaseGateLogsEmptyPreservedParticipants(t *testing.T) {
 		EpochPhase:           epochPhaseInference,
 		ConfirmationPoCPhase: confirmationPoCGeneration,
 		BlockReason:          "confirmation_poc",
-	}, nil, []participantKeyAddr{{key: "cut.example:8080", addr: "addr-cut"}})
+	}, nil, []string{"gonka1cccccccccccccccccccccccccccccccccccc3"})
 
 	require.Contains(t, buf.String(), "chain phase gate: preserved participant poll empty")
 	require.Contains(t, buf.String(), "excluded_count=1")
-	require.Contains(t, buf.String(), "excluded_participants=cut.example:8080(addr-cut)")
+	// Log labels are short suffixes (last 8 chars of the bech32
+	// address) for compact log lines.
+	require.Contains(t, buf.String(), "excluded_participants=ccccccc3")
 }
 
 func TestChainPhaseGateLogsLoadedPreservedParticipantsSorted(t *testing.T) {
@@ -340,16 +345,17 @@ func TestChainPhaseGateLogsLoadedPreservedParticipantsSorted(t *testing.T) {
 		EpochPhase:           epochPhaseInference,
 		ConfirmationPoCPhase: confirmationPoCGeneration,
 		BlockReason:          "confirmation_poc",
-	}, []participantKeyAddr{
-		{key: "z.example", addr: "gonka1zzzzzzzz"},
-		{key: "a.example", addr: "gonka1aaaaaaaa"},
-	}, []participantKeyAddr{
-		{key: "y.example", addr: "gonka1yyyyyyyy"},
-		{key: "b.example", addr: "gonka1bbbbbbbb"},
+	}, []string{
+		"gonka1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, []string{
+		"gonka1yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	})
 
 	output := buf.String()
 	require.Contains(t, output, "chain phase gate: preserved participants loaded")
-	require.True(t, strings.Contains(output, "participants=a.example(aaaaaaaa),z.example(zzzzzzzz)"))
-	require.True(t, strings.Contains(output, "excluded_participants=b.example(bbbbbbbb),y.example(yyyyyyyy)"))
+	// Sorted ASCII order of the last-8-char short labels: aaaaaaaa < zzzzzzzz, bbbbbbbb < yyyyyyyy.
+	require.True(t, strings.Contains(output, "participants=aaaaaaaa,zzzzzzzz"), output)
+	require.True(t, strings.Contains(output, "excluded_participants=bbbbbbbb,yyyyyyyy"), output)
 }

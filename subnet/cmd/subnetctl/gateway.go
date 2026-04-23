@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,7 @@ type Gateway struct {
 	phaseGate          *ChainPhaseGate
 	escrowChecker      *EscrowChecker
 	metrics            *SubnetMetrics
+	capacity           *CapacityState
 	settings           GatewaySettings
 	store              *GatewayStore
 	baseStorageDir     string
@@ -54,6 +56,12 @@ type subnetRuntime struct {
 	session         *user.Session
 	perfStore       *PerfStore
 	participantKeys []string
+	// participantSlotCounts maps a participant key to the number of
+	// slots in this escrow's group held by that host. Used by the
+	// CapacityState to compute share(h,e). Length differs from
+	// participantKeys when one host occupies multiple slots in the
+	// same escrow.
+	participantSlotCounts map[string]int
 
 	active         atomic.Bool
 	activeRequests atomic.Int64
@@ -135,7 +143,14 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRun
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
 
-	redundancy := NewRedundancy(session, perf, len(session.Clients()))
+	redundancy := NewRedundancyWithThrottle(
+		session,
+		perf,
+		len(session.Clients()),
+		model,
+		sharedParticipantRequestLimiter.IsBlocked,
+	)
+	redundancy.participantLimiter = sharedParticipantRequestLimiter
 	proxy := &Proxy{
 		session:    session,
 		sm:         sm,
@@ -146,16 +161,31 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRun
 	}
 
 	rt := &subnetRuntime{
-		id:              cfg.ID,
-		model:           model,
-		handler:         newRuntimeMux(proxy),
-		proxy:           proxy,
-		session:         session,
-		perfStore:       perfStore,
-		participantKeys: session.ParticipantKeys(),
+		id:                    cfg.ID,
+		model:                 model,
+		handler:               newRuntimeMux(proxy),
+		proxy:                 proxy,
+		session:               session,
+		perfStore:             perfStore,
+		participantKeys:       session.ParticipantKeys(),
+		participantSlotCounts: hostSlotCounts(session.HostParticipantKeyList()),
 	}
 	rt.active.Store(true)
 	return rt, nil
+}
+
+// hostSlotCounts builds a slot-count map from a per-slot participant
+// key list. Empty keys (uncommon, but possible if a slot lacks a
+// validator address) are skipped.
+func hostSlotCounts(perSlotKeys []string) map[string]int {
+	counts := make(map[string]int, len(perSlotKeys))
+	for _, key := range perSlotKeys {
+		if key == "" {
+			continue
+		}
+		counts[key]++
+	}
+	return counts
 }
 
 func (rt *subnetRuntime) close() error {
@@ -203,8 +233,40 @@ func (rt *subnetRuntime) snapshot() runtimeStatus {
 	return status
 }
 
-func (rt *subnetRuntime) score() int64 {
-	return rt.reservedTokens.Load()*1000 + rt.activeRequests.Load()
+// TODO: the (reservedTokens*1000 + activeRequests) formula is missleading,
+// let's just leave activeRequests here, and leave a todo comment, that
+// we might need to change it, so that if limits for tokens or cuncurrent
+// requests are set, we need to measure if the escrow is further from
+// the limists
+
+// load returns the capacity-aware load score for this runtime. Lower
+// is better; the picker selects the runtime with the smallest load.
+//
+// Score is simply activeRequests / W(e):
+//   - activeRequests is the live count of in-flight inferences this
+//     runtime owns (incremented on dispatch, decremented on
+//     completion). It's the most direct, low-latency signal of "is
+//     this runtime busy right now".
+//   - W(e) is the runtime's effective capacity: the sum of available
+//     host weights, accounting for chain-side weight, share within the
+//     escrow, PoC preservation, and reactive throttle.
+//
+// Reserved tokens (the historical "I expect this many tokens to flow
+// through me soon" hint) used to dominate the score; we no longer mix
+// them in because (a) they're a noisy estimate, (b) the participant
+// limiter already kills hosts that get hot, and (c) keeping the score
+// to one quantity makes load-balance debugging tractable.
+//
+// A weight <= 0 means the escrow currently has no usable hosts (every
+// host is throttled or PoC-excluded). Returning +Inf pushes it to the
+// back of the queue without removing it from the candidate set, which
+// preserves the existing fall-back semantics if every escrow degrades
+// simultaneously.
+func (rt *subnetRuntime) load(weight float64) float64 {
+	if weight <= 0 {
+		return math.Inf(+1)
+	}
+	return float64(rt.activeRequests.Load()) / weight
 }
 
 func NewGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, defaultModel string) *Gateway {
@@ -219,6 +281,7 @@ func NewGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, defaultModel
 		limiter:            limiter,
 		participantLimiter: sharedParticipantRequestLimiter,
 		metrics:            NewSubnetMetrics(),
+		capacity:           NewCapacityState(),
 		settings: GatewaySettings{
 			DefaultModel: defaultModel,
 		},
@@ -227,6 +290,7 @@ func NewGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, defaultModel
 	g.metrics.AttachGateway(g)
 	for _, rt := range runtimes {
 		g.attachMetrics(rt)
+		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
 	}
 	return g
 }
@@ -243,6 +307,7 @@ func NewManagedGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, setti
 				rt.proxy.phaseGate = g.phaseGate
 			}
 		}
+		g.attachCapacityStateToPhaseGate()
 		g.phaseGate.Start()
 	}
 	g.escrowChecker = NewEscrowChecker(func() string {
@@ -254,6 +319,34 @@ func NewManagedGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, setti
 		g.attachEscrowChecker(rt)
 	}
 	return g
+}
+
+// attachCapacityStateToPhaseGate wires the capacity state into the
+// chain phase poll loop. Two channels are wired:
+//
+//   - Live availability source: the picker pulls per-host availability
+//     from the participant limiter on every EscrowWeight call so a 503
+//     (or recovery) shrinks/restores W(e) on the very next request,
+//     without waiting for the next phase poll. Availability is binary
+//     with hysteresis to full bucket recovery (see
+//     ParticipantRequestLimiter.IsAvailable).
+//   - Phase-gate snapshot push: chain-reported weights and PoC
+//     preserved set on every refresh, plus a scale-hook callback that
+//     pushes the latest W_tot/W_ref ratio to the GatewayLimiter.
+func (g *Gateway) attachCapacityStateToPhaseGate() {
+	if g == nil || g.phaseGate == nil || g.capacity == nil {
+		return
+	}
+	if g.participantLimiter != nil {
+		g.capacity.SetLiveAvailable(g.participantLimiter.IsAvailable)
+	}
+	scaleHook := func(scale float64) {
+		if g.limiter == nil {
+			return
+		}
+		g.limiter.ApplyScaleFactor(scale)
+	}
+	g.phaseGate.SetCapacityState(g.capacity, scaleHook)
 }
 
 func (g *Gateway) Close() error {
@@ -329,7 +422,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	}
 	logRequestStage(ctx, "gateway_request_received", "model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens)
 
-	if !relaxedPoCBypassActive() {
+	if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 		if err := g.limiter.Acquire(inputTokens); err != nil {
 			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
@@ -384,7 +477,7 @@ func (g *Gateway) handleSubnet(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
 		}
-		if !relaxedPoCBypassActive() {
+		if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 			if err := g.limiter.Acquire(inputTokens); err != nil {
 				g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 				logRequestStage(ctx, "gateway_subnet_limiter_rejected", "escrow", subnetID, "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
@@ -395,13 +488,6 @@ func (g *Gateway) handleSubnet(w http.ResponseWriter, r *http.Request) {
 			logRequestStage(ctx, "gateway_subnet_limiter_acquired", "escrow", subnetID, "input_tokens", inputTokens)
 		} else {
 			logRequestStage(ctx, "gateway_subnet_limiter_bypassed_during_poc", "escrow", subnetID, "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
-		}
-
-		if err := g.ensureRuntimeAvailable(rt); err != nil {
-			g.metrics.RecordLimitRejection("participant_request_budget")
-			logRequestStage(ctx, "gateway_subnet_participant_limiter_rejected", "escrow", subnetID, "error", err)
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
-			return
 		}
 
 		g.reserveRuntime(rt, inputTokens)
@@ -435,13 +521,8 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	defer g.mu.Unlock()
 
 	var candidates []*subnetRuntime
-	skippedForParticipants := false
 	for _, rt := range g.runtimeOrder {
 		if !rt.active.Load() {
-			continue
-		}
-		if err := g.ensureRuntimeAvailable(rt); err != nil {
-			skippedForParticipants = true
 			continue
 		}
 		candidates = append(candidates, rt)
@@ -458,16 +539,13 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 		}
 	}
 	if len(candidates) == 0 {
-		if skippedForParticipants {
-			return nil, &EscrowParticipantRateLimitError{}
-		}
 		return nil, fmt.Errorf("no subnet runtimes configured")
 	}
 
-	bestScore := candidates[0].score()
+	bestScore := g.runtimeLoad(candidates[0])
 	best := []*subnetRuntime{candidates[0]}
 	for _, rt := range candidates[1:] {
-		score := rt.score()
+		score := g.runtimeLoad(rt)
 		switch {
 		case score < bestScore:
 			bestScore = score
@@ -477,14 +555,69 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 		}
 	}
 
-	if len(best) == 1 {
-		g.reserveRuntimeLocked(best[0], inputTokens)
-		return best[0], nil
+	// All candidates score +Inf only when every escrow's W(e) == 0 -
+	// i.e. every host is PoC-excluded or fully throttled. Surface this
+	// as a participant-rate-limit error so callers see the existing
+	// 429 path instead of dispatching a request that is guaranteed to
+	// fail upstream. We deliberately don't enumerate which hosts caused
+	// it: a host can have W(e)==0 for many reasons (chain weight 0, PoC
+	// exclusion, reactive throttle, share rounding) and surfacing only
+	// the throttled subset would mislead operators about the root
+	// cause. Per-escrow W(e) is logged below for diagnostics.
+	if math.IsInf(bestScore, +1) {
+		log.Printf(
+			"gateway: all %d candidate escrow(s) at zero capacity, returning 429; per-escrow weights: %s",
+			len(candidates), g.formatCandidateWeightsLocked(candidates),
+		)
+		return nil, &EscrowParticipantRateLimitError{}
 	}
-	idx := int(g.roundRobinSeed.Add(1)-1) % len(best)
-	chosen := best[idx]
+
+	chosen := best[0]
+	if len(best) > 1 {
+		idx := int(g.roundRobinSeed.Add(1)-1) % len(best)
+		chosen = best[idx]
+	}
 	g.reserveRuntimeLocked(chosen, inputTokens)
+	if g.metrics != nil {
+		g.metrics.RecordPickerChoice(chosen.id, chosen.model)
+	}
 	return chosen, nil
+}
+
+// formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
+// string for log output when every escrow scored +Inf. Operators use
+// this to tell whether the cause was a system-wide PoC pause (every
+// W(e) == 0 simultaneously), a single hot escrow (one weight low),
+// or a missing capacity-model registration (HasEscrow false).
+func (g *Gateway) formatCandidateWeightsLocked(candidates []*subnetRuntime) string {
+	parts := make([]string, 0, len(candidates))
+	for _, rt := range candidates {
+		if g.capacity != nil && g.capacity.HasEscrow(rt.id) {
+			parts = append(parts, fmt.Sprintf("%s=%g", rt.id, g.capacity.EscrowWeight(rt.id)))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=unregistered", rt.id))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// runtimeLoad bridges the gateway and the subnetRuntime: it pulls the
+// effective weight W(e) from the CapacityState and feeds it into the
+// runtime's load formula. Kept on the gateway so the runtime stays
+// free of state dependencies.
+//
+// Fallback rules:
+//   - No capacity state attached, or escrow not registered with the
+//     state (no slot/membership info): use neutral weight 1.0 so the
+//     picker degrades to a pure activeRequests comparison.
+//   - Escrow registered but W(e) == 0 (every host is PoC-excluded or
+//     fully throttled): honor the 0 so the runtime drops to +Inf load
+//     and stops receiving traffic until at least one host recovers.
+func (g *Gateway) runtimeLoad(rt *subnetRuntime) float64 {
+	if g == nil || g.capacity == nil || !g.capacity.HasEscrow(rt.id) {
+		return rt.load(1.0)
+	}
+	return rt.load(g.capacity.EscrowWeight(rt.id))
 }
 
 func (g *Gateway) reserveRuntime(rt *subnetRuntime, inputTokens int64) {
@@ -501,16 +634,6 @@ func (g *Gateway) reserveRuntimeLocked(rt *subnetRuntime, inputTokens int64) {
 func (g *Gateway) releaseRuntime(rt *subnetRuntime, inputTokens int64) {
 	rt.activeRequests.Add(-1)
 	rt.reservedTokens.Add(-inputTokens)
-}
-
-func (g *Gateway) ensureRuntimeAvailable(rt *subnetRuntime) error {
-	if g == nil || g.participantLimiter == nil || rt == nil {
-		return nil
-	}
-	if relaxedPoCBypassActive() {
-		return nil
-	}
-	return g.participantLimiter.CanAcceptEscrow(rt.participantKeys)
 }
 
 func gatewayStatusCodeForError(err error) int {
@@ -769,6 +892,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if g.phaseGate != nil {
+			g.attachCapacityStateToPhaseGate()
 			g.phaseGate.Start()
 		}
 		g.limiter.UpdateLimits(settings.MaxConcurrentRequests, settings.MaxInputTokensInFlight)
@@ -918,6 +1042,9 @@ func (g *Gateway) handleAdminAddSubnet(w http.ResponseWriter, r *http.Request) {
 	g.attachMetrics(rt)
 	g.attachEscrowChecker(rt)
 	g.sortRuntimeOrderLocked()
+	if g.capacity != nil {
+		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
+	}
 	writeJSON(w, map[string]any{
 		"id":           record.ID,
 		"active":       true,
@@ -987,6 +1114,9 @@ func (g *Gateway) handleAdminCleanSubnet(w http.ResponseWriter, r *http.Request,
 		}
 		delete(g.runtimes, id)
 		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+		if g.capacity != nil {
+			g.capacity.RemoveEscrow(id)
+		}
 		if err := rt.close(); err != nil {
 			log.Printf("close subnet %s: %v", id, err)
 		}

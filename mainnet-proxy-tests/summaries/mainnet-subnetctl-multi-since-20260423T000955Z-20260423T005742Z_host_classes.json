@@ -1,0 +1,258 @@
+{
+  "generated_at_utc": "2026-04-23T01:00:00Z",
+  "source_log": "mainnet-proxy-tests/logs/mainnet-subnetctl-multi-since-20260423T000955Z-20260423T005742Z.log",
+  "analysis_window": {
+    "since_utc": "2026-04-23T00:09:55Z",
+    "until_utc": "2026-04-23T00:57:42Z"
+  },
+  "batch_summary": {
+    "requests": 4672,
+    "attempts": 7353,
+    "extra_attempts": 2681,
+    "escalation_triggers": 2676,
+    "proxy_response_finished_total": 4671,
+    "proxy_response_finished_ok": 4669,
+    "proxy_response_finished_error": 2,
+    "proxy_flush_failed": 0,
+    "proxy_client_disconnected": 2,
+    "nginx_rc_ok": 8780,
+    "nginx_rc_empty": 4,
+    "nginx_premature_close": 4
+  },
+  "taxonomy": {
+    "broken_route_404": [
+      {
+        "host": "7y0k36hv",
+        "count": 1,
+        "good_finished_in_batch": 0
+      }
+    ],
+    "pure_empty": [],
+    "hybrid_hang_empty": [
+      {
+        "host": "5ec2v0jv",
+        "empty_count": 4,
+        "unfinished_count": 1,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "hqlnexwy",
+        "empty_count": 1,
+        "unfinished_count": 2,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "ss84ha7t",
+        "empty_count": 1,
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "ua9693gl",
+        "empty_count": 2,
+        "unfinished_count": 2,
+        "good_finished_in_batch": 0
+      }
+    ],
+    "pure_hang": [
+      {
+        "host": "39vwhuk6",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "9nzypdy7",
+        "unfinished_count": 5,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "d9r5hqws",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "e9szfqgg",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "g2s682dl",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "jrm8z0z9",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "kqje6z4c",
+        "unfinished_count": 5,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "n5ae350k",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "pq0p2c9e",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "sww66zg6",
+        "unfinished_count": 5,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "tcguyxl8",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "v3h9d02t",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 0
+      },
+      {
+        "host": "vkm0x7m2",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 0
+      }
+    ],
+    "mixed_quality_unfinished": [
+      {
+        "host": "36xalhvl",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 217
+      },
+      {
+        "host": "3gtcw9es",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 343
+      },
+      {
+        "host": "3ne99p32",
+        "unfinished_count": 5,
+        "good_finished_in_batch": 1
+      },
+      {
+        "host": "3v76jqgl",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 97
+      },
+      {
+        "host": "3wu9tugg",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 838
+      },
+      {
+        "host": "8d4vdqnk",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 19
+      },
+      {
+        "host": "97fwqexu",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 265
+      },
+      {
+        "host": "995vrxr3",
+        "unfinished_count": 4,
+        "good_finished_in_batch": 1
+      },
+      {
+        "host": "9ks9qgr5",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 247
+      },
+      {
+        "host": "9sxfuknt",
+        "unfinished_count": 5,
+        "good_finished_in_batch": 29
+      },
+      {
+        "host": "anmm34cs",
+        "unfinished_count": 13,
+        "good_finished_in_batch": 1
+      },
+      {
+        "host": "dc66977y",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 315
+      },
+      {
+        "host": "dwv5t34f",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 1563
+      },
+      {
+        "host": "fglnkns2",
+        "unfinished_count": 14,
+        "good_finished_in_batch": 218
+      },
+      {
+        "host": "fv6gryzk",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 322
+      },
+      {
+        "host": "gtjafj50",
+        "unfinished_count": 7,
+        "good_finished_in_batch": 377
+      },
+      {
+        "host": "jt0e4a2p",
+        "unfinished_count": 2,
+        "good_finished_in_batch": 127
+      },
+      {
+        "host": "juz92w8f",
+        "unfinished_count": 3,
+        "good_finished_in_batch": 2
+      },
+      {
+        "host": "kjp5vd76",
+        "unfinished_count": 6,
+        "good_finished_in_batch": 1
+      },
+      {
+        "host": "sqks2vm2",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 98
+      },
+      {
+        "host": "takhyu5u",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 1
+      },
+      {
+        "host": "tsdlgprt",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 97
+      },
+      {
+        "host": "u3vqgz09",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 7
+      },
+      {
+        "host": "u8mcr09v",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 103
+      },
+      {
+        "host": "y350vpwn",
+        "unfinished_count": 1,
+        "good_finished_in_batch": 212
+      }
+    ]
+  },
+  "notes": [
+    "This window is cumulative from the current cursor start, not only the newest delta after the previous analysis.",
+    "pure_hang means receipt/no-output/unfinished with no good finished response in this batch.",
+    "hybrid_hang_empty means the host appeared in both unfinished and empty_stream buckets in this batch.",
+    "mixed_quality_unfinished means the host had unfinished attempts but also at least one good finished response in the same batch."
+  ]
+}
