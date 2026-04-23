@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 
-	sdkerrors "cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,15 +11,10 @@ import (
 )
 
 func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *types.MsgSubmitNewUnfundedParticipant) (*types.MsgSubmitNewUnfundedParticipantResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	// Participant access gating: optionally freeze creation of NEW participants after a cutoff height.
-	if _, found := k.GetParticipant(ctx, msg.GetAddress()); !found && k.IsNewParticipantRegistrationClosed(ctx, ctx.BlockHeight()) {
-		k.LogError("SubmitNewUnfundedParticipant: new participant registration is closed", types.Participants,
-			"address", msg.Address,
-			"blockHeight", ctx.BlockHeight())
-		return nil, sdkerrors.Wrap(types.ErrNewParticipantRegistrationClosed, msg.GetAddress())
+	if err := k.CheckPermission(goCtx, msg, OpenRegistrationPermission); err != nil {
+		return nil, err
 	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("Adding new account directly", types.Participants, "address", msg.Address)
 	addr, err := sdk.AccAddressFromBech32(msg.Address)

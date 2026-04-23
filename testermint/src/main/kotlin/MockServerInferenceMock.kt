@@ -219,6 +219,21 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         setPocResponse(weight, scenarioName)
     }
 
+    override fun setLatestPocNonce(nonce: Long) {
+        try {
+            val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/poc/nonce")
+                .jsonBody("""{"nonce": $nonce}""")
+                .responseString()
+            if (response.statusCode != 200) {
+                Logger.error("Failed to set latest PoC nonce: ${response.statusCode} ${response.responseMessage}")
+            } else {
+                Logger.info("Set latest PoC nonce to $nonce")
+            }
+        } catch (e: Exception) {
+            Logger.error("Failed to set latest PoC nonce: ${e.message}")
+        }
+    }
+
     override fun hasRequestsToVersionedEndpoint(segment: String): Boolean {
         // For MockServerInferenceMock, we can't easily verify WireMock-style request patterns
         // Since this is primarily used in tests with the original WireMock-based InferenceMock,

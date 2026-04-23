@@ -8,12 +8,10 @@ import (
 )
 
 func (k msgServer) RegisterBridgeAddresses(goCtx context.Context, msg *types.MsgRegisterBridgeAddresses) (*types.MsgRegisterBridgeAddressesResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
-
-	// Validate authority - only governance can register bridge addresses
-	if msg.Authority != k.GetAuthority() {
-		return nil, types.ErrInvalidSigner
+	if err := k.CheckPermission(goCtx, msg, GovernancePermission); err != nil {
+		return nil, err
 	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	// Use the chain name directly as chainId (e.g., "ethereum", "polygon")
 	chainId := msg.ChainName

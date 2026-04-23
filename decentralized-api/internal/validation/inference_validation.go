@@ -706,9 +706,11 @@ func (s *InferenceValidator) isAlreadyValidated(inferenceId string, epochId uint
 // For post-upgrade inferences, returns ErrPayloadUnavailable for caller to handle invalidation.
 // Returns ErrHashMismatch immediately (no retry) when executor serves wrong payload with valid signature.
 // Returns ErrEpochStale if inference epoch becomes too old during retries.
+// Retries use a short first backoff and longer subsequent backoffs, both with jitter.
 func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]byte, []byte, error) {
 	const maxRetries = 10
-	const retryInterval = 2 * time.Minute // 10 * 2 min = 20 min total
+	const firstRetryInterval = 10 * time.Second
+	const subsequentRetryInterval = 2 * time.Minute
 
 	ctx := s.recorder.GetContext()
 	var lastErr error
@@ -749,8 +751,20 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 
 		// Wait between retries with random jitter (skip sleep on final attempt since we're done)
 		if attempt < maxRetries {
-			jitter := time.Duration(1+rand.Intn(120)) * time.Second
-			time.Sleep(retryInterval + jitter)
+			retryInterval := subsequentRetryInterval
+			jitterMaxSeconds := 120
+			if attempt == 1 {
+				retryInterval = firstRetryInterval
+				jitterMaxSeconds = 10
+			}
+			sleepDuration := retryInterval + time.Duration(1+rand.Intn(jitterMaxSeconds))*time.Second
+			timer := time.NewTimer(sleepDuration)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 
@@ -945,7 +959,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
-	return compareLogits(originalLogits, validationLogits, baseResult), nil
+	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
 func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
@@ -1036,7 +1050,7 @@ func (r InvalidInferenceResult) GetValidationResponseBytes() []byte {
 	return []byte{}
 }
 
-func compareLogits(
+func CompareLogits(
 	originalLogits []completionapi.Logprob,
 	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,

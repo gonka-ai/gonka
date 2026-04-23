@@ -43,7 +43,7 @@ func TestValidation(t *testing.T) {
 		ResponseBytes: []byte{},
 	}
 
-	val := compareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
+	val := CompareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
 	t.Logf("Validation result: %v", val)
 }
 
@@ -63,6 +63,6 @@ func TestValidationQuant(t *testing.T) {
 		ResponseBytes: []byte{},
 	}
 
-	val := compareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
+	val := CompareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
 	t.Logf("Validation result: %v", val)
 }

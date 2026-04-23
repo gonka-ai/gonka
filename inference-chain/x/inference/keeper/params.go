@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -13,24 +14,40 @@ const defaultGenesisGuardianNetworkMaturityMinHeight int64 = 0
 const defaultDeveloperAccessUntilBlockHeight int64 = 0
 const defaultNewParticipantRegistrationStartHeight int64 = 0
 
-// GetParams get all parameters as types.Params
-func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+type paramsKey struct{}
+
+func (k Keeper) getParamsFromStore(ctx context.Context) (params types.Params, err error) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz := store.Get(types.ParamsKey)
 	if bz == nil {
 		return params, nil
 	}
-
-	err = k.cdc.Unmarshal(bz, &params)
-	if err != nil {
+	if err := k.cdc.Unmarshal(bz, &params); err != nil {
 		return types.Params{}, err
 	}
 	return params, nil
 }
 
+// GetParams get all parameters as types.Params
+func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
+	if cached, ok := ctx.Value(paramsKey{}).(*types.Params); ok && cached != nil {
+		return *cached, nil
+	}
+	return k.getParamsFromStore(ctx)
+}
+
+// InjectParamsIntoContext returns a new context with the params cached.
+func (k Keeper) InjectParamsIntoContext(ctx sdk.Context) (sdk.Context, error) {
+	params, err := k.getParamsFromStore(ctx)
+	if err != nil {
+		return ctx, err
+	}
+	return ctx.WithValue(paramsKey{}, &params), nil
+}
+
 // SetParams set the params
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
-	oldParams, _ := k.GetParams(ctx)
+	oldParams, _ := k.getParamsFromStore(ctx)
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	bz, err := k.cdc.Marshal(&params)
@@ -260,6 +277,34 @@ func (k Keeper) IsAllowedTransferAgent(ctx context.Context, taAddress string) bo
 	}
 	for _, a := range p.AllowedTransferAddresses {
 		if a == taAddress {
+			return true
+		}
+	}
+	return false
+}
+
+// GetSubnetEscrowParams returns subnet escrow params, falling back to defaults if unset.
+func (k Keeper) GetSubnetEscrowParams(ctx context.Context) *types.SubnetEscrowParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetSubnetEscrowParams", types.System, "error", err)
+		return types.DefaultSubnetEscrowParams()
+	}
+	if p.SubnetEscrowParams == nil {
+		return types.DefaultSubnetEscrowParams()
+	}
+	return p.SubnetEscrowParams
+}
+
+// IsAllowedEscrowCreator returns true if the address is allowed to create/settle subnet escrows.
+// An empty allowlist means everyone is allowed.
+func (k Keeper) IsAllowedEscrowCreator(ctx context.Context, address string) bool {
+	ep := k.GetSubnetEscrowParams(ctx)
+	if len(ep.AllowedCreatorAddresses) == 0 {
+		return true
+	}
+	for _, a := range ep.AllowedCreatorAddresses {
+		if a == address {
 			return true
 		}
 	}

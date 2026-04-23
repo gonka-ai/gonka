@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.inference;
+
+import "gogoproto/gogo.proto";
+import "inference/inference/params.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// SPRTPrecomputedValues contains log-likelihood ratios precomputed for SPRT.
+message SPRTPrecomputedValues {
+  option (gogoproto.equal) = true;
+
+  Decimal invalidation_log_fail = 1;
+  Decimal invalidation_log_pass = 2;
+  Decimal inactive_log_fail = 3;
+  Decimal inactive_log_pass = 4;
+}

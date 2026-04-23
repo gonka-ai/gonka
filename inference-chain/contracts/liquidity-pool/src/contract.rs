@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
-    StdError, StdResult, Uint128, QueryRequest, StakingQuery, GrpcQuery, ContractResult, SystemResult, WasmMsg,
+    StdError, StdResult, Uint128, Uint256, QueryRequest, GrpcQuery, ContractResult, SystemResult, WasmMsg,
 };
 use prost::Message; // For proto encoding/decoding
 use cw2::{get_contract_version, set_contract_version};
@@ -31,6 +31,20 @@ pub struct QueryValidateWrappedTokenForTradeResponse {
     pub is_valid: bool,
 }
 
+#[derive(Clone, PartialEq, Message)]
+pub struct QueryValidateIbcTokenForTradeRequest {
+    #[prost(string, tag = "1")]
+    pub ibc_denom: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct QueryValidateIbcTokenForTradeResponse {
+    #[prost(bool, tag = "1")]
+    pub is_valid: bool,
+    #[prost(uint32, tag = "2")]
+    pub decimals: u32,
+}
+
 // Proto types for ApprovedTokensForTrade response decoding (for gRPC path)
 #[derive(Clone, PartialEq, Message, serde::Serialize)]
 pub struct BridgeTradeApprovedToken {
@@ -49,6 +63,21 @@ pub struct QueryApprovedTokensForTradeResponseProto {
 // Empty request for endpoints without fields
 #[derive(Clone, PartialEq, Message)]
 pub struct EmptyRequest {}
+
+// CW20 token_info query and response (standard CW20 spec)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Cw20QueryMsg {
+    TokenInfo {},
+}
+
+#[derive(serde::Deserialize)]
+pub struct TokenInfoResponse {
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub total_supply: Uint128,
+}
 
 // Proto types for bank TotalSupply query (to get base denom)
 #[derive(Clone, PartialEq, Message)]
@@ -77,8 +106,7 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Accepts either a raw CW20 address (bech32) or a value prefixed with "cw20:"
 fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Result<bool, ContractError> {
     deps.api.debug(&format!(
-        "LP: validate_wrapped_token_for_trade start token_identifier={}",
-        token_identifier
+        "LP: validate_wrapped_token_for_trade start token_identifier={token_identifier}"
     ));
 
     // For compatibility: allow both "cw20:<bech32>" and raw bech32 addresses
@@ -86,8 +114,7 @@ fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Resul
         .strip_prefix("cw20:")
         .unwrap_or(token_identifier);
     deps.api.debug(&format!(
-        "LP: extracted cw20 contract_address={}",
-        contract_address
+        "LP: extracted cw20 contract_address={contract_address}"
     ));
 
     // Construct the proto request and send via generic helper
@@ -100,7 +127,7 @@ fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Resul
         "/inference.inference.Query/ValidateWrappedTokenForTrade",
         &request,
     )
-    .map_err(|e| ContractError::Std(e))?;
+    .map_err(ContractError::Std)?;
     deps.api.debug(&format!(
         "LP: ValidateWrappedTokenForTrade response is_valid={}",
         response.is_valid
@@ -109,32 +136,40 @@ fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Resul
     Ok(response.is_valid)
 }
 
-// Helper function to get native denomination from bank module
-fn get_native_denom(deps: Deps) -> Result<String, ContractError> {
-    // Query the bank module's total supply to get the base/native denomination
-    // The first coin in total supply is typically the native/base denom
-    let request = QueryTotalSupplyRequest {};
-    
-    match query_proto::<QueryTotalSupplyRequest, QueryTotalSupplyResponse>(
-        deps,
-        "/cosmos.bank.v1beta1.Query/TotalSupply",
-        &request,
-    ) {
-        Ok(response) => {
-            // Get the first coin from total supply, which is the native/base denom
-            if let Some(coin) = response.supply.first() {
-                if !coin.denom.is_empty() {
-                    return Ok(coin.denom.clone());
-                }
-            }
-            // Fall back to default if supply is empty or denom is empty
-            Ok("ngonka".to_string())
-        },
-        Err(_) => {
-            // Fall back to default if query fails
-            Ok("ngonka".to_string())
+// Helper function to validate if a token is a legitimate IBC token for trading
+// Helper to validate IBC token and get decimals
+fn validate_ibc_token_for_trade(deps: Deps, ibc_denom: &str) -> Result<(bool, u32), ContractError> {
+    deps.api.debug(&format!(
+        "LP: validate_ibc_token_for_trade start ibc_denom={ibc_denom}"
+    ));
+
+    #[cfg(test)]
+    {
+        // Mock validation for unit tests to avoid complex gRPC mocking
+        if ibc_denom == "ibc/USDT" {
+            return Ok((true, 6)); // Assume 6 decimals for test
+        }
+        if ibc_denom == "ibc/TEST" {
+            return Ok((true, 6));
         }
     }
+
+    // Construct the proto request
+    let request = QueryValidateIbcTokenForTradeRequest {
+        ibc_denom: ibc_denom.to_string(),
+    };
+    deps.api.debug("LP: issuing query_grpc for ValidateIbcTokenForTrade");
+    let response: QueryValidateIbcTokenForTradeResponse = query_proto(
+        deps,
+        "/inference.inference.Query/ValidateIbcTokenForTrade",
+        &request,
+    )
+    .map_err(ContractError::Std)?;
+    deps.api.debug(&format!(
+        "LP: ValidateIbcTokenForTrade response is_valid={} decimals={}",
+        response.is_valid, response.decimals
+    ));
+    Ok((response.is_valid, response.decimals))
 }
 
 // Helper function to create CW20 transfer message
@@ -144,9 +179,7 @@ fn create_cw20_transfer_msg(
     amount: Uint128,
 ) -> Result<WasmMsg, ContractError> {
     let transfer_msg_str = format!(
-        r#"{{"transfer":{{"recipient":"{}","amount":"{}"}}}}"#,
-        recipient,
-        amount
+        r#"{{"transfer":{{"recipient":"{recipient}","amount":"{amount}"}}}}"#
     );
     
     Ok(WasmMsg::Execute {
@@ -154,6 +187,24 @@ fn create_cw20_transfer_msg(
         msg: Binary::from(transfer_msg_str.as_bytes()),
         funds: vec![],
     })
+}
+
+/// Normalize a token amount to 6-decimal USD value based on the token's decimals.
+/// Assumes 1:1 USD peg for stablecoins (USDT, USDC).
+fn normalize_to_usd(amount: Uint128, decimals: u32) -> Result<Uint128, ContractError> {
+    if decimals == 6 {
+        Ok(amount)
+    } else if decimals < 6 {
+        let factor = 10u128.pow(6 - decimals);
+        amount.checked_mul(Uint128::from(factor)).map_err(|e| {
+            ContractError::Std(StdError::msg(format!("overflow normalizing to usd: {e}")))
+        })
+    } else {
+        let divisor = 10u128.pow(decimals - 6);
+        amount.checked_div(Uint128::from(divisor)).map_err(|e| {
+            ContractError::Std(StdError::msg(format!("overflow normalizing to usd: {e}")))
+        })
+    }
 }
 
 #[entry_point]
@@ -180,8 +231,8 @@ pub fn instantiate(
         _ => String::new(), // No admin
     };
 
-    // Get native denomination from chain
-    let native_denom = get_native_denom(deps.as_ref())?;
+    // Use passed native denomination or default to "ngonka"
+    let native_denom = msg.native_denom.unwrap_or_else(|| "ngonka".to_string());
 
     // Use provided total_supply or default to 0
     let total_supply = msg.total_supply.unwrap_or(Uint128::zero());
@@ -189,9 +240,9 @@ pub fn instantiate(
     let config = Config {
         admin: admin.clone(),
         native_denom: native_denom.clone(),
-        daily_limit_bp: daily_limit_bp,
+        daily_limit_bp,
         is_paused: false,
-        total_supply: total_supply,
+        total_supply,
         total_tokens_sold: Uint128::zero(),
     };
 
@@ -231,24 +282,31 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         ExecuteMsg::Receive(msg) => receive_cw20(deps, env, info, msg),
+        ExecuteMsg::PurchaseWithNative {} => purchase_with_native(deps, env, info),
         ExecuteMsg::Pause {} => pause_contract(deps, info),
         ExecuteMsg::Resume {} => resume_contract(deps, info),
         ExecuteMsg::UpdateDailyLimit { daily_limit_bp } => {
             update_daily_limit(deps, info, daily_limit_bp)
         }
-        ExecuteMsg::WithdrawNativeTokens { amount, recipient } => {
-            withdraw_native_tokens(deps, info, amount, recipient)
+        ExecuteMsg::WithdrawNative { amount, recipient } => {
+            withdraw_native(deps, env, info, amount, recipient)
         }
+        ExecuteMsg::WithdrawIbc {
+            denom,
+            amount,
+            recipient,
+        } => withdraw_ibc(deps, env, info, denom, amount, recipient),
+        ExecuteMsg::WithdrawCw20 {
+            contract_addr,
+            amount,
+            recipient,
+        } => withdraw_cw20(deps, env, info, contract_addr, amount, recipient),
         ExecuteMsg::EmergencyWithdraw { recipient } => emergency_withdraw(deps, env, info, recipient),
         ExecuteMsg::UpdatePricingConfig {
             base_price_usd,
             tokens_per_tier,
             tier_multiplier,
         } => update_pricing_config(deps, info, base_price_usd, tokens_per_tier, tier_multiplier),
-        ExecuteMsg::AddPaymentToken { denom, usd_rate } => {
-            add_payment_token(deps, info, denom, usd_rate)
-        }
-        ExecuteMsg::RemovePaymentToken { denom } => remove_payment_token(deps, info, denom),
     }
 }
 
@@ -276,18 +334,27 @@ fn receive_cw20(
     // The sender (info.sender) is the CW20 contract address
     let cw20_contract = info.sender.to_string();
     deps.api.debug(&format!(
-        "LP: validating wrapped token via chain for cw20={}",
-        cw20_contract
+        "LP: validating wrapped token via chain for cw20={cw20_contract}"
     ));
     
     // CRITICAL: Validate this is a legitimate bridge token for trading by checking the cosmos module
     if !validate_wrapped_token_for_trade(deps.as_ref(), &cw20_contract)? {
         deps.api.debug("LP: validate_wrapped_token_for_trade returned false");
         return Err(ContractError::TokenNotAccepted {
-            token: format!("CW20 contract {} is not a legitimate bridge token approved for trading", cw20_contract),
+            token: format!("CW20 contract {cw20_contract} is not a legitimate bridge token approved for trading"),
         });
     }
     deps.api.debug("LP: validate_wrapped_token_for_trade returned true");
+
+    // Query CW20 token_info for decimals (standard CW20 query)
+    let token_info_response: TokenInfoResponse = deps.querier.query_wasm_smart(
+        &cw20_contract,
+        &Cw20QueryMsg::TokenInfo {},
+    )?;
+    let decimals = token_info_response.decimals;
+    deps.api.debug(&format!(
+        "LP: CW20 token_info decimals={decimals}"
+    ));
 
     // Parse the message to determine what action to take
     deps.api.debug("LP: parsing inner purchase msg");
@@ -307,9 +374,8 @@ fn receive_cw20(
         daily_stats.tokens_sold_today = Uint128::zero();
     }
 
-    // For wrapped bridge tokens, treat amount as micro-USD (1:1 with amount)
-    // This assumes wrapped tokens like USDT have 6 decimals and are USD-pegged
-    let usd_value = token_amount;
+    // Normalize token amount to 6-decimal USD value
+    let usd_value = normalize_to_usd(token_amount, decimals as u32)?;
 
     if usd_value.is_zero() {
         return Err(ContractError::ZeroAmount {});
@@ -325,13 +391,11 @@ fn receive_cw20(
     // Verify we can spend ALL the USD received (no partial spending allowed)
     if actual_usd_to_spend != usd_value {
         deps.api.debug(&format!(
-            "LP: Cannot spend full USD amount - requested: {}, can spend: {}",
-            usd_value, actual_usd_to_spend
+            "LP: Cannot spend full USD amount - requested: {usd_value}, can spend: {actual_usd_to_spend}"
         ));
         // This shouldn't happen with proper multi-tier calculation, but safety check
         return Err(ContractError::Std(StdError::msg(
-            format!("Cannot process full USD amount: requested {}, can only process {}", 
-                    usd_value, actual_usd_to_spend)
+            format!("Cannot process full USD amount: requested {usd_value}, can only process {actual_usd_to_spend}")
         )));
     }
 
@@ -342,7 +406,7 @@ fn receive_cw20(
     // Check daily limit - pure token-based approach
     let daily_token_limit = match config
         .total_supply
-        .checked_mul(Uint128::from(config.daily_limit_bp))
+        .checked_mul(config.daily_limit_bp)
     {
         Ok(amount) => match amount.checked_div(Uint128::from(10000u128)) {
             Ok(limit) => limit,
@@ -393,19 +457,19 @@ fn receive_cw20(
     daily_stats.usd_received_today = daily_stats
         .usd_received_today
         .checked_add(usd_amount_to_track)
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {e}"))))?;
     
     daily_stats.tokens_sold_today = daily_stats
         .tokens_sold_today
         .checked_add(tokens_to_buy)
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {e}"))))?;
     
     let mut updated_config = config;
     // Update total tokens sold (for tier calculation)
     updated_config.total_tokens_sold = updated_config
         .total_tokens_sold
         .checked_add(tokens_to_buy)
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {}", e))))?;
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(format!("overflow: {e}"))))?;
 
     DAILY_STATS.save(deps.storage, &daily_stats)?;
     CONFIG.save(deps.storage, &updated_config)?;
@@ -420,23 +484,10 @@ fn receive_cw20(
     };
 
     // Forward received CW20 tokens to governance module (admin)
-    let mut response = Response::new().add_message(send_native_msg);
+    let response = Response::new().add_message(send_native_msg);
     
-    if !updated_config.admin.is_empty() {
-        let transfer_cw20_msg = create_cw20_transfer_msg(
-            cw20_contract.clone(),
-            updated_config.admin.clone(),
-            token_amount,
-        )?;
-        response = response.add_message(transfer_cw20_msg);
-        deps.api.debug(&format!(
-            "LP: forwarding CW20 tokens to governance admin={} amount={}",
-            updated_config.admin,
-            token_amount
-        ));
-    } else {
-        deps.api.debug("LP: no admin set, CW20 tokens remain in contract");
-    }
+    // CW20 tokens remain in contract balance (safely accumulated)
+    // Admin can withdraw them using WithdrawCw20 message
 
     deps.api.debug("LP: building success response with native send and CW20 forward");
     
@@ -453,6 +504,173 @@ fn receive_cw20(
         .add_attribute("average_price_paid", average_price)
         .add_attribute("tokens_available_today", tokens_available_today)
         .add_attribute("cw20_forwarded_to", updated_config.admin))
+}
+
+fn purchase_with_native(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+) -> Result<Response, ContractError> {
+    deps.api.debug(&format!(
+        "LP: purchase_with_native start sender={}",
+        info.sender
+    ));
+    
+    // Validate funds: expect exactly one coin
+    // This supports specifically approved payment tokens (Native IBC or potential future native tokens)
+    if info.funds.len() != 1 {
+        return Err(ContractError::FundsMissing {});
+    }
+    let payment_coin = &info.funds[0];
+    let denom = payment_coin.denom.clone();
+    // Validate amount fits in Uint128 (since our pricing logic uses Uint128)
+    let amount: Uint128 = payment_coin.amount.try_into()
+        .map_err(|_| ContractError::Std(StdError::msg("Payment amount exceeds Uint128 limit")))?;
+
+    // Load config and pricing
+    let config = CONFIG.load(deps.storage)?;
+    let pricing_config = PRICING_CONFIG.load(deps.storage)?;
+
+    if config.is_paused {
+        return Err(ContractError::ContractPaused {});
+    }
+
+    // SAFEGUARD: Never allow purchasing with the native token itself
+    if denom == config.native_denom {
+        return Err(ContractError::TokenNotAccepted { 
+            token: format!("Cannot purchase {native_denom} with same token", native_denom = config.native_denom)
+        });
+    }
+
+    // DYNAMIC VALIDATION: Only IBC tokens are supported.
+    // Verify it is still approved by the chain and get decimals.
+    if !denom.starts_with("ibc/") {
+         return Err(ContractError::TokenNotAccepted {
+             token: format!("Only IBC tokens are accepted for native purchase. {denom} is not an IBC token"),
+         });
+    }
+
+    let (is_valid, decimals) = validate_ibc_token_for_trade(deps.as_ref(), &denom)?;
+    if !is_valid {
+        return Err(ContractError::TokenNotAccepted {
+            token: format!("Token {denom} is no longer a valid approved IBC token"),
+        });
+    }
+    
+    // Normalize token amount to 6-decimal USD value (1:1 stablecoin peg)
+    let usd_value = normalize_to_usd(amount, decimals)?;
+
+    if usd_value.is_zero() {
+        return Err(ContractError::ZeroAmount {});
+    }
+
+    // Initialize/Load Daily Stats
+    let current_day = env.block.time.seconds() / 86400;
+    let mut daily_stats = DAILY_STATS.load(deps.storage)?;
+
+    if daily_stats.current_day != current_day {
+        daily_stats.current_day = current_day;
+        daily_stats.usd_received_today = Uint128::zero();
+        daily_stats.tokens_sold_today = Uint128::zero();
+    }
+
+    // Calculate purchase
+    let (tokens_to_buy, actual_usd_to_spend, start_tier, end_tier, average_price) = calculate_multi_tier_purchase(
+        usd_value,
+        config.total_tokens_sold,
+        &pricing_config,
+    );
+
+    // Verify full spend
+    if actual_usd_to_spend != usd_value {
+        return Err(ContractError::Std(StdError::msg(
+            format!("Cannot process full payment amount: input value {usd_value}, can only spend {actual_usd_to_spend}")
+        )));
+    }
+
+    if tokens_to_buy.is_zero() {
+        return Err(ContractError::ZeroAmount {});
+    }
+
+    // Check daily limits
+    let daily_token_limit = match config
+        .total_supply
+        .checked_mul(config.daily_limit_bp)
+    {
+        Ok(amount) => match amount.checked_div(Uint128::from(10000u128)) {
+            Ok(limit) => limit,
+            Err(_) => return Err(ContractError::InvalidBasisPoints {
+                value: config.daily_limit_bp,
+            }),
+        },
+        Err(_) => return Err(ContractError::InvalidBasisPoints {
+            value: config.daily_limit_bp,
+        }),
+    };
+
+    let tokens_available_today = daily_token_limit
+        .checked_sub(daily_stats.tokens_sold_today)
+        .unwrap_or_default();
+
+    if tokens_to_buy > tokens_available_today {
+        return Err(ContractError::DailyLimitExceeded {
+            available: tokens_available_today.u128(),
+            requested: tokens_to_buy.u128(),
+        });
+    }
+
+    // Check contract balance for native token (ngonka)
+    let contract_balance = deps
+        .querier
+        .query_balance(env.contract.address.to_string(), config.native_denom.as_str())?;
+    
+    if Uint256::from(tokens_to_buy) > contract_balance.amount {
+        let available_u128 = match Uint128::try_from(contract_balance.amount) {
+            Ok(v) => v.u128(),
+            Err(_) => u128::MAX,
+        };
+        return Err(ContractError::InsufficientBalance {
+            available: available_u128,
+            needed: tokens_to_buy.u128(),
+        });
+    }
+
+    // Update State
+    daily_stats.usd_received_today += usd_value;
+    daily_stats.tokens_sold_today += tokens_to_buy;
+    
+    let mut updated_config = config.clone();
+    updated_config.total_tokens_sold += tokens_to_buy;
+
+    DAILY_STATS.save(deps.storage, &daily_stats)?;
+    CONFIG.save(deps.storage, &updated_config)?;
+
+    // Execute Transfers
+    // 1. Send purchased native tokens to buyer
+    let send_purchase_msg = BankMsg::Send {
+        to_address: info.sender.to_string(),
+        amount: vec![Coin {
+            denom: updated_config.native_denom.clone(),
+            amount: tokens_to_buy.into(),
+        }],
+    };
+
+    let response = Response::new().add_message(send_purchase_msg);
+
+    // 2. Forward received payment tokens to admin
+    // Payment tokens remain in contract balance (safely accumulated)
+    // Admin can withdraw them using WithdrawIbc message
+
+    Ok(response
+        .add_attribute("method", "purchase_with_native")
+        .add_attribute("buyer", info.sender)
+        .add_attribute("payment_token", denom)
+        .add_attribute("payment_amount", amount)
+        .add_attribute("tokens_purchased", tokens_to_buy)
+        .add_attribute("usd_value", usd_value)
+        .add_attribute("start_tier", start_tier.to_string())
+        .add_attribute("end_tier", end_tier.to_string())
+        .add_attribute("average_price", average_price))
 }
 
 fn pause_contract(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
@@ -512,8 +730,9 @@ fn update_daily_limit(
         .add_attribute("admin", info.sender))
 }
 
-fn withdraw_native_tokens(
+fn withdraw_native(
     deps: DepsMut,
+    _env: Env,
     info: MessageInfo,
     amount: Uint128,
     recipient: String,
@@ -540,7 +759,80 @@ fn withdraw_native_tokens(
 
     Ok(Response::new()
         .add_message(send_msg)
-        .add_attribute("method", "withdraw_native_tokens")
+        .add_attribute("method", "withdraw_native")
+        .add_attribute("amount", amount)
+        .add_attribute("recipient", recipient)
+        .add_attribute("admin", info.sender))
+}
+
+fn withdraw_ibc(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    denom: String,
+    amount: Uint128,
+    recipient: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    if config.admin.is_empty() || info.sender.as_str() != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let recipient_addr = deps.api.addr_validate(&recipient)?;
+
+    if amount.is_zero() {
+        return Err(ContractError::ZeroAmount {});
+    }
+
+    let send_msg = BankMsg::Send {
+        to_address: recipient_addr.to_string(),
+        amount: vec![Coin {
+            denom: denom.clone(),
+            amount: amount.into(),
+        }],
+    };
+
+    Ok(Response::new()
+        .add_message(send_msg)
+        .add_attribute("method", "withdraw_ibc")
+        .add_attribute("denom", denom)
+        .add_attribute("amount", amount)
+        .add_attribute("recipient", recipient)
+        .add_attribute("admin", info.sender))
+}
+
+fn withdraw_cw20(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    contract_addr: String,
+    amount: Uint128,
+    recipient: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    if config.admin.is_empty() || info.sender.as_str() != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    deps.api.addr_validate(&contract_addr)?;
+    let recipient_addr = deps.api.addr_validate(&recipient)?;
+
+    if amount.is_zero() {
+        return Err(ContractError::ZeroAmount {});
+    }
+
+    let transfer_msg = create_cw20_transfer_msg(
+        contract_addr.clone(),
+        recipient_addr.to_string(),
+        amount,
+    )?;
+
+    Ok(Response::new()
+        .add_message(transfer_msg)
+        .add_attribute("method", "withdraw_cw20")
+        .add_attribute("contract_addr", contract_addr)
         .add_attribute("amount", amount)
         .add_attribute("recipient", recipient)
         .add_attribute("admin", info.sender))
@@ -580,7 +872,7 @@ fn emergency_withdraw(
         .add_message(send_msg)
         .add_attribute("method", "emergency_withdraw")
         .add_attribute("recipient", recipient)
-        .add_attribute("withdrawn_funds", format!("{:?}", balance))
+        .add_attribute("withdrawn_funds", format!("{balance:?}"))
         .add_attribute("admin", info.sender))
 }
 
@@ -629,57 +921,6 @@ fn update_pricing_config(
         .add_attribute("admin", info.sender))
 }
 
-fn add_payment_token(
-    deps: DepsMut,
-    info: MessageInfo,
-    denom: String,
-    usd_rate: Uint128,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    if config.admin.is_empty() || info.sender.as_str() != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    if usd_rate.is_zero() {
-        return Err(ContractError::InvalidExchangeRate { token: denom });
-    }
-
-    // CRITICAL SECURITY CHECK: Verify this is a legitimate bridge token for trading
-    if !validate_wrapped_token_for_trade(deps.as_ref(), &denom)? {
-        return Err(ContractError::TokenNotAccepted {
-            token: format!("Token {} is not a legitimate bridge token approved for trading", denom),
-        });
-    }
-
-    // PAYMENT_TOKENS.save(deps.storage, denom.clone(), &usd_rate)?; // This line is removed
-
-    Ok(Response::new()
-        .add_attribute("method", "add_payment_token")
-        .add_attribute("token", denom)
-        .add_attribute("usd_rate", usd_rate)
-        .add_attribute("bridge_token_validated", "true")
-        .add_attribute("admin", info.sender))
-}
-
-fn remove_payment_token(
-    deps: DepsMut,
-    info: MessageInfo,
-    denom: String,
-) -> Result<Response, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    if config.admin.is_empty() || info.sender.as_str() != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // PAYMENT_TOKENS.remove(deps.storage, denom.clone()); // This line is removed
-
-    Ok(Response::new()
-        .add_attribute("method", "remove_payment_token")
-        .add_attribute("token", denom)
-        .add_attribute("admin", info.sender))
-}
 
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -721,14 +962,7 @@ pub fn migrate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
         .map_err(|e| ContractError::Std(cosmwasm_std::StdError::msg(e.to_string())))?;
 
-    // Update stored native_denom to the correct value from chain
-    // This fixes any incorrect stored values and avoids expensive queries on every execution
-    let mut config = CONFIG.load(deps.storage)?;
-    let correct_native_denom = get_native_denom(deps.as_ref())?;
-    if config.native_denom != correct_native_denom {
-        config.native_denom = correct_native_denom.clone();
-        CONFIG.save(deps.storage, &config)?;
-    }
+    // native_denom is no longer updated during migrate since it's set on instantiation.
 
     Ok(Response::new()
         .add_attribute("action", "migrate")
@@ -748,33 +982,13 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
 }
 
 fn query_test_bridge_validation(deps: Deps, cw20_contract: String) -> StdResult<TestBridgeValidationResponse> {
-    // Accept either raw cw20 address or prefixed cw20:<addr>
-    let denom = if cw20_contract.starts_with("cw20:") {
-        cw20_contract
-    } else {
-        format!("cw20:{}", cw20_contract)
-    };
-    let is_valid = validate_wrapped_token_for_trade(deps, &denom).unwrap_or(false);
+    // Pass directly to the validator which handles both prefixed and raw addresses
+    let is_valid = validate_wrapped_token_for_trade(deps, &cw20_contract).unwrap_or(false);
     Ok(TestBridgeValidationResponse { is_valid })
 }
 
 fn query_block_height(env: Env) -> StdResult<BlockHeightResponse> {
     Ok(BlockHeightResponse { height: env.block.height })
-}
-
-fn query_test_approved_tokens(deps: Deps) -> StdResult<ApprovedTokensForTradeJson> {
-    // Empty request protobuf
-    let decoded: QueryApprovedTokensForTradeResponseProto = query_proto(
-        deps,
-        "/inference.inference.Query/ApprovedTokensForTrade",
-        &EmptyRequest::default(),
-    )?;
-    let approved_tokens = decoded
-        .approved_tokens
-        .into_iter()
-        .map(|t| ApprovedTokenJson { chain_id: t.chain_id, contract_address: t.contract_address })
-        .collect();
-    Ok(ApprovedTokensForTradeJson { approved_tokens })
 }
 
 // Generic helpers for gRPC queries using raw_query serialization pattern
@@ -809,10 +1023,10 @@ where
     let mut buf = Vec::new();
     request
         .encode(&mut buf)
-        .map_err(|e| StdError::msg(format!("Encode request: {}", e)))?;
+        .map_err(|e| StdError::msg(format!("Encode request: {e}")))?;
     let bytes = query_grpc(deps, path, Binary::from(buf))?;
     TResponse::decode(bytes.as_slice())
-        .map_err(|e| StdError::msg(format!("Decode response: {}", e)))
+        .map_err(|e| StdError::msg(format!("Decode response: {e}")))
 }
 
 fn query_daily_stats(deps: Deps, env: Env) -> StdResult<DailyStatsResponse> {
@@ -830,7 +1044,7 @@ fn query_daily_stats(deps: Deps, env: Env) -> StdResult<DailyStatsResponse> {
 
     let daily_token_limit = config
         .total_supply
-        .checked_mul(Uint128::from(config.daily_limit_bp))
+        .checked_mul(config.daily_limit_bp)
         .map(|x| x.checked_div(Uint128::from(10000u128)).unwrap_or_default())
         .unwrap_or_default();
 
@@ -908,6 +1122,21 @@ fn query_calculate_tokens(deps: Deps, usd_amount: Uint128) -> StdResult<TokenCal
     })
 }
 
+fn query_test_approved_tokens(deps: Deps) -> StdResult<ApprovedTokensForTradeJson> {
+    // Empty request protobuf
+    let decoded: QueryApprovedTokensForTradeResponseProto = query_proto(
+        deps,
+        "/inference.inference.Query/ApprovedTokensForTrade",
+        &EmptyRequest::default(),
+    )?;
+    let approved_tokens = decoded
+        .approved_tokens
+        .into_iter()
+        .map(|t| ApprovedTokenJson { chain_id: t.chain_id, contract_address: t.contract_address })
+        .collect();
+    Ok(ApprovedTokensForTradeJson { approved_tokens })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,14 +1148,16 @@ mod tests {
     fn proper_instantiation() {
         let mut deps = mock_dependencies();
         let env = mock_env();
+        let admin_addr = deps.api.addr_make("admin").to_string();
 
         let msg = InstantiateMsg {
-            admin: Some("admin".to_string()),
+            admin: Some(admin_addr),
             daily_limit_bp: Some(Uint128::from(100u128)), // 1%
             base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
             tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
+            native_denom: Some("ngonka".to_string()),
         };
 
         let info = MessageInfo {
@@ -942,15 +1173,17 @@ mod tests {
     fn test_pause_resume() {
         let mut deps = mock_dependencies();
         let env = mock_env();
+        let admin_addr = deps.api.addr_make("admin").to_string();
 
         // Instantiate
         let msg = InstantiateMsg {
-            admin: Some("admin".to_string()),
+            admin: Some(admin_addr.clone()),
             daily_limit_bp: Some(Uint128::from(100u128)),
             base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
             tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
+            native_denom: Some("ngonka".to_string()),
         };
 
         let info = MessageInfo {
@@ -962,7 +1195,7 @@ mod tests {
         // Pause
         let pause_msg = ExecuteMsg::Pause {};
         let info = MessageInfo {
-            sender: Addr::unchecked("admin"),
+            sender: Addr::unchecked(&admin_addr),
             funds: vec![], // same as &[] before
         };
         execute(deps.as_mut(), env.clone(), info, pause_msg).unwrap();
@@ -975,7 +1208,7 @@ mod tests {
         // Resume
         let resume_msg = ExecuteMsg::Resume {};
         let info = MessageInfo {
-            sender: Addr::unchecked("admin"),
+            sender: Addr::unchecked(&admin_addr),
             funds: vec![], // same as &[] before
         };
         execute(deps.as_mut(), env.clone(), info, resume_msg).unwrap();
@@ -990,15 +1223,17 @@ mod tests {
     fn test_usd_based_tier_calculation() {
         let mut deps = mock_dependencies();
         let env = mock_env();
+        let admin_addr = deps.api.addr_make("admin").to_string();
 
         // Instantiate with known values
         let msg = InstantiateMsg {
-            admin: Some("admin".to_string()),
+            admin: Some(admin_addr),
             daily_limit_bp: Some(Uint128::from(1000u128)), // 10%
             base_price_usd: Some(Uint128::from(25000u128)), // $0.025 with 6 decimals for USD
             tokens_per_tier: Some(Uint128::from(3_000_000_000_000_000u128)), // 3 million tokens per tier (9 decimals)
             tier_multiplier: Some(Uint128::from(1300u128)), // 1.3x
             total_supply: Some(Uint128::from(120_000_000_000_000_000u128)), // 120M tokens
+            native_denom: Some("ngonka".to_string()),
         };
 
         let info = MessageInfo {
@@ -1018,7 +1253,7 @@ mod tests {
         // $100 should be in tier 0 (before first tier)
         assert_eq!(response.current_tier, 0);
         assert_eq!(response.current_price, Uint128::from(25000u128)); // $0.025
-        assert_eq!(response.tokens, Uint128::from(4_000_000_000u128)); // 4000 tokens for $100 (100,000,000 * 1,000,000 / 25,000)
+        assert_eq!(response.tokens, Uint128::from(4_000_000_000_000u128)); // 4000 tokens (9 decimals)
     }
 
     #[test]
@@ -1067,5 +1302,74 @@ mod tests {
         // Average price should be between $0.025 and $0.0325
         assert!(avg_price > Uint128::from(25000u128)); // > $0.025
         assert!(avg_price < Uint128::from(32500u128)); // < $0.0325
+    }
+
+
+    #[test]
+    fn test_purchase_with_ibc_stablecoin() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let admin_addr = deps.api.addr_make("admin").to_string();
+        let info = MessageInfo {
+            sender: Addr::unchecked(&admin_addr),
+            funds: vec![],
+        };
+
+        // Instantiate
+        let instantiate_msg = InstantiateMsg {
+            admin: Some(admin_addr),
+            daily_limit_bp: None,
+            base_price_usd: None,
+            tokens_per_tier: None,
+            tier_multiplier: None,
+            total_supply: Some(Uint128::from(100_000_000_000_000u128)),
+            native_denom: Some("ngonka".to_string()),
+        };
+        instantiate(deps.as_mut(), env.clone(), info.clone(), instantiate_msg).unwrap();
+
+        // Setup: Add a Stablecoin (USDT) via IBC
+        // Token: ibc/USDT
+        // DYNAMIC VALIDATION: We DO NOT add to PAYMENT_TOKENS map.
+        // The contract should validate it via validate_ibc_token_for_trade (mocked to return true and 6 decimals).
+        
+        // Rate calculation:
+        // Mock returns 6 decimals.
+        // Logic: if decimals == 6 -> value = amount.
+        
+        // Test Purchase
+        // User sends 10 USDT (10 * 1e6 = 10,000,000 uUSDT)
+        // USD Value = 10,000,000 micro-USD = $10.
+        // Price per token = $0.025 (25,000 uUSD).
+        // Tokens bought = 10,000,000 / 25,000 = 400 tokens.
+        // 400 tokens * 1e9 (decimals) = 400_000_000_000.
+        
+        let purchase_info = MessageInfo {
+            sender: Addr::unchecked("buyer"),
+            funds: coins(10_000_000, "ibc/USDT"),
+        };
+        
+        // Mock contract balance (needed for balance check)
+        deps.querier.bank.update_balance(env.contract.address.clone(), coins(1_000_000_000_000_000, "ngonka"));
+
+        let res = execute(
+            deps.as_mut(), 
+            env.clone(), 
+            purchase_info, 
+            ExecuteMsg::PurchaseWithNative {}
+        ).unwrap();
+
+        // access attributes to verify
+        let attrs: HashMap<String, String> = res.attributes.into_iter()
+            .map(|a| (a.key, a.value))
+            .collect();
+        
+        assert_eq!(attrs.get("method"), Some(&"purchase_with_native".to_string()));
+        assert_eq!(attrs.get("payment_token"), Some(&"ibc/USDT".to_string()));
+        assert_eq!(attrs.get("payment_amount"), Some(&"10000000".to_string()));
+        assert_eq!(attrs.get("usd_value"), Some(&"10000000".to_string())); // $10
+        assert_eq!(attrs.get("tokens_purchased"), Some(&"400000000000".to_string())); // 400 tokens
+        
+        // Verify messages: 1 to buyer (tokens purchased). Payment stays in contract.
+        assert_eq!(res.messages.len(), 1);
     }
 } 

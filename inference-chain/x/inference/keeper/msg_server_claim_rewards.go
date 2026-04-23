@@ -20,7 +20,13 @@ import (
 const maxInferenceSampleSize = 10000
 
 func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimRewards) (*types.MsgClaimRewardsResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
+		return nil, err
+	}
+	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
+	if err != nil {
+		return nil, err
+	}
 
 	settleAmount, response := k.validateRequest(ctx, msg)
 	if response != nil {
@@ -29,20 +35,30 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	}
 	k.LogInfo("Validate request succeeded", types.Claims, "account", msg.Creator, "settleAmount", settleAmount)
 
-	response, err := k.validateClaim(ctx, msg, settleAmount)
+	params, err := k.GetParams(ctx)
 	if err != nil {
-		k.LogError("Claim validation failed", types.Claims, "error", err, "account", msg.Creator)
-		return response, nil
+		k.LogError("GetParams failed in claim", types.Claims, "error", err, "account", msg.Creator)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Internal error loading params",
+		}, nil
 	}
-	k.LogDebug("Claim verified", types.Claims, "account", msg.Creator, "seed", msg.Seed)
-
-	response, err = k.payoutClaim(ctx, msg, settleAmount)
-	if err != nil {
-		k.LogError("Claim payout failed", types.Claims, "error", err, "account", msg.Creator)
-		return response, nil
+	if params.ValidationParams != nil && params.ValidationParams.ClaimValidationEnabled {
+		validationResponse, validationErr := k.validateClaim(ctx, msg, settleAmount)
+		if validationErr != nil {
+			k.LogError("Claim validation failed", types.Claims, "error", validationErr, "account", msg.Creator)
+			return validationResponse, nil
+		}
+		k.LogDebug("Claim verified", types.Claims, "account", msg.Creator, "seed", msg.Seed)
 	}
 
-	return response, nil
+	payoutResponse, payoutErr := k.payoutClaim(ctx, msg, settleAmount)
+	if payoutErr != nil {
+		k.LogError("Claim payout failed", types.Claims, "error", payoutErr, "account", msg.Creator)
+		return payoutResponse, nil
+	}
+
+	return payoutResponse, nil
 }
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
@@ -128,17 +144,24 @@ func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmou
 }
 
 func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) (*types.SettleAmount, *types.MsgClaimRewardsResponse) {
-	currentEpoch, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogError("GetCurrentEpoch failed", types.Claims, "error", err)
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("GetEffectiveEpochIndex failed", types.Claims)
 		return nil, &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Can't validate claim, current epoch group not found",
 		}
 	}
+	if currentEpochIndex == 0 {
+		k.LogError("Current epoch index is zero, cannot validate previous-epoch claim", types.Claims, "epoch", msg.EpochIndex)
+		return nil, &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Can't validate claim, current epoch group does not match previous epoch",
+		}
+	}
 
-	if (currentEpoch.GroupData.EpochIndex - 1) != msg.EpochIndex {
-		k.LogError("Current epoch group does not match previous epoch", types.Claims, "epoch", msg.EpochIndex, "currentEpoch", currentEpoch.GroupData.EpochIndex)
+	if (currentEpochIndex - 1) != msg.EpochIndex {
+		k.LogError("Current epoch does not match previous epoch", types.Claims, "epoch", msg.EpochIndex, "currentEpoch", currentEpochIndex)
 		return nil, &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Can't validate claim, current epoch group does not match previous epoch",

@@ -1,1 +1,1 @@
-d3a39d1da9fb38a6cd8b8fd1b2aee6c7697ae03b45b08375ab7f94a2a95d36fd  community_sale.wasm
+fdcf7a3f4b07bdbae457602aa5dc0692bfbcef170f82b621770c55fbed407535  community_sale.wasm

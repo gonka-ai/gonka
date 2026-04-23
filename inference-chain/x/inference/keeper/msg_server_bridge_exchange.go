@@ -26,6 +26,9 @@ func PubKeyToAddress(pubKey string) (string, error) {
 }
 
 func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExchange) (*types.MsgBridgeExchangeResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("Bridge exchange: Processing transaction request", types.Messages,
@@ -51,17 +54,12 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	// Check if the validator account exists
-	acc := k.AccountKeeper.GetAccount(ctx, addr)
-	if acc == nil {
-		k.LogError("Bridge exchange: Account not found for validator", types.Messages, "validator", msg.Validator)
-		return nil, fmt.Errorf("account not found for validator")
-	}
-
 	// Create transaction object with all the content for secure validation
+	// ContractAddress is normalized to lowercase to ensure consistent dedup and comparison
+	// regardless of EIP-55 checksum casing used by individual validator nodes.
 	proposedTx := &types.BridgeTransaction{
 		ChainId:         msg.OriginChain,
-		ContractAddress: msg.ContractAddress,
+		ContractAddress: strings.ToLower(msg.ContractAddress),
 		OwnerAddress:    msg.OwnerAddress,
 		Amount:          msg.Amount,
 		BlockNumber:     msg.BlockNumber,

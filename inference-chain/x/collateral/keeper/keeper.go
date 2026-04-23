@@ -12,6 +12,7 @@ import (
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 
 	"github.com/productscience/inference/x/collateral/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -365,10 +366,17 @@ func (k Keeper) GetAllJailed(ctx sdk.Context) ([]sdk.AccAddress, error) {
 	return iter.Keys()
 }
 
-// Slash penalizes a participant by burning a fraction of their total collateral.
+// Slash penalizes a participant by burning a fraction of their collateral.
 // This includes both their active collateral and any collateral in the unbonding queue.
-// The slash is applied proportionally to all holdings.
-func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, slashFraction math.LegacyDec, reason string) (sdk.Coin, error) {
+// The slash is applied proportionally to all holdings, and the slashed coins are transferred
+// from the collateral module account to the governance module account
+//
+// When requiredCollateral is positive, the slash target is calculated as
+// requiredCollateral × slashFraction, capped at the total actual collateral.
+// This prevents over-depositors from being penalized more than the amount
+// required for their weight. When requiredCollateral is zero the legacy
+// behaviour is preserved (fraction applied to the entire actual balance).
+func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, slashFraction math.LegacyDec, reason string, requiredCollateral math.Int) (sdk.Coin, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	if slashFraction.IsNegative() || slashFraction.GT(math.LegacyOneDec()) {
 		return sdk.Coin{}, fmt.Errorf("slash fraction must be between 0 and 1, got %s", slashFraction)
@@ -378,12 +386,40 @@ func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, sl
 		return sdk.Coin{}, err
 	}
 
+	// Gather total actual collateral (active + unbonding).
+	totalActual := math.ZeroInt()
+	activeCollateral, activeFound := k.GetCollateral(ctx, participantAddress)
+	if activeFound {
+		totalActual = totalActual.Add(activeCollateral.Amount)
+	}
+	unbondingEntries, err := k.GetUnbondingByParticipant(sdkCtx, participantAddress)
+	if err != nil {
+		return sdk.Coin{}, err
+	}
+	for _, entry := range unbondingEntries {
+		totalActual = totalActual.Add(entry.Amount.Amount)
+	}
+
+	// Determine the effective fraction to apply.
+	// If requiredCollateral is provided and smaller than totalActual, scale the
+	// fraction so that the total slash equals requiredCollateral × slashFraction.
+	effectiveFraction := slashFraction
+	if requiredCollateral.IsPositive() && totalActual.IsPositive() {
+		// slashTarget = min(requiredCollateral, totalActual) × slashFraction
+		base := math.MinInt(requiredCollateral, totalActual)
+		slashTarget := math.LegacyNewDecFromInt(base).Mul(slashFraction)
+		// effectiveFraction = slashTarget / totalActual
+		effectiveFraction = slashTarget.Quo(math.LegacyNewDecFromInt(totalActual))
+		if effectiveFraction.GT(math.LegacyOneDec()) {
+			effectiveFraction = math.LegacyOneDec()
+		}
+	}
+
 	totalSlashedAmount := sdk.NewCoin(inferencetypes.BaseCoin, math.ZeroInt())
 
 	// 1. Slash active collateral
-	activeCollateral, found := k.GetCollateral(ctx, participantAddress)
-	if found {
-		slashAmountDec := math.LegacyNewDecFromInt(activeCollateral.Amount).Mul(slashFraction)
+	if activeFound {
+		slashAmountDec := math.LegacyNewDecFromInt(activeCollateral.Amount).Mul(effectiveFraction)
 		slashAmount := sdk.NewCoin(activeCollateral.Denom, slashAmountDec.TruncateInt())
 
 		if !slashAmount.IsZero() {
@@ -396,12 +432,8 @@ func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, sl
 	}
 
 	// 2. Slash unbonding collateral
-	unbondingEntries, err := k.GetUnbondingByParticipant(sdkCtx, participantAddress)
-	if err != nil {
-		return sdk.Coin{}, err
-	}
 	for _, entry := range unbondingEntries {
-		slashAmountDec := math.LegacyNewDecFromInt(entry.Amount.Amount).Mul(slashFraction)
+		slashAmountDec := math.LegacyNewDecFromInt(entry.Amount.Amount).Mul(effectiveFraction)
 		slashAmount := sdk.NewCoin(entry.Amount.Denom, slashAmountDec.TruncateInt())
 
 		if !slashAmount.IsZero() {
@@ -429,12 +461,13 @@ func (k Keeper) Slash(ctx context.Context, participantAddress sdk.AccAddress, sl
 		}
 	}
 
-	// 3. Burn the total slashed amount from the module account
+	// 3. Redirect the total slashed amount to governance
 	if !totalSlashedAmount.IsZero() {
-		err := k.bookkeepingBankKeeper.BurnCoins(sdkCtx, types.ModuleName, sdk.NewCoins(totalSlashedAmount), "collateral_slashed:"+reason)
+		memo := "collateral_slashed:" + reason
+		err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(sdkCtx, types.ModuleName, govtypes.ModuleName, sdk.NewCoins(totalSlashedAmount), memo)
 		if err != nil {
-			// This is a critical error, indicating an issue with the module account or supply
-			return sdk.Coin{}, fmt.Errorf("failed to burn slashed coins: %w", err)
+			// This is a critical error, indicating an issue with module accounts or bank module.
+			return sdk.Coin{}, fmt.Errorf("failed to transfer slashed coins to governance: %w", err)
 		}
 
 		if key != nil {

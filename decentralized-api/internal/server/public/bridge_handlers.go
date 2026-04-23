@@ -114,6 +114,12 @@ func (q *BridgeQueue) GetPendingBlocks() []BridgeBlock {
 	return result
 }
 
+func (q *BridgeQueue) GetQueueSize() int {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	return len(q.pendingBlocks)
+}
+
 // Init sets up the queue processing
 func (q *BridgeQueue) init() {
 	ticker := time.NewTicker(5 * time.Minute) // Process every 5 minutes regardless
@@ -308,7 +314,7 @@ func (s *Server) postBlock(c echo.Context) error {
 		Message:       "Block queued for processing",
 		BlockNumber:   blockNumber,
 		ReceiptsCount: len(blockData.Receipts),
-		QueueSize:     len(s.blockQueue.pendingBlocks),
+		QueueSize:     s.blockQueue.GetQueueSize(),
 	})
 }
 

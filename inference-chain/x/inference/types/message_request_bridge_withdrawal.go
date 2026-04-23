@@ -2,6 +2,7 @@ package types
 
 import (
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 )
@@ -30,9 +31,13 @@ func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid user address (%s)", err)
 	}
 
-	// Validate amount is not empty
-	if len(msg.Amount) == 0 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount cannot be empty")
+	// Validate amount is a positive integer
+	amountInt, ok := math.NewIntFromString(msg.Amount)
+	if !ok {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be a valid integer")
+	}
+	if !amountInt.IsPositive() {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be positive")
 	}
 
 	// Validate destination address is not empty (Ethereum address format not validated here)
@@ -41,13 +46,4 @@ func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
 	}
 
 	return nil
-}
-
-func (msg *MsgRequestBridgeWithdrawal) GetSigners() []sdk.AccAddress {
-	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
-		//nolint:forbidigo // GetSigners can't return error
-		return nil
-	}
-	return []sdk.AccAddress{creatorAddr}
 }

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
@@ -45,7 +46,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 		authorization := grant.Authorization.GetCachedValue()
 
 		if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
-			if genericAuth.Msg == req.MessageTypeUrl {
+			if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(req.MessageTypeUrl, "/") {
 				granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
 				if err != nil {
 					k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)
