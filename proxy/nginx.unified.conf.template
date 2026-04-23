@@ -90,6 +90,12 @@ http {
     # Dashboard upstream - only included if DASHBOARD_PORT is set
     ${DASHBOARD_UPSTREAM}
 
+    # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
+    # Routes /devshard/<version>/* to versiond which forwards to the matching
+    # devshard binary. /v1/devshard/* still goes to the api backend (legacy
+    # in-process HostManager).
+    ${VERSIOND_UPSTREAM}
+
     # Enable gzip compression
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
@@ -138,6 +144,9 @@ http {
 
         # Exempt Routes (High Performance)
         ${EXEMPT_ROUTES_CONFIG}
+
+        # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
+        ${DEVSHARD_VERSIOND_LOCATION}
 
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
