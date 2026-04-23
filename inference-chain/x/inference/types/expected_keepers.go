@@ -136,6 +136,9 @@ type BlsKeeper interface {
 	// DKG methods
 	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
 	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, error)
+	// Params
+	GetParams(ctx context.Context) (blstypes.Params, error)
+
 	// ActiveEpochID tracks the epoch that is currently undergoing the DKG process
 	SetActiveEpochID(ctx sdk.Context, epochID uint64)
 	GetActiveEpochID(ctx sdk.Context) (uint64, bool)

@@ -54,6 +54,21 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 		return fmt.Errorf("failed to assign slots: %w", err)
 	}
 
+	// Validate shape constraints before initiating
+	if len(blsParticipants) > types.MaxEncryptedSharesParticipantsCount {
+		return fmt.Errorf("number of participants %d exceeds maximum %d", len(blsParticipants), types.MaxEncryptedSharesParticipantsCount)
+	}
+	if tSlotsDegree+1 > uint32(types.MaxDealerPartCommitmentsCount) {
+		return fmt.Errorf("tSlotsDegree+1 (%d) exceeds maximum commitments count %d", tSlotsDegree+1, types.MaxDealerPartCommitmentsCount)
+	}
+
+	for _, p := range blsParticipants {
+		_, err := expectedEncryptedSharesCount(p)
+		if err != nil {
+			return fmt.Errorf("failed to validate encrypted share bounds for %s: %w", p.Address, err)
+		}
+	}
+
 	// Calculate phase deadlines
 	currentHeight := ctx.BlockHeight()
 	dealingPhaseDeadline := currentHeight + params.DealingPhaseDurationBlocks
