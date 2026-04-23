@@ -120,8 +120,6 @@ else
     echo "   SSL: Disabled"
 fi
 
-<<<<<<< HEAD
-=======
 # Versiond upstream. The matching /devshard/ location is defined later (after
 # streaming, conn-limit, CORS and timeout vars are set).
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
@@ -134,7 +132,6 @@ else
     export VERSIOND_UPSTREAM="# devshard proxy disabled"
 fi
 
->>>>>>> 271f0f705 (proxy setup)
 if [ "$DASHBOARD_ENABLED" = "true" ]; then
     echo "   DASHBOARD_PORT: $DASHBOARD_PORT (enabled)"
     echo "Dashboard: Enabled - root path will proxy to explorer"
