@@ -1,10 +1,25 @@
-export KEY_NAME="join-2"
-export PUBLIC_URL="http://89.169.110.250:8000"
-export P2P_EXTERNAL_ADDRESS="tcp://89.169.110.250:5000"
-export SYNC_WITH_SNAPSHOTS="false"
-export DAPI_API__POC_CALLBACK_URL="http://api:9100"
-export CHAIN_ID="gonka-testnet"
-export HF_HOME="/srv/dai/cache/"
-export TESTNET_BASE_DIR="/srv/dai/"
+#!/usr/bin/env bash
+set -euo pipefail
 
-python3 launch.py --mode join --branch origin/testnet/main --chainid "$CHAIN_ID"
+if [ -f ".env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source ./.env
+  set +a
+fi
+
+export KEY_NAME="${KEY_NAME:-join-2}"
+export COLD_KEY_MNEMONIC="${COLD_KEY_MNEMONIC:-${JOIN2_COLD_KEY_MNEMONIC:-}}"
+export DOMAIN="${DOMAIN:-${PUBLIC_DOMAIN:-xj7-5.s.filfox.io}}"
+export API_PORT="${API_PORT:-${JOIN2_INTERNAL_API_PORT:-8000}}"
+export PUBLIC_API_PORT="${PUBLIC_API_PORT:-${JOIN2_API_PORT:-19252}}"
+export P2P_PORT="${P2P_PORT:-${JOIN2_P2P_PORT:-19251}}"
+export PUBLIC_URL="http://${DOMAIN}:${PUBLIC_API_PORT}"
+export P2P_EXTERNAL_ADDRESS="tcp://${DOMAIN}:${P2P_PORT}"
+export SYNC_WITH_SNAPSHOTS="${SYNC_WITH_SNAPSHOTS:-false}"
+export DAPI_API__POC_CALLBACK_URL="${DAPI_API__POC_CALLBACK_URL:-http://api:9100}"
+export CHAIN_ID="${CHAIN_ID:-gonka-testnet-3}"
+export HF_HOME="${HF_HOME:-/srv/dai/cache/}"
+export TESTNET_BASE_DIR="${TESTNET_BASE_DIR:-${DEPLOY_DIR:-/srv/dai/}}"
+
+python3 launch.py --mode join --branch "${REPO_BRANCH:-origin/testnet/main}" --chainid "$CHAIN_ID"

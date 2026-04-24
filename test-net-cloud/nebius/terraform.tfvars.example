@@ -1,0 +1,31 @@
+ssh_private_key_path = "~/.ssh/id_ed25519_engenious"
+ssh_user             = "decentai"
+
+# These defaults match the current Filfox/Nebius testnet.
+public_domain       = "xj7-5.s.filfox.io"
+chain_id            = "gonka-testnet-3"
+repo_branch         = "origin/testnet/main"
+deploy_dir          = "/srv/dai"
+hf_home             = "/srv/dai/cache/"
+keyring_password    = "12345678"
+genesis_key_name    = "gonka-account-key"
+
+genesis_internal_ip = "172.18.114.113"
+join_1_internal_ip  = "172.18.114.125"
+join_2_internal_ip  = "172.18.114.105"
+
+genesis_ssh_port    = 18220
+join_1_ssh_port     = 18225
+join_2_ssh_port     = 18226
+
+genesis_p2p_port    = 19239
+genesis_api_port    = 19240
+join_1_p2p_port     = 19249
+join_1_api_port     = 19250
+join_2_p2p_port     = 19251
+join_2_api_port     = 19252
+
+# Platform forwards public API ports to these internal host ports.
+genesis_internal_api_port = 8000
+join_1_internal_api_port  = 8000
+join_2_internal_api_port  = 8000

@@ -1,5 +1,17 @@
 {
   "app_state": {
+    "bls": {
+      "params": {
+        "i_total_slots": 100,
+        "t_slots_degree_offset": 50,
+        "dealing_phase_duration_blocks": "5",
+        "verification_phase_duration_blocks": "3",
+        "signing_deadline_blocks": "10",
+        "dispute_phase_duration_blocks": "3",
+        "completed_fallback_blocks": "0",
+        "max_signing_attempts": 3
+      }
+    },
     "bank": {
       "denom_metadata": [
         {
@@ -44,14 +56,14 @@
     "gov": {
       "params": {
         "voting_period": "10m0s",
-        "quorum": "0.334000000000000000",
+        "quorum": "0.300000000000000000",
         "min_deposit": [
           {
             "denom": "ngonka",
             "amount": "25_000_000"
           }
         ],
-        "expedited_voting_period": "10m0s",
+        "expedited_voting_period": "5m0s",
         "expedited_min_deposit": [
           {
             "denom": "ngonka",
@@ -71,29 +83,147 @@
       },
       "params": {
         "epoch_params": {
-        "confirmation_poc_safety_window": "5",
-        "epoch_length": "360",
-        "epoch_multiplier": "1",
-        "epoch_shift": "300",
-        "poc_stage_duration": "30",
-        "poc_exchange_duration": "2",
-        "poc_validation_delay": "2",
-        "poc_validation_duration": "20",
-        "set_new_validators_delay": "30",
-        "inference_validation_cutoff": "20",
-        "default_unit_of_compute_price": "100",
+          "epoch_length": "280",
+          "epoch_multiplier": "1",
+          "epoch_shift": "200",
+          "poc_stage_duration": "45",
+          "poc_exchange_duration": "2",
+          "poc_validation_delay": "2",
+          "poc_validation_duration": "20",
+          "set_new_validators_delay": "40",
+          "inference_validation_cutoff": "20",
+          "default_unit_of_compute_price": "100",
           "inference_pruning_max": "0",
-          "poc_pruning_max": "0"
+          "poc_pruning_max": "0",
+          "poc_slot_allocation": {
+            "value": "1",
+            "exponent": 0
+          }
         },
         "validation_params": {
           "binom_test_p0": {
             "value": "4",
             "exponent": -1
-          }
+          },
+          "logprobs_mode": "processed_logprobs"
         },
         "poc_params": {
-          "weight_scale_factor": {
+          "poc_v2_enabled": true,
+          "confirmation_poc_v2_enabled": true,
+          "poc_normalization_enabled": true,
+          "model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "models": [
+            {
+              "model_id": "Qwen/Qwen2.5-7B-Instruct",
+              "seq_len": 256,
+              "weight_scale_factor": {
+                "value": "25",
+                "exponent": -1
+              },
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "penalty_start_epoch": "0"
+            },
+            {
+              "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+              "seq_len": 256,
+              "weight_scale_factor": {
+                "value": "25",
+                "exponent": -1
+              },
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "penalty_start_epoch": "0"
+            },
+            {
+              "model_id": "Qwen/QwQ-32B",
+              "seq_len": 256,
+              "weight_scale_factor": {
+                "value": "25",
+                "exponent": -1
+              },
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "penalty_start_epoch": "3"
+            },
+            {
+              "model_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+              "seq_len": 256,
+              "weight_scale_factor": {
+                "value": "25",
+                "exponent": -1
+              },
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "penalty_start_epoch": "3"
+            }
+          ]
+        },
+        "delegation_params": {
+          "initial_model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "cap_factor": {
+            "value": "1",
+            "exponent": 0
+          },
+          "deploy_window": "1",
+          "refusal_penalty": {
+            "value": "1",
+            "exponent": -1
+          },
+          "no_participation_penalty": {
             "value": "25",
+            "exponent": -2
+          },
+          "delegation_share": {
+            "value": "1",
             "exponent": -1
           },
           "model_id": "Qwen/Qwen3-4B-Instruct-2507",
@@ -105,7 +235,7 @@
             "p_mismatch": { "value": "1", "exponent": -1 },
             "p_value_threshold": { "value": "5", "exponent": -2 }
           },
-          "poc_normalization_enabled": true
+          "v_min": "3"
         },
         "confirmation_poc_params": {
           "expected_confirmations_per_epoch": "1"
@@ -166,7 +296,9 @@
             "fp8",
             "--enable-auto-tool-choice",
             "--tool-call-parser",
-            "hermes"
+            "hermes",
+            "--generation-config",
+            "vllm"
           ],
           "v_ram": "24",
           "throughput_per_nonce": "10000",
@@ -216,10 +348,8 @@
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
         "originator_supply": "160000000000000000",
-        "top_reward_amount": "120000000000000000",
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
-        "top_rewards": 3,
         "supply_denom": "ngonka"
       }
     }

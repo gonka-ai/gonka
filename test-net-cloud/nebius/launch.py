@@ -64,6 +64,15 @@ def load_config_from_env(hf_home: str = None):
         "IS_TEST_NET": "true",
         "ETHEREUM_NETWORK": "sepolia",
         "BEACON_STATE_URL": "https://sepolia.checkpoint-sync.ethpandaops.io",
+        # If set, import this mnemonic instead of generating a fresh key (join nodes)
+        "COLD_KEY_MNEMONIC": "",
+        # Comma-separated addresses to pre-fund in genesis — loaded from .env, default empty
+        "PRE_FUND_ADDRESSES": "",
+        # Amount granted to each PRE_FUND_ADDRESSES entry
+        "PRE_FUND_AMOUNT": "150000000ngonka",
+        # Docker Hub / ghcr.io credentials for pulling private images (e.g. versiond)
+        "DOCKER_USERNAME": "",
+        "DOCKER_TOKEN": "",
     }
     
     config = default_config.copy()
@@ -91,12 +100,45 @@ def load_config_from_env(hf_home: str = None):
     return config
 
 
+def load_dotenv_file(config: dict, dotenv_path: Path) -> None:
+    """Merge key=value pairs from a .env file into config (overrides defaults, yields to real env vars)."""
+    if not dotenv_path.exists():
+        print(f"  No .env file found at {dotenv_path}, skipping")
+        return
+    print(f"Loading .env file from {dotenv_path}")
+    with open(dotenv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            # Real environment variables take precedence over .env file
+            if os.environ.get(key) is not None:
+                print(f"  .env: {key} skipped (overridden by real env var)")
+            elif key in config:
+                print(f"  .env: {key} = {value}")
+                config[key] = value
+
+
 # Load configuration from environment
 custom_hf_home = os.environ.get("TESTNET_HF_HOME", None)
 CONFIG_ENV = load_config_from_env(hf_home=custom_hf_home)
+_DOTENV_PATH = Path(__file__).parent / ".env"
+load_dotenv_file(CONFIG_ENV, _DOTENV_PATH)
 
 
 def clean_state():
+    # Preserve tmkms key across deploys so the consensus key stays stable.
+    # Without this, every deploy generates a new key that doesn't match genesis.
+    tmkms_key_src = DEPLOY_DIR / ".tmkms/secrets/priv_validator_key.softsign"
+    tmkms_key_backup = BASE_DIR / "priv_validator_key.softsign.bak"
+    if subprocess.run(["sudo", "test", "-f", str(tmkms_key_src)], capture_output=True).returncode == 0:
+        subprocess.run(["sudo", "cp", str(tmkms_key_src), str(tmkms_key_backup)], check=True)
+        subprocess.run(["sudo", "chmod", "644", str(tmkms_key_backup)], check=True)
+        print(f"Preserved tmkms consensus key to {tmkms_key_backup}")
+
     if GONKA_REPO_DIR.exists():
         print(f"Removing {GONKA_REPO_DIR}")
         os.system(f"sudo rm -rf {GONKA_REPO_DIR}")
@@ -106,8 +148,7 @@ def clean_state():
         os.system(f"sudo rm -f {BASE_DIR / 'inferenced-linux-amd64.zip'}")
     
     if INFERENCED_BINARY.path.exists():
-        print(f"Removing {BASE_DIR / 'inferenced'}")
-        os.system(f"sudo rm -f {BASE_DIR / 'inferenced'}")
+        print(f"Keeping existing {BASE_DIR / 'inferenced'} (pre-built binary)")
 
     if INFERENCED_STATE_DIR.exists():
         print(f"Removing {INFERENCED_STATE_DIR}")
@@ -118,12 +159,14 @@ def docker_compose_down():
     """Stop and remove all Docker containers from previous runs"""
     if DEPLOY_DIR.exists():
         print("Stopping any running Docker containers...")
-        
+
         # Check if env-override file exists
         env_override_file = DEPLOY_DIR / "docker-compose.env-override.yml"
         compose_files = ["-f", "docker-compose.yml", "-f", "docker-compose.mlnode.yml"]
         if env_override_file.exists():
             compose_files.extend(["-f", "docker-compose.env-override.yml"])
+        if (DEPLOY_DIR / "docker-compose.api-upgrade.yml").exists():
+            compose_files.extend(["-f", "docker-compose.api-upgrade.yml"])
         
         try:
             # First try to stop containers gracefully
@@ -226,6 +269,86 @@ def create_state_dirs():
         print(f"{my_dir} already exists, contents: {list(my_dir.iterdir())}")
 
 
+INFERENCED_CONTAINER_BINARY = BASE_DIR / "inferenced-container"
+
+
+def build_inferenced_from_repo():
+    """Build the inferenced binary from the cloned repo source.
+
+    The Docker image builds a musl-linked binary (runs inside alpine containers).
+    We save it to INFERENCED_CONTAINER_BINARY — a separate path from INFERENCED_BINARY
+    (the glibc release binary used for host operations like key management and gentx).
+
+    The node-binary-override mounts INFERENCED_CONTAINER_BINARY into the node container
+    so the chain runs the correct branch version.
+    """
+    if not GONKA_REPO_DIR.exists():
+        print("Repo not cloned yet, skipping inferenced build")
+        return
+
+    image_tag = "api:0.2.12-testnet"
+    image_exists = os.system(f"docker image inspect {image_tag} >/dev/null 2>&1") == 0
+
+    if not image_exists:
+        print("Building api:0.2.12-testnet from repo source (~8 min)...")
+        build_cmd = (
+            f"DOCKER_BUILDKIT=1 docker build "
+            f"--build-arg GOOS=linux --build-arg GOARCH=amd64 "
+            f"-f decentralized-api/Dockerfile -t {image_tag} . "
+            f"> /tmp/inferenced-build.log 2>&1"
+        )
+        # Build builder stage first (compile step — no network needed after cache)
+        builder_cmd = (
+            f"DOCKER_BUILDKIT=1 docker build "
+            f"--build-arg GOOS=linux --build-arg GOARCH=amd64 "
+            f"--target builder -t devshardd-builder "
+            f"-f decentralized-api/Dockerfile . >> /tmp/inferenced-build.log 2>&1"
+        )
+        os.system(f"cd {GONKA_REPO_DIR} && {builder_cmd}")
+        # Retry final stage up to 3x (apk network flakiness)
+        for _retry in range(3):
+            if os.system(f"cd {GONKA_REPO_DIR} && {build_cmd}") == 0:
+                image_exists = True
+                break
+            print(f"  build attempt {_retry + 1}/3 failed (see /tmp/inferenced-build.log), retrying...")
+        if not image_exists:
+            print("Warning: api image build failed — gentx will use builder stage, node will use release binary")
+    else:
+        print(f"{image_tag} already exists, skipping build")
+
+    # Extract inferenced (musl) for container use
+    if not INFERENCED_CONTAINER_BINARY.exists():
+        src = image_tag if image_exists else "devshardd-builder"
+        if os.system(f"docker image inspect {src} >/dev/null 2>&1") == 0:
+            if os.system(f"docker run --rm {src} cat /usr/bin/inferenced > {INFERENCED_CONTAINER_BINARY} && chmod +x {INFERENCED_CONTAINER_BINARY}") == 0:
+                print(f"Extracted inferenced-container from {src}")
+            else:
+                print("Warning: could not extract inferenced-container")
+
+    # Write api-upgrade override
+    api_upgrade = DEPLOY_DIR / "docker-compose.api-upgrade.yml"
+    api_upgrade.parent.mkdir(parents=True, exist_ok=True)
+    api_upgrade.write_text("services:\n  api:\n    image: api:0.2.12-testnet\n")
+
+    # Extract devshardd
+    devshardd_dst = DEPLOY_DIR / "devshards/bin/devshardd"
+    devshardd_dst.parent.mkdir(parents=True, exist_ok=True)
+    if not devshardd_dst.exists():
+        for src in ["api:0.2.12-testnet", "devshardd-builder"]:
+            if os.system(f"docker image inspect {src} >/dev/null 2>&1") == 0:
+                if os.system(f"docker run --rm {src} cat /app/decentralized-api/build/devshardd > {devshardd_dst} && chmod +x {devshardd_dst}") == 0:
+                    print(f"Extracted devshardd from {src}")
+                    break
+        else:
+            print("Warning: could not extract devshardd")
+
+    devshardd_base = BASE_DIR / "devshardd"
+    if devshardd_dst.exists() and not devshardd_base.exists():
+        import shutil as _shutil2
+        _shutil2.copy2(str(devshardd_dst), str(devshardd_base))
+        os.chmod(str(devshardd_base), 0o755)
+
+
 def install_inferenced():
     url = INFERENCED_BINARY.url
     inferenced_zip = INFERENCED_BINARY.zip_file
@@ -275,53 +398,60 @@ def install_inferenced():
 
 
 def create_account_key():
-    """Create account key using inferenced CLI"""
+    """Create (or recover) the cold account key using inferenced CLI.
+
+    If KEY_MNEMONIC is set in CONFIG_ENV the key is recovered from that mnemonic
+    instead of being freshly generated.  This lets join nodes use a pre-provisioned
+    account that was already endowed in genesis.
+    """
     inferenced_binary = INFERENCED_BINARY.path
-    
+
     if not inferenced_binary.exists():
         raise FileNotFoundError(f"Inferenced binary not found at {inferenced_binary}")
-    
+
     # Check if key already exists
     try:
         result = subprocess.run(
             [str(inferenced_binary), "keys", "list", "--keyring-backend", "file", "--home", str(INFERENCED_STATE_DIR)],
-            capture_output=True,
-            text=True,
-            check=True
+            capture_output=True, text=True, check=True,
         )
-        if "gonka-account-key" in result.stdout:
-            print("Account key 'gonka-account-key' already exists")
+        if COLD_KEY_NAME in result.stdout:
+            print(f"Account key '{COLD_KEY_NAME}' already exists")
             return
     except subprocess.CalledProcessError:
-        # Keyring might not exist yet, which is fine
         pass
-    
-    print("Creating account key 'gonka-account-key' with auto-generated passphrase...")
-    
-    # Execute the key creation command with automated password input
-    # The password is "12345678" and needs to be entered twice
-    password = f"{CONFIG_ENV['KEYRING_PASSWORD']}\n"  # \n for newline
-    password_input = password + password  # Enter password twice
-    
-    process = subprocess.Popen([
-        str(inferenced_binary), 
-        "keys", 
-        "add", 
-        COLD_KEY_NAME, 
-        "--keyring-backend", 
-        "file",
-        "--home",
-        str(INFERENCED_STATE_DIR)
-    ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    stdout, stderr = process.communicate(input=password_input)
-    
+
+    mnemonic = CONFIG_ENV.get("COLD_KEY_MNEMONIC", "").strip()
+    password = f"{CONFIG_ENV['KEYRING_PASSWORD']}\n"
+
+    if mnemonic:
+        print(f"Recovering account key '{COLD_KEY_NAME}' from mnemonic...")
+        cmd = [
+            str(inferenced_binary), "keys", "add", COLD_KEY_NAME,
+            "--keyring-backend", "file", "--home", str(INFERENCED_STATE_DIR),
+            "--recover",
+        ]
+        # --recover reads: mnemonic (then password twice)
+        stdin_input = f"{mnemonic}\n{password}{password}"
+    else:
+        print(f"Generating new account key '{COLD_KEY_NAME}'...")
+        cmd = [
+            str(inferenced_binary), "keys", "add", COLD_KEY_NAME,
+            "--keyring-backend", "file", "--home", str(INFERENCED_STATE_DIR),
+        ]
+        stdin_input = password + password  # password entered twice
+
+    process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    stdout, stderr = process.communicate(input=stdin_input)
+
     if process.returncode != 0:
-        print(f"Error creating key: {stderr}")
+        print(f"Error creating/recovering key: {stderr}")
         raise subprocess.CalledProcessError(process.returncode, "inferenced keys add")
-    
-    print("Account key created successfully!")
-    print("Key details:")
+
+    action = "recovered" if mnemonic else "created"
+    print(f"Account key {action} successfully!")
     print(stdout)
     
     # Extract both address and pubkey from the output
@@ -433,12 +563,40 @@ def get_compose_files_arg(include_mlnode=True):
     files = ["docker-compose.yml"]
     if include_mlnode:
         files.append("docker-compose.mlnode.yml")
+    # Include tmkms chain_id override so tmkms never starts with gonka-mainnet
+    if (DEPLOY_DIR / "docker-compose.tmkms-override.yml").exists():
+        files.append("docker-compose.tmkms-override.yml")
+    # Include api image override when present (placed manually for custom builds)
+    if (DEPLOY_DIR / "docker-compose.api-upgrade.yml").exists():
+        files.append("docker-compose.api-upgrade.yml")
     files.append("docker-compose.env-override.yml")
-    
+
     args = []
     for f in files:
         args.extend(["-f", f])
     return " ".join(args)
+
+
+def docker_login_ghcr():
+    """Log in to Docker Hub (and ghcr.io) if credentials are provided in the environment.
+
+    Set DOCKER_USERNAME and DOCKER_TOKEN in .env.
+    """
+    username = CONFIG_ENV.get("DOCKER_USERNAME", "").strip()
+    token = CONFIG_ENV.get("DOCKER_TOKEN", "").strip()
+    if not username or not token:
+        print("DOCKER_USERNAME/DOCKER_TOKEN not set — skipping docker login (private images like versiond may fail to pull)")
+        return
+    for registry in ["ghcr.io", ""]:  # "" = docker.io default
+        result = subprocess.run(
+            ["docker", "login"] + ([registry] if registry else []) + ["-u", username, "--password-stdin"],
+            input=token, capture_output=True, text=True
+        )
+        label = registry or "docker.io"
+        if result.returncode == 0:
+            print(f"docker login {label} succeeded")
+        else:
+            print(f"Warning: docker login {label} failed: {result.stderr.strip()[:80]}")
 
 
 def pull_images():
@@ -457,7 +615,7 @@ def pull_images():
     # Create the command to source config.env and run docker compose
     # We use bash -c to run both commands in sequence
     compose_files = get_compose_files_arg(include_mlnode=True)
-    cmd = f"bash -c 'source {config_file} && docker compose {compose_files} pull'"
+    cmd = f"bash -c 'source {config_file} && docker compose {compose_files} pull --ignore-pull-failures'"
     
     # Retry logic for network instability
     max_retries = 3
@@ -465,27 +623,64 @@ def pull_images():
     
     for attempt in range(max_retries):
         # Run the command in the specified working directory
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=working_dir,
-            capture_output=True,
-            text=True
-        )
-        
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min max — cached images check quickly; avoids hangs on unavailable registries
+            )
+        except subprocess.TimeoutExpired:
+            print(f"Warning: image pull timed out after 5 min (continuing with cached images)")
+            return
+
         if result.returncode == 0:
             print("Docker images pulled successfully!")
             if result.stdout:
                 print(result.stdout)
-            return
-        
+            break
+
         if attempt < max_retries - 1:
             print(f"Error pulling images (attempt {attempt + 1}/{max_retries}): {result.stderr}")
             print(f"Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
         else:
-            print(f"Error pulling images after {max_retries} attempts: {result.stderr}")
-            raise subprocess.CalledProcessError(result.returncode, cmd)
+            print(f"Warning: image pull failed after {max_retries} attempts (continuing with cached images): {result.stderr}")
+
+    # Pull mlnode directly by image name — large image (~29GB) that regularly exceeds the
+    # 5 min general pull timeout. Pulling by explicit tag avoids picking up whatever tag
+    # the branch's docker-compose.mlnode.yml happens to specify (e.g. 3.0.13-alpha3).
+    MLNODE_IMAGE = "ghcr.io/product-science/mlnode:3.0.12-post4"
+    print(f"Pulling {MLNODE_IMAGE} directly (up to 30 min)...")
+    try:
+        result = subprocess.run(
+            ["docker", "pull", MLNODE_IMAGE],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        if result.returncode == 0:
+            print(f"mlnode image {MLNODE_IMAGE} pulled successfully!")
+        else:
+            print(f"Warning: mlnode pull failed (continuing with cached image): {result.stderr[:200]}")
+    except subprocess.TimeoutExpired:
+        print("Warning: mlnode pull timed out after 30 min (continuing with cached image)")
+
+    # Patch docker-compose.mlnode.yml to use the correct image regardless of branch.
+    mlnode_compose = GONKA_REPO_DIR / "deploy/join/docker-compose.mlnode.yml"
+    if mlnode_compose.exists():
+        import re as _re
+        content = mlnode_compose.read_text()
+        patched = _re.sub(
+            r'image:\s*ghcr\.io/product-science/mlnode:[^\s]+',
+            f'image: {MLNODE_IMAGE}',
+            content
+        )
+        if patched != content:
+            mlnode_compose.write_text(patched)
+            print(f"Patched docker-compose.mlnode.yml to use {MLNODE_IMAGE}")
 
 
 def create_docker_compose_override(init_only=True, node_id=None):
@@ -694,19 +889,36 @@ def get_or_create_warm_key(service="api"):
     """Create warm key using Docker compose and return AccountKey"""
     working_dir = GONKA_REPO_DIR / "deploy/join"
     config_file = working_dir / "config.env"
-    
+
     if not working_dir.exists():
         raise FileNotFoundError(f"Working directory not found: {working_dir}")
-    
+
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
-    
-    print(f"Creating warm key for service: {service}")
-    
-    # Create the key
+
     compose_files = get_compose_files_arg(include_mlnode=True)
+
+    # Check if the warm key already exists; if so, return it without re-creating.
+    show_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T {service} sh -lc \"printf \\\"%s\\\\n\\\" \\$KEYRING_PASSWORD | inferenced keys show \\$KEY_NAME --keyring-backend file\"'"
+    show_result = subprocess.run(show_cmd, shell=True, cwd=working_dir, capture_output=True, text=True)
+    if show_result.returncode == 0:
+        full_output = show_result.stdout + show_result.stderr
+        address_match = re.search(r"address:\s*([a-z0-9]+)", full_output)
+        pubkey_match = re.search(r"pubkey: '(.+?)'", full_output)
+        name_match = re.search(r"name:\s*\"?([^\"]+)\"?", full_output)
+        if address_match and pubkey_match:
+            address = address_match.group(1)
+            pubkey_data = json.loads(pubkey_match.group(1))
+            pubkey = pubkey_data.get("key", "")
+            name = name_match.group(1) if name_match else CONFIG_ENV["KEY_NAME"]
+            print(f"Warm key already exists: {address}")
+            return AccountKey(address=address, pubkey=pubkey, name=name)
+
+    print(f"Creating warm key for service: {service}")
+
+    # Create the key
     add_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T {service} sh -lc \"printf \\\"%s\\\\n%s\\\\n\\\" \\$KEYRING_PASSWORD \\$KEYRING_PASSWORD | inferenced keys add \\$KEY_NAME --keyring-backend file\"'"
-    
+
     result = subprocess.run(
         add_cmd,
         shell=True,
@@ -714,7 +926,7 @@ def get_or_create_warm_key(service="api"):
         capture_output=True,
         text=True
     )
-    
+
     if result.returncode != 0:
         print(f"Error creating key: {result.stderr}")
         raise subprocess.CalledProcessError(result.returncode, add_cmd)
@@ -793,47 +1005,42 @@ def setup_genesis_file():
     print("Genesis.json setup completed successfully!")
 
 
-def add_genesis_account(account_key: AccountKey):
-    """Add genesis account using the cold key address"""
+def _add_genesis_account_by_address(address: str, amount: str = "150000000ngonka"):
+    """Add a genesis account by raw address and amount."""
     working_dir = GONKA_REPO_DIR / "deploy/join"
     config_file = working_dir / "config.env"
-    
+
     if not working_dir.exists():
         raise FileNotFoundError(f"Working directory not found: {working_dir}")
-    
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
-    
-    print(f"Adding genesis account for address: {account_key.address}")
-    
-    # Now run the genesis add-genesis-account command
-    compose_files = get_compose_files_arg(include_mlnode=True)
-    genesis_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T node sh -lc \"inferenced genesis add-genesis-account {account_key.address} 150000000ngonka\"'"
 
-    print("Running genesis add-genesis-account command...")
-    genesis_result = subprocess.run(
-        genesis_cmd,
-        shell=True,
-        cwd=working_dir,
-        capture_output=True,
-        text=True
+    print(f"Adding genesis account: {address}  amount: {amount}")
+
+    compose_files = get_compose_files_arg(include_mlnode=True)
+    genesis_cmd = (
+        f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T node "
+        f"sh -lc \"inferenced genesis add-genesis-account {address} {amount}\"'"
     )
-    
-    print("Genesis account addition completed!")
-    print("Output:")
+
+    result = subprocess.run(genesis_cmd, shell=True, cwd=working_dir, capture_output=True, text=True)
+
     print("=" * 50)
-    if genesis_result.stdout:
-        print(genesis_result.stdout)
-    if genesis_result.stderr:
-        print("Errors/Warnings:")
-        print(genesis_result.stderr)
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
     print("=" * 50)
-    
-    if genesis_result.returncode != 0:
-        print(f"Genesis account addition failed with return code: {genesis_result.returncode}")
-        raise subprocess.CalledProcessError(genesis_result.returncode, genesis_cmd)
-    
-    print("Genesis account added successfully!")
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, genesis_cmd)
+
+    print(f"Genesis account added: {address}")
+
+
+def add_genesis_account(account_key: AccountKey, amount: str = "150000000ngonka"):
+    """Add genesis account using an AccountKey."""
+    _add_genesis_account_by_address(account_key.address, amount)
 
 
 def fund_distribution_module_account(community_pool_amount="120000000000000000"):
@@ -928,19 +1135,62 @@ def fund_distribution_module_account(community_pool_amount="120000000000000000")
     print(f"Community pool: {community_pool_amount}.000000000000000000ngonka")
 
 
+def _run_gentx_in_container(consensus_key: str, node_id: str, warm_key_address: str, chain_id: str) -> bool:
+    """Run gentx inside the api docker image which has the correct chain binary.
+
+    Falls back to this when the local release binary cannot validate the genesis
+    (e.g. version mismatch between release binary and cloned branch).
+    Returns True on success.
+    """
+    # Prefer the full api image; fall back to the builder stage which also has inferenced
+    image = None
+    for candidate in ["api:0.2.12-testnet", "devshardd-builder"]:
+        if os.system(f"docker image inspect {candidate} >/dev/null 2>&1") == 0:
+            image = candidate
+            break
+    if image is None:
+        print("  no suitable docker image available for docker gentx")
+        return False
+
+    password = CONFIG_ENV['KEYRING_PASSWORD']
+    gentx_args = (
+        f"genesis gentx --keyring-backend file --home /root/.inference "
+        f"{COLD_KEY_NAME} 1ngonka "
+        f"--moniker {GENESIS_VAL_NAME} "
+        f"--pubkey '{consensus_key}' "
+        f"--ml-operational-address {warm_key_address} "
+        f"--url {CONFIG_ENV['PUBLIC_URL']} "
+        f"--chain-id {chain_id} "
+        f"--node-id {node_id}"
+    )
+    cmd = (
+        f"docker run --rm "
+        f"-v {INFERENCED_STATE_DIR}:/root/.inference "
+        f"{image} "
+        f"sh -c \"printf '%s\\n%s\\n' '{password}' '{password}' | /usr/bin/inferenced {gentx_args}\""
+    )
+    print(f"Running gentx inside {image} container...")
+    result = os.system(cmd)
+    if result == 0:
+        # Files written by the container are owned by root; fix so local binary can read them.
+        os.system(f"sudo chown -R $(id -u):$(id -g) {INFERENCED_STATE_DIR} 2>/dev/null || true")
+    return result == 0
+
+
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str, chain_id: str):
-    """Generate genesis transaction using local inferenced binary"""
+    """Generate genesis transaction.
+
+    Tries the local release binary first. If it fails due to genesis version mismatch
+    (unknown fields or validation errors from proto differences), falls back to running
+    gentx inside the api docker container which has the correct chain binary.
+    """
     print("Generating genesis transaction (gentx)...")
-    
-    # Use the local inferenced binary
-    inferenced_binary = INFERENCED_BINARY.path
-    
-    if not inferenced_binary.exists():
-        raise FileNotFoundError(f"Inferenced binary not found at {inferenced_binary}")
-    
-    # Prepare the gentx command
+
+    password_input = f"{CONFIG_ENV['KEYRING_PASSWORD']}\n"
+    gpath = INFERENCED_STATE_DIR / "config/genesis.json"
+
     gentx_cmd = [
-        str(inferenced_binary),
+        str(INFERENCED_BINARY.path),
         "genesis", "gentx",
         "--keyring-backend", "file",
         "--home", str(INFERENCED_STATE_DIR),
@@ -950,37 +1200,62 @@ def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, wa
         "--ml-operational-address", warm_key_address,
         "--url", CONFIG_ENV["PUBLIC_URL"],
         "--chain-id", chain_id,
-        "--node-id", node_id
+        "--node-id", node_id,
     ]
-    
-    print(f"Running gentx command: {' '.join(gentx_cmd)}")
-    
-    # Run the command with password input
-    password_input = f"{CONFIG_ENV['KEYRING_PASSWORD']}\n"
-    
+
+    # If the api docker image is available, use it directly — it has the correct chain
+    # binary for the cloned branch and avoids all version-mismatch stripping issues.
+    if os.system("docker image inspect api:0.2.12-testnet >/dev/null 2>&1") == 0:
+        print("api:0.2.12-testnet image available — running gentx inside container (skipping local binary).")
+        if _run_gentx_in_container(consensus_key, node_id, warm_key_address, chain_id):
+            print("Docker gentx succeeded.")
+            gentx_dir = INFERENCED_STATE_DIR / "config/gentx"
+            genpart_dir = INFERENCED_STATE_DIR / "config/genparticipant"
+            gentx_files = list(gentx_dir.glob("gentx-*.json")) if gentx_dir.exists() else []
+            genpart_files = list(genpart_dir.glob("genparticipant-*.json")) if genpart_dir.exists() else []
+            if gentx_files and genpart_files:
+                return gentx_files[0].name, genpart_files[0].name
+            return None, None
+        raise RuntimeError("Docker gentx failed")
+
+    # Fallback: local release binary with unknown-field auto-strip loop.
     process = subprocess.Popen(
-        gentx_cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+        gentx_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
-    
     stdout, stderr = process.communicate(input=password_input)
-    
-    print("Gentx generation completed!")
-    print("Output:")
-    print("=" * 50)
-    if stdout:
-        print(stdout)
-    if stderr:
-        print("Errors/Warnings:")
-        print(stderr)
-    print("=" * 50)
-    
-    if process.returncode != 0:
-        print(f"Gentx generation failed with return code: {process.returncode}")
+
+    for _attempt in range(20):
+        if process.returncode == 0:
+            break
+        full_err = stdout + stderr
+        unknown_match = re.search(r'unknown field "([^"]+)"', full_err)
+        if not unknown_match:
+            print(f"Gentx generation failed with return code: {process.returncode}\n{full_err[:300]}")
+            raise subprocess.CalledProcessError(process.returncode, gentx_cmd)
+        bad_field = unknown_match.group(1)
+        print(f"Auto-stripping unknown genesis field '{bad_field}' (attempt {_attempt + 1})...")
+        with open(gpath) as _f:
+            _g = json.load(_f)
+        def _rm_field(obj, field):
+            if isinstance(obj, dict):
+                obj.pop(field, None)
+                for v in obj.values(): _rm_field(v, field)
+            elif isinstance(obj, list):
+                for i in obj: _rm_field(i, field)
+        _rm_field(_g, bad_field)
+        with open(gpath, "w") as _f:
+            json.dump(_g, _f, indent=2)
+        process = subprocess.Popen(
+            gentx_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        stdout, stderr = process.communicate(input=password_input)
+    else:
         raise subprocess.CalledProcessError(process.returncode, gentx_cmd)
+
+    print("Gentx completed!")
+    print(stdout)
+    if stderr:
+        print(stderr)
     
     # Extract the generated file paths from output (check both stdout and stderr)
     full_output = stdout + stderr if stderr else stdout
@@ -1331,6 +1606,150 @@ def register_joining_participant(service="api", max_retries=5, retry_delay=30):
     raise subprocess.CalledProcessError(result.returncode, register_cmd)
 
 
+def submit_new_participant_tx(max_retries=5, retry_delay=30):
+    """Register this node as participant via direct chain tx.
+
+    Replaces the API-based register_joining_participant() flow which relies on a
+    GET /v1/participants/{address} query path that is broken on this chain version.
+    """
+    inferenced_binary = INFERENCED_BINARY.path
+    public_url = CONFIG_ENV.get("PUBLIC_URL")
+    seed_api_url = CONFIG_ENV.get("SEED_API_URL")
+    chain_id = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    keyring_password = CONFIG_ENV.get("KEYRING_PASSWORD", "12345678")
+    working_dir = GONKA_REPO_DIR / "deploy/join"
+    config_file = working_dir / "config.env"
+
+    if not public_url:
+        raise ValueError("PUBLIC_URL not found in CONFIG_ENV")
+    if not seed_api_url:
+        raise ValueError("SEED_API_URL not found in CONFIG_ENV")
+
+    # Auto-fetch validator consensus key from the running node container
+    compose_files = get_compose_files_arg(include_mlnode=False)
+    status_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} exec -T node wget -qO- http://localhost:26657/status'"
+    validator_key = ""
+    status_result = subprocess.run(status_cmd, shell=True, cwd=working_dir, capture_output=True, text=True)
+    if status_result.returncode == 0:
+        try:
+            validator_key = json.loads(status_result.stdout)["result"]["validator_info"]["pub_key"]["value"]
+            print(f"Auto-fetched validator key: {validator_key}")
+        except Exception as e:
+            print(f"Warning: could not parse validator key from node status: {e}")
+
+    cmd = [
+        str(inferenced_binary),
+        "tx", "inference", "submit-new-participant",
+        public_url,
+        "--from", COLD_KEY_NAME,
+        "--keyring-backend", "file",
+        "--home", str(INFERENCED_STATE_DIR),
+        "--node", f"{seed_api_url}/chain-rpc/",
+        "--chain-id", chain_id,
+        "--gas", "2000000",
+        "--output", "json",
+        "-y",
+    ]
+    if validator_key:
+        cmd.extend(["--validator-key", validator_key])
+
+    print(f"Submitting participant tx: {' '.join(cmd)}")
+
+    for attempt in range(max_retries):
+        process = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        stdout, stderr = process.communicate(input=f"{keyring_password}\n")
+        full_output = stdout + stderr
+
+        print(f"Attempt {attempt + 1}/{max_retries}")
+        print("=" * 50)
+        if stdout:
+            print(stdout)
+        if stderr:
+            print(stderr)
+        print("=" * 50)
+
+        # code 0 = accepted by mempool (JSON output: "code": 0 or YAML: "code: 0")
+        try:
+            tx_result = json.loads(stdout)
+            if tx_result.get("code", -1) == 0:
+                print("Participant tx submitted successfully!")
+                time.sleep(10)
+                return
+        except Exception:
+            pass
+        # fallback string check for YAML output
+        if '"code": 0' in full_output or '"code":0' in full_output or '\ncode: 0\n' in full_output or full_output.strip().startswith('code: 0'):
+            print("Participant tx submitted successfully!")
+            time.sleep(10)
+            return
+
+        # already registered is not a fatal error
+        if "already exists" in full_output.lower() or "already registered" in full_output.lower():
+            print("Participant already registered on chain, continuing.")
+            return
+
+        # transient errors — retry
+        if any(e in full_output.lower() for e in ["connection refused", "not responding", "timeout", "unavailable"]):
+            if attempt < max_retries - 1:
+                print(f"Node not ready, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                continue
+
+        print(f"Participant tx failed (attempt {attempt + 1}): {full_output[:200]}")
+        if attempt < max_retries - 1:
+            time.sleep(retry_delay)
+
+    raise RuntimeError(f"submit-new-participant tx failed after {max_retries} attempts")
+
+
+def inject_approved_devshard_versions_into_overrides(overrides_path: Path):
+    """Patch the genesis-overrides file with the devshardd approved_versions entry.
+
+    Called just before apply_genesis_overrides() so the approved_versions are baked
+    into genesis from block 0.  The binary URL points to file-server:80/devshardd,
+    the nginx container that serves ./devshards/bin/ within the docker network.
+    The sha256 is computed from the actual binary built during this deploy.
+    """
+    devshardd_path = DEPLOY_DIR / "devshards/bin/devshardd"
+    if not devshardd_path.exists():
+        print("devshardd binary not found, skipping approved_versions injection")
+        return
+
+    with open(devshardd_path, "rb") as f:
+        sha256 = hashlib.sha256(f.read()).hexdigest()
+
+    if not overrides_path.exists():
+        print(f"Overrides file not found at {overrides_path}, skipping approved_versions injection")
+        return
+
+    with open(overrides_path) as f:
+        overrides = json.load(f)
+
+    # Inject into devshard_escrow_params.approved_versions inside inference app_state
+    def _set_approved(obj):
+        if isinstance(obj, dict):
+            if "devshard_escrow_params" in obj:
+                obj["devshard_escrow_params"]["approved_versions"] = [{
+                    "name": "v0.2.12",
+                    "binary": "http://file-server:80/devshardd",
+                    "sha256": sha256,
+                }]
+                return True
+            for v in obj.values():
+                if _set_approved(v):
+                    return True
+        return False
+
+    if _set_approved(overrides):
+        with open(overrides_path, "w") as f:
+            json.dump(overrides, f, indent=2)
+        print(f"Injected approved_versions into {overrides_path} (sha256={sha256[:16]}...)")
+    else:
+        print("Warning: devshard_escrow_params not found in overrides, approved_versions not injected")
+
+
 def grant_key_permissions(warm_key_address: str):
     """
     Grant ML operations permissions to the warm key
@@ -1440,11 +1859,15 @@ def start_docker_services(
     
     # Add up command
     cmd_parts.append("up")
-    
+
+    # Never pull during up — pull_images() already ran with --ignore-pull-failures.
+    # This prevents a single unavailable image from blocking all services.
+    cmd_parts.append("--pull=never")
+
     # Add services if specified
     if services:
         cmd_parts.extend(services)
-    
+
     # Add additional arguments
     cmd_parts.extend(additional_args)
     
@@ -1478,16 +1901,75 @@ def start_docker_services(
     print("=" * 50)
     
     if result.returncode != 0:
-        print(f"Docker services startup failed with return code: {result.returncode}")
-        raise subprocess.CalledProcessError(result.returncode, start_cmd)
-    
+        # Compose up failed — likely a service has a missing private image (e.g. versiond).
+        # Retry by starting each service individually so one missing image doesn't block all.
+        print(f"Warning: compose up returned {result.returncode}, retrying service-by-service...")
+        compose_prefix = " ".join(f"-f {f}" for f in compose_files)
+        svc_list_cmd = f"bash -c 'source {config_file} && docker compose {compose_prefix} config --services'"
+        svc_result = subprocess.run(svc_list_cmd, shell=True, cwd=working_dir, capture_output=True, text=True)
+        services_to_start = svc_result.stdout.strip().split() if svc_result.returncode == 0 else []
+        failed_svcs = []
+        for svc in services_to_start:
+            svc_cmd = f"bash -c 'source {config_file} && docker compose {compose_prefix} up --pull=never --no-deps -d {svc}'"
+            r = subprocess.run(svc_cmd, shell=True, cwd=working_dir, capture_output=True, text=True)
+            if r.returncode != 0:
+                failed_svcs.append(svc)
+                print(f"  [warn] {svc} could not start: {(r.stderr or r.stdout).strip()[:120]}")
+        critical = ["node", "api"]
+        if any(s in failed_svcs for s in critical):
+            raise RuntimeError(f"Critical services failed to start: {[s for s in critical if s in failed_svcs]}")
+        if failed_svcs:
+            print(f"Warning: {failed_svcs} did not start (may need docker login to ghcr.io)")
+
     print("Docker services started successfully!")
+
+
+def patch_tmkms_chain_id(chain_id: str):
+    """Patch tmkms.toml to replace gonka-mainnet with the actual chain_id.
+
+    The tmkms image ships with gonka-mainnet hardcoded. Signing votes with the
+    wrong chain_id produces invalid signatures that are rejected by peers,
+    causing consensus to deadlock as soon as join nodes become validators.
+    Called by both genesis_route and join_route after tmkms has been initialised.
+    """
+    tmkms_toml = DEPLOY_DIR / ".tmkms/tmkms.toml"
+    # On a fresh node tmkms writes the file on first start — wait up to 30s.
+    for _ in range(10):
+        if subprocess.run(["sudo", "test", "-f", str(tmkms_toml)], capture_output=True).returncode == 0:
+            break
+        time.sleep(3)
+    if subprocess.run(["sudo", "test", "-f", str(tmkms_toml)], capture_output=True).returncode == 0:
+        subprocess.run(["sudo", "sed", "-i", "s/gonka-mainnet/" + chain_id + "/g", str(tmkms_toml)], check=True)
+        print(f"Patched tmkms.toml: gonka-mainnet -> {chain_id}")
+        subprocess.run(["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.env-override.yml",
+                        "restart", "tmkms"], cwd=str(DEPLOY_DIR), capture_output=True)
+        print("Restarted tmkms with patched chain_id")
+    else:
+        print(f"Warning: tmkms.toml not found at {tmkms_toml}, skipping chain_id patch")
 
 
 def genesis_route(account_key: AccountKey, chain_id: str):
     print("\n=== GENESIS MODE: Initializing genesis node ===")
     run_genesis_initialization()
+
+    # Restore preserved tmkms consensus key if it exists, so the same key is
+    # used across redeploys and genesis.json always matches what tmkms signs with.
+    tmkms_key_backup = BASE_DIR / "priv_validator_key.softsign.bak"
+    tmkms_key_dst = DEPLOY_DIR / ".tmkms/secrets/priv_validator_key.softsign"
+    if subprocess.run(["sudo", "test", "-f", str(tmkms_key_backup)], capture_output=True).returncode == 0:
+        subprocess.run(["sudo", "cp", str(tmkms_key_backup), str(tmkms_key_dst)], check=True)
+        subprocess.run(["sudo", "chmod", "600", str(tmkms_key_dst)], check=True)
+        print(f"Restored tmkms consensus key from {tmkms_key_backup}")
+
+    patch_tmkms_chain_id(chain_id)
+
     add_genesis_account(account_key)
+
+    # Endow any additional accounts listed in PRE_FUND_ADDRESSES (e.g. join node operators)
+    pre_fund_addresses = [a.strip() for a in CONFIG_ENV.get("PRE_FUND_ADDRESSES", "").split(",") if a.strip()]
+    pre_fund_amount = CONFIG_ENV.get("PRE_FUND_AMOUNT", "150000000ngonka")
+    for addr in pre_fund_addresses:
+        _add_genesis_account_by_address(addr, pre_fund_amount)
 
     consensus_key = extract_consensus_key()
     warm_key = get_or_create_warm_key()
@@ -1497,6 +1979,35 @@ def genesis_route(account_key: AccountKey, chain_id: str):
     setup_genesis_file()
     set_chain_id_in_genesis(chain_id)
     fund_distribution_module_account()
+    # Apply overrides before gentx so BLS/other params pass validation
+    local_overrides = BASE_DIR / "genesis-overrides.json"
+    repo_overrides = GONKA_REPO_DIR / "test-net-cloud/nebius/genesis-overrides.json"
+    pre_gentx_overrides = local_overrides if local_overrides.exists() else repo_overrides
+    inject_approved_devshard_versions_into_overrides(pre_gentx_overrides)
+    apply_genesis_overrides(pre_gentx_overrides)
+    # Strip fields removed from proto that the genesis template still emits, or fields
+    # unknown to the local gentx binary (which may be older than the chain binary).
+    # Fields removed across PRs #1002, #1003, #1045; dispute_phase_duration_blocks added
+    # in upgrade-v0.2.12 and unknown to the v0.2.11 release binary used for gentx.
+    _removed_fields = [
+        "top_reward_amount", "top_rewards", "top_reward_period", "top_reward_payouts",
+        "top_reward_payouts_per_miner", "top_reward_max_duration", "top_reward_allowed_failure",
+        "top_miner_poc_qualification", "top_miner_vesting_period",
+        "subnet_escrow_params", "allowed_creator_addresses", "approved_versions",
+    ]
+    _gpath = INFERENCED_STATE_DIR / "config/genesis.json"
+    if _gpath.exists():
+        def _rm(obj, fields):
+            if isinstance(obj, dict):
+                for f in fields:
+                    obj.pop(f, None)
+                for v in obj.values(): _rm(v, fields)
+            elif isinstance(obj, list):
+                for i in obj: _rm(i, fields)
+        with open(_gpath) as _f: _g = json.load(_f)
+        _rm(_g, _removed_fields)
+        with open(_gpath, "w") as _f: json.dump(_g, _f, indent=2)
+        print(f"Stripped reserved fields from genesis: {_removed_fields}")
     # Generate gentx transaction
     node_id = CONFIG_ENV.get("NODE_ID", "")
     if not node_id:
@@ -1529,12 +2040,12 @@ def genesis_route(account_key: AccountKey, chain_id: str):
 
 def join_route(account_key: AccountKey, chain_id: str):
     print("\n=== JOIN MODE: Joining existing network ===")
-    
+
     # Try to fetch global genesis file from the seed node
     # This is critical if the chain ID has changed from default
     try:
         genesis_content = fetch_genesis_from_seed()
-        
+
         # Verify Chain ID
         fetched_chain_id = genesis_content.get("chain_id", "unknown")
         if fetched_chain_id != chain_id:
@@ -1544,18 +2055,48 @@ def join_route(account_key: AccountKey, chain_id: str):
         print(f"Warning: Could not fetch genesis from seed: {e}")
         print("Falling back to local repo genesis.json. Ensure it matches the network!")
 
+    # Place 0.2.12 binary in cosmovisor so it doesn't fall back to 0.2.11 image binary.
+    inferenced_src = BASE_DIR / "inferenced"
+    cosmovisor_bin = DEPLOY_DIR / ".inference/cosmovisor/genesis/bin/inferenced"
+    if inferenced_src.exists():
+        subprocess.run(["sudo", "mkdir", "-p", str(cosmovisor_bin.parent)], check=True)
+        subprocess.run(["sudo", "cp", str(inferenced_src), str(cosmovisor_bin)], check=True)
+        subprocess.run(["sudo", "chmod", "+x", str(cosmovisor_bin)], check=True)
+        print(f"Placed 0.2.12 binary in cosmovisor genesis bin path")
+
     start_docker_services(
         compose_files=["docker-compose.yml"],
         services=["tmkms", "node"],
         additional_args=["-d", "--no-deps"]
     )
-    print("Waiting 15 seconds for node to start...")
-    time.sleep(15)
-    
+
+    patch_tmkms_chain_id(chain_id)
+
+    # Wait for node RPC to be ready before registering (up to 3 minutes).
+    print("Waiting for node RPC to be ready...")
+    seed_rpc = CONFIG_ENV.get("SEED_NODE_RPC_URL", "http://localhost:26657")
+    node_rpc = "http://localhost:26657"
+    for attempt in range(36):
+        try:
+            with urllib.request.urlopen(f"http://node:26657/status", timeout=3) as r:
+                if r.status == 200:
+                    print(f"Node RPC ready after {attempt * 5}s")
+                    break
+        except Exception:
+            pass
+        try:
+            with urllib.request.urlopen(f"{seed_rpc}/status", timeout=3) as r:
+                pass
+        except Exception:
+            pass
+        time.sleep(5)
+    else:
+        print("Warning: node RPC not ready after 3 min, attempting registration anyway")
+
     # Get warm key for ML operations
     warm_key = get_or_create_warm_key()
-    
-    register_joining_participant()
+
+    submit_new_participant_tx()
     grant_key_permissions(warm_key.address)
 
 
@@ -1641,15 +2182,57 @@ def main():
     create_state_dirs()
     install_inferenced()
 
+    # If the branch is newer than the release binary knows about, build from source.
+    # This happens after a nuke teardown (binaries wiped) or when the repo branch
+    # contains proto changes that the release binary doesn't understand.
+    if args.branch not in ("main", "origin/main", "testnet/main", "origin/testnet/main"):
+        print(f"Branch '{args.branch}' may have proto changes; rebuilding inferenced from source")
+        build_inferenced_from_repo()
+
     # Create local 
     account_key = create_account_key()
     CONFIG_ENV["ACCOUNT_PUBKEY"] = account_key.pubkey
     create_config_env_file()
-    
+
+    # Mount the correct inferenced binary into the node container so cosmovisor uses it.
+    # Prefer the musl container binary built from source; fall back to the release binary.
+    # Both run fine inside the alpine-based node container.
+    node_binary_path = INFERENCED_CONTAINER_BINARY if INFERENCED_CONTAINER_BINARY.exists() else BASE_DIR / "inferenced"
+    if node_binary_path.exists():
+        override = DEPLOY_DIR / "docker-compose.node-binary-override.yml"
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text(f"services:\n  node:\n    volumes:\n      - {node_binary_path}:/usr/local/bin/inferenced\n      - {node_binary_path}:/usr/bin/inferenced\n")
+        print(f"Written node binary override using {node_binary_path}")
+
+    # Build versiond image from source (versioned/ dir in repo).
+    # Tagged as ghcr.io/product-science/versiond:0.2.11 so the existing
+    # docker-compose.yml service definition needs no changes.
+    versiond_img = "ghcr.io/product-science/versiond:0.2.11"
+    if os.system(f"docker image inspect {versiond_img} >/dev/null 2>&1") == 0:
+        print(f"{versiond_img} already exists, skipping build")
+    elif GONKA_REPO_DIR.exists() and (GONKA_REPO_DIR / "versioned/Dockerfile").exists():
+        print("Building versiond from source...")
+        if os.system(f"cd {GONKA_REPO_DIR}/versioned && docker build -t {versiond_img} . > /tmp/versiond-build.log 2>&1") == 0:
+            print("versiond image built successfully")
+        else:
+            print("Warning: versiond build failed (see /tmp/versiond-build.log)")
+
+    # Ensure devshards data dir exists (bin is created by build_inferenced_from_repo)
+    (DEPLOY_DIR / "devshards/data").mkdir(parents=True, exist_ok=True)
+
+    # Write a tmkms compose override with the correct chain_id.
+    # The actual tmkms.toml patching happens in genesis_route() after init creates the file.
+    chain_id = args.chainid
+    tmkms_override = DEPLOY_DIR / "docker-compose.tmkms-override.yml"
+    tmkms_override.parent.mkdir(parents=True, exist_ok=True)
+    tmkms_override.write_text(f"services:\n  tmkms:\n    environment:\n      - CHAIN_ID={chain_id}\n")
+    print(f"Written tmkms chain_id override ({chain_id})")
+
     # Clean up any containers that might have been started during setup
     docker_compose_down()  # Ensure clean state before starting new containers
-    
+
     # Run the main processes
+    docker_login_ghcr()
     pull_images()
 
     if is_genesis:
@@ -1663,16 +2246,41 @@ def main():
         node_id = CONFIG_ENV.get("NODE_ID", "")
         if node_id:
             create_docker_compose_override(init_only=False, node_id=node_id)
+            extra = [f for f in ["docker-compose.tmkms-override.yml", "docker-compose.node-binary-override.yml", "docker-compose.api-upgrade.yml"] if (DEPLOY_DIR / f).exists()]
             start_docker_services(
-                compose_files=["docker-compose.yml", "docker-compose.mlnode.yml", "docker-compose.runtime-override.yml"]
+                compose_files=["docker-compose.yml", "docker-compose.mlnode.yml", "docker-compose.runtime-override.yml"] + extra
             )
         else:
             raise ValueError("NODE_ID not found in CONFIG_ENV")
+
+        # Grant fee-grant from cold key to warm key so genesis node can submit PoC TXs.
+        # join_route() does this automatically; genesis_route() registers via gentx so
+        # the grant must be submitted after the chain is live.
+        print("Waiting for genesis node to produce first block before granting key permissions...")
+        for attempt in range(72):
+            try:
+                import json as _json
+                with urllib.request.urlopen("http://localhost:26657/status", timeout=3) as r:
+                    if r.status == 200:
+                        data = _json.loads(r.read())
+                        height = int(data.get("result", {}).get("sync_info", {}).get("latest_block_height", 0))
+                        if height >= 1:
+                            print(f"Node RPC ready at block {height} after {attempt * 5}s")
+                            break
+            except Exception:
+                pass
+            time.sleep(5)
+        else:
+            print("Warning: node RPC not at block 1 after 6 min, attempting fee grant anyway")
+        warm_key = get_or_create_warm_key()
+        grant_key_permissions(warm_key.address)
     else:
+        extra = [f for f in ["docker-compose.tmkms-override.yml", "docker-compose.node-binary-override.yml", "docker-compose.api-upgrade.yml"] if (DEPLOY_DIR / f).exists()]
         start_docker_services(
-            compose_files=["docker-compose.yml", "docker-compose.mlnode.yml"],
+            compose_files=["docker-compose.yml", "docker-compose.mlnode.yml"] + extra,
             additional_args=["-d"]
         )
+
 
 if __name__ == "__main__":
     main()
