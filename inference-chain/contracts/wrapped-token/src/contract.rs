@@ -318,12 +318,22 @@ pub fn migrate(
 ) -> Result<Response, ContractError> {
     let old = get_contract_version(deps.storage)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
-    
-    if old.contract != CONTRACT_NAME && old.contract != LEGACY_CW20_BASE_CONTRACT_NAME {
+
+    let is_legacy_cw20_base = old.contract == LEGACY_CW20_BASE_CONTRACT_NAME;
+    if old.contract != CONTRACT_NAME && !is_legacy_cw20_base {
         return Err(ContractError::Std(StdError::generic_err(format!(
             "wrong contract: expected {} or {}, got {}",
             CONTRACT_NAME, LEGACY_CW20_BASE_CONTRACT_NAME, old.contract
         ))));
+    }
+
+    if is_legacy_cw20_base {
+        CREATOR
+            .may_load(deps.storage)?
+            .ok_or_else(|| StdError::generic_err("missing wrapped-token legacy state: creator"))?;
+        BRIDGE_INFO
+            .may_load(deps.storage)?
+            .ok_or_else(|| StdError::generic_err("missing wrapped-token legacy state: bridge_info"))?;
     }
 
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
@@ -429,6 +439,22 @@ mod tests {
         }
     }
 
+    fn seed_legacy_wrapped_token_state(mut deps: DepsMut) {
+        let creator = deps.api.addr_make("inference-module");
+        CREATOR
+            .save(deps.storage, &creator)
+            .expect("creator should be stored");
+        BRIDGE_INFO
+            .save(
+                deps.storage,
+                &BridgeInfo {
+                    chain_id: "ethereum-mainnet".to_string(),
+                    contract_address: "0x1111111111111111111111111111111111111111".to_string(),
+                },
+            )
+            .expect("bridge info should be stored");
+    }
+
     #[test]
     fn instantiate_sets_wrapped_token_cw2_marker() {
         let mut deps = mock_dependencies();
@@ -448,11 +474,27 @@ mod tests {
         let mut deps = mock_dependencies();
         set_contract_version(deps.as_mut().storage, LEGACY_CW20_BASE_CONTRACT_NAME, "2.0.0")
             .expect("legacy marker should be stored");
+        seed_legacy_wrapped_token_state(deps.as_mut());
 
         migrate(deps.as_mut(), mock_env(), Binary::default()).expect("migration should succeed");
 
         let version = get_contract_version(&deps.storage).expect("contract version should be updated");
         assert_eq!(version.contract, CONTRACT_NAME);
         assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_rejects_foreign_legacy_cw20_base_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, LEGACY_CW20_BASE_CONTRACT_NAME, "2.0.0")
+            .expect("legacy marker should be stored");
+
+        let err = migrate(deps.as_mut(), mock_env(), Binary::default())
+            .expect_err("migration should fail without wrapped-token legacy state");
+        assert!(
+            err.to_string()
+                .contains("missing wrapped-token legacy state"),
+            "unexpected error: {err}"
+        );
     }
 }
