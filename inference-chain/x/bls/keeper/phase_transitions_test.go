@@ -508,10 +508,10 @@ func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) 
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-	// Under slot-weighted quorum including dealer self:
-	// Dealer 0: gets votes from verifier 0 (33), verifier 1 (33), and implicitly self-votes (34) = 100 slots (Valid)
-	// Dealer 1: gets votes from verifier 0 (33), missing from verifier 1, implicitly self-votes (33) = 66 slots (Valid)
-	// Dealer 2: gets votes from verifier 0 (33), missing from verifier 1, implicitly self-votes (33) = 66 slots (Valid)
+	// Under slot-weighted quorum including implicit dealer self weight:
+	// Dealer 0: verifier 1 votes yes (33), verifier 2 abstains, and dealer 0 implicitly contributes self weight (33) = 66 slots (Valid)
+	// Dealer 1: verifier 0 votes yes (33), verifier 2 abstains, and dealer 1 implicitly contributes self weight (33) = 66 slots (Valid)
+	// Dealer 2: verifier 0 votes yes (33), verifier 1's short vector omits dealer 2, and dealer 2 implicitly contributes self weight (34) = 67 slots (Valid)
 	expectedValidDealers := []bool{true, true, true}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
