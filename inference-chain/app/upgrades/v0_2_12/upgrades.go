@@ -2,14 +2,17 @@ package v0_2_12
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	sdkmath "cosmossdk.io/math"
 	"cosmossdk.io/x/feegrant"
 	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/authz"
@@ -33,6 +36,56 @@ const MigratedFeeAllowanceExpiration = 365 * 24 * time.Hour
 
 const kimiModelID = "moonshotai/Kimi-K2.6"
 
+const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
+const DefaultBountyIbcUsdtDenom = "ibc/B25DC823C082E24B706293F45EC062FB119ED7FB4CC99031E4FFFCF0B8525EBB"
+
+func USDT(amount int64) int64 {
+	return amount * 1_000_000
+}
+
+type BountyReward struct {
+	Address string
+	Amount  int64
+}
+
+var bountyRewards = []BountyReward{
+	// CertiK audit fixes (GEB-29, GEB-35, GEB-44, GEB-45, GEB-51).
+	// PR: #988, #1020, #1021
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(6000)},
+	// DKG dealer consensus.
+	// PR: #825
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(3000)},
+	// Developer inference access / account API changes.
+	// PR: #750
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(1000)},
+	// OpenAI compatibility and API error handling.
+	// PR: #614
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(500)},
+	// v0.2.12 release management.
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(2500)},
+	// v0.2.12 release management.
+	{Address: "gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56", Amount: USDT(5000)},
+	// Inference validation optimization.
+	// Issue: #929
+	{Address: "gonka1yhdhp4vwsvdsplv4acksntx0zxh8saueq6lj9m", Amount: USDT(9000)},
+	// Acquire node gRPC.
+	// PR: #945
+	{Address: "gonka1vu28c7w5zxqe28lakrrfdrkvscft326rxur3dv", Amount: USDT(3000)},
+	// Fund atomicity error safety.
+	// PR: #789
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(2000)},
+	// Align validator slashing with required collateral.
+	// PR: #940
+	{Address: "gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8", Amount: USDT(1500)},
+	// Report of free inference vulnerability (fixed by devshards release).
+	{Address: "gonka1c34w3r45f0uftjckt2yy4k22vnc3zqjnp0umyz", Amount: USDT(500)},
+	// Chat completions fix (missed from v0.2.10).
+	// Issue: #499
+	{Address: "gonka139f7x4gur2yuyty64dkqxep8jk3d7ku8ayjaqg", Amount: USDT(200)},
+	// Review of upgrade v0.2.11.
+	{Address: "gonka12jaf7m4eysyqt32mrgarum6z96vt55tckvcleq", Amount: USDT(1000)},
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
@@ -42,7 +95,7 @@ func CreateUpgradeHandler(
 	authzKeeper authzkeeper.Keeper,
 	feegrantKeeper feegrantkeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
-	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
 
 		// Keep capability module version explicit to avoid re-running InitGenesis
@@ -140,6 +193,10 @@ func CreateUpgradeHandler(
 		}
 
 		if err := setFeeParams(ctx, k); err != nil {
+			return nil, err
+		}
+
+		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -792,5 +849,71 @@ func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 		"min_gas_price_ngonka", fp.MinGasPriceNgonka,
 		"base_validation_gas", fp.BaseValidationGas,
 		"gas_per_poc_count", fp.GasPerPocCount)
+	return nil
+}
+
+func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
+	if len(bountyRewards) == 0 {
+		k.Logger().Info("No bounty rewards to distribute")
+		return nil
+	}
+
+	communitySaleAddr, err := sdk.AccAddressFromBech32(BountyCommunitySaleContractAddress)
+	if err != nil {
+		k.Logger().Error("invalid hardcoded community sale contract address", "address", BountyCommunitySaleContractAddress, "error", err)
+		return nil
+	}
+	authorityAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.Logger().Error("invalid authority address", "authority", k.GetAuthority(), "error", err)
+		return nil
+	}
+
+	var totalRequired int64
+	for _, bounty := range bountyRewards {
+		totalRequired += bounty.Amount
+	}
+
+	available := k.BankView.SpendableCoin(ctx, communitySaleAddr, DefaultBountyIbcUsdtDenom).Amount.Int64()
+	if available < totalRequired {
+		k.Logger().Warn("insufficient community sale balance, skipping bounty distribution",
+			"required", totalRequired, "available", available, "denom", DefaultBountyIbcUsdtDenom)
+		return nil
+	}
+
+	k.Logger().Info("community sale balance sufficient for bounty distribution",
+		"required", totalRequired, "available", available, "denom", DefaultBountyIbcUsdtDenom)
+
+	permissionedKeeper := wasmkeeper.NewGovPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, bounty := range bountyRewards {
+		recipient, err := sdk.AccAddressFromBech32(bounty.Address)
+		if err != nil {
+			k.Logger().Error("invalid bounty address", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		msgBz, err := json.Marshal(map[string]any{
+			"withdraw_ibc": map[string]string{
+				"denom":     DefaultBountyIbcUsdtDenom,
+				"amount":    strconv.FormatInt(bounty.Amount, 10),
+				"recipient": recipient.String(),
+			},
+		})
+		if err != nil {
+			k.Logger().Error("failed to marshal community sale withdraw message", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		if _, err := permissionedKeeper.Execute(sdkCtx, communitySaleAddr, authorityAddr, msgBz, sdk.NewCoins()); err != nil {
+			k.Logger().Error("failed to distribute bounty from community sale contract",
+				"address", bounty.Address, "amount", bounty.Amount, "denom", DefaultBountyIbcUsdtDenom, "error", err)
+			continue
+		}
+
+		k.Logger().Info("bounty distributed from community sale contract",
+			"address", bounty.Address, "amount", bounty.Amount, "denom", DefaultBountyIbcUsdtDenom)
+	}
+
 	return nil
 }
