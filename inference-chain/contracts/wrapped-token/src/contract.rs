@@ -22,18 +22,15 @@ pub const CREATOR: Item<Addr> = Item::new("creator");
 
 const CONTRACT_NAME: &str = "wrapped-token";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const LEGACY_CW20_BASE_CONTRACT_NAME: &str = "crates.io:cw20-base";
 
 #[entry_point]
 pub fn instantiate(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    // Note: We don't set_contract_version here because cw20_base_contract::instantiate
-    // will set it to "crates.io:cw20-base". Our migrate function handles this by
-    // allowing migration from both "wrapped-token" and "crates.io:cw20-base".
-    
     // Save creator (instantiator = inference module) - controls operations
     CREATOR.save(deps.storage, &info.sender)?;
     
@@ -73,8 +70,12 @@ pub fn instantiate(
             logo: None,
         }),
     };
-    let resp = cw20_base_contract::instantiate(deps, env, info, cw20_init)
+    let resp = cw20_base_contract::instantiate(deps.branch(), env, info, cw20_init)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
+        .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+
     Ok(resp)
 }
 
@@ -318,10 +319,10 @@ pub fn migrate(
     let old = get_contract_version(deps.storage)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
     
-    if old.contract != CONTRACT_NAME {
+    if old.contract != CONTRACT_NAME && old.contract != LEGACY_CW20_BASE_CONTRACT_NAME {
         return Err(ContractError::Std(StdError::generic_err(format!(
-            "wrong contract: expected {}, got {}",
-            CONTRACT_NAME, old.contract
+            "wrong contract: expected {} or {}, got {}",
+            CONTRACT_NAME, LEGACY_CW20_BASE_CONTRACT_NAME, old.contract
         ))));
     }
 
@@ -411,4 +412,47 @@ where
     let bytes = query_grpc(deps, path, Binary::from(buf))?;
     TResponse::decode(bytes.as_slice())
         .map_err(|e| StdError::generic_err(format!("Decode response: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+    fn instantiate_msg() -> InstantiateMsg {
+        InstantiateMsg {
+            chain_id: "ethereum-mainnet".to_string(),
+            contract_address: "0x1111111111111111111111111111111111111111".to_string(),
+            initial_balances: vec![],
+            mint: None,
+            admin: None,
+        }
+    }
+
+    #[test]
+    fn instantiate_sets_wrapped_token_cw2_marker() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("inference-module");
+        let info = message_info(&sender, &[]);
+
+        instantiate(deps.as_mut(), env, info, instantiate_msg()).expect("instantiate should succeed");
+
+        let version = get_contract_version(&deps.storage).expect("contract version should be stored");
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_accepts_legacy_cw20_base_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, LEGACY_CW20_BASE_CONTRACT_NAME, "2.0.0")
+            .expect("legacy marker should be stored");
+
+        migrate(deps.as_mut(), mock_env(), Binary::default()).expect("migration should succeed");
+
+        let version = get_contract_version(&deps.storage).expect("contract version should be updated");
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
 }
