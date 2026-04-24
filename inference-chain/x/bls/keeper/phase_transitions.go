@@ -164,14 +164,8 @@ func (k Keeper) transitionFromVerifyingToDisputing(ctx sdk.Context, epochBLSData
 		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to determine candidate valid dealers: %v", err))
 	}
 
-	// Calculate total slots covered by candidate valid dealers
-	var candidateDealerSlots uint32 = 0
-	for i, participant := range epochBLSData.Participants {
-		if i < len(candidateValidDealers) && candidateValidDealers[i] {
-			participantSlots := participant.SlotEndIndex - participant.SlotStartIndex + 1
-			candidateDealerSlots += participantSlots
-		}
-	}
+	// Snapshot candidate dealers from raw verification votes before complaint adjudication
+	candidateDealerSlots := sumDealerSlots(epochBLSData.Participants, candidateValidDealers)
 
 	k.Logger().Info("Checking candidate valid dealers slots",
 		"epochId", epochBLSData.EpochId,
@@ -180,9 +174,10 @@ func (k Keeper) transitionFromVerifyingToDisputing(ctx sdk.Context, epochBLSData
 		"requiredSlots", epochBLSData.ITotalSlots/2)
 
 	if candidateDealerSlots <= epochBLSData.ITotalSlots/2 {
-		failureReason := fmt.Sprintf("Insufficient candidate valid dealer slots: %d slots out of %d total slots (required: >%d)",
-			candidateDealerSlots, epochBLSData.ITotalSlots, epochBLSData.ITotalSlots/2)
-		return k.MarkDKGAsFailed(ctx, epochBLSData, failureReason)
+		k.Logger().Info("Candidate dealers below quorum before complaint adjudication; continuing to DISPUTING",
+			"epochId", epochBLSData.EpochId,
+			"candidateDealerSlots", candidateDealerSlots,
+			"totalSlots", epochBLSData.ITotalSlots)
 	}
 
 	params, err := k.GetParams(ctx)
@@ -193,42 +188,14 @@ func (k Keeper) transitionFromVerifyingToDisputing(ctx sdk.Context, epochBLSData
 
 	epochBLSData.CandidateValidDealers = candidateValidDealers
 
-	filteredComplaints := make([]types.DealerComplaint, 0, len(epochBLSData.DealerComplaints))
-	for _, complaint := range epochBLSData.DealerComplaints {
-		dealerIdx := complaint.DealerIndex
-		if dealerIdx >= uint32(len(candidateValidDealers)) {
-			continue
-		}
-		// Keep only complaints against dealers that passed vote-based candidacy.
-		if candidateValidDealers[int(dealerIdx)] {
-			filteredComplaints = append(filteredComplaints, complaint)
-		}
-	}
-	// Wipe all existing complaint sub-keys so filtered-out entries don't
-	// linger. SetEpochBLSData below will resync the kept subset via its
-	// inline sync loop.
-	if err := k.DeleteDealerComplaintsForEpoch(ctx, epochBLSData.EpochId); err != nil {
-		return fmt.Errorf("failed to clear dealer complaint sub-keys for epoch %d: %w", epochBLSData.EpochId, err)
-	}
-	epochBLSData.DealerComplaints = filteredComplaints
-
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING
 	epochBLSData.DisputingPhaseDeadlineBlock = currentBlockHeight + params.DisputePhaseDurationBlocks
 
-	// NOT SetEpochBLSDataBaseOnly here: filteredComplaints above plus the
-	// DeleteDealerComplaintsForEpoch call cleared every complaint sub-key,
-	// so SetEpochBLSData's DealerComplaints sync loop MUST re-write the
-	// filtered subset. Null only the other two before Set; restore after
-	// so the event below still carries the full state.
-	dealerParts := epochBLSData.DealerParts
-	verSubs := epochBLSData.VerificationSubmissions
-	epochBLSData.DealerParts = nil
-	epochBLSData.VerificationSubmissions = nil
-	if err := k.SetEpochBLSData(ctx, *epochBLSData); err != nil {
+	// Persist only base fields. Dealer parts, verifier submissions, and
+	// complaints are already stored under sub-keys and remain untouched
+	if err := k.SetEpochBLSDataBaseOnly(ctx, *epochBLSData); err != nil {
 		return fmt.Errorf("failed to set EpochBLSData for epoch %d: %w", epochBLSData.EpochId, err)
 	}
-	epochBLSData.DealerParts = dealerParts
-	epochBLSData.VerificationSubmissions = verSubs
 
 	if err := ctx.EventManager().EmitTypedEvent(&types.EventDisputePhaseStarted{
 		EpochId:                     epochBLSData.EpochId,
@@ -255,33 +222,28 @@ func (k Keeper) CompleteDKG(ctx sdk.Context, epochBLSData *types.EpochBLSData) e
 }
 
 func (k Keeper) finalizeDisputingPhase(ctx sdk.Context, epochBLSData *types.EpochBLSData) error {
-	finalValidDealers := epochBLSData.CandidateValidDealers
-	if len(finalValidDealers) != len(epochBLSData.Participants) {
-		return fmt.Errorf(
-			"invalid candidate valid dealers length for epoch %d: got %d, expected %d",
-			epochBLSData.EpochId,
-			len(finalValidDealers),
-			len(epochBLSData.Participants),
-		)
-	}
-
-	var err error
-	finalValidDealers, err = k.applyDealerComplaintOutcomes(epochBLSData, finalValidDealers)
+	dealerFaults, falseComplainersByDealer, err := k.adjudicateDealerComplaints(epochBLSData)
 	if err != nil {
 		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to apply complaint outcomes: %v", err))
 	}
 
-	// Calculate total slots covered by final valid dealers
-	var finalDealerSlots uint32 = 0
-	for i, participant := range epochBLSData.Participants {
-		if i < len(finalValidDealers) && finalValidDealers[i] {
-			participantSlots := participant.SlotEndIndex - participant.SlotStartIndex + 1
-			finalDealerSlots += participantSlots
-		}
+	candidateValidDealers, err := k.determineValidDealersWithConsensus(epochBLSData, falseComplainersByDealer)
+	if err != nil {
+		return k.MarkDKGAsFailed(ctx, epochBLSData, fmt.Sprintf("failed to determine final candidate dealers: %v", err))
 	}
+	epochBLSData.CandidateValidDealers = candidateValidDealers
+
+	finalValidDealers := make([]bool, len(candidateValidDealers))
+	copy(finalValidDealers, candidateValidDealers)
+	complainerFaults := flattenFalseComplainers(falseComplainersByDealer)
+	applyComplaintFaultMaps(finalValidDealers, dealerFaults, complainerFaults)
+
+	finalDealerSlots := sumDealerSlots(epochBLSData.Participants, finalValidDealers)
 
 	k.Logger().Info("Checking final valid dealers slots",
 		"epochId", epochBLSData.EpochId,
+		"dealerFaultCount", len(dealerFaults),
+		"falseComplainerCount", len(complainerFaults),
 		"finalDealerSlots", finalDealerSlots,
 		"totalSlots", epochBLSData.ITotalSlots,
 		"requiredSlots", epochBLSData.ITotalSlots/2)
@@ -377,6 +339,11 @@ func (k Keeper) CalculateSlotsWithVerificationVectors(epochBLSData *types.EpochB
 
 // DetermineValidDealersWithConsensus determines which dealers are valid under weighted slot quorum
 func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSData) ([]bool, error) {
+	return k.determineValidDealersWithConsensus(epochBLSData, nil)
+}
+
+// determineValidDealersWithConsensus determines valid dealers with optional per-dealer verifier exclusions
+func (k Keeper) determineValidDealersWithConsensus(epochBLSData *types.EpochBLSData, excludedVerifiersByDealer map[int]map[int]struct{}) ([]bool, error) {
 	participantCount := len(epochBLSData.Participants)
 	if participantCount == 0 {
 		return nil, fmt.Errorf("no participants found for epoch %d", epochBLSData.EpochId)
@@ -384,9 +351,34 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 
 	validDealers := make([]bool, participantCount)
 	totalSlots := uint64(epochBLSData.ITotalSlots)
-	quorumSlots := totalSlots/2 + 1
 
 	for dealerIndex := 0; dealerIndex < participantCount; dealerIndex++ {
+		excludedVerifiers := map[int]struct{}(nil)
+		if excludedVerifiersByDealer != nil {
+			excludedVerifiers = excludedVerifiersByDealer[dealerIndex]
+		}
+
+		effectiveTotalSlots := totalSlots
+		if len(excludedVerifiers) > 0 {
+			var excludedSlots uint64
+			for verifierIndex := range excludedVerifiers {
+				if verifierIndex < 0 || verifierIndex >= participantCount {
+					continue
+				}
+				participant := epochBLSData.Participants[verifierIndex]
+				if participant.SlotEndIndex < participant.SlotStartIndex {
+					return nil, fmt.Errorf("invalid slot range for participant %d in epoch %d", verifierIndex, epochBLSData.EpochId)
+				}
+				excludedSlots += uint64(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+			}
+			if excludedSlots >= effectiveTotalSlots {
+				effectiveTotalSlots = 0
+			} else {
+				effectiveTotalSlots -= excludedSlots
+			}
+		}
+		quorumSlots := effectiveTotalSlots/2 + 1
+
 		dealerParticipant := epochBLSData.Participants[dealerIndex]
 		if dealerParticipant.SlotEndIndex < dealerParticipant.SlotStartIndex {
 			return nil, fmt.Errorf("invalid slot range for dealer %d in epoch %d", dealerIndex, epochBLSData.EpochId)
@@ -404,6 +396,11 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 			if verifierIndex >= participantCount {
 				continue
 			}
+			if excludedVerifiers != nil {
+				if _, excluded := excludedVerifiers[verifierIndex]; excluded {
+					continue
+				}
+			}
 			if verifierIndex == dealerIndex {
 				continue
 			}
@@ -419,7 +416,7 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 			validVotingSlots += verifierSlots
 		}
 
-		dealerIsValid := totalSlots > 0 && validVotingSlots >= quorumSlots
+		dealerIsValid := effectiveTotalSlots > 0 && validVotingSlots >= quorumSlots
 		dealerSubmittedParts := dealerIndex < len(epochBLSData.DealerParts) &&
 			epochBLSData.DealerParts[dealerIndex] != nil &&
 			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&
@@ -429,6 +426,16 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 	}
 
 	return validDealers, nil
+}
+
+func sumDealerSlots(participants []types.BLSParticipantInfo, validDealers []bool) uint32 {
+	var totalSlots uint32
+	for i, participant := range participants {
+		if i < len(validDealers) && validDealers[i] {
+			totalSlots += participant.SlotEndIndex - participant.SlotStartIndex + 1
+		}
+	}
+	return totalSlots
 }
 
 func countTrueBooleans(values []bool) int {
@@ -497,4 +504,3 @@ func (k Keeper) ComputeGroupPublicKey(epochBLSData *types.EpochBLSData, validDea
 
 	return groupPublicKeyBytes, nil
 }
-

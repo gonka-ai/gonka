@@ -324,6 +324,9 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
 
 	k.SetEpochBLSData(ctx, epochBLSData)
 	k.SetActiveEpochID(ctx, epochID)
@@ -394,16 +397,27 @@ func TestCompleteDKG_WrongPhase(t *testing.T) {
 	require.Contains(t, err.Error(), "not in DISPUTING phase")
 }
 
-func TestCompleteDKG_InvalidCandidateValidDealersLength(t *testing.T) {
+func TestCompleteDKG_RecomputesCandidatesWhenStoredSnapshotIsMalformed(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	epochBLSData := createTestEpochBLSData(uint64(29), 3)
 	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_DISPUTING
+	// Simulate stale/corrupted snapshot from an older phase.
 	epochBLSData.CandidateValidDealers = []bool{true, true}
+	testCommitment := createTestG2Commitment()
+	epochBLSData.DealerParts[0].DealerAddress = "participant1"
+	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[1].DealerAddress = "participant2"
+	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
+	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
 
 	err := k.CompleteDKG(ctx, &epochBLSData)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid candidate valid dealers length")
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_COMPLETED, epochBLSData.DkgPhase)
+	require.Equal(t, []bool{true, true, false}, epochBLSData.CandidateValidDealers)
+	require.Equal(t, []bool{true, true, false}, epochBLSData.ValidDealers)
 }
 
 func TestDetermineValidDealersWithConsensus(t *testing.T) {
@@ -587,6 +601,54 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	activeEpoch, found := k.GetActiveEpochID(ctx)
 	require.False(t, found)
 	require.Equal(t, uint64(0), activeEpoch)
+}
+
+func TestProcessDKGPhaseTransitionForEpoch_VerifyingToDisputing_PreservesComplaintsForNonCandidateDealers(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	epochID := uint64(31)
+	epochBLSData := createTestEpochBLSData(epochID, 3)
+	epochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_VERIFYING
+
+	testCommitment := createTestG2Commitment()
+	for i := 0; i < 3; i++ {
+		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
+		epochBLSData.DealerParts[i].Commitments = [][]byte{testCommitment}
+	}
+
+	// Two verifiers submit vectors (>50% verification participation),
+	// but no dealer reaches weighted quorum before disputes.
+	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{false, false, false}
+	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{false, false, false}
+
+	// Complaint targets dealer 0, who is not in the pre-dispute candidate set.
+	epochBLSData.DealerComplaints = []types.DealerComplaint{
+		{
+			DealerIndex:             0,
+			ComplainerIndex:         1,
+			DisputedSlotIndex:       33,
+			DisputedCiphertextIndex: 0,
+		},
+	}
+
+	k.SetEpochBLSData(ctx, epochBLSData)
+	k.SetActiveEpochID(ctx, epochID)
+
+	ctx = ctx.WithBlockHeight(epochBLSData.VerifyingPhaseDeadlineBlock)
+	err := k.ProcessDKGPhaseTransitionForEpoch(ctx, epochID)
+	require.NoError(t, err)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DISPUTING, storedData.DkgPhase)
+	require.Equal(t, []bool{false, false, false}, storedData.CandidateValidDealers)
+	require.Len(t, storedData.DealerComplaints, 1)
+	require.Equal(t, uint32(0), storedData.DealerComplaints[0].DealerIndex)
+	require.Equal(t, uint32(1), storedData.DealerComplaints[0].ComplainerIndex)
+
+	activeEpoch, found := k.GetActiveEpochID(ctx)
+	require.True(t, found)
+	require.Equal(t, epochID, activeEpoch)
 }
 
 func TestProcessDKGPhaseTransitionForEpoch_VerifyingToFailed(t *testing.T) {
