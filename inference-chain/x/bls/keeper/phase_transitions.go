@@ -392,13 +392,10 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 			return nil, fmt.Errorf("invalid slot range for dealer %d in epoch %d", dealerIndex, epochBLSData.EpochId)
 		}
 		dealerOwnSlots := uint64(dealerParticipant.SlotEndIndex-dealerParticipant.SlotStartIndex) + 1
-		dealerOwnSlotsAtLeastHalf := totalSlots > 0 && dealerOwnSlots*2 >= totalSlots
-		maxPossibleNonSelfVotingSlots := uint64(0)
-		if dealerOwnSlots <= totalSlots {
-			maxPossibleNonSelfVotingSlots = totalSlots - dealerOwnSlots
-		}
 
-		var validVotingSlotsExcludingDealer uint64
+		var validVotingSlots uint64
+		// Implicitly, the dealer considers its own parts valid
+		validVotingSlots = dealerOwnSlots
 
 		for verifierIndex, verification := range epochBLSData.VerificationSubmissions {
 			if verification == nil || len(verification.DealerValidity) == 0 {
@@ -419,26 +416,14 @@ func (k Keeper) DetermineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 				return nil, fmt.Errorf("invalid slot range for participant %d in epoch %d", verifierIndex, epochBLSData.EpochId)
 			}
 			verifierSlots := uint64(participant.SlotEndIndex-participant.SlotStartIndex) + 1
-			validVotingSlotsExcludingDealer += verifierSlots
+			validVotingSlots += verifierSlots
 		}
 
-		dealerIsValid := totalSlots > 0 && validVotingSlotsExcludingDealer >= quorumSlots
+		dealerIsValid := totalSlots > 0 && validVotingSlots >= quorumSlots
 		dealerSubmittedParts := dealerIndex < len(epochBLSData.DealerParts) &&
 			epochBLSData.DealerParts[dealerIndex] != nil &&
 			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&
 			len(epochBLSData.DealerParts[dealerIndex].Commitments) > 0
-
-		if dealerSubmittedParts && totalSlots > 0 && maxPossibleNonSelfVotingSlots < quorumSlots {
-			k.Logger().Warn("Dealer cannot reach weighted quorum with self-vote excluded",
-				"epochId", epochBLSData.EpochId,
-				"dealerIndex", dealerIndex,
-				"dealerOwnSlots", dealerOwnSlots,
-				"dealerOwnSlotsAtLeastHalf", dealerOwnSlotsAtLeastHalf,
-				"maxNonSelfVotingSlots", maxPossibleNonSelfVotingSlots,
-				"quorumSlots", quorumSlots,
-				"totalSlots", totalSlots,
-				"receivedVotingSlotsExcludingDealer", validVotingSlotsExcludingDealer)
-		}
 
 		validDealers[dealerIndex] = dealerIsValid && dealerSubmittedParts
 	}
