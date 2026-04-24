@@ -19,53 +19,81 @@ const (
 	dkgShareBytesLen  = 32
 )
 
-// applyDealerComplaintOutcomes applies complaint outcomes to the candidate valid dealer set.
+// applyDealerComplaintOutcomes applies complaint outcomes to the provided dealer set
 // Current policy:
 // - missing/invalid dealer response => dealer fault (dealer removed)
-// - valid dealer response => false complaint (complainer removed if in candidate set)
+// - valid dealer response => false complaint (complainer removed)
 func (k Keeper) applyDealerComplaintOutcomes(epochBLSData *types.EpochBLSData, candidateValidDealers []bool) ([]bool, error) {
 	finalValidDealers := make([]bool, len(candidateValidDealers))
 	copy(finalValidDealers, candidateValidDealers)
 
+	dealerFaults, falseComplainersByDealer, err := k.adjudicateDealerComplaints(epochBLSData)
+	if err != nil {
+		return nil, err
+	}
+
+	complainerFaults := flattenFalseComplainers(falseComplainersByDealer)
+	applyComplaintFaultMaps(finalValidDealers, dealerFaults, complainerFaults)
+	return finalValidDealers, nil
+}
+
+// adjudicateDealerComplaints evaluates all stored complaints and returns fault sets
+func (k Keeper) adjudicateDealerComplaints(epochBLSData *types.EpochBLSData) (map[int]struct{}, map[int]map[int]struct{}, error) {
 	dealerFaults := make(map[int]struct{})
-	complainerFaults := make(map[int]struct{})
+	falseComplainersByDealer := make(map[int]map[int]struct{})
+	participantCount := len(epochBLSData.Participants)
 
 	for i := range epochBLSData.DealerComplaints {
 		complaint := epochBLSData.DealerComplaints[i]
 		dealerIndex := int(complaint.DealerIndex)
 		complainerIndex := int(complaint.ComplainerIndex)
 
-		if dealerIndex < 0 || dealerIndex >= len(finalValidDealers) {
+		if dealerIndex < 0 || dealerIndex >= participantCount {
 			continue
 		}
-		if complainerIndex < 0 || complainerIndex >= len(finalValidDealers) {
-			continue
-		}
-		if !candidateValidDealers[dealerIndex] {
-			// Complaints against non-candidate dealers do not affect final set.
+		if complainerIndex < 0 || complainerIndex >= participantCount {
 			continue
 		}
 
 		ok, err := k.verifyDealerComplaintResponse(epochBLSData, &complaint)
 		if err != nil {
-			return nil, fmt.Errorf("failed to verify complaint for dealer %d and complainer %d: %w", dealerIndex, complainerIndex, err)
+			return nil, nil, fmt.Errorf("failed to verify complaint for dealer %d and complainer %d: %w", dealerIndex, complainerIndex, err)
 		}
 
 		if ok {
-			complainerFaults[complainerIndex] = struct{}{}
+			if falseComplainersByDealer[dealerIndex] == nil {
+				falseComplainersByDealer[dealerIndex] = make(map[int]struct{})
+			}
+			falseComplainersByDealer[dealerIndex][complainerIndex] = struct{}{}
 		} else {
 			dealerFaults[dealerIndex] = struct{}{}
 		}
 	}
 
+	return dealerFaults, falseComplainersByDealer, nil
+}
+
+func flattenFalseComplainers(falseComplainersByDealer map[int]map[int]struct{}) map[int]struct{} {
+	complainerFaults := make(map[int]struct{})
+	for _, complainers := range falseComplainersByDealer {
+		for complainerIndex := range complainers {
+			complainerFaults[complainerIndex] = struct{}{}
+		}
+	}
+	return complainerFaults
+}
+
+func applyComplaintFaultMaps(validDealers []bool, dealerFaults map[int]struct{}, complainerFaults map[int]struct{}) {
 	for dealerIndex := range dealerFaults {
-		finalValidDealers[dealerIndex] = false
+		if dealerIndex >= 0 && dealerIndex < len(validDealers) {
+			validDealers[dealerIndex] = false
+		}
 	}
 	for complainerIndex := range complainerFaults {
-		finalValidDealers[complainerIndex] = false
+		if complainerIndex >= 0 && complainerIndex < len(validDealers) {
+			validDealers[complainerIndex] = false
+		}
 	}
-
-	return finalValidDealers, nil
 }
 
 func (k Keeper) verifyDealerComplaintResponse(epochBLSData *types.EpochBLSData, complaint *types.DealerComplaint) (bool, error) {
