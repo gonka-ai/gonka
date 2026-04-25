@@ -23,6 +23,9 @@ func expectedEncryptedSharesCount(participant types.BLSParticipantInfo) (int, er
 	if expected > uint64(maxInt) {
 		return 0, fmt.Errorf("expected encrypted shares count overflow for participant %s", participant.Address)
 	}
+	if expected > uint64(types.MaxEncryptedSharesPerParticipantCount) {
+		return 0, fmt.Errorf("expected encrypted shares count %d exceeds maximum %d for participant %s", expected, types.MaxEncryptedSharesPerParticipantCount, participant.Address)
+	}
 
 	return int(expected), nil
 }

@@ -1510,6 +1510,23 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	// Compute adjusted percentages if genesis guardian reservation applies
 	adjustedPercentages := ApplyBLSGuardianSlotReservation(ctx, am.keeper, activeParticipants)
 
+	// Fetch BLS params to compute maximum allowed warm keys per participant
+	blsParams, err := am.keeper.BlsKeeper.GetParams(ctx)
+	var maxAdditionalKeys int
+	if err != nil || blsParams.ITotalSlots == 0 {
+		am.LogError("Failed to get BLS params or ITotalSlots is zero, defaulting to minimal allowed keys", types.EpochGroup, "epochID", epochID, "error", err)
+		maxAdditionalKeys = 0
+	} else {
+		// Cap keys so that slotCount * (1 + additionalKeys) <= MaxEncryptedSharesPerParticipantCount.
+		// Since slotCount can be at most ITotalSlots, dividing the max limit by ITotalSlots gives
+		// the safe upper bound per slot.
+		maxKeysPerSlot := blstypes.MaxEncryptedSharesPerParticipantCount / int(blsParams.ITotalSlots)
+		maxAdditionalKeys = maxKeysPerSlot - 1
+		if maxAdditionalKeys < 0 {
+			maxAdditionalKeys = 0 // Paranoia fallback
+		}
+	}
+
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, ap := range activeParticipants {
 		accAddr, err := sdk.AccAddressFromBech32(ap.Index)
@@ -1540,7 +1557,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
-		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes)
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
 
 		// Determine percentage weight: use adjusted reservation if present, else raw share
 		var percentage math.LegacyDec
@@ -1578,7 +1595,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	}
 
 	// Call the BLS module to initiate key generation
-	err := am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
+	err = am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
 	if err != nil {
 		am.LogError("Failed to initiate BLS key generation", types.EpochGroup, "epochID", epochID, "error", err.Error())
 		return
@@ -1589,7 +1606,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		"participantCount", len(finalizedParticipants))
 }
 
-func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, participantAddress string, primaryPubKey []byte) [][]byte {
+func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, participantAddress string, primaryPubKey []byte, maxAdditionalKeys int) [][]byte {
 	const blsDealerPartMsgTypeURL = "/inference.bls.MsgSubmitDealerPart"
 
 	resp, err := am.keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
@@ -1649,6 +1666,14 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 	slices.SortFunc(additionalPubKeys, func(a, b []byte) int {
 		return bytes.Compare(a, b)
 	})
+
+	if len(additionalPubKeys) > maxAdditionalKeys {
+		am.LogWarn("Pruning excess additional BLS participant public keys", types.EpochGroup,
+			"participant", participantAddress,
+			"found", len(additionalPubKeys),
+			"max_allowed", maxAdditionalKeys)
+		additionalPubKeys = additionalPubKeys[:maxAdditionalKeys]
+	}
 
 	return additionalPubKeys
 }
