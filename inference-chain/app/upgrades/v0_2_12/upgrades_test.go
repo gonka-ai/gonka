@@ -106,6 +106,44 @@ func TestClearLegacyPoCv2Data(t *testing.T) {
 	require.Equal(t, []byte("keep"), store.Get(canaryKey), "canary entry should survive clear")
 }
 
+func requirePoCModelConfig(t *testing.T, models []*inferencetypes.PoCModelConfig, modelID string) *inferencetypes.PoCModelConfig {
+	t.Helper()
+	for _, model := range models {
+		if model != nil && model.ModelId == modelID {
+			return model
+		}
+	}
+	require.Failf(t, "missing PoC model config", "model_id=%s", modelID)
+	return nil
+}
+
+func requireKimiPoCModelConfig(
+	t *testing.T,
+	models []*inferencetypes.PoCModelConfig,
+	baseWeightScaleFactor *inferencetypes.Decimal,
+	penaltyStartEpoch uint64,
+) {
+	t.Helper()
+	kimi := requirePoCModelConfig(t, models, kimiModelID)
+	require.Equal(t, int64(1024), kimi.SeqLen)
+	require.NotNil(t, kimi.StatTest)
+	require.Equal(t, &inferencetypes.Decimal{Value: 4, Exponent: -1}, kimi.StatTest.DistThreshold)
+	require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: -1}, kimi.StatTest.PMismatch)
+	require.Equal(t, &inferencetypes.Decimal{Value: 5, Exponent: -2}, kimi.StatTest.PValueThreshold)
+	require.Equal(t, kimiWeightScaleFactor(baseWeightScaleFactor), kimi.WeightScaleFactor)
+	require.Equal(t, penaltyStartEpoch, kimi.PenaltyStartEpoch)
+}
+
+func requireDeprecatedPoCParamsCleared(t *testing.T, poc *inferencetypes.PocParams) {
+	t.Helper()
+	require.NotNil(t, poc)
+	require.Nil(t, poc.WeightScaleFactor)
+	require.Nil(t, poc.ModelParams)
+	require.Empty(t, poc.ModelId)
+	require.Zero(t, poc.SeqLen)
+	require.Nil(t, poc.StatTest)
+}
+
 func TestMigrateParams(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
@@ -120,13 +158,14 @@ func TestMigrateParams(t *testing.T) {
 	params.PocParams.Models = nil
 	params.DelegationParams = nil
 	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 9))
 
 	require.NoError(t, migrateParams(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got.PocParams.Models, 1)
-	m := got.PocParams.Models[0]
+	require.Len(t, got.PocParams.Models, 2)
+	m := requirePoCModelConfig(t, got.PocParams.Models, "founding-model")
 	require.Equal(t, "founding-model", m.ModelId)
 	require.Equal(t, int64(512), m.SeqLen)
 	require.NotNil(t, m.WeightScaleFactor)
@@ -135,6 +174,7 @@ func TestMigrateParams(t *testing.T) {
 	require.Equal(t, "0.750000000000000000", wsf.String())
 	require.NotNil(t, m.StatTest)
 	require.Equal(t, uint64(0), m.PenaltyStartEpoch)
+	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 11)
 
 	require.NotNil(t, got.DelegationParams)
 	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
@@ -142,18 +182,79 @@ func TestMigrateParams(t *testing.T) {
 	require.Equal(t, defaults.DeployWindow, got.DelegationParams.DeployWindow)
 	require.Equal(t, defaults.VMin, got.DelegationParams.VMin)
 	require.Equal(t, defaults.WThreshold, got.DelegationParams.WThreshold)
-	require.Equal(t, defaults.CapFactor, got.DelegationParams.CapFactor)
-	require.Equal(t, defaults.DelegationShare, got.DelegationParams.DelegationShare)
-	require.Equal(t, defaults.RefusalPenalty, got.DelegationParams.RefusalPenalty)
-	require.Equal(t, defaults.NoParticipationPenalty, got.DelegationParams.NoParticipationPenalty)
+	require.Equal(t, inferencetypes.DecimalFromFloat(1.5), got.DelegationParams.CapFactor)
+	require.Equal(t, inferencetypes.DecimalFromFloat(0.05), got.DelegationParams.DelegationShare)
+	require.Equal(t, inferencetypes.DecimalFromFloat(0.1), got.DelegationParams.RefusalPenalty)
+	require.Equal(t, inferencetypes.DecimalFromFloat(0.15), got.DelegationParams.NoParticipationPenalty)
+	require.Equal(t, inferencetypes.DecimalFromFloat(0.3), got.DelegationParams.MaxModelVotingPowerPercentage)
+	requireDeprecatedPoCParamsCleared(t, got.PocParams)
 
 	// Idempotency: a second run must not duplicate models or alter values.
 	require.NoError(t, migrateParams(ctx, k))
 	got2, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got2.PocParams.Models, 1)
-	require.Equal(t, "founding-model", got2.PocParams.Models[0].ModelId)
-	require.Equal(t, int64(512), got2.PocParams.Models[0].SeqLen)
+	require.Len(t, got2.PocParams.Models, 2)
+	founder := requirePoCModelConfig(t, got2.PocParams.Models, "founding-model")
+	require.Equal(t, int64(512), founder.SeqLen)
+	requireKimiPoCModelConfig(t, got2.PocParams.Models, params.PocParams.WeightScaleFactor, 11)
+	requireDeprecatedPoCParamsCleared(t, got2.PocParams)
+}
+
+func TestUpdateGovernanceModels(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
+		{ModelId: "founding-model", SeqLen: 512, StatTest: inferencetypes.DefaultPoCStatTestParams(),
+			WeightScaleFactor: inferencetypes.DecimalFromFloat(1.0)},
+		{ModelId: kimiModelID, SeqLen: 1024, StatTest: inferencetypes.DefaultPoCStatTestParams(),
+			WeightScaleFactor: inferencetypes.DecimalFromFloat(1.0)},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	k.SetModel(ctx, &inferencetypes.Model{
+		ProposedBy:             "existing",
+		Id:                     "founding-model",
+		UnitsOfComputePerToken: 1,
+		HfRepo:                 "founding-model",
+	})
+	k.SetModel(ctx, &inferencetypes.Model{
+		ProposedBy:             "remove-me",
+		Id:                     "unapproved-model",
+		UnitsOfComputePerToken: 1,
+		HfRepo:                 "unapproved-model",
+	})
+
+	require.NoError(t, updateGovernanceModels(ctx, k))
+
+	founder, found := k.GetGovernanceModel(ctx, "founding-model")
+	require.True(t, found)
+	require.Equal(t, "existing", founder.ProposedBy)
+
+	_, found = k.GetGovernanceModel(ctx, "unapproved-model")
+	require.False(t, found)
+
+	kimi, found := k.GetGovernanceModel(ctx, kimiModelID)
+	require.True(t, found)
+	require.Equal(t, k.GetAuthority(), kimi.ProposedBy)
+	require.Equal(t, kimiModelID, kimi.Id)
+	require.Equal(t, uint64(10000), kimi.UnitsOfComputePerToken)
+	require.Equal(t, kimiModelID, kimi.HfRepo)
+	require.Equal(t, "5a49d036ab7472b7d5912ded487150ec1358c11d", kimi.HfCommit)
+	require.Equal(t, []string{
+		"--max-model-len", "240000",
+		"--tool-call-parser", "kimi_k2",
+		"--reasoning-parser", "kimi_k2",
+	}, kimi.ModelArgs)
+	require.Equal(t, uint64(720), kimi.VRam)
+	require.Equal(t, uint64(1500), kimi.ThroughputPerNonce)
+	require.Equal(t, &inferencetypes.Decimal{Value: 958, Exponent: -3}, kimi.ValidationThreshold)
+
+	require.NoError(t, updateGovernanceModels(ctx, k))
+	models, err := k.GetGovernanceModels(ctx)
+	require.NoError(t, err)
+	require.Len(t, models, 2)
 }
 
 func setupBackfillFixture(t *testing.T, k inferencekeeper.Keeper, ctx sdk.Context, modelID string, addr1, addr2 string) {
@@ -405,6 +506,8 @@ func TestMigrationSequence(t *testing.T) {
 	params.PocParams.Models = nil
 	params.DelegationParams = nil
 	require.NoError(t, k.SetParams(ctx, params))
+	k.SetModel(ctx, &inferencetypes.Model{Id: "founding-model", ProposedBy: "existing"})
+	k.SetModel(ctx, &inferencetypes.Model{Id: "unapproved-model", ProposedBy: "remove"})
 
 	// Epoch + ActiveParticipants + subgroup EpochGroupData with unset voting_power.
 	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 5, PocStartBlockHeight: 500}))
@@ -431,9 +534,10 @@ func TestMigrationSequence(t *testing.T) {
 	// Pruning state starts fresh.
 	require.NoError(t, k.PruningState.Set(ctx, inferencetypes.PruningState{}))
 
-	// Run the four migration functions in the same order as CreateUpgradeHandler.
+	// Run the multi-model migration functions in the same order as CreateUpgradeHandler.
 	require.NoError(t, clearLegacyPoCv2Data(ctx, k))
 	require.NoError(t, migrateParams(ctx, k))
+	require.NoError(t, updateGovernanceModels(ctx, k))
 	require.NoError(t, backfillVotingPower(ctx, k))
 	require.NoError(t, initNewPruningState(ctx, k))
 
@@ -446,10 +550,16 @@ func TestMigrationSequence(t *testing.T) {
 	// Params migrated.
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got.PocParams.Models, 1)
-	require.Equal(t, "founding-model", got.PocParams.Models[0].ModelId)
+	require.Len(t, got.PocParams.Models, 2)
+	requirePoCModelConfig(t, got.PocParams.Models, "founding-model")
+	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 7)
 	require.NotNil(t, got.DelegationParams)
 	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
+	requireDeprecatedPoCParamsCleared(t, got.PocParams)
+	_, found := k.GetGovernanceModel(ctx, "unapproved-model")
+	require.False(t, found)
+	_, found = k.GetGovernanceModel(ctx, kimiModelID)
+	require.True(t, found)
 
 	// Backfill picked up the migrated model id (proves ordering dependency).
 	ap, found := k.GetActiveParticipants(ctx, 5)

@@ -19,6 +19,7 @@ import (
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 )
 
 // MigratedFeeAllowance is the BasicAllowance limit auto-granted during the
@@ -29,6 +30,8 @@ var MigratedFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(100
 
 // MigratedFeeAllowanceExpiration is how long the auto-granted allowance lasts.
 const MigratedFeeAllowanceExpiration = 365 * 24 * time.Hour
+
+const kimiModelID = "moonshotai/Kimi-K2.6"
 
 func CreateUpgradeHandler(
 	mm *module.Manager,
@@ -65,6 +68,11 @@ func CreateUpgradeHandler(
 		}
 
 		err = migrateParams(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+
+		err = updateGovernanceModels(ctx, k)
 		if err != nil {
 			return nil, err
 		}
@@ -480,6 +488,54 @@ func clearLegacyPoCv2Data(ctx context.Context, k keeper.Keeper) error {
 	return k.ClearLegacyPoCv2Data(ctx)
 }
 
+func kimiWeightScaleFactor(base *types.Decimal) *types.Decimal {
+	baseDec := decimal.NewFromInt(1)
+	if base != nil {
+		baseDec = base.ToDecimal()
+	}
+	scaled := baseDec.
+		Mul(decimal.NewFromInt(6400)).
+		Div(decimal.NewFromInt(1822))
+	return types.DecimalFromDecimal(scaled)
+}
+
+func kimiPoCModelConfig(baseWeightScaleFactor *types.Decimal, penaltyStartEpoch uint64) *types.PoCModelConfig {
+	return &types.PoCModelConfig{
+		ModelId: kimiModelID,
+		SeqLen:  1024,
+		StatTest: &types.PoCStatTestParams{
+			DistThreshold:   &types.Decimal{Value: 4, Exponent: -1},
+			PMismatch:       &types.Decimal{Value: 1, Exponent: -1},
+			PValueThreshold: &types.Decimal{Value: 5, Exponent: -2},
+		},
+		WeightScaleFactor: kimiWeightScaleFactor(baseWeightScaleFactor),
+		PenaltyStartEpoch: penaltyStartEpoch,
+	}
+}
+
+func kimiPenaltyStartEpoch(ctx context.Context, k keeper.Keeper) uint64 {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogInfo("no effective epoch for Kimi penalty start; using fallback", types.Upgrades,
+			"model_id", kimiModelID, "penalty_start_epoch", 2)
+		return 2
+	}
+	return epochIndex + 2
+}
+
+func ensureKimiPoCModelConfig(ctx context.Context, k keeper.Keeper, poc *types.PocParams) bool {
+	if poc == nil {
+		return false
+	}
+	for _, model := range poc.Models {
+		if model != nil && model.ModelId == kimiModelID {
+			return false
+		}
+	}
+	poc.Models = append(poc.Models, kimiPoCModelConfig(poc.WeightScaleFactor, kimiPenaltyStartEpoch(ctx, k)))
+	return true
+}
+
 // migrateParams populates PocParams.Models from the deprecated singular fields
 // (ModelId, SeqLen, StatTest, WeightScaleFactor) and initializes
 // DelegationParams with defaults. Idempotent: skips work if Models is already
@@ -504,6 +560,10 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 		k.LogInfo("migrated PocParams singular fields into models[]", types.Upgrades,
 			"model_id", poc.ModelId, "seq_len", poc.SeqLen)
 	}
+	if ensureKimiPoCModelConfig(ctx, k, poc) {
+		k.LogInfo("added Kimi model to PocParams models[]", types.Upgrades,
+			"model_id", kimiModelID, "seq_len", 1024)
+	}
 
 	if params.DelegationParams == nil {
 		defaults := types.DefaultDelegationParams()
@@ -512,17 +572,86 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 			"deploy_window", defaults.DeployWindow,
 			"v_min", defaults.VMin)
 	}
+	params.DelegationParams.RefusalPenalty = types.DecimalFromFloat(0.1)
+	params.DelegationParams.NoParticipationPenalty = types.DecimalFromFloat(0.15)
+	params.DelegationParams.DelegationShare = types.DecimalFromFloat(0.05)
+	params.DelegationParams.CapFactor = types.DecimalFromFloat(1.5)
 	if poc != nil && params.DelegationParams.InitialModelId == "" {
 		params.DelegationParams.InitialModelId = poc.ModelId
 	}
 
-	// Per-model voting-power concentration cap (field 9) is new in v0.2.12.
-	// Set explicitly to 0 (disabled) so the on-chain params struct carries
-	// the new field from day one. Governance can raise it later via
-	// MsgUpdateParams once real network concentration is observable.
-	params.DelegationParams.MaxModelVotingPowerPercentage = types.DecimalFromFloat(0)
+	// MaxModelVotingPowerPercentage is a fraction, so 0.3 means 30%.
+	params.DelegationParams.MaxModelVotingPowerPercentage = types.DecimalFromFloat(0.3)
+	clearDeprecatedPocParams(poc)
 
 	return k.SetParams(ctx, params)
+}
+
+func clearDeprecatedPocParams(poc *types.PocParams) {
+	if poc == nil {
+		return
+	}
+	poc.WeightScaleFactor = nil
+	poc.ModelParams = nil
+	poc.ModelId = ""
+	poc.SeqLen = 0
+	poc.StatTest = nil
+}
+
+func kimiGovernanceModel(authority string) *types.Model {
+	return &types.Model{
+		ProposedBy:             authority,
+		Id:                     kimiModelID,
+		UnitsOfComputePerToken: 10000,
+		HfRepo:                 kimiModelID,
+		HfCommit:               "5a49d036ab7472b7d5912ded487150ec1358c11d",
+		ModelArgs: []string{
+			"--max-model-len", "240000",
+			"--tool-call-parser", "kimi_k2",
+			"--reasoning-parser", "kimi_k2",
+		},
+		VRam:                720,
+		ThroughputPerNonce:  1500,
+		ValidationThreshold: &types.Decimal{Value: 958, Exponent: -3},
+	}
+}
+
+func updateGovernanceModels(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		return errors.New("poc params not found")
+	}
+
+	approved := make(map[string]bool)
+	for _, modelConfig := range params.PocParams.GetModelConfigs() {
+		if modelConfig == nil || modelConfig.ModelId == "" {
+			continue
+		}
+		approved[modelConfig.ModelId] = true
+	}
+
+	k.SetModel(ctx, kimiGovernanceModel(k.GetAuthority()))
+
+	models, err := k.GetGovernanceModels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if !approved[model.Id] {
+			k.DeleteGovernanceModel(ctx, model.Id)
+			k.LogInfo("removed governance model not present in PocParams", types.Upgrades,
+				"model_id", model.Id)
+		}
+	}
+	k.LogInfo("updated governance models for PocParams", types.Upgrades,
+		"approved_count", len(approved), "kimi_model_id", kimiModelID)
+	return nil
 }
 
 // initNewPruningState seeds the four pruning-state fields introduced in
