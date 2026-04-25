@@ -781,6 +781,7 @@ func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	fp := types.DefaultFeeParams()
+	fp.MinGasPriceNgonka = 0
 	params.FeeParams = fp
 	if err := k.SetParams(ctx, params); err != nil {
 		k.LogError("failed to set fee params during upgrade", types.Upgrades, "error", err)
