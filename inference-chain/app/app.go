@@ -351,6 +351,12 @@ func New(
 			return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
 		}
 		ctx.Logger().Info("WASM keeper check: pinned codes enumerated successfully. Keeper is functional.")
+
+		if isTestnet, _ := appOpts.Get(server.KeyIsTestnet).(bool); isTestnet {
+			if err := InitInferenceAppForTestnet(app, appOpts); err != nil {
+				return nil, fmt.Errorf("init for testnet: %w", err)
+			}
+		}
 	}
 
 	return app, nil
