@@ -132,6 +132,19 @@ func GrantMLOperationalKeyPermissionsToAccount(
 			"Run `inferenced tx feegrant revoke <warm-address>` first if you want to refresh it.")
 	}
 
+	// This command bypasses GenerateOrBroadcastTxCLI, so we replicate its
+	// --gas auto handling here: when the factory is set to simulate, run
+	// CalculateGas and apply the adjustment before building the tx. Without
+	// this, --gas auto produces a tx with gasWanted=0 and OOGs immediately.
+	if txFactory.SimulateAndExecute() {
+		_, adjusted, err := tx.CalculateGas(clientCtx, txFactory, grantMsgs...)
+		if err != nil {
+			return fmt.Errorf("failed to simulate gas: %w", err)
+		}
+		txFactory = txFactory.WithGas(adjusted)
+		fmt.Printf("gas estimate: %d\n", adjusted)
+	}
+
 	txb, err := txFactory.BuildUnsignedTx(grantMsgs...)
 	if err != nil {
 		return err

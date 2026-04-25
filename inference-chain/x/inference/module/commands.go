@@ -49,11 +49,15 @@ Example:
     gonka-account-key \
     gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm \
     --from gonka-account-key \
+    --gas auto --gas-adjustment 1.5 \
     --gas-prices 10ngonka \
     --node http://node2.gonka.ai:8000/chain-rpc/
 
 Note: Chain ID will be auto-detected from the chain if not specified with --chain-id.
-      Use --gas-prices 10ngonka (or higher) to set transaction fees.`,
+      Use --gas-prices 10ngonka (or higher) to set transaction fees.
+      This tx bundles ~20 authz grants plus a feegrant allowance, so it is
+      larger than typical — passing --gas auto --gas-adjustment 1.5 is the
+      easiest way to size it correctly.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
