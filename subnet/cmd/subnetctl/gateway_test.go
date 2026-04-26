@@ -66,6 +66,87 @@ func TestGatewayHandleSubnetRewritesInnerPath(t *testing.T) {
 	require.Equal(t, "12", rec.Header().Get("X-Subnet-ID"))
 }
 
+func TestAdminDeactivateSubnetAllowsActiveRequestsAndStopsNewChat(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewaySubnetState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+
+	var forwarded bool
+	rt := &subnetRuntime{
+		id:    "12",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			forwarded = true
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}
+	rt.activeRequests.Store(1)
+	g := NewGateway([]*subnetRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/subnets/12/deactivate", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminDeactivateSubnet(rec, req, "12")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.False(t, rt.active.Load())
+	require.EqualValues(t, 1, rt.activeRequests.Load())
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, state.Subnets[0].Active)
+
+	chatReq := httptest.NewRequest(http.MethodPost, "/subnet/12/v1/chat/completions",
+		strings.NewReader(`{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`))
+	chatRec := httptest.NewRecorder()
+	g.handleSubnet(chatRec, chatReq)
+
+	require.Equal(t, http.StatusConflict, chatRec.Code)
+	require.False(t, forwarded)
+}
+
+func TestGatewayHandleSubnetFinalizeRequiresNoActiveRequests(t *testing.T) {
+	var forwarded bool
+	rt := &subnetRuntime{
+		id:    "12",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			forwarded = true
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}
+	rt.activeRequests.Store(1)
+	g := NewGateway([]*subnetRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+
+	req := httptest.NewRequest(http.MethodPost, "/subnet/12/v1/finalize", nil)
+	rec := httptest.NewRecorder()
+	g.handleSubnet(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.False(t, forwarded)
+
+	rt.activeRequests.Store(0)
+	rt.active.Store(false)
+	rec = httptest.NewRecorder()
+	g.handleSubnet(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.True(t, forwarded)
+}
+
 func TestGatewayHandlePooledChatSetsChosenSubnetHeader(t *testing.T) {
 	slow := &subnetRuntime{
 		id:    "6",

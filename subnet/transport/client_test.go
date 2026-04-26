@@ -225,7 +225,7 @@ func (s *stubAdmissionController) ObserveResult(participantKey, path string, sta
 	s.observed = append(s.observed, fmt.Sprintf("%s:%s:%d", participantKey, path, statusCode))
 }
 
-func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path string) {
+func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path string, err error) {
 	s.observed = append(s.observed, fmt.Sprintf("%s:%s:transport", participantKey, path))
 }
 

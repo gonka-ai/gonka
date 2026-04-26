@@ -592,6 +592,11 @@ func (g *Gateway) handleSubnet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if innerPath == "/v1/chat/completions" {
+		if !rt.active.Load() {
+			logRequestStage(ctx, "gateway_subnet_inactive", "escrow", subnetID)
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"subnet %s is inactive"}}`, subnetID), http.StatusConflict)
+			return
+		}
 		body, _, inputTokens, err := parseChatReservation(r)
 		if err != nil {
 			logRequestStage(ctx, "gateway_subnet_parse_failed", "escrow", subnetID, "error", err)
@@ -617,6 +622,10 @@ func (g *Gateway) handleSubnet(w http.ResponseWriter, r *http.Request) {
 		logRequestStage(ctx, "gateway_subnet_runtime_selected", "escrow", subnetID, "input_tokens", inputTokens)
 
 		g.serveChatToRuntime(rt, innerPath, body, w, r)
+		return
+	}
+	if innerPath == "/v1/finalize" && r.Method == http.MethodPost && rt.activeRequests.Load() > 0 {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":"subnet %s has active requests"}}`, subnetID), http.StatusConflict)
 		return
 	}
 
@@ -1357,10 +1366,6 @@ func (g *Gateway) handleAdminDeactivateSubnet(w http.ResponseWriter, r *http.Req
 	rt, ok := g.runtimes[id]
 	if !ok {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"subnet %s is not active"}}`, id), http.StatusNotFound)
-		return
-	}
-	if rt.activeRequests.Load() > 0 {
-		http.Error(w, fmt.Sprintf(`{"error":{"message":"subnet %s has active requests"}}`, id), http.StatusConflict)
 		return
 	}
 	if err := g.store.SetSubnetActive(id, false); err != nil {
