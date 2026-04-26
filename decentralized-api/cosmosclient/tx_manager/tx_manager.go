@@ -56,7 +56,7 @@ const (
 	// BatchGasLimit is the gas limit for batch transactions.
 	// Must not exceed NetworkDutyFeeBypassDecorator.GasCap so that fee-exempt
 	// duty transactions are not rejected by the gas cap check.
-	BatchGasLimit = 10_000_000
+	BatchGasLimit = 1_000_000_000
 )
 
 type TxManager interface {

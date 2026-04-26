@@ -781,6 +781,7 @@ func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	fp := types.DefaultFeeParams()
+	// Note: temporary due to issue in gas estimations.
 	fp.MinGasPriceNgonka = 0
 	params.FeeParams = fp
 	if err := k.SetParams(ctx, params); err != nil {

@@ -131,8 +131,12 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
-	// Start with config value; we'll refine this from chain state below.
-	effectiveGasPrice := nodeConfig.GetMinGasPriceNgonka()
+	configGasPrice := nodeConfig.GetMinGasPriceNgonka()
+	if configGasPrice != 0 {
+		log.Printf("Ignoring configured DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA=%d; fees are disabled for this rollout, using 0", configGasPrice)
+	}
+	// Note: temporary due to issue in gas estimations.
+	effectiveGasPrice := int64(0)
 
 	log.Printf("Initializing cosmos Client."+
 		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
@@ -151,46 +155,32 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
-	// Query the chain for its current FeeParams and use that as the effective
-	// gas price. This makes the DAPI self-configuring: hosts don't need to
-	// manually update their config.env after the v0.2.12 upgrade — the DAPI
-	// picks up the on-chain default automatically.
-	//
-	// Behavior:
-	//   * If the config explicitly sets min_gas_price_ngonka, honor it (allows
-	//     hosts to pay more than the minimum if they want faster inclusion).
-	//   * Otherwise use the on-chain FeeParams.MinGasPriceNgonka.
-	//   * If FeeParams is nil (pre-upgrade chain), use 0.
-	//   * If the query itself FAILS, abort startup rather than defaulting to 0,
-	//     because a silent default would produce rejected transactions.
-	if nodeConfig.GetMinGasPriceNgonka() == 0 {
-		chainGasPrice, queryErr := queryChainMinGasPrice(ctx, &cosmoclient)
-		if queryErr != nil {
-			return nil, fmt.Errorf("failed to query chain for FeeParams.MinGasPriceNgonka at startup "+
-				"(required for automatic DAPI gas price configuration): %w. "+
-				"Either fix the chain connectivity or set DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA explicitly in config.env", queryErr)
+	// Use the chain value only if governance enables a non-zero gas price.
+	chainGasPrice, queryErr := queryChainMinGasPrice(ctx, &cosmoclient)
+	if queryErr != nil {
+		return nil, fmt.Errorf("failed to query chain for FeeParams.MinGasPriceNgonka at startup "+
+			"(required for automatic DAPI gas price configuration): %w", queryErr)
+	}
+	if chainGasPrice > 0 {
+		effectiveGasPrice = chainGasPrice
+		log.Printf("Using on-chain FeeParams.MinGasPriceNgonka = %d", effectiveGasPrice)
+		// Re-create the cosmoclient with the correct gas price for the
+		// TxFactory to produce valid transactions.
+		cosmoclient, err = cosmosclient.New(
+			ctx,
+			cosmosclient.WithAddressPrefix(addressPrefix),
+			cosmosclient.WithKeyringServiceName("inferenced"),
+			cosmosclient.WithNodeAddress(nodeConfig.Url),
+			cosmosclient.WithKeyringDir(keyringDir),
+			cosmosclient.WithGasPrices(fmt.Sprintf("%dngonka", effectiveGasPrice)),
+			cosmosclient.WithGas("auto"),
+			cosmosclient.WithGasAdjustment(5),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error recreating cosmos client with chain gas price: %w", err)
 		}
-		if chainGasPrice > 0 {
-			effectiveGasPrice = chainGasPrice
-			log.Printf("Using on-chain FeeParams.MinGasPriceNgonka = %d (config value was 0)", effectiveGasPrice)
-			// Re-create the cosmoclient with the correct gas price for the
-			// TxFactory to produce valid transactions.
-			cosmoclient, err = cosmosclient.New(
-				ctx,
-				cosmosclient.WithAddressPrefix(addressPrefix),
-				cosmosclient.WithKeyringServiceName("inferenced"),
-				cosmosclient.WithNodeAddress(nodeConfig.Url),
-				cosmosclient.WithKeyringDir(keyringDir),
-				cosmosclient.WithGasPrices(fmt.Sprintf("%dngonka", effectiveGasPrice)),
-				cosmosclient.WithGas("auto"),
-				cosmosclient.WithGasAdjustment(5),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("error recreating cosmos client with chain gas price: %w", err)
-			}
-		} else {
-			log.Printf("Chain returned nil FeeParams; DAPI will send zero-fee transactions (pre-upgrade chain).")
-		}
+	} else {
+		log.Printf("Chain FeeParams.MinGasPriceNgonka is 0 or unset; DAPI will send zero-fee transactions.")
 	}
 	err = updateKeyringIfNeeded(&cosmoclient, keyringDir, config)
 	if err != nil {
