@@ -669,7 +669,7 @@ func kimiGovernanceModel(authority string) *types.Model {
 		},
 		VRam:                720,
 		ThroughputPerNonce:  1500,
-		ValidationThreshold: &types.Decimal{Value: 958, Exponent: -3},
+		ValidationThreshold: &types.Decimal{Value: 920, Exponent: -3},
 	}
 }
 
