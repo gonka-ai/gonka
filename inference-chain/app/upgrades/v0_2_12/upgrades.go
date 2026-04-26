@@ -37,7 +37,7 @@ const MigratedFeeAllowanceExpiration = 365 * 24 * time.Hour
 const kimiModelID = "moonshotai/Kimi-K2.6"
 
 const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
-const DefaultBountyIbcUsdtDenom = "ibc/B25DC823C082E24B706293F45EC062FB119ED7FB4CC99031E4FFFCF0B8525EBB"
+const DefaultBountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
 
 func USDT(amount int64) int64 {
 	return amount * 1_000_000
