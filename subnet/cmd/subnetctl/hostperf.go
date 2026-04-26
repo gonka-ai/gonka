@@ -1,22 +1,47 @@
 package main
 
 import (
+	"fmt"
+	"hash/fnv"
 	"log"
 	"math"
 	"sync"
 	"time"
 )
 
-const perfWindowSize = 128
+var (
+	PerfWindowSize        = 256
+	ParticipantPerfWindow = 60 * time.Minute
+)
+
+func DefaultPerfSettings() PerfSettings {
+	return PerfSettings{
+		SampleSize: PerfWindowSize,
+		WindowMS:   ParticipantPerfWindow.Milliseconds(),
+	}
+}
+
+func ApplyPerfSettings(settings PerfSettings) {
+	defaults := PerfSettings{SampleSize: 256, WindowMS: int64(time.Hour / time.Millisecond)}
+	if settings.SampleSize <= 0 {
+		settings.SampleSize = defaults.SampleSize
+	}
+	if settings.WindowMS <= 0 {
+		settings.WindowMS = defaults.WindowMS
+	}
+	PerfWindowSize = settings.SampleSize
+	ParticipantPerfWindow = time.Duration(settings.WindowMS) * time.Millisecond
+}
 
 type RequestSample struct {
-	HostIdx     int
-	Responsive  bool
-	SendTime    time.Time
-	ReceiptTime time.Time // zero if no receipt
-	FirstToken  time.Time // zero if no tokens
-	TotalTime   time.Duration
-	InputTokens uint64
+	HostIdx        int
+	ParticipantKey string
+	Responsive     bool
+	SendTime       time.Time
+	ReceiptTime    time.Time // zero if no receipt
+	FirstToken     time.Time // zero if no tokens
+	TotalTime      time.Duration
+	InputTokens    uint64
 }
 
 func (s RequestSample) ReceiptMs() float64 {
@@ -39,39 +64,100 @@ func (s RequestSample) CTTFL() float64 {
 }
 
 type hostRing struct {
-	samples [perfWindowSize]RequestSample
+	samples []RequestSample
 	pos     int
 	count   int
 }
 
 func (r *hostRing) add(s RequestSample) {
+	r.ensureSize()
 	r.samples[r.pos] = s
-	r.pos = (r.pos + 1) % perfWindowSize
-	if r.count < perfWindowSize {
+	r.pos = (r.pos + 1) % len(r.samples)
+	if r.count < len(r.samples) {
 		r.count++
 	}
 }
 
+func (r *hostRing) ensureSize() {
+	size := PerfWindowSize
+	if size <= 0 {
+		size = 256
+	}
+	if len(r.samples) == size {
+		return
+	}
+	old := r.all()
+	if len(old) > size {
+		old = old[len(old)-size:]
+	}
+	r.samples = make([]RequestSample, size)
+	copy(r.samples, old)
+	r.count = len(old)
+	if size > 0 {
+		r.pos = r.count % size
+	} else {
+		r.pos = 0
+	}
+}
+
+func (r *hostRing) all() []RequestSample {
+	if r.count == 0 || len(r.samples) == 0 {
+		return nil
+	}
+	out := make([]RequestSample, r.count)
+	for i := 0; i < r.count; i++ {
+		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
+		out[i] = r.samples[idx]
+	}
+	return out
+}
+
+func (r *hostRing) hasHostIdx(hostIdx int) bool {
+	for _, sample := range r.all() {
+		if sample.HostIdx == hostIdx {
+			return true
+		}
+	}
+	return false
+}
+
 type HostPerfStats struct {
+	ParticipantKey   string  `json:"participant_key,omitempty"`
 	HostIdx          int     `json:"host_idx"`
 	TotalSamples     int     `json:"total_samples"`
+	FailureSamples   int     `json:"failure_samples"`
 	ResponsiveRate   float64 `json:"responsive_rate"`
 	AvgReceiptTimeMs float64 `json:"avg_receipt_time_ms"`
 	AvgCTTFL         float64 `json:"avg_cttfl"`
 	AvgTotalTimeMs   float64 `json:"avg_total_time_ms"`
+	WindowStart      string  `json:"window_start,omitempty"`
 }
 
-func (r *hostRing) stats(hostIdx int) HostPerfStats {
+func (r *hostRing) stats(participantKey string, hostIdx int, windowStart time.Time) HostPerfStats {
+	base := HostPerfStats{
+		ParticipantKey: participantKey,
+		HostIdx:        hostIdx,
+	}
+	if !windowStart.IsZero() {
+		base.WindowStart = windowStart.Format(time.RFC3339Nano)
+	}
 	if r.count == 0 {
-		return HostPerfStats{HostIdx: hostIdx}
+		return base
 	}
 
 	var responsive int
 	var receiptSum, cttflSum, totalSum float64
 	var receiptN, cttflN, totalN int
+	var total int
 
-	for i := 0; i < r.count; i++ {
-		s := r.samples[i]
+	for _, s := range r.all() {
+		if !windowStart.IsZero() && s.SendTime.Before(windowStart) {
+			continue
+		}
+		total++
+		if s.HostIdx >= 0 {
+			base.HostIdx = s.HostIdx
+		}
 		if s.Responsive {
 			responsive++
 		}
@@ -89,11 +175,13 @@ func (r *hostRing) stats(hostIdx int) HostPerfStats {
 		}
 	}
 
-	st := HostPerfStats{
-		HostIdx:        hostIdx,
-		TotalSamples:   r.count,
-		ResponsiveRate: float64(responsive) / float64(r.count),
+	if total == 0 {
+		return base
 	}
+	st := base
+	st.TotalSamples = total
+	st.FailureSamples = total - responsive
+	st.ResponsiveRate = float64(responsive) / float64(total)
 	if receiptN > 0 {
 		st.AvgReceiptTimeMs = receiptSum / float64(receiptN)
 	}
@@ -159,13 +247,13 @@ func (r *requestRing) all() []RequestRecord {
 
 type PerfTracker struct {
 	mu       sync.RWMutex
-	hosts    map[int]*hostRing
+	hosts    map[string]*hostRing
 	requests requestRing
 	store    *PerfStore
 }
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
-	pt := &PerfTracker{hosts: make(map[int]*hostRing), store: store}
+	pt := &PerfTracker{hosts: make(map[string]*hostRing), store: store}
 	if store != nil {
 		pt.loadFromStore()
 	}
@@ -179,10 +267,14 @@ func (t *PerfTracker) loadFromStore() {
 		return
 	}
 	for _, s := range samples {
-		ring, ok := t.hosts[s.HostIdx]
+		key := perfSampleKey(s)
+		if key == "" {
+			continue
+		}
+		ring, ok := t.hosts[key]
 		if !ok {
 			ring = &hostRing{}
-			t.hosts[s.HostIdx] = ring
+			t.hosts[key] = ring
 		}
 		ring.add(s)
 	}
@@ -201,12 +293,59 @@ func (t *PerfTracker) loadFromStore() {
 	}
 }
 
-func (t *PerfTracker) Record(s RequestSample) {
+func (t *PerfTracker) addLoadedSamples(samples []RequestSample) {
 	t.mu.Lock()
-	ring, ok := t.hosts[s.HostIdx]
+	defer t.mu.Unlock()
+	for _, s := range samples {
+		key := perfSampleKey(s)
+		if key == "" {
+			continue
+		}
+		ring, ok := t.hosts[key]
+		if !ok {
+			ring = &hostRing{}
+			t.hosts[key] = ring
+		}
+		ring.add(s)
+	}
+}
+
+func (t *PerfTracker) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath string, participantKeys []string) error {
+	if t == nil || t.store == nil {
+		return nil
+	}
+	samples, err := t.store.BackfillLegacyEscrowSamples(sourceEscrow, sourcePath, participantKeys)
+	if err != nil {
+		return err
+	}
+	t.addLoadedSamples(samples)
+	return nil
+}
+
+func (t *PerfTracker) ResizeRings() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, ring := range t.hosts {
+		ring.ensureSize()
+	}
+}
+
+func (t *PerfTracker) Record(s RequestSample) {
+	if s.SendTime.IsZero() {
+		s.SendTime = time.Now()
+	}
+	key := perfSampleKey(s)
+	if key == "" {
+		return
+	}
+	t.mu.Lock()
+	ring, ok := t.hosts[key]
 	if !ok {
 		ring = &hostRing{}
-		t.hosts[s.HostIdx] = ring
+		t.hosts[key] = ring
 	}
 	ring.add(s)
 	t.mu.Unlock()
@@ -219,21 +358,47 @@ func (t *PerfTracker) Record(s RequestSample) {
 }
 
 func (t *PerfTracker) Stats(hostIdx int) HostPerfStats {
+	key := legacyHostPerfKey(hostIdx)
+	now := time.Now()
+	t.mu.RLock()
+	if _, ok := t.hosts[key]; !ok {
+		for participantKey, ring := range t.hosts {
+			if ring.hasHostIdx(hostIdx) {
+				t.mu.RUnlock()
+				return t.statsForKey(participantKey, hostIdx, now)
+			}
+		}
+	}
+	t.mu.RUnlock()
+	return t.statsForKey(key, hostIdx, now)
+}
+
+func (t *PerfTracker) StatsForParticipant(participantKey string) HostPerfStats {
+	return t.statsForKey(participantKey, -1, time.Now())
+}
+
+func (t *PerfTracker) statsForKey(key string, fallbackHostIdx int, now time.Time) HostPerfStats {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	ring, ok := t.hosts[hostIdx]
+	ring, ok := t.hosts[key]
+	windowStart := participantPerfWindowStart(key, now)
 	if !ok {
-		return HostPerfStats{HostIdx: hostIdx}
+		st := HostPerfStats{ParticipantKey: key, HostIdx: fallbackHostIdx}
+		if !windowStart.IsZero() {
+			st.WindowStart = windowStart.Format(time.RFC3339Nano)
+		}
+		return st
 	}
-	return ring.stats(hostIdx)
+	return ring.stats(key, fallbackHostIdx, windowStart)
 }
 
 func (t *PerfTracker) AllStats() []HostPerfStats {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	result := make([]HostPerfStats, 0, len(t.hosts))
-	for idx, ring := range t.hosts {
-		result = append(result, ring.stats(idx))
+	now := time.Now()
+	for key, ring := range t.hosts {
+		result = append(result, ring.stats(key, -1, participantPerfWindowStart(key, now)))
 	}
 	return result
 }
@@ -243,6 +408,15 @@ func (t *PerfTracker) AllStats() []HostPerfStats {
 // Returns 0 if insufficient data.
 func (t *PerfTracker) EstimatedTimeMs(hostIdx int, inputTokens uint64) float64 {
 	st := t.Stats(hostIdx)
+	return estimatedTimeFromStats(st, inputTokens)
+}
+
+func (t *PerfTracker) EstimatedTimeMsForParticipant(participantKey string, inputTokens uint64) float64 {
+	st := t.StatsForParticipant(participantKey)
+	return estimatedTimeFromStats(st, inputTokens)
+}
+
+func estimatedTimeFromStats(st HostPerfStats, inputTokens uint64) float64 {
 	if st.TotalSamples == 0 || st.AvgReceiptTimeMs == 0 {
 		return 0
 	}
@@ -269,8 +443,66 @@ func (t *PerfTracker) RecentRequests() []RequestRecord {
 
 func (t *PerfTracker) IsUnresponsive(hostIdx int) bool {
 	st := t.Stats(hostIdx)
+	return statsUnresponsive(st)
+}
+
+func (t *PerfTracker) IsUnresponsiveParticipant(participantKey string) bool {
+	st := t.StatsForParticipant(participantKey)
+	return statsUnresponsive(st)
+}
+
+func statsUnresponsive(st HostPerfStats) bool {
 	if st.TotalSamples == 0 {
 		return false
 	}
 	return st.ResponsiveRate < UnresponsiveThreshold
+}
+
+func (t *PerfTracker) ParticipantFailureThresholdExceeded(participantKey string) bool {
+	st := t.StatsForParticipant(participantKey)
+	if st.TotalSamples == 0 {
+		return false
+	}
+	if st.TotalSamples < 100 {
+		return st.FailureSamples > 1
+	}
+	return float64(st.FailureSamples)/float64(st.TotalSamples) > 0.01
+}
+
+func perfSampleKey(s RequestSample) string {
+	if s.ParticipantKey != "" {
+		return s.ParticipantKey
+	}
+	return legacyHostPerfKey(s.HostIdx)
+}
+
+func legacyHostPerfKey(hostIdx int) string {
+	return fmt.Sprintf("host:%d", hostIdx)
+}
+
+func participantPerfWindowStart(participantKey string, now time.Time) time.Time {
+	if ParticipantPerfWindow <= 0 || participantKey == "" || now.IsZero() {
+		return time.Time{}
+	}
+	windowNanos := ParticipantPerfWindow.Nanoseconds()
+	if windowNanos <= 0 {
+		return time.Time{}
+	}
+	offset := participantPerfWindowOffset(participantKey)
+	shifted := now.Add(-offset)
+	truncated := shifted.Truncate(ParticipantPerfWindow)
+	return truncated.Add(offset)
+}
+
+func participantPerfWindowOffset(participantKey string) time.Duration {
+	if ParticipantPerfWindow <= 0 || participantKey == "" {
+		return 0
+	}
+	windowNanos := ParticipantPerfWindow.Nanoseconds()
+	if windowNanos <= 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(participantKey))
+	return time.Duration(int64(h.Sum64() % uint64(windowNanos)))
 }

@@ -528,3 +528,38 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	require.Nil(t, receipt.Receipt, "non-executor should not have receipt")
 	require.False(t, hasInferenceData, "non-executor should not have inference data")
 }
+
+func TestCachedReplayPayloadKind(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "serialized stream payload",
+			body: `{"events":["data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}","data: [DONE]"]}`,
+			want: "serialized_stream",
+		},
+		{
+			name: "plain chat completion json",
+			body: `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`,
+			want: "json_chat_completion",
+		},
+		{
+			name: "plain chat completion chunk json",
+			body: `{"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`,
+			want: "json_chat_completion_chunk",
+		},
+		{
+			name: "invalid json",
+			body: `not-json`,
+			want: "non_json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, cachedReplayPayloadKind([]byte(tt.body)))
+		})
+	}
+}

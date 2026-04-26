@@ -18,6 +18,8 @@ import (
 	"subnet/user"
 )
 
+var sseDoneMarker = []byte("data: [DONE]")
+
 // writeStreamReset writes a stream_reset SSE event to signal the client
 // that the connection was lost and the response will be replayed from scratch.
 func writeStreamReset(w io.Writer) {
@@ -195,10 +197,12 @@ type deferredWriter struct {
 	requestID      string
 	started        bool
 	bytesWritten   int64
+	sawDone        bool
 	lastFlushErr   error
 	flushFailed    bool
 	disconnectOnce sync.Once
 	flushFailOnce  sync.Once
+	writeFailOnce  sync.Once
 }
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string) *deferredWriter {
@@ -225,8 +229,21 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	n, err := d.w.Write(p)
+	rewritten := rewriteStreamingPayload(p)
+	if bytes.Contains(rewritten, sseDoneMarker) {
+		d.sawDone = true
+	}
+	n, err := d.w.Write(rewritten)
 	d.bytesWritten += int64(n)
+	if err != nil {
+		d.writeFailOnce.Do(func() {
+			logRequestStage(d.ctx, "proxy_write_failed",
+				"escrow", d.escrow,
+				"bytes_written", d.bytesWritten,
+				"error", err,
+			)
+		})
+	}
 	return n, err
 }
 
@@ -304,11 +321,14 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	}
 
 	logRequestStage(r.Context(), "proxy_stream_completed", "escrow", p.escrowID, "bytes_written", dw.bytesWritten)
-	if _, werr := fmt.Fprint(dw, "data: [DONE]\n\n"); werr != nil {
-		doneWriteErr = werr
-		logRequestStage(r.Context(), "proxy_done_write_failed", "escrow", p.escrowID, "error", werr)
+	var finalErr error
+	if !dw.sawDone {
+		if _, werr := fmt.Fprint(dw, "data: [DONE]\n\n"); werr != nil {
+			doneWriteErr = werr
+			logRequestStage(r.Context(), "proxy_done_write_failed", "escrow", p.escrowID, "error", werr)
+		}
+		finalErr = dw.flush("done")
 	}
-	finalErr := dw.flush("done")
 	logProxyResponseFinished(r.Context(), p.escrowID, "ok", dw, finalErr, doneWriteErr, started)
 }
 
@@ -473,7 +493,8 @@ func (p *Proxy) handleDebugPerf(w http.ResponseWriter, r *http.Request) {
 		"receipt_timeout_ms":     ReceiptTimeout.Milliseconds(),
 		"advantage_threshold":    ParallelAdvantageThreshold,
 		"unresponsive_threshold": UnresponsiveThreshold,
-		"host_window_size":       perfWindowSize,
+		"host_window_size":       PerfWindowSize,
+		"participant_window_ms":  ParticipantPerfWindow.Milliseconds(),
 		"request_log_size":       requestLogSize,
 	})
 }

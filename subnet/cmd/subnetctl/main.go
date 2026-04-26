@@ -12,16 +12,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"subnet/bridge"
 	"subnet/state"
 )
 
 const (
-	defaultChainRESTURL = "http://localhost:1317"
-	defaultPublicAPIURL = "http://localhost:9000"
-	defaultModelName    = "Qwen/Qwen2.5-7B-Instruct"
-	defaultListenPort   = "8080"
+	defaultChainRESTURL          = "http://localhost:1317"
+	defaultPublicAPIURL          = "http://localhost:9000"
+	defaultModelName             = "Qwen/Qwen2.5-7B-Instruct"
+	defaultListenPort            = "8080"
+	defaultMaxConcurrentRequests = 512
 )
 
 type SettlementJSON struct {
@@ -100,6 +102,7 @@ func main() {
 		mustBootstrapGatewayState(gatewayStore, bootstrapOpts)
 		gatewayState = mustReloadGatewayState(gatewayStore)
 	}
+	mustRepairPersistedGatewayEndpointSettings(gatewayStore, &gatewayState, flags)
 
 	mustLoadParticipantThrottleState(gatewayStore)
 
@@ -146,9 +149,9 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		PublicAPI:               opts.publicAPI,
 		DefaultModel:            opts.defaultModel,
 		DefaultRequestMaxTokens: uint64(readInt64Env("GATEWAY_DEFAULT_MAX_TOKENS", int64(DefaultRequestMaxTokens))),
-		MaxConcurrentRequests:   readInt64Env("GATEWAY_MAX_CONCURRENT_REQUESTS", 0),
+		MaxConcurrentRequests:   readInt64Env("GATEWAY_MAX_CONCURRENT_REQUESTS", defaultMaxConcurrentRequests),
 		MaxInputTokensInFlight:  readInt64Env("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", 0),
-	}
+	}.WithTuningDefaults()
 	return opts
 }
 
@@ -235,6 +238,30 @@ func mustReloadGatewayState(gatewayStore *GatewayStore) GatewayState {
 	return gatewayState
 }
 
+func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gatewayState *GatewayState, flags cliFlags) {
+	if gatewayStore == nil || gatewayState == nil {
+		return
+	}
+	settings := gatewayState.Settings
+	changed := false
+	if strings.TrimSpace(settings.ChainREST) == "" {
+		settings.ChainREST = envOverride(flags.chainREST, os.Getenv("SUBNET_CHAIN_REST"), defaultChainRESTURL)
+		changed = true
+	}
+	if strings.TrimSpace(settings.PublicAPI) == "" {
+		settings.PublicAPI = envOverride(flags.publicAPI, os.Getenv("SUBNET_PUBLIC_API"), defaultPublicAPIURL)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if err := gatewayStore.UpdateSettings(settings); err != nil {
+		log.Fatalf("repair persisted gateway endpoints: %v", err)
+	}
+	gatewayState.Settings = settings
+	log.Printf("repaired persisted gateway endpoint settings chain_rest=%q public_api=%q", settings.ChainREST, settings.PublicAPI)
+}
+
 func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions) {
 	runtimeCfgs, err := resolveRuntimeConfigs(opts.escrowID, opts.privateKeyHex, opts.defaultModel, opts.storagePath)
 	if err != nil {
@@ -257,20 +284,31 @@ func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions
 }
 
 func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string) *Gateway {
+	gatewayState.Settings = gatewayState.Settings.WithTuningDefaults()
 	DefaultRequestMaxTokens = gatewayState.Settings.DefaultRequestMaxTokens
+	applyGatewayTuningSettings(gatewayState.Settings)
 
-	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir)
+	perfStore, err := NewPerfStore(filepath.Join(baseStorageDir, "perf.db"))
 	if err != nil {
+		log.Fatalf("open global perf store: %v", err)
+	}
+	perf := NewPerfTracker(perfStore)
+
+	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
+	if err != nil {
+		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,
 	)
-	return NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, perf)
+	gateway.perfStore = perfStore
+	return gateway
 }
 
-func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string) ([]*subnetRuntime, error) {
+func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*subnetRuntime, error) {
 	activeCfgs := make([]RuntimeConfig, 0, len(gatewayState.Subnets))
 	for _, subnet := range gatewayState.Subnets {
 		if subnet.Active {
@@ -282,27 +320,64 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
 
-	runtimes := make([]*subnetRuntime, 0, len(activeCfgs))
-	for _, cfg := range activeCfgs {
-		rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel)
-		if err != nil {
-			if errors.Is(err, bridge.ErrEscrowNotFound) {
-				log.Printf("subnet %s escrow missing on chain, marking inactive and skipping runtime: %v", cfg.ID, err)
+	type buildResult struct {
+		idx int
+		rt  *subnetRuntime
+		err error
+	}
+	t0 := time.Now()
+	ch := make(chan buildResult, len(activeCfgs))
+	for i, cfg := range activeCfgs {
+		go func(idx int, cfg RuntimeConfig) {
+			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
+			ch <- buildResult{idx, rt, err}
+		}(i, cfg)
+	}
+
+	runtimes := make([]*subnetRuntime, len(activeCfgs))
+	var skipped []int
+	var firstFatal error
+	for range activeCfgs {
+		res := <-ch
+		cfg := activeCfgs[res.idx]
+		if res.err != nil {
+			if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				log.Printf("subnet %s escrow missing on chain, marking inactive and skipping runtime: %v", cfg.ID, res.err)
 				if gatewayStore != nil {
 					if deactivateErr := gatewayStore.SetSubnetActive(cfg.ID, false); deactivateErr != nil {
-						closeRuntimes(runtimes)
-						return nil, fmt.Errorf("deactivate subnet %s: %w", cfg.ID, deactivateErr)
+						if firstFatal == nil {
+							firstFatal = fmt.Errorf("deactivate subnet %s: %w", cfg.ID, deactivateErr)
+						}
 					}
 				}
 				markSubnetInactive(gatewayState, cfg.ID)
+				skipped = append(skipped, res.idx)
 				continue
 			}
-			closeRuntimes(runtimes)
-			return nil, err
+			if firstFatal == nil {
+				firstFatal = res.err
+			}
+			continue
 		}
-		runtimes = append(runtimes, rt)
+		runtimes[res.idx] = res.rt
 	}
-	return runtimes, nil
+	if firstFatal != nil {
+		for _, rt := range runtimes {
+			if rt != nil {
+				rt.close()
+			}
+		}
+		return nil, firstFatal
+	}
+	// Compact out nil entries from skipped escrows.
+	out := runtimes[:0]
+	for _, rt := range runtimes {
+		if rt != nil {
+			out = append(out, rt)
+		}
+	}
+	log.Printf("build_runtimes_parallel count=%d skipped=%d total_elapsed_ms=%d", len(out), len(skipped), time.Since(t0).Milliseconds())
+	return out, nil
 }
 
 func markSubnetInactive(gatewayState *GatewayState, id string) {

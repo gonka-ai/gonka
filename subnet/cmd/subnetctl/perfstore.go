@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -11,7 +13,8 @@ import (
 
 // PerfStore persists host performance samples and request records to SQLite.
 type PerfStore struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 func NewPerfStore(dbPath string) (*PerfStore, error) {
@@ -35,12 +38,15 @@ func NewPerfStore(dbPath string) (*PerfStore, error) {
 	CREATE TABLE IF NOT EXISTS perf_host_samples (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
 		host_idx     INTEGER NOT NULL,
+		participant_key TEXT NOT NULL DEFAULT '',
 		responsive   INTEGER NOT NULL,
 		send_time    TEXT NOT NULL,
 		receipt_time TEXT NOT NULL,
 		first_token  TEXT NOT NULL,
 		total_time_ms REAL NOT NULL,
-		input_tokens INTEGER NOT NULL
+		input_tokens INTEGER NOT NULL,
+		source_escrow TEXT NOT NULL DEFAULT '',
+		source_sample_id INTEGER
 	);
 	CREATE TABLE IF NOT EXISTS perf_request_log (
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,8 +62,25 @@ func NewPerfStore(dbPath string) (*PerfStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("create perf schema: %w", err)
 	}
+	for _, col := range []struct {
+		name string
+		ddl  string
+	}{
+		{"participant_key", "TEXT NOT NULL DEFAULT ''"},
+		{"source_escrow", "TEXT NOT NULL DEFAULT ''"},
+		{"source_sample_id", "INTEGER"},
+	} {
+		if err := ensureColumn(db, "perf_host_samples", col.name, col.ddl); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate perf samples: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS perf_host_samples_source_idx ON perf_host_samples(source_escrow, source_sample_id) WHERE source_sample_id IS NOT NULL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create perf source index: %w", err)
+	}
 
-	return &PerfStore{db: db}, nil
+	return &PerfStore{db: db, path: dbPath}, nil
 }
 
 func (s *PerfStore) Close() error {
@@ -66,9 +89,10 @@ func (s *PerfStore) Close() error {
 
 func (s *PerfStore) InsertSample(sample RequestSample) error {
 	_, err := s.db.Exec(
-		`INSERT INTO perf_host_samples (host_idx, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO perf_host_samples (host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		sample.HostIdx,
+		sample.ParticipantKey,
 		boolToInt(sample.Responsive),
 		timeToStr(sample.SendTime),
 		timeToStr(sample.ReceiptTime),
@@ -97,11 +121,23 @@ func (s *PerfStore) InsertRequest(rec RequestRecord) error {
 	return err
 }
 
-// LoadSamples returns the most recent perfWindowSize samples per host.
+// LoadSamples returns recent participant-keyed samples.
 func (s *PerfStore) LoadSamples() ([]RequestSample, error) {
+	cutoff := ""
+	if ParticipantPerfWindow > 0 {
+		cutoff = time.Now().Add(-2*ParticipantPerfWindow - time.Hour).Format(time.RFC3339Nano)
+	}
+	query := `SELECT host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens
+		 FROM perf_host_samples WHERE participant_key <> ''`
+	args := []any{}
+	if cutoff != "" {
+		query += ` AND send_time >= ?`
+		args = append(args, cutoff)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, PerfWindowSize*4096)
 	rows, err := s.db.Query(
-		`SELECT host_idx, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens
-		 FROM perf_host_samples ORDER BY id DESC LIMIT ?`, perfWindowSize*128)
+		query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -110,25 +146,27 @@ func (s *PerfStore) LoadSamples() ([]RequestSample, error) {
 	var samples []RequestSample
 	for rows.Next() {
 		var (
-			hostIdx     int
-			responsive  int
-			sendStr     string
-			receiptStr  string
-			firstStr    string
-			totalMs     float64
-			inputTokens uint64
+			hostIdx        int
+			participantKey string
+			responsive     int
+			sendStr        string
+			receiptStr     string
+			firstStr       string
+			totalMs        float64
+			inputTokens    uint64
 		)
-		if err := rows.Scan(&hostIdx, &responsive, &sendStr, &receiptStr, &firstStr, &totalMs, &inputTokens); err != nil {
+		if err := rows.Scan(&hostIdx, &participantKey, &responsive, &sendStr, &receiptStr, &firstStr, &totalMs, &inputTokens); err != nil {
 			return nil, err
 		}
 		samples = append(samples, RequestSample{
-			HostIdx:     hostIdx,
-			Responsive:  responsive != 0,
-			SendTime:    strToTime(sendStr),
-			ReceiptTime: strToTime(receiptStr),
-			FirstToken:  strToTime(firstStr),
-			TotalTime:   time.Duration(totalMs) * time.Millisecond,
-			InputTokens: inputTokens,
+			HostIdx:        hostIdx,
+			ParticipantKey: participantKey,
+			Responsive:     responsive != 0,
+			SendTime:       strToTime(sendStr),
+			ReceiptTime:    strToTime(receiptStr),
+			FirstToken:     strToTime(firstStr),
+			TotalTime:      time.Duration(totalMs) * time.Millisecond,
+			InputTokens:    inputTokens,
 		})
 	}
 
@@ -183,9 +221,15 @@ func (s *PerfStore) LoadRequests() ([]RequestRecord, error) {
 
 // Prune removes old rows beyond the retention window.
 func (s *PerfStore) Prune() error {
+	if ParticipantPerfWindow > 0 {
+		cutoff := time.Now().Add(-2*ParticipantPerfWindow - time.Hour).Format(time.RFC3339Nano)
+		if _, err := s.db.Exec(`DELETE FROM perf_host_samples WHERE send_time <> '' AND send_time < ?`, cutoff); err != nil {
+			return err
+		}
+	}
 	_, err := s.db.Exec(
 		`DELETE FROM perf_host_samples WHERE id NOT IN (SELECT id FROM perf_host_samples ORDER BY id DESC LIMIT ?)`,
-		perfWindowSize*128)
+		PerfWindowSize*4096)
 	if err != nil {
 		return err
 	}
@@ -193,6 +237,87 @@ func (s *PerfStore) Prune() error {
 		`DELETE FROM perf_request_log WHERE id NOT IN (SELECT id FROM perf_request_log ORDER BY id DESC LIMIT ?)`,
 		requestLogSize)
 	return err
+}
+
+func (s *PerfStore) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath string, participantKeys []string) ([]RequestSample, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(sourceEscrow) == "" || strings.TrimSpace(sourcePath) == "" {
+		return nil, nil
+	}
+	if filepath.Clean(sourcePath) == filepath.Clean(s.path) {
+		return nil, nil
+	}
+	sourceDB, err := sql.Open("sqlite", sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("open legacy perf source: %w", err)
+	}
+	defer sourceDB.Close()
+	sourceDB.SetMaxOpenConns(1)
+
+	rows, err := sourceDB.Query(`SELECT id, host_idx, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens FROM perf_host_samples ORDER BY id ASC`)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read legacy perf samples: %w", err)
+	}
+	defer rows.Close()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO perf_host_samples
+		(host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens, source_escrow, source_sample_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	var inserted []RequestSample
+	for rows.Next() {
+		var (
+			id          int64
+			hostIdx     int
+			responsive  int
+			sendStr     string
+			receiptStr  string
+			firstStr    string
+			totalMs     float64
+			inputTokens uint64
+		)
+		if err := rows.Scan(&id, &hostIdx, &responsive, &sendStr, &receiptStr, &firstStr, &totalMs, &inputTokens); err != nil {
+			return nil, err
+		}
+		if hostIdx < 0 || hostIdx >= len(participantKeys) || strings.TrimSpace(participantKeys[hostIdx]) == "" {
+			continue
+		}
+		participantKey := strings.TrimSpace(participantKeys[hostIdx])
+		res, err := stmt.Exec(hostIdx, participantKey, responsive, sendStr, receiptStr, firstStr, totalMs, inputTokens, sourceEscrow, id)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted = append(inserted, RequestSample{
+				HostIdx:        hostIdx,
+				ParticipantKey: participantKey,
+				Responsive:     responsive != 0,
+				SendTime:       strToTime(sendStr),
+				ReceiptTime:    strToTime(receiptStr),
+				FirstToken:     strToTime(firstStr),
+				TotalTime:      time.Duration(totalMs) * time.Millisecond,
+				InputTokens:    inputTokens,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return inserted, nil
 }
 
 func boolToInt(b bool) int {

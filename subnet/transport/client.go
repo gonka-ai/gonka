@@ -19,6 +19,7 @@ import (
 	json "github.com/goccy/go-json"
 
 	"subnet/host"
+	"subnet/logging"
 	"subnet/signing"
 	"subnet/types"
 )
@@ -81,9 +82,18 @@ type RequestAdmissionController interface {
 	ObserveResult(participantKey, path string, statusCode int)
 	// ObserveTransportFailure is called when the request never
 	// received an HTTP response (dial error, connection reset, etc.).
-	// Implementations apply a short cooldown; no-op is allowed.
-	ObserveTransportFailure(participantKey, path string)
+	// Implementations decide whether to quarantine based on path kind.
+	ObserveTransportFailure(participantKey, path string, err error)
 }
+
+// ErrSSEStreamTruncated is returned when an SSE inference stream ends (clean EOF)
+// before the upstream emitted any terminator -- neither an OpenAI-style `data: [DONE]`
+// nor a subnet-protocol `subnet_receipt` event was observed. Treat it as truncation,
+// not as a successful completion: a typical cause is a peer / middlebox closing the
+// HTTP body early (HTTP/1.1 Connection: close, lying Content-Length, premature
+// HTTP/2 END_STREAM, idle-timeout on a proxy, etc.) which bufio readers cannot
+// distinguish from a normal end-of-response.
+var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or subnet_receipt")
 
 type UpstreamStatusError struct {
 	Path       string
@@ -202,9 +212,12 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
-		result, err := c.parseSSEResponse(resp.Body, stream, receiptHandler)
+		cr := &countingReader{r: resp.Body}
+		result, err := c.parseSSEResponse(cr, stream, receiptHandler)
+		if result != nil {
+			result.StreamBytesRead = cr.n
+		}
 		if err != nil && result != nil {
-			// Partial result: return both so caller can extract receipt from broken stream.
 			return result, err
 		}
 		return result, err
@@ -224,73 +237,171 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 
 // parseSSEResponse reads an SSE stream and extracts subnet_receipt and subnet_meta events.
 // Non-protocol data lines are forwarded to stream if configured.
+//
+// Uses bufio.Reader (not bufio.Scanner) for two reasons:
+//  1. bufio.Scanner imposes a hard token-size cap (we previously raised it to 1MB);
+//     a single oversized SSE line -- e.g. a large subnet_meta with a base64 mempool,
+//     or a non-streaming server inlining a giant JSON on one line -- would trip
+//     bufio.ErrTooLong and silently truncate. ReadBytes is bounded only by memory.
+//  2. We need to distinguish a clean EOF that arrives *after* a terminator
+//     ([DONE] or subnet_receipt) from a clean EOF that arrives *before* one.
+//     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
+//     a successful completion from a peer / middlebox closing the body early.
 func (c *HTTPClient) parseSSEResponse(r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1MB max line -- default 64KB breaks on long SSE responses
+	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
+	var writeErrLogged bool
+	var unexpectedLineLogged bool
+	var sawTerminator bool // true once we observe [DONE] or a subnet_receipt event
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+	for {
+		raw, readErr := br.ReadBytes('\n')
+		if len(raw) > 0 {
+			line := string(bytes.TrimRight(raw, "\r\n"))
+			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
 		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			writeSSELine(stream, line)
-			continue
-		}
-
-		// Try to parse as subnet protocol envelope.
-		var envelope map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
-			// Not JSON -- forward as-is.
-			writeSSELine(stream, line)
-			continue
-		}
-
-		if raw, ok := envelope["subnet_receipt"]; ok {
-			var receipt SubnetReceiptEvent
-			if err := json.Unmarshal(raw, &receipt); err == nil {
-				result.StateSig = receipt.StateSig
-				result.StateHash = receipt.StateHash
-				result.Nonce = receipt.Nonce
-				result.Receipt = receipt.Receipt
-				result.ConfirmedAt = receipt.ConfirmedAt
-			}
-			if receiptHandler != nil {
-				receiptHandler()
-			}
-			continue
-		}
-
-		if raw, ok := envelope["subnet_meta"]; ok {
-			var meta SubnetMetaEvent
-			if err := json.Unmarshal(raw, &meta); err == nil {
-				txs, txErr := SubnetTxsFromBytes(meta.Mempool)
-				if txErr == nil {
-					result.Mempool = txs
+		if readErr != nil {
+			if readErr == io.EOF {
+				if !sawTerminator {
+					return &result, ErrSSEStreamTruncated
 				}
+				return &result, nil
 			}
-			continue
+			return &result, fmt.Errorf("read SSE stream: %w", readErr)
 		}
-
-		// Inference data line -- forward to callback.
-		writeSSELine(stream, line)
 	}
-	if err := scanner.Err(); err != nil {
-		return &result, fmt.Errorf("read SSE stream: %w", err)
-	}
-	return &result, nil
 }
 
-func writeSSELine(w io.Writer, line string) {
-	if w == nil {
+// handleSSELine processes a single SSE line (terminator already stripped).
+// Mutates result / flags in place; never returns an error -- read errors are
+// the caller's job to detect via the underlying reader.
+func (c *HTTPClient) handleSSELine(
+	line string,
+	stream io.Writer,
+	receiptHandler func(),
+	result *host.HostResponse,
+	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
+) {
+	if !strings.HasPrefix(line, "data: ") {
+		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
+			if strings.HasPrefix(line, "data:") {
+				logging.Warn("sse_data_line_missing_space", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120))
+			} else if strings.HasPrefix(line, "event:") || strings.HasPrefix(line, "id:") || strings.HasPrefix(line, "retry:") {
+				// Standard SSE fields we intentionally skip.
+			} else {
+				*unexpectedLineLogged = true
+				logging.Warn("sse_unexpected_line", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120))
+			}
+		}
 		return
 	}
-	fmt.Fprintf(w, "%s\n\n", line)
+	data := strings.TrimPrefix(line, "data: ")
+	if data == "[DONE]" {
+		*sawTerminator = true
+		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "[DONE]", "error", err)
+		}
+		return
+	}
+
+	// Try to parse as subnet protocol envelope.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+		// Not JSON -- forward as-is.
+		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
+		}
+		return
+	}
+
+	if raw, ok := envelope["subnet_receipt"]; ok {
+		*sawTerminator = true
+		var receipt SubnetReceiptEvent
+		if err := json.Unmarshal(raw, &receipt); err != nil {
+			logging.Warn("sse_receipt_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "error", err)
+		} else {
+			hostLabel := c.config.ParticipantKey
+			if len(hostLabel) > 8 {
+				hostLabel = hostLabel[len(hostLabel)-8:]
+			}
+			logging.Info("sse_subnet_receipt",
+				"subsystem", "transport",
+				"escrow", c.escrowID,
+				"host", hostLabel,
+				"nonce", receipt.Nonce,
+				"has_state_sig", len(receipt.StateSig) > 0,
+				"state_sig_bytes", len(receipt.StateSig),
+				"has_state_hash", len(receipt.StateHash) > 0,
+				"state_hash_bytes", len(receipt.StateHash),
+				"has_executor_receipt", len(receipt.Receipt) > 0,
+				"executor_receipt_bytes", len(receipt.Receipt),
+				"confirmed_at", receipt.ConfirmedAt,
+			)
+			result.StateSig = receipt.StateSig
+			result.StateHash = receipt.StateHash
+			result.Nonce = receipt.Nonce
+			result.Receipt = receipt.Receipt
+			result.ConfirmedAt = receipt.ConfirmedAt
+		}
+		if receiptHandler != nil {
+			receiptHandler()
+		}
+		return
+	}
+
+	if raw, ok := envelope["subnet_meta"]; ok {
+		var meta SubnetMetaEvent
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "error", err)
+		} else {
+			txs, txErr := SubnetTxsFromBytes(meta.Mempool)
+			if txErr != nil {
+				logging.Warn("sse_meta_tx_decode_failed", "subsystem", "transport", "escrow", c.escrowID, "mempool_len", len(meta.Mempool), "error", txErr)
+			} else {
+				result.Mempool = txs
+			}
+		}
+		return
+	}
+
+	// Inference data line -- forward to callback.
+	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+		*writeErrLogged = true
+		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
+	}
+}
+
+func writeSSELine(w io.Writer, line string) error {
+	if w == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "%s\n\n", line); err != nil {
+		return err
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	return nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	cr.n += int64(n)
+	return n, err
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // GossipNonce sends a nonce notification to a peer.
@@ -446,7 +557,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.observeTransportFailure(path)
+		c.observeTransportFailure(path, err)
 		return nil, fmt.Errorf("http post %s: %w", path, err)
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -487,7 +598,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.observeTransportFailure(url)
+		c.observeTransportFailure(url, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -519,9 +630,9 @@ func (c *HTTPClient) observeResult(path string, statusCode int) {
 	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
 }
 
-func (c *HTTPClient) observeTransportFailure(path string) {
+func (c *HTTPClient) observeTransportFailure(path string, err error) {
 	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return
 	}
-	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path)
+	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
 }

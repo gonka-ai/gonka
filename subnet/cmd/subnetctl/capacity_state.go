@@ -365,11 +365,19 @@ func (m *CapacityState) scaleFactorLocked() float64 {
 // CapacitySnapshot is a read-only view of the state used by metrics
 // and admin endpoints.
 type CapacitySnapshot struct {
-	TotalWeight    float64
-	BaselineWeight float64
-	ScaleFactor    float64
-	EscrowWeights  map[string]float64
-	HostCount      int
+	TotalWeight              float64
+	BaselineWeight           float64
+	ScaleFactor              float64
+	EscrowWeights            map[string]float64
+	HostCount                int
+	AvailableHostCount       int
+	UnavailableHostCount     int
+	CurrentWeightMatched     int
+	CurrentWeightFallback    int
+	BaselineWeightMatched    int
+	BaselineWeightFallback   int
+	ObservedCurrentWeightKey int
+	ObservedFullWeightKey    int
 }
 
 // Snapshot copies the current state.
@@ -383,12 +391,40 @@ func (m *CapacityState) Snapshot() CapacitySnapshot {
 	for id := range m.escrowMembership {
 		weights[id] = m.escrowWeightLocked(id)
 	}
+	available, unavailable := 0, 0
+	currentMatched, currentFallback := 0, 0
+	baselineMatched, baselineFallback := 0, 0
+	for host := range m.hostTotalSlots {
+		if m.hostAvailableLocked(host) {
+			available++
+		} else {
+			unavailable++
+		}
+		if _, ok := m.currentWeights[host]; ok {
+			currentMatched++
+		} else {
+			currentFallback++
+		}
+		if _, ok := m.fullWeights[host]; ok {
+			baselineMatched++
+		} else {
+			baselineFallback++
+		}
+	}
 	return CapacitySnapshot{
-		TotalWeight:    m.totalWeightLocked(),
-		BaselineWeight: m.baselineWeightLocked(),
-		ScaleFactor:    m.scaleFactorLocked(),
-		EscrowWeights:  weights,
-		HostCount:      len(m.hostTotalSlots),
+		TotalWeight:              m.totalWeightLocked(),
+		BaselineWeight:           m.baselineWeightLocked(),
+		ScaleFactor:              m.scaleFactorLocked(),
+		EscrowWeights:            weights,
+		HostCount:                len(m.hostTotalSlots),
+		AvailableHostCount:       available,
+		UnavailableHostCount:     unavailable,
+		CurrentWeightMatched:     currentMatched,
+		CurrentWeightFallback:    currentFallback,
+		BaselineWeightMatched:    baselineMatched,
+		BaselineWeightFallback:   baselineFallback,
+		ObservedCurrentWeightKey: len(m.currentWeights),
+		ObservedFullWeightKey:    len(m.fullWeights),
 	}
 }
 

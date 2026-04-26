@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -202,13 +203,13 @@ type InferenceParams struct {
 
 // Session manages the user side of the subnet protocol.
 type Session struct {
-	mu              sync.Mutex
-	sm              *state.StateMachine
-	signer          signing.Signer
-	verifier        signing.Verifier
-	escrowID        string
-	group           []types.SlotAssignment
-	addrToSlots     map[string][]uint32 // validator address -> slot IDs
+	mu          sync.Mutex
+	sm          *state.StateMachine
+	signer      signing.Signer
+	verifier    signing.Verifier
+	escrowID    string
+	group       []types.SlotAssignment
+	addrToSlots map[string][]uint32 // validator address -> slot IDs
 	// participantKeys[i] is the canonical participant identifier for
 	// slot i: always the slot's gonka validator address (bech32). This
 	// matches the keying used by chain-side state in
@@ -227,6 +228,11 @@ type Session struct {
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
+
+	// snapshotInFlight is set to true while an async background snapshot
+	// save is running, so concurrent composeDiffLocked invocations do not
+	// pile up duplicate saves. See maybeSaveSnapshotLocked.
+	snapshotInFlight atomic.Bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -324,6 +330,85 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 	return result
 }
 
+// validateCatchUp warns if the catch-up diffs for a host are non-contiguous
+// or miss the target nonce. Either condition means the host will fail to apply
+// the diff chain and signReceipt will return nil. This is a diagnostic-only
+// check; it never mutates state.
+// Caller must hold s.mu.
+func (s *Session) validateCatchUp(diffs []types.Diff, targetNonce uint64, hostIdx int) {
+	if len(diffs) == 0 {
+		logging.Error("catch_up_empty",
+			"subsystem", "session",
+			"escrow", s.escrowID,
+			"host_idx", hostIdx,
+			"target_nonce", targetNonce,
+			"session_nonce", s.nonce,
+			"host_sync_nonce", s.hostSyncNonce[hostIdx],
+			"diffs_len", len(s.diffs),
+		)
+		return
+	}
+
+	found := false
+	for i, d := range diffs {
+		if d.Nonce == targetNonce {
+			found = true
+		}
+		if i > 0 && d.Nonce != diffs[i-1].Nonce+1 {
+			logging.Error("catch_up_gap",
+				"subsystem", "session",
+				"escrow", s.escrowID,
+				"host_idx", hostIdx,
+				"target_nonce", targetNonce,
+				"gap_after", diffs[i-1].Nonce,
+				"next_nonce", d.Nonce,
+				"host_sync_nonce", s.hostSyncNonce[hostIdx],
+				"diffs_total", len(s.diffs),
+				"catch_up_len", len(diffs),
+			)
+		}
+	}
+
+	if !found {
+		logging.Error("catch_up_missing_target",
+			"subsystem", "session",
+			"escrow", s.escrowID,
+			"host_idx", hostIdx,
+			"target_nonce", targetNonce,
+			"catch_up_first", diffs[0].Nonce,
+			"catch_up_last", diffs[len(diffs)-1].Nonce,
+			"host_sync_nonce", s.hostSyncNonce[hostIdx],
+			"diffs_total", len(s.diffs),
+		)
+	}
+}
+
+// postStateRootForNonce returns the persisted post-state root for the given
+// nonce when it is present in s.diffs. Recovery may intentionally keep only a
+// contiguous suffix of diffs (for stranded-host catch-up), so callers must not
+// assume s.diffs is indexed from nonce 1.
+func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
+	if len(s.diffs) == 0 {
+		return nil, false
+	}
+	firstNonce := s.diffs[0].Nonce
+	if nonce >= firstNonce {
+		idx := nonce - firstNonce
+		if idx < uint64(len(s.diffs)) {
+			diff := s.diffs[idx]
+			if diff.Nonce == nonce {
+				return diff.PostStateRoot, true
+			}
+		}
+	}
+	for _, diff := range s.diffs {
+		if diff.Nonce == nonce {
+			return diff.PostStateRoot, true
+		}
+	}
+	return nil, false
+}
+
 // processResponse updates session state from a host response.
 // inferenceNonce is the nonce assigned during PrepareInference (the logical inference ID).
 // resp.Nonce may differ when the host has already advanced past inferenceNonce.
@@ -331,10 +416,9 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
 	// Verify state hash if the host returned one.
 	if len(resp.StateHash) > 0 {
-		idx := int(resp.Nonce) - 1
 		var expected []byte
-		if idx >= 0 && idx < len(s.diffs) {
-			expected = s.diffs[idx].PostStateRoot
+		if root, ok := s.postStateRootForNonce(resp.Nonce); ok {
+			expected = root
 		} else {
 			// Finalize path: nonce beyond diffs array, compute live.
 			var err error
@@ -506,9 +590,50 @@ func (s *Session) composeDiffLocked(extraTxs []*types.SubnetTx) (types.Diff, int
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
+		s.maybeSaveSnapshotLocked()
 	}
 
 	return diff, hostIdx, nil
+}
+
+// maybeSaveSnapshotLocked schedules an asynchronous snapshot save when
+// the current nonce is on the snapshot interval. The deep copy of state
+// and per-host cursor is taken under the existing s.mu lock so the
+// snapshot is consistent; the JSON marshal and storage write run on a
+// goroutine without any session locks held.
+//
+// snapshotInFlight (atomic CAS) ensures that if a previous save hasn't
+// finished by the next interval boundary we skip rather than pile up
+// concurrent writers. Skipping is safe -- the cursor will simply be
+// captured at the next interval (snapshotInterval nonces later).
+//
+// Caller must hold s.mu.
+func (s *Session) maybeSaveSnapshotLocked() {
+	if s.store == nil {
+		return
+	}
+	if s.nonce == 0 || s.nonce%snapshotInterval != 0 {
+		return
+	}
+	if !s.snapshotInFlight.CompareAndSwap(false, true) {
+		return
+	}
+
+	// Deep-copy state and cursor under the session lock; release before
+	// any disk IO. ExportState takes its own SM RLock for the deep copy.
+	state := s.sm.ExportState()
+	cursor := make(map[int]uint64, len(s.hostSyncNonce))
+	for k, v := range s.hostSyncNonce {
+		cursor[k] = v
+	}
+	nonce := s.nonce
+	store := s.store
+	escrowID := s.escrowID
+
+	go func() {
+		defer s.snapshotInFlight.Store(false)
+		writeSnapshot(store, escrowID, nonce, state, cursor)
+	}()
 }
 
 // PrepareInference composes a diff, applies it locally, advances nonce,
@@ -584,6 +709,8 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	s.nonceStates[nonce] = &nonceOutcome{}
 
 	catchUp := s.diffsForHost(hostIdx)
+	// TODO: remove this when we are sure that there is no bug in CatchUp
+	s.validateCatchUp(catchUp, nonce, hostIdx)
 	return &PreparedInference{
 		diff:    diff,
 		hostIdx: hostIdx,

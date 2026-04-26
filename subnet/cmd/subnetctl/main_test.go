@@ -34,7 +34,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 	require.True(t, ok)
 
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*subnetRuntime, error) {
 		switch cfg.ID {
 		case "12":
 			return nil, fmt.Errorf("runtime %s: create session: build group: get escrow: %w", cfg.ID, bridge.ErrEscrowNotFound)
@@ -48,7 +48,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir())
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, "24", runtimes[0].id)
@@ -85,18 +85,90 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	require.True(t, ok)
 
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*subnetRuntime, error) {
 		return nil, fmt.Errorf("runtime %s: create session: dial tcp timeout", cfg.ID)
 	}
 	t.Cleanup(func() {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	_, err = buildGatewayRuntimes(store, &state, t.TempDir())
+	_, err = buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
 	require.Error(t, err)
 
 	reloaded, ok, err := store.LoadState()
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, reloaded.Subnets[0].Active)
+}
+
+func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	t.Setenv("SUBNET_PUBLIC_API", "http://api:9000")
+	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
+		chainREST: defaultChainRESTURL,
+		publicAPI: defaultPublicAPIURL,
+	})
+
+	require.Equal(t, "http://api:9000", state.Settings.PublicAPI)
+
+	reloaded, ok := reloadGatewayStateForTest(t, store)
+	require.True(t, ok)
+	require.Equal(t, "http://api:9000", reloaded.Settings.PublicAPI)
+	require.Equal(t, "http://node:1317", reloaded.Settings.ChainREST)
+}
+
+func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://configured-api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	t.Setenv("SUBNET_PUBLIC_API", "http://env-api:9000")
+	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
+		chainREST: defaultChainRESTURL,
+		publicAPI: defaultPublicAPIURL,
+	})
+
+	require.Equal(t, "http://configured-api:9000", state.Settings.PublicAPI)
+
+	reloaded, ok := reloadGatewayStateForTest(t, store)
+	require.True(t, ok)
+	require.Equal(t, "http://configured-api:9000", reloaded.Settings.PublicAPI)
+}
+
+func reloadGatewayStateForTest(t *testing.T, store *GatewayStore) (GatewayState, bool) {
+	t.Helper()
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	return state, ok
 }

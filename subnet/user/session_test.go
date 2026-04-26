@@ -109,6 +109,25 @@ func TestUser_RoundRobinSelection(t *testing.T) {
 	require.Equal(t, uint64(6), session.Nonce())
 }
 
+func TestPrepareInference_StartInferenceIsMandatory(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100, 10)
+
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+
+	prepared, err := session.PrepareInference(params)
+	require.Error(t, err)
+	require.Nil(t, prepared)
+	require.ErrorContains(t, err, "mandatory start inference")
+	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.Equal(t, uint64(0), session.Nonce(), "failed start must not advance nonce")
+	require.Empty(t, session.Diffs(), "failed start must not record a no-start diff")
+	_, ok := session.sm.GetInference(1)
+	require.False(t, ok, "failed start must not create an inference record")
+}
+
 func TestUser_PipelinesReceipt(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()

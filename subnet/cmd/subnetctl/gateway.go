@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"subnet/bridge"
 	"subnet/transport"
@@ -43,6 +44,8 @@ type Gateway struct {
 	capacity           *CapacityState
 	settings           GatewaySettings
 	store              *GatewayStore
+	perf               *PerfTracker
+	perfStore          *PerfStore
 	baseStorageDir     string
 	mu                 sync.Mutex
 	roundRobinSeed     atomic.Uint64
@@ -54,7 +57,6 @@ type subnetRuntime struct {
 	handler         http.Handler
 	proxy           *Proxy
 	session         *user.Session
-	perfStore       *PerfStore
 	participantKeys []string
 	// participantSlotCounts maps a participant key to the number of
 	// slots in this escrow's group held by that host. Used by the
@@ -84,6 +86,25 @@ type runtimeStatus struct {
 	BlockReason          string `json:"block_reason,omitempty"`
 }
 
+type gatewayCapacityStatus struct {
+	TotalWeight              float64            `json:"total_weight"`
+	BaselineWeight           float64            `json:"baseline_weight"`
+	LostWeight               float64            `json:"lost_weight"`
+	ScaleFactor              float64            `json:"scale_factor"`
+	AvailablePercent         float64            `json:"available_percent"`
+	LostPercent              float64            `json:"lost_percent"`
+	HostCount                int                `json:"host_count"`
+	AvailableHostCount       int                `json:"available_host_count"`
+	UnavailableHostCount     int                `json:"unavailable_host_count"`
+	CurrentWeightMatched     int                `json:"current_weight_matched_hosts"`
+	CurrentWeightFallback    int                `json:"current_weight_fallback_hosts"`
+	BaselineWeightMatched    int                `json:"baseline_weight_matched_hosts"`
+	BaselineWeightFallback   int                `json:"baseline_weight_fallback_hosts"`
+	ObservedCurrentWeightKey int                `json:"observed_current_weight_keys"`
+	ObservedFullWeightKey    int                `json:"observed_full_weight_keys"`
+	EscrowWeights            map[string]float64 `json:"escrow_weights"`
+}
+
 var (
 	DefaultRequestMaxTokens uint64 = 10_000
 )
@@ -99,7 +120,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	return mux
 }
 
-func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRuntime, error) {
+func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*subnetRuntime, error) {
 	keyHex := strings.TrimSpace(cfg.PrivateKeyHex)
 	if keyHex == "" && cfg.PrivateKeyEnv != "" {
 		keyHex = strings.TrimSpace(os.Getenv(cfg.PrivateKeyEnv))
@@ -117,15 +138,12 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRun
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
 	}
 
-	perfStore, err := NewPerfStore(cfg.StoragePath)
-	if err != nil {
-		return nil, fmt.Errorf("runtime %s: open perf store: %w", cfg.ID, err)
+	if perf == nil {
+		perf = NewPerfTracker(nil)
 	}
-	perf := NewPerfTracker(perfStore)
 
 	pv, pvErr := types.ParseProtocolVersion(cfg.ProtocolVersion)
 	if pvErr != nil {
-		perfStore.Close()
 		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, pvErr)
 	}
 
@@ -139,8 +157,10 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRun
 		ProtocolVersion:  pv,
 	})
 	if err != nil {
-		perfStore.Close()
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
+	}
+	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, cfg.StoragePath, session.HostParticipantKeyList()); err != nil {
+		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}
 
 	redundancy := NewRedundancyWithThrottle(
@@ -166,7 +186,6 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string) (*subnetRun
 		handler:               newRuntimeMux(proxy),
 		proxy:                 proxy,
 		session:               session,
-		perfStore:             perfStore,
 		participantKeys:       session.ParticipantKeys(),
 		participantSlotCounts: hostSlotCounts(session.HostParticipantKeyList()),
 	}
@@ -191,9 +210,6 @@ func hostSlotCounts(perSlotKeys []string) map[string]int {
 func (rt *subnetRuntime) close() error {
 	if rt.session != nil {
 		rt.session.Close()
-	}
-	if rt.perfStore != nil {
-		return rt.perfStore.Close()
 	}
 	return nil
 }
@@ -288,6 +304,7 @@ func NewGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, defaultModel
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
 	g.metrics.AttachGateway(g)
+	g.attachCapacityLiveAvailability()
 	for _, rt := range runtimes {
 		g.attachMetrics(rt)
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
@@ -295,11 +312,16 @@ func NewGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, defaultModel
 	return g
 }
 
-func NewManagedGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore) *Gateway {
+func NewManagedGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, perfArgs ...*PerfTracker) *Gateway {
+	settings = settings.WithTuningDefaults()
+	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
 	g.settings = settings
 	g.baseStorageDir = baseStorageDir
 	g.store = store
+	if len(perfArgs) > 0 && perfArgs[0] != nil {
+		g.perf = perfArgs[0]
+	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
@@ -318,7 +340,44 @@ func NewManagedGateway(runtimes []*subnetRuntime, limiter *GatewayLimiter, setti
 	for _, rt := range g.runtimeOrder {
 		g.attachEscrowChecker(rt)
 	}
+	go g.balanceCheckLoop()
 	return g
+}
+
+const (
+	balanceCheckInterval           = 30 * time.Second
+	balanceMinimumThreshold uint64 = 1_000_000
+)
+
+// checkBalances scans all active runtimes and deactivates any whose
+// escrow balance has dropped below balanceMinimumThreshold.
+func (g *Gateway) checkBalances() {
+	g.mu.Lock()
+	runtimes := make([]*subnetRuntime, len(g.runtimeOrder))
+	copy(runtimes, g.runtimeOrder)
+	g.mu.Unlock()
+
+	for _, rt := range runtimes {
+		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
+			continue
+		}
+		balance := rt.proxy.sm.Balance()
+		if balance < balanceMinimumThreshold {
+			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — deactivating",
+				rt.id, balance, balanceMinimumThreshold)
+			g.deactivateSubnetByID(rt.id)
+		}
+	}
+}
+
+// balanceCheckLoop periodically checks each active runtime's escrow balance.
+func (g *Gateway) balanceCheckLoop() {
+	g.checkBalances()
+	ticker := time.NewTicker(balanceCheckInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		g.checkBalances()
+	}
 }
 
 // attachCapacityStateToPhaseGate wires the capacity state into the
@@ -337,9 +396,7 @@ func (g *Gateway) attachCapacityStateToPhaseGate() {
 	if g == nil || g.phaseGate == nil || g.capacity == nil {
 		return
 	}
-	if g.participantLimiter != nil {
-		g.capacity.SetLiveAvailable(g.participantLimiter.IsAvailable)
-	}
+	g.attachCapacityLiveAvailability()
 	scaleHook := func(scale float64) {
 		if g.limiter == nil {
 			return
@@ -349,6 +406,61 @@ func (g *Gateway) attachCapacityStateToPhaseGate() {
 	g.phaseGate.SetCapacityState(g.capacity, scaleHook)
 }
 
+func (g *Gateway) attachCapacityLiveAvailability() {
+	if g == nil || g.capacity == nil {
+		return
+	}
+	if g.participantLimiter == nil {
+		g.capacity.SetLiveAvailable(nil)
+		return
+	}
+	g.capacity.SetLiveAvailable(g.participantLimiter.IsAvailable)
+}
+
+func (g *Gateway) refreshCapacityScale() {
+	if g == nil || g.capacity == nil || g.limiter == nil {
+		return
+	}
+	if !g.limiter.HasConfiguredLimits() {
+		return
+	}
+	g.limiter.ApplyScaleFactor(g.capacity.ScaleFactor())
+}
+
+func (g *Gateway) capacityStatus() gatewayCapacityStatus {
+	if g == nil || g.capacity == nil {
+		return gatewayCapacityStatus{}
+	}
+	snap := g.capacity.Snapshot()
+	lost := snap.BaselineWeight - snap.TotalWeight
+	if lost < 0 {
+		lost = 0
+	}
+	availablePercent := snap.ScaleFactor * 100
+	lostPercent := 100 - availablePercent
+	if lostPercent < 0 {
+		lostPercent = 0
+	}
+	return gatewayCapacityStatus{
+		TotalWeight:              snap.TotalWeight,
+		BaselineWeight:           snap.BaselineWeight,
+		LostWeight:               lost,
+		ScaleFactor:              snap.ScaleFactor,
+		AvailablePercent:         availablePercent,
+		LostPercent:              lostPercent,
+		HostCount:                snap.HostCount,
+		AvailableHostCount:       snap.AvailableHostCount,
+		UnavailableHostCount:     snap.UnavailableHostCount,
+		CurrentWeightMatched:     snap.CurrentWeightMatched,
+		CurrentWeightFallback:    snap.CurrentWeightFallback,
+		BaselineWeightMatched:    snap.BaselineWeightMatched,
+		BaselineWeightFallback:   snap.BaselineWeightFallback,
+		ObservedCurrentWeightKey: snap.ObservedCurrentWeightKey,
+		ObservedFullWeightKey:    snap.ObservedFullWeightKey,
+		EscrowWeights:            snap.EscrowWeights,
+	}
+}
+
 func (g *Gateway) Close() error {
 	var firstErr error
 	if g.phaseGate != nil {
@@ -356,6 +468,11 @@ func (g *Gateway) Close() error {
 	}
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if g.perfStore != nil {
+		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -371,6 +488,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/settings", g.handleAdminSettings)
 	mux.HandleFunc("/v1/admin/subnets", g.handleAdminSubnets)
 	mux.HandleFunc("/v1/admin/subnets/", g.handleAdminSubnetAction)
+	mux.HandleFunc("/v1/admin/participants/unquarantine", g.handleAdminUnquarantine)
 	mux.HandleFunc("/v1/finalize", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
@@ -380,6 +498,7 @@ func (g *Gateway) Handler() http.Handler {
 }
 
 func (g *Gateway) handlePooledStatus(w http.ResponseWriter, r *http.Request) {
+	g.refreshCapacityScale()
 	g.mu.Lock()
 	runtimes := append([]*subnetRuntime(nil), g.runtimeOrder...)
 	g.mu.Unlock()
@@ -396,6 +515,7 @@ func (g *Gateway) handlePooledStatus(w http.ResponseWriter, r *http.Request) {
 		"mode":     "gateway",
 		"subnets":  statuses,
 		"limiter":  g.limiter.Snapshot(),
+		"capacity": g.capacityStatus(),
 		"runtimes": len(runtimes),
 	})
 }
@@ -423,6 +543,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	logRequestStage(ctx, "gateway_request_received", "model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens)
 
 	if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
+		g.refreshCapacityScale()
 		if err := g.limiter.Acquire(inputTokens); err != nil {
 			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
@@ -478,6 +599,7 @@ func (g *Gateway) handleSubnet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
+			g.refreshCapacityScale()
 			if err := g.limiter.Acquire(inputTokens); err != nil {
 				g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 				logRequestStage(ctx, "gateway_subnet_limiter_rejected", "escrow", subnetID, "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
@@ -781,12 +903,42 @@ type adminSubnetRequest struct {
 }
 
 type adminSettingsRequest struct {
-	ChainREST               *string `json:"chain_rest,omitempty"`
-	PublicAPI               *string `json:"public_api,omitempty"`
-	DefaultModel            *string `json:"default_model,omitempty"`
-	MaxConcurrentRequests   *int64  `json:"max_concurrent_requests,omitempty"`
-	MaxInputTokensInFlight  *int64  `json:"max_input_tokens_in_flight,omitempty"`
-	DefaultRequestMaxTokens *uint64 `json:"default_request_max_tokens,omitempty"`
+	ChainREST               *string                          `json:"chain_rest,omitempty"`
+	PublicAPI               *string                          `json:"public_api,omitempty"`
+	DefaultModel            *string                          `json:"default_model,omitempty"`
+	MaxConcurrentRequests   *int64                           `json:"max_concurrent_requests,omitempty"`
+	MaxInputTokensInFlight  *int64                           `json:"max_input_tokens_in_flight,omitempty"`
+	DefaultRequestMaxTokens *uint64                          `json:"default_request_max_tokens,omitempty"`
+	ParticipantThrottle     *adminParticipantThrottleRequest `json:"participant_throttle,omitempty"`
+	Redundancy              *adminRedundancyRequest          `json:"redundancy,omitempty"`
+	Perf                    *adminPerfRequest                `json:"perf,omitempty"`
+}
+
+type adminParticipantThrottleRequest struct {
+	RequestBurst                   *int   `json:"request_burst,omitempty"`
+	RecoveryPerMinute              *int   `json:"recovery_per_minute,omitempty"`
+	HTTPQuarantineMS               *int64 `json:"http_quarantine_ms,omitempty"`
+	TransportFailureQuarantineMS   *int64 `json:"transport_failure_quarantine_ms,omitempty"`
+	EmptyStreamQuarantineMS        *int64 `json:"empty_stream_quarantine_ms,omitempty"`
+	StalledWinnerQuarantineMS      *int64 `json:"stalled_winner_quarantine_ms,omitempty"`
+	EmptyStreamQuarantineThreshold *int   `json:"empty_stream_threshold,omitempty"`
+}
+
+type adminRedundancyRequest struct {
+	ReceiptTimeoutMS             *int64   `json:"receipt_timeout_ms,omitempty"`
+	FirstTokenTimeoutFloorMS     *int64   `json:"first_token_timeout_floor_ms,omitempty"`
+	PerInputTokenFirstTokenLagMS *int64   `json:"per_input_token_first_token_lag_ms,omitempty"`
+	InterChunkStallTimeoutMS     *int64   `json:"inter_chunk_stall_timeout_ms,omitempty"`
+	NonStreamResponseFloorMS     *int64   `json:"non_stream_response_floor_ms,omitempty"`
+	PerInputTokenResponseLagMS   *int64   `json:"per_input_token_response_lag_ms,omitempty"`
+	SecondaryWaitAfterWinnerMS   *int64   `json:"secondary_wait_after_winner_ms,omitempty"`
+	ParallelAdvantageThreshold   *float64 `json:"parallel_advantage_threshold,omitempty"`
+	UnresponsiveThreshold        *float64 `json:"unresponsive_threshold,omitempty"`
+}
+
+type adminPerfRequest struct {
+	SampleSize *int   `json:"sample_size,omitempty"`
+	WindowMS   *int64 `json:"window_ms,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -794,6 +946,7 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	g.refreshCapacityScale()
 	if g.store == nil {
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
 		return
@@ -807,6 +960,8 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"settings": g.settings,
 			"subnets":  []GatewaySubnetState{},
+			"limiter":  g.limiter.Snapshot(),
+			"capacity": g.capacityStatus(),
 		})
 		return
 	}
@@ -835,6 +990,7 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		"settings": state.Settings,
 		"subnets":  views,
 		"limiter":  g.limiter.Snapshot(),
+		"capacity": g.capacityStatus(),
 	})
 }
 
@@ -876,6 +1032,20 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		if req.DefaultRequestMaxTokens != nil {
 			settings.DefaultRequestMaxTokens = *req.DefaultRequestMaxTokens
 		}
+		if req.ParticipantThrottle != nil {
+			applyParticipantThrottleRequest(&settings.ParticipantThrottle, req.ParticipantThrottle)
+		}
+		if req.Redundancy != nil {
+			applyRedundancyRequest(&settings.Redundancy, req.Redundancy)
+		}
+		if req.Perf != nil {
+			applyPerfRequest(&settings.Perf, req.Perf)
+		}
+		if err := validateGatewaySettings(settings); err != nil {
+			g.mu.Unlock()
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
 		if err := g.store.UpdateSettings(settings); err != nil {
 			g.mu.Unlock()
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -897,12 +1067,135 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		g.limiter.UpdateLimits(settings.MaxConcurrentRequests, settings.MaxInputTokensInFlight)
 		DefaultRequestMaxTokens = settings.DefaultRequestMaxTokens
+		applyGatewayTuningSettings(settings)
+		if g.perf != nil {
+			g.perf.ResizeRings()
+		}
 		g.mu.Unlock()
 
 		writeJSON(w, settings)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func applyParticipantThrottleRequest(settings *ParticipantThrottleSettings, req *adminParticipantThrottleRequest) {
+	if req.RequestBurst != nil {
+		settings.RequestBurst = *req.RequestBurst
+	}
+	if req.RecoveryPerMinute != nil {
+		settings.RecoveryPerMinute = *req.RecoveryPerMinute
+	}
+	if req.HTTPQuarantineMS != nil {
+		settings.HTTPQuarantineMS = *req.HTTPQuarantineMS
+	}
+	if req.TransportFailureQuarantineMS != nil {
+		settings.TransportFailureQuarantineMS = *req.TransportFailureQuarantineMS
+	}
+	if req.EmptyStreamQuarantineMS != nil {
+		settings.EmptyStreamQuarantineMS = *req.EmptyStreamQuarantineMS
+	}
+	if req.StalledWinnerQuarantineMS != nil {
+		settings.StalledWinnerQuarantineMS = *req.StalledWinnerQuarantineMS
+	}
+	if req.EmptyStreamQuarantineThreshold != nil {
+		settings.EmptyStreamQuarantineThreshold = *req.EmptyStreamQuarantineThreshold
+	}
+}
+
+func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRequest) {
+	if req.ReceiptTimeoutMS != nil {
+		settings.ReceiptTimeoutMS = *req.ReceiptTimeoutMS
+	}
+	if req.FirstTokenTimeoutFloorMS != nil {
+		settings.FirstTokenTimeoutFloorMS = *req.FirstTokenTimeoutFloorMS
+	}
+	if req.PerInputTokenFirstTokenLagMS != nil {
+		settings.PerInputTokenFirstTokenLagMS = *req.PerInputTokenFirstTokenLagMS
+	}
+	if req.InterChunkStallTimeoutMS != nil {
+		settings.InterChunkStallTimeoutMS = *req.InterChunkStallTimeoutMS
+	}
+	if req.NonStreamResponseFloorMS != nil {
+		settings.NonStreamResponseFloorMS = *req.NonStreamResponseFloorMS
+	}
+	if req.PerInputTokenResponseLagMS != nil {
+		settings.PerInputTokenResponseLagMS = *req.PerInputTokenResponseLagMS
+	}
+	if req.SecondaryWaitAfterWinnerMS != nil {
+		settings.SecondaryWaitAfterWinnerMS = *req.SecondaryWaitAfterWinnerMS
+	}
+	if req.ParallelAdvantageThreshold != nil {
+		settings.ParallelAdvantageThreshold = *req.ParallelAdvantageThreshold
+	}
+	if req.UnresponsiveThreshold != nil {
+		settings.UnresponsiveThreshold = *req.UnresponsiveThreshold
+	}
+}
+
+func applyPerfRequest(settings *PerfSettings, req *adminPerfRequest) {
+	if req.SampleSize != nil {
+		settings.SampleSize = *req.SampleSize
+	}
+	if req.WindowMS != nil {
+		settings.WindowMS = *req.WindowMS
+	}
+}
+
+func validateGatewaySettings(settings GatewaySettings) error {
+	p := settings.ParticipantThrottle
+	switch {
+	case p.RequestBurst <= 0:
+		return fmt.Errorf("participant_throttle.request_burst must be > 0")
+	case p.RecoveryPerMinute <= 0:
+		return fmt.Errorf("participant_throttle.recovery_per_minute must be > 0")
+	case p.HTTPQuarantineMS <= 0:
+		return fmt.Errorf("participant_throttle.http_quarantine_ms must be > 0")
+	case p.TransportFailureQuarantineMS <= 0:
+		return fmt.Errorf("participant_throttle.transport_failure_quarantine_ms must be > 0")
+	case p.EmptyStreamQuarantineMS <= 0:
+		return fmt.Errorf("participant_throttle.empty_stream_quarantine_ms must be > 0")
+	case p.StalledWinnerQuarantineMS <= 0:
+		return fmt.Errorf("participant_throttle.stalled_winner_quarantine_ms must be > 0")
+	case p.EmptyStreamQuarantineThreshold <= 0:
+		return fmt.Errorf("participant_throttle.empty_stream_threshold must be > 0")
+	}
+	r := settings.Redundancy
+	switch {
+	case r.ReceiptTimeoutMS <= 0:
+		return fmt.Errorf("redundancy.receipt_timeout_ms must be > 0")
+	case r.FirstTokenTimeoutFloorMS <= 0:
+		return fmt.Errorf("redundancy.first_token_timeout_floor_ms must be > 0")
+	case r.PerInputTokenFirstTokenLagMS < 0:
+		return fmt.Errorf("redundancy.per_input_token_first_token_lag_ms must be >= 0")
+	case r.InterChunkStallTimeoutMS < 0:
+		return fmt.Errorf("redundancy.inter_chunk_stall_timeout_ms must be >= 0")
+	case r.NonStreamResponseFloorMS <= 0:
+		return fmt.Errorf("redundancy.non_stream_response_floor_ms must be > 0")
+	case r.PerInputTokenResponseLagMS < 0:
+		return fmt.Errorf("redundancy.per_input_token_response_lag_ms must be >= 0")
+	case r.SecondaryWaitAfterWinnerMS <= 0:
+		return fmt.Errorf("redundancy.secondary_wait_after_winner_ms must be > 0")
+	case r.ParallelAdvantageThreshold <= 0 || r.ParallelAdvantageThreshold >= 1:
+		return fmt.Errorf("redundancy.parallel_advantage_threshold must be > 0 and < 1")
+	case r.UnresponsiveThreshold <= 0 || r.UnresponsiveThreshold > 1:
+		return fmt.Errorf("redundancy.unresponsive_threshold must be > 0 and <= 1")
+	}
+	perf := settings.Perf
+	switch {
+	case perf.SampleSize <= 0:
+		return fmt.Errorf("perf.sample_size must be > 0")
+	case perf.WindowMS <= 0:
+		return fmt.Errorf("perf.window_ms must be > 0")
+	}
+	return nil
+}
+
+func applyGatewayTuningSettings(settings GatewaySettings) {
+	settings = settings.WithTuningDefaults()
+	sharedParticipantRequestLimiter.UpdateSettings(settings.ParticipantThrottle)
+	ApplyRedundancySettings(settings.Redundancy)
+	ApplyPerfSettings(settings.Perf)
 }
 
 func (g *Gateway) handleAdminSubnets(w http.ResponseWriter, r *http.Request) {
@@ -1027,7 +1320,7 @@ func (g *Gateway) handleAdminAddSubnet(w http.ResponseWriter, r *http.Request) {
 		record.StoragePath = defaultStoragePath(g.baseStorageDir, record.ID)
 	}
 
-	rt, err := buildRuntime(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel)
+	rt, err := buildRuntime(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
@@ -1135,6 +1428,33 @@ func (g *Gateway) handleAdminCleanSubnet(w http.ResponseWriter, r *http.Request,
 	})
 }
 
+func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ParticipantKey string `json:"participant_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.ParticipantKey) == "" {
+		http.Error(w, `{"error":{"message":"participant_key is required"}}`, http.StatusBadRequest)
+		return
+	}
+	if g.participantLimiter == nil {
+		http.Error(w, `{"error":{"message":"participant limiter not configured"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	cleared := g.participantLimiter.ClearQuarantine(req.ParticipantKey)
+	writeJSON(w, map[string]any{
+		"participant_key": req.ParticipantKey,
+		"cleared":         cleared,
+	})
+}
+
 func findGatewaySubnet(subnets []GatewaySubnetState, id string) (GatewaySubnetState, bool) {
 	for _, subnet := range subnets {
 		if subnet.ID == id {
@@ -1169,14 +1489,20 @@ func (g *Gateway) attachMetrics(rt *subnetRuntime) {
 }
 
 func (g *Gateway) attachEscrowChecker(rt *subnetRuntime) {
-	if g == nil || g.escrowChecker == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
+	if g == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
 		return
 	}
 	escrowID := rt.id
-	rt.proxy.redundancy.onEscrowMissing = func() {
-		go g.escrowChecker.TriggerCheck(escrowID, func() {
-			g.deactivateSubnetByID(escrowID)
-		})
+	if g.escrowChecker != nil {
+		rt.proxy.redundancy.onEscrowMissing = func() {
+			go g.escrowChecker.TriggerCheck(escrowID, func() {
+				g.deactivateSubnetByID(escrowID)
+			})
+		}
+	}
+	rt.proxy.redundancy.onBalanceExhausted = func() {
+		log.Printf("gateway_deactivating_exhausted_escrow escrow=%s", escrowID)
+		g.deactivateSubnetByID(escrowID)
 	}
 }
 
@@ -1250,17 +1576,42 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 }
 
 func buildRuntimes(configs []RuntimeConfig, chainREST, defaultModel string) ([]*subnetRuntime, error) {
-	runtimes := make([]*subnetRuntime, 0, len(configs))
-	for _, cfg := range configs {
-		rt, err := buildRuntime(cfg, chainREST, defaultModel)
-		if err != nil {
-			for _, built := range runtimes {
-				built.close()
-			}
-			return nil, err
-		}
-		runtimes = append(runtimes, rt)
-		log.Printf("loaded subnet runtime escrow=%s model=%s storage=%s", cfg.ID, rt.model, cfg.StoragePath)
+	type result struct {
+		idx int
+		rt  *subnetRuntime
+		err error
 	}
+	t0 := time.Now()
+	perf := NewPerfTracker(nil)
+	ch := make(chan result, len(configs))
+	for i, cfg := range configs {
+		go func(idx int, cfg RuntimeConfig) {
+			rt, err := buildRuntime(cfg, chainREST, defaultModel, perf)
+			ch <- result{idx, rt, err}
+		}(i, cfg)
+	}
+
+	runtimes := make([]*subnetRuntime, len(configs))
+	var firstErr error
+	for range configs {
+		res := <-ch
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+		}
+		if res.rt != nil {
+			runtimes[res.idx] = res.rt
+			log.Printf("loaded subnet runtime escrow=%s model=%s storage=%s",
+				configs[res.idx].ID, res.rt.model, configs[res.idx].StoragePath)
+		}
+	}
+	if firstErr != nil {
+		for _, rt := range runtimes {
+			if rt != nil {
+				rt.close()
+			}
+		}
+		return nil, firstErr
+	}
+	log.Printf("build_runtimes_parallel count=%d total_elapsed_ms=%d", len(configs), time.Since(t0).Milliseconds())
 	return runtimes, nil
 }

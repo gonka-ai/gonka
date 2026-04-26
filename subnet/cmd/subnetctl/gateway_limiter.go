@@ -61,6 +61,12 @@ func (l *GatewayLimiter) Snapshot() LimiterSnapshot {
 	}
 }
 
+func (l *GatewayLimiter) HasConfiguredLimits() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.maxConcurrent > 0 || l.maxInputTokens > 0
+}
+
 // UpdateLimits replaces the baseline caps and re-derives the
 // effective caps using the currently active scale factor. The scale is
 // preserved across config reloads so an operator changing the cap
@@ -122,10 +128,10 @@ func (l *GatewayLimiter) Acquire(inputTokens int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.effectiveMaxConcurrent > 0 && l.inFlightRequests+1 > l.effectiveMaxConcurrent {
+	if l.maxConcurrent > 0 && l.inFlightRequests+1 > l.effectiveMaxConcurrent {
 		return fmt.Errorf("rate limit exceeded: too many concurrent requests")
 	}
-	if l.effectiveMaxInputTokens > 0 && l.inFlightInputToks+inputTokens > l.effectiveMaxInputTokens {
+	if l.maxInputTokens > 0 && l.inFlightInputToks+inputTokens > l.effectiveMaxInputTokens {
 		return fmt.Errorf("rate limit exceeded: too many input tokens in flight")
 	}
 

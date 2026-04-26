@@ -87,7 +87,7 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver     // optional, nil = no warm key support
+	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
 	protocolVersion types.ProtocolVersion // default: ProtocolV0211
 }
 
@@ -157,13 +157,13 @@ func NewStateMachine(
 			RevealedSeeds: make(map[uint32]int64),
 			WarmKeys:      make(map[uint32]string),
 		},
-		verifier:        verifier,
-		userAddress:     userAddress,
-		slotToAddress:   slotToAddr,
+		verifier:           verifier,
+		userAddress:        userAddress,
+		slotToAddress:      slotToAddr,
 		addressToSlotCount: addrToSlotCount,
-		addressToSlots:  addrToSlots,
-		totalSlots:      uint32(len(group)),
-		protocolVersion: types.ProtocolV0211,
+		addressToSlots:     addrToSlots,
+		totalSlots:         uint32(len(group)),
+		protocolVersion:    types.ProtocolV0211,
 	}
 	for _, o := range opts {
 		o(sm)
@@ -191,6 +191,24 @@ func NewStateMachine(
 	)
 
 	return sm
+}
+
+// ExportState returns a deep copy of the current escrow state for snapshotting.
+func (sm *StateMachine) ExportState() *types.EscrowState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.DeepCopy()
+}
+
+// RestoreState replaces the state machine's internal state with the provided
+// snapshot. Used during recovery to skip replaying old diffs. The caller must
+// ensure that lookup maps (slotToAddress, etc.) are consistent with the
+// restored state's Group. Typically called immediately after construction,
+// before any Apply calls.
+func (sm *StateMachine) RestoreState(s *types.EscrowState) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.state = s
 }
 
 // ApplyDiff validates user signature and post_state_root, then applies the diff.
@@ -225,7 +243,8 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.SubnetTx) ([]byte,
 	return sm.applyCore(nonce, txs, nil)
 }
 
-// ApplyLocalBestEffort applies txs one by one, skipping any that fail.
+// ApplyLocalBestEffort applies txs one by one, skipping any non-start txs that fail.
+// MsgStartInference is mandatory: if it cannot apply, the whole nonce is rolled back.
 // Returns the post-state root and the subset of txs that were applied.
 // Used by the user to compose diffs from pending txs that may be stale.
 func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx) ([]byte, []*types.SubnetTx, error) {
@@ -259,6 +278,10 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.SubnetTx
 	var applied []*types.SubnetTx
 	for _, tx := range txs {
 		if err := sm.applyTx(tx); err != nil {
+			if start := tx.GetStartInference(); start != nil {
+				sm.restoreMutable(snap)
+				return nil, nil, fmt.Errorf("apply mandatory start inference %d: %w", start.InferenceId, err)
+			}
 			continue
 		}
 		applied = append(applied, tx)
@@ -409,6 +432,13 @@ func (sm *StateMachine) LatestNonce() uint64 {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.state.LatestNonce
+}
+
+// Balance returns the current escrow balance without deep-copying state.
+func (sm *StateMachine) Balance() uint64 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.Balance
 }
 
 // Phase returns the current session phase.

@@ -3,11 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -16,18 +16,9 @@ import (
 	"subnet/host"
 	"subnet/logging"
 	"subnet/transport"
+	"subnet/types"
 	"subnet/user"
 )
-
-// forensicBytes returns a base64-encoded, size-capped view of sample so the
-// caller can safely embed it in a single log line. Returns "" when sample is
-// empty so log lines stay short in the common case.
-func forensicBytes(sample []byte) string {
-	if len(sample) == 0 {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(sample)
-}
 
 // errEmptyStream marks an attempt that completed successfully at the transport
 // layer but produced no content tokens. The host returned only protocol/SSE
@@ -61,10 +52,11 @@ func sseChunkHasContent(p []byte) bool {
 
 // sseChunkContentSource is the classifying variant of sseChunkHasContent: when
 // content is present it returns a short label identifying the field that
-// carried it ("delta.content", "delta.reasoning_content", or
-// "delta.tool_calls"). The second return value is false when no accepted
-// content was found. Used for forensic logging so we can tell, after the
-// fact, exactly which field a short-content winner was emitting.
+// carried it ("delta.content", "delta.reasoning_content", "delta.tool_calls",
+// or the convertible completion shape "message.content"). The second return
+// value is false when no accepted content was found. Used for forensic logging
+// so we can tell, after the fact, exactly which field a short-content winner
+// was emitting.
 func sseChunkContentSource(p []byte) (string, bool) {
 	if len(p) == 0 {
 		return "", false
@@ -85,6 +77,9 @@ func sseChunkContentSource(p []byte) (string, bool) {
 					ReasoningContent string          `json:"reasoning_content"`
 					ToolCalls        json.RawMessage `json:"tool_calls"`
 				} `json:"delta"`
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(payload, &evt); err != nil {
@@ -99,6 +94,9 @@ func sseChunkContentSource(p []byte) (string, bool) {
 			}
 			if hasJSONArrayElements(c.Delta.ToolCalls) {
 				return "delta.tool_calls", true
+			}
+			if c.Message.Content != "" {
+				return "message.content", true
 			}
 		}
 	}
@@ -121,7 +119,7 @@ func hasJSONArrayElements(raw json.RawMessage) bool {
 
 // Tuning knobs — exported so they can be adjusted without code changes.
 var (
-	ReceiptTimeout             = 500 * time.Millisecond
+	ReceiptTimeout             = 5 * time.Second
 	ParallelAdvantageThreshold = 0.5 // 50% better estimated time
 	UnresponsiveThreshold      = 1.0 // any non-responsive history → start secondary
 	MinSamplesForDecision      = 3
@@ -130,11 +128,65 @@ var (
 	PerInputTokenFirstTokenLag = 10 * time.Millisecond
 	// InterChunkStallTimeout caps how long the crowned winner may go silent
 	// between forwarded chunks before we abort the stream as stalled.
-	InterChunkStallTimeout = 500 * time.Millisecond
-	NonStreamResponseFloor     = 20 * time.Second
-	PerInputTokenResponseLag   = 20 * time.Millisecond
-	SecondaryWaitAfterWinner   = time.Minute
+	InterChunkStallTimeout   = time.Minute
+	NonStreamResponseFloor   = 20 * time.Second
+	PerInputTokenResponseLag = 20 * time.Millisecond
+	SecondaryWaitAfterWinner = 5 * time.Minute
 )
+
+func DefaultRedundancySettings() RedundancySettings {
+	return RedundancySettings{
+		ReceiptTimeoutMS:             5000,
+		FirstTokenTimeoutFloorMS:     1000,
+		PerInputTokenFirstTokenLagMS: 10,
+		InterChunkStallTimeoutMS:     60000,
+		NonStreamResponseFloorMS:     20000,
+		PerInputTokenResponseLagMS:   20,
+		SecondaryWaitAfterWinnerMS:   300000,
+		ParallelAdvantageThreshold:   0.5,
+		UnresponsiveThreshold:        1.0,
+	}
+}
+
+func ApplyRedundancySettings(settings RedundancySettings) {
+	defaults := DefaultRedundancySettings()
+	if settings.ReceiptTimeoutMS <= 0 {
+		settings.ReceiptTimeoutMS = defaults.ReceiptTimeoutMS
+	}
+	if settings.FirstTokenTimeoutFloorMS <= 0 {
+		settings.FirstTokenTimeoutFloorMS = defaults.FirstTokenTimeoutFloorMS
+	}
+	if settings.PerInputTokenFirstTokenLagMS < 0 {
+		settings.PerInputTokenFirstTokenLagMS = defaults.PerInputTokenFirstTokenLagMS
+	}
+	if settings.InterChunkStallTimeoutMS < 0 {
+		settings.InterChunkStallTimeoutMS = defaults.InterChunkStallTimeoutMS
+	}
+	if settings.NonStreamResponseFloorMS <= 0 {
+		settings.NonStreamResponseFloorMS = defaults.NonStreamResponseFloorMS
+	}
+	if settings.PerInputTokenResponseLagMS < 0 {
+		settings.PerInputTokenResponseLagMS = defaults.PerInputTokenResponseLagMS
+	}
+	if settings.SecondaryWaitAfterWinnerMS <= 0 {
+		settings.SecondaryWaitAfterWinnerMS = defaults.SecondaryWaitAfterWinnerMS
+	}
+	if settings.ParallelAdvantageThreshold <= 0 || settings.ParallelAdvantageThreshold >= 1 {
+		settings.ParallelAdvantageThreshold = defaults.ParallelAdvantageThreshold
+	}
+	if settings.UnresponsiveThreshold <= 0 || settings.UnresponsiveThreshold > 1 {
+		settings.UnresponsiveThreshold = defaults.UnresponsiveThreshold
+	}
+	ReceiptTimeout = time.Duration(settings.ReceiptTimeoutMS) * time.Millisecond
+	FirstTokenTimeoutCap = time.Duration(settings.FirstTokenTimeoutFloorMS) * time.Millisecond
+	PerInputTokenFirstTokenLag = time.Duration(settings.PerInputTokenFirstTokenLagMS) * time.Millisecond
+	InterChunkStallTimeout = time.Duration(settings.InterChunkStallTimeoutMS) * time.Millisecond
+	NonStreamResponseFloor = time.Duration(settings.NonStreamResponseFloorMS) * time.Millisecond
+	PerInputTokenResponseLag = time.Duration(settings.PerInputTokenResponseLagMS) * time.Millisecond
+	SecondaryWaitAfterWinner = time.Duration(settings.SecondaryWaitAfterWinnerMS) * time.Millisecond
+	ParallelAdvantageThreshold = settings.ParallelAdvantageThreshold
+	UnresponsiveThreshold = settings.UnresponsiveThreshold
+}
 
 var maxSpeculativeAttempts atomic.Int64
 
@@ -157,15 +209,17 @@ type Decision struct {
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
 type Redundancy struct {
-	session            *user.Session
-	perf               *PerfTracker
-	groupSize          int
-	subnetID           string
-	model              string // escrow's registered model; used for ghost probes when no real request is around
-	metrics            *SubnetMetrics
-	onEscrowMissing    func() // called (at most once per request) when a host reports escrow not found
-	picker             *sessionPicker
-	participantLimiter *ParticipantRequestLimiter
+	session              *user.Session
+	perf                 *PerfTracker
+	groupSize            int
+	subnetID             string
+	model                string // escrow's registered model; used for ghost probes when no real request is around
+	metrics              *SubnetMetrics
+	onEscrowMissing      func() // called (at most once per request) when a host reports escrow not found
+	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
+	balanceExhaustedOnce sync.Once
+	picker               *sessionPicker
+	participantLimiter   *ParticipantRequestLimiter
 }
 
 // ErrAllHostsExcluded is returned by prepareInflight when the request
@@ -223,21 +277,32 @@ func (e *Redundancy) Stop() {
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
 	secondaryHostIdx := (primaryHostIdx + 1) % e.groupSize
+	primaryParticipant := e.participantKeyForHost(primaryHostIdx)
+	secondaryParticipant := e.participantKeyForHost(secondaryHostIdx)
 
 	// Rule 1: primary is known unresponsive → immediate parallel
-	if e.perf.IsUnresponsive(primaryHostIdx) {
+	if e.perf.IsUnresponsiveParticipant(primaryParticipant) {
 		return Decision{RunSecondary: true, Delay: 0, Reason: "primary_unresponsive"}
 	}
 
 	// Rule 2: secondary is >50% faster → immediate parallel
-	primaryEst := e.perf.EstimatedTimeMs(primaryHostIdx, inputTokens)
-	secondaryEst := e.perf.EstimatedTimeMs(secondaryHostIdx, inputTokens)
+	primaryEst := e.perf.EstimatedTimeMsForParticipant(primaryParticipant, inputTokens)
+	secondaryEst := e.perf.EstimatedTimeMsForParticipant(secondaryParticipant, inputTokens)
 	if primaryEst > 0 && secondaryEst > 0 && secondaryEst < primaryEst*(1-ParallelAdvantageThreshold) {
 		return Decision{RunSecondary: true, Delay: 0, Reason: "secondary_faster"}
 	}
 
-	// Rule 3: default — start secondary after ReceiptTimeout if no receipt
-	return Decision{RunSecondary: true, Delay: ReceiptTimeout, Reason: "receipt_timeout"}
+	// Rule 3: default — start secondary after the request-sized receipt timeout.
+	return Decision{RunSecondary: true, Delay: receiptTimeoutForInput(inputTokens), Reason: "receipt_timeout"}
+}
+
+func (e *Redundancy) participantKeyForHost(hostIdx int) string {
+	if e != nil && e.session != nil {
+		if key := e.session.HostParticipantKey(hostIdx); key != "" {
+			return key
+		}
+	}
+	return legacyHostPerfKey(hostIdx)
 }
 
 // inflight tracks one in-flight inference and its timing.
@@ -255,17 +320,19 @@ type inflight struct {
 	receiptTime time.Time
 	receiptCh   chan struct{} // closed when receipt arrives
 
-	tokenOnce     sync.Once
-	firstToken    time.Time
-	firstTokenCh  chan struct{}
-	outputChunks  atomic.Int64
-	contentChunks atomic.Int64
-	lastChunkAt   atomic.Int64
-	forwardedLog  sync.Once
-	suppressedLog sync.Once
-	sampleOnce    sync.Once
-	processOnce   sync.Once
-	processErr    error
+	tokenOnce       sync.Once
+	firstToken      time.Time
+	firstTokenCh    chan struct{}
+	outputChunks    atomic.Int64
+	contentChunks   atomic.Int64
+	outputBytes     atomic.Int64
+	lastChunkAt     atomic.Int64
+	forwardedLog    sync.Once
+	suppressedLog   sync.Once
+	ctxCancelledLog sync.Once
+	sampleOnce      sync.Once
+	processOnce     sync.Once
+	processErr      error
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -274,17 +341,11 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
-	// firstBytesSample retains up to forensicSampleBytes of the raw stream
-	// bytes seen on this attempt so we can reconstruct exactly what shape a
-	// host emitted when a winner is crowned with suspiciously low content
-	// (e.g. 0 or 1 content chunk). Written from raceWriter.Write under the
-	// same single-writer invariant as pendingBuf.
-	firstBytesSample []byte
-
 	// contentSource labels the field that produced the first content event
-	// ("delta.content", "delta.reasoning_content", "delta.tool_calls"). Set
-	// exactly once when sseChunkContentSource first returns true. Empty
-	// string means no accepted content was ever observed.
+	// ("delta.content", "delta.reasoning_content", "delta.tool_calls", or the
+	// streaming-only convertible shape "message.content"). Set exactly once
+	// when sseChunkContentSource* first returns true. Empty string means no
+	// accepted content was ever observed.
 	contentSource string
 
 	resp *host.HostResponse
@@ -298,27 +359,18 @@ type inflight struct {
 	cancel context.CancelFunc
 }
 
-// forensicSampleBytes caps how much raw stream body we retain per attempt for
-// post-mortem logging when a short-content winner is observed. 512 is enough
-// to capture the full first few SSE events in practice.
-const forensicSampleBytes = 512
-
-// smallContentThreshold triggers forensic logging on race_completed. Legit
-// streaming completions in the observed distribution land in the tens or
-// hundreds of content chunks; values at or below this threshold indicate
-// either a truncated response or a backend emitting an unrenderable shape.
-const smallContentThreshold = 2
-
 // raceGroup arbitrates which inflight's stream is forwarded to the client.
 type raceGroup struct {
-	mu       sync.Mutex
-	winner   uint64 // 0 = undecided
-	winnerCh chan struct{}
-	w        io.Writer
-	decided  atomic.Bool
-	logCtx   context.Context
-	writeCtx context.Context
-	escrow   string
+	mu             sync.Mutex
+	clientMu       sync.Mutex
+	winner         uint64 // 0 = undecided
+	winnerCh       chan struct{}
+	w              io.Writer
+	decided        atomic.Bool
+	clientDetached atomic.Bool
+	logCtx         context.Context
+	writeCtx       context.Context
+	escrow         string
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -359,6 +411,18 @@ func (rg *raceGroup) winnerSignal() <-chan struct{} {
 	return rg.winnerCh
 }
 
+func (rg *raceGroup) detachClient() {
+	if rg != nil {
+		rg.clientMu.Lock()
+		defer rg.clientMu.Unlock()
+		rg.clientDetached.Store(true)
+	}
+}
+
+func (rg *raceGroup) isClientDetached() bool {
+	return rg != nil && rg.clientDetached.Load()
+}
+
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
 	group *raceGroup
@@ -374,9 +438,6 @@ func (rw *raceWriter) ctxErr() error {
 }
 
 func (rw *raceWriter) Write(p []byte) (int, error) {
-	if err := rw.ctxErr(); err != nil {
-		return 0, err
-	}
 	now := time.Now()
 	rw.inf.tokenOnce.Do(func() {
 		rw.inf.firstToken = now
@@ -385,17 +446,8 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		}
 	})
 	rw.inf.outputChunks.Add(1)
+	rw.inf.outputBytes.Add(int64(len(p)))
 	rw.inf.lastChunkAt.Store(now.UnixNano())
-
-	// Retain the first forensicSampleBytes of raw bytes for post-mortem
-	// logging. Single-writer invariant (same as pendingBuf) means no lock.
-	if remaining := forensicSampleBytes - len(rw.inf.firstBytesSample); remaining > 0 {
-		take := len(p)
-		if take > remaining {
-			take = remaining
-		}
-		rw.inf.firstBytesSample = append(rw.inf.firstBytesSample, p[:take]...)
-	}
 
 	// Detect whether this Write contains the first content-bearing event for
 	// this attempt. Only content events promote a nonce to winner; role-only
@@ -441,6 +493,26 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 
 	switch {
 	case isWinner:
+		rw.group.clientMu.Lock()
+		defer rw.group.clientMu.Unlock()
+		if rw.group.isClientDetached() {
+			rw.inf.pendingBuf = nil
+			return len(p), nil
+		}
+		if err := rw.ctxErr(); err != nil {
+			rw.inf.pendingBuf = nil
+			rw.inf.ctxCancelledLog.Do(func() {
+				logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "winner_write_ctx_cancelled",
+					"host", rw.inf.hostID,
+					"output_chunks", rw.inf.outputChunks.Load(),
+					"content_chunks", rw.inf.contentChunks.Load(),
+					"output_bytes", rw.inf.outputBytes.Load(),
+					"where", "write",
+					"error", err,
+				)
+			})
+			return 0, err
+		}
 		rw.inf.forwardedLog.Do(func() {
 			logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "stream_forwarding_started", "host", rw.inf.hostID)
 		})
@@ -481,9 +553,6 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 }
 
 func (rw *raceWriter) Flush() {
-	if rw.ctxErr() != nil {
-		return
-	}
 	if rw.inf.probe {
 		return
 	}
@@ -491,8 +560,24 @@ func (rw *raceWriter) Flush() {
 	isWinner := rw.group.winner == rw.nonce
 	rw.group.mu.Unlock()
 	if !isWinner {
-		// Either no winner has been chosen yet (still buffering pre-content)
-		// or another attempt won. Either way, do not flush our writer.
+		return
+	}
+	rw.group.clientMu.Lock()
+	defer rw.group.clientMu.Unlock()
+	if rw.group.isClientDetached() {
+		return
+	}
+	if err := rw.ctxErr(); err != nil {
+		rw.inf.ctxCancelledLog.Do(func() {
+			logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "winner_write_ctx_cancelled",
+				"host", rw.inf.hostID,
+				"output_chunks", rw.inf.outputChunks.Load(),
+				"content_chunks", rw.inf.contentChunks.Load(),
+				"output_bytes", rw.inf.outputBytes.Load(),
+				"where", "flush",
+				"error", err,
+			)
+		})
 		return
 	}
 	if f, ok := rw.group.w.(http.Flusher); ok {
@@ -522,6 +607,9 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	primary, err := e.prepareInflight(ctx, params, triedParticipants)
 	if err != nil {
 		logRequestStage(ctx, "runner_prepare_failed", "escrow", e.subnetID, "error", err)
+		if errors.Is(err, types.ErrInsufficientBalance) {
+			e.fireBalanceExhausted()
+		}
 		return err
 	}
 	triedParticipants[e.session.HostParticipantKey(primary.hostIdx)] = true
@@ -666,11 +754,28 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer cancel()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		streamBytes := int64(0)
+		if inf.resp != nil {
+			streamBytes = inf.resp.StreamBytesRead
+		}
 		if inf.err != nil {
-			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed", "host", inf.hostID, "error", inf.err)
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed",
+				"host", inf.hostID,
+				"output_chunks", inf.outputChunks.Load(),
+				"content_chunks", inf.contentChunks.Load(),
+				"output_bytes", inf.outputBytes.Load(),
+				"stream_bytes_read", streamBytes,
+				"error", inf.err,
+			)
 			return
 		}
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed", "host", inf.hostID)
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed",
+			"host", inf.hostID,
+			"output_chunks", inf.outputChunks.Load(),
+			"content_chunks", inf.contentChunks.Load(),
+			"output_bytes", inf.outputBytes.Load(),
+			"stream_bytes_read", streamBytes,
+		)
 		// A transport-level success that streamed bytes but produced zero
 		// content events indicates the host returned only protocol/SSE
 		// boilerplate (role chunk, [DONE]) without any delta content. Treat
@@ -687,8 +792,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "empty_stream",
 				"host", inf.hostID,
 				"output_chunks", inf.outputChunks.Load(),
+				"output_bytes", inf.outputBytes.Load(),
 				"content_source", inf.contentSource,
-				"first_bytes_b64", forensicBytes(inf.firstBytesSample),
 			)
 		}
 	}()
@@ -744,9 +849,19 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 func firstTokenFallbackDelay(inputTokens uint64) time.Duration {
 	delay := time.Duration(inputTokens) * PerInputTokenFirstTokenLag
 	if delay < FirstTokenTimeoutCap {
-		return FirstTokenTimeoutCap
+		delay = FirstTokenTimeoutCap
+	}
+	if inputTokens > 50_000 {
+		delay = time.Duration(float64(delay) * (float64(inputTokens) / 50_000.0))
 	}
 	return delay
+}
+
+func receiptTimeoutForInput(inputTokens uint64) time.Duration {
+	if inputTokens > 100_000 {
+		return ReceiptTimeout * 2
+	}
+	return ReceiptTimeout
 }
 
 func nonStreamingFallbackDelay(inputTokens uint64) time.Duration {
@@ -884,7 +999,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						"max_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
 						"decision", decision.Reason,
 					)
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, false)
+					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
 					return nil
 				}
 			}
@@ -928,7 +1043,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if stallTimer != nil {
 				stopTimer(stallTimer)
 			}
-			return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, false)
+			return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
 		}
 
 		select {
@@ -939,7 +1054,10 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					if escalationTimer != nil {
 						stopTimer(escalationTimer)
 					}
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, true)
+					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
+						forceTreatAsFailure:  true,
+						recordFailureSamples: true,
+					})
 					logRequestStage(settleCtx, "winner_failed_after_content", "escrow", e.subnetID, "winner_nonce", w, "error", err)
 					return err
 				}
@@ -974,11 +1092,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if !stalled || time.Now().Before(deadline) {
 				break
 			}
-			if winning != nil && winning.cancel != nil {
-				winning.cancel()
-			}
-			err := fmt.Errorf("inference: winner stalled waiting for next chunk after %s", InterChunkStallTimeout)
-			go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, true)
 			sinceLastChunk := int64(0)
 			if winning != nil {
 				lastChunkAt := winning.lastChunkAt.Load()
@@ -986,11 +1099,15 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					sinceLastChunk = time.Since(time.Unix(0, lastChunkAt)).Milliseconds()
 				}
 			}
+			race.detachClient()
+			err := fmt.Errorf("inference: winner stalled waiting for next chunk after %s", InterChunkStallTimeout)
+			go e.finishStalledWinnerAfterClientTimeout(settleCtx, attempts, params, decision, w)
 			logRequestStage(settleCtx, "winner_stalled_after_content",
 				"escrow", e.subnetID,
 				"winner_nonce", w,
 				"stall_timeout_ms", InterChunkStallTimeout.Milliseconds(),
 				"since_last_chunk_ms", sinceLastChunk,
+				"background_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
 				"error", err,
 			)
 			return err
@@ -1004,7 +1121,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			pending := pendingInflights(attempts)
 			logRequestStage(settleCtx, "request_stream_canceled", "escrow", e.subnetID, "winner_nonce", winner, "pending", len(pending), "decision", decision.Reason, "error", streamCtx.Err())
-			go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, false)
+			go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
 			return streamCtx.Err()
 		}
 
@@ -1071,7 +1188,7 @@ func escalationForInflight(inf *inflight, params user.InferenceParams) (escalati
 	if inf.receiptTime.IsZero() {
 		return escalationTrigger{
 			inf:      inf,
-			deadline: inf.sendTime.Add(ReceiptTimeout),
+			deadline: inf.sendTime.Add(receiptTimeoutForInput(params.InputLength)),
 			stage:    "receipt_timeout_wait_elapsed",
 			reason:   "receipt_timeout",
 		}, true
@@ -1098,7 +1215,7 @@ func escalationForInflight(inf *inflight, params user.InferenceParams) (escalati
 func escalationDelay(stage string, inputTokens uint64) time.Duration {
 	switch stage {
 	case "receipt_timeout_wait_elapsed":
-		return ReceiptTimeout
+		return receiptTimeoutForInput(inputTokens)
 	case "first_token_timeout_wait_elapsed":
 		return firstTokenFallbackDelay(inputTokens)
 	case "response_timeout_wait_elapsed":
@@ -1154,15 +1271,108 @@ func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *r
 	}
 }
 
-func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, forceTreatAsFailure bool) {
+type raceFinishOptions struct {
+	forceTreatAsFailure  bool
+	recordFailureSamples bool
+}
+
+func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
 	bgCtx, _ := ensureRequestLogContext(context.Background())
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 
 	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
 
-	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, forceTreatAsFailure); err != nil {
+	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, opts); err != nil {
 		logRequestStage(bgCtx, "background_race_finalize_failed", "escrow", e.subnetID, "error", err)
 	}
+}
+
+func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64) {
+	bgCtx, _ := ensureRequestLogContext(context.Background())
+	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+
+	winner := inflightByNonce(attempts, winnerNonce)
+	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
+	if abandonedWinner {
+		e.recordStalledWinnerFailureOnce(winner, params)
+		if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
+			forceTreatAsFailure: true,
+		}); err != nil {
+			logRequestStage(bgCtx, "background_stalled_winner_finalize_failed", "escrow", e.subnetID, "error", err)
+		}
+		return
+	}
+
+	if winner != nil && winner.err == nil && inflightFinished(winner) {
+		logInferenceStage(bgCtx, winner.escrowID, winner.nonce, "winner_completed_after_client_timeout",
+			"host", winner.hostID,
+			"output_chunks", winner.outputChunks.Load(),
+			"content_chunks", winner.contentChunks.Load(),
+			"output_bytes", winner.outputBytes.Load(),
+		)
+	}
+	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
+		recordFailureSamples: true,
+	}); err != nil {
+		logRequestStage(bgCtx, "background_stalled_winner_finalize_failed", "escrow", e.subnetID, "error", err)
+	}
+}
+
+func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight) bool {
+	pending := pendingInflights(attempts)
+	if len(pending) == 0 {
+		return false
+	}
+
+	timer := time.NewTimer(SecondaryWaitAfterWinner)
+	defer stopTimer(timer)
+
+	naturalDone := make(chan *inflight, len(pending))
+	for _, inf := range pending {
+		inf := inf
+		go func() {
+			<-inf.done
+			naturalDone <- inf
+		}()
+	}
+
+	abandonedWinner := false
+	remaining := len(pending)
+	for remaining > 0 {
+		select {
+		case <-naturalDone:
+			remaining--
+		case <-timer.C:
+			still := pendingInflights(attempts)
+			logRequestStage(ctx, "client_timeout_wait_abandoned",
+				"escrow", e.subnetID,
+				"winner_nonce", winnerNonce,
+				"pending", len(still),
+				"wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
+			)
+			for _, inf := range still {
+				reason := "client_timeout_grace_expired"
+				stage := "speculative_attempt_canceled"
+				if inf.nonce == winnerNonce {
+					stage = "stalled_winner_canceled_after_client_timeout"
+					abandonedWinner = true
+				}
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, stage,
+					"host", inf.hostID,
+					"reason", reason,
+				)
+				if inf.cancel != nil {
+					inf.cancel()
+				}
+			}
+			for remaining > 0 {
+				<-naturalDone
+				remaining--
+			}
+			return abandonedWinner
+		}
+	}
+	return false
 }
 
 // waitForPendingLosers waits for all not-yet-done attempts to close their done
@@ -1320,6 +1530,43 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 	})
 }
 
+func (e *Redundancy) recordStartedAttemptSamples(attempts []*inflight, params user.InferenceParams) {
+	for _, inf := range attempts {
+		if inf == nil || inf.probe || inf.sendTime.IsZero() {
+			continue
+		}
+		e.recordSampleOnce(inf, params)
+	}
+}
+
+func (e *Redundancy) recordStalledWinnerFailureOnce(inf *inflight, params user.InferenceParams) {
+	if inf == nil {
+		return
+	}
+	inf.sampleOnce.Do(func() {
+		participantKey := e.participantKeyForHost(inf.hostIdx)
+		sample := RequestSample{
+			HostIdx:        inf.hostIdx,
+			ParticipantKey: participantKey,
+			Responsive:     false,
+			SendTime:       inf.sendTime,
+			ReceiptTime:    inf.receiptTime,
+			FirstToken:     inf.firstToken,
+			InputTokens:    params.InputLength,
+		}
+		if !inf.sendTime.IsZero() {
+			sample.TotalTime = time.Since(inf.sendTime)
+		}
+		e.perf.Record(sample)
+		if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
+			e.participantLimiter.ObserveStalledWinner(participantKey)
+		}
+		if e.metrics != nil {
+			e.metrics.ObserveRequestSample(e.subnetID, sample)
+		}
+	})
+}
+
 func (e *Redundancy) processInflightOnce(inf *inflight) error {
 	inf.processOnce.Do(func() {
 		if inf.resp == nil {
@@ -1335,7 +1582,7 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 // is true (winner failed after content while other inflights were still
 // running), the request is always settled as a failure even if another
 // attempt later completes successfully on the protocol layer.
-func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, forceTreatAsFailure bool) error {
+func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	// Process all responses first so Session has complete protocol state.
 	for _, inf := range attempts {
 		if err := e.processInflightOnce(inf); err != nil {
@@ -1366,33 +1613,40 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		if !inf.probe {
 			anySucceeded = anySucceeded || ok
 		}
+		streamBytes := int64(0)
+		if inf.resp != nil {
+			streamBytes = inf.resp.StreamBytesRead
+		}
+		var confirmedAt int64
+		var hasReceipt bool
+		if inf.resp != nil {
+			confirmedAt = inf.resp.ConfirmedAt
+			hasReceipt = len(inf.resp.Receipt) > 0
+		}
 		fields := []any{
 			"host", inf.hostID,
 			"winner", inf.nonce == winnerNonce,
 			"finished", ok,
-			"responsive", inf.resp != nil && inf.resp.ConfirmedAt > 0,
+			"responsive", confirmedAt > 0,
+			"has_receipt", hasReceipt,
+			"confirmed_at", confirmedAt,
 			"output_chunks", inf.outputChunks.Load(),
 			"content_chunks", inf.contentChunks.Load(),
+			"output_bytes", inf.outputBytes.Load(),
+			"stream_bytes_read", streamBytes,
 			"content_source", inf.contentSource,
 			"probe", inf.probe,
-		}
-		// Attach a forensic sample for any attempt that crossed the finish
-		// line with suspiciously little content. This catches both the
-		// `42g7kr9d` pattern (1 content chunk, response renders as empty to
-		// the client) and the empty-stream case. Probes are excluded because
-		// they deliberately produce no content.
-		if !inf.probe && inf.contentChunks.Load() <= smallContentThreshold {
-			if sample := forensicBytes(inf.firstBytesSample); sample != "" {
-				fields = append(fields, "first_bytes_b64", sample)
-			}
 		}
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
 		if !ok {
 			failed = append(failed, inf)
 		}
 	}
-	effectiveSuccess := anySucceeded && !forceTreatAsFailure
+	effectiveSuccess := anySucceeded && !opts.forceTreatAsFailure
 	if !effectiveSuccess {
+		if opts.recordFailureSamples {
+			e.recordStartedAttemptSamples(attempts, params)
+		}
 		for _, inf := range failed {
 			if inf.probe {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
@@ -1419,7 +1673,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			}
 		}
 		errMsg := "inference: no non-probe attempt finished"
-		if forceTreatAsFailure && anySucceeded {
+		if opts.forceTreatAsFailure && anySucceeded {
 			errMsg = "inference: winner failed after streaming started (alternate completion ignored)"
 		}
 		logRequestStage(ctx, "request_failed", "escrow", e.subnetID, "error", errMsg)
@@ -1567,20 +1821,21 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams) {
 	// host that returns an empty stream is recorded as non-responsive so
 	// the local PerfTracker routes future requests away from it.
 	responsive := inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf)
+	participantKey := e.participantKeyForHost(inf.hostIdx)
 	sample := RequestSample{
-		HostIdx:     inf.hostIdx,
-		Responsive:  responsive,
-		SendTime:    inf.sendTime,
-		ReceiptTime: inf.receiptTime,
-		FirstToken:  inf.firstToken,
-		InputTokens: params.InputLength,
+		HostIdx:        inf.hostIdx,
+		ParticipantKey: participantKey,
+		Responsive:     responsive,
+		SendTime:       inf.sendTime,
+		ReceiptTime:    inf.receiptTime,
+		FirstToken:     inf.firstToken,
+		InputTokens:    params.InputLength,
 	}
 	if !inf.sendTime.IsZero() {
 		sample.TotalTime = time.Since(inf.sendTime)
 	}
 	e.perf.Record(sample)
 	if e.participantLimiter != nil {
-		participantKey := e.session.HostParticipantKey(inf.hostIdx)
 		switch {
 		case isEmptyStreamAttempt(inf):
 			e.participantLimiter.ObserveEmptyStream(participantKey)
@@ -1667,6 +1922,19 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"reason", reason,
 		"poc_reason", currentPoCPhaseReason(),
 	)
+}
+
+// fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy
+// lifetime. The callback deactivates the runtime at the gateway level so no
+// more requests are routed to this escrow.
+func (e *Redundancy) fireBalanceExhausted() {
+	if e.onBalanceExhausted == nil {
+		return
+	}
+	e.balanceExhaustedOnce.Do(func() {
+		log.Printf("escrow_balance_exhausted escrow=%s", e.subnetID)
+		e.onBalanceExhausted()
+	})
 }
 
 // checkEscrowMissing fires onEscrowMissing if any attempt got "escrow not found"

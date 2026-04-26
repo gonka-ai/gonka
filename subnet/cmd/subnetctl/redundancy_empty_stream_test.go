@@ -53,14 +53,14 @@ func TestSseChunkHasContent(t *testing.T) {
 			want: false,
 		},
 		{
-			// The `42g7kr9d` pattern: a host wraps the non-streaming
-			// response shape inside a single SSE event for a stream=true
-			// request. Streaming clients parse `delta` and see nothing —
-			// the proxy must NOT count this as content, otherwise the host
-			// wins the race while the user receives an empty rendering.
-			name: "non_streaming_message_content_rejected",
+			// The `42g7kr9d` pattern: a host wraps the non-streaming response
+			// shape inside a single SSE event. Redundancy should still count
+			// that as usable convertible content so the attempt can win; the
+			// streaming writer is responsible for rewriting it into chunk
+			// form before it reaches the client.
+			name: "message_content_convertible",
 			body: `data: {"choices":[{"message":{"content":"stub"}}],"usage":{}}` + "\n\n",
-			want: false,
+			want: true,
 		},
 		{
 			// Legacy /v1/completions shape. Our streaming path only serves
@@ -148,10 +148,10 @@ func TestSseChunkContentSource(t *testing.T) {
 			wantOK:     true,
 		},
 		{
-			name:       "message_content_rejected",
+			name:       "message_content_convertible",
 			body:       `data: {"choices":[{"message":{"content":"stub"}}]}` + "\n\n",
-			wantSource: "",
-			wantOK:     false,
+			wantSource: "message.content",
+			wantOK:     true,
 		},
 		{
 			name:       "text_rejected",
@@ -204,15 +204,11 @@ func TestRaceWriter_RecordsContentSourceAndSample(t *testing.T) {
 	_, err := rw.Write(role)
 	require.NoError(t, err)
 	require.Equal(t, "", inf.contentSource, "role-only chunk must not set contentSource")
-	require.Equal(t, len(role), len(inf.firstBytesSample), "raw bytes are sampled even before content arrives")
 
 	content := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
 	_, err = rw.Write(content)
 	require.NoError(t, err)
 	require.Equal(t, "delta.content", inf.contentSource)
-	require.LessOrEqual(t, len(inf.firstBytesSample), forensicSampleBytes, "sample is capped at forensicSampleBytes")
-	require.Contains(t, string(inf.firstBytesSample), `"role":"assistant"`, "sample preserves early bytes for post-mortem")
-	require.Contains(t, string(inf.firstBytesSample), `"content":"hi"`)
 
 	// A later chunk with a different source must NOT overwrite the first.
 	more := []byte(`data: {"choices":[{"delta":{"tool_calls":[{"id":"x"}]}}]}` + "\n\n")
@@ -221,14 +217,11 @@ func TestRaceWriter_RecordsContentSourceAndSample(t *testing.T) {
 	require.Equal(t, "delta.content", inf.contentSource, "first content source wins")
 }
 
-// TestRaceWriter_SampleCapEnforced ensures the forensic sample does not grow
-// without bound. The sample is strictly capped at forensicSampleBytes; once
-// full, later bytes are dropped.
-func TestRaceWriter_SampleCapEnforced(t *testing.T) {
+func TestRaceWriter_MessageContentCountsAsConvertibleContent(t *testing.T) {
 	ctx := context.Background()
+	body := []byte(`data: {"choices":[{"message":{"role":"assistant","content":"hi"}}]}` + "\n\n")
 	var sink bytes.Buffer
 	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
-
 	inf := &inflight{
 		hostID:       "host-A",
 		escrowID:     "escrow-x",
@@ -238,14 +231,10 @@ func TestRaceWriter_SampleCapEnforced(t *testing.T) {
 		firstTokenCh: make(chan struct{}),
 	}
 	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
-
-	// One very large non-content write (role + filler) should be truncated
-	// to exactly forensicSampleBytes.
-	big := bytes.Repeat([]byte("x"), 2*forensicSampleBytes)
-	frame := append([]byte(`data: {"choices":[{"delta":{"role":"assistant"}}]}`+"\n\n"), big...)
-	_, err := rw.Write(frame)
+	_, err := rw.Write(body)
 	require.NoError(t, err)
-	require.Equal(t, forensicSampleBytes, len(inf.firstBytesSample))
+	require.Equal(t, int64(1), inf.contentChunks.Load())
+	require.Equal(t, "message.content", inf.contentSource)
 }
 
 func TestIsEmptyStreamAttempt(t *testing.T) {

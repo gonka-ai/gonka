@@ -158,6 +158,13 @@ func TestGatewayLimiterAcquireRespectsScaledCaps(t *testing.T) {
 	require.NoError(t, l.Acquire(1))
 }
 
+func TestGatewayLimiterAcquireBlocksWhenScaledToZero(t *testing.T) {
+	l := NewGatewayLimiter(4, 100)
+	l.ApplyScaleFactor(0)
+
+	require.ErrorContains(t, l.Acquire(1), "too many concurrent requests")
+}
+
 func TestGatewayLimiterUpdateLimitsPreservesScale(t *testing.T) {
 	l := NewGatewayLimiter(10, 100)
 	l.ApplyScaleFactor(0.25)

@@ -103,12 +103,18 @@ services:
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
       - SERVER_NAME=${SERVER_NAME:-}
       - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs
+      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet
       - GONKA_API_BLOCKED_ROUTES=poc-batches training
+      - GLOBAL_CONN_LIMIT=${GLOBAL_CONN_LIMIT:-1024}
+      - EXEMPT_CONN_LIMIT=${EXEMPT_CONN_LIMIT:-512}
       - CHAIN_RPC_PORT=26657
       - CHAIN_API_PORT=1317
       - CHAIN_GRPC_PORT=9090

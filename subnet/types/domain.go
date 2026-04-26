@@ -104,6 +104,38 @@ type EscrowState struct {
 	LatestNonce   uint64
 }
 
+// DeepCopy returns a fully independent copy of the state.
+func (s *EscrowState) DeepCopy() *EscrowState {
+	cp := *s
+	cp.Group = make([]SlotAssignment, len(s.Group))
+	copy(cp.Group, s.Group)
+	cp.Inferences = make(map[uint64]*InferenceRecord, len(s.Inferences))
+	for k, v := range s.Inferences {
+		rec := *v
+		if v.PromptHash != nil {
+			rec.PromptHash = append([]byte(nil), v.PromptHash...)
+		}
+		if v.ResponseHash != nil {
+			rec.ResponseHash = append([]byte(nil), v.ResponseHash...)
+		}
+		cp.Inferences[k] = &rec
+	}
+	cp.HostStats = make(map[uint32]*HostStats, len(s.HostStats))
+	for k, v := range s.HostStats {
+		hs := *v
+		cp.HostStats[k] = &hs
+	}
+	cp.RevealedSeeds = make(map[uint32]int64, len(s.RevealedSeeds))
+	for k, v := range s.RevealedSeeds {
+		cp.RevealedSeeds[k] = v
+	}
+	cp.WarmKeys = make(map[uint32]string, len(s.WarmKeys))
+	for k, v := range s.WarmKeys {
+		cp.WarmKeys[k] = v
+	}
+	return &cp
+}
+
 // Diff is the protocol primitive: what the user creates and signs.
 // UserSig covers hash(proto_serialize(Nonce, Txs)).
 // Txs uses the proto-generated SubnetTx with its oneof discriminator,

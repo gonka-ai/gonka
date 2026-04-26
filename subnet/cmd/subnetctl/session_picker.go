@@ -292,9 +292,7 @@ func (p *sessionPicker) run() {
 
 		if empty {
 			// Nothing queued. Wait for a submit or stop.
-			select {
-			case <-p.notify:
-			}
+			<-p.notify
 			continue
 		}
 
@@ -406,10 +404,21 @@ func (p *sessionPicker) run() {
 			continue
 
 		case err != nil:
+			if chosen != nil {
+				chosen.reply <- pickerResult{err: err}
+				continue
+			}
 			// Unclassified error from chooser. Should not happen with
-			// the current branches, but log defensively rather than
-			// crash.
+			// the current branches, but if it does then nonce preparation
+			// is not making progress. Fail queued callers instead of
+			// spinning on the same unusable nonce.
 			logRequestStage(p.logCtx, "session_picker_chooser_error", "error", err)
+			p.mu.Lock()
+			for _, r := range p.queue {
+				r.reply <- pickerResult{err: err}
+			}
+			p.queue = nil
+			p.mu.Unlock()
 			continue
 		}
 

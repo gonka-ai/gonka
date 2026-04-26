@@ -23,7 +23,7 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 		DefaultRequestMaxTokens: 1234,
 		MaxConcurrentRequests:   5,
 		MaxInputTokensInFlight:  999,
-	}
+	}.WithTuningDefaults()
 	subnets := []GatewaySubnetState{{
 		RuntimeConfig: RuntimeConfig{
 			ID:            "12",
@@ -86,6 +86,26 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 		DefaultRequestMaxTokens: 2000,
 		MaxConcurrentRequests:   5,
 		MaxInputTokensInFlight:  500,
+		ParticipantThrottle: ParticipantThrottleSettings{
+			RequestBurst:                   42,
+			RecoveryPerMinute:              7,
+			HTTPQuarantineMS:               1100,
+			TransportFailureQuarantineMS:   1200,
+			EmptyStreamQuarantineMS:        1300,
+			StalledWinnerQuarantineMS:      1400,
+			EmptyStreamQuarantineThreshold: 2,
+		},
+		Redundancy: RedundancySettings{
+			ReceiptTimeoutMS:             1500,
+			FirstTokenTimeoutFloorMS:     1600,
+			PerInputTokenFirstTokenLagMS: 17,
+			InterChunkStallTimeoutMS:     1800,
+			NonStreamResponseFloorMS:     1900,
+			PerInputTokenResponseLagMS:   20,
+			SecondaryWaitAfterWinnerMS:   2100,
+			ParallelAdvantageThreshold:   0.4,
+			UnresponsiveThreshold:        0.8,
+		},
 	}))
 
 	state, ok, err := store.LoadState()
@@ -94,4 +114,10 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 2000, state.Settings.DefaultRequestMaxTokens)
 	require.EqualValues(t, 5, state.Settings.MaxConcurrentRequests)
 	require.EqualValues(t, 500, state.Settings.MaxInputTokensInFlight)
+	require.EqualValues(t, 42, state.Settings.ParticipantThrottle.RequestBurst)
+	require.EqualValues(t, 1200, state.Settings.ParticipantThrottle.TransportFailureQuarantineMS)
+	require.EqualValues(t, 2, state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
+	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
+	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
+	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 }

@@ -216,19 +216,21 @@ Important relationships:
 
 ### `ParticipantRequestLimiter`
 
-`ParticipantRequestLimiter` is a shared process-wide **reactive** limiter keyed by participant identity, usually derived from host IP / URL hostname.
+`ParticipantRequestLimiter` is a shared process-wide **reactive** limiter keyed by participant identity (gonka validator address, bech32).
 
 It is responsible for:
 
-- quarantining a host after its first upstream `429` or `503` (reactive activation)
-- applying token-bucket recovery for quarantined hosts (burst + recovery-per-minute)
-- expiring tracking when a host fully recovers to its burst budget
+- quarantining a host after upstream `429`/`503`, transport failures on inference paths, repeated empty streams, or stalled winners
+- applying time-based quarantine (30 min for transport/empty-stream/stalled, 60 min for 429/503)
 - persisting throttle state to `gateway.db` so it survives reboots
 - letting `Gateway` reject escrows whose participant set includes a quarantined host
+- providing an admin endpoint (`POST /v1/admin/participants/unquarantine`) to manually clear quarantine
 
-Hosts that have never returned `429` or `503` are **not tracked** and are never rate-limited. Tracking only begins on the first throttle response. When a tracked host's tokens recover to the full burst value, the host is removed from tracking and its persistent record is deleted.
+Transport failures on non-inference paths (verify-timeout, gossip, etc.) are logged but do **not** trigger quarantine.
 
-On startup, persisted throttle state is loaded and time-based recovery is applied. Hosts that have fully recovered during downtime are automatically cleaned up.
+Hosts that have never triggered any quarantine signal are **not tracked** and are never rate-limited. When a tracked host's quarantine expires and tokens recover to the full burst value, the host is removed from tracking and its persistent record is deleted.
+
+See [host-health.md](host-health.md) for the full quarantine trigger table, PerfTracker interaction, and diagnostic log signals.
 
 It is intentionally **outside** any one runtime, because the same participant can appear:
 

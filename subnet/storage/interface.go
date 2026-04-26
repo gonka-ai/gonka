@@ -21,8 +21,13 @@ type Storage interface {
 	GetSessionMeta(escrowID string) (*SessionMeta, error)
 	MarkFinalized(escrowID string, nonce uint64) error
 	LastFinalized(escrowID string) (uint64, error)
+	SaveSnapshot(escrowID string, nonce uint64, data []byte) error
+	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
 	Close() error
 }
+
+// ErrSnapshotNotFound is returned when no snapshot exists for a session.
+var ErrSnapshotNotFound = errors.New("snapshot not found")
 
 // CreateSessionParams holds all parameters for creating a new session.
 type CreateSessionParams struct {

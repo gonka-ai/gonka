@@ -92,6 +92,45 @@ func TestPicker_NoExclude_DispatchesNormally(t *testing.T) {
 	require.Equal(t, 0, ghost.total(), "no ghost expected for clean dispatch")
 }
 
+func TestPicker_PrepareErrorRepliesToChosenRequest(t *testing.T) {
+	env := setupTestProxyWithBalance(t, 3, nil, true, 100)
+	env.proxy.redundancy.picker.stop()
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.Error(t, res.err)
+	require.ErrorContains(t, res.err, "mandatory start inference")
+	require.Nil(t, res.prepared)
+	require.Equal(t, uint64(0), env.session.Nonce(), "failed prepare must not burn nonce")
+	require.Equal(t, 0, ghost.total(), "real request prepare failure must not ghost-dispatch")
+}
+
+func TestPicker_PrepareErrorWhileGhostingDrainsQueue(t *testing.T) {
+	env := setupTestProxyWithBalance(t, 3, nil, true, 0)
+	env.proxy.redundancy.picker.stop()
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	req.excludeParticipants = map[string]bool{env.session.HostParticipantKey(1): true}
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.Error(t, res.err)
+	require.ErrorContains(t, res.err, "mandatory start inference")
+	require.Nil(t, res.prepared)
+	require.Equal(t, uint64(0), env.session.Nonce(), "failed ghost burn must not advance nonce")
+	require.Equal(t, 0, ghost.total(), "failed ghost prepare must not dispatch")
+}
+
 // TestPicker_ExcludeNextHost_GhostBurnsThenMatches: when the only
 // queued request excludes the participant on the next host, the
 // picker holds for the stale threshold, ghost-burns the nonce on that

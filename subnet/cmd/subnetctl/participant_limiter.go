@@ -19,10 +19,13 @@ const (
 	httpThrottleQuarantine = 60 * time.Minute
 	// transportFailureQuarantine is used when the HTTP request never
 	// received a response (connection error, etc.).
-	transportFailureQuarantine = 10 * time.Minute
+	transportFailureQuarantine = 30 * time.Minute
 	// emptyStreamQuarantine is used when a host returns contentless SSE
-	// responses repeatedly. It matches the transport-failure cooldown.
-	emptyStreamQuarantine = 10 * time.Minute
+	// responses repeatedly.
+	emptyStreamQuarantine = 30 * time.Minute
+	// stalledWinnerQuarantine is used when a crowned winner emits some
+	// content, then goes silent long enough to fail the user-visible stream.
+	stalledWinnerQuarantine = 30 * time.Minute
 	// emptyStreamQuarantineThreshold is the number of consecutive empty
 	// content responses before the host is temporarily quarantined.
 	emptyStreamQuarantineThreshold = 3
@@ -32,12 +35,27 @@ const (
 	// participantStatusEmptyStream is persisted when an empty-stream streak
 	// trips the short quarantine.
 	participantStatusEmptyStream = -1
+	// participantStatusStalledWinner is persisted when a crowned winner
+	// stalls after streaming content to the client.
+	participantStatusStalledWinner = -2
 )
 
 var sharedParticipantRequestLimiter = NewParticipantRequestLimiter(
 	defaultParticipantRequestBurst,
 	defaultParticipantRequestRecoveryPerMinute,
 )
+
+func DefaultParticipantThrottleSettings() ParticipantThrottleSettings {
+	return ParticipantThrottleSettings{
+		RequestBurst:                   defaultParticipantRequestBurst,
+		RecoveryPerMinute:              defaultParticipantRequestRecoveryPerMinute,
+		HTTPQuarantineMS:               httpThrottleQuarantine.Milliseconds(),
+		TransportFailureQuarantineMS:   transportFailureQuarantine.Milliseconds(),
+		EmptyStreamQuarantineMS:        emptyStreamQuarantine.Milliseconds(),
+		StalledWinnerQuarantineMS:      stalledWinnerQuarantine.Milliseconds(),
+		EmptyStreamQuarantineThreshold: emptyStreamQuarantineThreshold,
+	}
+}
 
 type ParticipantRateLimitError struct {
 	ParticipantKey string
@@ -70,18 +88,23 @@ type ParticipantThrottleStore interface {
 }
 
 // ParticipantRequestLimiter is a reactive, per-host limiter. After 429/503
-// the host is quarantined for httpThrottleQuarantine; after a transport
-// failure (no HTTP response) or three consecutive empty-stream responses
-// for transportFailureQuarantine / emptyStreamQuarantine. Longer of the
+// the host is quarantined for the configured HTTP throttle duration; after
+// a transport failure (no HTTP response) or configured consecutive
+// empty-stream responses for the configured short quarantine. Longer of the
 // overlapping quarantines wins. Legacy rows without quarantine use the
 // token-bucket refill only.
 type ParticipantRequestLimiter struct {
-	mu                sync.Mutex
-	burst             float64
-	recoveryPerSecond float64
-	participants      map[string]*participantRequestState
-	metrics           *SubnetMetrics
-	store             ParticipantThrottleStore
+	mu                             sync.Mutex
+	burst                          float64
+	recoveryPerSecond              float64
+	httpThrottleQuarantine         time.Duration
+	transportFailureQuarantine     time.Duration
+	emptyStreamQuarantine          time.Duration
+	stalledWinnerQuarantine        time.Duration
+	emptyStreamQuarantineThreshold int
+	participants                   map[string]*participantRequestState
+	metrics                        *SubnetMetrics
+	store                          ParticipantThrottleStore
 }
 
 type participantRequestState struct {
@@ -92,16 +115,60 @@ type participantRequestState struct {
 }
 
 func NewParticipantRequestLimiter(burst int, recoveryPerMinute int) *ParticipantRequestLimiter {
-	if burst <= 0 {
-		burst = defaultParticipantRequestBurst
+	settings := DefaultParticipantThrottleSettings()
+	if burst > 0 {
+		settings.RequestBurst = burst
 	}
-	if recoveryPerMinute <= 0 {
-		recoveryPerMinute = defaultParticipantRequestRecoveryPerMinute
+	if recoveryPerMinute > 0 {
+		settings.RecoveryPerMinute = recoveryPerMinute
 	}
-	return &ParticipantRequestLimiter{
-		burst:             float64(burst),
-		recoveryPerSecond: float64(recoveryPerMinute) / 60.0,
-		participants:      make(map[string]*participantRequestState),
+	l := &ParticipantRequestLimiter{
+		participants: make(map[string]*participantRequestState),
+	}
+	l.applySettingsLocked(settings)
+	return l
+}
+
+func (l *ParticipantRequestLimiter) UpdateSettings(settings ParticipantThrottleSettings) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.applySettingsLocked(settings)
+}
+
+func (l *ParticipantRequestLimiter) applySettingsLocked(settings ParticipantThrottleSettings) {
+	defaults := DefaultParticipantThrottleSettings()
+	if settings.RequestBurst <= 0 {
+		settings.RequestBurst = defaults.RequestBurst
+	}
+	if settings.RecoveryPerMinute <= 0 {
+		settings.RecoveryPerMinute = defaults.RecoveryPerMinute
+	}
+	if settings.HTTPQuarantineMS <= 0 {
+		settings.HTTPQuarantineMS = defaults.HTTPQuarantineMS
+	}
+	if settings.TransportFailureQuarantineMS <= 0 {
+		settings.TransportFailureQuarantineMS = defaults.TransportFailureQuarantineMS
+	}
+	if settings.EmptyStreamQuarantineMS <= 0 {
+		settings.EmptyStreamQuarantineMS = defaults.EmptyStreamQuarantineMS
+	}
+	if settings.StalledWinnerQuarantineMS <= 0 {
+		settings.StalledWinnerQuarantineMS = defaults.StalledWinnerQuarantineMS
+	}
+	if settings.EmptyStreamQuarantineThreshold <= 0 {
+		settings.EmptyStreamQuarantineThreshold = defaults.EmptyStreamQuarantineThreshold
+	}
+	l.burst = float64(settings.RequestBurst)
+	l.recoveryPerSecond = float64(settings.RecoveryPerMinute) / 60.0
+	l.httpThrottleQuarantine = time.Duration(settings.HTTPQuarantineMS) * time.Millisecond
+	l.transportFailureQuarantine = time.Duration(settings.TransportFailureQuarantineMS) * time.Millisecond
+	l.emptyStreamQuarantine = time.Duration(settings.EmptyStreamQuarantineMS) * time.Millisecond
+	l.stalledWinnerQuarantine = time.Duration(settings.StalledWinnerQuarantineMS) * time.Millisecond
+	l.emptyStreamQuarantineThreshold = settings.EmptyStreamQuarantineThreshold
+	for _, state := range l.participants {
+		if state.tokens > l.burst {
+			state.tokens = l.burst
+		}
 	}
 }
 
@@ -162,8 +229,8 @@ func (l *ParticipantRequestLimiter) LoadStateWithQuarantine(key string, tokens f
 		remain := l.burst - tokens
 		if l.recoveryPerSecond > 0 {
 			toFull := time.Duration(remain / l.recoveryPerSecond * float64(time.Second))
-			if toFull > httpThrottleQuarantine {
-				toFull = httpThrottleQuarantine
+			if toFull > l.httpThrottleQuarantine {
+				toFull = l.httpThrottleQuarantine
 			}
 			st.quarantineUntil = now.Add(toFull)
 		}
@@ -257,7 +324,7 @@ func (l *ParticipantRequestLimiter) ObserveResult(participantKey, path string, s
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
 		l.metrics.RecordParticipantTransportError(participantPathKind(path), statusCode)
 	}
-	quarantineFor := participantHTTPQuarantine(path, statusCode)
+	quarantineFor := l.participantHTTPQuarantine(path, statusCode)
 	if quarantineFor == 0 {
 		return
 	}
@@ -277,27 +344,45 @@ func (l *ParticipantRequestLimiter) ObserveResult(participantKey, path string, s
 }
 
 // ObserveTransportFailure records that a request to this host never
-// received an HTTP response. Uses a short quarantine
-// (transportFailureQuarantine); if a 429/503 quarantine is already
-// longer, it is kept.
-func (l *ParticipantRequestLimiter) ObserveTransportFailure(participantKey, path string) {
+// received an HTTP response. Only inference-path failures
+// (/chat/completions) trigger a quarantine; failures on protocol-
+// internal paths (verify-timeout, gossip, etc.) are logged but do
+// not quarantine because a single flaky vote RPC should not remove
+// a host that is otherwise serving inferences normally.
+func (l *ParticipantRequestLimiter) ObserveTransportFailure(participantKey, path string, err error) {
 	if participantKey == "" {
 		return
 	}
-	now := time.Now()
+	kind := participantPathKind(path)
 	if l.metrics != nil {
-		// status label "0" = no HTTP response (distinguishable from 503/429 in dashboards).
-		l.metrics.RecordParticipantTransportError(participantPathKind(path), 0)
+		l.metrics.RecordParticipantTransportError(kind, 0)
 	}
+	if kind != "inference" {
+		log.Printf("participant_transport_failure_ignored participant_key=%s path_kind=%s error=%q",
+			participantKey, kind, truncateError(err))
+		return
+	}
+	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.applyQuarantineLocked(participantKey, now.Add(transportFailureQuarantine), now)
+	l.applyQuarantineLocked(participantKey, now.Add(l.transportFailureQuarantine), now)
 	if st := l.participants[participantKey]; st != nil {
 		st.emptyStreamStreak = 0
 	}
-	log.Printf("participant_limit_transport_failure participant_key=%s path_kind=%s",
-		participantKey, participantPathKind(path))
+	log.Printf("participant_limit_transport_failure participant_key=%s path_kind=%s error=%q",
+		participantKey, kind, truncateError(err))
 	l.persistThrottledStateLocked(participantKey, l.participants[participantKey], participantStatusTransport)
+}
+
+func truncateError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if len(s) > 200 {
+		return s[:200]
+	}
+	return s
 }
 
 // ObserveEmptyStream increments the consecutive empty-stream streak for a
@@ -321,15 +406,34 @@ func (l *ParticipantRequestLimiter) ObserveEmptyStream(participantKey string) {
 		return
 	}
 	state.emptyStreamStreak++
-	if state.emptyStreamStreak >= emptyStreamQuarantineThreshold {
-		l.applyQuarantineLocked(participantKey, now.Add(emptyStreamQuarantine), now)
+	if state.emptyStreamStreak >= l.emptyStreamQuarantineThreshold {
+		l.applyQuarantineLocked(participantKey, now.Add(l.emptyStreamQuarantine), now)
 		state.emptyStreamStreak = 0
-		log.Printf("participant_limit_empty_stream_quarantine participant_key=%s threshold=%d", participantKey, emptyStreamQuarantineThreshold)
+		log.Printf("participant_limit_empty_stream_quarantine participant_key=%s threshold=%d", participantKey, l.emptyStreamQuarantineThreshold)
 		l.persistThrottledStateLocked(participantKey, state, participantStatusEmptyStream)
 		return
 	}
 	log.Printf("participant_limit_empty_stream_streak participant_key=%s streak=%d", participantKey, state.emptyStreamStreak)
 	l.persistThrottledStateLocked(participantKey, state, participantStatusEmptyStream)
+}
+
+// ObserveStalledWinner records a host that won the race, emitted some content,
+// then stalled long enough to fail the request. This is treated as an immediate
+// short quarantine because it is user-visible breakage, not just a loser-side
+// transport blip.
+func (l *ParticipantRequestLimiter) ObserveStalledWinner(participantKey string) {
+	if participantKey == "" {
+		return
+	}
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	state := l.ensureStateLocked(participantKey, now)
+	l.applyQuarantineLocked(participantKey, now.Add(l.stalledWinnerQuarantine), now)
+	state.emptyStreamStreak = 0
+	log.Printf("participant_limit_stalled_winner_quarantine participant_key=%s", participantKey)
+	l.persistThrottledStateLocked(participantKey, state, participantStatusStalledWinner)
 }
 
 // ObserveSuccessfulInference clears any accumulated empty-stream streak for a
@@ -361,6 +465,25 @@ func (l *ParticipantRequestLimiter) ObserveSuccessfulInference(participantKey st
 		return
 	}
 	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
+}
+
+// ClearQuarantine removes quarantine and resets the token bucket for
+// the given participant, making it immediately available for requests.
+// Returns true if the participant had state to clear.
+func (l *ParticipantRequestLimiter) ClearQuarantine(participantKey string) bool {
+	if participantKey == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.participants[participantKey]
+	if !ok {
+		return false
+	}
+	delete(l.participants, participantKey)
+	l.persistDeleteLocked(participantKey)
+	log.Printf("participant_quarantine_cleared participant_key=%s", participantKey)
+	return true
 }
 
 func (l *ParticipantRequestLimiter) SetMetrics(metrics *SubnetMetrics) {
@@ -570,12 +693,12 @@ func (l *ParticipantRequestLimiter) clearExpiredQuarantineIfAnyLocked(key string
 	}
 }
 
-func participantHTTPQuarantine(path string, statusCode int) time.Duration {
+func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statusCode int) time.Duration {
 	switch {
 	case isParticipantThrottleStatus(statusCode):
-		return httpThrottleQuarantine
-	case statusCode == http.StatusNotFound && participantPathKind(path) == "inference":
-		return transportFailureQuarantine
+		return l.httpThrottleQuarantine
+	case (statusCode == http.StatusNotFound || statusCode == http.StatusForbidden) && participantPathKind(path) == "inference":
+		return l.transportFailureQuarantine
 	default:
 		return 0
 	}

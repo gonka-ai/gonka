@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -306,6 +307,13 @@ func (s *Server) HandleInference(c echo.Context) error {
 	// If reconnecting to a completed inference, replay cached response.
 	// Otherwise run deferred execution with live streaming.
 	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
+		logging.Info("cached inference replay",
+			"subsystem", "server",
+			"escrow", s.host.EscrowID(),
+			"nonce", resp.Nonce,
+			"payload_kind", cachedReplayPayloadKind(resp.CachedResponseBody),
+			"payload_bytes", len(resp.CachedResponseBody),
+		)
 		replaySSEBody(w, resp.CachedResponseBody)
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
@@ -343,6 +351,43 @@ func replaySSEBody(w http.ResponseWriter, body []byte) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// cachedReplayPayloadKind classifies the cached response body from the bytes we
+// actually stored, so future log forensics can distinguish replaying a raw JSON
+// completion from replaying a serialized streamed payload. The labels are kept
+// deliberately conservative: they only report shapes directly visible in the
+// cached bytes.
+func cachedReplayPayloadKind(body []byte) string {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return "empty"
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
+		return "non_json"
+	}
+	if _, ok := envelope["events"]; ok {
+		return "serialized_stream"
+	}
+	if raw, ok := envelope["object"]; ok {
+		var object string
+		if err := json.Unmarshal(raw, &object); err == nil && object != "" {
+			switch object {
+			case "chat.completion":
+				return "json_chat_completion"
+			case "chat.completion.chunk":
+				return "json_chat_completion_chunk"
+			default:
+				return "json_object_" + object
+			}
+		}
+	}
+	if _, ok := envelope["choices"]; ok {
+		return "json_choices"
+	}
+	return "json_unknown"
 }
 
 // writeSSEEvent writes a single SSE data line with JSON payload.

@@ -10,12 +10,63 @@ import (
 )
 
 type GatewaySettings struct {
-	ChainREST               string `json:"chain_rest"`
-	PublicAPI               string `json:"public_api"`
-	DefaultModel            string `json:"default_model"`
-	DefaultRequestMaxTokens uint64 `json:"default_request_max_tokens"`
-	MaxConcurrentRequests   int64  `json:"max_concurrent_requests"`
-	MaxInputTokensInFlight  int64  `json:"max_input_tokens_in_flight"`
+	ChainREST               string                      `json:"chain_rest"`
+	PublicAPI               string                      `json:"public_api"`
+	DefaultModel            string                      `json:"default_model"`
+	DefaultRequestMaxTokens uint64                      `json:"default_request_max_tokens"`
+	MaxConcurrentRequests   int64                       `json:"max_concurrent_requests"`
+	MaxInputTokensInFlight  int64                       `json:"max_input_tokens_in_flight"`
+	ParticipantThrottle     ParticipantThrottleSettings `json:"participant_throttle"`
+	Redundancy              RedundancySettings          `json:"redundancy"`
+	Perf                    PerfSettings                `json:"perf"`
+}
+
+type ParticipantThrottleSettings struct {
+	RequestBurst                   int   `json:"request_burst"`
+	RecoveryPerMinute              int   `json:"recovery_per_minute"`
+	HTTPQuarantineMS               int64 `json:"http_quarantine_ms"`
+	TransportFailureQuarantineMS   int64 `json:"transport_failure_quarantine_ms"`
+	EmptyStreamQuarantineMS        int64 `json:"empty_stream_quarantine_ms"`
+	StalledWinnerQuarantineMS      int64 `json:"stalled_winner_quarantine_ms"`
+	EmptyStreamQuarantineThreshold int   `json:"empty_stream_threshold"`
+}
+
+type RedundancySettings struct {
+	ReceiptTimeoutMS             int64   `json:"receipt_timeout_ms"`
+	FirstTokenTimeoutFloorMS     int64   `json:"first_token_timeout_floor_ms"`
+	PerInputTokenFirstTokenLagMS int64   `json:"per_input_token_first_token_lag_ms"`
+	InterChunkStallTimeoutMS     int64   `json:"inter_chunk_stall_timeout_ms"`
+	NonStreamResponseFloorMS     int64   `json:"non_stream_response_floor_ms"`
+	PerInputTokenResponseLagMS   int64   `json:"per_input_token_response_lag_ms"`
+	SecondaryWaitAfterWinnerMS   int64   `json:"secondary_wait_after_winner_ms"`
+	ParallelAdvantageThreshold   float64 `json:"parallel_advantage_threshold"`
+	UnresponsiveThreshold        float64 `json:"unresponsive_threshold"`
+}
+
+type PerfSettings struct {
+	SampleSize int   `json:"sample_size"`
+	WindowMS   int64 `json:"window_ms"`
+}
+
+func DefaultGatewaySettingsTuning() (ParticipantThrottleSettings, RedundancySettings, PerfSettings) {
+	return DefaultParticipantThrottleSettings(), DefaultRedundancySettings(), PerfSettings{
+		SampleSize: 256,
+		WindowMS:   int64(time.Hour / time.Millisecond),
+	}
+}
+
+func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
+	participantDefaults, redundancyDefaults, perfDefaults := DefaultGatewaySettingsTuning()
+	if s.ParticipantThrottle == (ParticipantThrottleSettings{}) {
+		s.ParticipantThrottle = participantDefaults
+	}
+	if s.Redundancy == (RedundancySettings{}) {
+		s.Redundancy = redundancyDefaults
+	}
+	if s.Perf == (PerfSettings{}) {
+		s.Perf = perfDefaults
+	}
+	return s
 }
 
 type GatewaySubnetState struct {
@@ -46,8 +97,26 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			public_api TEXT NOT NULL DEFAULT '',
 			default_model TEXT NOT NULL,
 			default_request_max_tokens INTEGER NOT NULL,
-			max_concurrent_requests INTEGER NOT NULL,
+			max_concurrent_requests INTEGER NOT NULL DEFAULT 512,
 			max_input_tokens_in_flight INTEGER NOT NULL,
+			participant_request_burst INTEGER NOT NULL DEFAULT 600,
+			participant_recovery_per_minute INTEGER NOT NULL DEFAULT 10,
+			participant_http_quarantine_ms INTEGER NOT NULL DEFAULT 3600000,
+			participant_transport_failure_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_empty_stream_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_stalled_winner_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_empty_stream_threshold INTEGER NOT NULL DEFAULT 3,
+			redundancy_receipt_timeout_ms INTEGER NOT NULL DEFAULT 5000,
+			redundancy_first_token_timeout_floor_ms INTEGER NOT NULL DEFAULT 1000,
+			redundancy_per_input_token_first_token_lag_ms INTEGER NOT NULL DEFAULT 10,
+			redundancy_inter_chunk_stall_timeout_ms INTEGER NOT NULL DEFAULT 60000,
+			redundancy_non_stream_response_floor_ms INTEGER NOT NULL DEFAULT 20000,
+			redundancy_per_input_token_response_lag_ms INTEGER NOT NULL DEFAULT 20,
+			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 300000,
+			redundancy_parallel_advantage_threshold REAL NOT NULL DEFAULT 0.5,
+			redundancy_unresponsive_threshold REAL NOT NULL DEFAULT 1.0,
+			perf_sample_size INTEGER NOT NULL DEFAULT 256,
+			perf_window_ms INTEGER NOT NULL DEFAULT 3600000,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS gateway_subnets (
@@ -70,6 +139,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err := ensureGatewaySettingsColumn(db, "public_api", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway store: %w", err)
+	}
+	if err := ensureGatewaySettingsTuningColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway tuning settings: %w", err)
 	}
 	if err := ensureGatewaySubnetsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
@@ -108,7 +181,16 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	var state GatewayState
 	row := s.db.QueryRow(`
 		SELECT chain_rest, public_api, default_model, default_request_max_tokens,
-		       max_concurrent_requests, max_input_tokens_in_flight
+		       max_concurrent_requests, max_input_tokens_in_flight,
+		       participant_request_burst, participant_recovery_per_minute,
+		       participant_http_quarantine_ms, participant_transport_failure_quarantine_ms,
+		       participant_empty_stream_quarantine_ms, participant_stalled_winner_quarantine_ms,
+		       participant_empty_stream_threshold,
+		       redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
+		       redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
+		       redundancy_non_stream_response_floor_ms, redundancy_per_input_token_response_lag_ms,
+		       redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
+		       redundancy_unresponsive_threshold, perf_sample_size, perf_window_ms
 		FROM gateway_settings
 		WHERE id = 1`)
 	err := row.Scan(
@@ -118,6 +200,24 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.DefaultRequestMaxTokens,
 		&state.Settings.MaxConcurrentRequests,
 		&state.Settings.MaxInputTokensInFlight,
+		&state.Settings.ParticipantThrottle.RequestBurst,
+		&state.Settings.ParticipantThrottle.RecoveryPerMinute,
+		&state.Settings.ParticipantThrottle.HTTPQuarantineMS,
+		&state.Settings.ParticipantThrottle.TransportFailureQuarantineMS,
+		&state.Settings.ParticipantThrottle.EmptyStreamQuarantineMS,
+		&state.Settings.ParticipantThrottle.StalledWinnerQuarantineMS,
+		&state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold,
+		&state.Settings.Redundancy.ReceiptTimeoutMS,
+		&state.Settings.Redundancy.FirstTokenTimeoutFloorMS,
+		&state.Settings.Redundancy.PerInputTokenFirstTokenLagMS,
+		&state.Settings.Redundancy.InterChunkStallTimeoutMS,
+		&state.Settings.Redundancy.NonStreamResponseFloorMS,
+		&state.Settings.Redundancy.PerInputTokenResponseLagMS,
+		&state.Settings.Redundancy.SecondaryWaitAfterWinnerMS,
+		&state.Settings.Redundancy.ParallelAdvantageThreshold,
+		&state.Settings.Redundancy.UnresponsiveThreshold,
+		&state.Settings.Perf.SampleSize,
+		&state.Settings.Perf.WindowMS,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayState{}, false, nil
@@ -125,6 +225,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	if err != nil {
 		return GatewayState{}, false, fmt.Errorf("load gateway settings: %w", err)
 	}
+	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version
@@ -160,6 +261,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 }
 
 func (s *GatewayStore) Initialize(settings GatewaySettings, subnets []GatewaySubnetState) error {
+	settings = settings.WithTuningDefaults()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -178,14 +280,41 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, subnets []GatewaySub
 	if _, err := tx.Exec(`
 		INSERT INTO gateway_settings (
 			id, chain_rest, public_api, default_model, default_request_max_tokens,
-			max_concurrent_requests, max_input_tokens_in_flight, updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
+			max_concurrent_requests, max_input_tokens_in_flight,
+			participant_request_burst, participant_recovery_per_minute,
+			participant_http_quarantine_ms, participant_transport_failure_quarantine_ms,
+			participant_empty_stream_quarantine_ms, participant_stalled_winner_quarantine_ms,
+			participant_empty_stream_threshold,
+			redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
+			redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
+			redundancy_non_stream_response_floor_ms, redundancy_per_input_token_response_lag_ms,
+			redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
+			redundancy_unresponsive_threshold, perf_sample_size, perf_window_ms, updated_at
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
 		settings.DefaultRequestMaxTokens,
 		settings.MaxConcurrentRequests,
 		settings.MaxInputTokensInFlight,
+		settings.ParticipantThrottle.RequestBurst,
+		settings.ParticipantThrottle.RecoveryPerMinute,
+		settings.ParticipantThrottle.HTTPQuarantineMS,
+		settings.ParticipantThrottle.TransportFailureQuarantineMS,
+		settings.ParticipantThrottle.EmptyStreamQuarantineMS,
+		settings.ParticipantThrottle.StalledWinnerQuarantineMS,
+		settings.ParticipantThrottle.EmptyStreamQuarantineThreshold,
+		settings.Redundancy.ReceiptTimeoutMS,
+		settings.Redundancy.FirstTokenTimeoutFloorMS,
+		settings.Redundancy.PerInputTokenFirstTokenLagMS,
+		settings.Redundancy.InterChunkStallTimeoutMS,
+		settings.Redundancy.NonStreamResponseFloorMS,
+		settings.Redundancy.PerInputTokenResponseLagMS,
+		settings.Redundancy.SecondaryWaitAfterWinnerMS,
+		settings.Redundancy.ParallelAdvantageThreshold,
+		settings.Redundancy.UnresponsiveThreshold,
+		settings.Perf.SampleSize,
+		settings.Perf.WindowMS,
 		now,
 	); err != nil {
 		return fmt.Errorf("insert gateway settings: %w", err)
@@ -200,6 +329,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, subnets []GatewaySub
 }
 
 func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
+	settings = settings.WithTuningDefaults()
 	res, err := s.db.Exec(`
 		UPDATE gateway_settings
 		SET chain_rest = ?,
@@ -208,6 +338,24 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    default_request_max_tokens = ?,
 		    max_concurrent_requests = ?,
 		    max_input_tokens_in_flight = ?,
+		    participant_request_burst = ?,
+		    participant_recovery_per_minute = ?,
+		    participant_http_quarantine_ms = ?,
+		    participant_transport_failure_quarantine_ms = ?,
+		    participant_empty_stream_quarantine_ms = ?,
+		    participant_stalled_winner_quarantine_ms = ?,
+		    participant_empty_stream_threshold = ?,
+		    redundancy_receipt_timeout_ms = ?,
+		    redundancy_first_token_timeout_floor_ms = ?,
+		    redundancy_per_input_token_first_token_lag_ms = ?,
+		    redundancy_inter_chunk_stall_timeout_ms = ?,
+		    redundancy_non_stream_response_floor_ms = ?,
+		    redundancy_per_input_token_response_lag_ms = ?,
+		    redundancy_secondary_wait_after_winner_ms = ?,
+		    redundancy_parallel_advantage_threshold = ?,
+		    redundancy_unresponsive_threshold = ?,
+		    perf_sample_size = ?,
+		    perf_window_ms = ?,
 		    updated_at = ?
 		WHERE id = 1`,
 		strings.TrimSpace(settings.ChainREST),
@@ -216,6 +364,24 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.DefaultRequestMaxTokens,
 		settings.MaxConcurrentRequests,
 		settings.MaxInputTokensInFlight,
+		settings.ParticipantThrottle.RequestBurst,
+		settings.ParticipantThrottle.RecoveryPerMinute,
+		settings.ParticipantThrottle.HTTPQuarantineMS,
+		settings.ParticipantThrottle.TransportFailureQuarantineMS,
+		settings.ParticipantThrottle.EmptyStreamQuarantineMS,
+		settings.ParticipantThrottle.StalledWinnerQuarantineMS,
+		settings.ParticipantThrottle.EmptyStreamQuarantineThreshold,
+		settings.Redundancy.ReceiptTimeoutMS,
+		settings.Redundancy.FirstTokenTimeoutFloorMS,
+		settings.Redundancy.PerInputTokenFirstTokenLagMS,
+		settings.Redundancy.InterChunkStallTimeoutMS,
+		settings.Redundancy.NonStreamResponseFloorMS,
+		settings.Redundancy.PerInputTokenResponseLagMS,
+		settings.Redundancy.SecondaryWaitAfterWinnerMS,
+		settings.Redundancy.ParallelAdvantageThreshold,
+		settings.Redundancy.UnresponsiveThreshold,
+		settings.Perf.SampleSize,
+		settings.Perf.WindowMS,
 		time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -391,6 +557,38 @@ func gatewayBoolToInt(v bool) int {
 
 func ensureGatewaySettingsColumn(db *sql.DB, columnName, columnDDL string) error {
 	return ensureColumn(db, "gateway_settings", columnName, columnDDL)
+}
+
+func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"participant_request_burst", "INTEGER NOT NULL DEFAULT 600"},
+		{"participant_recovery_per_minute", "INTEGER NOT NULL DEFAULT 10"},
+		{"participant_http_quarantine_ms", "INTEGER NOT NULL DEFAULT 3600000"},
+		{"participant_transport_failure_quarantine_ms", "INTEGER NOT NULL DEFAULT 1800000"},
+		{"participant_empty_stream_quarantine_ms", "INTEGER NOT NULL DEFAULT 1800000"},
+		{"participant_stalled_winner_quarantine_ms", "INTEGER NOT NULL DEFAULT 1800000"},
+		{"participant_empty_stream_threshold", "INTEGER NOT NULL DEFAULT 3"},
+		{"redundancy_receipt_timeout_ms", "INTEGER NOT NULL DEFAULT 5000"},
+		{"redundancy_first_token_timeout_floor_ms", "INTEGER NOT NULL DEFAULT 1000"},
+		{"redundancy_per_input_token_first_token_lag_ms", "INTEGER NOT NULL DEFAULT 10"},
+		{"redundancy_inter_chunk_stall_timeout_ms", "INTEGER NOT NULL DEFAULT 60000"},
+		{"redundancy_non_stream_response_floor_ms", "INTEGER NOT NULL DEFAULT 20000"},
+		{"redundancy_per_input_token_response_lag_ms", "INTEGER NOT NULL DEFAULT 20"},
+		{"redundancy_secondary_wait_after_winner_ms", "INTEGER NOT NULL DEFAULT 300000"},
+		{"redundancy_parallel_advantage_threshold", "REAL NOT NULL DEFAULT 0.5"},
+		{"redundancy_unresponsive_threshold", "REAL NOT NULL DEFAULT 1.0"},
+		{"perf_sample_size", "INTEGER NOT NULL DEFAULT 256"},
+		{"perf_window_ms", "INTEGER NOT NULL DEFAULT 3600000"},
+	}
+	for _, column := range columns {
+		if err := ensureGatewaySettingsColumn(db, column.name, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureGatewaySubnetsColumn(db *sql.DB, columnName, columnDDL string) error {

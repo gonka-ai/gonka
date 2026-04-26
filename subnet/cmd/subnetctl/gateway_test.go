@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +96,120 @@ func TestGatewayHandlePooledChatSetsChosenSubnetHeader(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.Equal(t, "12", rec.Header().Get("X-Subnet-ID"))
+}
+
+func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(1, 10)
+	rt := &subnetRuntime{
+		id:    "6",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}),
+		participantKeys:       []string{"host-a", "host-b"},
+		participantSlotCounts: map[string]int{"host-a": 1, "host-b": 1},
+	}
+	g := NewGateway([]*subnetRuntime{rt}, NewGatewayLimiter(4, 0), "Qwen/Test")
+	g.participantLimiter = limiter
+	g.capacity.SetLiveAvailable(limiter.IsAvailable)
+	g.capacity.SetHostWeights(map[string]float64{"host-a": 1, "host-b": 1}, false)
+
+	require.NoError(t, g.limiter.Acquire(1))
+	require.NoError(t, g.limiter.Acquire(1))
+	require.EqualValues(t, 4, g.limiter.Snapshot().EffectiveMaxConcurrent)
+
+	limiter.ObserveResult("host-a", "/sessions/6/chat/completions", http.StatusServiceUnavailable)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+
+	g.handlePooledChat(rec, req)
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "too many concurrent requests")
+	snap := g.limiter.Snapshot()
+	require.EqualValues(t, 2, snap.EffectiveMaxConcurrent)
+	require.EqualValues(t, 2, snap.InFlightRequests)
+}
+
+func TestGatewayStatusExposesCapacityLossAndEffectiveLimits(t *testing.T) {
+	a := &subnetRuntime{
+		id:                    "6",
+		model:                 "Qwen/Test",
+		participantSlotCounts: map[string]int{"host-a": 1},
+	}
+	b := &subnetRuntime{
+		id:                    "12",
+		model:                 "Qwen/Test",
+		participantSlotCounts: map[string]int{"host-b": 1},
+	}
+	g := NewGateway([]*subnetRuntime{a, b}, NewGatewayLimiter(4, 100), "Qwen/Test")
+	g.capacity.SetHostWeights(map[string]float64{"host-a": 1, "host-b": 1}, false)
+	g.capacity.SetLiveAvailable(func(host string) bool {
+		return host != "host-a"
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	g.handlePooledStatus(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Limiter  LimiterSnapshot       `json:"limiter"`
+		Capacity gatewayCapacityStatus `json:"capacity"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.EqualValues(t, 2, body.Limiter.EffectiveMaxConcurrent)
+	require.EqualValues(t, 50, body.Limiter.EffectiveMaxInputTokens)
+	require.InDelta(t, 2.0, body.Capacity.BaselineWeight, 1e-9)
+	require.InDelta(t, 1.0, body.Capacity.TotalWeight, 1e-9)
+	require.InDelta(t, 1.0, body.Capacity.LostWeight, 1e-9)
+	require.InDelta(t, 50.0, body.Capacity.AvailablePercent, 1e-9)
+	require.InDelta(t, 50.0, body.Capacity.LostPercent, 1e-9)
+	require.Equal(t, 1, body.Capacity.UnavailableHostCount)
+	require.Equal(t, 2, body.Capacity.CurrentWeightMatched)
+	require.Equal(t, 0, body.Capacity.CurrentWeightFallback)
+}
+
+func TestGatewayWiresQuarantineIntoCapacityWithoutPhaseGate(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(1, 10)
+	rt := &subnetRuntime{
+		id:                    "6",
+		model:                 "Qwen/Test",
+		participantSlotCounts: map[string]int{"host-a": 1, "host-b": 1},
+	}
+	other := &subnetRuntime{
+		id:                    "12",
+		model:                 "Qwen/Test",
+		participantSlotCounts: map[string]int{"host-c": 1},
+	}
+	g := NewGateway([]*subnetRuntime{rt, other}, NewGatewayLimiter(4, 0), "Qwen/Test")
+	g.participantLimiter = limiter
+	g.attachCapacityLiveAvailability()
+
+	limiter.ObserveResult("host-a", "/sessions/6/chat/completions", http.StatusServiceUnavailable)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	g.handlePooledStatus(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Limiter  LimiterSnapshot       `json:"limiter"`
+		Capacity gatewayCapacityStatus `json:"capacity"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 2, body.Capacity.AvailableHostCount)
+	require.Equal(t, 1, body.Capacity.UnavailableHostCount)
+	require.Equal(t, 0, body.Capacity.CurrentWeightMatched)
+	require.Equal(t, 3, body.Capacity.CurrentWeightFallback)
+	require.InDelta(t, 2.0, body.Capacity.TotalWeight, 1e-9)
+	require.InDelta(t, 3.0, body.Capacity.BaselineWeight, 1e-9)
+	require.InDelta(t, 33.333333, body.Capacity.LostPercent, 1e-6)
+	require.EqualValues(t, 3, body.Limiter.EffectiveMaxConcurrent)
 }
 
 func TestGatewayChooseRuntimeSkipsInactiveSubnet(t *testing.T) {
@@ -292,7 +408,7 @@ func TestParticipantRequestLimiterUntrackedHostAlwaysAllowed(t *testing.T) {
 func TestParticipantRequestLimiterTransportShorterQuarantineThan503(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	t0 := time.Now()
-	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions")
+	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions", fmt.Errorf("dial tcp: connection refused"))
 	require.True(t, limiter.IsBlocked("transport-host"))
 	require.True(t, limiter.allow("transport-host", t0.Add(transportFailureQuarantine+time.Second)))
 
@@ -302,12 +418,28 @@ func TestParticipantRequestLimiterTransportShorterQuarantineThan503(t *testing.T
 	require.True(t, limiter.allow("http-host", t0.Add(httpThrottleQuarantine+time.Second)))
 }
 
-func TestParticipantRequestLimiterInference404UsesShortQuarantine(t *testing.T) {
+func TestParticipantRequestLimiterTransportFailureOnVerifyTimeoutDoesNotQuarantine(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.ObserveTransportFailure("vote-host", "/sessions/1/verify-timeout", fmt.Errorf("dial tcp: i/o timeout"))
+	require.False(t, limiter.IsBlocked("vote-host"), "verify-timeout transport failure must not quarantine")
+
+	limiter.ObserveTransportFailure("gossip-host", "/sessions/1/gossip/nonce", fmt.Errorf("connection refused"))
+	require.False(t, limiter.IsBlocked("gossip-host"), "gossip transport failure must not quarantine")
+
+	limiter.ObserveTransportFailure("infer-host", "/sessions/1/chat/completions", fmt.Errorf("dial tcp: i/o timeout"))
+	require.True(t, limiter.IsBlocked("infer-host"), "inference transport failure must quarantine")
+}
+
+func TestParticipantRequestLimiterInferenceRouteFailureUsesShortQuarantine(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	t0 := time.Now()
 	limiter.ObserveResult("broken-host", "/sessions/38/chat/completions", http.StatusNotFound)
 	require.True(t, limiter.IsBlocked("broken-host"))
 	require.True(t, limiter.allow("broken-host", t0.Add(transportFailureQuarantine+time.Second)))
+
+	limiter.ObserveResult("forbidden-host", "/sessions/38/chat/completions", http.StatusForbidden)
+	require.True(t, limiter.IsBlocked("forbidden-host"))
+	require.True(t, limiter.allow("forbidden-host", t0.Add(transportFailureQuarantine+time.Second)))
 }
 
 func TestParticipantRequestLimiterEmptyStreamQuarantineAfterThreeConsecutive(t *testing.T) {
@@ -327,6 +459,30 @@ func TestParticipantRequestLimiterEmptyStreamQuarantineAfterThreeConsecutive(t *
 	require.True(t, limiter.allow("empty-host", now.Add(emptyStreamQuarantine+time.Second)))
 }
 
+func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.UpdateSettings(ParticipantThrottleSettings{
+		RequestBurst:                   10,
+		RecoveryPerMinute:              10,
+		HTTPQuarantineMS:               200,
+		TransportFailureQuarantineMS:   100,
+		EmptyStreamQuarantineMS:        150,
+		StalledWinnerQuarantineMS:      175,
+		EmptyStreamQuarantineThreshold: 2,
+	})
+	now := time.Now()
+
+	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions", fmt.Errorf("dial tcp: connection refused"))
+	require.True(t, limiter.IsBlocked("transport-host"))
+	require.True(t, limiter.allow("transport-host", now.Add(101*time.Millisecond)))
+
+	limiter.ObserveEmptyStream("empty-host")
+	require.False(t, limiter.IsBlocked("empty-host"))
+	limiter.ObserveEmptyStream("empty-host")
+	require.True(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.allow("empty-host", now.Add(151*time.Millisecond)))
+}
+
 func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 
@@ -342,6 +498,18 @@ func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *
 	require.False(t, limiter.IsBlocked("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
 	require.True(t, limiter.IsBlocked("empty-host"))
+}
+
+func TestParticipantRequestLimiterStalledWinnerQuarantinesImmediately(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	now := time.Now()
+
+	limiter.ObserveEmptyStream("stall-host")
+	limiter.ObserveEmptyStream("stall-host")
+	limiter.ObserveStalledWinner("stall-host")
+
+	require.True(t, limiter.IsBlocked("stall-host"))
+	require.True(t, limiter.allow("stall-host", now.Add(stalledWinnerQuarantine+time.Second)))
 }
 
 func TestParticipantRequestLimiterRecoversAfterThrottle(t *testing.T) {
@@ -463,6 +631,8 @@ func TestNormalizeChatRequestDefaultsAndCapsMaxTokens(t *testing.T) {
 	DefaultRequestMaxTokens = 10_000
 	t.Cleanup(func() {
 		DefaultRequestMaxTokens = oldDefault
+		sharedParticipantRequestLimiter.UpdateSettings(DefaultParticipantThrottleSettings())
+		ApplyRedundancySettings(DefaultRedundancySettings())
 	})
 
 	body, req, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hello"}]}`))
@@ -520,7 +690,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	}, t.TempDir(), store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
-		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":7777}`))
+		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":7777,"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"non_stream_response_floor_ms":1900,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
 	rec := httptest.NewRecorder()
 	g.handleAdminSettings(rec, req)
 
@@ -540,6 +710,48 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.EqualValues(t, 7777, state.Settings.DefaultRequestMaxTokens)
 	require.EqualValues(t, 7, state.Settings.MaxConcurrentRequests)
 	require.EqualValues(t, 700, state.Settings.MaxInputTokensInFlight)
+	require.EqualValues(t, 42, state.Settings.ParticipantThrottle.RequestBurst)
+	require.EqualValues(t, 2, state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
+	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
+	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
+	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
+	require.Equal(t, 1500*time.Millisecond, ReceiptTimeout)
+	require.Equal(t, 17*time.Millisecond, PerInputTokenFirstTokenLag)
+}
+
+func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+		sharedParticipantRequestLimiter.UpdateSettings(DefaultParticipantThrottleSettings())
+		ApplyRedundancySettings(DefaultRedundancySettings())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+
+	g := NewManagedGateway(nil, NewGatewayLimiter(2, 200), GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, t.TempDir(), store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
+		strings.NewReader(`{"participant_throttle":{"empty_stream_threshold":0}}`))
+	rec := httptest.NewRecorder()
+	g.handleAdminSettings(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "empty_stream_threshold")
 }
 
 func TestGatewayMetricsEndpointExposedAndUpdated(t *testing.T) {
