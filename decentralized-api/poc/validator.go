@@ -37,21 +37,21 @@ type OffChainValidator struct {
 
 // ValidationConfig contains configuration for off-chain validation.
 type ValidationConfig struct {
-	WorkerCount    int
-	RequestTimeout time.Duration
-	MaxRetries     int
-	RetryBackoff   time.Duration
-	DeadlineBuffer time.Duration // Safety buffer subtracted from on-chain window to ensure timely submission
+	WorkerCount        int
+	RequestTimeout     time.Duration
+	MaxRetries         int
+	RetryBackoff       time.Duration
+	PhaseCheckInterval time.Duration
 }
 
 // DefaultValidationConfig returns the default configuration.
 func DefaultValidationConfig() ValidationConfig {
 	return ValidationConfig{
-		WorkerCount:    10,
-		RequestTimeout: 20 * time.Second,
-		MaxRetries:     15,
-		RetryBackoff:   3 * time.Second,
-		DeadlineBuffer: 60 * time.Second,
+		WorkerCount:        10,
+		RequestTimeout:     20 * time.Second,
+		MaxRetries:         15,
+		RetryBackoff:       3 * time.Second,
+		PhaseCheckInterval: 3 * time.Second,
 	}
 }
 
@@ -308,20 +308,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	failCount := 0
 	pendingCount := len(workItems)
 
-	// Compute global deadline from on-chain validation window to prevent
-	// workers from continuing past the submission deadline.
-	deadline := v.computeValidationDeadline(epochState)
-	var ctx context.Context
-	var cancel context.CancelFunc
-	if deadline > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), deadline)
-		logging.Info("OffChainValidator: set global validation deadline", types.PoC,
-			"deadline", deadline, "deadlineBuffer", v.config.DeadlineBuffer)
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
-		logging.Warn("OffChainValidator: could not compute deadline, running without global timeout", types.PoC)
-	}
+	// Context for coordinating shutdown. A phase watcher below cancels it as soon
+	// as the chain stops accepting validation results for this PoC stage.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight)
 
 	// Start workers
 	numWorkers := v.config.WorkerCount
@@ -368,32 +359,37 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		"failed", failCount)
 }
 
-// computeValidationDeadline calculates a global timeout for the validation run
-// based on the remaining on-chain validation window. This prevents workers from
-// continuing past the point where results can still be submitted on-chain.
-func (v *OffChainValidator) computeValidationDeadline(epochState *chainphase.EpochState) time.Duration {
-	if epochState == nil {
-		return 0
+func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64) {
+	phaseCheckInterval := v.config.PhaseCheckInterval
+	if phaseCheckInterval <= 0 {
+		phaseCheckInterval = 3 * time.Second
 	}
 
-	endBlock := epochState.LatestEpoch.EndOfPoCValidation()
-	currentBlock := epochState.CurrentBlock.Height
+	go func() {
+		ticker := time.NewTicker(phaseCheckInterval)
+		defer ticker.Stop()
 
-	if endBlock <= currentBlock {
-		return 0
-	}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				state := v.phaseTracker.GetCurrentEpochState()
+				if state == nil {
+					continue
+				}
 
-	remainingBlocks := endBlock - currentBlock
-	// Approximate block duration ~5.41s (matches expectedBlockDurationSec in chainvalidation.go)
-	const approxBlockDurationSec = 5.41
-	estimatedRemaining := time.Duration(float64(remainingBlocks)*approxBlockDurationSec*float64(time.Second))
-
-	deadline := estimatedRemaining - v.config.DeadlineBuffer
-	if deadline <= 0 {
-		return 0
-	}
-
-	return deadline
+				if !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight {
+					logging.Info("OffChainValidator: validation phase ended, stopping workers", types.PoC,
+						"currentPhase", state.CurrentPhase,
+						"blockHeight", state.CurrentBlock.Height,
+						"pocStageStartBlockHeight", pocStageStartBlockHeight)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 }
 
 // worker processes participants from the work channel.
@@ -483,9 +479,8 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
-					logging.Warn("OffChainValidator: max retries exceeded, reporting as invalid", types.PoC,
+					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
-					reportAddr = work.address
 				}
 			}
 
