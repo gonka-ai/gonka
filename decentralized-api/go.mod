@@ -6,6 +6,7 @@ require (
 	cosmossdk.io/errors v1.0.2
 	cosmossdk.io/math v1.5.3
 	cosmossdk.io/store v1.1.2
+	cosmossdk.io/x/feegrant v0.1.1
 	cosmossdk.io/x/upgrade v0.1.4
 	devshard v0.0.0-00010101000000-000000000000
 	github.com/cometbft/cometbft v0.38.21
@@ -64,7 +65,6 @@ require (
 	cosmossdk.io/tools/confix v0.1.2 // indirect
 	cosmossdk.io/x/circuit v0.1.1 // indirect
 	cosmossdk.io/x/evidence v0.1.1 // indirect
-	cosmossdk.io/x/feegrant v0.1.1 // indirect
 	cosmossdk.io/x/nft v0.1.1 // indirect
 	cosmossdk.io/x/tx v0.14.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect

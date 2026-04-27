@@ -249,7 +249,7 @@ func TestUpdateGovernanceModels(t *testing.T) {
 	}, kimi.ModelArgs)
 	require.Equal(t, uint64(720), kimi.VRam)
 	require.Equal(t, uint64(1500), kimi.ThroughputPerNonce)
-	require.Equal(t, &inferencetypes.Decimal{Value: 958, Exponent: -3}, kimi.ValidationThreshold)
+	require.Equal(t, &inferencetypes.Decimal{Value: 920, Exponent: -3}, kimi.ValidationThreshold)
 
 	require.NoError(t, updateGovernanceModels(ctx, k))
 	models, err := k.GetGovernanceModels(ctx)
