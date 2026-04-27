@@ -225,8 +225,8 @@ http {
             grpc_read_timeout ${CHAIN_GRPC_TRANSFER_TIMEOUT}s;
         }
 
-        # Subnet proxy - routes /subnet/<escrow-id>/... to subnetctl-<escrow-id>:8080/...
-        ${SUBNET_PROXY_LOCATION}
+        # Devshard proxy - routes /devshard/<escrow-id>/... to devshardctl-<escrow-id>:8080/...
+        ${DEVSHARD_PROXY_LOCATION}
 
         # Root location - either dashboard or not configured page
         ${ROOT_LOCATION}

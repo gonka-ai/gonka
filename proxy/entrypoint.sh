@@ -210,17 +210,16 @@ export STREAMING_CONFIG='
             proxy_request_buffering off;
             gzip off;'
 
-# Subnet proxy routing (dynamic resolution via Docker DNS)
-if [ "${DISABLE_SUBNET_PROXY:-true}" = "false" ]; then
-    echo "   Subnet proxy: Enabled (/subnet/<escrow-id>/...)"
+# Devshard proxy routing (dynamic resolution via Docker DNS)
+if [ "${DISABLE_DEVSHARD_PROXY:-true}" = "false" ]; then
+    echo "   Devshard proxy: Enabled (/devshard/<escrow-id>/...)"
 
-    # Load-balanced pool: /subnet/v1/... auto-discovers via Docker DNS alias "subnet-pool"
-    # Must come before the regex to avoid /subnet/v1/... matching as escrow_id=v1
-    SUBNET_PROXY_LOCATION="location ^~ /subnet/v1/ {
-            set \$\$limit_zone_name SUBNET;
-            set \$\$subnet_pool subnet-pool;
-            rewrite ^/subnet(/v1/.*)\$\$ \$\$1 break;
-            proxy_pass http://\$\$subnet_pool:8080;
+    # Load-balanced pool: /devshard/v1/... auto-discovers via Docker DNS alias "devshard-pool"
+    # Must come before the regex to avoid /devshard/v1/... matching as escrow_id=v1
+    DEVSHARD_PROXY_LOCATION="location ^~ /devshard/v1/ {
+            set \$\$devshard_pool devshard-pool;
+            rewrite ^/devshard(/v1/.*)\$\$ \$\$1 break;
+            proxy_pass http://\$\$devshard_pool:8080;
             proxy_set_header Host \$\$host;
             proxy_set_header X-Real-IP \$\$remote_addr;
             proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
@@ -233,13 +232,13 @@ if [ "${DISABLE_SUBNET_PROXY:-true}" = "false" ]; then
             proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }"
 
-    # Per-escrow routing: /subnet/<escrow-id>/...
-    SUBNET_PROXY_LOCATION="${SUBNET_PROXY_LOCATION}
+    # Per-escrow routing: /devshard/<escrow-id>/...
+    DEVSHARD_PROXY_LOCATION="${DEVSHARD_PROXY_LOCATION}
 
-        location ~ ^/subnet/([^/]+)/(.*) {
+        location ~ ^/devshard/([^/]+)/(.*) {
             set \$\$escrow_id \$\$1;
-            set \$\$subnet_path \$\$2;
-            proxy_pass http://subnetctl-\$\$escrow_id:8080/\$\$subnet_path\$\$is_args\$\$args;
+            set \$\$devshard_path \$\$2;
+            proxy_pass http://devshardctl-\$\$escrow_id:8080/\$\$devshard_path\$\$is_args\$\$args;
             proxy_set_header Host \$\$host;
             proxy_set_header X-Real-IP \$\$remote_addr;
             proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
@@ -251,12 +250,12 @@ if [ "${DISABLE_SUBNET_PROXY:-true}" = "false" ]; then
             proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
             proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }"
-    echo "   Subnet pool: Auto-discovery via DNS alias 'subnet-pool' -> /subnet/v1/..."
+    echo "   Devshard pool: Auto-discovery via DNS alias 'devshard-pool' -> /devshard/v1/..."
 
-    export SUBNET_PROXY_LOCATION
+    export DEVSHARD_PROXY_LOCATION
 else
-    echo "   Subnet proxy: Disabled"
-    export SUBNET_PROXY_LOCATION="# Subnet proxy not configured"
+    echo "   Devshard proxy: Disabled"
+    export DEVSHARD_PROXY_LOCATION="# Devshard proxy not configured"
 fi
 
 # If SSL is intended, ensure certificates are present (attempt issuance if missing)
@@ -775,7 +774,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$CHAIN_GRPC_CONNECT_TIMEOUT,\$CHAIN_GRPC_TRANSF
 # Group 6: Rate Limiting Rules
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_GLOBAL,\$LIMIT_REQ_RULE_GONKA_API"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_CHAIN_RPC,\$LIMIT_REQ_RULE_CHAIN_API,\$LIMIT_REQ_RULE_CHAIN_GRPC"
-ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS,\$SUBNET_PROXY_LOCATION"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS,\$DEVSHARD_PROXY_LOCATION"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
 envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
@@ -819,9 +818,9 @@ echo "   /api/*         -> API backend"
 echo "   /chain-rpc/*   -> Chain RPC"
 echo "   /chain-api/*   -> Chain REST API"
 echo "   /chain-grpc/*  -> Chain gRPC"
-if [ "${DISABLE_SUBNET_PROXY:-true}" = "false" ]; then
-    echo "   /subnet/<id>/* -> Subnet proxy (per-escrow)"
-    echo "   /subnet/v1/*   -> Subnet proxy (load-balanced pool)"
+if [ "${DISABLE_DEVSHARD_PROXY:-true}" = "false" ]; then
+    echo "   /devshard/<id>/* -> Devshard proxy (per-escrow)"
+    echo "   /devshard/v1/*   -> Devshard proxy (load-balanced pool)"
 fi
 echo "   /health        -> Health check"
 
