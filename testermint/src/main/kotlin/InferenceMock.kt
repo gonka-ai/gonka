@@ -44,6 +44,7 @@ interface IInferenceMock {
     // PoC v2 (artifact-based) methods
     fun setPocV2Response(weight: Long, hostName: String? = null, scenarioName: String = "ModelState")
     fun setPocV2ValidationResponse(weight: Long, scenarioName: String = "ModelState")
+    fun setLatestPocNonce(nonce: Long) {}
     fun getLastInferenceRequest(): InferenceRequestPayload?
     fun hasRequestsToVersionedEndpoint(segment: String): Boolean
     fun resetMocks()

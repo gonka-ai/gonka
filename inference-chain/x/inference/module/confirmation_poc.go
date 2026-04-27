@@ -16,8 +16,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const safetyWindow = 50
-
 var pocDeviationCoeff = decimal.New(909, -3)
 
 // handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
@@ -138,7 +136,7 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		epochParams.PocValidationDelay +
 		epochParams.PocValidationDuration +
 		epochParams.SetNewValidatorsDelay +
-		safetyWindow
+		epochParams.ConfirmationPocSafetyWindow
 	triggerWindowEnd := nextPoCStart - epochParams.InferenceValidationCutoff - confirmationWindowDuration
 
 	if blockHeight < setNewValidatorsHeight || blockHeight > triggerWindowEnd {

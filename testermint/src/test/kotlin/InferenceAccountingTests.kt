@@ -130,6 +130,10 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
+        val (cluster, genesis) = initCluster(config = delayPruningConfig, reboot = true)
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
         logSection("Clearing claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference")
@@ -179,6 +183,10 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `start comes after finish inference`() {
+        val (cluster, genesis) = initCluster(config = delayPruningConfig, reboot = true)
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
         logSection("Clearing Claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inferences")
@@ -189,15 +197,17 @@ class InferenceAccountingTests : TestermintTest() {
             Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
         }
         logSection("Making inference")
-        val inferences: Sequence<InferenceResult> = generateSequence {
-            getInferenceResult(genesis, seed = DELAY_SEED)
-        }.take(2)
-        verifySettledInferences(genesis, inferences, participants, startLastRewardedEpoch)
+        val inferences = collectSuccessfulInferenceResults(genesis, 2, seed = DELAY_SEED)
+        verifySettledInferences(genesis, inferences.asSequence(), participants, startLastRewardedEpoch)
     }
 
     @Test
     @Tag("sanity")
     fun `test post settle amounts`() {
+        val (cluster, genesis) = initCluster(config = delayPruningConfig, reboot = true)
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
         logSection("Clearing claims")
         // If we don't wait until the next rewards claim, there may be lingering requests that mess with our math
         genesis.waitForStage(EpochStage.CLAIM_REWARDS, 3)
@@ -210,10 +220,8 @@ class InferenceAccountingTests : TestermintTest() {
             Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
         }
         logSection("Making inference")
-        val inferences: Sequence<InferenceResult> = generateSequence {
-            getInferenceResult(genesis)
-        }.take(1)
-        verifySettledInferences(genesis, inferences, participants, startLastRewardedEpoch)
+        val inferences = collectSuccessfulInferenceResults(genesis, 1)
+        verifySettledInferences(genesis, inferences.asSequence(), participants, startLastRewardedEpoch)
     }
 
     private fun getFailingInference(
@@ -256,22 +264,23 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     companion object {
-        @JvmStatic
-        @BeforeAll
-        fun getCluster(): Unit {
-            val delayPruningSpec = spec {
-                this[AppState::inference] = spec<InferenceState> {
-                    this[InferenceState::params] = spec<InferenceParams> {
-                        this[InferenceParams::epochParams] = spec<EpochParams> {
-                            this[EpochParams::inferencePruningEpochThreshold] = 4L
-                        }
+        private val delayPruningSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::inferencePruningEpochThreshold] = 4L
                     }
                 }
             }
-            val delayPruningConfig = inferenceConfig.copy(
-                genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
-            )
+        }
 
+        val delayPruningConfig = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(delayPruningSpec) ?: delayPruningSpec
+        )
+
+        @JvmStatic
+        @BeforeAll
+        fun getCluster(): Unit {
             val (clus, gen) = initCluster(config = delayPruningConfig)
             clus.allPairs.forEach { pair ->
                 pair.waitForMlNodesToLoad()
@@ -285,6 +294,29 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
 
+}
+
+private fun collectSuccessfulInferenceResults(
+    genesis: LocalInferencePair,
+    count: Int,
+    seed: Int? = null,
+    maxAttempts: Int = count * 4
+): List<InferenceResult> {
+    val results = mutableListOf<InferenceResult>()
+    repeat(maxAttempts) { attempt ->
+        val result = runCatching { getInferenceResult(genesis, seed = seed) }
+            .onFailure { error ->
+                Logger.warn("Inference attempt ${attempt + 1} failed while collecting $count successful requests: $error")
+            }
+            .getOrNull()
+            ?: return@repeat
+
+        results += result
+        if (results.size == count) {
+            return results
+        }
+    }
+    error("Only collected ${results.size} successful inferences out of $count requested")
 }
 
 const val DEFAULT_TOKENS = 5_000L

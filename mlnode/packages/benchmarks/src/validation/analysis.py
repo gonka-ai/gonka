@@ -11,7 +11,10 @@ from validation import stats
 
 def process_data(items):
     distances = [
-        distance2(item.inference_result, item.validation_result)
+        distance2(
+            item.inference_result,
+            item.validation_result,
+        )
         for item in items
     ]
 

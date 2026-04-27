@@ -72,7 +72,7 @@ fun runParallelInferencesWithResults(
         result?.let {
             try {
                 val retrievalStart = System.currentTimeMillis()
-                val inference = genesis.api.getInference(result.id)
+                val inference = genesis.node.getInference(result.id)
                 inference
             } catch (e: Exception) {
                 null
@@ -83,7 +83,7 @@ fun runParallelInferencesWithResults(
     val overallEndTime = System.currentTimeMillis()
     val totalDuration = overallEndTime - overallStartTime
     
-    inferences
+    inferences.map{ it.inference }
 }
 
 /**

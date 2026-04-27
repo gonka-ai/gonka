@@ -57,6 +57,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgRegisterModel{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgDeleteGovernanceModel{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgCreateTrainingTask{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
@@ -112,6 +115,30 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRemoveParticipantsFromAllowList{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgBridgeExchange{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRegisterBridgeAddresses{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRegisterTokenMetadata{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgApproveBridgeTokenForTrading{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRegisterWrappedTokenContract{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgMigrateAllWrappedTokens{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgApproveIbcTokenForTrading{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRegisterIbcTokenMetadata{},
 	)
 	// this line is used by starport scaffolding # 3
 

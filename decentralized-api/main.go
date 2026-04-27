@@ -17,12 +17,15 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/statsstorage"
 	"net"
 
 	"github.com/productscience/inference/api/inference/inference"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	internalsubnet "decentralized-api/internal/subnet"
+	subnetstorage "subnet/storage"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant"
@@ -148,12 +151,33 @@ func main() {
 	// Start periodic config auto-flush of dynamic data to DB
 	config.StartAutoFlush(ctx, 60*time.Second)
 
+	// Optional off-chain inference stats storage (PostgreSQL-backed when PGHOST is configured).
+	statsStore, err := statsstorage.NewStatsStorage(ctx)
+	if err != nil {
+		logging.Error("Failed to initialize stats storage", types.System, "error", err)
+		return
+	}
+	if statsStore != nil {
+		defer statsStore.Close()
+	}
+
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
-	listener := event_listener.NewEventListener(config, pocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsManager)
+	listener := event_listener.NewEventListener(
+		config,
+		pocOrchestrator,
+		nodeBroker,
+		validator,
+		*recorder,
+		trainingExecutor,
+		chainPhaseTracker,
+		cancel,
+		blsManager,
+		event_listener.WithStatsStorage(statsStore),
+	)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
@@ -193,7 +217,41 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue, chainPhaseTracker, payloadStore, pserver.WithArtifactStore(artifactStore))
+	subnetSigner, subnetSignerErr := internalsubnet.NewSignerFromKeyring(*recorder.GetKeyring(), recorder.GetApiAccount().SignerAccount.Name)
+	if subnetSignerErr != nil {
+		logging.Error("subnet signer init failed", types.System, "error", subnetSignerErr)
+	}
+
+	publicServer := pserver.NewServer(
+		nodeBroker,
+		config,
+		recorder,
+		trainingExecutor,
+		blockQueue,
+		chainPhaseTracker,
+		payloadStore,
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	)
+
+	if subnetSigner != nil {
+		subnetBridge := internalsubnet.NewChainBridge(recorder)
+		httpClient := pserver.NewNoRedirectClient(5 * time.Minute)
+		subnetEngine := internalsubnet.NewEngineAdapter(nodeBroker, config.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient)
+		subnetValidator := internalsubnet.NewValidationAdapter(nodeBroker, config.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, subnetBridge, recorder)
+		// TODO: move to SubnetConfig when config consolidation happens.
+		subnetStore, storeErr := subnetstorage.NewSQLite("/root/.dapi/data/subnet.db")
+		if storeErr != nil {
+			logging.Error("subnet storage init failed", types.System, "error", storeErr)
+		} else {
+			defer subnetStore.Close()
+			hostManager := internalsubnet.NewHostManager(subnetStore, subnetSigner, subnetEngine, subnetValidator, subnetBridge, payloadStore, recorder)
+			if err := hostManager.RecoverSessions(); err != nil {
+				logging.Error("subnet recovery failed", types.System, "error", err)
+			}
+			hostManager.Register(publicServer.SubnetGroup())
+		}
+	}
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

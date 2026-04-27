@@ -1,0 +1,54 @@
+syntax = "proto3";
+package subnet.v1;
+option go_package = "subnet/types";
+
+import "subnet/v1/tx.proto";
+
+// DiffContent is what the user signs: hash(serialize(DiffContent)).
+message DiffContent {
+  uint64 nonce = 1;
+  repeated SubnetTx txs = 2;
+  string escrow_id = 3;
+  bytes post_state_root = 4;  // state root AFTER applying this diff's txs
+}
+
+// SubnetTx wraps all 8 tx types in a oneof for deterministic serialization.
+message SubnetTx {
+  oneof tx {
+    MsgStartInference start_inference = 1;
+    MsgConfirmStart confirm_start = 2;
+    MsgFinishInference finish_inference = 3;
+    MsgTimeoutInference timeout_inference = 4;
+    MsgValidation validation = 5;
+    MsgValidationVote validation_vote = 6;
+    MsgRevealSeed reveal_seed = 7;
+    MsgFinalizeRound finalize_round = 8;
+  }
+}
+
+// ExecutorReceiptContent is what the executor signs for MsgConfirmStart.
+message ExecutorReceiptContent {
+  uint64 inference_id = 1;
+  bytes  prompt_hash = 2;
+  string model = 3;
+  uint64 input_length = 4;
+  uint64 max_tokens = 5;
+  int64  started_at = 6;
+  string escrow_id = 7;
+  int64  confirmed_at = 8;
+}
+
+// TimeoutVoteContent is what a host signs for a TimeoutVote.
+message TimeoutVoteContent {
+  string escrow_id = 1;
+  uint64 inference_id = 2;
+  TimeoutReason reason = 3;
+  bool   accept = 4;
+}
+
+// StateSignatureContent is what a host signs for state attestation.
+message StateSignatureContent {
+  bytes  state_root = 1;
+  string escrow_id = 2;
+  uint64 nonce = 3;
+}

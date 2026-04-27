@@ -40,7 +40,7 @@ func ProcessStartInference(
 	if currentInference == nil {
 		return nil, nil, sdkerrors.Wrap(types.ErrInferenceNotFound, startMessage.InferenceId)
 	}
-	if currentInference.InferenceId != "" && !finishedProcessed(currentInference) {
+	if currentInference.InferenceId != "" && !currentInference.FinishedProcessed() {
 		// We already have an inference with this ID (but it wasn't created by FinishInference)
 		return nil, nil, sdkerrors.Wrap(types.ErrInferenceIdExists, currentInference.InferenceId)
 	}
@@ -74,6 +74,7 @@ func ProcessStartInference(
 	currentInference.TransferredBy = startMessage.Creator
 	currentInference.TransferSignature = startMessage.TransferSignature
 	currentInference.PromptHash = startMessage.PromptHash
+	currentInference.OriginalPromptHash = startMessage.OriginalPromptHash
 	if currentInference.PromptTokenCount == 0 {
 		currentInference.PromptTokenCount = startMessage.PromptTokenCount
 	}
@@ -95,7 +96,7 @@ func ProcessStartInference(
 		}
 		// NOTE: inference.EscrowAmount is not set here. It will be set later, after escrow
 		// has SUCCESSFULLY been transferred
-		if finishedProcessed(currentInference) {
+		if currentInference.FinishedProcessed() {
 			if err := setEscrowForFinished(currentInference, escrowAmount, payments); err != nil {
 				return nil, nil, err
 			}
@@ -159,6 +160,9 @@ func ProcessFinishInference(
 	currentInference.ExecutionSignature = finishMessage.ExecutorSignature
 	currentInference.CompletionTokenCount = finishMessage.CompletionTokenCount
 	currentInference.ExecutedBy = finishMessage.ExecutedBy
+	currentInference.RequestedBy = finishMessage.RequestedBy
+	currentInference.OriginalPromptHash = finishMessage.OriginalPromptHash
+	currentInference.PromptHash = finishMessage.PromptHash
 	currentInference.EndBlockHeight = blockContext.BlockHeight
 	currentInference.EndBlockTimestamp = blockContext.BlockTimestamp
 
@@ -173,7 +177,7 @@ func ProcessFinishInference(
 		return nil, nil, err
 	}
 	currentInference.ActualCost = actualCost
-	if startProcessed(currentInference) {
+	if currentInference.StartProcessed() {
 		escrowAmount := currentInference.EscrowAmount
 		if currentInference.ActualCost >= escrowAmount {
 			payments.ExecutorPayment = escrowAmount
@@ -184,14 +188,6 @@ func ProcessFinishInference(
 		}
 	}
 	return currentInference, &payments, nil
-}
-
-func startProcessed(inference *types.Inference) bool {
-	return inference.PromptHash != ""
-}
-
-func finishedProcessed(inference *types.Inference) bool {
-	return inference.ExecutedBy != ""
 }
 
 func getMaxTokens(msg *types.MsgStartInference) uint64 {

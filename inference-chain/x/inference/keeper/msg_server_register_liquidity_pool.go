@@ -18,13 +18,8 @@ import (
 // This operation instantiates a new contract and registers it atomically.
 // Only the authorized governance account can perform this registration.
 func (k msgServer) RegisterLiquidityPool(goCtx context.Context, msg *types.MsgRegisterLiquidityPool) (*types.MsgRegisterLiquidityPoolResponse, error) {
-	// Validate authority explicitly and consistently
-	expectedAuthority := k.GetAuthority()
-	if strings.TrimSpace(msg.Authority) == "" {
-		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidAddress, "authority cannot be empty")
-	}
-	if msg.Authority != expectedAuthority {
-		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "unauthorized: expected authority %s, got %s", expectedAuthority, msg.Authority)
+	if err := k.CheckPermission(goCtx, msg, GovernancePermission); err != nil {
+		return nil, err
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)

@@ -24,6 +24,11 @@ data class TxResponse(
         val proposalId = proposalEvent?.attributes?.firstOrNull { it.key == "proposal_id" }
         return proposalId?.value
     }
+
+    fun getEscrowId(): Long? {
+        val event = events.firstOrNull { it.type == "subnet_escrow_created" }
+        return event?.attributes?.firstOrNull { it.key == "escrow_id" }?.value?.toLongOrNull()
+    }
 }
 
 data class Event(

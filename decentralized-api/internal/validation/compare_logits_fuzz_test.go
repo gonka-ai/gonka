@@ -85,16 +85,16 @@ func FuzzCompareLogits(f *testing.F) {
 			ResponseBytes: []byte("test-response"),
 		}
 
-		// compareLogits calls customSimilarity -> customDistance -> positionDistance
+		// CompareLogits calls customSimilarity -> customDistance -> positionDistance
 		defer func() {
 			if r := recover(); r != nil {
 				t.Errorf("Recovered from panic: %v", r)
 			}
 		}()
 
-		result := compareLogits(orig, val, baseResult)
+		result := CompareLogits(orig, val, baseResult)
 		if result == nil {
-			t.Errorf("compareLogits returned nil")
+			t.Errorf("CompareLogits returned nil")
 		}
 	})
 }

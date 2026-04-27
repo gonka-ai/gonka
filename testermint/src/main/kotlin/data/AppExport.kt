@@ -76,6 +76,8 @@ data class InferenceParams(
     val confirmationPocParams: ConfirmationPoCParams? = null,
     @SerializedName("transfer_agent_access_params")
     val transferAgentAccessParams: TransferAgentAccessParams? = null,
+    @SerializedName("subnet_escrow_params")
+    val subnetEscrowParams: SubnetEscrowParams? = null,
 )
 
 data class TokenomicsParams(
@@ -144,6 +146,7 @@ data class EpochParams(
     val pocPruningMax: Long,
     @SerializedName("poc_slot_allocation")
     val pocSlotAllocation: Decimal?,
+    val confirmationPocSafetyWindow: Long,
 )
 
 data class Decimal(
@@ -209,6 +212,8 @@ data class ValidationParams(
     val quickFailureThreshold: Decimal?,
     @SerializedName("binom_test_p0")
     val binomTestP0: Decimal?,
+    @SerializedName("claim_validation_enabled")
+    val claimValidationEnabled: Boolean = false,
 )
 
 data class BandwidthLimitsParams(
@@ -221,7 +226,7 @@ data class BandwidthLimitsParams(
     @SerializedName("invalidations_limit")
     val invalidationsLimit: Long,
     @SerializedName("invalidations_sample_period")
-    val invalidationsSamplePeriod: Long,
+    val invalidationsSamplePeriod: Long = 1,
     @SerializedName("invalidations_limit_curve")
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")
@@ -244,6 +249,21 @@ data class ConfirmationPoCParams(
 data class TransferAgentAccessParams(
     @SerializedName("allowed_transfer_addresses")
     val allowedTransferAddresses: List<String> = emptyList(),
+)
+
+data class SubnetEscrowParams(
+    @SerializedName("min_amount")
+    val minAmount: Long,
+    @SerializedName("max_amount")
+    val maxAmount: Long,
+    @SerializedName("max_escrows_per_epoch")
+    val maxEscrowsPerEpoch: Long,
+    @SerializedName("group_size")
+    val groupSize: Long,
+    @SerializedName("allowed_creator_addresses")
+    val allowedCreatorAddresses: List<String> = emptyList(),
+    @SerializedName("token_price")
+    val tokenPrice: Long,
 )
 
 data class PocParams(

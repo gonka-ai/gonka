@@ -20,7 +20,19 @@ func TestClaimTrainingTaskForAssignment_AllowListEnforced(t *testing.T) {
 
 	// create a task
 	sdkCtx := sdk.UnwrapSDKContext(wctx)
-	require.NoError(t, k.CreateTask(sdkCtx, &types.TrainingTask{Id: 0}))
+	participant := types.Participant{Index: creator, Address: creator}
+	k.SetParticipant(ctx, participant)
+	require.NoError(t, k.CreateTask(sdkCtx, &types.TrainingTask{
+		Id:          0,
+		RequestedBy: creator,
+		Assigner:    creator,
+		Config: &types.TrainingConfig{
+			Datasets: &types.TrainingDatasets{
+				Train: "train_data",
+				Test:  "test_data",
+			},
+		},
+	}))
 	// next id allocated by CreateTask/GetNextTaskID; get top id 1
 
 	// not allowed
@@ -37,6 +49,8 @@ func TestClaimTrainingTaskForAssignment_AllowListEnforced(t *testing.T) {
 	require.NoError(t, k.TrainingStartAllowListSet.Set(wctx, acc))
 
 	// should succeed now
+	// Advance block height to allow claiming (override assignment deadline)
+	wctx = wctx.WithBlockHeight(200)
 	_, err = ms.ClaimTrainingTaskForAssignment(wctx, &types.MsgClaimTrainingTaskForAssignment{
 		Creator: creator,
 		TaskId:  1,
