@@ -78,8 +78,8 @@
         "poc_stage_duration": "30",
         "poc_exchange_duration": "2",
         "poc_validation_delay": "2",
-        "poc_validation_duration": "20",
-        "set_new_validators_delay": "30",
+        "poc_validation_duration": "40",
+        "set_new_validators_delay": "10",
         "inference_validation_cutoff": "20",
         "default_unit_of_compute_price": "100",
           "inference_pruning_max": "0",
@@ -92,6 +92,8 @@
           }
         },
         "poc_params": {
+          "default_difficulty": 5,
+          "validation_sample_size": 20,
           "weight_scale_factor": {
             "value": "25",
             "exponent": -1
