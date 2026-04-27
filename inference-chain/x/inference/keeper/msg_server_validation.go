@@ -62,14 +62,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return &types.MsgValidationResponse{}, nil
 	}
 
-	if !msg.Revalidation {
-		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
-		if err != nil {
-			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
-			return nil, err
-		}
-	}
-
 	if inference.Status == types.InferenceStatus_INVALIDATED {
 		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
@@ -145,6 +137,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	needsRevalidation := false
 
 	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
+	if !msg.Revalidation {
+		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
+		if err != nil {
+			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
+			return nil, err
+		}
+	}
 	if msg.Revalidation {
 		if inference.ProposalDetails == nil {
 			k.LogError("Inference proposal details not set", types.Validation, "inference", inference)

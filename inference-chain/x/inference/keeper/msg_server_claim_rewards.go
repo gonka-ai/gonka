@@ -329,24 +329,8 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 	}
 
 	wasValidated := make(map[string]bool)
-	skippedInvalidated := 0
 	for _, inferenceId := range wasValidatedRaw.ValidatedInferences {
-		// Do not grant validation credit for inferences that are INVALIDATED.
-		// MsgValidation still records the credit (design decision: validations can be
-		// submitted during the whole epoch), but invalidated inferences must not
-		// reduce the missed-validation count during reward claims.
-		inference, inferenceFound := k.GetInference(ctx, inferenceId)
-		if inferenceFound && inference.Status == types.InferenceStatus_INVALIDATED {
-			skippedInvalidated++
-			continue
-		}
 		wasValidated[inferenceId] = true
-	}
-	if skippedInvalidated > 0 {
-		k.LogInfo("Excluded invalidated inferences from validation credit", types.Claims,
-			"skippedInvalidated", skippedInvalidated,
-			"epoch", msg.EpochIndex,
-			"account", msg.Creator)
 	}
 	return wasValidated
 }
@@ -506,12 +490,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			params.ValidationParams, false)
 		k.LogDebug(s, types.Claims, "inference", inference.InferenceId, "seed", msg.Seed, "model", modelId, "validator", msg.Creator)
 		if shouldValidate {
-			// Skip invalidated inferences: validators should not be penalized
-			// for not validating inferences that were already invalidated.
-			inf, infFound := k.GetInference(ctx, inference.InferenceId)
-			if infFound && inf.Status == types.InferenceStatus_INVALIDATED {
-				continue
-			}
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
 		}
 	}
