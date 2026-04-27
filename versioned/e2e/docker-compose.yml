@@ -1,0 +1,38 @@
+services:
+  oracle:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.mockoracle
+    environment:
+      PORT: "8080"
+      BINARY_DIR: /data/binaries
+    volumes:
+      - oracle-data:/data
+
+  versiond:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      VERSIOND_ORACLE_URL: http://oracle:8080/versions
+      VERSIOND_POLL_INTERVAL: "5s"
+      VERSIOND_BIN_DIR: /opt/versiond/bin
+      VERSIOND_DATA_DIR: /opt/versiond/data
+      VERSIOND_BINARY_NAME: testapp
+    depends_on:
+      - oracle
+
+  tests:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.tests
+    environment:
+      ORACLE_URL: http://oracle:8080
+      VERSIOND_URL: http://versiond:8080
+      TESTAPP_PATH: /app/build/testapp
+    depends_on:
+      - oracle
+      - versiond
+
+volumes:
+  oracle-data:

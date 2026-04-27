@@ -9,6 +9,8 @@ import com.google.gson.annotations.SerializedName
 data class PocProofsRequest(
     @SerializedName("poc_stage_start_block_height")
     val pocStageStartBlockHeight: Long,
+    @SerializedName("model_id")
+    val modelId: String,
     @SerializedName("root_hash")
     val rootHash: String,  // base64-encoded 32 bytes
     val count: Long,
@@ -49,6 +51,8 @@ data class PocProofsResponse(
 data class PocArtifactsStateResponse(
     @SerializedName("poc_stage_start_block_height")
     val pocStageStartBlockHeight: Long,
+    @SerializedName("model_id")
+    val modelId: String,
     val count: Long,
     @SerializedName("root_hash")
     val rootHash: String  // base64-encoded 32 bytes, empty if count=0

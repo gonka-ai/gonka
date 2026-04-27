@@ -11,10 +11,12 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
@@ -23,8 +25,16 @@ import (
 
 // setupTestKeeperWithBLS creates a test keeper with BLS integration
 func setupTestKeeperWithBLS(t testing.TB) (keeper.Keeper, sdk.Context) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 	return k, ctx
+}
+
+func allowEmptyBLSGrantQueries(mocks keepertest.InferenceMocks) {
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		Return(&authztypes.QueryGranterGrantsResponse{}, nil).
+		AnyTimes()
 }
 
 // newSecp256k1PubKeyFromHexStr creates a secp256k1.PubKey from a hex string (compressed, 33 bytes).
@@ -113,7 +123,8 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	participantDetails := map[string]string{
 		aliceAccAddrStr:   aliceSecp256k1PubHex,
@@ -159,7 +170,8 @@ func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
@@ -178,7 +190,8 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Alice: No account found (GetAccount returns nil)
 	// Bob: Account found, but no public key
@@ -226,7 +239,8 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// AccountKeeper will provide the source of truth for Alice's PubKey
 	participantDetails := map[string]string{
@@ -274,7 +288,8 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Generate a valid missing address
 	missingAddr := generateValidBech32Address(t, "03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd")
@@ -306,7 +321,8 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
 
 	// Generate a valid problem address
 	problemAddr := generateValidBech32Address(t, "0365cdf48e56aa2a8c2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a")
@@ -429,4 +445,76 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 	// Both epochs should have valid participant data
 	require.Len(t, epochBLSData1.Participants, 2, "Epoch 1 should have 2 participants")
 	require.Len(t, epochBLSData2.Participants, 2, "Epoch 2 should have 2 participants")
+}
+
+func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
+	setupSDKConfig()
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	alicePrivKey := secp256k1.GenPrivKey()
+	aliceAccAddr := sdk.AccAddress(alicePrivKey.PubKey().Address())
+	aliceAccAddrStr := aliceAccAddr.String()
+
+	// Setup account mock
+	participantDetails := map[string]string{
+		aliceAccAddrStr: hex.EncodeToString(alicePrivKey.PubKey().Bytes()),
+	}
+	_ = setupMockAccountExpectations(t, mocks.AccountKeeper, participantDetails)
+
+	// Mock BLS params to limit maximum additional keys
+	blsParams, err := k.BlsKeeper.GetParams(ctx)
+	require.NoError(t, err)
+	blsParams.ITotalSlots = 4096 // 16384 total shares / 4096 slots = 4 keys/slot => 1 primary + 3 additional
+	err = k.BlsKeeper.(blskeeper.Keeper).SetParams(ctx, blsParams)
+	require.NoError(t, err)
+
+	numGrants := 5 // We simulate 5 grants, pruning to 3
+	grants := make([]*authztypes.GrantAuthorization, numGrants)
+	for i := 0; i < numGrants; i++ {
+		warmKey := secp256k1.GenPrivKey()
+		granteeAddr := sdk.AccAddress(warmKey.PubKey().Address())
+		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
+		require.NoError(t, err)
+		grants[i] = &authztypes.GrantAuthorization{
+			Granter: aliceAccAddrStr,
+			Grantee: granteeAddr.String(),
+			Authorization: authAny,
+		}
+		baseAcc := authtypes.NewBaseAccount(granteeAddr, warmKey.PubKey(), 0, 0)
+		mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), granteeAddr).Return(baseAcc).AnyTimes()
+	}
+
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		Return(&authztypes.QueryGranterGrantsResponse{
+			Grants: grants,
+		}, nil).
+		AnyTimes()
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+
+	// Setup participant
+	storedParticipant := types.Participant{
+		Index:           aliceAccAddrStr,
+		Address:         aliceAccAddrStr,
+		Weight:          100,
+		Status:          types.ParticipantStatus_ACTIVE,
+	}
+	k.SetParticipant(ctx, storedParticipant)
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 100},
+	}
+
+	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)
+	epochID := uint64(50)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, 1)
+
+	// Max allowed should be 3
+	require.Len(t, epochBLSData.Participants[0].AllowedSecp256K1PublicKeys, 3)
 }

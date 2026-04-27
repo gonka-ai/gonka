@@ -11,6 +11,7 @@ import (
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	collateralKeeper "github.com/productscience/inference/x/collateral/keeper"
 	collateralTypes "github.com/productscience/inference/x/collateral/types"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -38,23 +39,53 @@ func setupKeeperWithMocksForIntegration(t testing.TB) (keeper.Keeper, types.MsgS
 	return k, keeper.NewMsgServerImpl(k), ctx, &mock
 }
 
+func seedSlashBaseForParticipant(t testing.TB, ctx sdk.Context, k keeper.Keeper, participantAddr string, weight int64, mocks *keepertest.InferenceMocks) math.Int {
+	t.Helper()
+
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found || effectiveEpoch == nil || effectiveEpoch.Index != 1 {
+		err := setEffectiveEpoch(ctx, k, 1, mocks)
+		require.NoError(t, err)
+	}
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 1,
+		ModelId:    "",
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: participantAddr,
+				Weight:        weight,
+			},
+		},
+	})
+
+	participantAcc, err := sdk.AccAddressFromBech32(participantAddr)
+	require.NoError(t, err)
+
+	return k.GetRequiredCollateralForSlash(ctx, participantAcc)
+}
+
 func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeeper.Keeper, types.MsgServer, collateralTypes.MsgServer, *keepertest.InferenceMocks) {
 	// --- Store and Codec Setup ---
 	inferenceStoreKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	collateralStoreKey := storetypes.NewKVStoreKey(collateralTypes.StoreKey)
+	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(inferenceStoreKey, storetypes.StoreTypeIAVL, db)
 	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(collateralStoreKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
@@ -81,19 +112,17 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		cdc,
 		runtime.NewKVStoreService(collateralStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		nil,                // bank keeper
 		bookkepingBankMock, // bookkeeping bank keeper
 	)
 
 	// Create a BLS keeper for testing (similar to testutil/keeper/inference.go)
-	blsStoreKey := storetypes.NewKVStoreKey("bls")
-	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	blsKeeper := blskeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(blsStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 	)
 
 	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
@@ -102,7 +131,7 @@ func setupRealKeepers(t testing.TB) (sdk.Context, keeper.Keeper, collateralKeepe
 		runtime.NewKVStoreService(inferenceStoreKey),
 		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		bookkepingBankMock,
 		bankViewMock,
 		groupMock,
@@ -139,6 +168,7 @@ func TestSlashingForInvalidStatus_Integration(t *testing.T) {
 	params := types.DefaultParams()
 	slashFraction := types.DecimalFromFloat(0.2)
 	params.CollateralParams.SlashFractionInvalid = slashFraction
+	params.CollateralParams.GracePeriodEndEpoch = 0
 	k.SetParams(ctx, params)
 
 	// Setup participant
@@ -150,12 +180,13 @@ func TestSlashingForInvalidStatus_Integration(t *testing.T) {
 		Address: participantAddrStr,
 		Status:  types.ParticipantStatus_INVALID, // The new status
 	}
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 100, mocks)
 
 	// Mock the slash call on the collateral keeper
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, gomock.Any()).
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, expectedRequiredCollateral).
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
@@ -171,6 +202,7 @@ func TestSlashingForDowntime_Integration(t *testing.T) {
 	slashFraction := types.DecimalFromFloat(0.1)     // 10%
 	params.CollateralParams.DowntimeMissedPercentageThreshold = downtimeThreshold
 	params.CollateralParams.SlashFractionDowntime = slashFraction
+	params.CollateralParams.GracePeriodEndEpoch = 0
 	k.SetParams(ctx, params)
 
 	// Setup participant
@@ -185,16 +217,45 @@ func TestSlashingForDowntime_Integration(t *testing.T) {
 			MissedRequests: 6, // 6 out of 11 total = ~54.5% > 50% threshold
 		},
 	}
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 150, mocks)
 
 	// Mock the slash call on the collateral keeper
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonDowntime, gomock.Any()).
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonDowntime, expectedRequiredCollateral).
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
 	k.SlashForDowntime(ctx, participant, params)
+}
+
+func TestSlashingForInvalidStatus_Integration_GracePeriodUsesZeroRequiredCollateral(t *testing.T) {
+	k, _, ctx, mocks := setupKeeperWithMocksForIntegration(t)
+
+	params := types.DefaultParams()
+	params.CollateralParams.SlashFractionInvalid = types.DecimalFromFloat(0.2)
+	params.CollateralParams.GracePeriodEndEpoch = 10
+	k.SetParams(ctx, params)
+
+	participantAddrStr := sample.AccAddress()
+	participantAcc, err := sdk.AccAddressFromBech32(participantAddrStr)
+	require.NoError(t, err)
+
+	participant := &types.Participant{
+		Address: participantAddrStr,
+		Status:  types.ParticipantStatus_INVALID,
+	}
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 100, mocks)
+
+	expectedSlashFraction, err := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
+	require.NoError(t, err)
+	mocks.CollateralKeeper.EXPECT().
+		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, expectedRequiredCollateral).
+		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
+	require.True(t, expectedRequiredCollateral.IsZero())
+
+	k.SlashForInvalidStatus(ctx, participant, params)
 }
 
 func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
@@ -209,6 +270,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	params := types.DefaultParams()
 	slashFraction := types.DecimalFromFloat(0.2)
 	params.CollateralParams.SlashFractionInvalid = slashFraction
+	params.CollateralParams.GracePeriodEndEpoch = 0
 	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(0.05)
 	k.SetParams(ctx, params)
 
@@ -217,6 +279,7 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	participantAcc, err := sdk.AccAddressFromBech32(participantAddrStr)
 	require.NoError(t, err)
 	authority := k.GetAuthority()
+	expectedRequiredCollateral := seedSlashBaseForParticipant(t, ctx, k, participantAddrStr, 100, mocks)
 
 	// --- Stateful Mock Logic ---
 	fakeCollateralAmount := math.NewInt(1000)
@@ -233,7 +296,9 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, gomock.Any()).DoAndReturn(
 		func(ctx sdk.Context, pa sdk.AccAddress, fraction math.LegacyDec, reason string, requiredCollateral math.Int) (sdk.Coin, error) {
-			slashedAmount := fakeCollateralAmount.ToLegacyDec().Mul(fraction).TruncateInt()
+			require.Equal(t, expectedRequiredCollateral, requiredCollateral)
+			base := math.MinInt(requiredCollateral, fakeCollateralAmount)
+			slashedAmount := math.LegacyNewDecFromInt(base).Mul(fraction).TruncateInt()
 			fakeCollateralAmount = fakeCollateralAmount.Sub(slashedAmount)
 			return sdk.NewCoin(types.BaseCoin, slashedAmount), nil
 		}).Times(1)
@@ -292,7 +357,8 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	require.True(t, found)
 
 	// Calculate expected result and assert
-	expectedAmount := math.NewInt(800)
+	expectedSlashedAmount := math.LegacyNewDecFromInt(math.MinInt(expectedRequiredCollateral, math.NewInt(1000))).Mul(expectedSlashFraction).TruncateInt()
+	expectedAmount := math.NewInt(1000).Sub(expectedSlashedAmount)
 	require.Equal(t, expectedAmount, finalCollateral.Amount)
 	// And also check the fake variable directly for good measure
 	require.Equal(t, expectedAmount, fakeCollateralAmount)

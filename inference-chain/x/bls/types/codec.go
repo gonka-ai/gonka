@@ -15,6 +15,7 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgSubmitPartialSignature{},
 		&MsgSubmitDealerPart{},
 		&MsgSubmitVerificationVector{},
+		&MsgRespondDealerComplaints{},
 		&MsgUpdateParams{},
 		&MsgSubmitGroupKeyValidationSignature{},
 	)

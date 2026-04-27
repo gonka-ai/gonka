@@ -26,6 +26,9 @@ enum DKGPhase {
   
   // SIGNED represents the phase where DKG has completed and been validated by previous epoch
   DKG_PHASE_SIGNED = 5;
+
+  // DISPUTING represents the phase where complaints against candidate dealers are resolved
+  DKG_PHASE_DISPUTING = 6;
 }
 
 // BLSParticipantInfo contains information about a participant in the DKG process
@@ -42,18 +45,23 @@ message BLSParticipantInfo {
   
   // secp256k1_public_key is the participant's secp256k1 public key for encryption
   bytes secp256k1_public_key = 3;
-  
+
   // slot_start_index is the first slot index assigned to this participant
   uint32 slot_start_index = 4;
   
   // slot_end_index is the last slot index assigned to this participant (inclusive)
   uint32 slot_end_index = 5;
+
+  // allowed_secp256k1_public_keys are additional allowed secp256k1 public keys for encryption.
+  // This list excludes secp256k1_public_key to avoid duplication.
+  repeated bytes allowed_secp256k1_public_keys = 6;
 }
 
 // EncryptedSharesForParticipant contains encrypted shares for a specific participant
 message EncryptedSharesForParticipant {
-  // encrypted_shares contains shares for participant's slot range in order
-  // Index i = share for slot (participant.slot_start_index + i)
+  // encrypted_shares contains ciphertexts grouped by slot for participant's slot range.
+  // For each slot, ciphertexts for all allowed keys are stored consecutively.
+  // Index = slot_offset * keys_per_slot + key_index.
   repeated bytes encrypted_shares = 1;
 }
 
@@ -77,6 +85,30 @@ message VerificationVectorSubmission {
   // true = dealer's shares verified correctly; false = failed verification or no submission
   // Empty array indicates participant has not submitted verification yet
   repeated bool dealer_validity = 1;
+}
+
+// DealerComplaint tracks a complaint raised by a verifier against a dealer during disputing phase.
+message DealerComplaint {
+  // dealer_index is the accused dealer index in EpochBLSData.participants
+  uint32 dealer_index = 1;
+
+  // complainer_index is the participant index of the complaint author
+  uint32 complainer_index = 2;
+
+  // disputed_slot_index identifies the disputed slot index covered by this complaint
+  uint32 disputed_slot_index = 3;
+
+  // disputed_ciphertext_index identifies the disputed ciphertext offset referenced by this complaint
+  uint32 disputed_ciphertext_index = 4;
+
+  // response_submitted is true once dealer response payload is submitted on chain
+  bool response_submitted = 5;
+
+  // response_share_bytes is dealer-provided response payload for share material
+  bytes response_share_bytes = 6;
+
+  // response_opening_material is dealer-provided response payload for encryption opening material
+  bytes response_opening_material = 7;
 }
 
 // EpochBLSData contains all information about a DKG round for a specific epoch
@@ -129,6 +161,16 @@ message EpochBLSData {
   // slot_public_keys contains precomputed per-slot public keys (G2 points).
   // Index i corresponds to slot i. Each entry is a 96-byte compressed G2.
   repeated bytes slot_public_keys = 13;
+
+  // candidate_valid_dealers stores dealer validity after VERIFYING votes and before DISPUTING resolution.
+  // Index i corresponds to whether dealer i (participants[i]) is a candidate valid dealer.
+  repeated bool candidate_valid_dealers = 14;
+
+  // disputing_phase_deadline_block is the block height deadline for the disputing phase.
+  int64 disputing_phase_deadline_block = 15;
+
+  // dealer_complaints stores complaints submitted during DISPUTING phase.
+  repeated DealerComplaint dealer_complaints = 16 [(gogoproto.nullable) = false];
 }
 
  

@@ -163,33 +163,6 @@ func TestPermission_CurrentActiveParticipant(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrParticipantNotFound)
 }
 
-func TestPermission_TrainingAllowLists(t *testing.T) {
-	k, ms, ctx, _ := setupPermissionsHarness(t)
-
-	signer := testutil.Executor
-	signerAddr := sdk.MustAccAddressFromBech32(signer)
-
-	// Exec permission
-	execMsg := &types.MsgTrainingHeartbeat{Creator: signer}
-	// failure when not allowed
-	err := keeper.CheckPermission(ms, ctx, execMsg, keeper.TrainingExecPermission)
-	require.Error(t, err)
-	// allow and succeed
-	require.NoError(t, k.TrainingExecAllowListSet.Set(ctx, signerAddr))
-	err = keeper.CheckPermission(ms, ctx, execMsg, keeper.TrainingExecPermission)
-	require.NoError(t, err)
-
-	// Start permission
-	startMsg := &types.MsgCreateDummyTrainingTask{Creator: signer}
-	// failure when not allowed
-	err = keeper.CheckPermission(ms, ctx, startMsg, keeper.TrainingStartPermission)
-	require.Error(t, err)
-	// allow and succeed
-	require.NoError(t, k.TrainingStartAllowListSet.Set(ctx, signerAddr))
-	err = keeper.CheckPermission(ms, ctx, startMsg, keeper.TrainingStartPermission)
-	require.NoError(t, err)
-}
-
 func TestPermission_NoPermissionAlwaysPasses(t *testing.T) {
 	_, ms, ctx, _ := setupPermissionsHarness(t)
 	msg := &types.MsgInvalidateInference{Creator: testutil.Requester, InferenceId: "id"}

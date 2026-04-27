@@ -66,10 +66,12 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			// Emit a searchable event and continue using current epoch data as fallback
 			ms.Keeper.LogWarn("Previous epoch not found - using current epoch for validation", "previous_epoch_id", previousEpochId, "new_epoch_id", msg.NewEpochId)
-			ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
+			if err := ctx.EventManager().EmitTypedEvent(&types.EventGroupKeyValidationFailed{
 				NewEpochId: msg.NewEpochId,
 				Reason:     fmt.Sprintf("previous_epoch_missing_fallback:%d", previousEpochId),
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("failed to emit group key validation failed event for new epoch %d: %w", msg.NewEpochId, err)
+			}
 
 			previousEpochBLSData = newEpochBLSData
 		} else {
@@ -103,18 +105,13 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Check or create GroupKeyValidationState
-	var validationState *types.GroupKeyValidationState
-	validationStateKey := fmt.Sprintf("group_validation_%d", msg.NewEpochId)
-
-	// Try to get existing validation state
-	store := ms.storeService.OpenKVStore(ctx)
-	bz, err := store.Get([]byte(validationStateKey))
+	validationState, found, err := ms.GetGroupKeyValidationState(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get validation state: %w", err)
 	}
 
-	if bz == nil {
+	if !found {
 		// First signature for this epoch - create validation state
 		validationState = &types.GroupKeyValidationState{
 			NewEpochId:      msg.NewEpochId,
@@ -131,14 +128,6 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 			return nil, fmt.Errorf("failed to compute message hash: %w", err)
 		}
 		validationState.MessageHash = messageHash
-	} else {
-		// Existing validation state
-		validationState = &types.GroupKeyValidationState{}
-		err = ms.cdc.Unmarshal(bz, validationState)
-		if err != nil {
-			ms.Keeper.LogError("Failed to unmarshal validation state", "error", err.Error())
-			return nil, fmt.Errorf("failed to unmarshal validation state: %w", err)
-		}
 	}
 
 	// Reject duplicate slots (already covered)
@@ -188,12 +177,26 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		SlotIndices:        filteredSlots,
 		Signature:          filteredSig,
 	}
-	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
+	// Persist the partial signature to its own sub-key. Cost is bounded by
+	// THIS participant's own slot coverage, independent of how many other
+	// signers already landed — which is the whole point of the split (see
+	// GroupValidationPartialSigEpochPrefix doc for the gas-scaling
+	// rationale). Resubmissions by the same participant merge into the
+	// existing sub-key entry.
+	if err := ms.SetGroupValidationPartialSignature(ctx, msg.NewEpochId, uint32(participantIndex), partialSignature); err != nil {
+		ms.Keeper.LogError("Failed to save partial signature", "new_epoch_id", msg.NewEpochId, "participant_index", participantIndex, "error", err.Error())
+		return nil, fmt.Errorf("failed to save partial signature: %w", err)
+	}
 
-	// Update slots covered
+	// Keep the in-memory view in sync so the threshold check and the
+	// aggregation path below see the newly-added signature.
+	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 	validationState.SlotsCovered += uint32(len(filteredSlots))
 
-	// Use the previous epoch DKG threshold t+1 for readiness.
+	// Check if we have sufficient participation (previous epoch DKG threshold t+1).
+	// For a polynomial of degree t (TSlotsDegree), we need at least t + 1 valid signature shares
+	// to successfully reconstruct the group signature using Lagrange interpolation.
+	// Note that TSlotsDegree is configurable per epoch, making this threshold dynamic.
 	requiredSlots := previousEpochBLSData.TSlotsDegree + 1
 	ms.Keeper.LogInfo("Checking for signature readiness", "required_slots", requiredSlots, "slots_covered", validationState.SlotsCovered)
 	if validationState.SlotsCovered >= requiredSlots {
@@ -218,10 +221,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		validationState.FinalSignature = finalSignature
 		validationState.Status = types.GroupKeyValidationStatus_GROUP_KEY_VALIDATION_STATUS_VALIDATED
 
-		// Store the final signature in the new epoch's EpochBLSData and transition to SIGNED phase
+		// Only ValidationSignature and DkgPhase are changing; sub-keys
+		// are already persisted from the DKG phase.
 		newEpochBLSData.ValidationSignature = validationState.FinalSignature
 		newEpochBLSData.DkgPhase = types.DKGPhase_DKG_PHASE_SIGNED
-		if err := ms.SetEpochBLSData(ctx, newEpochBLSData); err != nil {
+		if err := ms.SetEpochBLSDataBaseOnly(ctx, newEpochBLSData); err != nil {
 			ms.Keeper.LogError("Failed to save updated epoch BLS data", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 			return nil, fmt.Errorf("failed to save updated epoch %d BLS data: %w", msg.NewEpochId, err)
 		}
@@ -237,13 +241,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		}
 	}
 
-	// Store updated validation state
-	bz, err = ms.cdc.Marshal(validationState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal validation state: %w", err)
-	}
-	err = store.Set([]byte(validationStateKey), bz)
-	if err != nil {
+	// Null PartialSignatures: the new entry is already in its sub-key
+	// (above), and SetGroupValidationPartialSignature's append-merge
+	// would otherwise double every rehydrated entry on every submission.
+	validationState.PartialSignatures = nil
+	if err := ms.SetGroupKeyValidationState(ctx, validationState); err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)
 	}
 

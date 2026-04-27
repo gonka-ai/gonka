@@ -67,9 +67,6 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
-	// Enforce model if configured
-	EnforceModel(&c.Node)
-
 	// Validate node configuration
 	if err := b.validateInferenceNode(c.Node, ""); err != nil {
 		logging.Error("RegisterNode. Node validation failed", types.Nodes, "node_id", c.Node.Id, "error", err)
@@ -204,8 +201,6 @@ func (c UpdateNode) Execute(b *Broker) {
 		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("node not found: %s", c.Node.Id)}
 		return
 	}
-
-	EnforceModel(&c.Node)
 
 	// Validate node configuration (exclude current node from duplicate checks)
 	if err := b.validateInferenceNode(c.Node, c.Node.Id); err != nil {

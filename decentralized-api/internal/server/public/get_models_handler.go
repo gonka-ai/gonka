@@ -2,6 +2,7 @@ package public
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
@@ -17,8 +18,9 @@ func (s *Server) getModels(ctx echo.Context) error {
 		return err
 	}
 
-	var activeModels []types.Model
+	models := make([]ModelDescriptor, 0)
 	parentEpochData := currentEpoch.GetEpochGroupData()
+	createdAt := time.Now().Unix()
 
 	// Iterate over the subgroup models to get the snapshot for each one.
 	for _, modelId := range parentEpochData.SubGroupModels {
@@ -33,12 +35,24 @@ func (s *Server) getModels(ctx echo.Context) error {
 		}
 
 		if modelEpochData.EpochGroupData.ModelSnapshot != nil {
-			activeModels = append(activeModels, *modelEpochData.EpochGroupData.ModelSnapshot)
+			m := modelEpochData.EpochGroupData.ModelSnapshot
+			models = append(models, ModelDescriptor{
+				Object:           "model",
+				ID:               m.Id,
+				HuggingFaceID:    m.HfRepo,
+				Name:             m.Id,
+				Created:          createdAt,
+				InputModalities:  []string{"text"},
+				OutputModalities: []string{"text"},
+				ContextLength:    m.ContextWindow,
+				MaxOutputLength:  m.ContextWindow,
+			})
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, &ModelsResponse{
-		Models: activeModels,
+	return ctx.JSON(http.StatusOK, ModelsListResponse{
+		Object: "list",
+		Data:   models,
 	})
 }
 

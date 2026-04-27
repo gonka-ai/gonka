@@ -1,7 +1,11 @@
 package public
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	comettypes "github.com/cometbft/cometbft/types"
@@ -10,6 +14,8 @@ import (
 
 type ChatRequest struct {
 	Body              []byte
+	ForwardPath       string
+	ForwardBody       []byte
 	Request           *http.Request
 	OpenAiRequest     OpenAiRequest
 	AuthKey           string // signature signing inference request
@@ -20,6 +26,7 @@ type ChatRequest struct {
 	Timestamp         int64  // timestamp of the request
 	TransferSignature string // signature of the transfer address
 	PromptHash        string
+	SignBodyHash      string
 }
 
 type OpenAiRequest struct {
@@ -31,7 +38,137 @@ type OpenAiRequest struct {
 }
 
 type Message struct {
-	Content string `json:"content"` // The content of the message
+	Role    string         `json:"role"`
+	Content MessageContent `json:"content"`
+}
+
+func (m *Message) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string           `json:"role"`
+		Content *json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if strings.TrimSpace(raw.Role) == "" {
+		return fmt.Errorf("message role must be a non-empty string")
+	}
+	m.Role = raw.Role
+	if raw.Content == nil {
+		return nil
+	}
+
+	if err := json.Unmarshal(*raw.Content, &m.Content); err != nil {
+		return err
+	}
+	return nil
+}
+
+type MessageContent struct {
+	Text  *string
+	Parts []ContentPart
+}
+
+type ContentPart struct {
+	raw  json.RawMessage
+	Type string
+	Text string
+}
+
+func (p *ContentPart) UnmarshalJSON(data []byte) error {
+	p.raw = append(p.raw[:0], data...)
+	var fields struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	p.Type = fields.Type
+	p.Text = fields.Text
+	return nil
+}
+
+func (p ContentPart) MarshalJSON() ([]byte, error) {
+	if p.raw != nil {
+		// Preserve original part payload so unknown OpenAI content-part fields
+		// (e.g. image_url metadata and future part types) survive round-trips.
+		return p.raw, nil
+	}
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}{Type: p.Type, Text: p.Text})
+}
+
+func (c *MessageContent) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		c.Text = nil
+		c.Parts = nil
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		c.Text = &text
+		c.Parts = nil
+		return nil
+	}
+
+	var parts []ContentPart
+	if err := json.Unmarshal(data, &parts); err == nil {
+		c.Text = nil
+		c.Parts = parts
+		return nil
+	}
+
+	return fmt.Errorf("message content must be a string or an array of typed content parts")
+}
+
+func (c MessageContent) MarshalJSON() ([]byte, error) {
+	if c.Text != nil {
+		return json.Marshal(*c.Text)
+	}
+	if c.Parts != nil {
+		return json.Marshal(c.Parts)
+	}
+	return []byte("null"), nil
+}
+
+func (c MessageContent) FlattenedText() (string, int) {
+	if c.Text != nil {
+		return *c.Text, 0
+	}
+
+	var b strings.Builder
+	ignoredParts := 0
+	for _, part := range c.Parts {
+		if part.Type == "text" {
+			b.WriteString(part.Text)
+			continue
+		}
+		ignoredParts++
+	}
+
+	return b.String(), ignoredParts
+}
+
+func FlattenMessagesText(messages []Message) (string, int) {
+	var b strings.Builder
+	ignoredParts := 0
+	for _, message := range messages {
+		text, ignored := message.Content.FlattenedText()
+		b.WriteString(text)
+		b.WriteByte('\n')
+		ignoredParts += ignored
+	}
+	return b.String(), ignoredParts
+}
+
+// ContentText keeps backward-compatible text extraction behavior.
+func (m Message) ContentText() string {
+	text, _ := m.Content.FlattenedText()
+	return text
 }
 
 type ExecutorDestination struct {
@@ -75,31 +212,6 @@ type ParticipantsDto struct {
 	BlockHeight  int64            `json:"block_height"`
 }
 
-type StartTrainingDto struct {
-	HardwareResources []HardwareResourcesDto `json:"hardware_resources"`
-	Config            TrainingConfigDto      `json:"config"`
-}
-
-type HardwareResourcesDto struct {
-	Type  string `json:"type"`
-	Count uint32 `json:"count"`
-}
-
-type TrainingConfigDto struct {
-	Datasets              TrainingDatasetsDto `json:"datasets"`
-	NumUocEstimationSteps uint32              `json:"num_uoc_estimation_steps"`
-}
-
-type TrainingDatasetsDto struct {
-	Train string `json:"train"`
-	Test  string `json:"test"`
-}
-
-type LockTrainingNodesDto struct {
-	TrainingTaskId uint64   `json:"training_task_id"`
-	NodeIds        []string `json:"node_ids"`
-}
-
 type ProofVerificationRequest struct {
 	Value    string               `json:"value"`
 	AppHash  string               `json:"app_hash"`
@@ -141,6 +253,12 @@ type ModelPriceDto struct {
 	// Model metrics information
 	Utilization *float64 `json:"utilization,omitempty"` // Current utilization if available
 	Capacity    *int64   `json:"capacity,omitempty"`    // Model capacity if available
+}
+
+type AccountDto struct {
+	Pubkey  string `json:"pubkey"`
+	Balance int64  `json:"balance"`
+	Denom   string `json:"denom"`
 }
 
 // FinalizedBlock represents a finalized block with optional receipts

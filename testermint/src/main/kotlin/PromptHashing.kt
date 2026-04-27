@@ -12,6 +12,7 @@ import java.security.MessageDigest
 import java.util.TreeMap
 
 private const val DEFAULT_MAX_TOKENS = 5000
+private const val DEFAULT_LOGPROBS_MODE = "processed_logprobs"
 
 data class PromptPayloadHash(
     val canonicalPayload: String,
@@ -37,7 +38,11 @@ object PromptHashing {
 
     fun canonicalSha256(json: String): String = sha256Hex(canonicalizeJson(json))
 
-    fun modifyRequestBody(requestJson: String, defaultSeed: Int): String {
+    fun modifyRequestBody(
+        requestJson: String,
+        defaultSeed: Int,
+        logprobsMode: String = DEFAULT_LOGPROBS_MODE
+    ): String {
         @Suppress("UNCHECKED_CAST")
         val requestMap = gson.fromJson(requestJson, MutableMap::class.java) as MutableMap<String, Any?>
 
@@ -76,15 +81,28 @@ object PromptHashing {
             }
         }
 
+        if (logprobsMode.isNotEmpty()) {
+            requestMap.remove("logprobs_mode")
+            requestMap["logprobs_mode"] = logprobsMode
+        }
+
         return gson.toJson(requestMap)
     }
 
-    fun computeModifiedPromptHash(requestJson: String, defaultSeed: Long = 0): String {
-        return computeModifiedPromptPayloadAndHash(requestJson, defaultSeed).promptHash
+    fun computeModifiedPromptHash(
+        requestJson: String,
+        defaultSeed: Long = 0,
+        logprobsMode: String = DEFAULT_LOGPROBS_MODE
+    ): String {
+        return computeModifiedPromptPayloadAndHash(requestJson, defaultSeed, logprobsMode).promptHash
     }
 
-    fun computeModifiedPromptPayloadAndHash(requestJson: String, defaultSeed: Long = 0): PromptPayloadHash {
-        val modifiedJson = modifyRequestBody(requestJson, defaultSeed.toInt())
+    fun computeModifiedPromptPayloadAndHash(
+        requestJson: String,
+        defaultSeed: Long = 0,
+        logprobsMode: String = DEFAULT_LOGPROBS_MODE
+    ): PromptPayloadHash {
+        val modifiedJson = modifyRequestBody(requestJson, defaultSeed.toInt(), logprobsMode)
         val canonicalPayload = canonicalizeJson(modifiedJson)
         return PromptPayloadHash(
             canonicalPayload = canonicalPayload,

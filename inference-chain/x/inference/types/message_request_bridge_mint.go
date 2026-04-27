@@ -11,12 +11,13 @@ import (
 
 var _ sdk.Msg = &MsgRequestBridgeMint{}
 
-func NewMsgRequestBridgeMint(creator, amount, destinationAddress, chainId string) *MsgRequestBridgeMint {
+func NewMsgRequestBridgeMint(creator, amount, destinationAddress, chainId, destinationBridgeAddress string) *MsgRequestBridgeMint {
 	return &MsgRequestBridgeMint{
-		Creator:            creator,
-		Amount:             amount,
-		DestinationAddress: destinationAddress,
-		ChainId:            chainId,
+		Creator:                  creator,
+		Amount:                   amount,
+		DestinationAddress:       destinationAddress,
+		ChainId:                  chainId,
+		DestinationBridgeAddress: destinationBridgeAddress,
 	}
 }
 
@@ -50,6 +51,16 @@ func (msg *MsgRequestBridgeMint) ValidateBasic() error {
 	// Basic validation for Ethereum address format (0x + 40 hex characters)
 	if !isValidEthereumAddress(msg.DestinationAddress) {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination address must be a valid Ethereum address")
+	}
+
+	// Validate destination bridge address is not empty
+	if len(msg.DestinationBridgeAddress) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination bridge address cannot be empty")
+	}
+
+	// Validate bridge address format format
+	if !isValidEthereumAddress(msg.DestinationBridgeAddress) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination bridge address must be a valid Ethereum address")
 	}
 
 	// Validate chain ID is not empty and is supported

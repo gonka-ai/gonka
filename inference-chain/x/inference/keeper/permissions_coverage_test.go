@@ -182,10 +182,6 @@ func permissionIdentToValue(name string) string {
 	switch name {
 	case "GovernancePermission":
 		return string(keeper.GovernancePermission)
-	case "TrainingExecPermission":
-		return string(keeper.TrainingExecPermission)
-	case "TrainingStartPermission":
-		return string(keeper.TrainingStartPermission)
 	case "ParticipantPermission":
 		return string(keeper.ParticipantPermission)
 	case "ActiveParticipantPermission":

@@ -25,7 +25,8 @@ func (k Keeper) PocV2ValidationsForStage(goCtx context.Context, req *types.Query
 	}
 
 	pocValidationsWithParticipants := make([]types.PoCValidationsWithParticipantsV2, 0, len(pocValidations))
-	for participantIndex, validations := range pocValidations {
+	for key, validations := range pocValidations {
+		participantIndex := key.ParticipantAddress
 		addr, err := sdk.AccAddressFromBech32(participantIndex)
 		if err != nil {
 			k.LogError("PocV2ValidationsForStage. Invalid address", types.PoC, "address", participantIndex, "err", err)
@@ -49,6 +50,7 @@ func (k Keeper) PocV2ValidationsForStage(goCtx context.Context, req *types.Query
 			PocValidation: validations,
 			PubKey:        utils.PubKeyToString(pubKey),
 			HexPubKey:     utils.PubKeyToHexString(pubKey),
+			ModelId:       key.ModelID,
 		})
 	}
 

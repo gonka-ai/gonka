@@ -53,6 +53,26 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    fun `valid inference with multipart content`() {
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        genesis.waitForNextInferenceWindow()
+
+        val timestamp = Instant.now().toEpochNanos()
+        val genesisAddress = genesis.node.getColdAddress()
+        val signature = genesis.node.signRequest(
+            inferenceRequestMultipart,
+            accountAddress = null,
+            timestamp = timestamp,
+            endpointAccount = genesisAddress
+        )
+
+        val valid = genesis.api.makeInferenceRequest(inferenceRequestMultipart, genesisAddress, signature, timestamp)
+        assertThat(valid.id).isEqualTo(signature)
+        assertThat(valid.model).isEqualTo(defaultModel)
+        assertThat(valid.choices).hasSize(1)
+    }
+
+    @Test
     fun `wrong TA address`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()

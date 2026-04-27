@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
@@ -12,6 +13,7 @@ import java.io.File
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 val nameExtractor = "(.+)-node".toRegex()
 
@@ -64,6 +66,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val nodes: List<Container> =
         containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
+    val proxies = containers.filter { it.names.any { name -> name.endsWith("-proxy") } }
     val mocks = containers.filter { it.image == config.mockImageName }
     var foundPairs = 0
     if (nodes.size != apis.size) {
@@ -89,28 +92,34 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } } ?: throw InvalidClusterException(
             "Unable to find API container for $name"
         )
+        val proxyContainer: Container = proxies.find { it.names.any { it == "$name-proxy" } }
+            ?: return@mapNotNull null // Pair not fully up yet, skip
         // Find primary mock server
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-mock-server" } }
-        
+
         // Find all mock servers for this participant (including numbered ones like mock-server-2, mock-server-3)
         val allMockContainers: List<Container> = mocks.filter { container ->
             container.names.any { containerName ->
-                containerName == "$name-mock-server" || 
+                containerName == "$name-mock-server" ||
                 containerName.matches(Regex("$name-mock-server-\\d+"))
             }
         }
-        
+
         val configWithName = config.copy(pairName = name)
         val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
         val dapiLogs = attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
 
         val portMap = apiContainer.ports.associateBy { it.privatePort }
-        Logger.info("Container ports: $portMap")
+        val proxyPortMap = proxyContainer.ports.associateBy { it.privatePort }
+        Logger.info("API container ports: $portMap")
+        Logger.info("Proxy container ports: $proxyPortMap")
+
         val apiUrls = mapOf(
-            SERVER_TYPE_PUBLIC to getUrlForPrivatePort(portMap, 9000),
+            SERVER_TYPE_PUBLIC to getUrlForPrivatePort(proxyPortMap, 80),
             SERVER_TYPE_ML to getUrlForPrivatePort(portMap, 9100),
             SERVER_TYPE_ADMIN to getUrlForPrivatePort(portMap, 9200)
         )
+        val nodeManagerGrpcHostPort = portMap[9400]?.publicPort
 
         Logger.info("Creating local inference pair for $name")
         Logger.info("API URLs for ${apiContainer.names.first()}:")
@@ -121,7 +130,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         allMockContainers.forEach { mockContainer ->
             Logger.info("  Mock: ${mockContainer.names.first()} on port ${mockContainer.getMappedPort(8080)}")
         }
-        
+
         val executor = DockerExecutor(
             chainContainer.id,
             configWithName
@@ -141,6 +150,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             },
             name = name,
             config = configWithName,
+            nodeManagerGrpcHostPort = nodeManagerGrpcHostPort,
         )
     }
 }
@@ -195,6 +205,13 @@ private fun DockerClient.executeCommand(
 
 private val attachedContainers = ConcurrentHashMap<String, LogOutput>()
 
+data class VersiondInstallMetadata(
+    @SerializedName("archive_sha256")
+    val archiveSha256: String,
+    @SerializedName("binary_sha256")
+    val binarySha256: String,
+)
+
 fun attachDockerLogs(
     dockerClient: DockerClient,
     name: String,
@@ -221,6 +238,7 @@ data class LocalInferencePair(
     val mock: IInferenceMock?, // Primary mock for backward compatibility
     val name: String,
     override val config: ApplicationConfig,
+    val nodeManagerGrpcHostPort: Int? = null,
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
@@ -254,6 +272,75 @@ data class LocalInferencePair(
         DockerClientBuilder.getInstance().build().use { dockerClient ->
             dockerClient.stopContainerCmd(apiContainer.id).exec()
         }
+    }
+
+    private fun siblingContainerId(serviceName: String): String {
+        val cleanName = name.trimStart('/')
+        val expectedNames = setOf("$cleanName-$serviceName", "/$cleanName-$serviceName")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            return dockerClient.listContainersCmd()
+                .withShowAll(true)
+                .exec()
+                .find { container -> container.names.any { it in expectedNames } }
+                ?.id
+                ?: error("Container not found for $cleanName service=$serviceName")
+        }
+    }
+
+    fun execInVersiond(args: List<String>, stdin: String? = null): List<String> = wrapLog("execInVersiond", false) {
+        DockerExecutor(siblingContainerId("versiond"), config).exec(args, stdin)
+    }
+
+    fun curlFromApiNetwork(url: String): String = wrapLog("curlFromApiNetwork", false) {
+        api.executor.exec(listOf("sh", "-c", "curl -sf '$url'"), null).joinToString("").trim()
+    }
+
+    fun versiondBinaryPath(versionName: String, binaryName: String = "devshardd"): String =
+        "/opt/versiond/bin/$versionName/$binaryName"
+
+    fun versiondInstallMetadataPath(versionName: String): String =
+        "/opt/versiond/bin/$versionName/install.json"
+
+    fun versiondBinaryExists(versionName: String, binaryName: String = "devshardd"): Boolean =
+        try {
+            execInVersiond(
+                listOf("sh", "-c", "test -x '${versiondBinaryPath(versionName, binaryName)}' && echo OK"),
+                null,
+            ).any { it.contains("OK") }
+        } catch (_: Exception) {
+            false
+        }
+
+    fun readVersiondInstallMetadata(versionName: String): VersiondInstallMetadata? =
+        try {
+            val installPath = versiondInstallMetadataPath(versionName)
+            val json = execInVersiond(
+                listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
+                null,
+            ).joinToString("").trim()
+            json.takeIf { it.isNotBlank() }?.let {
+                cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+    fun readVersiondLogs(tail: Int = 200): String = wrapLog("readVersiondLogs", false) {
+        val output = ExecCaptureOutput()
+        val containerId = siblingContainerId("versiond")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            val command = dockerClient.logContainerCmd(containerId)
+                .withStdOut(true)
+                .withStdErr(true)
+                .withTimestamps(false)
+            if (tail > 0) {
+                command.withTail(tail)
+            }
+            val callback = command.exec(output)
+            callback.awaitCompletion(10, TimeUnit.SECONDS)
+            callback.close()
+        }
+        output.output.joinToString("")
     }
 
     fun setPocWeight(weight: Long, node: InferenceNode? = null) {
@@ -303,9 +390,9 @@ data class LocalInferencePair(
         )
     }
 
-    fun createSubnetEscrow(amount: Long): TxResponse {
+    fun createDevshardEscrow(amount: Long, modelId: String): TxResponse {
         return this.submitTransaction(
-            listOf("inference", "create-subnet-escrow", amount.toString())
+            listOf("inference", "create-devshard-escrow", amount.toString(), modelId)
         )
     }
 
@@ -569,6 +656,15 @@ data class LocalInferencePair(
         }
     }
 
+    fun submitTransactionWithFees(args: List<String>, fees: String, waitForProcessed: Boolean = true): TxResponse {
+        val submittedTransaction = this.node.sendTransactionWithFees(args, fees)
+        return if (waitForProcessed && submittedTransaction.code == 0) {
+            this.node.waitForTxProcessed(submittedTransaction.txhash)
+        } else {
+            submittedTransaction
+        }
+    }
+
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
         val sourceAccount = this.node.getKeys()[0].address
         val destAccount = destinationNode.getKeys()[0].address
@@ -587,9 +683,9 @@ data class LocalInferencePair(
     fun submitGovernanceProposal(proposal: GovernanceProposal): TxResponse =
         wrapLog("submitGovProposal", infoLevel = false) {
             val govAccount = this.node.getModuleAccount("gov")
-            val govValue = govAccount.account.value as? AccountValue 
+            val govValue = govAccount.account.value as? AccountValue
                 ?: throw IllegalStateException("Gov module account value is not AccountValue")
-            
+
             val finalProposal = proposal.copy(
                 messages = proposal.messages.map {
                     it.withAuthority(govValue.address)
@@ -728,20 +824,30 @@ data class LocalInferencePair(
         }
     }
 
-    data class SubnetProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
+    data class DevshardProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
 
-    fun startSubnetProxy(escrowId: Long, keyName: String? = null, port: Int = 18080 + escrowId.toInt()): SubnetProxyHandle =
-        wrapLog("startSubnetProxy", true) {
+    fun startDevshardProxy(
+        escrowId: Long,
+        keyName: String? = null,
+        port: Int = 18080 + escrowId.toInt(),
+        routePrefix: String? = null,
+    ): DevshardProxyHandle =
+        wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
-            val stderrFile = "/tmp/subnetctl-proxy-${escrowId}.log"
+            val stderrFile = "/tmp/devshardctl-proxy-${escrowId}.log"
+            // Tests pin the route prefix explicitly so they are not coupled to
+            // devshardctl's release-default routing choice.
+            val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
+            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
             val startCommand = listOf(
                 "sh", "-c",
-                "SUBNET_PRIVATE_KEY='$privateKey'" +
-                    " SUBNET_ESCROW_ID=$escrowId" +
-                    " SUBNET_CHAIN_REST=http://\$NODE_HOST:1317" +
-                    " SUBNET_PORT=$port" +
-                    " SUBNET_STORAGE_PATH=/tmp/subnetctl-proxy-${escrowId}.db" +
-                    " nohup subnetctl >$stderrFile 2>&1 &" +
+                "DEVSHARD_PRIVATE_KEY='$privateKey'" +
+                    " DEVSHARD_ESCROW_ID=$escrowId" +
+                    " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
+                    " DEVSHARD_PORT=$port" +
+                    " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
+                    routePrefixEnv +
+                    " nohup devshardctl >$stderrFile 2>&1 &" +
                     " echo \$!"
             )
             api.executor.exec(startCommand, null)
@@ -762,27 +868,53 @@ data class LocalInferencePair(
                 val logs = try {
                     api.executor.exec(listOf("cat", stderrFile), null).joinToString("")
                 } catch (_: Exception) { "no logs" }
-                error("subnetctl did not start within 15s. Logs:\n$logs")
+                error("devshardctl did not start within 15s. Logs:\n$logs")
             }
-            SubnetProxyHandle(escrowId, port, proxyUrl)
+            DevshardProxyHandle(escrowId, port, proxyUrl)
         }
 
-    fun stopSubnetProxy(escrowId: Long) {
+    fun stopDevshardProxy(escrowId: Long) {
         try {
-            api.executor.exec(listOf("sh", "-c", "pkill -f 'SUBNET_ESCROW_ID=$escrowId.*subnetctl' || true"), null)
+            api.executor.exec(listOf("sh", "-c", "pkill -f 'DEVSHARD_ESCROW_ID=$escrowId.*devshardctl' || true"), null)
         } catch (_: Exception) { /* ignore */ }
     }
 
-    fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
-        val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
+    fun getDevshardInferenceState(proxyUrl: String, inferenceId: Long): String {
         val result = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf -X POST $proxyUrl/v1/chat/completions -H 'Content-Type: application/json' -d '${body.replace("'", "'\\''")}'"
+            "curl -sf $proxyUrl/v1/inference -H 'X-Inference-Id: $inferenceId'"
         ), null)
         return result.joinToString("")
     }
 
-    fun finalizeSubnetProxy(proxyUrl: String): SubnetctlResult {
+    fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
+        val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
+        val maxTimeSeconds = if (stream) 55 else 30
+        val result = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl --silent --show-error --fail --connect-timeout 5 --max-time $maxTimeSeconds " +
+                "-X POST $proxyUrl/v1/chat/completions " +
+                "-H 'Content-Type: application/json' " +
+                "-d '${body.replace("'", "'\\''")}'"
+        ), null)
+        return result.joinToString("")
+    }
+
+    fun getDevshardProxyStatus(proxyUrl: String): DevshardProxyStatus {
+        val raw = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl --silent --show-error --fail $proxyUrl/v1/status"
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("status returned no JSON object. raw:\n$raw")
+        }
+        val json = raw.substring(start, end + 1)
+        return Gson().fromJson(json, DevshardProxyStatus::class.java)
+    }
+
+    fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
             "curl -sf -X POST $proxyUrl/v1/finalize"
@@ -793,29 +925,29 @@ data class LocalInferencePair(
             error("finalize returned no JSON object. raw:\n$raw")
         }
         val json = raw.substring(start, end + 1)
-        val parsed = Gson().fromJson(json, SubnetSettlementData::class.java)
-        return SubnetctlResult(parsed = parsed, rawJson = json, stderr = "")
+        val parsed = Gson().fromJson(json, DevshardSettlementData::class.java)
+        return DevshardctlResult(parsed = parsed, rawJson = json, stderr = "")
     }
 
-    data class SubnetctlResult(val parsed: SubnetSettlementData, val rawJson: String, val stderr: String)
+    data class DevshardctlResult(val parsed: DevshardSettlementData, val rawJson: String, val stderr: String)
 
-    fun settleSubnetEscrow(settlementJson: String, from: String? = null): TxResponse =
-        wrapLog("settleSubnetEscrow", true) {
+    fun settleDevshardEscrow(settlementJson: String, from: String? = null): TxResponse =
+        wrapLog("settleDevshardEscrow", true) {
             node.writeFileToContainer(settlementJson, "settlement.json")
             if (from != null) {
                 val txResp = node.sendTransactionDirectly(
-                    listOf("inference", "settle-subnet-escrow", "settlement.json"),
+                    listOf("inference", "settle-devshard-escrow", "settlement.json"),
                     from
                 )
                 node.waitForTxProcessed(txResp.txhash)
             } else {
-                submitTransaction(listOf("inference", "settle-subnet-escrow", "settlement.json"))
+                submitTransaction(listOf("inference", "settle-devshard-escrow", "settlement.json"))
             }
         }
 
-    fun createSubnetEscrow(amount: Long, from: String): TxResponse {
+    fun createDevshardEscrow(amount: Long, from: String, modelId: String = defaultModel): TxResponse {
         val txResp = node.sendTransactionDirectly(
-            listOf("inference", "create-subnet-escrow", amount.toString()),
+            listOf("inference", "create-devshard-escrow", amount.toString(), modelId),
             from
         )
         return node.waitForTxProcessed(txResp.txhash)
@@ -852,6 +984,10 @@ data class ApplicationConfig(
     val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
     val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
     val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
+    // Extra env vars passed to docker compose for every pair. Used by tests
+    // that need to enable optional features (e.g. running devshardd under
+    // versiond) without polluting the JVM-wide environment.
+    val additionalEnvVars: Map<String, String> = emptyMap(),
 ) {
     val mountDir: String
         get() = "./$chainId/$pairName:/root/$stateDirName"

@@ -108,7 +108,7 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 	}
 
 	// Get granter's own public key
-	participant, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{
+	participant, err := queryClient.AccountByAddress(ctx, &types.QueryAccountByAddressRequest{
 		Address: granterAddress,
 	})
 	if err != nil {

@@ -1,11 +1,11 @@
-# Inference Subnet: Storage Design
+# Inference Devshard: Storage Design
 
-Persistent storage for subnet sessions. Covers schema, write path, state reconstruction, warm keys, lifecycle, and config consolidation.
+Persistent storage for devshard sessions. Covers schema, write path, state reconstruction, warm keys, lifecycle, and config consolidation.
 
 
 ## Single SQLite File
 
-All sessions share one `subnet.db` file. No per-session files, no per-escrow sharding.
+All sessions share one `devshard.db` file. No per-session files, no per-escrow sharding.
 
 Rationale: 1000 concurrent sessions with separate DBs = 3000 file descriptors (each SQLite file uses db + wal + shm). Competes with network sockets under the same ulimit. A single DB = 3 file descriptors total, regardless of session count.
 
@@ -35,7 +35,7 @@ CREATE TABLE sessions (
 CREATE TABLE diffs (
     escrow_id       TEXT NOT NULL,
     nonce           INTEGER NOT NULL,
-    txs_proto       BLOB NOT NULL,     -- []SubnetTx serialized (proto, same as wire format)
+    txs_proto       BLOB NOT NULL,     -- []DevshardTx serialized (proto, same as wire format)
     user_sig        BLOB NOT NULL,
     state_hash      BLOB NOT NULL,     -- state root after applying this diff
     warm_keys_json  TEXT,              -- warm key bindings from diff-contained sigs, NULL if none
@@ -284,7 +284,7 @@ Pruning is idempotent. Safe to run multiple times or crash mid-pruning.
 
 ## Config Consolidation
 
-All subnet parameters in a single `SubnetConfig` struct. Two categories in one file:
+All devshard parameters in a single `DevshardConfig` struct. Two categories in one file:
 
 - Session/protocol params. Must be identical for all participants in a session. Persisted in `sessions.config_json`.
 - Local node params. Affect only this node's storage, gossip, transport, and pruning behavior. Not part of the replicated session state.
@@ -293,16 +293,16 @@ Currently scattered across 6 files:
 
 | Parameter | Current location |
 |-----------|------------------|
-| RefusalTimeout, ExecutionTimeout, TokenPrice, ValidationRate | `subnet/types/config.go` |
-| Gossip K, StaleTTL, RecoveryDelay, RecoveryTick | `subnet/gossip/gossip.go` |
-| InferenceTimeout, GossipTimeout, VerifyTimeout, QueryTimeout | `subnet/transport/client.go` |
-| MaxIdleConnsPerHost, IdleConnTimeout, TLSHandshakeTimeout | `subnet/transport/client.go` |
-| penaltyValidationRate | `subnet/state/machine.go` |
+| RefusalTimeout, ExecutionTimeout, TokenPrice, ValidationRate | `devshard/types/config.go` |
+| Gossip K, StaleTTL, RecoveryDelay, RecoveryTick | `devshard/gossip/gossip.go` |
+| InferenceTimeout, GossipTimeout, VerifyTimeout, QueryTimeout | `devshard/transport/client.go` |
+| MaxIdleConnsPerHost, IdleConnTimeout, TLSHandshakeTimeout | `devshard/transport/client.go` |
+| penaltyValidationRate | `devshard/state/machine.go` |
 
 Consolidated struct:
 
 ```go
-type SubnetConfig struct {
+type DevshardConfig struct {
     DataDir   string          `koanf:"data_dir"`
     Session   SessionParams   `koanf:"session"`
     Gossip    GossipParams    `koanf:"gossip"`
@@ -342,20 +342,20 @@ type LifecycleParams struct {
 
 ### Integration with dapi config
 
-Add `Subnet SubnetConfig` field to `apiconfig.Config`:
+Add `Devshard DevshardConfig` field to `apiconfig.Config`:
 
 ```go
 type Config struct {
     // ... existing fields ...
-    Subnet SubnetConfig `koanf:"subnet" json:"subnet"`
+    Devshard DevshardConfig `koanf:"devshard" json:"devshard"`
 }
 ```
 
 Loadable from YAML:
 
 ```yaml
-subnet:
-  data_dir: /var/lib/gonka/subnet.db
+devshard:
+  data_dir: /var/lib/gonka/devshard.db
   session:
     refusal_timeout: 60
     execution_timeout: 1200
@@ -370,9 +370,9 @@ subnet:
     prune_after_epochs: 2
 ```
 
-Environment variables: `DAPI_SUBNET__DATA_DIR`, `DAPI_SUBNET__SESSION__REFUSAL_TIMEOUT`, etc. (koanf uses `__` for nesting).
+Environment variables: `DAPI_DEVSHARD__DATA_DIR`, `DAPI_DEVSHARD__SESSION__REFUSAL_TIMEOUT`, etc. (koanf uses `__` for nesting).
 
-`DefaultSubnetConfig()` returns the current hardcoded values. Tests use defaults directly without YAML.
+`DefaultDevshardConfig()` returns the current hardcoded values. Tests use defaults directly without YAML.
 
 
 ## Implementation Order
@@ -381,7 +381,7 @@ Environment variables: `DAPI_SUBNET__DATA_DIR`, `DAPI_SUBNET__SESSION__REFUSAL_T
 2. Expand `storage.Storage` interface (`CreateSessionParams`, `GetSessionMeta`, `ListActiveSessions`, `MarkSettled`)
 3. Update `Memory` implementation to match new interface
 4. SQLite implementation of `storage.Storage`
-5. Add `SubnetConfig` to `subnet/types/` with `DefaultSubnetConfig()`
+5. Add `DevshardConfig` to `devshard/types/` with `DefaultDevshardConfig()`
 6. Wire config through `HostManager` and `NewHTTPSession`
 7. Add restart recovery logic to `HostManager`
 8. Add pruning goroutine
@@ -396,19 +396,19 @@ Steps 1-4 are complete.
 
 ### Step 1: WarmKeyDelta + InjectWarmKeys
 
-Done. `DiffRecord.WarmKeyDelta` field added to `subnet/types/domain.go`. `InjectWarmKeys` method added to state machine (`subnet/state/machine.go`). Tests cover round-trip through storage and replay.
+Done. `DiffRecord.WarmKeyDelta` field added to `devshard/types/domain.go`. `InjectWarmKeys` method added to state machine (`devshard/state/machine.go`). Tests cover round-trip through storage and replay.
 
 ### Step 2: Expanded Storage Interface
 
-Done. `subnet/storage/interface.go` defines `Storage` with `CreateSessionParams`, `SessionMeta`, `GetSessionMeta`, `ListActiveSessions`, `MarkSettled`, `MarkFinalized`, `LastFinalized`.
+Done. `devshard/storage/interface.go` defines `Storage` with `CreateSessionParams`, `SessionMeta`, `GetSessionMeta`, `ListActiveSessions`, `MarkSettled`, `MarkFinalized`, `LastFinalized`.
 
 ### Step 3: Memory Implementation
 
-Done. `subnet/storage/memory.go` implements the full interface. Shared conformance tests in `subnet/storage/shared_test.go` run against both Memory and SQLite.
+Done. `devshard/storage/memory.go` implements the full interface. Shared conformance tests in `devshard/storage/shared_test.go` run against both Memory and SQLite.
 
 ### Step 4: SQLite Implementation
 
-Done. `subnet/storage/sqlite.go` uses modernc.org/sqlite (pure Go, no CGO). Uses separate read/write connection pools on the same WAL-mode file: `writeDB` (MaxOpenConns=1) serializes writes, `readDB` (MaxOpenConns=10) allows parallel reads. Schema matches the design doc (sessions, diffs, signatures tables). Diffs and signatures loaded via LEFT JOIN to avoid nested queries. Concurrency tests verify no SQLITE_BUSY errors under parallel read/write load.
+Done. `devshard/storage/sqlite.go` uses modernc.org/sqlite (pure Go, no CGO). Uses separate read/write connection pools on the same WAL-mode file: `writeDB` (MaxOpenConns=1) serializes writes, `readDB` (MaxOpenConns=10) allows parallel reads. Schema matches the design doc (sessions, diffs, signatures tables). Diffs and signatures loaded via LEFT JOIN to avoid nested queries. Concurrency tests verify no SQLITE_BUSY errors under parallel read/write load.
 
 Deviation from design: the write path uses two `sql.DB` pools instead of a background writer goroutine with a channel. All writes are already serialized at the application level by `host.mu`, so MaxOpenConns=1 on the write pool is sufficient. The channel-based writer would add complexity without benefit.
 
