@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"math/bits"
 	"time"
 
 	"encoding/base64"
@@ -49,13 +52,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		k.LogError("Creator not found", types.Inferences, "creator", msg.Creator, "msg", "StartInference")
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator), msg), nil
 	}
-	dev, found := k.GetParticipant(ctx, msg.RequestedBy)
-	if !found {
-		k.LogError("RequestedBy not found", types.Inferences, "requestedBy", msg.RequestedBy, "msg", "StartInference")
-		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
-	}
-
-	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
+	devAddress := msg.RequestedBy
 	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
@@ -84,7 +81,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		}
 		k.LogDebug("StartInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
 	} else {
-		err := k.verifyStartFirstMessageKeys(ctx, msg, &dev)
+		err := k.verifyStartFirstMessageKeys(ctx, msg, devAddress)
 		if err != nil {
 			k.LogError("StartInference: verifyStartFirstMessageKeys failed", types.Inferences, "error", err)
 			return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -154,7 +151,7 @@ func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference)
 	}
 }
 
-func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgStartInference, dev *types.Participant) error {
+func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgStartInference, devAddress string) error {
 	devComponents := getDevSignatureComponents(msg)
 
 	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60); err != nil {
@@ -163,7 +160,7 @@ func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgSt
 
 	// Verify dev signature (original_prompt_hash)
 	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-		DevSignature: msg.InferenceId, Dev: dev,
+		DevSignature: msg.InferenceId, Dev: devAddress,
 	}, k); err != nil {
 		k.LogError("StartInference: dev signature failed", types.Inferences, "error", err)
 		return err
@@ -342,19 +339,42 @@ func (k msgServer) processInferencePayments(
 		}
 		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
-			k.LogError("Unable to Issue Refund for started inference", types.Payments, err)
+			k.LogError("Unable to Issue Refund for started inference", types.Payments,
+				"error", err, "inferenceId", inference.InferenceId)
+			return nil, sdkerrors.Wrapf(types.ErrIllegalState, "refund failed for inference %s: %v", inference.InferenceId, err)
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-		if executor == nil {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy)
+		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment), "inference_finished")
+		if err != nil {
+			return nil, err
 		}
-		ensureParticipantEpochStats(executor)
-		executor.CoinBalance += payments.ExecutorPayment
-		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
 	}
 	return inference, nil
+}
+
+// AddToCoinBalance adds payout to the participant's claimable work balance and
+// current-epoch earned coins, with overflow protection for both fields.
+func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64, memo string) error {
+	if participant == nil {
+		return sdkerrors.Wrap(types.ErrParticipantNotFound, "nil participant")
+	}
+	if payout > math.MaxInt64 {
+		return sdkerrors.Wrap(types.ErrIntOverflowSettleAmount, "payout exceeds maximum integer value")
+	}
+	ensureParticipantEpochStats(participant)
+	nextCoinBalance := participant.CoinBalance + int64(payout)
+	if nextCoinBalance < participant.CoinBalance {
+		return fmt.Errorf("participant coin balance overflow for %s", participant.Address)
+	}
+	nextEarnedCoins, carry := bits.Add64(participant.CurrentEpochStats.EarnedCoins, payout, 0)
+	if carry != 0 {
+		return fmt.Errorf("participant earned coins overflow for %s", participant.Address)
+	}
+	participant.CoinBalance = nextCoinBalance
+	participant.CurrentEpochStats.EarnedCoins = nextEarnedCoins
+	k.SafeLogSubAccountTransaction(ctx, participant.Address, types.ModuleName, types.OwedSubAccount, participant.CoinBalance, memo)
+	return nil
 }
 
 func shouldPersistParticipant(inference *types.Inference, payments *calculations.Payments, executor *types.Participant) bool {

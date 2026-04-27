@@ -11,6 +11,8 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -130,6 +132,7 @@ func CreateUpgradeHandler(
 	configurator module.Configurator,
 	k keeper.Keeper,
 	distrKeeper distrkeeper.Keeper,
+	blsKeeper blskeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -160,6 +163,10 @@ func CreateUpgradeHandler(
 		}
 
 		if err := distributeBountyRewards(ctx, k, distrKeeper); err != nil {
+			return nil, err
+		}
+
+		if err := setBLSDurations(ctx, blsKeeper); err != nil {
 			return nil, err
 		}
 
@@ -269,7 +276,7 @@ func setParameters(ctx context.Context, k keeper.Keeper) error {
 
 	params.ValidationParams.ClaimValidationEnabled = false
 
-	params.SubnetEscrowParams = &types.SubnetEscrowParams{
+	params.DevshardEscrowParams = &types.DevshardEscrowParams{
 		MinAmount:          50_000_000,      // 0.05 GNK
 		MaxAmount:          100_000_000_000, // 100 GNK
 		MaxEscrowsPerEpoch: 100,
@@ -306,7 +313,7 @@ func setPruningState(ctx context.Context, k keeper.Keeper) error {
 		return err
 	}
 	state.EpochGroupValidationsPrunedEpoch = 0
-	state.SubnetPrunedEpoch = 0
+	state.DevshardPrunedEpoch = 0
 	return k.PruningState.Set(ctx, state)
 }
 
@@ -361,4 +368,21 @@ func distributeBountyRewards(ctx context.Context, k keeper.Keeper, distrKeeper d
 	}
 
 	return nil
+}
+
+func setBLSDurations(ctx context.Context, blsKeeper blskeeper.Keeper) error {
+	params, err := blsKeeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.ITotalSlots == 0 {
+		params = blstypes.DefaultParams()
+	}
+	if params.VerificationPhaseDurationBlocks < 6 {
+		params.VerificationPhaseDurationBlocks = 6
+	}
+	if params.DisputePhaseDurationBlocks < 6 {
+		params.DisputePhaseDurationBlocks = 6
+	}
+	return blsKeeper.SetParams(ctx, params)
 }

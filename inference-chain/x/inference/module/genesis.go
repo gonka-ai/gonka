@@ -64,6 +64,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
+	// Note: FeeParams are NOT set at genesis. Fee enforcement is enabled via
+	// the v0.2.12 upgrade handler on existing chains.
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)
@@ -96,6 +98,50 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		// Set all bridge trade approved tokens from genesis
 		for _, elem := range genState.Bridge.TradeApprovedTokens {
 			if err := k.SetBridgeTradeApprovedToken(ctx, *elem); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+		}
+
+		for _, elem := range genState.Bridge.PendingMintRefunds {
+			if elem == nil {
+				continue
+			}
+			if err := k.BridgeMintRefundsMap.Set(ctx, elem.RequestId, types.MsgRequestBridgeMint{
+				Creator:            elem.Creator,
+				Amount:             elem.Amount,
+				DestinationAddress: elem.DestinationAddress,
+				ChainId:            elem.ChainId,
+			}); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+		}
+
+		for _, elem := range genState.Bridge.PendingWithdrawalRefunds {
+			if elem == nil {
+				continue
+			}
+			if err := k.BridgeWithdrawalRefundsMap.Set(ctx, elem.RequestId, types.MsgRequestBridgeWithdrawal{
+				Creator:            elem.Creator,
+				UserAddress:        elem.UserAddress,
+				Amount:             elem.Amount,
+				DestinationAddress: elem.DestinationAddress,
+			}); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+			if elem.ChainId == "" && elem.ContractAddress == "" {
+				continue
+			}
+			if elem.ChainId == "" || elem.ContractAddress == "" {
+				//nolint:forbidigo // genesis code
+				panic("invalid pending withdrawal refund token reference in genesis")
+			}
+			if err := k.BridgeWithdrawalTokenRefsMap.Set(ctx, elem.RequestId, types.BridgeTokenReference{
+				ChainId:         elem.ChainId,
+				ContractAddress: elem.ContractAddress,
+			}); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}
@@ -200,17 +246,10 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	}
 
 	// Ensures creation if not already existing
-	k.AccountKeeper.GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.BridgeEscrowAccName)
 
-	topRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
 	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
-
-	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin), "top_reward_pool init"); err != nil {
-		//nolint:forbidigo // genesis code
-		panic(err)
-	}
 	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, sdk.NewCoins(preProgrammedCoin), "pre_programmed_coin_init"); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)
@@ -292,10 +331,24 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		tradeApprovedTokenPtrs[i] = &tradeApprovedTokens[i]
 	}
 
+	pendingMintRefunds := k.GetAllBridgePendingMintRefunds(ctx)
+	pendingMintRefundPtrs := make([]*types.BridgePendingMintRefund, len(pendingMintRefunds))
+	for i := range pendingMintRefunds {
+		pendingMintRefundPtrs[i] = &pendingMintRefunds[i]
+	}
+
+	pendingWithdrawalRefunds := k.GetAllBridgePendingWithdrawalRefunds(ctx)
+	pendingWithdrawalRefundPtrs := make([]*types.BridgePendingWithdrawalRefund, len(pendingWithdrawalRefunds))
+	for i := range pendingWithdrawalRefunds {
+		pendingWithdrawalRefundPtrs[i] = &pendingWithdrawalRefunds[i]
+	}
+
 	genesis.Bridge = &types.Bridge{
-		ContractAddresses:   contractAddressPtrs,
-		TokenMetadata:       tokenMetadataPtrs,
-		TradeApprovedTokens: tradeApprovedTokenPtrs,
+		ContractAddresses:        contractAddressPtrs,
+		TokenMetadata:            tokenMetadataPtrs,
+		TradeApprovedTokens:      tradeApprovedTokenPtrs,
+		PendingMintRefunds:       pendingMintRefundPtrs,
+		PendingWithdrawalRefunds: pendingWithdrawalRefundPtrs,
 	}
 	// this line is used by starport scaffolding # genesis/module/export
 

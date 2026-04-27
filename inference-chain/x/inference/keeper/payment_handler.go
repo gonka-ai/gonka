@@ -63,26 +63,32 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 	k.LogInfo("Paying participant", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName, "vestingPeriods", vestingPeriods)
 
 	if vestingPeriods != nil && *vestingPeriods > 0 {
-		// Route through streamvesting system
+		// Route through streamvesting system with CacheContext for atomicity.
+		// AddVestedRewards does SendCoinsFromModuleToModule (coin transfer) then
+		// SetVestingSchedule (schedule update). If the schedule update fails after
+		// coins are transferred, the coins would be lost without a tracking schedule.
+		// CacheContext ensures both succeed or neither persists.
 		vestingAmount, err := types.GetCoins(amount)
 		if err != nil {
 			return err
 		}
-		// Vesting keeper should move funds and create vesting schedule
-		err = k.GetStreamVestingKeeper().AddVestedRewards(ctx, address, types.ModuleName, vestingAmount, vestingEpochs, memo+"_vested")
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		cacheCtx, writeFn := sdkCtx.CacheContext()
+		err = k.GetStreamVestingKeeper().AddVestedRewards(cacheCtx, address, types.ModuleName, vestingAmount, vestingEpochs, memo+"_vested")
 		if err != nil {
-			k.LogError("Error adding vested payment", types.Payments, "error", err, "amount", vestingAmount)
-			return err
+			k.LogError("Error adding vested payment, rolling back transfer", types.Payments, "error", err, "amount", vestingAmount)
+			return err // writeFn not called -- coin transfer rolled back
 		}
-	} else {
-		// Direct payment (existing logic)
-		coins, err := types.GetCoins(amount)
-		if err != nil {
-			return err
-		}
-		return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
+		writeFn() // Transfer and schedule committed atomically
+		return nil
 	}
-	return err
+
+	// Direct payment (existing logic)
+	coins, err := types.GetCoins(amount)
+	if err != nil {
+		return err
+	}
+	return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
 }
 
 func (k *Keeper) BurnModuleCoins(ctx context.Context, burnCoins int64, memo string) error {
@@ -97,7 +103,9 @@ func (k *Keeper) BurnModuleCoins(ctx context.Context, burnCoins int64, memo stri
 	}
 	err = k.BankKeeper.BurnCoins(ctx, types.ModuleName, coins, memo)
 	if err == nil {
-		k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: uint64(burnCoins)})
+		if err := k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: uint64(burnCoins)}); err != nil {
+			k.LogError("Failed to update tokenomics data after burn", types.Payments, "error", err)
+		}
 	}
 	return err
 }
@@ -109,7 +117,9 @@ func (k *Keeper) IssueRefund(ctx context.Context, refundAmount int64, address st
 		k.LogError("Error issuing refund", types.Payments, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: uint64(refundAmount)})
+	if err := k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: uint64(refundAmount)}); err != nil {
+		k.LogError("Failed to update tokenomics data after refund", types.Payments, "error", err)
+	}
 	return nil
 }
 

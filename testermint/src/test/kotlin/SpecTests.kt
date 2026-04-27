@@ -156,12 +156,6 @@ class SpecTests {
     }
 
     @Test
-    fun `parse top miner`() {
-        val topMiners = cosmosJson.fromJson(topMinerJson, TopMinersResponse::class.java)
-        println(topMiners)
-    }
-
-    @Test
     fun `invalid argument if type does not match`() {
         val result = runCatching {
             val spec = spec<Person> {
@@ -249,24 +243,6 @@ data class Person(val name: String, val age: Int, val gender: String, val camelC
 data class WithCoins(val coins: List<Coin>)
 
 data class WithDuration(val duration: Duration)
-
-
-val topMinerJson = """
-    {
-      "top_miner": [
-        {
-          "address": "cosmos1nrsklffzkzj3lhrmup3vwx9xv8usnz8wqdv0pr",
-          "last_qualified_started": "1739651467",
-          "last_updated_time": "1739651467",
-          "first_qualified_started": "1739651467"
-        }
-      ],
-      "pagination": {
-        "total": "1"
-      }
-    }
-""".trimIndent()
-
 
 val blsDataJson = """
     {

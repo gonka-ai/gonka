@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"encoding/base64"
 	"encoding/binary"
@@ -71,6 +70,7 @@ func (s *StringUint32) UnmarshalJSON(data []byte) error {
 // Uses StringInt64/StringUint32 to accept both number and string JSON encoding
 type PocProofsRequest struct {
 	PocStageStartBlockHeight StringInt64    `json:"poc_stage_start_block_height"`
+	ModelId                  string         `json:"model_id"`
 	RootHash                 string         `json:"root_hash"`    // base64-encoded 32 bytes
 	Count                    StringUint32   `json:"count"`        // snapshot leaf count
 	LeafIndices              []StringUint32 `json:"leaf_indices"` // 0-based indices
@@ -100,6 +100,7 @@ type PocProofsResponse struct {
 // PocArtifactsStateResponse is the response for GET /v1/poc/artifacts/state
 type PocArtifactsStateResponse struct {
 	PocStageStartBlockHeight int64  `json:"poc_stage_start_block_height"`
+	ModelId                  string `json:"model_id"`
 	Count                    uint32 `json:"count"`
 	RootHash                 string `json:"root_hash"` // base64-encoded 32 bytes, empty if count=0
 }
@@ -110,16 +111,15 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
 
-	if s.phaseTracker != nil && !poc.ShouldUseV2FromEpochState(s.phaseTracker.GetCurrentEpochState()) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "proof API requires V2 mode")
-	}
-
 	var req PocProofsRequest
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
 	// Validate required fields
+	if req.ModelId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "model_id required")
+	}
 	if req.RootHash == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "root_hash required")
 	}
@@ -186,10 +186,12 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 	}
 
 	// Get stage-specific artifact store
-	stageStore, err := s.artifactStore.GetStore(int64(req.PocStageStartBlockHeight))
+	stageStore, err := s.artifactStore.GetStore(int64(req.PocStageStartBlockHeight), req.ModelId)
 	if err != nil {
 		logging.Warn("Stage store not found", types.Validation,
-			"pocStageStartBlockHeight", req.PocStageStartBlockHeight, "error", err)
+			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+			"modelId", req.ModelId,
+			"error", err)
 		return echo.NewHTTPError(http.StatusNotFound, "not found for height (may be pruned or not yet created)")
 	}
 
@@ -263,6 +265,7 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 
 	signPayload := buildPocProofsResponseSignPayload(
 		int64(req.PocStageStartBlockHeight),
+		req.ModelId,
 		rootHash,
 		reqCount,
 		proofs,
@@ -291,10 +294,6 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
 
-	if s.phaseTracker != nil && !poc.ShouldUseV2FromEpochState(s.phaseTracker.GetCurrentEpochState()) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact state API requires V2 mode")
-	}
-
 	heightParam := ctx.QueryParam("height")
 	if heightParam == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "height query parameter required")
@@ -305,7 +304,12 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid height parameter")
 	}
 
-	store, err := s.artifactStore.GetStore(height)
+	modelID := ctx.QueryParam("model_id")
+	if modelID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "model_id query parameter required")
+	}
+
+	store, err := s.artifactStore.GetStore(height, modelID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "not found for height (may be pruned or not yet created)")
 	}
@@ -319,33 +323,55 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 
 	return ctx.JSON(http.StatusOK, PocArtifactsStateResponse{
 		PocStageStartBlockHeight: height,
+		ModelId:                  modelID,
 		Count:                    count,
 		RootHash:                 rootHashB64,
 	})
 }
 
 // buildPocProofsSignPayload builds the binary payload for signature verification.
-// Format: hex(SHA256(poc_stage_start_block_height(LE64) || root_hash(32) || count(LE32) ||
+// Format: hex(SHA256(
 //
-//	leaf_indices(LE32 each) || timestamp(LE64) || validator_address || validator_signer_address))
+//	poc_stage_start_block_height (LE64) ||
+//	len(model_id) (LE32) || model_id ||
+//	root_hash (32 bytes) ||
+//	count (LE32) ||
+//	num_leaf_indices (LE32) || leaf_indices (LE32 each) ||
+//	timestamp (LE64) ||
+//	len(validator_address) (LE32) || validator_address ||
+//	len(validator_signer_address) (LE32) || validator_signer_address
 //
-// Returns the hex-encoded hash as bytes because Kotlin's signPayload takes a hex string.
+// ))
+//
+// Every variable-length field is length-prefixed so distinct semantic
+// tuples cannot map to identical bytes. Returns the hex-encoded hash as
+// bytes because the Kotlin client signs a hex string.
 func buildPocProofsSignPayload(req *PocProofsRequest, rootHash []byte) []byte {
 	buf := new(bytes.Buffer)
 
 	binary.Write(buf, binary.LittleEndian, int64(req.PocStageStartBlockHeight))
+	writeLengthPrefixedString(buf, req.ModelId)
 	buf.Write(rootHash)
 	binary.Write(buf, binary.LittleEndian, uint32(req.Count))
+	binary.Write(buf, binary.LittleEndian, uint32(len(req.LeafIndices)))
 	for _, idx := range req.LeafIndices {
 		binary.Write(buf, binary.LittleEndian, uint32(idx))
 	}
 	binary.Write(buf, binary.LittleEndian, int64(req.Timestamp))
-	buf.WriteString(req.ValidatorAddress)
-	buf.WriteString(req.ValidatorSignerAddress)
+	writeLengthPrefixedString(buf, req.ValidatorAddress)
+	writeLengthPrefixedString(buf, req.ValidatorSignerAddress)
 
 	hash := sha256.Sum256(buf.Bytes())
 	// Return hex-encoded string as bytes (what Kotlin signs)
 	return []byte(hex.EncodeToString(hash[:]))
+}
+
+// writeLengthPrefixedString writes len(s) as a LE uint32 followed by the
+// raw string bytes. Used by all proof sign payload builders so that
+// variable-length fields cannot collide across distinct semantic inputs.
+func writeLengthPrefixedString(buf *bytes.Buffer, s string) {
+	binary.Write(buf, binary.LittleEndian, uint32(len(s)))
+	buf.WriteString(s)
 }
 
 // verifyPocProofsSignatureWithPubkey verifies the signature against a specific pubkey.
@@ -372,13 +398,23 @@ func verifyPocProofsSignatureWithPubkey(req *PocProofsRequest, rootHash []byte, 
 }
 
 // buildPocProofsResponseSignPayload builds the binary payload for response signature.
-// Format: hex(SHA256(poc_stage_start_block_height(LE64) || root_hash(32) || count(LE32) ||
+// Format: hex(SHA256(
 //
-//	proofs_hash(32) || timestamp(LE64) || signer_address))
+//	poc_stage_start_block_height (LE64) ||
+//	len(model_id) (LE32) || model_id ||
+//	root_hash (32 bytes) ||
+//	count (LE32) ||
+//	proofs_hash (32 bytes) ||
+//	timestamp (LE64) ||
+//	len(signer_address) (LE32) || signer_address
+//
+// ))
 //
 // proofs_hash = SHA256(concatenated: leaf_index(LE32) || nonce_value(LE32) || vector_bytes || proof_hashes...)
+// Variable-length fields are length-prefixed.
 func buildPocProofsResponseSignPayload(
 	pocStageStartBlockHeight int64,
+	modelID string,
 	rootHash []byte,
 	count uint32,
 	proofs []PocProofItem,
@@ -400,11 +436,12 @@ func buildPocProofsResponseSignPayload(
 	// Build final payload
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.LittleEndian, pocStageStartBlockHeight)
+	writeLengthPrefixedString(buf, modelID)
 	buf.Write(rootHash)
 	binary.Write(buf, binary.LittleEndian, count)
 	buf.Write(proofsHash[:])
 	binary.Write(buf, binary.LittleEndian, timestamp)
-	buf.WriteString(signerAddress)
+	writeLengthPrefixedString(buf, signerAddress)
 
 	hash := sha256.Sum256(buf.Bytes())
 	// Return hex-encoded string as bytes (consistent with request signing)

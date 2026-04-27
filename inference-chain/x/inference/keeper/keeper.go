@@ -31,6 +31,7 @@ type (
 		AccountKeeper types.AccountKeeper
 		AuthzKeeper   types.AuthzKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+		mintTokensFn  func(ctx sdk.Context, contractAddr, recipient, amount string) error
 
 		collateralKeeper    types.CollateralKeeper
 		streamvestingKeeper types.StreamVestingKeeper
@@ -41,9 +42,9 @@ type (
 		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// PoC v2 collections
-		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidationV2]
-		PoCV2StoreCommits         collections.Map[collections.Pair[int64, sdk.AccAddress], types.PoCV2StoreCommit]
-		MLNodeWeightDistributions collections.Map[collections.Pair[int64, sdk.AccAddress], types.MLNodeWeightDistribution]
+		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
+		PoCV2StoreCommits         collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
+		MLNodeWeightDistributions collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap                collections.Map[string, uint64]
 		ModelCapacityMap                    collections.Map[string, uint64]
@@ -63,6 +64,7 @@ type (
 		EpochGroupValidationsMap  collections.Map[collections.Pair[uint64, string], types.EpochGroupValidations]
 		EpochGroupValidationEntry collections.KeySet[collections.Triple[uint64, string, string]]
 		SettleAmounts             collections.Map[sdk.AccAddress, types.SettleAmount]
+		// TODO(post v0.2.12): remove TopMiners and the key for it after upgrade clears the data
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
 		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
@@ -81,6 +83,18 @@ type (
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
+		// BridgeTransactionValidators records per-validator confirmations
+		// for a bridge transaction. Key is (chainId, blockNumber, contentHashPart, validator_bech32),
+		// mirroring BridgeTransactionsMap's parent key so conflict txs (same
+		// chain/block/receipt but different content) get separate validator
+		// sets and removeBridgeTransactionByID's prefix-delete finds the
+		// right sub-keys. Split off BridgeTransaction.Validators so the Nth
+		// validator's confirmation tx doesn't pay gas proportional to the
+		// first N-1.
+		BridgeTransactionValidators    collections.KeySet[collections.Quad[string, string, string, string]]
+		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
+		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
+		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
 		WrappedTokenCodeIDItem         collections.Item[uint64]
 		WrappedTokenMetadataMap        collections.Map[collections.Pair[string, string], types.BridgeTokenMetadata]
 		WrappedTokenContractsMap       collections.Map[collections.Pair[string, string], types.BridgeWrappedTokenContract]
@@ -89,15 +103,22 @@ type (
 		LiquidityPoolApprovedTokensMap collections.Map[collections.Pair[string, string], types.BridgeTokenReference]
 		// PoC validation sampling snapshots
 		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
+		PreservedNodesSnapshotItem collections.Item[types.PreservedNodesSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		// Subnet escrow collections
-		SubnetEscrows           collections.Map[uint64, types.SubnetEscrow]
-		SubnetEscrowCounter     collections.Item[uint64]
-		SubnetEscrowEpochCount  collections.Map[uint64, uint64]
-		SubnetHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.SubnetHostEpochStats]
-		SubnetEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// Devshard escrow collections
+		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter     collections.Item[uint64]
+		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// PoC delegation collections
+		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
 	}
 )
 
@@ -179,21 +200,21 @@ func NewKeeper(
 			sb,
 			types.PoCValidationV2Prefix,
 			"poc_validation_v2",
-			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.PairKeyCodec(collections.StringKey, sdk.AccAddressKey)),
 			codec.CollValue[types.PoCValidationV2](cdc),
 		),
 		PoCV2StoreCommits: collections.NewMap(
 			sb,
 			types.PoCV2StoreCommitPrefix,
 			"poc_v2_store_commit",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
 			codec.CollValue[types.PoCV2StoreCommit](cdc),
 		),
 		MLNodeWeightDistributions: collections.NewMap(
 			sb,
 			types.MLNodeWeightDistributionPrefix,
 			"mlnode_weight_distribution",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
 			codec.CollValue[types.MLNodeWeightDistribution](cdc),
 		),
 		// dynamic pricing collections
@@ -409,6 +430,33 @@ func NewKeeper(
 			collections.TripleKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey),
 			codec.CollValue[types.BridgeTransaction](cdc),
 		),
+		BridgeTransactionValidators: collections.NewKeySet(
+			sb,
+			types.BridgeTransactionValidatorsPrefix,
+			"bridge_transaction_validators",
+			collections.QuadKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey, collections.StringKey),
+		),
+		BridgeMintRefundsMap: collections.NewMap(
+			sb,
+			types.BridgeMintRefundsPrefix,
+			"bridge_mint_refunds",
+			collections.StringKey,
+			codec.CollValue[types.MsgRequestBridgeMint](cdc),
+		),
+		BridgeWithdrawalRefundsMap: collections.NewMap(
+			sb,
+			types.BridgeWithdrawalRefundsPrefix,
+			"bridge_withdrawal_refunds",
+			collections.StringKey,
+			codec.CollValue[types.MsgRequestBridgeWithdrawal](cdc),
+		),
+		BridgeWithdrawalTokenRefsMap: collections.NewMap(
+			sb,
+			types.BridgeWithdrawalTokenRefsPrefix,
+			"bridge_withdrawal_token_refs",
+			collections.StringKey,
+			codec.CollValue[types.BridgeTokenReference](cdc),
+		),
 		WrappedTokenMetadataMap: collections.NewMap(
 			sb,
 			types.WrappedTokenMetadataPrefix,
@@ -456,6 +504,12 @@ func NewKeeper(
 			collections.Int64Key,
 			codec.CollValue[types.PoCValidationSnapshot](cdc),
 		),
+		PreservedNodesSnapshotItem: collections.NewItem(
+			sb,
+			types.PreservedNodesSnapshotPrefix,
+			"preserved_nodes_snapshot",
+			codec.CollValue[types.PreservedNodesSnapshot](cdc),
+		),
 		PunishmentGraceEpochs: collections.NewMap(
 			sb,
 			types.PunishmentGraceEpochsPrefix,
@@ -469,40 +523,72 @@ func NewKeeper(
 			"active_participants_cache",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
-		// Subnet escrow collections
-		SubnetEscrows: collections.NewMap(
+		// Devshard escrow collections
+		DevshardEscrows: collections.NewMap(
 			sb,
-			types.SubnetEscrowsPrefix,
-			"subnet_escrows",
+			types.DevshardEscrowsPrefix,
+			"devshard_escrows",
 			collections.Uint64Key,
-			codec.CollValue[types.SubnetEscrow](cdc),
+			codec.CollValue[types.DevshardEscrow](cdc),
 		),
-		SubnetEscrowCounter: collections.NewItem(
+		DevshardEscrowCounter: collections.NewItem(
 			sb,
-			types.SubnetEscrowCounterPrefix,
-			"subnet_escrow_counter",
+			types.DevshardEscrowCounterPrefix,
+			"devshard_escrow_counter",
 			collections.Uint64Value,
 		),
-		SubnetEscrowEpochCount: collections.NewMap(
+		DevshardEscrowEpochCount: collections.NewMap(
 			sb,
-			types.SubnetEscrowEpochCountPrefix,
-			"subnet_escrow_epoch_count",
+			types.DevshardEscrowEpochCountPrefix,
+			"devshard_escrow_epoch_count",
 			collections.Uint64Key,
 			collections.Uint64Value,
 		),
-		SubnetHostEpochStatsMap: collections.NewMap(
+		DevshardHostEpochStatsMap: collections.NewMap(
 			sb,
-			types.SubnetHostEpochStatsPrefix,
-			"subnet_host_epoch_stats",
+			types.DevshardHostEpochStatsPrefix,
+			"devshard_host_epoch_stats",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
-			codec.CollValue[types.SubnetHostEpochStats](cdc),
+			codec.CollValue[types.DevshardHostEpochStats](cdc),
 		),
-		SubnetEscrowsByEpoch: collections.NewMap(
+		DevshardEscrowsByEpoch: collections.NewMap(
 			sb,
-			types.SubnetEscrowsByEpochPrefix,
-			"subnet_escrows_by_epoch",
+			types.DevshardEscrowsByEpochPrefix,
+			"devshard_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		// PoC delegation collections
+		PoCDelegations: collections.NewMap(
+			sb,
+			types.PoCDelegationPrefix,
+			"poc_delegation",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			codec.CollValue[types.PoCDelegation](cdc),
+		),
+		PoCRefusals: collections.NewKeySet(
+			sb,
+			types.PoCRefusalPrefix,
+			"poc_refusal",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+		),
+		PoCDirectIntents: collections.NewKeySet(
+			sb,
+			types.PoCDirectIntentPrefix,
+			"poc_direct_intent",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+		),
+		DelegationSnapshot: collections.NewItem(
+			sb,
+			types.DelegationSnapshotPrefix,
+			"delegation_snapshot",
+			codec.CollValue[types.DelegationSnapshot](cdc),
+		),
+		BootstrapDelegationSnapshot: collections.NewItem(
+			sb,
+			types.BootstrapDelegationSnapshotPrefix,
+			"bootstrap_delegation_snapshot",
+			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
 	}
 	// Build the collections schema

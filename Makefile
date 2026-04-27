@@ -1,11 +1,20 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests subnetctl-build
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker
 
 VERSION ?= $(shell git describe --always)
+DEVSHARD_VERSION ?= dev
 TAG_NAME := "release/v$(VERSION)"
+USE_REGISTRY_CACHE ?= 0
+ifeq ($(USE_REGISTRY_CACHE),1)
+_MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
+_MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
+else
+_MOCK_CACHE_ARGS :=
+_MOCK_BUILD_CMD := DOCKER_BUILDKIT=1 docker build
+endif
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
@@ -17,7 +26,7 @@ mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@DOCKER_BUILDKIT=1 docker build --load -t inference-mock-server -f testermint/Dockerfile testermint
+	@$(_MOCK_BUILD_CMD) -t inference-mock-server -f testermint/Dockerfile testermint
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
@@ -28,7 +37,15 @@ proxy-ssl-build-docker:
 bridge-build-docker:
 	@make -C bridge build-docker SET_LATEST=1
 
-release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release
+versiond-build-docker:
+	@echo "Building versiond docker image..."
+	@docker build -t versiond:latest -f versioned/Dockerfile versioned
+
+testapp-server-build-docker:
+	@echo "Building testapp-server docker image..."
+	@docker build -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
+
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -60,6 +77,11 @@ bridge-release:
 	@make -C bridge release
 	@make -C bridge docker-push
 
+versiond-release:
+	@echo "Releasing versiond..."
+	@make -C versioned release
+	@make -C versioned docker-push
+
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
@@ -87,9 +109,23 @@ api-local-build:
 	@echo "Building decentralized-api locally..."
 	@cd decentralized-api && go build -mod=mod -o ./build/dapi
 
-subnetctl-build:
-	@echo "Building subnetctl..."
-	@cd subnet && go build -o ../build/subnetctl ./cmd/subnetctl/
+devshardctl-build:
+	@echo "Building devshardctl..."
+	@cd devshard && go build -ldflags "-X main.Version=$(DEVSHARD_VERSION)" -o ../build/devshardctl ./cmd/devshardctl/
+
+devshardd-build:
+	@echo "Building devshardd..."
+	@mkdir -p build
+	@DOCKER_BUILDKIT=1 docker build --no-cache --target builder \
+		--build-arg BLST_PORTABLE=1 \
+		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
+		-f decentralized-api/Dockerfile . \
+		-t devshardd-builder:latest -q >/dev/null
+	@CID=$$(docker create devshardd-builder:latest) && \
+		docker cp $$CID:/app/decentralized-api/build/devshardd build/devshardd && \
+		docker rm $$CID >/dev/null
+	@chmod +x build/devshardd
+	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
 
 node-local-build:
 	@echo "Building inference-chain locally..."

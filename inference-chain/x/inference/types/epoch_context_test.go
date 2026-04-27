@@ -224,6 +224,27 @@ func TestPlain(t *testing.T) {
 	require.True(t, ec.IsValidationExchangeWindow(startOfVal+1))
 }
 
+func TestDelegationSnapshotHeight(t *testing.T) {
+	epochParams := types.EpochParams{
+		EpochLength:           100,
+		EpochMultiplier:       1,
+		EpochShift:            90,
+		PocStageDuration:      20,
+		PocExchangeDuration:   1,
+		PocValidationDelay:    2,
+		PocValidationDuration: 10,
+		SetNewValidatorsDelay: 1,
+	}
+	epoch := types.Epoch{Index: 1, PocStartBlockHeight: 10}
+	ec := types.NewEpochContext(epoch, epochParams)
+
+	snapshotHeight := ec.NextPoCStart() - 3
+	require.True(t, ec.IsDelegationSnapshotHeight(snapshotHeight, 3))
+	require.False(t, ec.IsDelegationSnapshotHeight(snapshotHeight-1, 3))
+	require.False(t, ec.IsDelegationSnapshotHeight(snapshotHeight+1, 3))
+	require.False(t, ec.IsDelegationSnapshotHeight(snapshotHeight, 0))
+}
+
 func TestProdBug(t *testing.T) {
 	/*
 		"epoch_params": {

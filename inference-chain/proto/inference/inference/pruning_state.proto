@@ -8,5 +8,10 @@ message PruningState {
   int64 poc_validations_pruned_epoch = 2;
   int64 inference_pruned_epoch = 3;
   int64 epoch_group_validations_pruned_epoch = 4;
-  int64 subnet_pruned_epoch = 5;
+  int64 devshard_pruned_epoch = 5;
+  reserved "subnet_pruned_epoch";
+  int64 poc_v2_store_commits_pruned_epoch = 6;
+  int64 mlnode_weight_distributions_pruned_epoch = 7;
+  int64 poc_validations_v2_pruned_epoch = 8;
+  int64 poc_validation_snapshots_pruned_epoch = 9;
 }

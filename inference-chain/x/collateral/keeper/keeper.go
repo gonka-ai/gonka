@@ -19,6 +19,10 @@ import (
 )
 
 type (
+	collateralProviderRef struct {
+		provider types.RequiredCollateralProvider
+	}
+
 	// UnbondingIndexes groups the secondary indexes for the UnbondingCollateral map
 	UnbondingIndexes struct {
 		// ByParticipant indexes primary keys by participant address, to allow queries by participant
@@ -36,6 +40,7 @@ type (
 
 		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
+		collateralProviderRef *collateralProviderRef
 		params                collections.Item[types.Params]
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
@@ -82,6 +87,7 @@ func NewKeeper(
 
 		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
+		collateralProviderRef: &collateralProviderRef{},
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
@@ -105,6 +111,20 @@ func NewKeeper(
 	ak.Schema = schema
 
 	return ak
+}
+
+// GetRequiredCollateralForSlash returns the tokenomics-required collateral for a participant.
+// If no provider is configured, legacy slashing semantics are preserved by returning zero.
+func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
+	if k.collateralProviderRef.provider == nil {
+		return math.ZeroInt()
+	}
+
+	return k.collateralProviderRef.provider.GetRequiredCollateralForSlash(ctx, participantAddress)
+}
+
+func (k *Keeper) SetRequiredCollateralProvider(collateralProvider types.RequiredCollateralProvider) {
+	k.collateralProviderRef.provider = collateralProvider
 }
 
 // GetAuthority returns the module's authority.

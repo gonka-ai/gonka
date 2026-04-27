@@ -22,6 +22,7 @@ const (
 	Msg_UpdateParams_FullMethodName                      = "/inference.bls.Msg/UpdateParams"
 	Msg_SubmitDealerPart_FullMethodName                  = "/inference.bls.Msg/SubmitDealerPart"
 	Msg_SubmitVerificationVector_FullMethodName          = "/inference.bls.Msg/SubmitVerificationVector"
+	Msg_RespondDealerComplaints_FullMethodName           = "/inference.bls.Msg/RespondDealerComplaints"
 	Msg_SubmitGroupKeyValidationSignature_FullMethodName = "/inference.bls.Msg/SubmitGroupKeyValidationSignature"
 	Msg_SubmitPartialSignature_FullMethodName            = "/inference.bls.Msg/SubmitPartialSignature"
 	Msg_RequestThresholdSignature_FullMethodName         = "/inference.bls.Msg/RequestThresholdSignature"
@@ -38,6 +39,8 @@ type MsgClient interface {
 	SubmitDealerPart(ctx context.Context, in *MsgSubmitDealerPart, opts ...grpc.CallOption) (*MsgSubmitDealerPartResponse, error)
 	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
 	SubmitVerificationVector(ctx context.Context, in *MsgSubmitVerificationVector, opts ...grpc.CallOption) (*MsgSubmitVerificationVectorResponse, error)
+	// RespondDealerComplaints allows a dealer to submit complaint responses in a single transaction during disputing phase
+	RespondDealerComplaints(ctx context.Context, in *MsgRespondDealerComplaints, opts ...grpc.CallOption) (*MsgRespondDealerComplaintsResponse, error)
 	// SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
 	SubmitGroupKeyValidationSignature(ctx context.Context, in *MsgSubmitGroupKeyValidationSignature, opts ...grpc.CallOption) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
@@ -75,6 +78,15 @@ func (c *msgClient) SubmitDealerPart(ctx context.Context, in *MsgSubmitDealerPar
 func (c *msgClient) SubmitVerificationVector(ctx context.Context, in *MsgSubmitVerificationVector, opts ...grpc.CallOption) (*MsgSubmitVerificationVectorResponse, error) {
 	out := new(MsgSubmitVerificationVectorResponse)
 	err := c.cc.Invoke(ctx, Msg_SubmitVerificationVector_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RespondDealerComplaints(ctx context.Context, in *MsgRespondDealerComplaints, opts ...grpc.CallOption) (*MsgRespondDealerComplaintsResponse, error) {
+	out := new(MsgRespondDealerComplaintsResponse)
+	err := c.cc.Invoke(ctx, Msg_RespondDealerComplaints_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +131,8 @@ type MsgServer interface {
 	SubmitDealerPart(context.Context, *MsgSubmitDealerPart) (*MsgSubmitDealerPartResponse, error)
 	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
 	SubmitVerificationVector(context.Context, *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error)
+	// RespondDealerComplaints allows a dealer to submit complaint responses in a single transaction during disputing phase
+	RespondDealerComplaints(context.Context, *MsgRespondDealerComplaints) (*MsgRespondDealerComplaintsResponse, error)
 	// SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
 	SubmitGroupKeyValidationSignature(context.Context, *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
@@ -140,6 +154,9 @@ func (UnimplementedMsgServer) SubmitDealerPart(context.Context, *MsgSubmitDealer
 }
 func (UnimplementedMsgServer) SubmitVerificationVector(context.Context, *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitVerificationVector not implemented")
+}
+func (UnimplementedMsgServer) RespondDealerComplaints(context.Context, *MsgRespondDealerComplaints) (*MsgRespondDealerComplaintsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RespondDealerComplaints not implemented")
 }
 func (UnimplementedMsgServer) SubmitGroupKeyValidationSignature(context.Context, *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitGroupKeyValidationSignature not implemented")
@@ -217,6 +234,24 @@ func _Msg_SubmitVerificationVector_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RespondDealerComplaints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRespondDealerComplaints)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RespondDealerComplaints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RespondDealerComplaints_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RespondDealerComplaints(ctx, req.(*MsgRespondDealerComplaints))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_SubmitGroupKeyValidationSignature_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSubmitGroupKeyValidationSignature)
 	if err := dec(in); err != nil {
@@ -289,6 +324,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitVerificationVector",
 			Handler:    _Msg_SubmitVerificationVector_Handler,
+		},
+		{
+			MethodName: "RespondDealerComplaints",
+			Handler:    _Msg_RespondDealerComplaints_Handler,
 		},
 		{
 			MethodName: "SubmitGroupKeyValidationSignature",

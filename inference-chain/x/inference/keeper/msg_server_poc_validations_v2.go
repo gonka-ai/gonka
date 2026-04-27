@@ -30,8 +30,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		k.LogError(PocFailureTag+"[SubmitPocValidationsV2] Error checking confirmation PoC event", types.PoC, "error", err)
 	}
 
-	isMigrationTracking := params.PocParams.ConfirmationPocV2Enabled && isActive && activeEvent != nil && activeEvent.EventSequence == 0
-	if !params.PocParams.PocV2Enabled && !isMigrationTracking {
+	if !params.PocParams.PocV2Enabled {
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
 
@@ -112,12 +111,21 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 	// Process each validation - skip failures, don't fail entire batch
 	storedCount := 0
 	for _, validation := range msg.Validations {
+		modelID := validation.ModelId
+		if modelID == "" {
+			k.LogWarn("[SubmitPocValidationsV2] Missing model_id, skipping", types.PoC,
+				"validator", msg.Creator,
+				"participant", validation.ParticipantAddress)
+			continue
+		}
+
 		// Check for duplicate submission (prevents vote flipping)
-		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, validation.ParticipantAddress, msg.Creator)
+		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, validation.ParticipantAddress, modelID, msg.Creator)
 		if err != nil {
 			k.LogWarn("[SubmitPocValidationsV2] Failed to check existing validation, skipping", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
+				"model_id", modelID,
 				"error", err)
 			continue
 		}
@@ -125,6 +133,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			k.LogWarn("[SubmitPocValidationsV2] Validation already exists, skipping duplicate", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
+				"model_id", modelID,
 				"stage", startBlockHeight)
 			continue
 		}
@@ -134,6 +143,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			ParticipantAddress:          validation.ParticipantAddress,
 			ValidatorParticipantAddress: msg.Creator,
 			PocStageStartBlockHeight:    startBlockHeight,
+			ModelId:                     modelID,
 			ValidatedWeight:             validation.ValidatedWeight,
 		}
 
@@ -141,6 +151,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			k.LogWarn("[SubmitPocValidationsV2] Failed to store validation, skipping", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
+				"model_id", modelID,
 				"error", err)
 			continue
 		}
@@ -149,6 +160,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		k.LogInfo("[SubmitPocValidationsV2] Validation stored", types.PoC,
 			"validator", msg.Creator,
 			"participant", validation.ParticipantAddress,
+			"model_id", modelID,
 			"validatedWeight", validation.ValidatedWeight)
 	}
 

@@ -11,9 +11,11 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
-	"decentralized-api/training"
+	"devshard"
 	"net/http"
 	"time"
+
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
@@ -26,7 +28,6 @@ type Server struct {
 	nodeBroker          *broker.Broker
 	configManager       *apiconfig.ConfigManager
 	recorder            cosmosclient.CosmosMessageClient
-	trainingExecutor    *training.Executor
 	blockQueue          *BridgeQueue
 	bandwidthLimiter    *internal.BandwidthLimiter
 	identityCache       *identityCache
@@ -59,7 +60,6 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
-	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	payloadStorage payloadstorage.PayloadStorage,
@@ -75,7 +75,6 @@ func NewServer(
 		nodeBroker:          nodeBroker,
 		configManager:       configManager,
 		recorder:            recorder,
-		trainingExecutor:    trainingExecutor,
 		blockQueue:          blockQueue,
 		identityCache:       newIdentityCache(),
 		payloadStorage:      payloadStorage,
@@ -92,23 +91,20 @@ func NewServer(
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
+	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", s.postChat)
+	g.POST("completions", s.postCompletions)
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
-	g.GET("participants/:address", s.getInferenceParticipantByAddress)
+	g.GET("participants/:address", s.getAccountByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
-
-	g.POST("training/tasks", s.postTrainingTask)
-	g.GET("training/tasks", s.getTrainingTasks)
-	g.GET("training/tasks/:id", s.getTrainingTask)
-	g.POST("training/lock-nodes", s.lockTrainingNodes)
 
 	g.POST("verify-proof", s.postVerifyProof)
 	g.POST("verify-block", s.postVerifyBlock)
@@ -162,13 +158,16 @@ func NewServer(
 	// PoC artifact state endpoint (for testermint/validators to get real count and root_hash)
 	g.GET("poc/artifacts/state", s.getPocArtifactsState)
 
+	v2 := e.Group("/v2/")
+	v2.GET("participants/:address", s.getParticipantByAddress)
+	v2.GET("accounts/:address", s.getAccountByAddress)
 	return s
 }
 
-// SubnetGroup returns an echo group for mounting subnet routes.
-// Mounted under /v1/subnet so nginx's existing /v1/ location proxies it.
-func (s *Server) SubnetGroup() *echo.Group {
-	return s.e.Group("/v1/subnet")
+// DevshardGroup returns an echo group for mounting devshard routes.
+// Mounted under /v1/devshard so nginx's existing /v1/ location proxies it.
+func (s *Server) DevshardGroup() *echo.Group {
+	return s.e.Group(devshard.LegacyRoutePrefix)
 }
 
 func (s *Server) Start(addr string) {

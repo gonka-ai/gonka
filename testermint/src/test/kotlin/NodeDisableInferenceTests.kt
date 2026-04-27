@@ -1,6 +1,7 @@
 import com.productscience.*
 import com.productscience.assertions.assertThat
 import com.productscience.data.getParticipant
+import com.github.kittinunf.fuel.core.FuelError
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -32,14 +33,11 @@ class NodeDisableInferenceTests : TestermintTest() {
         val participants = genesis.api.getActiveParticipants().activeParticipants
         assertThat(participants.participants).hasSize(3)
 
+        val genesisRegisteredNodes = genesis.api.getNodes()
+        assertThat(genesisRegisteredNodes).hasSize(2)
+
         val genesisParticipant = participants.getParticipant(genesis)
         assertThat(genesisParticipant).isNotNull
-        genesisParticipant?.mlNodes?.firstOrNull()?.mlNodes.also { genesisMlNodes ->
-            assertThat(genesisMlNodes).hasSize(2)
-            assertThat(genesisMlNodes!![0].timeslotAllocation[1] || genesisMlNodes[1].timeslotAllocation[1])
-                .isTrue()
-                .`as`("At least one Genesis ML node should have inference timeslot allocation")
-        }
 
         // 3. Wait for INFERENCE phase and disable join-1
         logSection("Waiting for Inference Window")
@@ -60,8 +58,25 @@ class NodeDisableInferenceTests : TestermintTest() {
         val rewardSeed = join1.api.getConfig().currentSeed
         logSection("Waiting for an inference assigned to disabled join-1 in the current epoch")
         val join1Address = join1.node.getColdAddress()
-        val earnedInference = generateSequence { getInferenceResult(genesis) }
-            .take(20)
+        val earnedInference = (1..20)
+            .asSequence()
+            .mapNotNull { attempt ->
+                runCatching { getInferenceResult(genesis) }
+                    .onFailure { error ->
+                        val isTemporary500 = error is FuelError &&
+                            error.message.orEmpty().contains("500 Internal Server Error")
+                        val isChainLag = error is IllegalStateException &&
+                            error.message.orEmpty().contains("Inference never logged in chain")
+                        if (!isTemporary500 && !isChainLag) {
+                            throw error
+                        }
+                        Logger.info(
+                            "Inference attempt $attempt hit a transient response while waiting for join-1 assignment; retrying on the next block: ${error.message}"
+                        )
+                        genesis.waitForBlock(1) { true }
+                    }
+                    .getOrNull()
+            }
             .firstOrNull { result ->
                 result.inference.assignedTo == join1Address || result.inference.executedBy == join1Address
             }

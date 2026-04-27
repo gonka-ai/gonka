@@ -80,6 +80,48 @@ const (
           { "role": "user", "content": "Hi!" }
         ]
     }`
+
+	jsonBodyMultipartContent = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Hello" },
+              { "type": "image_url", "image_url": { "url": "https://example.com/cat.png" } },
+              { "type": "text", "text": " world" }
+            ]
+          }
+        ]
+    }`
+
+	jsonBodyNullContent = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          { "role": "user", "content": null }
+        ]
+    }`
+
+	jsonBodyToolCalling = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          { "role": "user", "content": "What is the weather?" },
+          { "role": "assistant", "tool_calls": [{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}] },
+          { "role": "tool", "content": "72F sunny", "tool_call_id": "call_1" }
+        ]
+    }`
+
+	jsonBodyMultipartTextPartMissingText = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text" }
+            ]
+          }
+        ]
+    }`
 )
 
 func TestModifyRequestBody_NullLogprobsPreserved(t *testing.T) {
@@ -257,4 +299,94 @@ func TestMaxTokens(t *testing.T) {
 			require.Equal(t, float64(tt.expected), maxCompletionTokens)
 		})
 	}
+}
+
+func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
+	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
+	require.NoError(t, err)
+
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+
+	messages := requestMap["messages"].([]interface{})
+	message := messages[0].(map[string]interface{})
+	_, isArray := message["content"].([]interface{})
+	require.True(t, isArray)
+}
+
+func TestModifyRequestBody_RejectsNullMessageContentForUser(t *testing.T) {
+	_, err := ModifyRequestBody([]byte(jsonBodyNullContent), 7)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is required")
+}
+
+func TestModifyRequestBody_AcceptsToolCallingPayload(t *testing.T) {
+	r, err := ModifyRequestBody([]byte(jsonBodyToolCalling), 7)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	messages := requestMap["messages"].([]interface{})
+	require.Len(t, messages, 3)
+	assistantMsg := messages[1].(map[string]interface{})
+	require.Nil(t, assistantMsg["content"])
+	require.NotNil(t, assistantMsg["tool_calls"])
+}
+
+func TestModifyRequestBody_RejectsTextPartWithoutTextField(t *testing.T) {
+	_, err := ModifyRequestBody([]byte(jsonBodyMultipartTextPartMissingText), 7)
+	require.Error(t, err, "text content part without text field should be rejected")
+}
+
+func TestModifyRequestBodyWithLogprobsMode_Processed(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "processed_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_Raw(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "raw_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "raw_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_EmptyNoKey(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	_, exists := m["logprobs_mode"]
+	require.False(t, exists, "logprobs_mode should not be present when empty string is passed")
+}
+
+func TestModifyRequestBodyWithLogprobsMode_OverwritesClientValue(t *testing.T) {
+	body := []byte(`{"model":"x","messages":[{"role":"user","content":"hi"}],"logprobs_mode":"raw_logprobs"}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "processed_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_PromptHashConsistency(t *testing.T) {
+	body := []byte(jsonBody)
+	mode := "processed_logprobs"
+
+	r1, err := ModifyRequestBodyWithLogprobsMode(body, 42, mode)
+	require.NoError(t, err)
+
+	r2, err := ModifyRequestBodyWithLogprobsMode(body, 42, mode)
+	require.NoError(t, err)
+
+	require.Equal(t, r1.NewBody, r2.NewBody, "identical inputs must produce identical outputs for hash consistency")
 }

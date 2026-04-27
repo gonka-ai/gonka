@@ -9,12 +9,13 @@ import (
 
 var _ sdk.Msg = &MsgRequestBridgeWithdrawal{}
 
-func NewMsgRequestBridgeWithdrawal(creator, userAddress, amount, destinationAddress string) *MsgRequestBridgeWithdrawal {
+func NewMsgRequestBridgeWithdrawal(creator, userAddress, amount, destinationAddress, destinationBridgeAddress string) *MsgRequestBridgeWithdrawal {
 	return &MsgRequestBridgeWithdrawal{
-		Creator:            creator,
-		UserAddress:        userAddress,
-		Amount:             amount,
-		DestinationAddress: destinationAddress,
+		Creator:                  creator,
+		UserAddress:              userAddress,
+		Amount:                   amount,
+		DestinationAddress:       destinationAddress,
+		DestinationBridgeAddress: destinationBridgeAddress,
 	}
 }
 
@@ -43,6 +44,16 @@ func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
 	// Validate destination address is not empty (Ethereum address format not validated here)
 	if len(msg.DestinationAddress) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination address cannot be empty")
+	}
+
+	// Validate destination bridge address is not empty
+	if len(msg.DestinationBridgeAddress) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination bridge address cannot be empty")
+	}
+
+	// Basic validation for Ethereum address format since bridge is Ethereum specific currently
+	if !isValidEthereumAddress(msg.DestinationBridgeAddress) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination bridge address must be a valid Ethereum address")
 	}
 
 	return nil

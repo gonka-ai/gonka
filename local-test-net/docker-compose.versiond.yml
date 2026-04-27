@@ -1,0 +1,67 @@
+services:
+  versiond:
+    container_name: ${KEY_NAME}-versiond
+    image: versiond:latest
+    build:
+      context: ./versioned
+      dockerfile: Dockerfile
+    environment:
+      VERSIOND_ORACLE_URL: http://${KEY_NAME}-api:9100/versions
+      VERSIOND_POLL_INTERVAL: "5s"
+      VERSIOND_BIN_DIR: /opt/versiond/bin
+      VERSIOND_DATA_DIR: /opt/versiond/data
+      # Default binary is testapp (VersiondTests). DevshardStandaloneTests
+      # exports VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=v0.2.11,
+      # VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd before bringing up
+      # the cluster, switching this versiond to run the locally-built
+      # devshardd binary instead.
+      VERSIOND_BINARY_NAME: ${VERSIOND_BINARY_NAME:-testapp}
+      VERSIOND_FORCE: ${VERSIOND_FORCE:-}
+      VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
+      NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
+      # Inherited by child binaries (devshardd reads these). Same env
+      # surface dapi's init-docker.sh uses.
+      KEY_NAME: ${VERSIOND_SIGNER_KEY_NAME}
+      ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:-}
+      NODE_HOST: ${KEY_NAME}-node
+      KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
+      KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
+      KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    volumes:
+      # Locally-built devshardd binary, served as version "v0.2.11" via the
+      # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if
+      # VERSIOND_FORCE is empty (versiond never references it).
+      # Path is relative to --project-directory (repo root), not the
+      # compose file location.
+      - ./build/devshardd:/opt/overrides/devshardd:ro
+      # Same keyring dapi uses, read-only. Devshardd signs devshard
+      # protocol messages with the same identity dapi registered on chain.
+      - ./prod-local/${KEY_NAME}:/root/.inference:ro
+    networks:
+      - chain-public
+    dns:
+      - 172.25.0.10
+      - 127.0.0.11
+
+  testapp-server:
+    container_name: ${KEY_NAME}-testapp-server
+    image: testapp-server:latest
+    build:
+      context: .
+      dockerfile: local-test-net/Dockerfile.testapp-server
+    ports:
+      - "${TESTAPP_SERVER_PORT:-7090}:8080"
+    networks:
+      - chain-public
+
+  devshardd-artifact-server:
+    container_name: ${KEY_NAME}-devshardd-artifact-server
+    image: python:3.12-alpine
+    working_dir: /srv/files
+    command: ["python3", "-m", "http.server", "8080"]
+    volumes:
+      # Test code prepares devshardd.zip and devshardd.zip.sha256 before the
+      # cluster boots so genesis can seed the final archive hash.
+      - ./build/devshardd-artifacts:/srv/files:ro
+    networks:
+      - chain-public

@@ -4,10 +4,14 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
-	"errors"
+	"net/url"
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+func encodeCallbackModelID(modelID string) string {
+	return url.PathEscape(url.PathEscape(modelID))
+}
 
 // NodeWorkerCommand defines the interface for commands executed by NodeWorker
 type NodeWorkerCommand interface {
@@ -65,12 +69,8 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		if healthy, _ := worker.GetClient().InferenceHealth(ctx); healthy {
 			// Check if loaded model matches expected
 			modelMatches := true
-			var expectedModel string
-			for modelId := range worker.node.State.EpochModels {
-				expectedModel = modelId
-				break
-			}
-			if expectedModel != "" {
+			expectedModel, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
+			if ok && expectedModel != "" {
 				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
 					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
 				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
@@ -114,7 +114,14 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	var selectedModel *types.Model
-	if len(worker.node.State.EpochModels) == 0 {
+	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
+	if ok && expectedModelID != "" {
+		if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
+			selectedModel = &model
+		}
+	}
+
+	if selectedModel == nil {
 		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
 		if err != nil {
 			result.Succeeded = false
@@ -124,16 +131,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			return result
 		}
 
-		hasIntersection := false
-		for _, govModel := range govModels.Model {
-			if _, ok := worker.node.Node.Models[govModel.Id]; ok {
-				hasIntersection = true
-				selectedModel = &govModel
-				break
-			}
-		}
-
-		if !hasIntersection {
+		if !ok || expectedModelID == "" {
 			result.Succeeded = false
 			result.Error = "No epoch models available for this node"
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -141,12 +139,22 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			return result
 		}
 
-		logging.Info("No epoch models configured for this node, using a governance model from one the supported by the node", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
-	} else {
-		for _, m := range worker.node.State.EpochModels {
-			selectedModel = &m
-			break
+		for i := range govModels.Model {
+			if govModels.Model[i].Id == expectedModelID {
+				selectedModel = &govModels.Model[i]
+				break
+			}
 		}
+
+		if selectedModel == nil {
+			result.Succeeded = false
+			result.Error = "No epoch models available for this node"
+			result.FinalStatus = types.HardwareNodeStatus_FAILED
+			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+			return result
+		}
+
+		logging.Info("No epoch model snapshot configured for this node, using deterministic configured governance model", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
 	}
 
 	if selectedModel == nil || selectedModel.Id == "" {
@@ -180,66 +188,6 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	return result
 }
 
-// StartTrainingNodeCommand starts training on a single node
-type StartTrainingNodeCommand struct {
-	TaskId         uint64
-	Participant    string
-	MasterNodeAddr string
-	NodeRanks      map[string]int
-	WorldSize      int
-}
-
-func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
-	result := NodeResult{
-		OriginalTarget: types.HardwareNodeStatus_TRAINING,
-	}
-
-	if ctx.Err() != nil {
-		result.Succeeded = false
-		result.Error = ctx.Err().Error()
-		result.FinalStatus = worker.node.State.CurrentStatus
-		result.FinalPocStatus = worker.node.State.PocCurrentStatus
-		return result
-	}
-
-	rank, ok := c.NodeRanks[worker.nodeId]
-	if !ok {
-		err := errors.New("rank not found for node")
-		logging.Error(err.Error(), types.Training, "node_id", worker.nodeId)
-		result.Succeeded = false
-		result.Error = err.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		return result
-	}
-
-	// Stop node first
-	if err := worker.GetClient().Stop(ctx); err != nil {
-		logging.Error("Failed to stop node for training", types.Training, "node_id", worker.nodeId, "error", err)
-		result.Succeeded = false
-		result.Error = err.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		return result
-	}
-
-	// Start training
-	trainingErr := worker.GetClient().StartTraining(
-		ctx, c.TaskId, c.Participant, worker.nodeId,
-		c.MasterNodeAddr, rank, c.WorldSize,
-	)
-	if trainingErr != nil {
-		logging.Error("Failed to start training", types.Training, "node_id", worker.nodeId, "error", trainingErr)
-		result.Succeeded = false
-		result.Error = trainingErr.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-	} else {
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_TRAINING
-		result.FinalPocStatus = PocStatusIdle
-		logging.Info("Successfully started training on node", types.Training, "node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
-	}
-	return result
-}
-
 // NoOpNodeCommand is a command that does nothing (used as placeholder)
 type NoOpNodeCommand struct {
 	Message string
@@ -257,13 +205,14 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 }
 
 type StartPoCNodeCommandV2 struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	CallbackUrl string
-	TotalNodes  int
-	Model       string
-	SeqLen      int64
+	BlockHeight    int64
+	BlockHash      string
+	PubKey         string
+	CallbackUrl    string
+	TotalNodes     int
+	Model          string
+	SeqLen         int64
+	PocStrongerRng bool
 }
 
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -306,7 +255,8 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
 		},
-		URL: c.CallbackUrl,
+		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
+		PocStrongerRng: c.PocStrongerRng,
 	}
 
 	if _, err := worker.GetClient().InitGenerateV2(ctx, req); err != nil {

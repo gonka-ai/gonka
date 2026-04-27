@@ -15,6 +15,9 @@ var (
 	KeyDealingPhaseDurationBlocks      = []byte("DealingPhaseDurationBlocks")
 	KeyVerificationPhaseDurationBlocks = []byte("VerificationPhaseDurationBlocks")
 	KeySigningDeadlineBlocks           = []byte("SigningDeadlineBlocks")
+	KeyDisputePhaseDurationBlocks      = []byte("DisputePhaseDurationBlocks")
+	KeyCompletedFallbackBlocks         = []byte("CompletedFallbackBlocks")
+	KeyMaxSigningAttempts              = []byte("MaxSigningAttempts")
 )
 
 // ParamKeyTable the param key table for launch module
@@ -29,6 +32,9 @@ func NewParams(
 	dealingPhaseDurationBlocks int64,
 	verificationPhaseDurationBlocks int64,
 	signingDeadlineBlocks int64,
+	disputePhaseDurationBlocks int64,
+	completedFallbackBlocks int64,
+	maxSigningAttempts uint32,
 ) Params {
 	return Params{
 		ITotalSlots:                     iTotalSlots,
@@ -36,6 +42,9 @@ func NewParams(
 		DealingPhaseDurationBlocks:      dealingPhaseDurationBlocks,
 		VerificationPhaseDurationBlocks: verificationPhaseDurationBlocks,
 		SigningDeadlineBlocks:           signingDeadlineBlocks,
+		DisputePhaseDurationBlocks:      disputePhaseDurationBlocks,
+		CompletedFallbackBlocks:         completedFallbackBlocks,
+		MaxSigningAttempts:              maxSigningAttempts,
 	}
 }
 
@@ -47,6 +56,9 @@ func DefaultParams() Params {
 		5,   // dealing_phase_duration_blocks: 5 blocks for PoC
 		3,   // verification_phase_duration_blocks: 3 blocks for PoC
 		10,  // signing_deadline_blocks: 10 blocks for PoC (enough time for controllers to respond)
+		3,   // dispute_phase_duration_blocks: 3 blocks for PoC
+		0,   // completed_fallback_blocks: disabled by default
+		3,   // max_signing_attempts: initial attempt + 2 retries
 	)
 }
 
@@ -58,6 +70,9 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyDealingPhaseDurationBlocks, &p.DealingPhaseDurationBlocks, validateDealingPhaseDurationBlocks),
 		paramtypes.NewParamSetPair(KeyVerificationPhaseDurationBlocks, &p.VerificationPhaseDurationBlocks, validateVerificationPhaseDurationBlocks),
 		paramtypes.NewParamSetPair(KeySigningDeadlineBlocks, &p.SigningDeadlineBlocks, validateSigningDeadlineBlocks),
+		paramtypes.NewParamSetPair(KeyDisputePhaseDurationBlocks, &p.DisputePhaseDurationBlocks, validateDisputePhaseDurationBlocks),
+		paramtypes.NewParamSetPair(KeyCompletedFallbackBlocks, &p.CompletedFallbackBlocks, validateCompletedFallbackBlocks),
+		paramtypes.NewParamSetPair(KeyMaxSigningAttempts, &p.MaxSigningAttempts, validateMaxSigningAttempts),
 	}
 }
 
@@ -76,6 +91,15 @@ func (p Params) Validate() error {
 		return err
 	}
 	if err := validateSigningDeadlineBlocks(p.SigningDeadlineBlocks); err != nil {
+		return err
+	}
+	if err := validateDisputePhaseDurationBlocks(p.DisputePhaseDurationBlocks); err != nil {
+		return err
+	}
+	if err := validateCompletedFallbackBlocks(p.CompletedFallbackBlocks); err != nil {
+		return err
+	}
+	if err := validateMaxSigningAttempts(p.MaxSigningAttempts); err != nil {
 		return err
 	}
 
@@ -152,6 +176,46 @@ func validateSigningDeadlineBlocks(i interface{}) error {
 
 	if v <= 0 {
 		return fmt.Errorf("signing_deadline_blocks must be positive")
+	}
+
+	return nil
+}
+
+func validateDisputePhaseDurationBlocks(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+
+	if v <= 0 {
+		return fmt.Errorf("dispute_phase_duration_blocks must be positive")
+	}
+
+	return nil
+}
+
+func validateCompletedFallbackBlocks(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+
+	if v < 0 {
+		return fmt.Errorf("completed_fallback_blocks must be non-negative")
+	}
+
+	return nil
+}
+
+func validateMaxSigningAttempts(i interface{}) error {
+	v, ok := i.(uint32)
+
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+
+	if v == 0 {
+		return fmt.Errorf("max_signing_attempts must be positive")
 	}
 
 	return nil

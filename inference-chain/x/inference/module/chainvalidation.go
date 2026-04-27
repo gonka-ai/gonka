@@ -2,10 +2,10 @@ package inference
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"sort"
+	"slices"
 	"strconv"
+	"strings"
 
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -41,126 +41,160 @@ func CalculateTimeNormalizationFactor(
 	return factor
 }
 
-// WeightCalculator encapsulates all the data needed to calculate new weights for participants.
+// PoCWeightCalculator encapsulates all the data needed to calculate new weights for participants.
 // Uses off-chain store commits and weight distributions instead of on-chain batches.
-type WeightCalculator struct {
-	CurrentValidatorWeights map[string]int64
-	StoreCommits            map[string]types.PoCV2StoreCommit
-	NodeWeightDistributions map[string]types.MLNodeWeightDistribution
-	Validations             map[string][]types.PoCValidationV2
+type PoCWeightCalculator struct {
+	ModelVotingPowers       map[string]map[string]int64 // model -> (participant -> votingPower)
+	TotalNetworkWeight      int64
+	StoreCommits            map[types.PoCParticipantModelKey]types.PoCV2StoreCommit
+	NodeWeightDistributions map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution
+	Validations             map[types.PoCParticipantModelKey][]types.PoCValidationV2
+	PocParams               *types.PocParams
 	Participants            map[string]types.Participant
 	Seeds                   map[string]types.RandomSeed
 	EpochStartBlockHeight   int64
 	Logger                  types.InferenceLogger
-	WeightScaleFactor       mathsdk.LegacyDec
 	TimeNormalizationFactor mathsdk.LegacyDec
 	GuardianEnabled         bool
 	GuardianAddresses       map[string]bool
 	AppHash                 string
 	ValidationSlots         int
-	sortedValidatorEntries  []calculations.WeightEntry
-	validatorTotalWeight    int64
+
+	// sortedVotingPowers caches PrepareSortedEntries output per model.
+	// Avoids re-sorting the same voting power map for every participant on the same model.
+	sortedVotingPowers map[string]sortedModelVP
 }
 
-// NewWeightCalculator creates a new WeightCalculator instance.
-func NewWeightCalculator(
-	currentValidatorWeights map[string]int64,
-	storeCommits map[string]types.PoCV2StoreCommit,
-	nodeWeightDistributions map[string]types.MLNodeWeightDistribution,
-	validations map[string][]types.PoCValidationV2,
+// sortedModelVP holds pre-computed sorted entries and total weight for a model.
+type sortedModelVP struct {
+	entries     []calculations.WeightEntry
+	totalWeight int64
+}
+
+// NewPoCWeightCalculator creates a new PoCWeightCalculator instance.
+func NewPoCWeightCalculator(
+	modelVotingPowers map[string]map[string]int64,
+	totalNetworkWeight int64,
+	storeCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+	nodeWeightDistributions map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution,
+	validations map[types.PoCParticipantModelKey][]types.PoCValidationV2,
+	pocParams *types.PocParams,
 	participants map[string]types.Participant,
 	seeds map[string]types.RandomSeed,
 	epochStartBlockHeight int64,
 	logger types.InferenceLogger,
-	weightScaleFactor mathsdk.LegacyDec,
 	timeNormalizationFactor mathsdk.LegacyDec,
 	guardianEnabled bool,
 	guardianAddresses map[string]bool,
 	appHash string,
 	validationSlots int,
-) *WeightCalculator {
-	wc := &WeightCalculator{
-		CurrentValidatorWeights: currentValidatorWeights,
+) *PoCWeightCalculator {
+	// Pre-compute sorted voting power entries per model to avoid re-sorting
+	// for every participant in pocValidated.
+	sortedVP := make(map[string]sortedModelVP, len(modelVotingPowers))
+	if validationSlots > 0 {
+		for _, modelID := range sortedKeys(modelVotingPowers) {
+			vp := modelVotingPowers[modelID]
+			entries, total := calculations.PrepareSortedEntries(vp)
+			sortedVP[modelID] = sortedModelVP{entries: entries, totalWeight: total}
+		}
+	}
+
+	return &PoCWeightCalculator{
+		ModelVotingPowers:       modelVotingPowers,
+		TotalNetworkWeight:      totalNetworkWeight,
 		StoreCommits:            storeCommits,
 		NodeWeightDistributions: nodeWeightDistributions,
 		Validations:             validations,
+		PocParams:               pocParams,
 		Participants:            participants,
 		Seeds:                   seeds,
 		EpochStartBlockHeight:   epochStartBlockHeight,
 		Logger:                  logger,
-		WeightScaleFactor:       weightScaleFactor,
 		TimeNormalizationFactor: timeNormalizationFactor,
 		GuardianEnabled:         guardianEnabled,
 		GuardianAddresses:       guardianAddresses,
 		AppHash:                 appHash,
 		ValidationSlots:         validationSlots,
+		sortedVotingPowers:      sortedVP,
 	}
-
-	if validationSlots > 0 {
-		wc.sortedValidatorEntries, wc.validatorTotalWeight = calculations.PrepareSortedEntries(currentValidatorWeights)
-	}
-
-	return wc
 }
 
 // Calculate computes the new weights for active participants.
-func (wc *WeightCalculator) Calculate() []*types.ActiveParticipant {
-	sortedParticipants := wc.getSortedParticipantKeys()
+func (wc *PoCWeightCalculator) Calculate() []*types.ActiveParticipant {
+	sortedKeys := wc.getSortedParticipantModelKeys()
+	activeParticipantsMap := make(map[string]*types.ActiveParticipant)
 
-	var activeParticipants []*types.ActiveParticipant
-	for _, participantAddress := range sortedParticipants {
-		activeParticipant := wc.validatedParticipant(participantAddress)
-		if activeParticipant != nil {
-			activeParticipants = append(activeParticipants, activeParticipant)
-			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
+	for _, key := range sortedKeys {
+		activeParticipant := wc.validatedParticipant(key)
+		if activeParticipant == nil {
+			continue
 		}
+		existing, found := activeParticipantsMap[activeParticipant.Index]
+		if !found {
+			activeParticipantsMap[activeParticipant.Index] = activeParticipant
+			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant, "modelId", key.ModelID)
+			continue
+		}
+		existing.Weight += activeParticipant.Weight
+		existing.Models = append(existing.Models, activeParticipant.Models...)
+		existing.MlNodes = append(existing.MlNodes, activeParticipant.MlNodes...)
+		wc.Logger.LogInfo("Calculate: Merging model contribution", types.PoC,
+			"participant", activeParticipant.Index,
+			"modelId", key.ModelID,
+			"weight", activeParticipant.Weight)
 	}
 
+	var participantAddresses []string
+	for participantAddress := range activeParticipantsMap {
+		participantAddresses = append(participantAddresses, participantAddress)
+	}
+	slices.Sort(participantAddresses)
+
+	activeParticipants := make([]*types.ActiveParticipant, 0, len(participantAddresses))
+	for _, participantAddress := range participantAddresses {
+		activeParticipants = append(activeParticipants, activeParticipantsMap[participantAddress])
+	}
 	return activeParticipants
 }
 
-func (wc *WeightCalculator) getSortedParticipantKeys() []string {
-	var sortedKeys []string
-	for key := range wc.StoreCommits {
-		sortedKeys = append(sortedKeys, key)
-	}
-	sort.Strings(sortedKeys)
-	return sortedKeys
+func (wc *PoCWeightCalculator) getSortedParticipantModelKeys() []types.PoCParticipantModelKey {
+	return sortedStoreCommitKeys(wc.StoreCommits)
 }
 
-func (wc *WeightCalculator) validatedParticipant(participantAddress string) *types.ActiveParticipant {
-	participant, ok := wc.Participants[participantAddress]
+func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantModelKey) *types.ActiveParticipant {
+	participant, ok := wc.Participants[key.ParticipantAddress]
 	if !ok {
-		wc.Logger.LogError("Calculate: Participant not found", types.PoC, "address", participantAddress)
+		wc.Logger.LogError("Calculate: Participant not found", types.PoC, "address", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
 
-	vals := wc.getParticipantValidations(participantAddress)
+	vals := wc.getParticipantValidations(key)
 	if len(vals) == 0 {
-		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
+		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
 
 	// Get claimed weight from store commit and per-node weights from distribution
-	nodeWeights, claimedWeight := wc.calculateParticipantWeight(participantAddress)
+	nodeWeights, claimedWeight := wc.calculateParticipantWeight(key)
 	if claimedWeight < 1 {
-		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
+		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID, "claimedWeight", claimedWeight)
 		return nil
 	}
-	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
+	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID, "claimedWeight", claimedWeight)
 
 	if participant.ValidatorKey == "" {
-		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
+		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
 
-	if !wc.pocValidated(vals, participantAddress) {
+	if !wc.pocValidated(vals, key) {
 		return nil
 	}
 
-	seed, found := wc.Seeds[participantAddress]
+	seed, found := wc.Seeds[key.ParticipantAddress]
 	if !found {
-		wc.Logger.LogError("Calculate: Seed not found", types.PoC, "blockHeight", wc.EpochStartBlockHeight, "participant", participantAddress)
+		wc.Logger.LogError("Calculate: Seed not found", types.PoC, "blockHeight", wc.EpochStartBlockHeight, "participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
 
@@ -185,26 +219,35 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		Weight:       claimedWeight,
 		InferenceUrl: participant.InferenceUrl,
 		Seed:         &seed,
-		Models:       make([]string, 0),
+		Models:       []string{key.ModelID},
 		MlNodes:      modelMLNodesArray,
 	}
 	return activeParticipant
 }
 
-func (wc *WeightCalculator) getParticipantValidations(participantAddress string) []types.PoCValidationV2 {
-	vals := wc.Validations[participantAddress]
+func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipantModelKey) []types.PoCValidationV2 {
+	vals := wc.Validations[key]
 
 	validators := make([]string, len(vals))
 	for i, v := range vals {
 		validators[i] = v.ValidatorParticipantAddress
 	}
 	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
-		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
+		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals), "validators", validators)
 
+	// Filter to validations from participants with voting power for this model.
+	// When no voting-power snapshot exists for the model yet, keep the original
+	// validations list for logging and guardian handling. pocValidated() still
+	// rejects later if the model has no voting-power data.
+	modelVP := wc.ModelVotingPowers[key.ModelID]
 	filteredVals := make([]types.PoCValidationV2, 0, len(vals))
-	for _, v := range vals {
-		if _, ok := wc.CurrentValidatorWeights[v.ValidatorParticipantAddress]; ok {
-			filteredVals = append(filteredVals, v)
+	if len(modelVP) == 0 {
+		filteredVals = vals
+	} else {
+		for _, v := range vals {
+			if _, ok := modelVP[v.ValidatorParticipantAddress]; ok {
+				filteredVals = append(filteredVals, v)
+			}
 		}
 	}
 
@@ -212,126 +255,105 @@ func (wc *WeightCalculator) getParticipantValidations(participantAddress string)
 	for i, v := range filteredVals {
 		filteredValidators[i] = v.ValidatorParticipantAddress
 	}
-	wc.Logger.LogInfo("Calculate: filtered validations to include only current validators", types.PoC,
-		"participant", participantAddress, "len(vals)", len(filteredVals), "validators", filteredValidators)
+	wc.Logger.LogInfo("Calculate: filtered validations to model validators with voting power", types.PoC,
+		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(filteredVals), "validators", filteredValidators)
 
 	return filteredVals
 }
 
 // pocValidated checks if the participant passed validation by majority vote.
-// When ValidationSlots > 0, uses sampled validator subset for O(N * N_SLOTS) complexity.
-// When ValidationSlots == 0, falls back to O(N²) all-validator validation.
-func (wc *WeightCalculator) pocValidated(vals []types.PoCValidationV2, participantAddress string) bool {
-	if len(wc.CurrentValidatorWeights) == 0 {
-		if wc.EpochStartBlockHeight > 0 {
-			wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
-		}
-		return true
-	}
-
-	assignedValidators := wc.getAssignedValidators(participantAddress)
-	outcome := wc.calculateAssignedOutcome(vals, assignedValidators)
-	// 66.7% threshold: need >2/3 of assigned slots to vote valid
-	// If not met, falls back to guardian decision
-	twoThirdsWeight := outcome.TotalWeight * 2 / 3
-
-	if outcome.ValidWeight > twoThirdsWeight {
-		wc.Logger.LogInfo("Calculate: Valid majority. Accepting.", types.PoC,
-			"participant", participantAddress,
-			"validWeight", outcome.ValidWeight,
-			"invalidWeight", outcome.InvalidWeight,
-			"totalWeight", outcome.TotalWeight,
-			"sampled", assignedValidators != nil,
-		)
-		return true
-	}
-
-	if outcome.InvalidWeight > twoThirdsWeight {
-		wc.Logger.LogWarn("Calculate: Invalid majority. Rejecting.", types.PoC,
-			"participant", participantAddress,
-			"validWeight", outcome.ValidWeight,
-			"invalidWeight", outcome.InvalidWeight,
-			"totalWeight", outcome.TotalWeight,
-			"sampled", assignedValidators != nil,
-		)
+// Uses per-model voting powers (delegation-resolved) for both slot sampling and threshold.
+// Only DIRECT members (participants who submitted PoC for this model) have voting power.
+// Delegated consensus weight flows into DIRECT members' voting power.
+func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key types.PoCParticipantModelKey) bool {
+	votingPowers := wc.ModelVotingPowers[key.ModelID]
+	if len(votingPowers) == 0 {
+		wc.Logger.LogWarn("Calculate: No voting powers for model. Rejecting.", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return false
 	}
 
-	return wc.guardianProtection(vals, participantAddress, outcome)
+	if wc.ValidationSlots > 0 {
+		// Slot-based: sample validators, count per-slot (each slot = 1 weight).
+		// Preserves duplicates -- a validator with 2 slots gets their vote counted twice.
+		// Only the model-local share of total network weight is sampled; the
+		// unsampled remainder behaves like abstention against the full slot count.
+		cached := wc.sortedVotingPowers[key.ModelID]
+		sampledSlots := calculations.ComputeSampledSlotCount(cached.totalWeight, wc.TotalNetworkWeight, wc.ValidationSlots)
+		assigned := calculations.GetSlotsFromSorted(
+			wc.AppHash, key.ParticipantAddress, key.ModelID,
+			cached.entries, cached.totalWeight, sampledSlots,
+		)
+		voteMap := make(map[string]int64)
+		for _, v := range vals {
+			voteMap[v.ValidatorParticipantAddress] = v.ValidatedWeight
+		}
+		totalSlots := int64(wc.ValidationSlots)
+		var validSlots, invalidSlots int64
+		for _, slotValidator := range assigned {
+			vote, hasVote := voteMap[slotValidator]
+			if !hasVote {
+				continue
+			}
+			if vote > 0 {
+				validSlots++
+			} else {
+				invalidSlots++
+			}
+		}
+		twoThirdsSlots := totalSlots * 2 / 3
+		if validSlots > twoThirdsSlots {
+			wc.Logger.LogInfo("Calculate: Valid majority (slot-sampled). Accepting.", types.PoC,
+				"participant", key.ParticipantAddress, "modelId", key.ModelID,
+				"validSlots", validSlots, "totalSlots", totalSlots)
+			return true
+		}
+		if invalidSlots > twoThirdsSlots {
+			wc.Logger.LogWarn("Calculate: Invalid majority (slot-sampled). Rejecting.", types.PoC,
+				"participant", key.ParticipantAddress, "modelId", key.ModelID,
+				"invalidSlots", invalidSlots, "totalSlots", totalSlots)
+			return false
+		}
+		return wc.guardianProtection(vals, key, ValidationOutcome{
+			TotalWeight:   totalSlots,
+			ValidWeight:   validSlots,
+			InvalidWeight: invalidSlots,
+		})
+	}
+
+	// Non-slot: weight approvals by votingPower, threshold against totalNetworkWeight.
+	outcome := calculateValidationOutcome(votingPowers, vals)
+	outcome.TotalWeight = wc.TotalNetworkWeight
+	twoThirds := wc.TotalNetworkWeight * 2 / 3
+	if outcome.ValidWeight > twoThirds {
+		wc.Logger.LogInfo("Calculate: Valid majority. Accepting.", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID,
+			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+		return true
+	}
+	if outcome.InvalidWeight > twoThirds {
+		wc.Logger.LogWarn("Calculate: Invalid majority. Rejecting.", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID,
+			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+		return false
+	}
+	return wc.guardianProtection(vals, key, outcome)
 }
 
-// getAssignedValidators returns the sampled validator addresses for a participant.
-// Returns nil when sampling is disabled (ValidationSlots == 0), triggering O(N²) fallback.
-func (wc *WeightCalculator) getAssignedValidators(participantAddress string) []string {
-	if wc.ValidationSlots == 0 {
-		return nil
-	}
-	if wc.sortedValidatorEntries == nil {
-		return nil
-	}
-	return calculations.GetSlotsFromSorted(wc.AppHash, participantAddress, wc.sortedValidatorEntries, wc.validatorTotalWeight, wc.ValidationSlots)
-}
-
-// ValidationOutcome holds aggregated vote counts.
-// When using slot-based sampling, these are slot counts (each slot = 1).
-// When using O(N²) fallback, these are weight sums.
+// ValidationOutcome holds aggregated vote weight sums.
 type ValidationOutcome struct {
 	TotalWeight   int64
 	ValidWeight   int64
 	InvalidWeight int64
 }
 
-// calculateAssignedOutcome computes vote counts from assigned slots.
-// When assignedValidators is nil, uses O(N²) fallback with weight-based counting.
-// When assignedValidators is set, counts slots (each slot = 1) since weight is
-// already encoded in how many slots each validator receives.
-func (wc *WeightCalculator) calculateAssignedOutcome(vals []types.PoCValidationV2, assignedValidators []string) ValidationOutcome {
-	if assignedValidators == nil {
-		outcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
-		totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
-		return ValidationOutcome{
-			TotalWeight:   int64(totalWeight),
-			ValidWeight:   outcome.ValidWeight,
-			InvalidWeight: outcome.InvalidWeight,
-		}
-	}
-
-	// Build map of validator address -> vote (positive = valid, zero/negative = invalid)
-	voteMap := make(map[string]int64)
-	for _, v := range vals {
-		voteMap[v.ValidatorParticipantAddress] = v.ValidatedWeight
-	}
-
-	// Count slots. Each slot = 1 (weight is already in slot distribution).
-	// Same validator can appear multiple times if they have high weight.
-	// TotalWeight is fixed to all assigned slots (missing votes are abstentions).
-	totalSlots := int64(len(assignedValidators))
-	var validSlots, invalidSlots int64
-	for _, slotValidator := range assignedValidators {
-		vote, hasVote := voteMap[slotValidator]
-		if !hasVote {
-			continue
-		}
-		if vote > 0 {
-			validSlots++
-		} else {
-			invalidSlots++
-		}
-	}
-
-	return ValidationOutcome{
-		TotalWeight:   totalSlots,
-		ValidWeight:   validSlots,
-		InvalidWeight: invalidSlots,
-	}
-}
-
 // guardianProtection handles tie-breaking when no clear majority exists.
 // All voting guardians must agree unanimously for the decision to pass.
-func (wc *WeightCalculator) guardianProtection(vals []types.PoCValidationV2, participantAddr string, outcome ValidationOutcome) bool {
+func (wc *PoCWeightCalculator) guardianProtection(vals []types.PoCValidationV2, key types.PoCParticipantModelKey, outcome ValidationOutcome) bool {
 	if !wc.GuardianEnabled || len(wc.GuardianAddresses) == 0 {
 		wc.Logger.LogWarn("Calculate: No majority and no guardians. Rejecting.", types.PoC,
-			"participant", participantAddr,
+			"participant", key.ParticipantAddress,
+			"modelId", key.ModelID,
 			"validWeight", outcome.ValidWeight,
 			"invalidWeight", outcome.InvalidWeight,
 			"totalWeight", outcome.TotalWeight,
@@ -352,7 +374,8 @@ func (wc *WeightCalculator) guardianProtection(vals []types.PoCValidationV2, par
 
 	if guardianValidCount > 0 && guardianInvalidCount == 0 {
 		wc.Logger.LogInfo("Calculate: Guardian tiebreaker - unanimous valid. Accepting.", types.PoC,
-			"participant", participantAddr,
+			"participant", key.ParticipantAddress,
+			"modelId", key.ModelID,
 			"guardianValidCount", guardianValidCount,
 		)
 		return true
@@ -360,14 +383,16 @@ func (wc *WeightCalculator) guardianProtection(vals []types.PoCValidationV2, par
 
 	if guardianInvalidCount > 0 && guardianValidCount == 0 {
 		wc.Logger.LogWarn("Calculate: Guardian tiebreaker - unanimous invalid. Rejecting.", types.PoC,
-			"participant", participantAddr,
+			"participant", key.ParticipantAddress,
+			"modelId", key.ModelID,
 			"guardianInvalidCount", guardianInvalidCount,
 		)
 		return false
 	}
 
 	wc.Logger.LogWarn("Calculate: No majority and guardians split. Rejecting.", types.PoC,
-		"participant", participantAddr,
+		"participant", key.ParticipantAddress,
+		"modelId", key.ModelID,
 		"guardianValidCount", guardianValidCount,
 		"guardianInvalidCount", guardianInvalidCount,
 	)
@@ -382,69 +407,61 @@ type nodeWeight struct {
 // calculateParticipantWeight computes the claimed weight from store commit and weight distribution.
 // Total weight comes from StoreCommit.Count (scaled by weightScaleFactor and timeNormalizationFactor).
 // Per-node weights come from MLNodeWeightDistribution.
-func (wc *WeightCalculator) calculateParticipantWeight(participantAddress string) ([]nodeWeight, int64) {
-	commit, hasCommit := wc.StoreCommits[participantAddress]
+// PocWeight is raw proven compute (timeNormalizationFactor only, no model coefficient).
+// Model coefficients are applied at the aggregation step in AggregateConsensusWeight.
+func (wc *PoCWeightCalculator) calculateParticipantWeight(key types.PoCParticipantModelKey) ([]nodeWeight, int64) {
+	commit, hasCommit := wc.StoreCommits[key]
 	if !hasCommit || commit.Count == 0 {
 		return nil, 0
 	}
 
-	combinedFactor := wc.WeightScaleFactor
+	normFactor := mathsdk.LegacyOneDec()
 	if wc.TimeNormalizationFactor.IsPositive() {
-		combinedFactor = combinedFactor.Mul(wc.TimeNormalizationFactor)
+		normFactor = wc.TimeNormalizationFactor
 	}
 
-	totalWeight := mathsdk.LegacyNewDec(int64(commit.Count)).Mul(combinedFactor).TruncateInt64()
+	totalWeight := mathsdk.LegacyNewDec(int64(commit.Count)).Mul(normFactor).TruncateInt64()
 
-	distribution, hasDistribution := wc.NodeWeightDistributions[participantAddress]
+	distribution, hasDistribution := wc.NodeWeightDistributions[key]
 	if !hasDistribution || len(distribution.Weights) == 0 {
 		wc.Logger.LogWarn("Calculate: No weight distribution for participant, skipping PoC weight", types.PoC,
-			"participant", participantAddress, "totalWeight", totalWeight)
+			"participant", key.ParticipantAddress, "modelId", key.ModelID, "totalWeight", totalWeight)
 		return nil, 0
 	}
 
 	nodeWeightsSlice := make([]nodeWeight, 0, len(distribution.Weights))
 	for _, w := range distribution.Weights {
-		scaledWeight := mathsdk.LegacyNewDec(int64(w.Weight)).Mul(combinedFactor).TruncateInt64()
+		scaledWeight := mathsdk.LegacyNewDec(int64(w.Weight)).Mul(normFactor).TruncateInt64()
 		nodeWeightsSlice = append(nodeWeightsSlice, nodeWeight{nodeId: w.NodeId, weight: scaledWeight})
 	}
-	sort.Slice(nodeWeightsSlice, func(i, j int) bool {
-		return nodeWeightsSlice[i].nodeId < nodeWeightsSlice[j].nodeId
+	slices.SortFunc(nodeWeightsSlice, func(a, b nodeWeight) int {
+		return strings.Compare(a.nodeId, b.nodeId)
 	})
-	wc.Logger.LogInfo("Calculate: Calculating participant weight", types.PoC,
-		"participant", participantAddress,
-		"weightScaleFactor", combinedFactor,
+	wc.Logger.LogInfo("Calculate: Calculating participant raw weight", types.PoC,
+		"participant", key.ParticipantAddress,
+		"modelId", key.ModelID,
 		"timeNormalizationFactor", wc.TimeNormalizationFactor,
 		"count", commit.Count,
-		"combinedFactor", combinedFactor,
 		"totalWeight", totalWeight,
 	)
 
 	return nodeWeightsSlice, totalWeight
 }
 
-type validationOutcome struct {
-	ValidWeight   int64
-	InvalidWeight int64
-}
-
 // calculateValidationOutcome computes valid/invalid weights from validations.
-// Uses validated_weight semantics:
-// - validated_weight == -1 -> invalid vote
-// - validated_weight > 0 -> valid vote
-func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidationV2) validationOutcome {
-	validWeight := int64(0)
-	invalidWeight := int64(0)
+// validated_weight > 0 is a valid vote, validated_weight <= 0 is invalid.
+func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidationV2) ValidationOutcome {
+	var validWeight, invalidWeight int64
 	for _, v := range validations {
 		if weight, ok := currentValidatorsSet[v.ValidatorParticipantAddress]; ok {
 			if v.ValidatedWeight > 0 {
 				validWeight += weight
 			} else {
-				// validated_weight <= 0 is treated as invalid (fraud/failure detected)
 				invalidWeight += weight
 			}
 		}
 	}
-	return validationOutcome{
+	return ValidationOutcome{
 		ValidWeight:   validWeight,
 		InvalidWeight: invalidWeight,
 	}
@@ -494,14 +511,16 @@ func (am AppModule) getCurrentValidatorWeights(ctx context.Context) (map[string]
 	return weights, nil
 }
 
-// GetPreviousEpochMLNodesWithInferenceAllocation retrieves MLNodes from the previous epoch that have POC_SLOT = true (inference allocation)
-// and returns a map of participant addresses to their ActiveParticipant objects with preserved weights
-func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
+// PreservedParticipantsFromCurrentEpoch reads the preserved-nodes snapshot for the
+// currently-active epoch (about to be replaced by upcomingEpoch) and returns the
+// corresponding ActiveParticipant records. Used by ComputeNewWeights to carry preserved
+// weight into the next epoch.
+func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
 	preservedParticipants := make(map[string]*types.ActiveParticipant)
 
 	// Skip for first epoch or if we can't get current epoch (which is about to end)
 	if upcomingEpoch.Index <= 1 {
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Skipping for first epoch", types.PoC,
+		am.LogInfo("PreservedParticipantsFromCurrentEpoch: Skipping for first epoch", types.PoC,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 		return nil
 	}
@@ -510,25 +529,38 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 	// At this point in the flow, we're still in the current epoch - the transition happens later in onSetNewValidatorsStage
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Unable to get current epoch group", types.PoC, "error", err.Error())
 		return nil
 	}
 	if currentEpochGroup.GroupData.EpochIndex != upcomingEpoch.Index-1 {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Current epoch group does not match upcoming epoch", types.PoC,
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Current epoch group does not match upcoming epoch", types.PoC,
 			"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 			"upcomingEpoch.Index", upcomingEpoch.Index)
 		return nil
 	}
 
-	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
+	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Processing current epoch group (about to end)", types.PoC,
 		"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Error getting preserved nodes by participant", types.PoC, "error", err)
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes snapshot", types.PoC,
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+			"error", err)
+		return nil
+	}
+	if !found {
+		am.LogWarn("PreservedParticipantsFromCurrentEpoch: Preserved nodes snapshot not found", types.PoC,
+			"epochIndex", currentEpochGroup.GroupData.EpochIndex)
+		return nil
+	}
+
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, &preservedSnapshot)
+	if err != nil {
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes by participant", types.PoC, "error", err)
 		return nil
 	}
 
@@ -536,67 +568,66 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
 		participantAddress := validationWeight.MemberAddress
 
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing participant", types.PoC,
-			"participantAddress", participantAddress,
-			"len(MlNodes)", len(validationWeight.MlNodes))
-
-		inferenceMLNodes, ok := preservedNodesByParticipant[participantAddress]
-		if !ok || len(inferenceMLNodes) == 0 {
-			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: No preserved MLNodes for participant", types.PoC,
-				"participantAddress", participantAddress)
+		modelBuckets, ok := preservedNodesByParticipant[participantAddress]
+		if !ok || len(modelBuckets) == 0 {
 			continue
 		}
 
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing participant", types.PoC,
-			"participantAddress", participantAddress,
-			"len(inferenceMLNodes)", len(inferenceMLNodes))
-
-		// If we found inference-serving MLNodes for this participant, create ActiveParticipant
-		// Get participant details
 		participant, found := am.keeper.GetParticipant(ctx, participantAddress)
 		if !found {
-			am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Participant not found", types.PoC,
+			am.LogError("PreservedParticipantsFromCurrentEpoch: Participant not found", types.PoC,
 				"participantAddress", participantAddress)
 			continue
 		}
 
-		// Calculate total weight from preserved MLNodes
-		totalWeight := int64(0)
-		filteredInferenceMLNodes := make([]*types.MLNodeInfo, 0)
-		for _, mlNode := range inferenceMLNodes {
-			if mlNode.NodeId == "" {
-				continue
+		// Build per-model MlNodes arrays with Models populated
+		var models []string
+		var mlNodeArrays []*types.ModelMLNodes
+
+		// Sort model IDs for deterministic order
+		sortedModelIds := make([]string, 0, len(modelBuckets))
+		for modelId := range modelBuckets {
+			sortedModelIds = append(sortedModelIds, modelId)
+		}
+		slices.Sort(sortedModelIds)
+
+		for _, modelId := range sortedModelIds {
+			nodes := modelBuckets[modelId]
+			filtered := make([]*types.MLNodeInfo, 0, len(nodes))
+			for _, node := range nodes {
+				if node.NodeId != "" {
+					filtered = append(filtered, node)
+				}
 			}
-			totalWeight += mlNode.PocWeight
-			filteredInferenceMLNodes = append(filteredInferenceMLNodes, mlNode)
+			if len(filtered) > 0 {
+				models = append(models, modelId)
+				mlNodeArrays = append(mlNodeArrays, &types.ModelMLNodes{MlNodes: filtered})
+			}
 		}
 
-		// Create the double repeated structure with all MLNodes in the first array (index 0)
-		firstMLNodeArray := &types.ModelMLNodes{
-			MlNodes: filteredInferenceMLNodes,
+		if len(mlNodeArrays) == 0 {
+			continue
 		}
-		modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
 
-		// Create ActiveParticipant with preserved weights
 		activeParticipant := &types.ActiveParticipant{
-			Index:        participant.Address,
+			Index:        participantAddress,
 			ValidatorKey: participant.ValidatorKey,
-			Weight:       totalWeight,
 			InferenceUrl: participant.InferenceUrl,
-			Seed:         nil,               // Will be set later if available
-			Models:       make([]string, 0), // Will be populated by setModelsForParticipants
-			MlNodes:      modelMLNodesArray,
+			Seed:         nil,
+			Models:       models,
+			MlNodes:      mlNodeArrays,
 		}
+		activeParticipant.Weight = RecalculateWeight(activeParticipant)
 
 		preservedParticipants[participantAddress] = activeParticipant
 
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
+		am.LogInfo("PreservedParticipantsFromCurrentEpoch: Created preserved participant", types.PoC,
 			"participantAddress", participantAddress,
-			"totalWeight", totalWeight,
-			"numMLNodes", len(filteredInferenceMLNodes))
+			"totalWeight", activeParticipant.Weight,
+			"models", models)
 	}
 
-	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Summary", types.PoC,
+	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Summary", types.PoC,
 		"totalPreservedParticipants", len(preservedParticipants))
 
 	participantsSlice := make([]*types.ActiveParticipant, 0, len(preservedParticipants))
@@ -604,48 +635,75 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		participantsSlice = append(participantsSlice, participant)
 	}
 	// Sort participants by address for consistent order
-	sort.Slice(participantsSlice, func(i, j int) bool {
-		return participantsSlice[i].Index < participantsSlice[j].Index
+	slices.SortFunc(participantsSlice, func(a, b *types.ActiveParticipant) int {
+		if a.Index < b.Index {
+			return -1
+		}
+		if a.Index > b.Index {
+			return 1
+		}
+		return 0
 	})
 
 	return participantsSlice
 }
 
-func (am AppModule) GetPreservedNodesByParticipant(ctx context.Context, epochId uint64) (map[string][]*types.MLNodeInfo, error) {
-	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
-	if !found {
-		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Active participants not found", types.PoC, "epochId", epochId)
-		return nil, errors.New("GetPreviousEpochMLNodesWithInferenceAllocation: active participant not found. epochId: " + strconv.FormatUint(epochId, 10))
+// GetPreservedNodesByParticipant returns per-model preserved node buckets.
+// Result: participant address -> model ID -> preserved nodes for that model.
+func (am AppModule) GetPreservedNodesByParticipant(
+	ctx context.Context,
+	epochId uint64,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+) (map[string]map[string][]*types.MLNodeInfo, error) {
+	result := make(map[string]map[string][]*types.MLNodeInfo)
+	if preservedSnapshot == nil {
+		return result, nil
 	}
 
-	result := make(map[string][]*types.MLNodeInfo)
-
-	for _, p := range participants.Participants {
-		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation. GetPreservedNodesByParticipant: Processing participant", types.PoC,
-			"participantAddress", p.Index, "len(p.MlNodes)", len(p.MlNodes))
-
-		nodes := make([]*types.MLNodeInfo, 0)
-		for _, nodeArray := range p.MlNodes {
-			for _, mlNode := range nodeArray.MlNodes {
-				if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
-					preservedMLNode := &types.MLNodeInfo{
-						NodeId:             mlNode.NodeId,
-						Throughput:         mlNode.Throughput,
-						PocWeight:          mlNode.PocWeight,    // Preserve the weight from current epoch
-						TimeslotAllocation: []bool{true, false}, // Reset to default for new epoch
-					}
-					nodes = append(nodes, preservedMLNode)
-				}
-			}
+	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
+		if len(modelNodes.Participants) == 0 {
+			continue
 		}
-		if len(nodes) > 0 {
-			result[p.Index] = nodes
-			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Found preserved MLNodes for participant", types.PoC,
-				"participantAddress", p.Index,
-				"numMLNodes", len(nodes))
-		} else {
-			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: No preserved MLNodes for participant", types.PoC,
-				"participantAddress", p.Index)
+
+		subgroupData, found := am.keeper.GetEpochGroupData(ctx, epochId, modelNodes.ModelId)
+		if !found {
+			am.LogWarn("GetPreservedNodesByParticipant: Model subgroup not found for preserved snapshot", types.PoC,
+				"epochId", epochId,
+				"modelId", modelNodes.ModelId)
+			continue
+		}
+
+		preservedNodeSet := make(map[string]map[string]struct{}, len(modelNodes.Participants))
+		for _, p := range modelNodes.Participants {
+			if p == nil {
+				continue
+			}
+			nodeSet := make(map[string]struct{}, len(p.NodeIds))
+			for _, nodeID := range p.NodeIds {
+				nodeSet[nodeID] = struct{}{}
+			}
+			preservedNodeSet[p.ParticipantId] = nodeSet
+		}
+
+		for _, validationWeight := range subgroupData.ValidationWeights {
+			participantNodes, ok := preservedNodeSet[validationWeight.MemberAddress]
+			if !ok {
+				continue
+			}
+			for _, node := range validationWeight.MlNodes {
+				if node == nil {
+					continue
+				}
+				if _, ok := participantNodes[node.NodeId]; !ok {
+					continue
+				}
+				if _, ok := result[validationWeight.MemberAddress]; !ok {
+					result[validationWeight.MemberAddress] = make(map[string][]*types.MLNodeInfo)
+				}
+				copyNode := *node
+				copyNode.TimeslotAllocation = append([]bool(nil), node.TimeslotAllocation...)
+				result[validationWeight.MemberAddress][modelNodes.ModelId] = append(result[validationWeight.MemberAddress][modelNodes.ModelId], &copyNode)
+			}
 		}
 	}
 
@@ -661,47 +719,53 @@ func findParticipantByAddress(participants []*types.ActiveParticipant, address s
 	return nil
 }
 
-// Helper function to merge MLNode arrays from preserved and PoC participants
-func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*types.ModelMLNodes {
-	if len(preservedMLNodes) == 0 {
-		return pocMLNodes
-	}
-	if len(pocMLNodes) == 0 {
-		return preservedMLNodes
-	}
+// mergeByModel merges per-model MLNode arrays from two participants (preserved + PoC).
+// For each model present in either side, nodes are combined and deduped by NodeId.
+// Returns sorted model list and corresponding MlNodes arrays.
+func mergeByModel(
+	preservedModels []string, preservedMLNodes []*types.ModelMLNodes,
+	pocModels []string, pocMLNodes []*types.ModelMLNodes,
+) ([]string, []*types.ModelMLNodes) {
+	modelNodes := make(map[string][]*types.MLNodeInfo)
 
-	// Merge the first arrays (index 0) which contain all MLNodes before model assignment
-	var mergedMLNodes []*types.MLNodeInfo
-
-	// Add preserved MLNodes first
-	if len(preservedMLNodes) > 0 && preservedMLNodes[0] != nil {
-		mergedMLNodes = append(mergedMLNodes, preservedMLNodes[0].MlNodes...)
-	}
-
-	// Add PoC MLNodes, avoiding duplicates by NodeId
-	if len(pocMLNodes) > 0 && pocMLNodes[0] != nil {
-		existingNodeIds := make(map[string]bool)
-		for _, mlNode := range mergedMLNodes {
-			existingNodeIds[mlNode.NodeId] = true
-		}
-
-		for _, pocMLNode := range pocMLNodes[0].MlNodes {
-			if !existingNodeIds[pocMLNode.NodeId] {
-				mergedMLNodes = append(mergedMLNodes, pocMLNode)
+	// Add preserved nodes per model
+	for i, modelId := range preservedModels {
+		if i < len(preservedMLNodes) && preservedMLNodes[i] != nil {
+			for _, node := range preservedMLNodes[i].MlNodes {
+				if node != nil && node.NodeId != "" {
+					modelNodes[modelId] = append(modelNodes[modelId], node)
+				}
 			}
 		}
 	}
 
-	filteredMergedMLNodes := make([]*types.MLNodeInfo, 0)
-	for _, mlNode := range mergedMLNodes {
-		if mlNode.NodeId == "" {
-			continue
+	// Add PoC nodes per model, dedup by NodeId
+	for i, modelId := range pocModels {
+		if i < len(pocMLNodes) && pocMLNodes[i] != nil {
+			existing := make(map[string]bool)
+			for _, node := range modelNodes[modelId] {
+				existing[node.NodeId] = true
+			}
+			for _, node := range pocMLNodes[i].MlNodes {
+				if node != nil && node.NodeId != "" && !existing[node.NodeId] {
+					modelNodes[modelId] = append(modelNodes[modelId], node)
+				}
+			}
 		}
-		filteredMergedMLNodes = append(filteredMergedMLNodes, mlNode)
 	}
 
-	// Return merged array in the first position
-	return []*types.ModelMLNodes{{MlNodes: filteredMergedMLNodes}}
+	// Build sorted output
+	sortedModels := make([]string, 0, len(modelNodes))
+	for modelId := range modelNodes {
+		sortedModels = append(sortedModels, modelId)
+	}
+	slices.Sort(sortedModels)
+
+	result := make([]*types.ModelMLNodes, 0, len(sortedModels))
+	for _, modelId := range sortedModels {
+		result = append(result, &types.ModelMLNodes{MlNodes: modelNodes[modelId]})
+	}
+	return sortedModels, result
 }
 
 func RecalculateWeight(p *types.ActiveParticipant) int64 {
@@ -721,33 +785,65 @@ func RecalculateWeight(p *types.ActiveParticipant) int64 {
 	return weight
 }
 
-// getInferenceServingNodeIds returns a set of node IDs that have POC_SLOT = true in the current epoch
-func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]bool {
-	inferenceServingNodeIds := make(map[string]bool)
+// mergeMLNodeArrays is a legacy helper for the V1 path.
+// It flattens all nodes into MlNodes[0] and deduplicates by NodeId.
+func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*types.ModelMLNodes {
+	_, merged := mergeByModel(nil, preservedMLNodes, nil, pocMLNodes)
+	// Flatten all model buckets into a single array (V1 has one model)
+	var allNodes []*types.MLNodeInfo
+	for _, m := range merged {
+		if m != nil {
+			allNodes = append(allNodes, m.MlNodes...)
+		}
+	}
+	if len(allNodes) == 0 {
+		return nil
+	}
+	return []*types.ModelMLNodes{{MlNodes: allNodes}}
+}
 
-	// Skip for first epoch
+// getInferenceServingNodeIds returns preserved node IDs for the current episode snapshot,
+// keyed by participant_id -> node_id set. HardwareNode.LocalId is unique per
+// participant only, so callers must consult by (participantAddress, nodeId).
+func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]map[string]struct{} {
+	inferenceServingNodeIds := make(map[string]map[string]struct{})
+
 	if upcomingEpoch.Index <= 1 {
 		return inferenceServingNodeIds
 	}
 
-	// Get current epoch group data
-	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
-		am.LogError("getInferenceServingNodeIds: Unable to get current epoch group", types.PoC, "error", err.Error())
+		am.LogError("getInferenceServingNodeIds: Unable to get preserved nodes snapshot", types.PoC, "error", err.Error())
+		return inferenceServingNodeIds
+	}
+	if !found {
 		return inferenceServingNodeIds
 	}
 
-	// Find all nodes with POC_SLOT = true
-	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
-		for _, mlNode := range validationWeight.MlNodes {
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
-				inferenceServingNodeIds[mlNode.NodeId] = true
-				am.LogInfo("getInferenceServingNodeIds: Found inference-serving node", types.PoC,
-					"nodeId", mlNode.NodeId,
-					"participantAddress", validationWeight.MemberAddress)
+	totalNodes := 0
+	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
+		for _, p := range modelNodes.Participants {
+			if p == nil {
+				continue
+			}
+			nodeSet, ok := inferenceServingNodeIds[p.ParticipantId]
+			if !ok {
+				nodeSet = make(map[string]struct{})
+				inferenceServingNodeIds[p.ParticipantId] = nodeSet
+			}
+			for _, nodeID := range p.NodeIds {
+				if _, exists := nodeSet[nodeID]; !exists {
+					nodeSet[nodeID] = struct{}{}
+					totalNodes++
+				}
 			}
 		}
 	}
+	am.LogInfo("getInferenceServingNodeIds: preserved snapshot loaded", types.PoC,
+		"epoch", upcomingEpoch.Index,
+		"participantCount", len(inferenceServingNodeIds),
+		"nodeCount", totalNodes)
 
 	return inferenceServingNodeIds
 }
@@ -760,23 +856,9 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
 	// Get preserved weights from inference-serving MLNodes
-	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
+	preservedParticipants := am.PreservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
 		"numPreservedParticipants", len(preservedParticipants))
-
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
-	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"weights", currentValidatorWeights)
-
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		return nil
-	}
 
 	// Get off-chain store commits (replaces on-chain batches)
 	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, epochStartBlockHeight)
@@ -823,8 +905,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 
 	validators := make([]string, len(validations))
 	var i = 0
-	for address := range validations {
-		validators[i] = address
+	for key := range validations {
+		validators[i] = key.ParticipantAddress + ":" + key.ModelID
 		i++
 	}
 	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
@@ -836,20 +918,18 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	// Collect participants and seeds
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
-	allowedCommits := make(map[string]types.PoCV2StoreCommit)
-	allowedDistributions := make(map[string]types.MLNodeWeightDistribution)
+	allowedCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
+	allowedDistributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
 
-	var sortedCommitKeys []string
-	for key := range storeCommits {
-		sortedCommitKeys = append(sortedCommitKeys, key)
-	}
-	sort.Strings(sortedCommitKeys)
+	sortedCommitKeys := sortedStoreCommitKeys(storeCommits)
 
-	for _, participantAddress := range sortedCommitKeys {
+	for _, commitKey := range sortedCommitKeys {
+		participantAddress := commitKey.ParticipantAddress
 		// Check participant allowlist
 		if !am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress) {
 			am.LogInfo("ComputeNewWeights: Participant not in allowlist, skipping", types.PoC,
 				"address", participantAddress,
+				"modelId", commitKey.ModelID,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
 				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 			continue
@@ -859,6 +939,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		if !ok {
 			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
 				"address", participantAddress,
+				"modelId", commitKey.ModelID,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
 				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 			continue
@@ -870,13 +951,14 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
 				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-				"participant", participantAddress)
+				"participant", participantAddress,
+				"modelId", commitKey.ModelID)
 			continue
 		}
 		seeds[participantAddress] = seed
-		allowedCommits[participantAddress] = storeCommits[participantAddress]
-		if dist, ok := weightDistributions[participantAddress]; ok {
-			allowedDistributions[participantAddress] = dist
+		allowedCommits[commitKey] = storeCommits[commitKey]
+		if dist, ok := weightDistributions[commitKey]; ok {
+			allowedDistributions[commitKey] = dist
 		}
 	}
 
@@ -903,8 +985,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"error", err)
 		return nil
 	}
-	weightScaleFactor := params.PocParams.GetWeightScaleFactorDec()
-
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
 	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
 	guardianSet := make(map[string]bool, len(guardianAddrs))
@@ -929,6 +1009,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	var appHash string
 	var validationSlots int
 	timeNormalizationFactor := mathsdk.LegacyOneDec()
+	modelVotingPowers := make(map[string]map[string]int64)
+	totalNetworkWeight := int64(0)
 
 	snapshot, snapshotFound, _ := am.keeper.GetPoCValidationSnapshot(ctx, epochStartBlockHeight)
 	if snapshotFound {
@@ -944,11 +1026,16 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 				params.EpochParams.PocExchangeDuration,
 			)
 		}
+		// Load per-model voting powers from snapshot
+		for _, mvw := range snapshot.ModelVotingPowers {
+			modelVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
+		}
+		totalNetworkWeight = snapshot.TotalNetworkWeight
 		am.LogInfo("ComputeNewWeights: Using validation snapshot", types.PoC,
 			"appHash", appHash,
 			"validationSlots", validationSlots,
-			"generationStartTimestamp", snapshot.GenerationStartTimestamp,
-			"exchangeEndTimestamp", snapshot.ExchangeEndTimestamp,
+			"numModels", len(modelVotingPowers),
+			"totalNetworkWeight", totalNetworkWeight,
 			"timeNormalizationFactor", timeNormalizationFactor.String(),
 			"pocNormalizationEnabled", params.PocParams.PocNormalizationEnabled,
 		)
@@ -958,23 +1045,17 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		)
 	}
 
-	weightsForCalculator := currentValidatorWeights
-	if snapshotFound && validationSlots > 0 && len(snapshot.ValidatorWeights) > 0 {
-		weightsForCalculator = validatorWeightsSliceToMap(snapshot.ValidatorWeights)
-		am.LogInfo("ComputeNewWeights: Using snapshot weights for calculator", types.PoC,
-			"numValidators", len(weightsForCalculator))
-	}
-
-	calculator := NewWeightCalculator(
-		weightsForCalculator,
+	calculator := NewPoCWeightCalculator(
+		modelVotingPowers,
+		totalNetworkWeight,
 		allowedCommits,
 		allowedDistributions,
 		validations,
+		params.PocParams,
 		participants,
 		seeds,
 		epochStartBlockHeight,
 		am,
-		weightScaleFactor,
 		timeNormalizationFactor,
 		guardianEnabled,
 		guardianSet,
@@ -983,28 +1064,28 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	)
 	pocMiningParticipants := calculator.Calculate()
 
-	// Merge preserved participants with PoC mining participants
+	// Merge preserved participants with PoC mining participants (per-model)
 	var allActiveParticipants []*types.ActiveParticipant
 
 	for _, preservedParticipant := range preservedParticipants {
 		participantAddress := preservedParticipant.Index
 
 		if pocParticipant := findParticipantByAddress(pocMiningParticipants, participantAddress); pocParticipant != nil {
-			combinedMLNodes := mergeMLNodeArrays(preservedParticipant.MlNodes, pocParticipant.MlNodes)
-			combinedWeight := int64(0)
-			for _, mlNode := range combinedMLNodes[0].MlNodes {
-				combinedWeight += mlNode.PocWeight
-			}
+			mergedModels, mergedMLNodes := mergeByModel(
+				preservedParticipant.Models, preservedParticipant.MlNodes,
+				pocParticipant.Models, pocParticipant.MlNodes,
+			)
 
 			mergedParticipant := &types.ActiveParticipant{
 				Index:        participantAddress,
 				ValidatorKey: preservedParticipant.ValidatorKey,
-				Weight:       combinedWeight,
+				Weight:       0, // Will be set by aggregation
 				InferenceUrl: preservedParticipant.InferenceUrl,
 				Seed:         pocParticipant.Seed,
-				Models:       make([]string, 0),
-				MlNodes:      combinedMLNodes,
+				Models:       mergedModels,
+				MlNodes:      mergedMLNodes,
 			}
+			mergedParticipant.Weight = RecalculateWeight(mergedParticipant)
 
 			allActiveParticipants = append(allActiveParticipants, mergedParticipant)
 
@@ -1012,8 +1093,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 				"participantAddress", participantAddress,
 				"preservedWeight", preservedParticipant.Weight,
 				"pocWeight", pocParticipant.Weight,
-				"combinedWeight", combinedWeight,
-				"combinedMLNodes", combinedMLNodes)
+				"combinedWeight", mergedParticipant.Weight,
+				"models", mergedModels)
 		} else {
 			allActiveParticipants = append(allActiveParticipants, preservedParticipant)
 
@@ -1050,32 +1131,35 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 // filterStoreCommitsFromInferenceNodes filters store commits and their weight distributions
 // to exclude weight from inference-serving nodes. Returns filtered commits and distributions.
 func (am AppModule) filterStoreCommitsFromInferenceNodes(
-	allCommits map[string]types.PoCV2StoreCommit,
-	allDistributions map[string]types.MLNodeWeightDistribution,
-	inferenceServingNodeIds map[string]bool,
-) (map[string]types.PoCV2StoreCommit, map[string]types.MLNodeWeightDistribution) {
-	filteredCommits := make(map[string]types.PoCV2StoreCommit)
-	filteredDistributions := make(map[string]types.MLNodeWeightDistribution)
+	allCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+	allDistributions map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution,
+	inferenceServingNodeIds map[string]map[string]struct{},
+) (map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution) {
+	filteredCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
+	filteredDistributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
 	excludedNodeCount := 0
 
-	for participantAddress, commit := range allCommits {
-		distribution, hasDistribution := allDistributions[participantAddress]
+	for key, commit := range allCommits {
+		distribution, hasDistribution := allDistributions[key]
 
 		if !hasDistribution || len(distribution.Weights) == 0 {
 			am.LogWarn("filterStoreCommitsFromInferenceNodes: No distribution, cannot filter inference nodes, skipping", types.PoC,
-				"participantAddress", participantAddress,
+				"participantAddress", key.ParticipantAddress,
+				"modelId", key.ModelID,
 				"commitCount", commit.Count)
 			continue
 		}
 
-		// Filter out inference-serving nodes from distribution
+		participantNodes := inferenceServingNodeIds[key.ParticipantAddress]
+
 		var filteredWeights []*types.MLNodeWeight
 		filteredCount := uint32(0)
 		for _, w := range distribution.Weights {
-			if inferenceServingNodeIds[w.NodeId] {
+			if _, isServing := participantNodes[w.NodeId]; isServing {
 				excludedNodeCount++
 				am.LogWarn("filterStoreCommitsFromInferenceNodes: Excluding weight from inference-serving node", types.PoC,
-					"participantAddress", participantAddress,
+					"participantAddress", key.ParticipantAddress,
+					"modelId", key.ModelID,
 					"nodeId", w.NodeId,
 					"weight", w.Weight)
 			} else {
@@ -1087,19 +1171,20 @@ func (am AppModule) filterStoreCommitsFromInferenceNodes(
 		if filteredCount == 0 {
 			// All nodes were inference-serving - skip this participant
 			am.LogWarn("filterStoreCommitsFromInferenceNodes: All nodes inference-serving, skipping participant", types.PoC,
-				"participantAddress", participantAddress)
+				"participantAddress", key.ParticipantAddress,
+				"modelId", key.ModelID)
 			continue
 		}
 
 		// Create filtered commit with adjusted count
 		filteredCommit := commit
 		filteredCommit.Count = filteredCount
-		filteredCommits[participantAddress] = filteredCommit
+		filteredCommits[key] = filteredCommit
 
 		// Create filtered distribution
 		filteredDistribution := distribution
 		filteredDistribution.Weights = filteredWeights
-		filteredDistributions[participantAddress] = filteredDistribution
+		filteredDistributions[key] = filteredDistribution
 	}
 
 	am.LogInfo("filterStoreCommitsFromInferenceNodes: Summary", types.PoC,
@@ -1108,12 +1193,4 @@ func (am AppModule) filterStoreCommitsFromInferenceNodes(
 		"filteredParticipants", len(filteredCommits))
 
 	return filteredCommits, filteredDistributions
-}
-
-func validatorWeightsSliceToMap(weights []*types.ValidatorWeight) map[string]int64 {
-	result := make(map[string]int64, len(weights))
-	for _, w := range weights {
-		result[w.Address] = w.Weight
-	}
-	return result
 }

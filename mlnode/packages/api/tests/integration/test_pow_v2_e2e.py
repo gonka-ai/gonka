@@ -141,7 +141,8 @@ def wait_for_artifacts(batch_receiver_url: str, min_count: int = 1, timeout: flo
 
 class TestPoCv2E2E:
     """End-to-end tests for PoC v2 artifact generation and validation."""
-    
+
+    @pytest.mark.parametrize("poc_stronger_rng", [False, True], ids=["legacy_rng", "stronger_rng"])
     def test_full_flow(
         self,
         server_url: str,
@@ -149,9 +150,15 @@ class TestPoCv2E2E:
         vllm_url: str,
         inference_client: InferenceClient,
         session_ids: Dict[str, Any],
+        poc_stronger_rng: bool,
     ):
-        """Full E2E test: deploy, generate, validate artifacts, stop."""
-        
+        """Full E2E test: deploy, generate, validate artifacts, stop.
+
+        Runs twice: once with legacy RNG (poc_stronger_rng=False) and once with
+        the stronger RNG path (poc_stronger_rng=True) to ensure both code paths
+        produce honest artifacts that validate cleanly.
+        """
+
         # 1. Setup: Clear batch receiver, stop any running services
         print("Step 1: Setup - clearing batch receiver and stopping services")
         clear_batch_receiver(batch_receiver_url)
@@ -189,8 +196,9 @@ class TestPoCv2E2E:
                 "k_dim": K_DIM,
             },
             "url": batch_receiver_url,
+            "poc_stronger_rng": poc_stronger_rng,
         }
-        
+
         resp = requests.post(f"{server_url}/api/v1/inference/pow/init/generate", json=init_payload)
         resp.raise_for_status()
         init_result = resp.json()
@@ -261,8 +269,9 @@ class TestPoCv2E2E:
                 "p_mismatch": 0.001,
                 "fraud_threshold": 0.01,
             },
+            "poc_stronger_rng": poc_stronger_rng,
         }
-        
+
         resp = requests.post(f"{server_url}/api/v1/inference/pow/generate", json=generate_payload)
         resp.raise_for_status()
         validation_result = resp.json()
