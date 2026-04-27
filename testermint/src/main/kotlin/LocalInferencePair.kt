@@ -10,6 +10,8 @@ import com.productscience.data.*
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -838,6 +840,12 @@ data class LocalInferencePair(
             val cleanName = name.trimStart('/')
             val containerName = "$cleanName-devshardctl-$escrowId"
             val proxyUrl = "http://$containerName:$port"
+            val devshardctlHostPath = Path.of(getRepoRoot(), "build", "devshardctl")
+                .toAbsolutePath()
+                .normalize()
+            check(Files.isRegularFile(devshardctlHostPath)) {
+                "Missing devshardctl binary at $devshardctlHostPath. Build it before running this test."
+            }
 
             DockerClientBuilder.getInstance().build().use { dockerClient ->
                 // Remove any leftover container from a previous run.
@@ -848,9 +856,10 @@ data class LocalInferencePair(
                         runCatching { dockerClient.removeContainerCmd(c.id).exec() }
                     }
 
-                val createResp = dockerClient.createContainerCmd("devshardd:latest")
+                val devshardctlContainerPath = "/usr/local/bin/devshardctl"
+                val createResp = dockerClient.createContainerCmd(config.apiImageName)
                     .withName(containerName)
-                    .withCmd("/usr/local/bin/devshardctl")
+                    .withCmd(devshardctlContainerPath)
                     .withEnv(
                         "DEVSHARD_PRIVATE_KEY=$privateKey",
                         "DEVSHARD_ESCROW_ID=$escrowId",
@@ -859,7 +868,17 @@ data class LocalInferencePair(
                         "DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db",
                         "DEVSHARD_ROUTE_PREFIX=$effectiveRoutePrefix",
                     )
-                    .withHostConfig(HostConfig().withNetworkMode("chain-public"))
+                    .withHostConfig(
+                        HostConfig()
+                            .withNetworkMode("chain-public")
+                            .withBinds(
+                                Bind(
+                                    devshardctlHostPath.toString(),
+                                    Volume(devshardctlContainerPath),
+                                    AccessMode.ro,
+                                )
+                            )
+                    )
                     .exec()
                 dockerClient.startContainerCmd(createResp.id).exec()
             }

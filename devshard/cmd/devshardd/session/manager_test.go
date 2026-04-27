@@ -30,7 +30,7 @@ func (b *mockBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 
 func (b *mockBridge) VerifyWarmKey(string, string) (bool, error) { return false, nil }
 
-func (b *mockBridge) OnEscrowCreated(bridge.EscrowInfo) error        { return bridge.ErrNotImplemented }
+func (b *mockBridge) OnEscrowCreated(bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
 func (b *mockBridge) OnSettlementProposed(_ uint64, _ []byte, _ uint64) error {
 	return bridge.ErrNotImplemented
 }
@@ -155,13 +155,13 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, types.LegacySessionVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
-	mgr.mu.RLock()
+	mgr.sessionsMutex.RLock()
 	srv, ok := mgr.sessions["1"]
-	mgr.mu.RUnlock()
+	mgr.sessionsMutex.RUnlock()
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
@@ -198,13 +198,13 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, types.LegacySessionVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
-	mgr.mu.RLock()
+	mgr.sessionsMutex.RLock()
 	srv, ok := mgr.sessions["1"]
-	mgr.mu.RUnlock()
+	mgr.sessionsMutex.RUnlock()
 	require.True(t, ok, "nonce-0 session must be registered after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
@@ -237,7 +237,7 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	}
 
 	const standaloneVersion = "v0.2.11"
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), standaloneVersion, br, nil, nil)
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil)
 	_, err := mgr.getOrCreate("1")
 	require.NoError(t, err)
 
@@ -251,13 +251,13 @@ func TestRecoverSessions_EmptyStore(t *testing.T) {
 	signer := mustGenerateKey(t)
 	br := &mockBridge{}
 
-	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, types.LegacySessionVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
-	mgr.mu.RLock()
+	mgr.sessionsMutex.RLock()
 	require.Empty(t, mgr.sessions)
-	mgr.mu.RUnlock()
+	mgr.sessionsMutex.RUnlock()
 }
 
 func TestRecoverSessions_StateRootMismatch(t *testing.T) {
@@ -308,12 +308,12 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, types.LegacySessionVersion, br, nil, nil)
 	err = mgr.RecoverSessions()
 	require.NoError(t, err)
 
-	mgr.mu.RLock()
+	mgr.sessionsMutex.RLock()
 	_, ok := mgr.sessions["1"]
-	mgr.mu.RUnlock()
+	mgr.sessionsMutex.RUnlock()
 	require.False(t, ok, "corrupt session should be skipped, not recovered")
 }

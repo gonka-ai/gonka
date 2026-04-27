@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
+
+	"devshard/cmd/devshardd/session"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -22,13 +25,15 @@ import (
 var sdkConfigOnce sync.Once
 
 type runtimeConfig struct {
-	Port            int
-	DataDir         string
-	SelectedVersion string
-	RuntimeVersion  string
-	BuildVersion    string
-	NodeManagerAddr string
-	Node            ChainNodeConfig
+	Port                    int
+	DataDir                 string
+	SelectedVersion         string
+	RuntimeVersion          string
+	BuildVersion            string
+	NodeManagerAddr         string
+	ValidationRetryInterval time.Duration
+	ValidationLeaseTTL      time.Duration
+	Node                    ChainNodeConfig
 }
 
 // ChainNodeConfig holds the chain connectivity and signing identity settings
@@ -106,14 +111,26 @@ func loadRuntimeConfig(args []string, buildVersion string) (runtimeConfig, error
 		return runtimeConfig{}, fmt.Errorf("resolve runtime version: %w", err)
 	}
 
+	retryInterval, err := parseDurationEnv("DEVSHARD_VALIDATION_RETRY_INTERVAL", session.DefaultRetryInterval)
+	if err != nil {
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_RETRY_INTERVAL: %w", err)
+	}
+
+	leaseTTL, err := parseDurationEnv("DEVSHARD_VALIDATION_LEASE_TTL", session.DefaultLeaseTTL)
+	if err != nil {
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_LEASE_TTL: %w", err)
+	}
+
 	return runtimeConfig{
-		Port:            *port,
-		DataDir:         *dataDir,
-		SelectedVersion: selectedVersion,
-		RuntimeVersion:  runtimeVersion,
-		BuildVersion:    buildVersion,
-		NodeManagerAddr: envOr("NODE_MANAGER_ADDR", "localhost:9400"),
-		Node:            loadNodeConfigFromEnv(),
+		Port:                    *port,
+		DataDir:                 *dataDir,
+		SelectedVersion:         selectedVersion,
+		RuntimeVersion:          runtimeVersion,
+		BuildVersion:            buildVersion,
+		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
+		ValidationRetryInterval: retryInterval,
+		ValidationLeaseTTL:      leaseTTL,
+		Node:                    loadNodeConfigFromEnv(),
 	}, nil
 }
 
@@ -223,6 +240,19 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseDurationEnv parses a duration env var. Returns fallback if the var is unset.
+func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", v, err)
+	}
+	return d, nil
 }
 
 func expandHome(path string) (string, error) {

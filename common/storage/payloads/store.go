@@ -104,12 +104,13 @@ func (s *Store) Retrieve(ctx context.Context, escrowId string, inferenceId, epoc
 	return prompt, response, nil
 }
 
-// PruneEpoch removes all payloads where epoch_id < epochId (i.e., all epochs before the given one). Idempotent.
-func (s *Store) PruneEpoch(ctx context.Context, epochId uint64) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM payload_storage WHERE epoch_id < $1`, epochId)
-	if err != nil {
-		return fmt.Errorf("payloads: prune epoch: %w", err)
+// DropEpoch drops the partition for exactly one epoch. Idempotent.
+func (s *Store) DropEpoch(ctx context.Context, epochId uint64) error {
+	partition := pgx.Identifier{fmt.Sprintf("payload_storage_epoch_%d", epochId)}.Sanitize()
+	if _, err := s.pool.Exec(ctx, "DROP TABLE IF EXISTS "+partition); err != nil {
+		return fmt.Errorf("payloads: drop epoch %d: %w", epochId, err)
 	}
-	logging.Info("Pruned epoch partitions", types.PayloadStorage, "before", epochId)
+	s.knownEpochs.Delete(epochId)
+	logging.Info("Dropped epoch partition", types.PayloadStorage, "epochId", epochId)
 	return nil
 }

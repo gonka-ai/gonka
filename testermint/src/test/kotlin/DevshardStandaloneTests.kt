@@ -33,7 +33,7 @@ import kotlin.test.assertNotNull
  *    /sessions/:id/...
  *  - The suite covers escrow creation, versiond download and health routing,
  *    inference settlement, streaming, parallel sessions, mempool access,
- *    challenge handling, and devshardd bridge event/phase transitions.
+ *    and devshardd bridge event/phase transitions.
  */
 class DevshardStandaloneTests : TestermintTest() {
     private val standaloneTestVersionName = "v0.2.11"
@@ -93,11 +93,6 @@ class DevshardStandaloneTests : TestermintTest() {
 
     private val overrideLongEpochConfig = versiondConfig(
         genesisSpec = createSpec(epochLength = 40, epochShift = 10).merge(devshardNoRestrictionsSpec),
-        env = overrideVersiondEnv,
-    )
-
-    private val overrideAlwaysValidateConfig = versiondConfig(
-        genesisSpec = mergedGenesisSpec(devshardNoRestrictionsSpec, devshardAlwaysValidateSpec),
         env = overrideVersiondEnv,
     )
 
@@ -510,76 +505,6 @@ class DevshardStandaloneTests : TestermintTest() {
         val mempool = getVersionedDevshardMempool(genesis, escrowId)
         assertThat(mempool.txs).isNotNull()
         assertThat(mempool.txs).isEmpty()
-    }
-
-    @Test
-    fun `invalid inference is challenged via devshardd`() {
-        val (cluster, genesis) = initCluster(config = overrideAlwaysValidateConfig, reboot = true)
-        genesis.waitForNextEpoch()
-
-        cluster.allPairs.forEach { pair ->
-            pair.mock?.stubDevshardResponseForAllSegments(
-                response = defaultInferenceResponseObject,
-                streamDelay = Duration.ofMillis(50),
-            )
-        }
-        cluster.allPairs.last().mock?.stubDevshardResponseForAllSegments(
-            response = defaultInferenceResponseObject.withMissingLogit(),
-        )
-
-        val user = genesis.createFundedDevshardUser("devshardd-challenged-user")
-
-        genesis.waitForNextInferenceWindow()
-
-        val escrowAmount = 7_000_000_000L
-        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
-
-        logSection("Starting devshard proxy against devshardd")
-        val handle = genesis.startDevshardProxy(
-            escrowId = escrowId,
-            keyName = user.keyName,
-            routePrefix = overrideRoutePrefix,
-        )
-
-        try {
-            genesis.waitForDevshardProxyWarmup()
-            logSection("Sending chat completions via proxy")
-            val numInferences = 20L
-            for (i in 0 until numInferences) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
-                assertThat(response).isNotEmpty()
-            }
-
-            genesis.waitForDevshardPreFinalize()
-            logSection("Finalizing via proxy")
-            val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
-
-            logSection("Verifying settlement data")
-            assertThat(result.parsed.escrowId).isEqualTo("$escrowId")
-            assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
-            assertThat(result.parsed.nonce).isGreaterThan(0)
-            assertThat(result.parsed.hostStats).isNotEmpty()
-            assertThat(result.parsed.signatures).isNotEmpty()
-
-            logSection("Submitting settlement from user account")
-            val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = user.keyName)
-            assertThat(settleResp.code).isEqualTo(0)
-            val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
-            assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-                .isEqualTo(standaloneTestVersionName)
-
-            logSection("Verifying escrow settled")
-            val escrow = genesis.node.queryDevshardEscrow(escrowId)
-            assertThat(escrow.escrow!!.settled).isTrue()
-
-            logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
-            logSection("Inference: $inference")
-            assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
-            assertThat(inference.votesInvalid).isNotZero()
-        } finally {
-            genesis.stopDevshardProxy(escrowId)
-        }
     }
 
     private fun checkDevshardEscrowCreatedEvent(

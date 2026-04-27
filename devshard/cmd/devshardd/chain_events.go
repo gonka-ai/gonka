@@ -74,6 +74,12 @@ func (b *chainEventBridge) Phase() *chain.Phase {
 	return b.phase
 }
 
+// OnNewBlock registers an additional new-block handler on the underlying listener.
+// Must be called before Start.
+func (b *chainEventBridge) OnNewBlock(h events.NewBlockHandler) {
+	b.listener.OnNewBlock(h)
+}
+
 func (b *chainEventBridge) Start(ctx context.Context) error {
 	if err := b.listener.Start(ctx); err != nil && err != context.Canceled {
 		return err

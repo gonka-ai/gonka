@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"common/chain"
 	mlnodeclient "common/nodemanager"
 	"common/storage/payloads"
+	"common/storage/validationlease"
+	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
@@ -72,12 +75,23 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	}
 	closers.Add(func() { mlClient.Close() })
 
-	payloadStore, err := buildPayloadStore(ctx, &closers)
+	pool, err := pgxpool.New(ctx, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pgxpool: %w", err)
+	}
+	closers.Add(pool.Close)
+
+	payloadStore, err := payloads.New(ctx, pool)
+	if err != nil {
+		return nil, fmt.Errorf("payload store: %w", err)
 	}
 
-	manager, err := buildHostManager(ctx, cfg, chainRuntime, mlClient, payloadStore, &closers)
+	leaseStore, err := validationlease.New(ctx, pool)
+	if err != nil {
+		return nil, fmt.Errorf("validation lease store: %w", err)
+	}
+
+	manager, err := buildHostManager(ctx, cfg, chainRuntime, mlClient, payloadStore, leaseStore, &closers)
 	if err != nil {
 		return nil, err
 	}
@@ -151,33 +165,13 @@ func buildMLNodeClient(addr string) (*mlnodeclient.Client, error) {
 	return mlClient, nil
 }
 
-func buildPayloadStore(ctx context.Context, closers *closeStack) (*payloads.Store, error) {
-	slog.Info("payload store",
-		"PGHOST", os.Getenv("PGHOST"),
-		"PGDATABASE", os.Getenv("PGDATABASE"),
-		"PGUSER", os.Getenv("PGUSER"),
-	)
-	// Empty DSN: pgxpool resolves the connection from PG* libpq env vars
-	// (PGHOST, PGDATABASE, PGUSER, PGPASSWORD) inherited from versiond.
-	pool, err := pgxpool.New(ctx, "")
-	if err != nil {
-		return nil, fmt.Errorf("pgxpool: %w", err)
-	}
-	closers.Add(pool.Close)
-
-	payloadStore, err := payloads.New(ctx, pool)
-	if err != nil {
-		return nil, fmt.Errorf("payload store: %w", err)
-	}
-	return payloadStore, nil
-}
-
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
 	chainRuntime *chainRuntime,
 	mlClient *mlnodeclient.Client,
 	payloadStore *payloads.Store,
+	leaseStore *validationlease.Store,
 	closers *closeStack,
 ) (*session.HostManager, error) {
 	chainParams := inference.NewChainParamsProvider(ctx, chainRuntime.identity)
@@ -186,6 +180,9 @@ func buildHostManager(
 	phase := chainRuntime.chainEvents.Phase()
 	chainBridge := chainRuntime.chainEvents.Bridge()
 	eng := inference.NewEngine(mlClient, payloadStore, chainParams, phase)
+
+	instanceAddr := chainRuntime.identity.GetSignerAddress()
+
 	validator := inference.NewValidator(
 		chainBridge,
 		chainRuntime.identity,
@@ -193,6 +190,7 @@ func buildHostManager(
 		phase,
 		normalizedVersion,
 	)
+	leaseValidator := inference.NewLeaseValidator(validator, phase, leaseStore, instanceAddr)
 
 	storePath := filepath.Join(cfg.DataDir, "devshardd.db")
 	store, err := devshardstorage.NewSQLite(storePath)
@@ -205,7 +203,8 @@ func buildHostManager(
 		store,
 		chainRuntime.signer,
 		eng,
-		validator,
+		leaseValidator,
+		leaseValidator,
 		normalizedVersion,
 		chainBridge,
 		payloadStore,
@@ -217,6 +216,38 @@ func buildHostManager(
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}
+
+	retryLoop := session.NewRetryLoop(leaseStore, validator, manager, phase, instanceAddr)
+	retryLoop.WithInterval(cfg.ValidationRetryInterval)
+	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
+	go retryLoop.Run(ctx)
+
+	var lastCleanEpoch atomic.Uint64
+	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+		currentEpoch := phase.EpochID()
+		if currentEpoch <= lastCleanEpoch.Load() {
+			return
+		}
+		lastCleanEpoch.Store(currentEpoch)
+
+		if currentEpoch >= 2 {
+			go func() {
+				if err := leaseStore.DeleteBeforeEpoch(context.Background(), currentEpoch); err != nil {
+					slog.Warn("validation lease cleanup failed", "error", err)
+				}
+			}()
+		}
+
+		if currentEpoch >= 4 {
+			expiredPayloadEpoch := currentEpoch - 3
+			go func() {
+				if err := payloadStore.DropEpoch(context.Background(), expiredPayloadEpoch); err != nil {
+					slog.Warn("payload epoch cleanup failed", "error", err)
+				}
+			}()
+		}
+	})
+
 	return manager, nil
 }
 
