@@ -482,6 +482,127 @@ else
     export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
 fi
 
+# Devshard gateway proxy routing (dynamic resolution via Docker DNS).
+# Keep this under /devshard-gateway/... so it does not collide with
+# /devshard/<version>/..., which is reserved for versiond/devshardd.
+if [ "${DISABLE_DEVSHARD_GATEWAY_PROXY:-true}" = "false" ]; then
+    echo "   Devshard gateway proxy: Enabled (/devshard-gateway/<escrow-id>/...)"
+
+    # Pooled gateway: /devshard-gateway/v1/... goes to devshardctl-multi,
+    # which picks a runtime internally. Must come before the regex to avoid
+    # /devshard-gateway/v1/... matching as escrow_id=v1.
+    DEVSHARD_GATEWAY_PROXY_LOCATION="location ^~ /devshard-gateway/v1/ {
+            set \$\$limit_zone_name EXEMPT;
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            rewrite ^/devshard-gateway(/v1/.*)\$\$ \$\$1 break;
+            proxy_pass http://devshardctl-multi:8080;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+
+    # Per-escrow routing: /devshard-gateway/<escrow-id>/...
+    # The main gateway container handles /devshard/<escrow-id>/... internally.
+    DEVSHARD_GATEWAY_PROXY_LOCATION="${DEVSHARD_GATEWAY_PROXY_LOCATION}
+
+        location ~ ^/devshard-gateway/([^/]+)/(.*) {
+            set \$\$limit_zone_name EXEMPT;
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            set \$\$escrow_id \$\$1;
+            set \$\$devshard_path \$\$2;
+            proxy_pass http://devshardctl-multi:8080/devshard/\$\$escrow_id/\$\$devshard_path\$\$is_args\$\$args;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+    echo "   Devshard gateway pool: devshardctl-multi -> /devshard-gateway/v1/..."
+    export DEVSHARD_GATEWAY_PROXY_LOCATION
+else
+    echo "   Devshard gateway proxy: Disabled"
+    export DEVSHARD_GATEWAY_PROXY_LOCATION="# devshard gateway proxy disabled"
+fi
+
+# Devshard direct proxy routing restores the legacy transparent per-escrow
+# Docker-DNS behavior on a separate prefix. This requires per-escrow containers
+# named devshardctl-<escrow-id> on the proxy network.
+if [ "${DISABLE_DEVSHARD_DIRECT_PROXY:-true}" = "false" ]; then
+    echo "   Devshard direct proxy: Enabled (/devshard-gateway-direct/<escrow-id>/...)"
+
+    # Load-balanced pool: /devshard-gateway-direct/v1/... auto-discovers via
+    # Docker DNS alias "devshard-pool". Must come before the regex to avoid
+    # /devshard-gateway-direct/v1/... matching as escrow_id=v1.
+    DEVSHARD_DIRECT_PROXY_LOCATION="location ^~ /devshard-gateway-direct/v1/ {
+            set \$\$limit_zone_name EXEMPT;
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            set \$\$devshard_pool devshard-pool;
+            rewrite ^/devshard-gateway-direct(/v1/.*)\$\$ \$\$1 break;
+            proxy_pass http://\$\$devshard_pool:8080;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+
+    # Transparent per-escrow routing:
+    # /devshard-gateway-direct/<escrow-id>/<path> -> devshardctl-<escrow-id>:8080/<path>
+    DEVSHARD_DIRECT_PROXY_LOCATION="${DEVSHARD_DIRECT_PROXY_LOCATION}
+
+        location ~ ^/devshard-gateway-direct/([^/]+)/(.*) {
+            set \$\$limit_zone_name EXEMPT;
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            set \$\$escrow_id \$\$1;
+            set \$\$devshard_path \$\$2;
+            proxy_pass http://devshardctl-\$\$escrow_id:8080/\$\$devshard_path\$\$is_args\$\$args;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+    echo "   Devshard direct pool: Auto-discovery via DNS alias 'devshard-pool' -> /devshard-gateway-direct/v1/..."
+    export DEVSHARD_DIRECT_PROXY_LOCATION
+else
+    echo "   Devshard direct proxy: Disabled"
+    export DEVSHARD_DIRECT_PROXY_LOCATION="# devshard direct proxy disabled"
+fi
+
 # --------------------------------------------------------------------------------
 # Fail2Ban Configuration (Sidecar)
 # --------------------------------------------------------------------------------
@@ -768,7 +889,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$CHAIN_GRPC_CONNECT_TIMEOUT,\$CHAIN_GRPC_TRANSF
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_GLOBAL,\$LIMIT_REQ_RULE_GONKA_API"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_CHAIN_RPC,\$LIMIT_REQ_RULE_CHAIN_API,\$LIMIT_REQ_RULE_CHAIN_GRPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS"
-ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$DEVSHARD_GATEWAY_PROXY_LOCATION,\$DEVSHARD_DIRECT_PROXY_LOCATION"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
 envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
@@ -814,6 +935,14 @@ echo "   /chain-api/*   -> Chain REST API"
 echo "   /chain-grpc/*  -> Chain gRPC"
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     echo "   /devshard/*    -> Versiond (devshard binaries)"
+fi
+if [ "${DISABLE_DEVSHARD_GATEWAY_PROXY:-true}" = "false" ]; then
+    echo "   /devshard-gateway/<id>/* -> Devshard gateway proxy (per-escrow)"
+    echo "   /devshard-gateway/v1/*   -> Devshard gateway proxy (load-balanced pool)"
+fi
+if [ "${DISABLE_DEVSHARD_DIRECT_PROXY:-true}" = "false" ]; then
+    echo "   /devshard-gateway-direct/<id>/* -> Devshard direct proxy (per-escrow)"
+    echo "   /devshard-gateway-direct/v1/*   -> Devshard direct proxy (load-balanced pool)"
 fi
 echo "   /health        -> Health check"
 

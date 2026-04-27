@@ -148,6 +148,14 @@ http {
         # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
         ${DEVSHARD_VERSIOND_LOCATION}
 
+        # Devshard gateway proxy - routes /devshard-gateway/<escrow-id>/...
+        # to devshardctl without colliding with /devshard/<version>/...
+        ${DEVSHARD_GATEWAY_PROXY_LOCATION}
+
+        # Devshard direct proxy - legacy transparent routing to per-escrow
+        # devshardctl-<escrow-id> containers on /devshard-gateway-direct/...
+        ${DEVSHARD_DIRECT_PROXY_LOCATION}
+
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
 
