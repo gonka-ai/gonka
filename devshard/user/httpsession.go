@@ -3,6 +3,7 @@ package user
 import (
 	"errors"
 	"fmt"
+	"strconv"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -37,12 +38,17 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("resolve route version: %w", err)
 	}
 
-	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
+	escrowIDInt, err := strconv.ParseUint(cfg.EscrowID, 10, 64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid escrow id %q: %w", cfg.EscrowID, err)
+	}
+
+	group, err := bridge.BuildGroup(escrowIDInt, cfg.Bridge)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build group: %w", err)
 	}
 
-	escrow, err := cfg.Bridge.GetEscrow(cfg.EscrowID)
+	escrow, err := cfg.Bridge.GetEscrow(escrowIDInt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get escrow: %w", err)
 	}

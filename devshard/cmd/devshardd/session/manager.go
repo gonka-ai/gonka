@@ -86,6 +86,38 @@ func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) 
 	return m.getOrCreate(escrowID)
 }
 
+// HandleEscrowCreated creates the local session as soon as the chain emits the
+// escrow event. Escrows for other hosts are ignored after the group check.
+func (m *HostManager) HandleEscrowCreated(escrow bridge.EscrowInfo) error {
+	escrowID := strconv.FormatUint(escrow.EscrowID, 10)
+	if _, err := m.SessionServer(escrowID); err != nil {
+		if errors.Is(err, types.ErrHostNotInGroup) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// HandleSettlementFinalized marks the session inactive and drops the live
+// transport server so RecoverSessions will not resurrect settled escrows.
+func (m *HostManager) HandleSettlementFinalized(escrowID uint64) error {
+	id := strconv.FormatUint(escrowID, 10)
+
+	m.mu.Lock()
+	_, hadSession := m.sessions[id]
+	delete(m.sessions, id)
+	m.mu.Unlock()
+
+	if err := m.store.MarkSettled(id); err != nil {
+		if errors.Is(err, storage.ErrSessionNotFound) && !hadSession {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 	m.mu.RLock()
 	srv, ok := m.sessions[escrowID]
@@ -121,12 +153,17 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 }
 
 func (m *HostManager) create(escrowID string) (*transport.Server, error) {
-	group, err := bridge.BuildGroup(escrowID, m.bridge)
+	id, err := strconv.ParseUint(escrowID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid escrow id %q: %w", escrowID, err)
+	}
+
+	group, err := bridge.BuildGroup(id, m.bridge)
 	if err != nil {
 		return nil, fmt.Errorf("build group: %w", err)
 	}
 
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	escrow, err := m.bridge.GetEscrow(id)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
@@ -134,17 +171,6 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	creatorAddr := escrow.CreatorAddress
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
-
-	if err := m.store.CreateSession(storage.CreateSessionParams{
-		EscrowID:       escrowID,
-		Version:        m.boundVersion,
-		CreatorAddr:    creatorAddr,
-		Config:         config,
-		Group:          group,
-		InitialBalance: escrow.Amount,
-	}); err != nil {
-		return nil, fmt.Errorf("init storage session: %w", err)
-	}
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
@@ -167,6 +193,17 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create server: %w", err)
+	}
+
+	if err := m.store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		Version:        m.boundVersion,
+		CreatorAddr:    creatorAddr,
+		Config:         config,
+		Group:          group,
+		InitialBalance: escrow.Amount,
+	}); err != nil {
+		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
 	return srv, nil

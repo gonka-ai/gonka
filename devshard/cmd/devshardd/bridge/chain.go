@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 
 	"common/chain"
 	"devshard/bridge"
+	"devshard/cmd/devshardd/events"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
-const warmKeyMsgTypeGRPC = "/inference.inference.MsgSettleDevshardEscrow"
+const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
 
 type warmCacheKey struct {
 	host string
@@ -23,18 +25,18 @@ type warmCacheKey struct {
 // Submitter broadcasts dispute state to the chain.
 // Implemented by the wiring layer (e.g. common/chain/tx.Manager).
 type Submitter interface {
-	SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
+	SubmitDisputeState(escrowID uint64, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
 }
 
 // ChainBridge implements MainnetBridge using common/chain for all queries and actions.
-// Notifications are dispatched to registered callbacks.
+// Handlers are registered by the session layer and dispatched on chain events.
 type ChainBridge struct {
 	client    *chain.Client
 	submitter Submitter
 
-	onEscrowCreated       func(bridge.EscrowInfo) error
-	onSettlementProposed  func(escrowID string, stateRoot []byte, nonce uint64) error
-	onSettlementFinalized func(escrowID string) error
+	escrowCreatedHandler       func(bridge.EscrowInfo) error
+	settlementProposedHandler  func(escrowID uint64, stateRoot []byte, nonce uint64) error
+	settlementFinalizedHandler func(escrowID uint64) error
 
 	warmCache sync.Map // warmCacheKey -> bool
 }
@@ -44,33 +46,57 @@ func NewChainBridge(client *chain.Client, submitter Submitter) *ChainBridge {
 	return &ChainBridge{client: client, submitter: submitter}
 }
 
-// OnEscrowCreatedHandler registers the callback for escrow creation events.
+func (b *ChainBridge) Subscribe(l *events.Listener) {
+	l.OnDevshardEscrowCreated(func(_ context.Context, e events.DevshardEscrowCreatedEvent) {
+		id, err := strconv.ParseUint(e.EscrowID, 10, 64)
+		if err != nil {
+			slog.Warn("chain events: invalid escrow_id", "escrow_id", e.EscrowID, "error", err)
+			return
+		}
+		info, err := b.GetEscrow(id)
+		if err != nil {
+			slog.Warn("chain events: failed to fetch escrow", "escrow_id", id, "error", err)
+			return
+		}
+		if err := b.OnEscrowCreated(*info); err != nil {
+			slog.Warn("chain events: escrow created handler failed", "escrow_id", id, "error", err)
+		}
+	})
+	// TODO: OnSettlementProposed?
+	l.OnDevshardEscrowSettled(func(_ context.Context, e events.DevshardEscrowSettledEvent) {
+		id, err := strconv.ParseUint(e.EscrowID, 10, 64)
+		if err != nil {
+			slog.Warn("chain events: invalid escrow_id", "escrow_id", e.EscrowID, "error", err)
+			return
+		}
+		if err := b.OnSettlementFinalized(id); err != nil {
+			slog.Warn("chain events: settlement finalized handler failed", "escrow_id", id, "error", err)
+		}
+	})
+}
+
 func (b *ChainBridge) OnEscrowCreatedHandler(fn func(bridge.EscrowInfo) error) {
-	b.onEscrowCreated = fn
+	b.escrowCreatedHandler = fn
 }
 
-// OnSettlementProposedHandler registers the callback for settlement proposal events.
-func (b *ChainBridge) OnSettlementProposedHandler(fn func(escrowID string, stateRoot []byte, nonce uint64) error) {
-	b.onSettlementProposed = fn
+func (b *ChainBridge) OnSettlementProposedHandler(fn func(uint64, []byte, uint64) error) {
+	b.settlementProposedHandler = fn
 }
 
-// OnSettlementFinalizedHandler registers the callback for settlement finalization events.
-func (b *ChainBridge) OnSettlementFinalizedHandler(fn func(escrowID string) error) {
-	b.onSettlementFinalized = fn
+func (b *ChainBridge) OnSettlementFinalizedHandler(fn func(uint64) error) {
+	b.settlementFinalizedHandler = fn
 }
 
 // -- MainnetBridge query methods --
 
-func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
-	id, err := strconv.ParseUint(escrowID, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid escrow id %q: %w", escrowID, err)
-	}
-
+func (b *ChainBridge) GetEscrow(escrowID uint64) (*bridge.EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
-		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
+		&inferencetypes.QueryGetDevshardEscrowRequest{Id: escrowID})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %d: %w", id, err)
+		return nil, fmt.Errorf("DevshardEscrow %d: %w", escrowID, err)
+	}
+	if resp == nil || !resp.Found || resp.Escrow == nil {
+		return nil, bridge.ErrEscrowNotFound
 	}
 
 	e := resp.Escrow
@@ -134,29 +160,29 @@ func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool,
 // -- MainnetBridge notification methods --
 
 func (b *ChainBridge) OnEscrowCreated(escrow bridge.EscrowInfo) error {
-	if b.onEscrowCreated == nil {
-		return nil
+	if b.escrowCreatedHandler != nil {
+		return b.escrowCreatedHandler(escrow)
 	}
-	return b.onEscrowCreated(escrow)
+	return nil
 }
 
-func (b *ChainBridge) OnSettlementProposed(escrowID string, stateRoot []byte, nonce uint64) error {
-	if b.onSettlementProposed == nil {
-		return nil
+func (b *ChainBridge) OnSettlementProposed(escrowID uint64, stateRoot []byte, nonce uint64) error {
+	if b.settlementProposedHandler != nil {
+		return b.settlementProposedHandler(escrowID, stateRoot, nonce)
 	}
-	return b.onSettlementProposed(escrowID, stateRoot, nonce)
+	return nil
 }
 
-func (b *ChainBridge) OnSettlementFinalized(escrowID string) error {
-	if b.onSettlementFinalized == nil {
-		return nil
+func (b *ChainBridge) OnSettlementFinalized(escrowID uint64) error {
+	if b.settlementFinalizedHandler != nil {
+		return b.settlementFinalizedHandler(escrowID)
 	}
-	return b.onSettlementFinalized(escrowID)
+	return nil
 }
 
 // -- MainnetBridge action methods --
 
-func (b *ChainBridge) SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error {
+func (b *ChainBridge) SubmitDisputeState(escrowID uint64, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error {
 	if b.submitter == nil {
 		return bridge.ErrNotImplemented
 	}

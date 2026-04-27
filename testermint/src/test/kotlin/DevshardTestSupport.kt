@@ -102,6 +102,14 @@ fun LocalCluster.stubDevshardChatResponse(
     }
 }
 
+fun LocalCluster.stubDevshardValidatedChatResponse() {
+    allPairs.forEach { pair ->
+        pair.mock?.stubDevshardResponseForAllSegments(
+            response = defaultInferenceResponseObject,
+        )
+    }
+}
+
 fun LocalInferencePair.createFundedDevshardUser(
     userKeyName: String,
     fundAmount: Long = 10_000_000_000L,

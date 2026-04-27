@@ -8,7 +8,6 @@ require (
 	cosmossdk.io/math v1.5.3
 	cosmossdk.io/x/feegrant v0.1.1
 	cosmossdk.io/x/upgrade v0.1.4
-	devshard v0.0.0-00010101000000-000000000000
 	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.18.1
 	github.com/cosmos/cosmos-sdk v0.53.3
@@ -29,7 +28,6 @@ require (
 	github.com/nats-io/nats.go v1.34.0
 	github.com/pkg/errors v0.9.1
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
-	github.com/shopspring/decimal v1.4.0
 	github.com/stretchr/testify v1.11.1
 	github.com/supranational/blst v0.3.16
 	github.com/testcontainers/testcontainers-go v0.40.0
@@ -244,6 +242,7 @@ require (
 	github.com/sasha-s/go-deadlock v0.3.5 // indirect
 	github.com/shamaton/msgpack/v2 v2.2.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.6 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spf13/afero v1.12.0 // indirect
@@ -307,7 +306,6 @@ require (
 
 replace (
 	common => ../common
-	devshard => ../devshard
 	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps15
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain

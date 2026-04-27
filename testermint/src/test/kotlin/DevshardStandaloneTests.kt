@@ -20,9 +20,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.assertNotNull
 
 /**
- * Mirror of DevshardTests but routed through versiond -> devshardd instead of
- * dapi's in-process HostManager. The shape of every assertion is the same;
- * only the test setup differs:
+ * End-to-end coverage for devshard as a standalone binary managed by versiond.
  *
  *  - docker-compose.versiond.yml is included for every pair so each pair runs
  *    a versiond container that boots the locally-built devshardd binary as
@@ -33,11 +31,9 @@ import kotlin.test.assertNotNull
  *    devshardctl builds host URLs as proxy/devshard/v0.2.11/sessions/:id/...
  *    nginx strips /devshard/, versiond strips /v0.2.11/, devshardd handles
  *    /sessions/:id/...
- *  - DAPI's in-process HostManager is still mounted on /v1/devshard for the
- *    legacy path; the new test does not exercise it.
- *  - This file also contains a startup-seeded state-driven test for the normal
- *    `approved_versions -> /versions -> versiond download` path without local
- *    overrides for the tested version.
+ *  - The suite covers escrow creation, versiond download and health routing,
+ *    inference settlement, streaming, parallel sessions, mempool access,
+ *    challenge handling, and devshardd bridge event/phase transitions.
  */
 class DevshardStandaloneTests : TestermintTest() {
     private val standaloneTestVersionName = "v0.2.11"
@@ -53,8 +49,11 @@ class DevshardStandaloneTests : TestermintTest() {
     // The default join count is 2 -> three pairs total (genesis, join1, join2).
     // Every pair gets the versiond compose extension so each runs its own
     // devshardd child managed by its own ${KEY_NAME}-versiond container.
-    private val versiondComposeFilesByPairName = listOf(GENESIS_KEY_NAME, "join1", "join2")
-        .associateWith { listOf("docker-compose.versiond.yml") }
+    private val versiondComposeFilesByPairName = mapOf(
+        GENESIS_KEY_NAME to listOf("docker-compose.versiond.yml", "docker-compose.devshard-postgres.yml"),
+        "join1" to listOf("docker-compose.versiond.yml"),
+        "join2" to listOf("docker-compose.versiond.yml"),
+    )
 
     // Switches the test cluster from "default" to "devshardd via versiond":
     //  - VERSIOND_BINARY_NAME selects the binary versiond launches per child
@@ -199,11 +198,114 @@ class DevshardStandaloneTests : TestermintTest() {
     }
 
     @Test
+    fun `devshardd bridge events and phases settle escrow lifecycle`() {
+        val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
+        waitForOverrideVersionedHealth(genesis)
+
+        val user = genesis.createFundedDevshardUser("devshardd-lifecycle-user")
+
+        genesis.waitForNextEpoch()
+        cluster.stubDevshardChatResponse()
+        genesis.waitForNextInferenceWindow(windowSizeInBlocks = 2)
+
+        val escrowAmount = 7_000_000_000L
+
+        logSection("Creating escrow")
+        val txResp = genesis.createDevshardEscrow(escrowAmount, from = user.keyName, modelId = devshardEscrowModel)
+        assertThat(txResp.code)
+            .withFailMessage("createDevshardEscrow failed (code=${txResp.code}): ${txResp.rawLog}")
+            .isEqualTo(0)
+        val escrowId = assertNotNull(txResp.getEscrowId())
+
+        // Event check: the chain must emit escrow metadata devshardd can bridge into a session.
+        checkDevshardEscrowCreatedEvent(txResp, user, escrowId, escrowAmount)
+
+        logSection("Waiting for escrow event to reach devshardd")
+        genesis.node.waitForNextBlock(3)
+
+        logSection("Starting devshard proxy against devshardd")
+        val handle = genesis.startDevshardProxy(
+            escrowId = escrowId,
+            keyName = user.keyName,
+            routePrefix = overrideRoutePrefix,
+        )
+
+        try {
+            // Bridge check: the session should already exist from the escrow event before warmup/inference.
+            checkBridgePreCreatedSession(genesis.getDevshardProxyStatus(handle.proxyUrl), escrowId, escrowAmount)
+
+            genesis.waitForDevshardProxyWarmup()
+            // Phase check: a bridged escrow starts as active and accepts inference traffic.
+            assertThat(genesis.getDevshardProxyStatus(handle.proxyUrl).phase).isEqualTo("active")
+
+            logSection("Sending chat completions via proxy")
+            repeat(3) { genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "lifecycle prompt $it") }
+            assertThat(genesis.getDevshardProxyStatus(handle.proxyUrl).nonce).isGreaterThan(0L)
+
+            genesis.waitForDevshardPreFinalize()
+            logSection("Finalizing via proxy")
+            val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
+            assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
+            assertThat(result.parsed.nonce).isGreaterThan(0L)
+
+            // Phase check: finalization should advance the session to settlement before chain settlement.
+            waitForDevshardPhase(genesis, handle.proxyUrl, "settlement")
+
+            logSection("Submitting settlement from user account")
+            val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = user.keyName)
+            assertThat(settleResp.code).isEqualTo(0)
+            // Event check: settlement must emit attributes consumed by accounting/refund assertions.
+            checkDevshardEscrowSettledEvent(settleResp, escrowId, user)
+
+            val escrow = genesis.node.queryDevshardEscrow(escrowId)
+            assertThat(escrow.escrow!!.settled).isTrue()
+        } finally {
+            genesis.stopDevshardProxy(escrowId)
+        }
+
+        logSection("Creating zero-inference escrow")
+        val zeroInferenceEscrowAmount = 5_000_000_000L
+        val zeroInferenceTxResp = genesis.createDevshardEscrow(
+            zeroInferenceEscrowAmount,
+            from = user.keyName,
+            modelId = devshardEscrowModel,
+        )
+        assertThat(zeroInferenceTxResp.code).isEqualTo(0)
+        val zeroInferenceEscrowId = assertNotNull(zeroInferenceTxResp.getEscrowId())
+
+        val zeroInferenceHandle = genesis.startDevshardProxy(
+            escrowId = zeroInferenceEscrowId,
+            keyName = user.keyName,
+            routePrefix = overrideRoutePrefix,
+        )
+
+        try {
+            genesis.waitForDevshardProxyWarmup()
+            val createFee = genesis.getDevshardProxyStatus(zeroInferenceHandle.proxyUrl).config.createDevshardFee
+
+            genesis.waitForDevshardPreFinalize()
+            val zeroInferenceResult = genesis.finalizeDevshardProxy(zeroInferenceHandle.proxyUrl)
+            assertThat(zeroInferenceResult.parsed.fees).isEqualTo(createFee)
+
+            waitForDevshardPhase(genesis, zeroInferenceHandle.proxyUrl, "settlement")
+            val settleResp = genesis.settleDevshardEscrow(zeroInferenceResult.rawJson, from = user.keyName)
+            assertThat(settleResp.code).isEqualTo(0)
+
+            val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
+            assertThat(devshardEventAttr(settleEvent, "fees").toLong()).isEqualTo(createFee)
+            assertThat(devshardEventAttr(settleEvent, "remainder").toLong())
+                .isEqualTo(zeroInferenceEscrowAmount - createFee)
+        } finally {
+            genesis.stopDevshardProxy(zeroInferenceEscrowId)
+        }
+    }
+
+    @Test
     fun `devshard inference e2e with settlement via devshardd`() {
         val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
         genesis.waitForNextEpoch()
 
-        cluster.stubDevshardChatResponse()
+        cluster.stubDevshardValidatedChatResponse()
 
         val user = genesis.createFundedDevshardUser("devshardd-user")
 
@@ -246,7 +348,7 @@ class DevshardStandaloneTests : TestermintTest() {
         genesis.waitForNextEpoch()
         waitForOverrideVersionedHealth(genesis)
 
-        cluster.stubDevshardChatResponse(content = "hello from stream", streamDelay = Duration.ofMillis(50))
+        cluster.stubDevshardValidatedChatResponse()
 
         val user = genesis.createFundedDevshardUser("devshardd-stream-user")
 
@@ -303,7 +405,7 @@ class DevshardStandaloneTests : TestermintTest() {
         val (cluster, genesis) = initCluster(config = overrideLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
-        cluster.stubDevshardChatResponse()
+        cluster.stubDevshardValidatedChatResponse()
 
         data class UserInfo(val keyName: String, val address: String)
         data class SessionSetup(val keyName: String, val address: String, val escrowId: Long)
@@ -393,6 +495,24 @@ class DevshardStandaloneTests : TestermintTest() {
     }
 
     @Test
+    fun `create escrow and query devshardd mempool`() {
+        val (_, genesis) = initCluster(config = overrideConfig, reboot = true)
+        genesis.waitForNextEpoch()
+        waitForOverrideVersionedHealth(genesis)
+
+        logSection("Creating devshard escrow")
+        val escrowAmount = 7_000_000_000L
+        val txResponse = genesis.createDevshardEscrow(escrowAmount, modelId = devshardEscrowModel)
+        assertThat(txResponse.code).isEqualTo(0)
+        val escrowId = txResponse.getEscrowId() ?: 1L
+
+        logSection("Query devshardd mempool -- triggers lazy session creation")
+        val mempool = getVersionedDevshardMempool(genesis, escrowId)
+        assertThat(mempool.txs).isNotNull()
+        assertThat(mempool.txs).isEmpty()
+    }
+
+    @Test
     fun `invalid inference is challenged via devshardd`() {
         val (cluster, genesis) = initCluster(config = overrideAlwaysValidateConfig, reboot = true)
         genesis.waitForNextEpoch()
@@ -460,6 +580,78 @@ class DevshardStandaloneTests : TestermintTest() {
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
+    }
+
+    private fun checkDevshardEscrowCreatedEvent(
+        txResp: TxResponse,
+        user: DevshardTestUser,
+        escrowId: Long,
+        escrowAmount: Long,
+    ) {
+        logSection("Checking devshard_escrow_created event attributes")
+        val event = assertNotNull(txResp.events.firstOrNull { it.type == "devshard_escrow_created" })
+        assertThat(devshardEventAttr(event, "escrow_id")).isEqualTo(escrowId.toString())
+        assertThat(devshardEventAttr(event, "creator")).isEqualTo(user.address)
+        assertThat(devshardEventAttr(event, "amount")).isEqualTo(escrowAmount.toString())
+        assertThat(devshardEventAttr(event, "epoch_index")).isNotBlank()
+    }
+
+    private fun checkBridgePreCreatedSession(
+        status: DevshardProxyStatus,
+        escrowId: Long,
+        escrowAmount: Long,
+    ) {
+        logSection("Checking session pre-created by bridge from escrow event")
+        assertThat(status.phase).isEqualTo("active")
+        assertThat(status.escrowId).isEqualTo(escrowId.toString())
+        assertThat(status.nonce).isEqualTo(0L)
+        assertThat(status.balance).isEqualTo(escrowAmount - status.config.createDevshardFee)
+        assertThat(status.config.createDevshardFee).isGreaterThan(0L)
+        assertThat(status.config.feePerNonce).isGreaterThanOrEqualTo(0L)
+        assertThat(status.config.voteThreshold).isGreaterThan(0)
+    }
+
+    private fun checkDevshardEscrowSettledEvent(
+        settleResp: TxResponse,
+        escrowId: Long,
+        user: DevshardTestUser,
+    ) {
+        logSection("Checking devshard_escrow_settled event attributes")
+        val event = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
+        assertThat(devshardEventAttr(event, "escrow_id")).isEqualTo(escrowId.toString())
+        assertThat(devshardEventAttr(event, "settler")).isEqualTo(user.address)
+        assertThat(devshardEventAttr(event, "total_payout").toLongOrNull())
+            .withFailMessage("total_payout is not a valid long: '${devshardEventAttr(event, "total_payout")}'")
+            .isNotNull()
+            .isGreaterThanOrEqualTo(0)
+        assertThat(devshardEventAttr(event, "fees").toLongOrNull())
+            .withFailMessage("fees is not a valid long: '${devshardEventAttr(event, "fees")}'")
+            .isNotNull()
+            .isGreaterThanOrEqualTo(0)
+        assertThat(devshardEventAttr(event, "remainder").toLongOrNull())
+            .withFailMessage("remainder is not a valid long: '${devshardEventAttr(event, "remainder")}'")
+            .isNotNull()
+            .isGreaterThanOrEqualTo(0)
+    }
+
+    private fun devshardEventAttr(event: Event, key: String): String =
+        event.attributes.firstOrNull { it.key == key }?.value
+            ?: error("Event '${event.type}' missing attribute '$key'. Present keys: ${event.attributes.map { it.key }}")
+
+    private fun waitForDevshardPhase(
+        genesis: LocalInferencePair,
+        proxyUrl: String,
+        expected: String,
+        timeoutSeconds: Int = 30,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutSeconds * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            val phase = runCatching { genesis.getDevshardProxyStatus(proxyUrl).phase }.getOrNull()
+            if (phase == expected) return
+            Thread.sleep(500)
+        }
+        val actual = runCatching { genesis.getDevshardProxyStatus(proxyUrl).phase }.getOrElse { "unreachable" }
+        error("Timed out waiting for phase='$expected' after ${timeoutSeconds}s (current: '$actual')")
     }
 
     private fun versiondConfig(
@@ -632,6 +824,24 @@ class DevshardStandaloneTests : TestermintTest() {
             .withFailMessage("GET /devshard/$versionName/healthz returned ${response.statusCode}: ${result}")
             .isEqualTo(200)
         return result.get().trim()
+    }
+
+    private fun getVersionedDevshardMempool(
+        genesis: LocalInferencePair,
+        escrowId: Long,
+        versionName: String = standaloneTestVersionName,
+    ): DevshardMempoolResponse {
+        val (_, response, result) = Fuel.get(
+            "${genesis.api.getPublicUrl()}/devshard/$versionName/sessions/$escrowId/mempool"
+        )
+            .timeoutRead(30000)
+            .responseString()
+        assertThat(response.statusCode)
+            .withFailMessage(
+                "GET /devshard/$versionName/sessions/$escrowId/mempool returned ${response.statusCode}: $result"
+            )
+            .isEqualTo(200)
+        return cosmosJson.fromJson(result.get(), DevshardMempoolResponse::class.java)
     }
 
     private fun waitForOverrideVersionedHealth(

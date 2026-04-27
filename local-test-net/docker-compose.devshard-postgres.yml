@@ -1,0 +1,10 @@
+services:
+  devshard-postgres:
+    container_name: devshard-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: devshardd
+      POSTGRES_USER: devshardd
+      POSTGRES_PASSWORD: devshardd
+    networks:
+      - chain-public

@@ -27,6 +27,12 @@ services:
       KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
       KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
       KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+      # PostgreSQL connection for the payload store (inherited by devshardd child).
+      # Points at the shared devshard-postgres container started by genesis.
+      PGHOST: devshard-postgres
+      PGDATABASE: devshardd
+      PGUSER: devshardd
+      PGPASSWORD: devshardd
     volumes:
       # Locally-built devshardd binary, served as version "v0.2.11" via the
       # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if

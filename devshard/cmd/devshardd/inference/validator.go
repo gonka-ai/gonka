@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"common/chain"
 	mlnodeclient "common/nodemanager"
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -20,6 +21,7 @@ type Validator struct {
 	recorder     PayloadAuthClient
 	engine       *Engine
 	chainParams  ChainParamsProvider
+	phase        *chain.Phase
 	boundVersion string
 }
 
@@ -32,6 +34,7 @@ func NewValidator(
 	recorder PayloadAuthClient,
 	engine *Engine,
 	chainParams ChainParamsProvider,
+	phase *chain.Phase,
 	boundVersion string,
 ) *Validator {
 	return &Validator{
@@ -41,6 +44,7 @@ func NewValidator(
 		recorder:     recorder,
 		engine:       engine,
 		chainParams:  chainParams,
+		phase:        phase,
 		boundVersion: boundVersion,
 	}
 }
@@ -52,7 +56,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		v.httpClient,
 		v.bridge,
 		v.recorder,
-		0,
+		v.phase.EpochID(),
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.executeMLRequest,
 		"devshardd",

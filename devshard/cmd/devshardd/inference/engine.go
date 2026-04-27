@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"common/chain"
 	mlnodeclient "common/nodemanager"
 	mlnodegen "common/nodemanager/gen"
 	"devshard"
@@ -21,6 +22,7 @@ type Engine struct {
 	payloadStore PayloadStore
 	httpClient   *http.Client
 	chainParams  ChainParamsProvider
+	phase        *chain.Phase
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client.
@@ -29,17 +31,19 @@ func NewEngine(
 	payloadStore PayloadStore,
 	httpClient *http.Client,
 	chainParams ChainParamsProvider,
+	phase *chain.Phase,
 ) *Engine {
 	return &Engine{
 		mlClient:     mlClient,
 		payloadStore: payloadStore,
 		httpClient:   httpClient,
 		chainParams:  chainParams,
+		phase:        phase,
 	}
 }
 
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	return executeInference(ctx, req, e.payloadStore, 0, e.executeMLRequest, e.chainParams)
+	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), e.executeMLRequest, e.chainParams)
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {

@@ -46,7 +46,7 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                 // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -692,7 +692,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
 			executorAddress: executorAddr,
-			epochID:         0, // ValidationAdapter will use its own phaseTracker
+			epochID:         0, // epoch ID is resolved by the Validator via chain.Phase
 		})
 	}
 

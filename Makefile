@@ -119,13 +119,13 @@ devshardd-build:
 	@DOCKER_BUILDKIT=1 docker build --no-cache --target builder \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
-		-f decentralized-api/Dockerfile . \
+		-f devshard/Dockerfile . \
 		-t devshardd-builder:latest -q >/dev/null
 	@CID=$$(docker create devshardd-builder:latest) && \
-		docker cp $$CID:/app/decentralized-api/build/devshardd build/devshardd && \
+		docker cp $$CID:/app/devshard/build/devshardd build/devshardd && \
 		docker rm $$CID >/dev/null
 	@chmod +x build/devshardd
-	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
+	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked\|arm64\|x86-64'))"
 
 node-local-build:
 	@echo "Building inference-chain locally..."

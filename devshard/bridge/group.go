@@ -7,7 +7,7 @@ import (
 
 // BuildGroup fetches escrow data to construct a session group.
 // Slots come from the chain (stored in DevshardEscrow), no re-derivation needed.
-func BuildGroup(escrowID string, b MainnetBridge) ([]types.SlotAssignment, error) {
+func BuildGroup(escrowID uint64, b MainnetBridge) ([]types.SlotAssignment, error) {
 	escrow, err := b.GetEscrow(escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)

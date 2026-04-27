@@ -100,8 +100,8 @@ func doGet[T any](client *http.Client, rawURL string) (*T, error) {
 
 // -- query methods --
 
-func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
-	u := fmt.Sprintf("%s/productscience/inference/inference/devshard_escrow/%s", b.baseURL, escrowID)
+func (b *RESTBridge) GetEscrow(escrowID uint64) (*EscrowInfo, error) {
+	u := fmt.Sprintf("%s/productscience/inference/inference/devshard_escrow/%d", b.baseURL, escrowID)
 
 	resp, err := doGet[escrowResponse](b.client, u)
 	if err != nil {
@@ -117,7 +117,7 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	}
 
 	return &EscrowInfo{
-		EscrowID:       escrowID,
+		EscrowID:       escrowID, // already uint64
 		Amount:         resp.Escrow.Amount,
 		CreatorAddress: resp.Escrow.Creator,
 		AppHash:        appHash,
@@ -180,14 +180,14 @@ func (b *RESTBridge) OnEscrowCreated(_ EscrowInfo) error {
 	return ErrNotImplemented
 }
 
-func (b *RESTBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error {
+func (b *RESTBridge) OnSettlementProposed(_ uint64, _ []byte, _ uint64) error {
 	return ErrNotImplemented
 }
 
-func (b *RESTBridge) OnSettlementFinalized(_ string) error {
+func (b *RESTBridge) OnSettlementFinalized(_ uint64) error {
 	return ErrNotImplemented
 }
 
-func (b *RESTBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint32][]byte) error {
+func (b *RESTBridge) SubmitDisputeState(_ uint64, _ []byte, _ uint64, _ map[uint32][]byte) error {
 	return ErrNotImplemented
 }
