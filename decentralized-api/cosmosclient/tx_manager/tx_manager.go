@@ -854,8 +854,7 @@ func logFeeRelatedHint(rawLog string) {
 		logging.Error(
 			"Fee-grant from cold to warm key is missing or expired. Run "+
 				"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' "+
-				"to refresh the authz grants AND the feegrant allowance in one transaction. "+
-				"See docs/host_onboarding.md for details.",
+				"to refresh the authz grants AND the feegrant allowance in one transaction.",
 			types.Messages,
 			"rawLog", rawLog,
 		)
@@ -863,8 +862,7 @@ func logFeeRelatedHint(rawLog string) {
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
 		logging.Error(
 			"Transaction fees are below the chain minimum. Set min_gas_price_ngonka in "+
-				"the DAPI config to at least the value of FeeParams.min_gas_price_ngonka on chain. "+
-				"See docs/host_onboarding.md for details.",
+				"the DAPI config to at least the value of FeeParams.min_gas_price_ngonka on chain.",
 			types.Messages,
 			"rawLog", rawLog,
 		)
@@ -1001,7 +999,7 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// set the cold account as the fee granter so fees are deducted from the
 	// cold account's balance instead of the warm key (which is unfunded).
 	// This requires the host to have set up a feegrant allowance from cold
-	// to warm during onboarding (see docs/host_onboarding.md).
+	// to warm during onboarding.
 	if !m.apiAccount.IsSignerTheMainAccount() {
 		coldAddr, err := m.apiAccount.AccountAddress()
 		if err == nil {

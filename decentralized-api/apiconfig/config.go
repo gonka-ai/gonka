@@ -94,8 +94,6 @@ type ChainNodeConfig struct {
 	// hosts upgrading from v0.2.11 to v0.2.12 do not need to update their
 	// config.env — the DAPI picks up the on-chain default automatically when
 	// cosmovisor restarts it with the new binary.
-	//
-	// See docs/host_onboarding.md §1.5 and §6 for details.
 	MinGasPriceNgonka int64 `koanf:"min_gas_price_ngonka" json:"min_gas_price_ngonka"`
 }
 
