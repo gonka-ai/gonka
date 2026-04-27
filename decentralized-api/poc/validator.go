@@ -53,19 +53,21 @@ type OffChainValidator struct {
 
 // ValidationConfig contains configuration for off-chain validation.
 type ValidationConfig struct {
-	WorkerCount    int
-	RequestTimeout time.Duration
-	MaxRetries     int
-	RetryBackoff   time.Duration
+	WorkerCount        int
+	RequestTimeout     time.Duration
+	MaxRetries         int
+	RetryBackoff       time.Duration
+	PhaseCheckInterval time.Duration
 }
 
 // DefaultValidationConfig returns the default configuration.
 func DefaultValidationConfig() ValidationConfig {
 	return ValidationConfig{
-		WorkerCount:    10,
-		RequestTimeout: 20 * time.Second,
-		MaxRetries:     15,
-		RetryBackoff:   3 * time.Second,
+		WorkerCount:        10,
+		RequestTimeout:     20 * time.Second,
+		MaxRetries:         15,
+		RetryBackoff:       3 * time.Second,
+		PhaseCheckInterval: 3 * time.Second,
 	}
 }
 
@@ -368,9 +370,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	failCount := 0
 	pendingCount := len(workItems)
 
-	// Context for coordinating shutdown
+	// Context for coordinating shutdown. The phase watcher cancels as soon
+	// as the chain stops accepting validation results for this PoC stage.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight)
 
 	// Start workers
 	numWorkers := v.config.WorkerCount
@@ -417,6 +421,54 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		"failed", failCount)
 }
 
+func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64) {
+	phaseCheckInterval := v.config.PhaseCheckInterval
+	if phaseCheckInterval <= 0 {
+		phaseCheckInterval = 3 * time.Second
+	}
+
+	go func() {
+		if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+			return
+		}
+
+		ticker := time.NewTicker(phaseCheckInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFunc, pocStageStartBlockHeight int64) bool {
+	state := v.phaseTracker.GetCurrentEpochState()
+	if !shouldStopValidationForStage(state, pocStageStartBlockHeight) {
+		return false
+	}
+
+	logging.Info("OffChainValidator: validation phase ended, stopping workers", types.PoC,
+		"currentPhase", state.CurrentPhase,
+		"blockHeight", state.CurrentBlock.Height,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight)
+	cancel()
+	return true
+}
+
+func shouldStopValidationForStage(state *chainphase.EpochState, pocStageStartBlockHeight int64) bool {
+	if state == nil {
+		return false
+	}
+	return !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight
+}
+
 // worker processes participants from the work channel.
 // Failed items are re-queued for retry instead of blocking on retries.
 func (v *OffChainValidator) worker(
@@ -447,13 +499,24 @@ func (v *OffChainValidator) worker(
 				return
 			}
 
-			// Not ready yet? Put back at end of queue
+			// Not ready yet? Put back at end of queue and sleep briefly to avoid busy-wait spin.
 			if time.Now().Before(work.retryAfter) {
-				workChan <- work
+				select {
+				case workChan <- work:
+				case <-ctx.Done():
+					return
+				}
+
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
 			result := v.validateParticipant(
+				ctx,
 				workerID,
 				work,
 				proofClient,
@@ -500,10 +563,8 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
-					logging.Warn("OffChainValidator: max retries exceeded, reporting as invalid", types.PoC,
+					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
-					// Report participant as invalid to chain. We probably should separate only to report failed network requests.
-					// reportAddr = work.address
 				}
 			}
 
@@ -527,6 +588,7 @@ func (v *OffChainValidator) worker(
 // samplingBlockHash: fresh hash for random sampling (anti-cheat)
 // pocStartBlockHash: original PoC start block hash (must match generation for MLNode)
 func (v *OffChainValidator) validateParticipant(
+	ctx context.Context,
 	workerID int,
 	work participantWork,
 	proofClient proofFetcher,
@@ -538,7 +600,6 @@ func (v *OffChainValidator) validateParticipant(
 	pocParams *types.PocParams,
 	sampleSize int,
 ) validateResult {
-	ctx := context.Background()
 	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
 	if len(modelNodes) == 0 {
 		logging.Warn("OffChainValidator: no validation executors for model", types.PoC,
