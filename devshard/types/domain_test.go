@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+func TestParseProtocolVersion_DefaultsToV0212(t *testing.T) {
+	got, err := ParseProtocolVersion("")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV0212 {
+		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV0212, got)
+	}
+}
+
+func TestSessionConfigForVersion_Fees(t *testing.T) {
+	v211 := SessionConfigForVersion(3, ProtocolV0211)
+	if v211.CreateDevshardFee != 0 || v211.FeePerNonce != 0 {
+		t.Fatalf("expected v0.2.11 no-fee config, got create=%d per_nonce=%d", v211.CreateDevshardFee, v211.FeePerNonce)
+	}
+
+	v212 := SessionConfigForVersion(3, ProtocolV0212)
+	if v212.CreateDevshardFee == 0 || v212.FeePerNonce == 0 {
+		t.Fatalf("expected v0.2.12 fee config, got create=%d per_nonce=%d", v212.CreateDevshardFee, v212.FeePerNonce)
+	}
+}
+
 func TestValidateGroup(t *testing.T) {
 	tests := []struct {
 		name    string

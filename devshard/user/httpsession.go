@@ -15,12 +15,14 @@ import (
 
 // HTTPSessionConfig holds the parameters needed to create an HTTP-backed user session.
 type HTTPSessionConfig struct {
-	PrivateKeyHex  string
-	EscrowID       string
-	Bridge         bridge.MainnetBridge
-	StoragePath    string                          // optional: path to SQLite DB for session persistence
-	StreamCallback func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
-	RoutePrefix    string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	PrivateKeyHex    string
+	EscrowID         string
+	Bridge           bridge.MainnetBridge
+	StoragePath      string                          // optional: path to SQLite DB for session persistence
+	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
+	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	RequestAdmission transport.RequestAdmissionController
+	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV0212
 }
 
 // NewHTTPSession creates a user Session wired with HTTP clients to real dapi hosts.
@@ -31,8 +33,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signer: %w", err)
 	}
+	pv := cfg.ProtocolVersion
+	if pv == "" {
+		pv = types.ProtocolV0212
+	}
+	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, cfg.RoutePrefix)
 	verifier := signing.NewSecp256k1Verifier()
-	version, err := devshardpkg.VersionForRoutePrefix(cfg.RoutePrefix)
+	version, err := devshardpkg.VersionForRoutePrefix(routePrefix)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve route version: %w", err)
 	}
@@ -47,19 +54,29 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("get escrow: %w", err)
 	}
 
-	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
+	config := types.SessionConfigWithPriceAndVersion(len(group), escrow.TokenPrice, pv)
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
 		state.WithVersion(version),
+		state.WithProtocolVersion(pv),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
+	// Canonical participant key is the slot's validator address (gonka
+	// bech32 string). We deliberately do NOT key on inference URL host
+	// even though the transport dials the URL: chain-side state
+	// (weights, PoC preservation, escrow membership) is keyed by
+	// validator address, and so is the throttle limiter -- mixing
+	// schemes would cause silent map misses (see CapacityState +
+	// ParticipantRequestLimiter wiring in cmd/devshardctl).
 	clients := make([]HostClient, len(group))
+	participantKeys := make([]string, len(group))
 	clientCache := make(map[string]*transport.HTTPClient)
 	for i, slot := range group {
+		participantKeys[i] = slot.ValidatorAddress
 		if c, ok := clientCache[slot.ValidatorAddress]; ok {
 			clients[i] = c
 			continue
@@ -69,13 +86,18 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
 		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || cfg.RoutePrefix != "" {
+		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil {
 			cc := transport.DefaultClientConfig()
+			cc.ProtocolVersion = pv
 			if cfg.StreamCallback != nil {
 				cc.StreamCallback = cfg.StreamCallback
 			}
-			if cfg.RoutePrefix != "" {
-				cc.RoutePrefix = cfg.RoutePrefix
+			if routePrefix != "" {
+				cc.RoutePrefix = routePrefix
+			}
+			if cfg.RequestAdmission != nil {
+				cc.ParticipantKey = slot.ValidatorAddress
+				cc.Admission = cfg.RequestAdmission
 			}
 			clientCfgs = append(clientCfgs, cc)
 		}
@@ -97,11 +119,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		if metaErr == nil {
 			session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, version, group, clients,
 				state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
+				state.WithProtocolVersion(pv),
 			)
 			if recErr != nil {
 				sqlStore.Close()
 				return nil, nil, fmt.Errorf("recover session: %w", recErr)
 			}
+			session.SetParticipantKeys(participantKeys)
 			return session, recSM, nil
 		}
 		if !errors.Is(metaErr, storage.ErrSessionNotFound) {
@@ -127,6 +151,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if err != nil {
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
+	session.SetParticipantKeys(participantKeys)
 
 	return session, sm, nil
 }

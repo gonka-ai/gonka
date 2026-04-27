@@ -99,3 +99,9 @@ The proxy holds the session open until finalization. Once finalized, the session
 Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks from the ML node and returns the final assembled JSON response.
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
+
+## Speculative execution
+
+The proxy uses speculative execution to reduce tail latency and route around unresponsive hosts.
+
+See `devshard/docs/speculative-proxy.md` for the detailed design and escalation rules.

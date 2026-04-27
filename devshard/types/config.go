@@ -1,8 +1,6 @@
 package types
 
-// DefaultSessionConfig returns the canonical session config that both user and
-// host must use. A single source of truth prevents state root divergence caused
-// by config mismatches (e.g. different ValidationRate values).
+// DefaultSessionConfig returns the normal v0.2.12 session config.
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return SessionConfig{
 		RefusalTimeout:    60,
@@ -15,10 +13,43 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 	}
 }
 
+// DefaultSessionConfigV0211 returns the legacy v0.2.11 session config without fees.
+func DefaultSessionConfigV0211(groupSize int) SessionConfig {
+	cfg := DefaultSessionConfig(groupSize)
+	cfg.CreateDevshardFee = 0
+	cfg.FeePerNonce = 0
+	return cfg
+}
+
+// DefaultSessionConfigV0212 returns the v0.2.12 session config with fee fields.
+func DefaultSessionConfigV0212(groupSize int) SessionConfig {
+	cfg := DefaultSessionConfig(groupSize)
+	return cfg
+}
+
+// SessionConfigForVersion returns the default config for the given protocol version.
+func SessionConfigForVersion(groupSize int, version ProtocolVersion) SessionConfig {
+	switch version {
+	case ProtocolV0211:
+		return DefaultSessionConfigV0211(groupSize)
+	default:
+		return DefaultSessionConfigV0212(groupSize)
+	}
+}
+
 // SessionConfigWithPrice returns a session config with a custom token price.
 // tokenPrice == 0 is treated as 1 for backward compatibility.
 func SessionConfigWithPrice(groupSize int, tokenPrice uint64) SessionConfig {
 	cfg := DefaultSessionConfig(groupSize)
+	if tokenPrice > 0 {
+		cfg.TokenPrice = tokenPrice
+	}
+	return cfg
+}
+
+// SessionConfigWithPriceAndVersion returns a versioned session config with a custom token price.
+func SessionConfigWithPriceAndVersion(groupSize int, tokenPrice uint64, version ProtocolVersion) SessionConfig {
+	cfg := SessionConfigForVersion(groupSize, version)
 	if tokenPrice > 0 {
 		cfg.TokenPrice = tokenPrice
 	}

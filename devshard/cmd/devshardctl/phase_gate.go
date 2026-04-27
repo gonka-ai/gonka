@@ -1,0 +1,786 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	defaultChainPhasePollInterval = 5 * time.Second
+
+	epochPhaseInference           = "Inference"
+	epochPhasePoCGenerate         = "PoCGenerate"
+	epochPhasePoCGenerateWindDown = "PoCGenerateWindDown"
+	epochPhasePoCValidate         = "PoCValidate"
+	epochPhasePoCValidateWindDown = "PoCValidateWindDown"
+
+	confirmationPoCInactive    = "CONFIRMATION_POC_INACTIVE"
+	confirmationPoCGracePeriod = "CONFIRMATION_POC_GRACE_PERIOD"
+	confirmationPoCGeneration  = "CONFIRMATION_POC_GENERATION"
+	confirmationPoCValidation  = "CONFIRMATION_POC_VALIDATION"
+	confirmationPoCCompleted   = "CONFIRMATION_POC_COMPLETED"
+)
+
+type ChainPhaseSnapshot struct {
+	BlockHeight          int64     `json:"block_height,omitempty"`
+	EpochIndex           uint64    `json:"epoch_index,omitempty"`
+	EpochPhase           string    `json:"chain_phase,omitempty"`
+	ConfirmationPoCPhase string    `json:"confirmation_poc_phase,omitempty"`
+	RequestsBlocked      bool      `json:"requests_blocked"`
+	BlockReason          string    `json:"block_reason,omitempty"`
+	LastUpdatedAt        time.Time `json:"last_updated_at,omitempty"`
+	LastError            string    `json:"last_error,omitempty"`
+}
+
+type ChainPhaseGate struct {
+	endpoint                      string
+	participantsEndpoint          string
+	client                        *http.Client
+	pollInterval                  time.Duration
+	defaultMaxSpeculativeAttempts int
+
+	mu       sync.RWMutex
+	snapshot ChainPhaseSnapshot
+
+	// capacityState receives per-host weights and the preserved-host
+	// set on every refresh so it can keep W_tot, W(e), and the
+	// GatewayLimiter scale factor in sync with chain phase transitions.
+	// Reactive throttle is consulted live by the state itself via the
+	// availability callback wired separately (SetLiveAvailable on the
+	// state at gateway construction). Refresh-time scale propagation
+	// (e.g. ApplyScaleFactor on the GatewayLimiter) is the
+	// scaleApplyHook's responsibility.
+	capacityState  *CapacityState
+	scaleApplyHook func(scale float64)
+
+	stopCh chan struct{}
+	doneCh chan struct{}
+}
+
+type chainEpochInfoResponse struct {
+	BlockHeight             jsonInt64                         `json:"block_height"`
+	Phase                   string                            `json:"phase"`
+	LatestEpoch             chainLatestEpoch                  `json:"latest_epoch"`
+	IsConfirmationPoCActive bool                              `json:"is_confirmation_poc_active"`
+	ActiveConfirmationPoC   *chainConfirmationPoCEventPayload `json:"active_confirmation_poc_event,omitempty"`
+}
+
+type chainLatestEpoch struct {
+	Index               jsonUint64 `json:"index"`
+	PocStartBlockHeight jsonInt64  `json:"poc_start_block_height"`
+}
+
+type chainConfirmationPoCEventPayload struct {
+	Phase confirmationPoCPhaseValue `json:"phase"`
+}
+
+type chainCurrentParticipantsResponse struct {
+	ActiveParticipants chainActiveParticipantsGroup `json:"active_participants"`
+}
+
+type chainActiveParticipantsGroup struct {
+	Participants []chainActiveParticipant `json:"participants"`
+}
+
+type chainActiveParticipant struct {
+	Index        string              `json:"index"`
+	InferenceURL string              `json:"inference_url"`
+	Weight       jsonUint64          `json:"weight,omitempty"`
+	MLNodes      []chainModelMLNodes `json:"ml_nodes"`
+}
+
+type chainModelMLNodes struct {
+	MLNodes []chainMLNodeInfo `json:"ml_nodes"`
+}
+
+type chainMLNodeInfo struct {
+	TimeslotAllocation []bool `json:"timeslot_allocation"`
+}
+
+type jsonInt64 int64
+
+func (n *jsonInt64) UnmarshalJSON(data []byte) error {
+	parsed, err := parseFlexibleInt64(data)
+	if err != nil {
+		return err
+	}
+	*n = jsonInt64(parsed)
+	return nil
+}
+
+type jsonUint64 uint64
+
+func (n *jsonUint64) UnmarshalJSON(data []byte) error {
+	parsed, err := parseFlexibleUint64(data)
+	if err != nil {
+		return err
+	}
+	*n = jsonUint64(parsed)
+	return nil
+}
+
+type confirmationPoCPhaseValue string
+
+func (p *confirmationPoCPhaseValue) UnmarshalJSON(data []byte) error {
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		*p = confirmationPoCPhaseValue(asString)
+		return nil
+	}
+
+	var asInt int
+	if err := json.Unmarshal(data, &asInt); err == nil {
+		switch asInt {
+		case 0:
+			*p = confirmationPoCPhaseValue(confirmationPoCInactive)
+		case 1:
+			*p = confirmationPoCPhaseValue(confirmationPoCGracePeriod)
+		case 2:
+			*p = confirmationPoCPhaseValue(confirmationPoCGeneration)
+		case 3:
+			*p = confirmationPoCPhaseValue(confirmationPoCValidation)
+		case 4:
+			*p = confirmationPoCPhaseValue(confirmationPoCCompleted)
+		default:
+			*p = confirmationPoCPhaseValue(strconv.Itoa(asInt))
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unsupported confirmation PoC phase %s", string(data))
+}
+
+type RequestAdmissionError struct {
+	Reason  string
+	Message string
+}
+
+func (e *RequestAdmissionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	if strings.TrimSpace(e.Reason) != "" {
+		return e.Reason
+	}
+	return "request admission blocked"
+}
+
+func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return nil
+	}
+	if pollInterval <= 0 {
+		pollInterval = defaultChainPhasePollInterval
+	}
+	return &ChainPhaseGate{
+		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
+		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
+		client:                        &http.Client{Timeout: 5 * time.Second},
+		pollInterval:                  pollInterval,
+		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
+		stopCh:                        make(chan struct{}),
+		doneCh:                        make(chan struct{}),
+	}
+}
+
+func (g *ChainPhaseGate) Start() {
+	if g == nil {
+		return
+	}
+	go g.run()
+}
+
+func (g *ChainPhaseGate) Stop() {
+	if g == nil {
+		return
+	}
+	select {
+	case <-g.doneCh:
+		return
+	default:
+	}
+	close(g.stopCh)
+	<-g.doneCh
+	setPoCPhaseState(false, "")
+	g.restoreDefaultSpeculativeAttempts()
+}
+
+func (g *ChainPhaseGate) Snapshot() ChainPhaseSnapshot {
+	if g == nil {
+		return ChainPhaseSnapshot{}
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.snapshot
+}
+
+// SetCapacityState attaches the capacity state that should receive
+// per-host weights and the preserved-host set on every refresh.
+// scaleHook is invoked after each refresh with the new W_tot/W_ref
+// scale factor; pass nil to skip scale propagation. Reactive throttle
+// is consulted live by the state itself via the availability callback
+// wired separately (SetLiveAvailable on the state at gateway
+// construction), so we no longer push throttle snapshots through the
+// refresh loop.
+func (g *ChainPhaseGate) SetCapacityState(state *CapacityState, scaleHook func(scale float64)) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.capacityState = state
+	g.scaleApplyHook = scaleHook
+}
+
+func (g *ChainPhaseGate) capacitySinks() (*CapacityState, func(float64)) {
+	if g == nil {
+		return nil, nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.capacityState, g.scaleApplyHook
+}
+
+func (g *ChainPhaseGate) AdmissionError() error {
+	if g == nil {
+		return nil
+	}
+	snapshot := g.Snapshot()
+	if !snapshot.RequestsBlocked {
+		return nil
+	}
+	return &RequestAdmissionError{
+		Reason:  snapshot.BlockReason,
+		Message: fmt.Sprintf("devshard temporarily unavailable during %s", humanizePhaseBlockReason(snapshot)),
+	}
+}
+
+func (g *ChainPhaseGate) run() {
+	defer close(g.doneCh)
+	g.refresh()
+
+	ticker := time.NewTicker(g.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			g.refresh()
+		case <-g.stopCh:
+			return
+		}
+	}
+}
+
+func (g *ChainPhaseGate) refresh() {
+	if g == nil {
+		return
+	}
+	previous := g.Snapshot()
+	resp, err := g.fetchEpochInfo()
+	if err != nil {
+		g.recordError(err)
+		log.Printf("chain phase poll failed: %v", err)
+		return
+	}
+	snapshot := deriveChainPhaseSnapshot(resp)
+	active, _ := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+	wasActive, _ := rawPoCBlockingState(previous.EpochPhase, previous.ConfirmationPoCPhase)
+
+	capacityState, scaleHook := g.capacitySinks()
+
+	// We need participants info for two purposes:
+	//   (a) the relaxed-PoC preserved-set update (only on active edge)
+	//   (b) feeding CapacityState weights + preserved set (every refresh,
+	//       when attached) so W(e)/W_tot/W_ref reflect the latest chain
+	//       observation.
+	// Combine the fetches so we never double-poll the chain.
+	needPreservedFetch := active && relaxedPoCModeEnabled() && !wasActive
+	if needPreservedFetch || capacityState != nil {
+		state, perr := g.fetchParticipantsState()
+		if perr != nil {
+			g.recordError(perr)
+			g.logPreservedParticipantFetchFailure(snapshot, perr)
+		} else {
+			if needPreservedFetch {
+				setPoCPreservedParticipants(state.preserved)
+				g.logPreservedParticipantsLoaded(snapshot, state.preserved, state.excluded)
+			}
+			if capacityState != nil {
+				// pocActive routes the observation: outside PoC it
+				// updates both fullWeights (steady-state baseline) and
+				// currentWeights, inside PoC it only nudges
+				// currentWeights so the live W_tot reflects PoC's
+				// transient drop while W_ref keeps the pre-PoC baseline.
+				capacityState.SetHostWeights(state.weights, active)
+				if active && relaxedPoCModeEnabled() {
+					capacityState.SetPoCPreserved(state.preserved)
+				} else {
+					// Outside relaxed PoC every host is "preserved"
+					// from the limiter's perspective; nil tells the
+					// state to treat the preserved set as not-yet-loaded
+					// and therefore not block anyone on PoC grounds.
+					capacityState.SetPoCPreserved(nil)
+				}
+			}
+		}
+	}
+	if !active {
+		setPoCPreservedParticipants(nil)
+	}
+
+	if capacityState != nil && scaleHook != nil {
+		scaleHook(capacityState.ScaleFactor())
+	}
+
+	g.applySpeculativeAttemptPolicy(snapshot)
+	g.logSnapshotTransition(previous, snapshot)
+	g.storeSnapshot(snapshot)
+}
+
+func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
+	resp, err := g.client.Get(g.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("epoch info status %d", resp.StatusCode)
+	}
+
+	var payload chainEpochInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+// participantsState is the parsed form of the chain participants
+// endpoint used by both the relaxed-PoC preserved-set logic and the
+// CapacityState weight ingestion. We collect everything in one fetch
+// so the gate doesn't double-poll. All keys (preserved, excluded,
+// weights map keys) are the participant's gonka address (chain
+// `Index`); the InferenceURL is intentionally NOT used as an identity
+// -- the chain address is the canonical participant key everywhere
+// downstream (CapacityState, ParticipantRequestLimiter, Session,
+// transport admission). weights holds the chain-reported w_chain(h)
+// for the moment this fetch landed; CapacityState's own
+// SetHostWeights(_, pocActive) decides whether to treat the values as
+// a steady-state baseline observation or a transient PoC-time
+// reading.
+type participantsState struct {
+	preserved []string
+	excluded  []string
+	weights   map[string]float64
+}
+
+func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
+	state, err := g.fetchParticipantsState()
+	if err != nil {
+		return nil, nil, err
+	}
+	return state.preserved, state.excluded, nil
+}
+
+func (g *ChainPhaseGate) fetchParticipantsState() (*participantsState, error) {
+	resp, err := g.client.Get(g.participantsEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("current participants status %d", resp.StatusCode)
+	}
+
+	var payload chainCurrentParticipantsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	state := &participantsState{
+		weights: make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+	}
+	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
+	seenExcluded := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
+	for _, participant := range payload.ActiveParticipants.Participants {
+		key := strings.TrimSpace(participant.Index)
+		if key == "" {
+			// A participant with no chain Index is not addressable
+			// downstream (Session/CapacityState/limiter all key by
+			// gonka address). Drop it -- there's no sensible fallback
+			// because the inference URL alone can't sign votes,
+			// receive PoC weight, or be matched against group slots.
+			continue
+		}
+		state.weights[key] = participantWeight(participant)
+		if !participantHasPreservedNode(participant) {
+			if _, ok := seenExcluded[key]; ok {
+				continue
+			}
+			seenExcluded[key] = struct{}{}
+			state.excluded = append(state.excluded, key)
+			continue
+		}
+		if _, ok := seenPreserved[key]; ok {
+			continue
+		}
+		seenPreserved[key] = struct{}{}
+		state.preserved = append(state.preserved, key)
+	}
+	return state, nil
+}
+
+func (g *ChainPhaseGate) storeSnapshot(snapshot ChainPhaseSnapshot) {
+	active, reason := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+	setPoCPhaseState(active, reason)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.snapshot = snapshot
+}
+
+func (g *ChainPhaseGate) logPreservedParticipantFetchFailure(snapshot ChainPhaseSnapshot, err error) {
+	if g == nil || err == nil {
+		return
+	}
+	log.Printf(
+		"chain phase gate: preserved participant poll failed reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d error=%v",
+		snapshot.BlockReason,
+		snapshot.EpochPhase,
+		snapshot.ConfirmationPoCPhase,
+		snapshot.EpochIndex,
+		snapshot.BlockHeight,
+		err,
+	)
+}
+
+// participantKeyLabels returns a sorted, short-form copy of the
+// supplied gonka addresses for log compactness. Short form is the
+// last 8 characters of the bech32 string -- enough to disambiguate in
+// practice without polluting log lines.
+func participantKeyLabels(keys []string) []string {
+	labels := make([]string, len(keys))
+	for i, k := range keys {
+		labels[i] = shortParticipantKey(k)
+	}
+	sort.Strings(labels)
+	return labels
+}
+
+func shortParticipantKey(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if len(trimmed) <= 8 {
+		return trimmed
+	}
+	return trimmed[len(trimmed)-8:]
+}
+
+func (g *ChainPhaseGate) logPreservedParticipantsLoaded(snapshot ChainPhaseSnapshot, preserved []string, excluded []string) {
+	if g == nil {
+		return
+	}
+	excludedLabels := participantKeyLabels(excluded)
+	excludedJoined := strings.Join(excludedLabels, ",")
+	if len(preserved) == 0 {
+		log.Printf(
+			"chain phase gate: preserved participant poll empty reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d excluded_count=%d excluded_participants=%s",
+			snapshot.BlockReason,
+			snapshot.EpochPhase,
+			snapshot.ConfirmationPoCPhase,
+			snapshot.EpochIndex,
+			snapshot.BlockHeight,
+			len(excludedLabels),
+			excludedJoined,
+		)
+		return
+	}
+	preservedLabels := participantKeyLabels(preserved)
+	log.Printf(
+		"chain phase gate: preserved participants loaded reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d count=%d participants=%s excluded_count=%d excluded_participants=%s",
+		snapshot.BlockReason,
+		snapshot.EpochPhase,
+		snapshot.ConfirmationPoCPhase,
+		snapshot.EpochIndex,
+		snapshot.BlockHeight,
+		len(preservedLabels),
+		strings.Join(preservedLabels, ","),
+		len(excludedLabels),
+		excludedJoined,
+	)
+}
+
+func (g *ChainPhaseGate) logSnapshotTransition(previous, next ChainPhaseSnapshot) {
+	if g == nil {
+		return
+	}
+
+	currentAttempts := CurrentMaxSpeculativeAttempts()
+	previousActive, previousReason := rawPoCBlockingState(previous.EpochPhase, previous.ConfirmationPoCPhase)
+	nextActive, nextReason := rawPoCBlockingState(next.EpochPhase, next.ConfirmationPoCPhase)
+	if !previousActive && nextActive {
+		log.Printf(
+			"chain phase gate: phase active reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d requests_blocked=%t max_attempts=%d",
+			nextReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			next.RequestsBlocked,
+			currentAttempts,
+		)
+	}
+	if previousActive && !nextActive {
+		log.Printf(
+			"chain phase gate: phase inactive previous_reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d requests_blocked=%t max_attempts=%d",
+			previousReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			next.RequestsBlocked,
+			currentAttempts,
+		)
+	}
+	if previousActive && nextActive &&
+		(previousReason != nextReason ||
+			previous.EpochPhase != next.EpochPhase ||
+			previous.ConfirmationPoCPhase != next.ConfirmationPoCPhase) {
+		log.Printf(
+			"chain phase gate: phase updated reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d requests_blocked=%t max_attempts=%d",
+			nextReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			next.RequestsBlocked,
+			currentAttempts,
+		)
+	}
+	if !previous.RequestsBlocked && next.RequestsBlocked {
+		log.Printf(
+			"chain phase gate: blocking new requests reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d max_attempts=%d",
+			next.BlockReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			currentAttempts,
+		)
+		return
+	}
+
+	if previous.RequestsBlocked && !next.RequestsBlocked {
+		log.Printf(
+			"chain phase gate: request blocking cleared previous_reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d max_attempts=%d",
+			previous.BlockReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			currentAttempts,
+		)
+		return
+	}
+
+	if next.RequestsBlocked &&
+		(previous.BlockReason != next.BlockReason ||
+			previous.EpochPhase != next.EpochPhase ||
+			previous.ConfirmationPoCPhase != next.ConfirmationPoCPhase) {
+		log.Printf(
+			"chain phase gate: blocking mode updated reason=%s chain_phase=%s confirmation_poc_phase=%s epoch=%d block_height=%d max_attempts=%d",
+			next.BlockReason,
+			next.EpochPhase,
+			next.ConfirmationPoCPhase,
+			next.EpochIndex,
+			next.BlockHeight,
+			currentAttempts,
+		)
+	}
+}
+
+func (g *ChainPhaseGate) applySpeculativeAttemptPolicy(snapshot ChainPhaseSnapshot) {
+	if g == nil {
+		return
+	}
+	active, _ := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+	if active && !relaxedPoCModeEnabled() {
+		SetMaxSpeculativeAttempts(1)
+		return
+	}
+	g.restoreDefaultSpeculativeAttempts()
+}
+
+func (g *ChainPhaseGate) restoreDefaultSpeculativeAttempts() {
+	if g == nil {
+		return
+	}
+	SetMaxSpeculativeAttempts(g.defaultMaxSpeculativeAttempts)
+}
+
+func (g *ChainPhaseGate) recordError(err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.snapshot.LastError = err.Error()
+}
+
+func deriveChainPhaseSnapshot(resp *chainEpochInfoResponse) ChainPhaseSnapshot {
+	if resp == nil {
+		return ChainPhaseSnapshot{}
+	}
+
+	snapshot := ChainPhaseSnapshot{
+		BlockHeight:   int64(resp.BlockHeight),
+		EpochIndex:    uint64(resp.LatestEpoch.Index),
+		EpochPhase:    deriveEpochPhase(resp),
+		LastUpdatedAt: time.Now().UTC(),
+	}
+
+	if resp.ActiveConfirmationPoC != nil {
+		snapshot.ConfirmationPoCPhase = string(resp.ActiveConfirmationPoC.Phase)
+	}
+	rawBlocked, reason := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+	snapshot.BlockReason = reason
+	snapshot.RequestsBlocked = rawBlocked && !relaxedPoCModeEnabled()
+	return snapshot
+}
+
+func deriveEpochPhase(resp *chainEpochInfoResponse) string {
+	if resp == nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Phase)
+}
+
+func rawPoCBlockingState(epochPhase, confirmationPhase string) (bool, string) {
+	switch epochPhase {
+	case epochPhasePoCGenerate, epochPhasePoCGenerateWindDown, epochPhasePoCValidate, epochPhasePoCValidateWindDown:
+		return true, "poc"
+	}
+	switch confirmationPhase {
+	case confirmationPoCGracePeriod, confirmationPoCGeneration, confirmationPoCValidation:
+		return true, "confirmation_poc"
+	}
+	return false, ""
+}
+
+func participantHasPreservedNode(participant chainActiveParticipant) bool {
+	for _, modelNodes := range participant.MLNodes {
+		for _, node := range modelNodes.MLNodes {
+			if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// participantWeight returns the chain-reported weight for one
+// participant, used by CapacityState as w_chain(h). The chain itself
+// is the authority -- during PoC the value naturally drops to reflect
+// reduced capacity, outside PoC it reflects the steady-state weight.
+// CapacityState.SetHostWeights' pocActive flag decides whether the
+// returned value is treated as a steady-state baseline observation or
+// a transient PoC-time observation; this function is phase-agnostic.
+//
+// A zero or missing weight is propagated as 0 (no synthesis from
+// MLNode counts, no fallback to 1.0); that's a real signal -- the
+// chain saying "this participant has no usable capacity right now".
+// CapacityState's own missing-key fallback (1.0) only applies to
+// hosts the gate has not yet observed at all.
+func participantWeight(participant chainActiveParticipant) float64 {
+	return float64(participant.Weight)
+}
+
+func (g *ChainPhaseGate) PoCActive() bool {
+	if g == nil {
+		return false
+	}
+	snapshot := g.Snapshot()
+	active, _ := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+	return active
+}
+
+func humanizePhaseBlockReason(snapshot ChainPhaseSnapshot) string {
+	if snapshot.BlockReason == "poc" {
+		switch snapshot.EpochPhase {
+		case epochPhasePoCGenerate:
+			return "PoC generation"
+		case epochPhasePoCGenerateWindDown:
+			return "PoC generation wind down"
+		case epochPhasePoCValidate:
+			return "PoC validation"
+		case epochPhasePoCValidateWindDown:
+			return "PoC validation wind down"
+		}
+		return "PoC"
+	}
+	if snapshot.BlockReason == "confirmation_poc" {
+		switch snapshot.ConfirmationPoCPhase {
+		case confirmationPoCGracePeriod:
+			return "confirmation PoC grace period"
+		case confirmationPoCGeneration:
+			return "confirmation PoC generation"
+		case confirmationPoCValidation:
+			return "confirmation PoC validation"
+		}
+		return "confirmation PoC"
+	}
+	if strings.TrimSpace(snapshot.BlockReason) != "" {
+		return strings.ReplaceAll(snapshot.BlockReason, "_", " ")
+	}
+	if strings.TrimSpace(snapshot.EpochPhase) != "" {
+		return snapshot.EpochPhase
+	}
+	return "chain admission controls"
+}
+
+func parseFlexibleInt64(data []byte) (int64, error) {
+	var asInt int64
+	if err := json.Unmarshal(data, &asInt); err == nil {
+		return asInt, nil
+	}
+
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		var parsed int64
+		if _, err := fmt.Sscan(asString, &parsed); err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	}
+
+	return 0, fmt.Errorf("unsupported int64 value %s", string(data))
+}
+
+func parseFlexibleUint64(data []byte) (uint64, error) {
+	var asUint uint64
+	if err := json.Unmarshal(data, &asUint); err == nil {
+		return asUint, nil
+	}
+
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		var parsed uint64
+		if _, err := fmt.Sscan(asString, &parsed); err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	}
+
+	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
+}

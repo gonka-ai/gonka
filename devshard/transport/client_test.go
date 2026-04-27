@@ -2,8 +2,11 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -65,7 +68,7 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), resp.Nonce)
 	require.NotNil(t, resp.StateSig)
@@ -80,6 +83,31 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
+}
+
+func TestHTTPClient_LegacyProtocolUsesSubnetAuthHeaders(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var sawSubnetSig, sawSubnetTS, sawDevshardSig, sawDevshardTS string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawSubnetSig = r.Header.Get(LegacySubnetHeaderSignature)
+		sawSubnetTS = r.Header.Get(LegacySubnetHeaderTimestamp)
+		sawDevshardSig = r.Header.Get(HeaderSignature)
+		sawDevshardTS = r.Header.Get(HeaderTimestamp)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	cfg := DefaultClientConfig()
+	cfg.ProtocolVersion = types.ProtocolV0211
+	client := NewHTTPClient(srv.URL, "83", signer, cfg)
+
+	err := client.post(context.Background(), "/sessions/83/verify-timeout", cfg.VerifyTimeout, VerifyTimeoutRequest{InferenceID: 1, Reason: "refused"}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, sawSubnetSig)
+	require.NotEmpty(t, sawSubnetTS)
+	require.Empty(t, sawDevshardSig)
+	require.Empty(t, sawDevshardTS)
 }
 
 func TestHTTPClient_GetDiffs(t *testing.T) {
@@ -98,7 +126,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 
 	// Fetch diffs.
@@ -124,7 +152,7 @@ func TestHTTPClient_GetMempool(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 
 	// Fetch mempool.
@@ -142,12 +170,32 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	// Use a reader that returns the data then an error (simulating connection drop).
 	r := &truncatedReader{data: []byte(sseData)}
 
-	result, err := client.parseSSEResponse(r, 1)
+	result, err := client.parseSSEResponse(r, nil, nil)
 	require.Error(t, err, "should return error from broken stream")
 	require.NotNil(t, result, "should return partial result")
 	require.Equal(t, uint64(1), result.Nonce)
 	require.NotNil(t, result.Receipt, "receipt should be extracted from partial stream")
 	require.Equal(t, int64(1000), result.ConfirmedAt)
+}
+
+func TestParseSSE_LegacySubnetReceiptAndMeta(t *testing.T) {
+	client := &HTTPClient{config: DefaultClientConfig()}
+	client.config.ProtocolVersion = types.ProtocolV0211
+	mempool, err := DevshardTxsToBytes([]*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
+	})
+	require.NoError(t, err)
+	meta, err := json.Marshal(DevshardMetaEvent{Mempool: mempool})
+	require.NoError(t, err)
+
+	sseData := "data: {\"subnet_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\n" +
+		fmt.Sprintf("data: {\"subnet_meta\":%s}\n\n", meta)
+	result, err := client.parseSSEResponse(strings.NewReader(sseData), nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), result.Nonce)
+	require.NotEmpty(t, result.Receipt)
+	require.Equal(t, int64(1000), result.ConfirmedAt)
+	require.NotEmpty(t, result.Mempool)
 }
 
 // truncatedReader returns data followed by an io.ErrUnexpectedEOF to simulate a broken connection.
@@ -174,11 +222,10 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 	client, _, userSigner, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
-	// Configure a stream callback to collect data lines.
 	var streamLines []string
-	client.config.StreamCallback = func(nonce uint64, line string) {
+	streamSink := lineCollector(func(line string) {
 		streamLines = append(streamLines, line)
-	}
+	})
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	resp, err := client.Send(ctx, host.HostRequest{
@@ -191,7 +238,7 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, streamSink, nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), resp.Nonce)
 	require.NotNil(t, resp.StateSig)
@@ -209,4 +256,92 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
+}
+
+type stubAdmissionController struct {
+	calls    []string
+	observed []string
+	err      error
+}
+
+func (s *stubAdmissionController) AllowRequest(participantKey, path string) error {
+	s.calls = append(s.calls, participantKey+":"+path)
+	return s.err
+}
+
+func (s *stubAdmissionController) ObserveResult(participantKey, path string, statusCode int) {
+	s.observed = append(s.observed, fmt.Sprintf("%s:%s:%d", participantKey, path, statusCode))
+}
+
+func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path string, err error) {
+	s.observed = append(s.observed, fmt.Sprintf("%s:%s:transport", participantKey, path))
+}
+
+func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
+	client, _, userSigner, _ := setupClientTestEnv(t)
+	ctx := context.Background()
+	admission := &stubAdmissionController{err: fmt.Errorf("participant request budget exhausted")}
+	client.config.ParticipantKey = "shared-host"
+	client.config.Admission = admission
+
+	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := client.Send(ctx, host.HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &host.InferencePayload{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	}, nil, nil)
+	require.ErrorContains(t, err, "participant request budget exhausted")
+	require.Len(t, admission.calls, 1)
+	require.Contains(t, admission.calls[0], "shared-host")
+	require.Contains(t, admission.calls[0], "/sessions/escrow-1/chat/completions")
+}
+
+func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	admission := &stubAdmissionController{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("nginx limit"))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		InferenceTimeout: DefaultClientConfig().InferenceTimeout,
+		GossipTimeout:    DefaultClientConfig().GossipTimeout,
+		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
+		QueryTimeout:     DefaultClientConfig().QueryTimeout,
+		ParticipantKey:   "shared-host",
+		Admission:        admission,
+	})
+
+	_, err := client.Send(context.Background(), host.HostRequest{
+		Nonce: 1,
+		Payload: &host.InferencePayload{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	}, nil, nil)
+	require.Error(t, err)
+	var upstreamErr *UpstreamStatusError
+	require.ErrorAs(t, err, &upstreamErr)
+	require.Equal(t, http.StatusServiceUnavailable, upstreamErr.StatusCode)
+	require.Len(t, admission.observed, 1)
+	require.Contains(t, admission.observed[0], "shared-host")
+	require.Contains(t, admission.observed[0], ":503")
+}
+
+type lineCollector func(line string)
+
+func (c lineCollector) Write(p []byte) (int, error) {
+	c(string(p))
+	return len(p), nil
 }

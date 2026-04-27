@@ -1,6 +1,10 @@
 package devshard
 
-import "testing"
+import (
+	"testing"
+
+	"devshard/types"
+)
 
 func TestNormalizeRoutePrefixDefaultsToLegacy(t *testing.T) {
 	if got := NormalizeRoutePrefix(""); got != LegacyRoutePrefix {
@@ -14,6 +18,18 @@ func TestResolveVersionedRoutePrefix(t *testing.T) {
 	}
 	if got := ResolveVersionedRoutePrefix("v1", LegacyRoutePrefix); got != LegacyRoutePrefix {
 		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
+	}
+}
+
+func TestResolveHostRoutePrefix(t *testing.T) {
+	if got := ResolveHostRoutePrefix(types.ProtocolV0211, ""); got != LegacySubnetRoutePrefix {
+		t.Fatalf("ResolveHostRoutePrefix(v0.2.11) = %q, want %q", got, LegacySubnetRoutePrefix)
+	}
+	if got := ResolveHostRoutePrefix(types.ProtocolV0212, ""); got != VersionedRoutePrefix("v0.2.12") {
+		t.Fatalf("ResolveHostRoutePrefix(v0.2.12) = %q, want %q", got, VersionedRoutePrefix("v0.2.12"))
+	}
+	if got := ResolveHostRoutePrefix(types.ProtocolV0211, LegacyRoutePrefix); got != LegacyRoutePrefix {
+		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
 	}
 }
 
@@ -32,6 +48,11 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		{
 			name:        "explicit legacy",
 			routePrefix: LegacyRoutePrefix,
+			want:        "v1",
+		},
+		{
+			name:        "explicit old subnet host route",
+			routePrefix: LegacySubnetRoutePrefix,
 			want:        "v1",
 		},
 		{

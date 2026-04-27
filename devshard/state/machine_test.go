@@ -1205,6 +1205,22 @@ func TestNewStateMachine_DeductsCreateDevshardFee(t *testing.T) {
 	require.Equal(t, uint64(25), st.Fees)
 }
 
+func TestNewStateMachine_CreateDevshardFeeSkippedForExplicitProtocolV0211(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	config.CreateDevshardFee = 25
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := NewStateMachine("escrow-1", config, group, 10, user.Address(), verifier, WithProtocolVersion(types.ProtocolV0211))
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(10), st.Balance)
+	require.Zero(t, st.Fees)
+}
+
 func TestNewStateMachine_CreateDevshardFeeInsufficientBalance(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -1241,6 +1257,33 @@ func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
 	st := sm.SnapshotState()
 	require.Equal(t, uint64(1), st.LatestNonce)
 	require.Equal(t, uint64(10000-150-7), st.Balance)
+}
+
+func TestApplyDiff_FeePerNonce_NotChargedForExplicitProtocolV0211(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.FeePerNonce = 7
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, WithProtocolVersion(types.ProtocolV0211))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint64(1), st.LatestNonce)
+	require.Equal(t, uint64(10000-150), st.Balance)
+	require.Zero(t, st.Fees)
 }
 
 func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
@@ -2955,6 +2998,58 @@ func TestApplyLocal_WithInjectedWarmKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, root1, root2, "state roots must match after replay with injected warm keys")
+}
+
+func TestStateMachine_ExplicitProtocolV0211UsesLegacyRoot(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.CreateDevshardFee = 7
+	verifier := signing.NewSecp256k1Verifier()
+
+	defaultSM, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier)
+	require.NoError(t, err)
+	defaultState := defaultSM.SnapshotState()
+	defaultRoot, err := defaultSM.ComputeStateRoot()
+	require.NoError(t, err)
+	canonicalRoot, err := ComputeStateRoot(defaultState.Balance, defaultState.HostStats, defaultState.Inferences, defaultState.Phase, defaultState.WarmKeys, defaultState.Fees, defaultState.Version)
+	require.NoError(t, err)
+	require.Equal(t, canonicalRoot, defaultRoot, "default state machine must keep current fee/version-bound root")
+
+	v0211SM, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier, WithProtocolVersion(types.ProtocolV0211))
+	require.NoError(t, err)
+	v0211State := v0211SM.SnapshotState()
+	v0211Root, err := v0211SM.ComputeStateRoot()
+	require.NoError(t, err)
+	legacyRoot, err := ComputeStateRootV0211(v0211State.Balance, v0211State.HostStats, v0211State.Inferences, v0211State.Phase, v0211State.WarmKeys)
+	require.NoError(t, err)
+	require.Equal(t, legacyRoot, v0211Root, "explicit protocol v0.2.11 must use the no-fees root")
+	require.NotEqual(t, defaultRoot, v0211Root, "test setup must distinguish canonical and v0.2.11 roots")
+}
+
+func TestStateMachine_ExplicitProtocolV0211UsesLegacyValidationRules(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+
+	defaultSM, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+	require.Equal(t,
+		ShouldValidate(42, 7, 1, 1, defaultSM.totalSlots, config.ValidationRate),
+		defaultSM.shouldValidate(42, 7, 1, 1),
+		"default state machine must keep integer validation rules",
+	)
+
+	v0211SM, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, WithProtocolVersion(types.ProtocolV0211))
+	require.NoError(t, err)
+	require.Equal(t,
+		ShouldValidateV0211(42, 7, 1, 1, v0211SM.totalSlots, config.ValidationRate),
+		v0211SM.shouldValidate(42, 7, 1, 1),
+		"explicit protocol v0.2.11 must use legacy validation rules",
+	)
 }
 
 func TestApplyDiff_RevealSeed_NoNewWarmKeyBinding(t *testing.T) {

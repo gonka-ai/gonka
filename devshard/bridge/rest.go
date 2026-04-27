@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,9 +21,10 @@ type warmCacheKey struct {
 // RESTBridge implements MainnetBridge query methods via the chain's grpc-gateway REST API.
 // Notification and action methods return ErrNotImplemented.
 type RESTBridge struct {
-	baseURL   string
-	client    *http.Client
-	warmCache sync.Map // warmCacheKey -> bool
+	baseURL        string
+	client         *http.Client
+	escrowEndpoint string
+	warmCache      sync.Map // warmCacheKey -> bool
 }
 
 type Option func(*RESTBridge)
@@ -31,10 +33,19 @@ func WithHTTPClient(c *http.Client) Option {
 	return func(b *RESTBridge) { b.client = c }
 }
 
+func WithEscrowEndpoint(endpoint string) Option {
+	return func(b *RESTBridge) {
+		if endpoint = strings.Trim(strings.TrimSpace(endpoint), "/"); endpoint != "" {
+			b.escrowEndpoint = endpoint
+		}
+	}
+}
+
 func NewRESTBridge(baseURL string, opts ...Option) *RESTBridge {
 	b := &RESTBridge{
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		baseURL:        baseURL,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		escrowEndpoint: "devshard_escrow",
 	}
 	for _, o := range opts {
 		o(b)
@@ -101,7 +112,7 @@ func doGet[T any](client *http.Client, rawURL string) (*T, error) {
 // -- query methods --
 
 func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
-	u := fmt.Sprintf("%s/productscience/inference/inference/devshard_escrow/%s", b.baseURL, escrowID)
+	u := fmt.Sprintf("%s/productscience/inference/inference/%s/%s", b.baseURL, b.escrowEndpoint, escrowID)
 
 	resp, err := doGet[escrowResponse](b.client, u)
 	if err != nil {

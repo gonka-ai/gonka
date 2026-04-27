@@ -158,6 +158,27 @@ func TestShouldValidate_ZeroRate(t *testing.T) {
 	}
 }
 
+func TestShouldValidateV0211_LegacyFloatRules(t *testing.T) {
+	require.False(t, ShouldValidateV0211(42, 1, 1, 1, 3, 0))
+	require.True(t, ShouldValidateV0211(42, 1, 2, 1, 3, 10000), "probability clamps to 1.0")
+	require.False(t, ShouldValidateV0211(42, 1, 1, 3, 3, 10000))
+}
+
+func TestShouldValidateForProtocol_DefaultsToCurrentRules(t *testing.T) {
+	require.Equal(t,
+		ShouldValidate(42, 7, 1, 1, 3, 5000),
+		ShouldValidateForProtocol("", 42, 7, 1, 1, 3, 5000),
+	)
+	require.Equal(t,
+		ShouldValidate(42, 7, 1, 1, 3, 5000),
+		ShouldValidateForProtocol(types.ProtocolV0212, 42, 7, 1, 1, 3, 5000),
+	)
+	require.Equal(t,
+		ShouldValidateV0211(42, 7, 1, 1, 3, 5000),
+		ShouldValidateForProtocol(types.ProtocolV0211, 42, 7, 1, 1, 3, 5000),
+	)
+}
+
 func TestShouldValidate_DivisionByZeroGuard(t *testing.T) {
 	// totalSlots == executorSlotCount -> false.
 	require.False(t, ShouldValidate(42, 1, 1, 3, 3, 10000))

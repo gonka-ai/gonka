@@ -13,6 +13,10 @@ const (
 	HeaderSignature = "X-Devshard-Signature"
 	// HeaderTimestamp is the HTTP header carrying the unix timestamp.
 	HeaderTimestamp = "X-Devshard-Timestamp"
+	// LegacySubnetHeaderSignature is the v0.2.11 /v1/subnet header name.
+	LegacySubnetHeaderSignature = "X-Subnet-Signature"
+	// LegacySubnetHeaderTimestamp is the v0.2.11 /v1/subnet timestamp header name.
+	LegacySubnetHeaderTimestamp = "X-Subnet-Timestamp"
 
 	// maxTimestampDrift is the maximum allowed clock skew in seconds.
 	maxTimestampDrift = 30
@@ -55,4 +59,3 @@ func VerifyRequest(verifier signing.Verifier, escrowID string, body []byte, sig 
 	}
 	return addr, nil
 }
-

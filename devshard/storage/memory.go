@@ -35,6 +35,11 @@ func copyWarmKeyDelta(src map[uint32]string) map[uint32]string {
 	return dst
 }
 
+type snapshotData struct {
+	nonce uint64
+	data  []byte
+}
+
 type sessionData struct {
 	escrowID      string
 	version       string
@@ -46,6 +51,7 @@ type sessionData struct {
 	nonceToIndex  map[uint64]int
 	lastFinalized uint64
 	status        string // "active", "settled"
+	snapshot      *snapshotData
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -218,6 +224,36 @@ func (m *Memory) LastFinalized(escrowID string) (uint64, error) {
 	}
 
 	return s.lastFinalized, nil
+}
+
+func (m *Memory) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	s.snapshot = &snapshotData{nonce: nonce, data: cp}
+	return nil
+}
+
+func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return 0, nil, ErrSnapshotNotFound
+	}
+	if s.snapshot == nil {
+		return 0, nil, ErrSnapshotNotFound
+	}
+	cp := make([]byte, len(s.snapshot.data))
+	copy(cp, s.snapshot.data)
+	return s.snapshot.nonce, cp, nil
 }
 
 func (m *Memory) Close() error { return nil }

@@ -55,6 +55,40 @@ func ComputeStateRoot(
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version...), nil
 }
 
+// ComputeStateRootV0211 computes the v0.2.11 state root (no fees):
+//
+//	state_root = sha256(host_stats_hash || rest_hash || phase_byte)
+//
+// where:
+//
+//	host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
+//	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
+//	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
+//	inferences_hash = sha256(proto(sorted inference records))
+//	phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement
+//
+// All components have fixed, known lengths (32 + 32 + 1), so the
+// concatenation is unambiguous without length prefixes.
+//
+// Mainnet settlement hardcodes phase_byte=0x02 when recomputing, rejecting
+// any pre-settlement state.
+func ComputeStateRootV0211(balance uint64, hostStats map[uint32]*types.HostStats, inferences map[uint64]*types.InferenceRecord, phase types.SessionPhase, warmKeys map[uint32]string) ([]byte, error) {
+	hostStatsHash, err := computeHostStatsHash(hostStats)
+	if err != nil {
+		return nil, err
+	}
+	restHash, err := computeRestHash(balance, inferences, warmKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	h := sha256.New()
+	h.Write(hostStatsHash)
+	h.Write(restHash)
+	h.Write([]byte{uint8(phase)})
+	return h.Sum(nil), nil
+}
+
 // ComputeHostStatsHash computes sha256(proto(sorted host stats)).
 // Exported for settlement verification on mainnet.
 func ComputeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error) {

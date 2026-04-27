@@ -3,18 +3,27 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
-	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
-	"devshard/user"
+)
+
+const (
+	defaultChainRESTURL          = "http://localhost:1317"
+	defaultPublicAPIURL          = "http://localhost:9000"
+	defaultModelName             = "Qwen/Qwen2.5-7B-Instruct"
+	defaultListenPort            = "8080"
+	defaultMaxConcurrentRequests = 512
 )
 
 type SettlementJSON struct {
@@ -47,109 +56,477 @@ type SlotSignatureJSON struct {
 // -X main.Version=... . Defaults to "dev" for local builds without an override.
 var Version = "dev"
 
+type cliFlags struct {
+	escrowID    string
+	chainREST   string
+	publicAPI   string
+	model       string
+	port        string
+	privateKey  string
+	storagePath string
+	storageDir  string
+}
+
+type runtimeOptions struct {
+	port           string
+	baseStorageDir string
+	apiKeys        map[string]struct{}
+	adminAPIKey    string
+}
+
+type bootstrapOptions struct {
+	escrowID          string
+	privateKeyHex     string
+	chainREST         string
+	publicAPI         string
+	defaultModel      string
+	storagePath       string
+	baseStorageDir    string
+	multiMode         bool
+	bootstrapSettings GatewaySettings
+}
+
+var gatewayRuntimeBuilder = buildRuntime
+
 func main() {
+	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
+	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	flags := parseCLIFlags()
+	runtimeOpts := mustLoadRuntimeOptions(flags)
+	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
+	defer func() {
+		if err := gatewayStore.Close(); err != nil {
+			log.Printf("close gateway state: %v", err)
+		}
+	}()
+
+	// Startup is intentionally two-phase:
+	// 1. Read only runtime env needed to locate/open gateway.db and configure auth/listen.
+	// 2. Bootstrap devshard topology/settings from env only when gateway.db does not exist yet.
+	gatewayState, hasState := mustLoadPersistedGatewayState(gatewayStore)
+	if !hasState {
+		bootstrapOpts := mustLoadBootstrapOptions(flags, runtimeOpts.baseStorageDir)
+		mustBootstrapGatewayState(gatewayStore, bootstrapOpts)
+		gatewayState = mustReloadGatewayState(gatewayStore)
+	}
+	mustRepairPersistedGatewayEndpointSettings(gatewayStore, &gatewayState, flags)
+
+	mustLoadParticipantThrottleState(gatewayStore)
+
+	gateway := mustBuildGateway(gatewayStore, gatewayState, runtimeOpts.baseStorageDir)
+	defer gateway.Close()
+
+	handler := buildGatewayHandler(gateway, runtimeOpts)
+	serveGateway(handler, runtimeOpts.port, len(gateway.runtimeOrder))
+}
+
+func mustLoadRuntimeOptions(flags cliFlags) runtimeOptions {
+	opts := runtimeOptions{
+		port:           envOverride(flags.port, os.Getenv("DEVSHARD_PORT"), defaultListenPort),
+		baseStorageDir: resolveBaseStorageDir(flags.storageDir, firstNonEmpty(flags.storagePath, os.Getenv("DEVSHARD_STORAGE_PATH"))),
+		apiKeys:        parseAPIKeys(os.Getenv("DEVSHARD_API_KEYS")),
+		adminAPIKey:    strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_API_KEY")),
+	}
+	if err := os.MkdirAll(opts.baseStorageDir, 0o755); err != nil {
+		log.Fatalf("create storage dir: %v", err)
+	}
+	return opts
+}
+
+func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOptions {
+	opts := bootstrapOptions{
+		multiMode:      strings.TrimSpace(os.Getenv("DEVSHARDS_JSON")) != "",
+		escrowID:       firstNonEmpty(flags.escrowID, os.Getenv("DEVSHARD_ESCROW_ID")),
+		privateKeyHex:  firstNonEmpty(flags.privateKey, os.Getenv("DEVSHARD_PRIVATE_KEY")),
+		chainREST:      envOverride(flags.chainREST, os.Getenv("DEVSHARD_CHAIN_REST"), defaultChainRESTURL),
+		publicAPI:      envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL),
+		defaultModel:   envOverride(flags.model, os.Getenv("DEVSHARD_MODEL"), defaultModelName),
+		storagePath:    firstNonEmpty(flags.storagePath, os.Getenv("DEVSHARD_STORAGE_PATH")),
+		baseStorageDir: baseStorageDir,
+	}
+	if !opts.multiMode {
+		requireNonEmpty(opts.privateKeyHex, "--private-key flag or DEVSHARD_PRIVATE_KEY env var required")
+		requireNonEmpty(opts.escrowID, "--escrow-id flag or DEVSHARD_ESCROW_ID env var required")
+	}
+	if opts.storagePath == "" && !opts.multiMode {
+		opts.storagePath = defaultStoragePath(opts.baseStorageDir, opts.escrowID)
+	}
+	opts.bootstrapSettings = GatewaySettings{
+		ChainREST:               opts.chainREST,
+		PublicAPI:               opts.publicAPI,
+		DefaultModel:            opts.defaultModel,
+		DefaultRequestMaxTokens: uint64(readInt64Env("GATEWAY_DEFAULT_MAX_TOKENS", int64(DefaultRequestMaxTokens))),
+		MaxConcurrentRequests:   readInt64Env("GATEWAY_MAX_CONCURRENT_REQUESTS", defaultMaxConcurrentRequests),
+		MaxInputTokensInFlight:  readInt64Env("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", 0),
+	}.WithTuningDefaults()
+	return opts
+}
+
+func parseCLIFlags() cliFlags {
 	fs := flag.NewFlagSet("devshardctl", flag.ExitOnError)
 	escrowID := fs.String("escrow-id", "", "escrow ID (required, or DEVSHARD_ESCROW_ID env)")
-	chainREST := fs.String("chain-rest", "http://localhost:1317", "chain REST API URL")
-	model := fs.String("model", "Qwen/Qwen2.5-7B-Instruct", "default model name")
-	port := fs.String("port", "8080", "listen port")
+	chainREST := fs.String("chain-rest", defaultChainRESTURL, "chain REST API URL")
+	publicAPI := fs.String("public-api", defaultPublicAPIURL, "public API URL used for epoch/PoC phase checks")
+	model := fs.String("model", defaultModelName, "default model name")
+	port := fs.String("port", defaultListenPort, "listen port")
 	privateKey := fs.String("private-key", "", "private key hex (alternative to DEVSHARD_PRIVATE_KEY env)")
 	storagePath := fs.String("storage-path", "", "SQLite path for crash recovery")
-
+	storageDir := fs.String("storage-dir", "", "base directory for multi-devshard SQLite files")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
+	return cliFlags{
+		escrowID:    *escrowID,
+		chainREST:   *chainREST,
+		publicAPI:   *publicAPI,
+		model:       *model,
+		port:        *port,
+		privateKey:  *privateKey,
+		storagePath: *storagePath,
+		storageDir:  *storageDir,
+	}
+}
 
-	keyHex := *privateKey
-	if keyHex == "" {
-		keyHex = os.Getenv("DEVSHARD_PRIVATE_KEY")
-	}
-	if keyHex == "" {
-		log.Fatal("--private-key flag or DEVSHARD_PRIVATE_KEY env var required")
-	}
-
-	eid := *escrowID
-	if eid == "" {
-		eid = os.Getenv("DEVSHARD_ESCROW_ID")
-	}
-	if eid == "" {
-		log.Fatal("--escrow-id flag or DEVSHARD_ESCROW_ID env var required")
-	}
-
-	crest := *chainREST
-	if v := os.Getenv("DEVSHARD_CHAIN_REST"); v != "" && *chainREST == "http://localhost:1317" {
-		crest = v
-	}
-
-	mdl := *model
-	if v := os.Getenv("DEVSHARD_MODEL"); v != "" && *model == "Qwen/Qwen2.5-7B-Instruct" {
-		mdl = v
-	}
-
-	p := *port
-	if v := os.Getenv("DEVSHARD_PORT"); v != "" && *port == "8080" {
-		p = v
-	}
-
-	sp := *storagePath
-	if sp == "" {
-		sp = os.Getenv("DEVSHARD_STORAGE_PATH")
-	}
-	if sp == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home = "/tmp"
+func resolveBaseStorageDir(flagStorageDir, storagePath string) string {
+	baseStorageDir := firstNonEmpty(flagStorageDir, os.Getenv("DEVSHARD_STORAGE_DIR"))
+	if baseStorageDir == "" {
+		if storagePath != "" {
+			baseStorageDir = filepath.Dir(storagePath)
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				home = "/tmp"
+			}
+			baseStorageDir = filepath.Join(home, ".cache", "gonka")
 		}
-		sp = filepath.Join(home, ".cache", "gonka", fmt.Sprintf("devshard-%s.db", eid))
 	}
+	return baseStorageDir
+}
 
-	if err := os.MkdirAll(filepath.Dir(sp), 0755); err != nil {
-		log.Fatalf("create storage dir: %v", err)
-	}
-
-	registry := newStreamRegistry()
-
-	br := bridge.NewRESTBridge(crest)
-	// DEVSHARD_ROUTE_PREFIX selects which HTTP path prefix to use when
-	// reaching devshard hosts. Default empty -> the embedded build-time
-	// versioned route. Set it explicitly for tests or local debugging.
-	routePrefix := devshardpkg.ResolveVersionedRoutePrefix(Version, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
-	cfg := user.HTTPSessionConfig{
-		PrivateKeyHex:  keyHex,
-		EscrowID:       eid,
-		Bridge:         br,
-		StoragePath:    sp,
-		StreamCallback: registry.callback,
-		RoutePrefix:    routePrefix,
-	}
-
-	session, sm, err := user.NewHTTPSession(cfg)
+func mustLoadParticipantThrottleState(store *GatewayStore) {
+	sharedParticipantRequestLimiter.SetStore(store)
+	throttles, err := store.LoadParticipantThrottles()
 	if err != nil {
-		log.Fatalf("create session: %v", err)
+		log.Printf("load participant throttle state: %v", err)
+		return
 	}
-	defer session.Close()
+	for _, t := range throttles {
+		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.EmptyStreamStreak)
+	}
+	if len(throttles) > 0 {
+		log.Printf("loaded %d persisted participant throttle state(s)", len(throttles))
+	}
+}
 
-	proxy := &Proxy{
-		session:  session,
-		sm:       sm,
-		escrowID: eid,
-		model:    mdl,
-		registry: registry,
+func mustOpenGatewayStore(baseStorageDir string) *GatewayStore {
+	gatewayStore, err := NewGatewayStore(filepath.Join(baseStorageDir, "gateway.db"))
+	if err != nil {
+		log.Fatalf("open gateway state: %v", err)
+	}
+	return gatewayStore
+}
+
+func mustLoadPersistedGatewayState(gatewayStore *GatewayStore) (GatewayState, bool) {
+	gatewayState, hasState, err := gatewayStore.LoadState()
+	if err != nil {
+		log.Fatalf("load gateway state: %v", err)
+	}
+	return gatewayState, hasState
+}
+
+func mustReloadGatewayState(gatewayStore *GatewayStore) GatewayState {
+	gatewayState, hasState, err := gatewayStore.LoadState()
+	if err != nil {
+		log.Fatalf("reload gateway state: %v", err)
+	}
+	if !hasState {
+		log.Fatal("gateway state missing after initialization")
+	}
+	return gatewayState
+}
+
+func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gatewayState *GatewayState, flags cliFlags) {
+	if gatewayStore == nil || gatewayState == nil {
+		return
+	}
+	settings := gatewayState.Settings
+	changed := false
+	if strings.TrimSpace(settings.ChainREST) == "" {
+		settings.ChainREST = envOverride(flags.chainREST, os.Getenv("DEVSHARD_CHAIN_REST"), defaultChainRESTURL)
+		changed = true
+	}
+	if strings.TrimSpace(settings.PublicAPI) == "" {
+		settings.PublicAPI = envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if err := gatewayStore.UpdateSettings(settings); err != nil {
+		log.Fatalf("repair persisted gateway endpoints: %v", err)
+	}
+	gatewayState.Settings = settings
+	log.Printf("repaired persisted gateway endpoint settings chain_rest=%q public_api=%q", settings.ChainREST, settings.PublicAPI)
+}
+
+func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions) {
+	runtimeCfgs, err := resolveRuntimeConfigs(opts.escrowID, opts.privateKeyHex, opts.defaultModel, opts.storagePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	runtimeCfgs, err = finalizeRuntimeConfigs(runtimeCfgs, opts.defaultModel, opts.baseStorageDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	devshards := make([]GatewayDevshardState, 0, len(runtimeCfgs))
+	for _, cfg := range runtimeCfgs {
+		devshards = append(devshards, GatewayDevshardState{
+			RuntimeConfig: cfg,
+			Active:        true,
+		})
+	}
+	if err := gatewayStore.Initialize(opts.bootstrapSettings, devshards); err != nil {
+		log.Fatalf("initialize gateway state: %v", err)
+	}
+}
+
+func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string) *Gateway {
+	gatewayState.Settings = gatewayState.Settings.WithTuningDefaults()
+	DefaultRequestMaxTokens = gatewayState.Settings.DefaultRequestMaxTokens
+	applyGatewayTuningSettings(gatewayState.Settings)
+
+	perfStore, err := NewPerfStore(filepath.Join(baseStorageDir, "perf.db"))
+	if err != nil {
+		log.Fatalf("open global perf store: %v", err)
+	}
+	perf := NewPerfTracker(perfStore)
+
+	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
+	if err != nil {
+		perfStore.Close()
+		log.Fatalf("create runtimes: %v", err)
+	}
+	limiter := NewGatewayLimiter(
+		gatewayState.Settings.MaxConcurrentRequests,
+		gatewayState.Settings.MaxInputTokensInFlight,
+	)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, perf)
+	gateway.perfStore = perfStore
+	return gateway
+}
+
+func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
+	activeCfgs := make([]RuntimeConfig, 0, len(gatewayState.Devshards))
+	for _, devshard := range gatewayState.Devshards {
+		if devshard.Active {
+			activeCfgs = append(activeCfgs, devshard.RuntimeConfig)
+		}
+	}
+	activeCfgs, err := finalizeRuntimeConfigs(activeCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/chat/completions", proxy.handleChatCompletions)
-	mux.HandleFunc("/v1/finalize", proxy.handleFinalize)
-	mux.HandleFunc("/v1/status", proxy.handleStatus)
-	mux.HandleFunc("/v1/debug/pending", proxy.handleDebugPending)
-	mux.HandleFunc("/v1/debug/state", proxy.handleDebugState)
-	mux.HandleFunc("/v1/inference", proxy.handleInference)
+	type buildResult struct {
+		idx int
+		rt  *devshardRuntime
+		err error
+	}
+	t0 := time.Now()
+	ch := make(chan buildResult, len(activeCfgs))
+	for i, cfg := range activeCfgs {
+		go func(idx int, cfg RuntimeConfig) {
+			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
+			ch <- buildResult{idx, rt, err}
+		}(i, cfg)
+	}
 
-	addr := ":" + p
-	log.Printf("devshardctl listening on %s (escrow=%s model=%s)", addr, eid, mdl)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	runtimes := make([]*devshardRuntime, len(activeCfgs))
+	var skipped []int
+	var firstFatal error
+	for range activeCfgs {
+		res := <-ch
+		cfg := activeCfgs[res.idx]
+		if res.err != nil {
+			if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				log.Printf("devshard %s escrow missing on chain, marking inactive and skipping runtime: %v", cfg.ID, res.err)
+				if gatewayStore != nil {
+					if deactivateErr := gatewayStore.SetDevshardActive(cfg.ID, false); deactivateErr != nil {
+						if firstFatal == nil {
+							firstFatal = fmt.Errorf("deactivate devshard %s: %w", cfg.ID, deactivateErr)
+						}
+					}
+				}
+				markDevshardInactive(gatewayState, cfg.ID)
+				skipped = append(skipped, res.idx)
+				continue
+			}
+			if firstFatal == nil {
+				firstFatal = res.err
+			}
+			continue
+		}
+		runtimes[res.idx] = res.rt
+	}
+	if firstFatal != nil {
+		for _, rt := range runtimes {
+			if rt != nil {
+				rt.close()
+			}
+		}
+		return nil, firstFatal
+	}
+	// Compact out nil entries from skipped escrows.
+	out := runtimes[:0]
+	for _, rt := range runtimes {
+		if rt != nil {
+			out = append(out, rt)
+		}
+	}
+	log.Printf("build_runtimes_parallel count=%d skipped=%d total_elapsed_ms=%d", len(out), len(skipped), time.Since(t0).Milliseconds())
+	return out, nil
+}
+
+func markDevshardInactive(gatewayState *GatewayState, id string) {
+	if gatewayState == nil {
+		return
+	}
+	for i := range gatewayState.Devshards {
+		if gatewayState.Devshards[i].ID == id {
+			gatewayState.Devshards[i].Active = false
+			return
+		}
+	}
+}
+
+func closeRuntimes(runtimes []*devshardRuntime) {
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		if err := rt.close(); err != nil {
+			log.Printf("close devshard %s: %v", rt.id, err)
+		}
+	}
+}
+
+func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
+	var handler http.Handler = gateway.Handler()
+	if len(opts.apiKeys) > 0 {
+		log.Printf("API key auth enabled (%d key(s))", len(opts.apiKeys))
+		handler = bearerAuthMiddleware(opts.apiKeys, handler)
+	}
+	handler = adminAuthMiddleware(opts.adminAPIKey, handler)
+	return gateway.metrics.Wrap(handler)
+}
+
+func serveGateway(handler http.Handler, port string, runtimeCount int) {
+	addr := ":" + port
+	log.Printf("devshardctl gateway listening on %s (devshards=%d default_max_tokens=%d)", addr, runtimeCount, DefaultRequestMaxTokens)
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func requireNonEmpty(value, message string) {
+	if strings.TrimSpace(value) == "" {
+		log.Fatal(message)
+	}
+}
+
+func envOverride(flagValue, envValue, defaultValue string) string {
+	if strings.TrimSpace(envValue) != "" && flagValue == defaultValue {
+		return strings.TrimSpace(envValue)
+	}
+	return flagValue
+}
+
+func parseAPIKeys(raw string) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, k := range strings.Split(raw, ",") {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			keys[k] = struct{}{}
+		}
+	}
+	return keys
+}
+
+func isAuthExemptPath(path string) bool {
+	return path == "/metrics" ||
+		path == "/v1/status" ||
+		strings.HasSuffix(path, "/v1/status") ||
+		strings.HasPrefix(path, "/v1/admin/")
+}
+
+func bearerAuthMiddleware(validKeys map[string]struct{}, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAuthExemptPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"message":"Missing or invalid Authorization header. Expected: Bearer <api-key>","type":"invalid_request_error","code":"invalid_api_key"}}`)
+			return
+		}
+
+		key := strings.TrimPrefix(auth, "Bearer ")
+		if _, ok := validKeys[key]; !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"message":"Invalid API key provided.","type":"invalid_request_error","code":"invalid_api_key"}}`)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/admin/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if adminKey == "" {
+			http.NotFound(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != adminKey {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"message":"Invalid admin API key.","type":"invalid_request_error","code":"invalid_api_key"}}`)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func readInt64Env(name string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	var v int64
+	if _, err := fmt.Sscan(raw, &v); err != nil {
+		log.Printf("invalid %s=%q, using %d", name, raw, fallback)
+		return fallback
+	}
+	return v
 }
 
 func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
@@ -157,7 +534,7 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
+	root := state.ComputeSettlementStateRootForProtocol(p.ProtocolVersion, hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {

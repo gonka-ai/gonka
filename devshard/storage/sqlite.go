@@ -92,6 +92,13 @@ func NewSQLite(dbPath string) (*SQLite, error) {
 		sig       BLOB NOT NULL,
 		PRIMARY KEY (escrow_id, nonce, slot_id)
 	);
+
+	CREATE TABLE IF NOT EXISTS snapshots (
+		escrow_id  TEXT PRIMARY KEY,
+		nonce      INTEGER NOT NULL,
+		state_data BLOB NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT 0
+	);
 	`
 	if _, err := writeDB.Exec(schema); err != nil {
 		writeDB.Close()
@@ -400,6 +407,31 @@ func (s *SQLite) LastFinalized(escrowID string) (uint64, error) {
 		return 0, err
 	}
 	return nonce, nil
+}
+
+func (s *SQLite) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	_, err := s.writeDB.Exec(
+		`INSERT INTO snapshots (escrow_id, nonce, state_data, created_at)
+		 VALUES (?, ?, ?, strftime('%s','now'))
+		 ON CONFLICT(escrow_id) DO UPDATE SET nonce = excluded.nonce, state_data = excluded.state_data, created_at = excluded.created_at`,
+		escrowID, nonce, data,
+	)
+	return err
+}
+
+func (s *SQLite) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	row := s.readDB.QueryRow(
+		`SELECT nonce, state_data FROM snapshots WHERE escrow_id = ?`, escrowID,
+	)
+	var nonce uint64
+	var data []byte
+	if err := row.Scan(&nonce, &data); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil, ErrSnapshotNotFound
+		}
+		return 0, nil, err
+	}
+	return nonce, data, nil
 }
 
 // marshalTxs serializes a slice of DevshardTx into a single proto blob

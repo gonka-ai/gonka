@@ -7,7 +7,10 @@ import (
 	"devshard/types"
 )
 
-const LegacyRoutePrefix = "/v1/devshard"
+const (
+	LegacyRoutePrefix       = "/v1/devshard"
+	LegacySubnetRoutePrefix = "/v1/subnet"
+)
 
 func VersionedRoutePrefix(version string) string {
 	return "/devshard/" + version
@@ -27,9 +30,26 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 	return VersionedRoutePrefix(version)
 }
 
+func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
+	if protocol == "" {
+		protocol = types.ProtocolV0212
+	}
+	return "v" + string(protocol)
+}
+
+func ResolveHostRoutePrefix(protocol types.ProtocolVersion, routePrefix string) string {
+	if routePrefix != "" {
+		return routePrefix
+	}
+	if protocol == types.ProtocolV0211 {
+		return LegacySubnetRoutePrefix
+	}
+	return VersionedRoutePrefix(ProtocolRouteVersion(protocol))
+}
+
 func VersionForRoutePrefix(routePrefix string) (string, error) {
 	normalized := NormalizeRoutePrefix(routePrefix)
-	if normalized == LegacyRoutePrefix {
+	if normalized == LegacyRoutePrefix || normalized == LegacySubnetRoutePrefix {
 		return types.LegacySessionVersion, nil
 	}
 

@@ -39,6 +39,32 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"valA", "valB", "valC"}, info.Slots)
 }
 
+func TestGetEscrow_CustomEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/productscience/inference/inference/subnet_escrow/42", r.URL.Path)
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":          "42",
+				"creator":     "inference1abc",
+				"amount":      "1000000000",
+				"slots":       []string{"valA", "valB"},
+				"epoch_index": "10",
+				"app_hash":    "deadbeef",
+				"settled":     false,
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL, WithEscrowEndpoint("subnet_escrow"))
+	info, err := b.GetEscrow("42")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1_000_000_000), info.Amount)
+	assert.Equal(t, []string{"valA", "valB"}, info.Slots)
+}
+
 func TestGetEscrow_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

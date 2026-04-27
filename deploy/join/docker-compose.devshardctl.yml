@@ -1,0 +1,33 @@
+services:
+  devshardctl:
+    container_name: ${DEVSHARD_INSTANCE_NAME:-devshardctl}
+    image: libermans/gonka-devshard-proxy:latest
+    env_file:
+      - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
+    environment:
+      - DEVSHARD_CHAIN_REST=http://node:1317
+      - DEVSHARD_PUBLIC_API=http://api:9000
+      - DEVSHARD_PORT=8080
+      - DEVSHARD_STORAGE_DIR=/root/.devshardctl
+    volumes:
+      - ${DEVSHARD_STORAGE_HOST_DIR:-.devshardctl}:/root/.devshardctl
+    expose:
+      - "8080"
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      join_default:
+        aliases:
+          - ${DEVSHARD_INSTANCE_NAME:-devshardctl}
+          - devshard-pool
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  join_default:
+    external: true

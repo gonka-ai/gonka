@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,45 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"devshard/host"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
 )
 
-// streamRegistry routes SSE lines to per-request writers by nonce.
-type streamRegistry struct {
-	mu      sync.RWMutex
-	writers map[uint64]io.Writer
-}
-
-func newStreamRegistry() *streamRegistry {
-	return &streamRegistry{writers: make(map[uint64]io.Writer)}
-}
-
-func (r *streamRegistry) register(nonce uint64, w io.Writer) {
-	r.mu.Lock()
-	r.writers[nonce] = w
-	r.mu.Unlock()
-}
-
-func (r *streamRegistry) unregister(nonce uint64) {
-	r.mu.Lock()
-	delete(r.writers, nonce)
-	r.mu.Unlock()
-}
-
-func (r *streamRegistry) callback(nonce uint64, line string) {
-	r.mu.RLock()
-	w := r.writers[nonce]
-	r.mu.RUnlock()
-	if w != nil {
-		fmt.Fprintf(w, "%s\n\n", line)
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}
-}
+var sseDoneMarker = []byte("data: [DONE]")
 
 // writeStreamReset writes a stream_reset SSE event to signal the client
 // that the connection was lost and the response will be replayed from scratch.
@@ -62,13 +30,35 @@ func writeStreamReset(w io.Writer) {
 	}
 }
 
+// flushResponseWriter drives a best-effort Flush on an http.ResponseWriter
+// through arbitrary middleware wrappers. It uses http.NewResponseController so
+// that even wrappers that embed http.ResponseWriter without re-exposing
+// http.Flusher (e.g. metricsResponseWriter) do not silently swallow flushes —
+// previously SSE chunks were only delivered when Go's default chunked-encoding
+// buffer happened to fill, which combined with nginx proxy_buffering caused
+// clients to see zero bytes until the handler returned.
+//
+// Returns the underlying Flush error so callers can distinguish a clean flush
+// from a kernel-level RST / EPIPE that Go surfaces only on the next write or
+// flush. Previously this error was discarded, which made it impossible to tell
+// "handler returned cleanly" from "client socket was already dead when we
+// flushed the final [DONE]".
+func flushResponseWriter(w http.ResponseWriter) error {
+	if w == nil {
+		return nil
+	}
+	return http.NewResponseController(w).Flush()
+}
+
 // Proxy is the OpenAI-compatible HTTP proxy backed by a devshard session.
 type Proxy struct {
-	session  *user.Session
-	sm       *state.StateMachine
-	escrowID string
-	model    string
-	registry *streamRegistry
+	session    *user.Session
+	sm         *state.StateMachine
+	escrowID   string
+	model      string
+	redundancy *Redundancy
+	perf       *PerfTracker
+	phaseGate  *ChainPhaseGate
 }
 
 type chatRequest struct {
@@ -77,20 +67,88 @@ type chatRequest struct {
 	MaxTokens uint64 `json:"max_tokens"`
 }
 
+// normalizeContent converts multi-part content arrays to simple strings.
+// [{"type":"text","text":"A"},{"type":"text","text":"B"}] → "A\nB"
+func normalizeContent(body []byte) []byte {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body
+	}
+	msgsRaw, ok := raw["messages"]
+	if !ok {
+		return body
+	}
+
+	var msgs []map[string]json.RawMessage
+	if err := json.Unmarshal(msgsRaw, &msgs); err != nil {
+		return body
+	}
+
+	changed := false
+	for i, msg := range msgs {
+		contentRaw, ok := msg["content"]
+		if !ok {
+			continue
+		}
+		var parts []map[string]string
+		if err := json.Unmarshal(contentRaw, &parts); err != nil {
+			continue
+		}
+		var texts []string
+		for _, p := range parts {
+			if p["type"] == "text" && p["text"] != "" {
+				texts = append(texts, p["text"])
+			}
+		}
+		if len(texts) > 0 {
+			combined, _ := json.Marshal(strings.Join(texts, "\n"))
+			msgs[i]["content"] = combined
+			changed = true
+		}
+	}
+
+	if !changed {
+		return body
+	}
+
+	newMsgs, err := json.Marshal(msgs)
+	if err != nil {
+		return body
+	}
+	raw["messages"] = newMsgs
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	ctx, _ := ensureRequestLogContext(r.Context())
+	r = r.WithContext(ctx)
 	if r.Method != http.MethodPost {
+		logRequestStage(ctx, "proxy_method_not_allowed", "method", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := p.admissionError(); err != nil {
+		logRequestStage(ctx, "proxy_request_blocked", "escrow", p.escrowID, "error", err)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		logRequestStage(ctx, "proxy_read_body_failed", "error", err)
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	body = normalizeContent(body)
+
 	var req chatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		logRequestStage(ctx, "proxy_parse_failed", "error", err)
 		http.Error(w, "parse request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -101,7 +159,10 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
-		maxTokens = 2048
+		maxTokens = DefaultRequestMaxTokens
+	}
+	if DefaultRequestMaxTokens > 0 && maxTokens > DefaultRequestMaxTokens {
+		maxTokens = DefaultRequestMaxTokens
 	}
 
 	params := user.InferenceParams{
@@ -110,7 +171,9 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		InputLength: uint64(len(body)),
 		MaxTokens:   maxTokens,
 		StartedAt:   time.Now().Unix(),
+		Stream:      req.Stream,
 	}
+	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
 	if req.Stream {
 		p.handleStreaming(w, r, params)
@@ -119,219 +182,207 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// timeoutBuffer is added to session config deadlines so verifiers have
-// passed their own deadline before the proxy fires the timeout.
-// Var (not const) so tests can set it to 0 for fast execution.
-var timeoutBuffer = 5 * time.Second
-
-// runInference sends the inference to the host with at most two attempts.
-// On first failure, waits for the appropriate deadline then retries once.
-// If both attempts fail, collects timeout votes and submits MsgTimeoutInference.
-func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w io.Writer) error {
-	prepared, err := p.session.PrepareInference(params)
-	if err != nil {
-		return fmt.Errorf("prepare: %w", err)
-	}
-
-	nonce := prepared.Nonce()
-	if w != nil {
-		p.registry.register(nonce, w)
-		defer p.registry.unregister(nonce)
-	}
-
-	cfg := p.sm.SnapshotState().Config
-	now := time.Now()
-
-	// Attempt 1.
-	finished, confirmedAt, err := p.sendAndProcess(ctx, prepared, nonce)
-	if err != nil {
-		return err
-	}
-	if finished {
-		return nil
-	}
-
-	// Wait for the appropriate deadline.
-	var reason types.TimeoutReason
-	if confirmedAt > 0 {
-		deadline := time.Unix(confirmedAt, 0).Add(
-			time.Duration(cfg.ExecutionTimeout)*time.Second + timeoutBuffer)
-		if !sleepUntil(ctx, deadline) {
-			return ctx.Err()
-		}
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-	} else {
-		deadline := now.Add(time.Duration(cfg.RefusalTimeout)*time.Second + timeoutBuffer)
-		if !sleepUntil(ctx, deadline) {
-			return ctx.Err()
-		}
-		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
-	}
-
-	// Attempt 2 (final).
-	if w != nil {
-		writeStreamReset(w)
-	}
-	finished, confirmedAt, err = p.sendAndProcess(ctx, prepared, nonce)
-	if err != nil {
-		return err
-	}
-	if finished {
-		return nil
-	}
-
-	// Update reason if attempt 2 revealed a receipt.
-	if confirmedAt > 0 {
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-	}
-
-	return p.handleTimeout(ctx, prepared, nonce, reason, params)
-}
-
-// sendAndProcess sends the prepared inference and processes the response.
-// Returns finished=true when MsgFinishInference is in the host's mempool.
-// confirmedAt is the executor's receipt timestamp (0 if no receipt received).
-func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64) (finished bool, confirmedAt int64, err error) {
-	resp, sendErr := p.session.SendOnly(ctx, prepared)
-	if sendErr != nil && resp == nil {
-		return false, 0, nil
-	}
-
-	if err := p.session.ProcessResponse(prepared.HostIdx(), resp, nonce); err != nil {
-		return false, 0, fmt.Errorf("process response: %w", err)
-	}
-
-	if sendErr == nil && hasMsgFinish(resp.Mempool, nonce) {
-		return true, resp.ConfirmedAt, nil
-	}
-
-	return false, resp.ConfirmedAt, nil
-}
-
-// sleepUntil blocks until deadline or context cancellation.
-// Returns true if the deadline was reached, false if cancelled.
-func sleepUntil(ctx context.Context, deadline time.Time) bool {
-	d := time.Until(deadline)
-	if d <= 0 {
-		return true
-	}
-	return sleep(ctx, d)
-}
-
-// hasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
-func hasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
-	for _, tx := range txs {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
-			return true
-		}
-	}
-	return false
-}
-
-// sleep returns false if context was cancelled during the wait.
-func sleep(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// handleTimeout collects timeout votes from verifier hosts and submits
-// MsgTimeoutInference. Single attempt -- the timeoutBuffer ensures verifiers
-// have already passed their own deadline before the proxy fires.
-func (p *Proxy) handleTimeout(ctx context.Context, prepared *user.PreparedInference, nonce uint64, reason types.TimeoutReason, params user.InferenceParams) error {
-	payload := &host.InferencePayload{
-		Prompt:      params.Prompt,
-		Model:       params.Model,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
-	}
-
-	verifiers := p.session.TimeoutVerifiers()
-	storedDiffs := p.session.Diffs()
-
-	votes, err := p.session.CollectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
-	if err != nil {
-		return fmt.Errorf("collect timeout votes: %w", err)
-	}
-
-	if p.session.HasSufficientTimeoutVotes(votes) {
-		p.session.AddPendingTimeoutTx(nonce, reason, votes)
-		if err := p.session.SendPendingDiff(ctx); err != nil {
-			return fmt.Errorf("send timeout diff: %w", err)
-		}
-		return fmt.Errorf("inference %d timed out: %s", nonce, reason)
-	}
-
-	log.Printf("inference %d: insufficient timeout votes, skipping timeout tx", nonce)
-	return fmt.Errorf("inference %d timed out but insufficient votes to prove it", nonce)
-}
-
 // deferredWriter delays WriteHeader(200) until the first Write call.
 // If runInference errors before any streaming data arrives, the proxy
 // can still return a proper HTTP error status.
+//
+// It also tracks total bytes written and the last flush error so the
+// streaming handler can emit a single proxy_response_finished record at the
+// very end with a truthful picture of whether the final [DONE] actually
+// reached the wire or whether Go's chunked encoder hit EPIPE/ECONNRESET on
+// the final flush.
 type deferredWriter struct {
-	w       http.ResponseWriter
-	started bool
+	ctx            context.Context
+	w              http.ResponseWriter
+	escrow         string
+	requestID      string
+	started        bool
+	bytesWritten   int64
+	sawDone        bool
+	lastFlushErr   error
+	flushFailed    bool
+	disconnectOnce sync.Once
+	flushFailOnce  sync.Once
+	writeFailOnce  sync.Once
+}
+
+func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string) *deferredWriter {
+	rid, _ := requestLogFromContext(ctx)
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
+	if err := d.ctx.Err(); err != nil {
+		d.logDisconnectOnce(err, "write")
+		return 0, err
+	}
 	if !d.started {
+		if d.requestID != "" {
+			// Emit before WriteHeader so nginx sees it and the aiohttp
+			// client can read it from the response headers. This gives
+			// us a 1:1 mapping between any client-side ClientPayloadError
+			// and a specific request=<id> entry in devshardctl logs.
+			d.w.Header().Set("X-Request-Id", d.requestID)
+		}
 		d.w.Header().Set("Content-Type", "text/event-stream")
 		d.w.Header().Set("Cache-Control", "no-cache")
 		d.w.Header().Set("Connection", "keep-alive")
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	return d.w.Write(p)
+	rewritten := rewriteStreamingPayload(p)
+	if bytes.Contains(rewritten, sseDoneMarker) {
+		d.sawDone = true
+	}
+	n, err := d.w.Write(rewritten)
+	d.bytesWritten += int64(n)
+	if err != nil {
+		d.writeFailOnce.Do(func() {
+			logRequestStage(d.ctx, "proxy_write_failed",
+				"escrow", d.escrow,
+				"bytes_written", d.bytesWritten,
+				"error", err,
+			)
+		})
+	}
+	return n, err
 }
 
 func (d *deferredWriter) Flush() {
-	if f, ok := d.w.(http.Flusher); ok {
-		f.Flush()
+	d.flush("mid_stream")
+}
+
+// flush performs the Flush, records any error, and emits a single
+// proxy_flush_failed log entry per deferredWriter so the logs don't explode
+// if every subsequent flush fails after the first break.
+func (d *deferredWriter) flush(where string) error {
+	if err := d.ctx.Err(); err != nil {
+		d.logDisconnectOnce(err, "flush")
+		d.lastFlushErr = err
+		return err
 	}
+	err := flushResponseWriter(d.w)
+	if err != nil {
+		d.lastFlushErr = err
+		d.logFlushFailedOnce(err, where)
+	}
+	return err
+}
+
+func (d *deferredWriter) logDisconnectOnce(err error, where string) {
+	d.disconnectOnce.Do(func() {
+		logRequestStage(d.ctx, "proxy_client_disconnected",
+			"escrow", d.escrow,
+			"where", where,
+			"started", d.started,
+			"bytes_written", d.bytesWritten,
+			"error", err,
+		)
+	})
+}
+
+func (d *deferredWriter) logFlushFailedOnce(err error, where string) {
+	d.flushFailOnce.Do(func() {
+		d.flushFailed = true
+		logRequestStage(d.ctx, "proxy_flush_failed",
+			"escrow", d.escrow,
+			"where", where,
+			"bytes_written", d.bytesWritten,
+			"error", err,
+		)
+	})
 }
 
 func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	dw := &deferredWriter{w: w}
+	started := time.Now()
+	dw := newDeferredWriter(r.Context(), w, p.escrowID)
 
-	err := p.runInference(r.Context(), params, dw)
+	var doneWriteErr error
+	err := p.redundancy.RunInference(r.Context(), params, dw)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			logRequestStage(r.Context(), "proxy_stream_terminated", "escrow", p.escrowID, "error", err, "bytes_written", dw.bytesWritten, "elapsed_ms", time.Since(started).Milliseconds())
+			return
+		}
+		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
+		statusCode := gatewayStatusCodeForError(err)
 		if !dw.started {
-			// No streaming data sent yet -- return proper HTTP error.
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
+			w.WriteHeader(statusCode)
 			fmt.Fprintf(w, `{"error":{"message":%q}}`, err.Error())
 			return
 		}
-		// Already streaming -- send error as SSE data.
 		log.Printf("inference error (mid-stream): %v", err)
-		fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
-		dw.Flush()
+		if _, werr := fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error()); werr != nil {
+			logRequestStage(r.Context(), "proxy_error_write_failed", "escrow", p.escrowID, "error", werr)
+		}
+		finalErr := dw.flush("error_final")
+		logProxyResponseFinished(r.Context(), p.escrowID, "error", dw, finalErr, werrOrNil(nil), started)
 		return
 	}
 
-	fmt.Fprint(dw, "data: [DONE]\n\n")
-	dw.Flush()
+	logRequestStage(r.Context(), "proxy_stream_completed", "escrow", p.escrowID, "bytes_written", dw.bytesWritten)
+	var finalErr error
+	if !dw.sawDone {
+		if _, werr := fmt.Fprint(dw, "data: [DONE]\n\n"); werr != nil {
+			doneWriteErr = werr
+			logRequestStage(r.Context(), "proxy_done_write_failed", "escrow", p.escrowID, "error", werr)
+		}
+		finalErr = dw.flush("done")
+	}
+	logProxyResponseFinished(r.Context(), p.escrowID, "ok", dw, finalErr, doneWriteErr, started)
+}
+
+// werrOrNil normalizes an error so the varargs passthrough below stays tidy.
+func werrOrNil(err error) error { return err }
+
+// logProxyResponseFinished is the authoritative "request left the building"
+// log entry. It fires after the final Flush on every success/error streaming
+// path, carrying everything needed to correlate with a client-side RST:
+//
+//	outcome        ok | error
+//	bytes_written  total bytes handed to the chunked-encoding writer
+//	elapsed_ms     full streaming duration from handleStreaming entry
+//	done_write_err non-nil ⇒ the [DONE] write itself returned an error
+//	final_flush_err non-nil ⇒ Go surfaced a kernel-level error (EPIPE /
+//	                        ECONNRESET / closed network connection) on the
+//	                        final Flush, meaning the client socket was dead
+//	                        before our [DONE] made it onto the wire
+//	flush_failed   a previous mid-stream flush had already errored
+func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw *deferredWriter, finalFlushErr, doneWriteErr error, started time.Time) {
+	kv := []any{
+		"escrow", escrowID,
+		"outcome", outcome,
+		"bytes_written", dw.bytesWritten,
+		"elapsed_ms", time.Since(started).Milliseconds(),
+		"flush_failed", dw.flushFailed,
+	}
+	if doneWriteErr != nil {
+		kv = append(kv, "done_write_err", doneWriteErr)
+	}
+	if finalFlushErr != nil {
+		kv = append(kv, "final_flush_err", finalFlushErr)
+	}
+	logRequestStage(ctx, "proxy_response_finished", kv...)
 }
 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	var buf bytes.Buffer
 
-	err := p.runInference(r.Context(), params, &buf)
+	err := p.redundancy.RunInference(r.Context(), params, &buf)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
+		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
 
 	assembled := assembleSSEChunks(buf.String())
+	if rid, ok := requestLogFromContext(r.Context()); ok {
+		w.Header().Set("X-Request-Id", rid)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(assembled)
+	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)
 }
 
 // assembleSSEChunks extracts the last data line from SSE output as the response.
@@ -367,7 +418,7 @@ func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
 
 	st := p.sm.SnapshotState()
 	finalNonce := p.session.Nonce()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	payload, err := state.BuildSettlementForProtocol(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce, p.sm.ProtocolVersion())
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -384,24 +435,34 @@ func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	EscrowID string `json:"escrow_id"`
-	Nonce    uint64 `json:"nonce"`
-	Phase    string `json:"phase"`
-	Balance  uint64 `json:"balance"`
-	// Config is the active session configuration used by the devshard state machine.
-	Config statusSessionConfig `json:"config"`
+	EscrowID             string              `json:"escrow_id"`
+	Nonce                uint64              `json:"nonce"`
+	Phase                string              `json:"phase"`
+	Balance              uint64              `json:"balance"`
+	ChainPhase           string              `json:"chain_phase,omitempty"`
+	ConfirmationPoCPhase string              `json:"confirmation_poc_phase,omitempty"`
+	RequestsBlocked      bool                `json:"requests_blocked"`
+	BlockReason          string              `json:"block_reason,omitempty"`
+	Config               statusSessionConfig `json:"config"`
 }
 
 // statusSessionConfig is the JSON representation of session config values
 // returned by the devshardctl status endpoint.
 type statusSessionConfig struct {
-	RefusalTimeout   int64  `json:"refusal_timeout"`
-	ExecutionTimeout int64  `json:"execution_timeout"`
-	TokenPrice       uint64 `json:"token_price"`
-	CreateDevshardFee  uint64 `json:"create_devshard_fee"`
-	FeePerNonce      uint64 `json:"fee_per_nonce"`
-	VoteThreshold    uint32 `json:"vote_threshold"`
-	ValidationRate   uint32 `json:"validation_rate"`
+	RefusalTimeout    int64  `json:"refusal_timeout"`
+	ExecutionTimeout  int64  `json:"execution_timeout"`
+	TokenPrice        uint64 `json:"token_price"`
+	CreateDevshardFee uint64 `json:"create_devshard_fee"`
+	FeePerNonce       uint64 `json:"fee_per_nonce"`
+	VoteThreshold     uint32 `json:"vote_threshold"`
+	ValidationRate    uint32 `json:"validation_rate"`
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.Encode(v)
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -430,13 +491,26 @@ func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := map[string]any{
+	writeJSON(w, map[string]any{
 		"nonce":     p.session.Nonce(),
 		"pending":   txs,
 		"warm_keys": warmKeys,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	})
+}
+
+func (p *Proxy) handleDebugPerf(w http.ResponseWriter, r *http.Request) {
+	stats := p.perf.AllStats()
+	requests := p.perf.RecentRequests()
+	writeJSON(w, map[string]any{
+		"hosts":                  stats,
+		"requests":               requests,
+		"receipt_timeout_ms":     ReceiptTimeout.Milliseconds(),
+		"advantage_threshold":    ParallelAdvantageThreshold,
+		"unresponsive_threshold": UnresponsiveThreshold,
+		"host_window_size":       PerfWindowSize,
+		"participant_window_ms":  ParticipantPerfWindow.Milliseconds(),
+		"request_log_size":       requestLogSize,
+	})
 }
 
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
@@ -461,14 +535,13 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 		counts[name]++
 	}
 
-	resp := map[string]any{
+	writeJSON(w, map[string]any{
 		"nonce":            st.LatestNonce,
 		"balance":          st.Balance,
 		"total_inferences": len(st.Inferences),
 		"status_counts":    counts,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	})
+
 }
 
 func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -492,24 +565,36 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	st := p.sm.SnapshotState()
 	cfg := st.Config
-	resp := statusResponse{
+	status := statusResponse{
 		EscrowID: p.escrowID,
 		Nonce:    p.session.Nonce(),
 		Phase:    phaseStr,
 		Balance:  st.Balance,
 		Config: statusSessionConfig{
-			RefusalTimeout:   cfg.RefusalTimeout,
-			ExecutionTimeout: cfg.ExecutionTimeout,
-			TokenPrice:       cfg.TokenPrice,
-			CreateDevshardFee:  cfg.CreateDevshardFee,
-			FeePerNonce:      cfg.FeePerNonce,
-			VoteThreshold:    cfg.VoteThreshold,
-			ValidationRate:   cfg.ValidationRate,
+			RefusalTimeout:    cfg.RefusalTimeout,
+			ExecutionTimeout:  cfg.ExecutionTimeout,
+			TokenPrice:        cfg.TokenPrice,
+			CreateDevshardFee: cfg.CreateDevshardFee,
+			FeePerNonce:       cfg.FeePerNonce,
+			VoteThreshold:     cfg.VoteThreshold,
+			ValidationRate:    cfg.ValidationRate,
 		},
 	}
+	if p.phaseGate != nil {
+		snapshot := p.phaseGate.Snapshot()
+		status.ChainPhase = snapshot.EpochPhase
+		status.ConfirmationPoCPhase = snapshot.ConfirmationPoCPhase
+		status.RequestsBlocked = snapshot.RequestsBlocked
+		status.BlockReason = snapshot.BlockReason
+	}
+	writeJSON(w, status)
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+func (p *Proxy) admissionError() error {
+	if p == nil || p.phaseGate == nil {
+		return nil
+	}
+	return p.phaseGate.AdmissionError()
 }
 
 func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
