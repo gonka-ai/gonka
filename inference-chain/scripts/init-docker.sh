@@ -235,6 +235,25 @@ kv app iavl-disable-fastnode true
   kv config "$key" "$raw_val" --skip-validate
 done
 
+# APP_* environment overrides -------------------------------------------------
+# Mirror of the CONFIG_* block above, but for app.toml. This lets operators
+# tune pruning, iavl-disable-fastnode, snapshot intervals etc through
+# compose env vars instead of post-init shell pokes. Substitutions:
+#   __  -> .   (nested keys, e.g. APP_state__sync__snapshot_interval)
+#   _   -> -   (kebab-case keys, e.g. APP_pruning_keep_recent)
+# Applied in this order, so nested kebab keys like state-sync.snapshot-interval
+# survive: APP_state__sync__snapshot_interval -> state.sync.snapshot-interval.
+# These overrides run AFTER the hardcoded `kv app` lines above, so an env
+# value wins over the static defaults (e.g. iavl-disable-fastnode).
+(
+  env | grep '^APP_' || true
+) | while IFS='=' read -r raw_key raw_val; do
+  key=${raw_key#APP_}
+  key=${key//__/.}
+  key=${key//_/-}
+  kv app "$key" "$raw_val" --skip-validate
+done
+
 update_configs
 
 ###############################################################################
