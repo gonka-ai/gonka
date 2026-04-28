@@ -58,3 +58,8 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     go build -mod=readonly -tags muslc \
     -ldflags "-X main.Version=${DEVSHARD_VERSION}" \
     -o ./build/devshardd ./cmd/devshardd
+
+FROM alpine:3.23 AS runtime
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/devshard/build/devshardd /usr/local/bin/devshardd
+COPY --from=builder /app/devshard/build/devshardctl /usr/local/bin/devshardctl

@@ -116,13 +116,13 @@ devshardctl-build:
 devshardd-build:
 	@echo "Building devshardd..."
 	@mkdir -p build
-	@DOCKER_BUILDKIT=1 docker build --no-cache --target builder \
+	@DOCKER_BUILDKIT=1 docker build --no-cache \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		-f devshard/Dockerfile . \
-		-t devshardd-builder:latest -q >/dev/null
-	@CID=$$(docker create devshardd-builder:latest) && \
-		docker cp $$CID:/app/devshard/build/devshardd build/devshardd && \
+		-t devshardd:latest -q >/dev/null
+	@CID=$$(docker create devshardd:latest) && \
+		docker cp $$CID:/usr/local/bin/devshardd build/devshardd && \
 		docker rm $$CID >/dev/null
 	@chmod +x build/devshardd
 	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked\|arm64\|x86-64'))"

@@ -848,9 +848,9 @@ data class LocalInferencePair(
                         runCatching { dockerClient.removeContainerCmd(c.id).exec() }
                     }
 
-                val createResp = dockerClient.createContainerCmd("devshardd-builder:latest")
+                val createResp = dockerClient.createContainerCmd("devshardd:latest")
                     .withName(containerName)
-                    .withCmd("/app/devshard/build/devshardctl")
+                    .withCmd("/usr/local/bin/devshardctl")
                     .withEnv(
                         "DEVSHARD_PRIVATE_KEY=$privateKey",
                         "DEVSHARD_ESCROW_ID=$escrowId",
