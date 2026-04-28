@@ -571,8 +571,9 @@ func (m *manager) sendTxs() error {
 			}
 
 			if !tx.Sent {
-				logging.Debug("start broadcast batch async", types.Messages, "id", tx.TxInfo.Id)
-				resp, timeout, broadcastErr = m.BroadcastMessages(tx.TxInfo.Id, msgs...)
+				logging.Debug("start broadcast batch async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
+				// Pass attempt so OOG retries bump gasWanted (gas_estimate.go).
+				resp, timeout, broadcastErr = m.broadcastMessagesAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs)
 			}
 		} else {
 			rawTx, err := m.unpackTx(tx.TxInfo.RawTx)
@@ -583,8 +584,8 @@ func (m *manager) sendTxs() error {
 			}
 
 			if !tx.Sent {
-				logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id)
-				resp, timeout, broadcastErr = m.broadcastMessage(tx.TxInfo.Id, rawTx)
+				logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
+				resp, timeout, broadcastErr = m.broadcastMessageAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, rawTx)
 			}
 		}
 
@@ -795,11 +796,19 @@ func (m *manager) GetJetStream() nats.JetStreamContext {
 }
 
 func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
+	return m.broadcastMessagesAtAttempt(id, 0, msgs)
+}
+
+// broadcastMessagesAtAttempt is the internal entry point for batch broadcast
+// that knows about retry attempt. attempt=0 is the first try at the
+// per-msg-type estimate; subsequent attempts bump gasWanted to escape OOG
+// loops. See estimateBatchGas in gas_estimate.go.
+func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
 	if len(msgs) == 1 {
-		return m.broadcastMessage(id, msgs[0])
+		return m.broadcastMessageAtAttempt(id, attempt, msgs[0])
 	}
 
 	factory, err := m.getFactory(id)
@@ -824,7 +833,10 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory)
+	// Size gasWanted from the inner messages, not the authz wrapper, so the
+	// estimate reflects what each handler will actually consume.
+	gasWanted := estimateBatchGas(msgs, attempt)
+	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -879,6 +891,12 @@ func containsAny(s string, substrs ...string) bool {
 }
 
 func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
+	return m.broadcastMessageAtAttempt(id, 0, rawTx)
+}
+
+// broadcastMessageAtAttempt is the internal entry point for single-message
+// broadcast that knows about retry attempt. See broadcastMessagesAtAttempt.
+func (m *manager) broadcastMessageAtAttempt(id string, attempt int, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	factory, err := m.getFactory(id)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -901,7 +919,8 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory)
+	gasWanted := estimateBatchGas([]sdk.Msg{rawTx}, attempt)
+	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -973,7 +992,7 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	return &factory, nil
 }
 
-func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, time.Time, error) {
+func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64) ([]byte, time.Time, error) {
 	blockTs := m.blockTimeTracker.latestBlockTime
 	if blockTs.IsZero() {
 		_, err := m.updateChainHalt()
@@ -985,12 +1004,19 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 
 	timestamp := getTimestamp(blockTs.UnixNano(), m.defaultTimeout)
 
-	// Fee amount = gas limit × gas price. Network-duty messages (validations,
-	// PoC, inference) are fee-exempt via the bypass decorator, so this fee
-	// will not be charged for exempt messages.
-	unsignedTx.SetGasLimit(BatchGasLimit)
+	// Fee amount = gasWanted × gas price. gasWanted is sized per-batch by
+	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
+	// routine txs aren't billed at the worst-case PoC commit ceiling.
+	// Network-duty messages (PoC, inference, validation, hardware-diff,
+	// claim-rewards, BLS DKG) are fee-exempt via NetworkDutyFeeBypassDecorator
+	// and pay nothing regardless of gasWanted.
+	if gasWanted == 0 || gasWanted > BatchGasLimit {
+		gasWanted = BatchGasLimit
+	}
+	unsignedTx.SetGasLimit(gasWanted)
 	if m.minGasPriceNgonka > 0 {
-		unsignedTx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", math.NewInt(BatchGasLimit*m.minGasPriceNgonka))))
+		feeAmount := math.NewIntFromUint64(gasWanted).MulRaw(m.minGasPriceNgonka)
+		unsignedTx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", feeAmount)))
 	} else {
 		unsignedTx.SetFeeAmount(sdk.Coins{})
 	}
