@@ -130,8 +130,9 @@ services:
       - NGINX_MODE=${NGINX_MODE:-http}
       - SERVER_NAME=${SERVER_NAME:-}
       - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
-      - EXEMPT_CONN_LIMIT=200
+      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard devshard-gateway devshard-gateway-direct
+      - GLOBAL_CONN_LIMIT=1024
+      - EXEMPT_CONN_LIMIT=1024
       - GONKA_API_BLOCKED_ROUTES=poc-batches training
       - CHAIN_RPC_PORT=26657
       - CHAIN_API_PORT=1317
@@ -150,8 +151,8 @@ services:
       - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
       - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-      - DISABLE_DEVSHARD_GATEWAY_PROXY=${DISABLE_DEVSHARD_GATEWAY_PROXY:-true}
-      - DISABLE_DEVSHARD_DIRECT_PROXY=${DISABLE_DEVSHARD_DIRECT_PROXY:-true}
+      - DISABLE_DEVSHARD_GATEWAY_PROXY=${DISABLE_DEVSHARD_GATEWAY_PROXY:-false}
+      - DISABLE_DEVSHARD_DIRECT_PROXY=${DISABLE_DEVSHARD_DIRECT_PROXY:-false}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
     depends_on:
@@ -167,6 +168,10 @@ services:
         condition: service_healthy
         required: false
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
