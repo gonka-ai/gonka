@@ -80,6 +80,44 @@ func TestCapacityStateBaselineFromFullWeightsNotFrozen(t *testing.T) {
 	require.InDelta(t, 1.0, m.ScaleFactor(), 1e-9)
 }
 
+func TestCapacityStateTotalWeightUsesAdjustedPoCWeights(t *testing.T) {
+	m := NewCapacityState()
+	m.SetEscrowMembership("X", map[string]int{"A": 1, "B": 1, "C": 1})
+	m.SetHostWeights(map[string]float64{"A": 100, "B": 50, "C": 25}, false)
+
+	m.SetHostWeights(map[string]float64{"A": 40, "B": 0, "C": 10}, true)
+	m.SetPoCPreserved([]string{"A", "C"})
+
+	require.InDelta(t, 50.0, m.TotalWeight(), 1e-9)
+	require.InDelta(t, 175.0, m.BaselineWeight(), 1e-9, "baseline must keep full weights during PoC")
+}
+
+func TestCapacityStateUsesModelSpecificPoCWeights(t *testing.T) {
+	m := NewCapacityState()
+	m.SetEscrowMembership("X", map[string]int{"A": 1, "B": 1})
+	m.SetHostWeights(map[string]float64{"A": 100, "B": 50}, false)
+	m.SetHostWeightsByModel(map[string]map[string]float64{
+		"Model/A": {"A": 100, "B": 50},
+		"Model/B": {"A": 100, "B": 50},
+	}, false)
+
+	m.SetHostWeights(map[string]float64{"A": 40, "B": 50}, true)
+	m.SetHostWeightsByModel(map[string]map[string]float64{
+		"Model/A": {"A": 40, "B": 0},
+		"Model/B": {"A": 0, "B": 50},
+	}, true)
+	m.SetPoCPreserved([]string{"A", "B"})
+
+	require.InDelta(t, 40.0, m.TotalWeightForModel("Model/A"), 1e-9)
+	require.InDelta(t, 50.0, m.TotalWeightForModel("Model/B"), 1e-9)
+	require.InDelta(t, 150.0, m.BaselineWeightForModel("Model/A"), 1e-9)
+	require.InDelta(t, 150.0, m.BaselineWeightForModel("Model/B"), 1e-9)
+	require.InDelta(t, 40.0/150.0, m.ScaleFactorForModel("Model/A"), 1e-9)
+	require.InDelta(t, 40.0/300.0, m.LimitShareForModel("Model/A"), 1e-9)
+	require.InDelta(t, 50.0/300.0, m.LimitShareForModel("Model/B"), 1e-9)
+	require.InDelta(t, 90.0/300.0, m.ScaleFactorAcrossModels(), 1e-9)
+}
+
 func TestCapacityStateScaleFactorClampedTo01(t *testing.T) {
 	m := NewCapacityState()
 	m.SetEscrowMembership("X", map[string]int{"A": 1})
@@ -158,6 +196,25 @@ func TestGatewayLimiterAcquireRespectsScaledCaps(t *testing.T) {
 	require.NoError(t, l.Acquire(1))
 }
 
+func TestGatewayLimiterTracksIndependentModelCounters(t *testing.T) {
+	l := NewGatewayLimiter(4, 0)
+
+	require.NoError(t, l.AcquireForModel("Model/A", 1, 0.5))
+	require.NoError(t, l.AcquireForModel("Model/A", 1, 0.5))
+	require.ErrorContains(t, l.AcquireForModel("Model/A", 1, 0.5), "too many concurrent requests")
+
+	require.NoError(t, l.AcquireForModel("Model/B", 1, 0.5))
+	require.NoError(t, l.AcquireForModel("Model/B", 1, 0.5))
+	require.ErrorContains(t, l.AcquireForModel("Model/B", 1, 0.5), "too many concurrent requests")
+
+	snap := l.Snapshot()
+	require.Equal(t, int64(4), snap.InFlightRequests)
+
+	l.ReleaseForModel("Model/A", 1)
+	require.NoError(t, l.AcquireForModel("Model/A", 1, 0.5))
+	require.ErrorContains(t, l.AcquireForModel("Model/B", 1, 0.5), "too many concurrent requests")
+}
+
 func TestGatewayLimiterAcquireBlocksWhenScaledToZero(t *testing.T) {
 	l := NewGatewayLimiter(4, 100)
 	l.ApplyScaleFactor(0)
@@ -222,6 +279,31 @@ func TestReserveRuntimeForModelPrefersHigherWeightEscrow(t *testing.T) {
 	}
 	require.Greater(t, counts["hi"], counts["lo"]*5,
 		"high-weight escrow should win majority of picks: %v", counts)
+}
+
+func TestReserveRuntimeForModelUsesModelSpecificWeights(t *testing.T) {
+	hi := &devshardRuntime{id: "hi", model: "Model/A"}
+	hi.active.Store(true)
+	lo := &devshardRuntime{id: "lo", model: "Model/A"}
+	lo.active.Store(true)
+
+	g := NewGateway([]*devshardRuntime{lo, hi}, NewGatewayLimiter(0, 0), "Model/A")
+	g.capacity = NewCapacityState()
+	g.capacity.SetEscrowMembership("hi", map[string]int{"A": 1})
+	g.capacity.SetEscrowMembership("lo", map[string]int{"B": 1})
+	g.capacity.SetHostWeights(map[string]float64{"A": 1, "B": 10}, false)
+	g.capacity.SetHostWeightsByModel(map[string]map[string]float64{
+		"Model/A": {"A": 10, "B": 1},
+	}, false)
+
+	counts := map[string]int{}
+	for i := 0; i < 100; i++ {
+		rt, err := g.reserveRuntimeForModel("Model/A", 1)
+		require.NoError(t, err)
+		counts[rt.id]++
+	}
+	require.Greater(t, counts["hi"], counts["lo"]*5,
+		"model-specific weight should override the host-level aggregate: %v", counts)
 }
 
 func TestReserveRuntimeForModelTreatsZeroWeightEscrowAsLastResort(t *testing.T) {

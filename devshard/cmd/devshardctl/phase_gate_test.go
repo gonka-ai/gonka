@@ -263,6 +263,129 @@ func TestChainPhaseGateFetchPreservedParticipantKeys(t *testing.T) {
 	}, excluded)
 }
 
+func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"active_participants": {
+				"participants": [
+					{
+						"index": "gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+						"weight": 100,
+						"models": ["Model/A"],
+						"ml_nodes": [
+							{"ml_nodes": [
+								{"poc_weight": 40, "timeslot_allocation": [true, true]},
+								{"poc_weight": 60, "timeslot_allocation": [true, false]}
+							]}
+						]
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	require.NotNil(t, gate)
+
+	state, err := gate.fetchParticipantsState(true)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"}, state.preserved)
+	require.Empty(t, state.excluded)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
+	}, state.weights)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
+		},
+	}, state.weightsByModel)
+}
+
+func TestChainPhaseGateExcludedParticipantContributesZeroDuringPoC(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"active_participants": {
+				"participants": [
+					{
+						"index": "gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2",
+						"weight": 100,
+						"models": ["Model/A"],
+						"ml_nodes": [
+							{"ml_nodes": [
+								{"poc_weight": 40, "timeslot_allocation": [true, false]},
+								{"poc_weight": 60, "timeslot_allocation": [true, false]}
+							]}
+						]
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	require.NotNil(t, gate)
+
+	state, err := gate.fetchParticipantsState(true)
+	require.NoError(t, err)
+	require.Empty(t, state.preserved)
+	require.Equal(t, []string{"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"}, state.excluded)
+	require.Equal(t, map[string]float64{
+		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
+	}, state.weights)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
+		},
+	}, state.weightsByModel)
+}
+
+func TestChainPhaseGateMapsOuterMLNodesToModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"active_participants": {
+				"participants": [
+					{
+						"index": "gonka1cccccccccccccccccccccccccccccccccccc3",
+						"weight": 100,
+						"models": ["Model/A", "Model/B"],
+						"ml_nodes": [
+							{"ml_nodes": [
+								{"node_id": "a1", "poc_weight": 40, "timeslot_allocation": [true, true]}
+							]},
+							{"ml_nodes": [
+								{"node_id": "b1", "poc_weight": 60, "timeslot_allocation": [true, false]}
+							]}
+						]
+					}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	require.NotNil(t, gate)
+
+	state, err := gate.fetchParticipantsState(true)
+	require.NoError(t, err)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1cccccccccccccccccccccccccccccccccccc3": 40,
+		},
+		"Model/B": {
+			"gonka1cccccccccccccccccccccccccccccccccccc3": 0,
+		},
+	}, state.weightsByModel)
+}
+
 func TestChainPhaseGateLogsConfirmationPoCTransitionInRelaxedMode(t *testing.T) {
 	setPoCModeForTest(t, pocRequestModeRelaxed)
 

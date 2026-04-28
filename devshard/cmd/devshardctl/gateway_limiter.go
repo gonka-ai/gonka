@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +26,12 @@ type GatewayLimiter struct {
 	currentScale            float64
 	inFlightRequests        int64
 	inFlightInputToks       int64
+	models                  map[string]limiterModelCounter
+}
+
+type limiterModelCounter struct {
+	inFlightRequests  int64
+	inFlightInputToks int64
 }
 
 type LimiterSnapshot struct {
@@ -44,6 +51,7 @@ func NewGatewayLimiter(maxConcurrent, maxInputTokens int64) *GatewayLimiter {
 		effectiveMaxConcurrent:  maxConcurrent,
 		effectiveMaxInputTokens: maxInputTokens,
 		currentScale:            1,
+		models:                  map[string]limiterModelCounter{},
 	}
 }
 
@@ -127,14 +135,41 @@ func (l *GatewayLimiter) Acquire(inputTokens int64) error {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.acquireLocked("", inputTokens, l.currentScale)
+}
 
-	if l.maxConcurrent > 0 && l.inFlightRequests+1 > l.effectiveMaxConcurrent {
+// AcquireForModel uses an independent in-flight counter for model while
+// deriving that model's cap from the same operator-configured global
+// limits. The supplied scale is usually W_current(model) / W_ref(all
+// models), so models share the configured gateway limit by available
+// capacity.
+func (l *GatewayLimiter) AcquireForModel(model string, inputTokens int64, scale float64) error {
+	if inputTokens <= 0 {
+		inputTokens = 1
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.acquireLocked(model, inputTokens, scale)
+}
+
+func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, scale float64) error {
+	model = strings.TrimSpace(model)
+	if l.models == nil {
+		l.models = map[string]limiterModelCounter{}
+	}
+	counter := l.models[model]
+	effectiveMaxConcurrent := scaleClampLimit(l.maxConcurrent, scale)
+	effectiveMaxInputTokens := scaleClampLimit(l.maxInputTokens, scale)
+	if l.maxConcurrent > 0 && counter.inFlightRequests+1 > effectiveMaxConcurrent {
 		return fmt.Errorf("rate limit exceeded: too many concurrent requests")
 	}
-	if l.maxInputTokens > 0 && l.inFlightInputToks+inputTokens > l.effectiveMaxInputTokens {
+	if l.maxInputTokens > 0 && counter.inFlightInputToks+inputTokens > effectiveMaxInputTokens {
 		return fmt.Errorf("rate limit exceeded: too many input tokens in flight")
 	}
 
+	counter.inFlightRequests++
+	counter.inFlightInputToks += inputTokens
+	l.models[model] = counter
 	l.inFlightRequests++
 	l.inFlightInputToks += inputTokens
 	return nil
@@ -147,7 +182,34 @@ func (l *GatewayLimiter) Release(inputTokens int64) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.releaseLocked("", inputTokens)
+}
 
+func (l *GatewayLimiter) ReleaseForModel(model string, inputTokens int64) {
+	if inputTokens <= 0 {
+		inputTokens = 1
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.releaseLocked(model, inputTokens)
+}
+
+func (l *GatewayLimiter) releaseLocked(model string, inputTokens int64) {
+	model = strings.TrimSpace(model)
+	counter := l.models[model]
+	counter.inFlightRequests--
+	if counter.inFlightRequests < 0 {
+		counter.inFlightRequests = 0
+	}
+	counter.inFlightInputToks -= inputTokens
+	if counter.inFlightInputToks < 0 {
+		counter.inFlightInputToks = 0
+	}
+	if counter.inFlightRequests == 0 && counter.inFlightInputToks == 0 {
+		delete(l.models, model)
+	} else {
+		l.models[model] = counter
+	}
 	l.inFlightRequests--
 	if l.inFlightRequests < 0 {
 		l.inFlightRequests = 0

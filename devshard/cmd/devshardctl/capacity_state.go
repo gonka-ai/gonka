@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -47,6 +48,12 @@ type CapacityState struct {
 	fullWeights    map[string]float64
 	currentWeights map[string]float64
 
+	// Optional model-specific views of the same weights. When a caller
+	// asks for a known model, these maps let the picker use only the
+	// capacity that the chain reports for that model.
+	fullWeightsByModel    map[string]map[string]float64
+	currentWeightsByModel map[string]map[string]float64
+
 	// PoC preservation. nil means "not yet loaded" (treat every host
 	// as preserved so we don't wedge to zero capacity on a missed
 	// poll). Empty map means "PoC active and nobody is preserved"
@@ -78,10 +85,12 @@ type CapacityState struct {
 // at weight 1, so the picker degrades gracefully to round-robin behavior.
 func NewCapacityState() *CapacityState {
 	return &CapacityState{
-		fullWeights:      map[string]float64{},
-		currentWeights:   map[string]float64{},
-		escrowMembership: map[string]map[string]int{},
-		hostTotalSlots:   map[string]int{},
+		fullWeights:           map[string]float64{},
+		currentWeights:        map[string]float64{},
+		fullWeightsByModel:    map[string]map[string]float64{},
+		currentWeightsByModel: map[string]map[string]float64{},
+		escrowMembership:      map[string]map[string]int{},
+		hostTotalSlots:        map[string]int{},
 	}
 }
 
@@ -169,6 +178,54 @@ func (m *CapacityState) SetHostWeights(weights map[string]float64, pocActive boo
 	}
 }
 
+// SetHostWeightsByModel replaces per-model, per-host chain weights. It
+// follows the same baseline/current split as SetHostWeights.
+func (m *CapacityState) SetHostWeightsByModel(weights map[string]map[string]float64, pocActive bool) {
+	if m == nil {
+		return
+	}
+	clean := cleanModelWeights(weights)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentWeightsByModel = clean
+	if !pocActive {
+		m.fullWeightsByModel = cloneModelWeights(clean)
+	}
+}
+
+func cleanModelWeights(weights map[string]map[string]float64) map[string]map[string]float64 {
+	clean := make(map[string]map[string]float64, len(weights))
+	for rawModel, hostWeights := range weights {
+		model := strings.TrimSpace(rawModel)
+		if model == "" {
+			continue
+		}
+		cleanHosts := make(map[string]float64, len(hostWeights))
+		for host, weight := range hostWeights {
+			if host == "" || weight < 0 {
+				continue
+			}
+			cleanHosts[host] = weight
+		}
+		if len(cleanHosts) > 0 {
+			clean[model] = cleanHosts
+		}
+	}
+	return clean
+}
+
+func cloneModelWeights(weights map[string]map[string]float64) map[string]map[string]float64 {
+	clone := make(map[string]map[string]float64, len(weights))
+	for model, hostWeights := range weights {
+		cloneHosts := make(map[string]float64, len(hostWeights))
+		for host, weight := range hostWeights {
+			cloneHosts[host] = weight
+		}
+		clone[model] = cloneHosts
+	}
+	return clone
+}
+
 // SetPoCPreserved updates the preserved-host set. Pass nil to mark the
 // preserved set as "not yet loaded" (treat every host as preserved so
 // we don't wedge to zero capacity on a missed poll). Pass a non-nil
@@ -238,6 +295,18 @@ func (m *CapacityState) hostCurrentWeightLocked(host string) float64 {
 	return 1.0
 }
 
+func (m *CapacityState) hostCurrentWeightForModelLocked(host, model string) float64 {
+	if model != "" {
+		if weights, ok := m.currentWeightsByModel[model]; ok {
+			if weight, ok := weights[host]; ok {
+				return weight
+			}
+			return 0
+		}
+	}
+	return m.hostCurrentWeightLocked(host)
+}
+
 // hostFullWeightLocked returns the steady-state chain weight for the
 // host or 1.0 if no Inference-phase observation has landed yet.
 func (m *CapacityState) hostFullWeightLocked(host string) float64 {
@@ -245,6 +314,18 @@ func (m *CapacityState) hostFullWeightLocked(host string) float64 {
 		return w
 	}
 	return 1.0
+}
+
+func (m *CapacityState) hostFullWeightForModelLocked(host, model string) float64 {
+	if model != "" {
+		if weights, ok := m.fullWeightsByModel[model]; ok {
+			if weight, ok := weights[host]; ok {
+				return weight
+			}
+			return 0
+		}
+	}
+	return m.hostFullWeightLocked(host)
 }
 
 // EscrowWeight computes W(e) = sum over h in e of
@@ -260,10 +341,21 @@ func (m *CapacityState) EscrowWeight(escrowID string) float64 {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.escrowWeightLocked(escrowID)
+	return m.escrowWeightLocked(escrowID, "")
 }
 
-func (m *CapacityState) escrowWeightLocked(escrowID string) float64 {
+// EscrowWeightForModel computes W(e) using model-specific chain weights
+// when they have been observed for the requested model.
+func (m *CapacityState) EscrowWeightForModel(escrowID, model string) float64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.escrowWeightLocked(escrowID, model)
+}
+
+func (m *CapacityState) escrowWeightLocked(escrowID, model string) float64 {
 	slots, ok := m.escrowMembership[escrowID]
 	if !ok || len(slots) == 0 {
 		return 0
@@ -278,7 +370,7 @@ func (m *CapacityState) escrowWeightLocked(escrowID string) float64 {
 			continue
 		}
 		share := float64(count) / float64(total)
-		sum += m.hostCurrentWeightLocked(host) * share
+		sum += m.hostCurrentWeightForModelLocked(host, model) * share
 	}
 	return sum
 }
@@ -294,16 +386,25 @@ func (m *CapacityState) TotalWeight() float64 {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.totalWeightLocked()
+	return m.totalWeightLocked("")
 }
 
-func (m *CapacityState) totalWeightLocked() float64 {
+func (m *CapacityState) TotalWeightForModel(model string) float64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.totalWeightLocked(model)
+}
+
+func (m *CapacityState) totalWeightLocked(model string) float64 {
 	var sum float64
 	for host := range m.hostTotalSlots {
 		if !m.hostAvailableLocked(host) {
 			continue
 		}
-		sum += m.hostCurrentWeightLocked(host)
+		sum += m.hostCurrentWeightForModelLocked(host, model)
 	}
 	return sum
 }
@@ -320,13 +421,22 @@ func (m *CapacityState) BaselineWeight() float64 {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.baselineWeightLocked()
+	return m.baselineWeightLocked("")
 }
 
-func (m *CapacityState) baselineWeightLocked() float64 {
+func (m *CapacityState) BaselineWeightForModel(model string) float64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.baselineWeightLocked(model)
+}
+
+func (m *CapacityState) baselineWeightLocked(model string) float64 {
 	var sum float64
 	for host := range m.hostTotalSlots {
-		sum += m.hostFullWeightLocked(host)
+		sum += m.hostFullWeightForModelLocked(host, model)
 	}
 	return sum
 }
@@ -340,16 +450,89 @@ func (m *CapacityState) ScaleFactor() float64 {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.scaleFactorLocked()
+	return m.scaleFactorLocked("")
 }
 
-func (m *CapacityState) scaleFactorLocked() float64 {
-	baseline := m.baselineWeightLocked()
+func (m *CapacityState) ScaleFactorForModel(model string) float64 {
+	if m == nil {
+		return 1
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.scaleFactorLocked(model)
+}
+
+// ScaleFactorAcrossModels returns aggregate available capacity divided
+// by aggregate baseline capacity across all observed models. If no
+// model-specific baseline is loaded, it falls back to the host-level
+// scale factor.
+func (m *CapacityState) ScaleFactorAcrossModels() float64 {
+	if m == nil {
+		return 1
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.scaleFactorAcrossModelsLocked()
+}
+
+// LimitShareForModel returns the fraction of the configured global
+// gateway limit that should be available to this model:
+// W_current(model) / W_ref(all models). This gives each model an
+// independent counter while keeping one operator-facing global setting.
+func (m *CapacityState) LimitShareForModel(model string) float64 {
+	if m == nil {
+		return 1
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	model = strings.TrimSpace(model)
+	if model == "" || len(m.fullWeightsByModel) == 0 {
+		return m.scaleFactorLocked("")
+	}
+	baseline := m.baselineWeightAcrossModelsLocked()
 	if baseline <= 0 {
 		return 1
 	}
-	current := m.totalWeightLocked()
-	scale := current / baseline
+	return clampScale(m.totalWeightLocked(model) / baseline)
+}
+
+func (m *CapacityState) scaleFactorLocked(model string) float64 {
+	baseline := m.baselineWeightLocked(model)
+	if baseline <= 0 {
+		return 1
+	}
+	current := m.totalWeightLocked(model)
+	return clampScale(current / baseline)
+}
+
+func (m *CapacityState) scaleFactorAcrossModelsLocked() float64 {
+	if len(m.fullWeightsByModel) == 0 {
+		return m.scaleFactorLocked("")
+	}
+	baseline := m.baselineWeightAcrossModelsLocked()
+	if baseline <= 0 {
+		return 1
+	}
+	return clampScale(m.totalWeightAcrossModelsLocked() / baseline)
+}
+
+func (m *CapacityState) baselineWeightAcrossModelsLocked() float64 {
+	var sum float64
+	for model := range m.fullWeightsByModel {
+		sum += m.baselineWeightLocked(model)
+	}
+	return sum
+}
+
+func (m *CapacityState) totalWeightAcrossModelsLocked() float64 {
+	var sum float64
+	for model := range m.fullWeightsByModel {
+		sum += m.totalWeightLocked(model)
+	}
+	return sum
+}
+
+func clampScale(scale float64) float64 {
 	if math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return 1
 	}
@@ -389,7 +572,7 @@ func (m *CapacityState) Snapshot() CapacitySnapshot {
 	defer m.mu.RUnlock()
 	weights := make(map[string]float64, len(m.escrowMembership))
 	for id := range m.escrowMembership {
-		weights[id] = m.escrowWeightLocked(id)
+		weights[id] = m.escrowWeightLocked(id, "")
 	}
 	available, unavailable := 0, 0
 	currentMatched, currentFallback := 0, 0
@@ -412,9 +595,9 @@ func (m *CapacityState) Snapshot() CapacitySnapshot {
 		}
 	}
 	return CapacitySnapshot{
-		TotalWeight:              m.totalWeightLocked(),
-		BaselineWeight:           m.baselineWeightLocked(),
-		ScaleFactor:              m.scaleFactorLocked(),
+		TotalWeight:              m.totalWeightLocked(""),
+		BaselineWeight:           m.baselineWeightLocked(""),
+		ScaleFactor:              m.scaleFactorLocked(""),
 		EscrowWeights:            weights,
 		HostCount:                len(m.hostTotalSlots),
 		AvailableHostCount:       available,

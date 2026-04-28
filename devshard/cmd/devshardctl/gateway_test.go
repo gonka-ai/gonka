@@ -244,8 +244,8 @@ func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 	g.capacity.SetHostWeights(map[string]float64{"host-a": 1, "host-b": 1}, false)
 
-	require.NoError(t, g.limiter.Acquire(1))
-	require.NoError(t, g.limiter.Acquire(1))
+	require.NoError(t, g.limiter.AcquireForModel("Qwen/Test", 1, 1))
+	require.NoError(t, g.limiter.AcquireForModel("Qwen/Test", 1, 1))
 	require.EqualValues(t, 4, g.limiter.Snapshot().EffectiveMaxConcurrent)
 
 	limiter.ObserveResult("host-a", "/sessions/6/chat/completions", http.StatusServiceUnavailable)

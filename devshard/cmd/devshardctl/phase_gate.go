@@ -94,6 +94,7 @@ type chainActiveParticipant struct {
 	Index        string              `json:"index"`
 	InferenceURL string              `json:"inference_url"`
 	Weight       jsonUint64          `json:"weight,omitempty"`
+	Models       []string            `json:"models,omitempty"`
 	MLNodes      []chainModelMLNodes `json:"ml_nodes"`
 }
 
@@ -102,7 +103,8 @@ type chainModelMLNodes struct {
 }
 
 type chainMLNodeInfo struct {
-	TimeslotAllocation []bool `json:"timeslot_allocation"`
+	TimeslotAllocation []bool     `json:"timeslot_allocation"`
+	PoCWeight          jsonUint64 `json:"poc_weight,omitempty"`
 }
 
 type jsonInt64 int64
@@ -309,7 +311,7 @@ func (g *ChainPhaseGate) refresh() {
 	// Combine the fetches so we never double-poll the chain.
 	needPreservedFetch := active && relaxedPoCModeEnabled() && !wasActive
 	if needPreservedFetch || capacityState != nil {
-		state, perr := g.fetchParticipantsState()
+		state, perr := g.fetchParticipantsState(active)
 		if perr != nil {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
@@ -325,6 +327,7 @@ func (g *ChainPhaseGate) refresh() {
 				// currentWeights so the live W_tot reflects PoC's
 				// transient drop while W_ref keeps the pre-PoC baseline.
 				capacityState.SetHostWeights(state.weights, active)
+				capacityState.SetHostWeightsByModel(state.weightsByModel, active)
 				if active && relaxedPoCModeEnabled() {
 					capacityState.SetPoCPreserved(state.preserved)
 				} else {
@@ -342,7 +345,7 @@ func (g *ChainPhaseGate) refresh() {
 	}
 
 	if capacityState != nil && scaleHook != nil {
-		scaleHook(capacityState.ScaleFactor())
+		scaleHook(capacityState.ScaleFactorAcrossModels())
 	}
 
 	g.applySpeculativeAttemptPolicy(snapshot)
@@ -377,26 +380,26 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 // `Index`); the InferenceURL is intentionally NOT used as an identity
 // -- the chain address is the canonical participant key everywhere
 // downstream (CapacityState, ParticipantRequestLimiter, Session,
-// transport admission). weights holds the chain-reported w_chain(h)
-// for the moment this fetch landed; CapacityState's own
-// SetHostWeights(_, pocActive) decides whether to treat the values as
-// a steady-state baseline observation or a transient PoC-time
-// reading.
+// transport admission). Outside PoC, weights holds the chain-reported
+// participant weight. During active PoC, weights holds the sum of
+// preserved ML-node poc_weight values, so partially preserved
+// participants only contribute preserved hardware capacity.
 type participantsState struct {
-	preserved []string
-	excluded  []string
-	weights   map[string]float64
+	preserved      []string
+	excluded       []string
+	weights        map[string]float64
+	weightsByModel map[string]map[string]float64
 }
 
 func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
-	state, err := g.fetchParticipantsState()
+	state, err := g.fetchParticipantsState(false)
 	if err != nil {
 		return nil, nil, err
 	}
 	return state.preserved, state.excluded, nil
 }
 
-func (g *ChainPhaseGate) fetchParticipantsState() (*participantsState, error) {
+func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsState, error) {
 	resp, err := g.client.Get(g.participantsEndpoint)
 	if err != nil {
 		return nil, err
@@ -414,7 +417,8 @@ func (g *ChainPhaseGate) fetchParticipantsState() (*participantsState, error) {
 	}
 
 	state := &participantsState{
-		weights: make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		weights:        make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		weightsByModel: make(map[string]map[string]float64),
 	}
 	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
 	seenExcluded := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
@@ -428,7 +432,15 @@ func (g *ChainPhaseGate) fetchParticipantsState() (*participantsState, error) {
 			// receive PoC weight, or be matched against group slots.
 			continue
 		}
-		state.weights[key] = participantWeight(participant)
+		state.weights[key] = participantWeight(participant, pocActive)
+		for model, weight := range participantWeightsByModel(participant, pocActive) {
+			modelWeights := state.weightsByModel[model]
+			if modelWeights == nil {
+				modelWeights = map[string]float64{}
+				state.weightsByModel[model] = modelWeights
+			}
+			modelWeights[key] = weight
+		}
 		if !participantHasPreservedNode(participant) {
 			if _, ok := seenExcluded[key]; ok {
 				continue
@@ -689,21 +701,59 @@ func participantHasPreservedNode(participant chainActiveParticipant) bool {
 	return false
 }
 
-// participantWeight returns the chain-reported weight for one
-// participant, used by CapacityState as w_chain(h). The chain itself
-// is the authority -- during PoC the value naturally drops to reflect
-// reduced capacity, outside PoC it reflects the steady-state weight.
-// CapacityState.SetHostWeights' pocActive flag decides whether the
-// returned value is treated as a steady-state baseline observation or
-// a transient PoC-time observation; this function is phase-agnostic.
+// participantWeight returns the weight CapacityState should ingest for
+// one participant. Outside PoC this is the chain-reported participant
+// weight, used as the steady-state baseline. During PoC this is only
+// the sum of preserved ML-node poc_weight values, so a participant with
+// partial preserved hardware does not contribute its full capacity.
 //
-// A zero or missing weight is propagated as 0 (no synthesis from
-// MLNode counts, no fallback to 1.0); that's a real signal -- the
-// chain saying "this participant has no usable capacity right now".
-// CapacityState's own missing-key fallback (1.0) only applies to
-// hosts the gate has not yet observed at all.
-func participantWeight(participant chainActiveParticipant) float64 {
+// A zero or missing API weight is propagated as 0. The phase gate does
+// not invent capacity from ML-node counts or default weights; the chain
+// API is the source of truth. CapacityState's own missing-key fallback
+// only applies to hosts the gate has not observed at all.
+func participantWeight(participant chainActiveParticipant, pocActive bool) float64 {
+	if pocActive {
+		return preservedNodePoCWeight(participant)
+	}
 	return float64(participant.Weight)
+}
+
+func preservedNodePoCWeight(participant chainActiveParticipant) float64 {
+	var weight uint64
+	for _, modelNodes := range participant.MLNodes {
+		weight += modelPreservedNodePoCWeight(modelNodes)
+	}
+	return float64(weight)
+}
+
+func participantWeightsByModel(participant chainActiveParticipant, pocActive bool) map[string]float64 {
+	weights := make(map[string]float64, len(participant.Models))
+	for i, rawModel := range participant.Models {
+		model := strings.TrimSpace(rawModel)
+		if model == "" {
+			continue
+		}
+		if !pocActive {
+			weights[model] = float64(participant.Weight)
+			continue
+		}
+		if i >= len(participant.MLNodes) {
+			weights[model] = 0
+			continue
+		}
+		weights[model] = float64(modelPreservedNodePoCWeight(participant.MLNodes[i]))
+	}
+	return weights
+}
+
+func modelPreservedNodePoCWeight(modelNodes chainModelMLNodes) uint64 {
+	var weight uint64
+	for _, node := range modelNodes.MLNodes {
+		if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+			weight += uint64(node.PoCWeight)
+		}
+	}
+	return weight
 }
 
 func (g *ChainPhaseGate) PoCActive() bool {

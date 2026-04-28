@@ -434,7 +434,7 @@ func (g *Gateway) refreshCapacityScale() {
 	if !g.limiter.HasConfiguredLimits() {
 		return
 	}
-	g.limiter.ApplyScaleFactor(g.capacity.ScaleFactor())
+	g.limiter.ApplyScaleFactor(g.capacity.ScaleFactorAcrossModels())
 }
 
 func (g *Gateway) capacityStatus() gatewayCapacityStatus {
@@ -554,13 +554,14 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 		g.refreshCapacityScale()
-		if err := g.limiter.Acquire(inputTokens); err != nil {
+		limitModel := firstNonEmpty(model, g.settings.DefaultModel)
+		if err := g.limiter.AcquireForModel(limitModel, inputTokens, g.capacity.LimitShareForModel(limitModel)); err != nil {
 			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 			return
 		}
-		defer g.limiter.Release(inputTokens)
+		defer g.limiter.ReleaseForModel(limitModel, inputTokens)
 		logRequestStage(ctx, "gateway_limiter_acquired", "input_tokens", inputTokens)
 	} else {
 		logRequestStage(ctx, "gateway_limiter_bypassed_during_poc", "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
@@ -607,7 +608,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is inactive"}}`, devshardID), http.StatusConflict)
 			return
 		}
-		body, _, inputTokens, err := parseChatReservation(r)
+		body, model, inputTokens, err := parseChatReservation(r)
 		if err != nil {
 			logRequestStage(ctx, "gateway_devshard_parse_failed", "escrow", devshardID, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
@@ -615,13 +616,14 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		}
 		if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 			g.refreshCapacityScale()
-			if err := g.limiter.Acquire(inputTokens); err != nil {
+			limitModel := firstNonEmpty(model, rt.model, g.settings.DefaultModel)
+			if err := g.limiter.AcquireForModel(limitModel, inputTokens, g.capacity.LimitShareForModel(limitModel)); err != nil {
 				g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 				logRequestStage(ctx, "gateway_devshard_limiter_rejected", "escrow", devshardID, "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
 				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 				return
 			}
-			defer g.limiter.Release(inputTokens)
+			defer g.limiter.ReleaseForModel(limitModel, inputTokens)
 			logRequestStage(ctx, "gateway_devshard_limiter_acquired", "escrow", devshardID, "input_tokens", inputTokens)
 		} else {
 			logRequestStage(ctx, "gateway_devshard_limiter_bypassed_during_poc", "escrow", devshardID, "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
@@ -683,10 +685,10 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 		return nil, fmt.Errorf("no devshard runtimes configured")
 	}
 
-	bestScore := g.runtimeLoad(candidates[0])
+	bestScore := g.runtimeLoad(candidates[0], requestModel)
 	best := []*devshardRuntime{candidates[0]}
 	for _, rt := range candidates[1:] {
-		score := g.runtimeLoad(rt)
+		score := g.runtimeLoad(rt, requestModel)
 		switch {
 		case score < bestScore:
 			bestScore = score
@@ -708,7 +710,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	if math.IsInf(bestScore, +1) {
 		log.Printf(
 			"gateway: all %d candidate escrow(s) at zero capacity, returning 429; per-escrow weights: %s",
-			len(candidates), g.formatCandidateWeightsLocked(candidates),
+			len(candidates), g.formatCandidateWeightsLocked(candidates, requestModel),
 		)
 		return nil, &EscrowParticipantRateLimitError{}
 	}
@@ -730,11 +732,12 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 // this to tell whether the cause was a system-wide PoC pause (every
 // W(e) == 0 simultaneously), a single hot escrow (one weight low),
 // or a missing capacity-model registration (HasEscrow false).
-func (g *Gateway) formatCandidateWeightsLocked(candidates []*devshardRuntime) string {
+func (g *Gateway) formatCandidateWeightsLocked(candidates []*devshardRuntime, requestModel string) string {
 	parts := make([]string, 0, len(candidates))
 	for _, rt := range candidates {
 		if g.capacity != nil && g.capacity.HasEscrow(rt.id) {
-			parts = append(parts, fmt.Sprintf("%s=%g", rt.id, g.capacity.EscrowWeight(rt.id)))
+			model := firstNonEmpty(requestModel, rt.model)
+			parts = append(parts, fmt.Sprintf("%s=%g", rt.id, g.capacity.EscrowWeightForModel(rt.id, model)))
 		} else {
 			parts = append(parts, fmt.Sprintf("%s=unregistered", rt.id))
 		}
@@ -754,11 +757,11 @@ func (g *Gateway) formatCandidateWeightsLocked(candidates []*devshardRuntime) st
 //   - Escrow registered but W(e) == 0 (every host is PoC-excluded or
 //     fully throttled): honor the 0 so the runtime drops to +Inf load
 //     and stops receiving traffic until at least one host recovers.
-func (g *Gateway) runtimeLoad(rt *devshardRuntime) float64 {
+func (g *Gateway) runtimeLoad(rt *devshardRuntime, requestModel string) float64 {
 	if g == nil || g.capacity == nil || !g.capacity.HasEscrow(rt.id) {
 		return rt.load(1.0)
 	}
-	return rt.load(g.capacity.EscrowWeight(rt.id))
+	return rt.load(g.capacity.EscrowWeightForModel(rt.id, firstNonEmpty(requestModel, rt.model)))
 }
 
 func (g *Gateway) reserveRuntime(rt *devshardRuntime, inputTokens int64) {
