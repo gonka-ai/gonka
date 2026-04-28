@@ -35,13 +35,14 @@ type runtimeConfig struct {
 // for devshardd. Inlined from decentralized-api/apiconfig to remove that
 // dependency.
 type ChainNodeConfig struct {
-	ChainRpcUrl     string // Tendermint RPC URL (e.g. http://node:26657)
-	ChainGrpcUrl    string // gRPC URL for chain.Client (e.g. node:9090)
-	ChainID         string // chain-id for tx signing (e.g. gonka-mainnet)
-	SignerKeyName   string
-	KeyringBackend  string
-	KeyringDir      string
-	KeyringPassword string
+	ChainRpcUrl         string // Tendermint RPC URL (e.g. http://node:26657)
+	ChainGrpcUrl        string // gRPC URL for chain.Client (e.g. node:9090)
+	ChainID             string // chain-id for tx signing (e.g. gonka-mainnet)
+	SignerKeyName       string
+	KeyringBackend      string
+	KeyringDir          string
+	KeyringPassword     string
+	AccountPubKeyBase64 string // base64-encoded cold account pubkey; falls back to signer pubkey if empty
 }
 
 // ApiAccount holds the account and signer keys for devshardd.
@@ -141,13 +142,14 @@ func resolveRuntimeVersion(selectedVersion, buildVersion string) (string, error)
 func loadNodeConfigFromEnv() ChainNodeConfig {
 	nodeHost := envOr("NODE_HOST", "node")
 	return ChainNodeConfig{
-		ChainRpcUrl:     "http://" + nodeHost + ":26657",
-		ChainGrpcUrl:    envOr("NODE_GRPC_URL", nodeHost+":9090"),
-		ChainID:         envOr("CHAIN_ID", ""),
-		KeyringBackend:  envOr("KEYRING_BACKEND", "file"),
-		KeyringDir:      envOr("KEYRING_DIR", "/root/.inference"),
-		SignerKeyName:   envOr("KEY_NAME", ""),
-		KeyringPassword: os.Getenv("KEYRING_PASSWORD"),
+		ChainRpcUrl:         "http://" + nodeHost + ":26657",
+		ChainGrpcUrl:        envOr("NODE_GRPC_URL", nodeHost+":9090"),
+		ChainID:             envOr("CHAIN_ID", ""),
+		KeyringBackend:      envOr("KEYRING_BACKEND", "file"),
+		KeyringDir:          envOr("KEYRING_DIR", "/root/.inference"),
+		SignerKeyName:       envOr("KEY_NAME", ""),
+		KeyringPassword:     os.Getenv("KEYRING_PASSWORD"),
+		AccountPubKeyBase64: os.Getenv("ACCOUNT_PUBKEY"),
 	}
 }
 
@@ -158,13 +160,13 @@ func loadNodeConfigFromEnv() ChainNodeConfig {
 //
 // If ACCOUNT_PUBKEY is unset we fall back to the signer pubkey. That keeps the
 // genesis test path working, where signer and account are the same key.
-func buildApiAccount(kr keyring.Keyring, keyName string) (ApiAccount, error) {
-	if keyName == "" {
+func buildApiAccount(kr keyring.Keyring, nodeConfig ChainNodeConfig) (ApiAccount, error) {
+	if nodeConfig.SignerKeyName == "" {
 		return ApiAccount{}, fmt.Errorf("KEY_NAME is required")
 	}
-	record, err := kr.Key(keyName)
+	record, err := kr.Key(nodeConfig.SignerKeyName)
 	if err != nil {
-		return ApiAccount{}, fmt.Errorf("get signer %q: %w", keyName, err)
+		return ApiAccount{}, fmt.Errorf("get signer %q: %w", nodeConfig.SignerKeyName, err)
 	}
 	signerPubKey, err := record.GetPubKey()
 	if err != nil {
@@ -172,8 +174,8 @@ func buildApiAccount(kr keyring.Keyring, keyName string) (ApiAccount, error) {
 	}
 
 	accountKey := signerPubKey
-	if accountPubKeyBase64 := os.Getenv("ACCOUNT_PUBKEY"); accountPubKeyBase64 != "" {
-		pubKeyBytes, decodeErr := base64.StdEncoding.DecodeString(accountPubKeyBase64)
+	if nodeConfig.AccountPubKeyBase64 != "" {
+		pubKeyBytes, decodeErr := base64.StdEncoding.DecodeString(nodeConfig.AccountPubKeyBase64)
 		if decodeErr != nil {
 			return ApiAccount{}, fmt.Errorf("decode ACCOUNT_PUBKEY: %w", decodeErr)
 		}

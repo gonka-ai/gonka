@@ -8,6 +8,7 @@ import (
 	chainbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 
+	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -17,19 +18,40 @@ type chainEventBridge struct {
 	phase    *chain.Phase
 }
 
+// bootstrapPhase fetches the current epoch and latest block height from the
+// chain and seeds the phase before the event listener starts ticking. This
+// ensures phase.EpochID() is correct from the first inference request.
+func bootstrapPhase(ctx context.Context, chainClient *chain.Client, phase *chain.Phase) {
+	epochResp, err := chainClient.InferenceQueryClient().GetCurrentEpoch(ctx, &chaintypes.QueryGetCurrentEpochRequest{})
+	if err != nil {
+		slog.Warn("phase: failed to bootstrap epoch, starting at 0", "error", err)
+		return
+	}
+
+	blockResp, err := chainClient.CometServiceClient().GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
+	if err != nil {
+		slog.Warn("phase: failed to bootstrap block height, starting at 0", "error", err)
+		phase.Update(epochResp.Epoch, 0)
+		return
+	}
+
+	phase.Update(epochResp.Epoch, blockResp.SdkBlock.Header.Height)
+}
+
 func newChainEventBridge(
+	ctx context.Context,
 	chainRPCURL string,
 	chainClient *chain.Client,
 	submitter chainbridge.Submitter,
 ) *chainEventBridge {
 	phase := new(chain.Phase)
+	bootstrapPhase(ctx, chainClient, phase)
 	eventListener := events.NewListener(chainRPCURL)
 	br := chainbridge.NewChainBridge(chainClient, submitter)
 	br.Subscribe(eventListener)
 	eventListener.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
-		qc := chainClient.InferenceQueryClient()
-		// TODO: shouldn't be called for every block.
-		resp, err := qc.GetCurrentEpoch(bctx, &chaintypes.QueryGetCurrentEpochRequest{})
+		// TODO: should this be called for every block?
+		resp, err := chainClient.InferenceQueryClient().GetCurrentEpoch(bctx, &chaintypes.QueryGetCurrentEpochRequest{})
 		if err != nil {
 			slog.Warn("phase: failed to query current epoch", "block", e.BlockHeight, "error", err)
 			phase.SetBlockHeight(e.BlockHeight)

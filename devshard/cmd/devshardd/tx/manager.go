@@ -19,15 +19,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-type TxManagerConfig struct {
-	SignerKeyName  string `yaml:"signer_key_name"`
-	KeyringBackend string `yaml:"keyring_backend"` // "test" or "file"
-	KeyringDir     string `yaml:"keyring_dir"`
-	NatsURL        string `yaml:"nats_url"`
-	ChainID        string `yaml:"chain_id"`
-	// KeyringPassword is read from KEYRING_PASSWORD env var, not config file.
-}
-
 // Manager signs and broadcasts MsgSettleDevshardEscrow.
 // No batching, no retry — caller handles retry if needed.
 type Manager struct {

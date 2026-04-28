@@ -104,7 +104,7 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("keyring: %w", err)
 	}
 
-	apiAccount, err := buildApiAccount(kr, nodeConfig.SignerKeyName)
+	apiAccount, err := buildApiAccount(kr, nodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("api account: %w", err)
 	}
@@ -133,7 +133,7 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(nodeConfig.ChainRpcUrl, chainClient, txMgr)
+	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, txMgr)
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -152,6 +152,13 @@ func buildMLNodeClient(addr string) (*mlnodeclient.Client, error) {
 }
 
 func buildPayloadStore(ctx context.Context, closers *closeStack) (*payloads.Store, error) {
+	slog.Info("payload store",
+		"PGHOST", os.Getenv("PGHOST"),
+		"PGDATABASE", os.Getenv("PGDATABASE"),
+		"PGUSER", os.Getenv("PGUSER"),
+	)
+	// Empty DSN: pgxpool resolves the connection from PG* libpq env vars
+	// (PGHOST, PGDATABASE, PGUSER, PGPASSWORD) inherited from versiond.
 	pool, err := pgxpool.New(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool: %w", err)
