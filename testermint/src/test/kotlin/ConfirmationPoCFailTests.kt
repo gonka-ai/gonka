@@ -14,9 +14,13 @@ class ConfirmationPoCFailTests : TestermintTest() {
     fun `confirmation PoC failed - capped rewards`() {
         logSection("=== TEST: Confirmation PoC Failed - Capped Rewards ===")
 
-        // Initialize cluster with custom spec for confirmation PoC testing
-        // Configure epoch timing to allow confirmation PoC triggers during inference phase
-        val confirmationSpec = createConfirmationPoCSpec(expectedConfirmationsPerEpoch = 100)
+        // Initialize cluster with custom spec for confirmation PoC testing.
+        // High expectedConfirmationsPerEpoch saturates the per-block trigger probability
+        // so every eligible block in the inference window triggers. With episode-scoped
+        // preservation (1-of-3 per event at default pocSlotAllocation), the Fail
+        // assertion requires Join1 to be measured (not preserved) in at least one event
+        // so its ConfirmationWeight min-takes to 8.
+        val confirmationSpec = createConfirmationPoCSpec(expectedConfirmationsPerEpoch = 1000)
         val (cluster, genesis) = initCluster(
             joinCount = 2,
             mergeSpec = confirmationSpec,  // Merge with defaults instead of replacing
@@ -77,7 +81,7 @@ class ConfirmationPoCFailTests : TestermintTest() {
             it.consensusPubkey.value == join1.node.getValidatorInfo().key
         }
         assertThat(join1ValidatorAfterPoC).isNotNull
-        assertThat(join1ValidatorAfterPoC!!.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+        assertThat(join1ValidatorAfterPoC!!.statusEnum).isEqualTo(StakeValidatorStatus.BONDED)
         Logger.info("  Join1 is still bonded (not slashed, confirmation_weight=8 > alpha*regular_weight=7)")
 
         logSection("Waiting for NEXT epoch where confirmation weights will be applied")
@@ -167,11 +171,14 @@ class ConfirmationPoCFailTests : TestermintTest() {
     fun `confirmation PoC failed - participant jailed for ratio below alpha`() {
         logSection("=== TEST: Confirmation PoC Failed - Participant Jailed ===")
 
-        // Initialize cluster with custom spec for confirmation PoC testing
-        // Configure with AlphaThreshold = 0.5 (lower than standard 0.70)
+        // Initialize cluster with custom spec for confirmation PoC testing.
+        // Configure with AlphaThreshold = 0.5 (lower than standard 0.70).
+        // High expectedConfirmationsPerEpoch saturates per-block trigger probability;
+        // the jail assertion requires Join1 to be measured (not preserved) in at least
+        // one event so its ConfirmationWeight min-takes below alpha.
         val confirmationSpec = createConfirmationPoCSpec(
-            expectedConfirmationsPerEpoch = 100,
-            alphaThreshold = 0.5
+            expectedConfirmationsPerEpoch = 1000,
+            alphaThreshold = 0.5,
         )
         val (cluster, genesis) = initCluster(
             joinCount = 2,

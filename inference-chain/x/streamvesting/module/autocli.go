@@ -44,6 +44,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod: "UpdateParams",
 					Skip:      true, // skipped because authority gated
 				},
+				{
+					RpcMethod: "TransferWithVesting",
+					Use:       "transfer-with-vesting [recipient] [amount] [vesting-epochs]",
+					Short:     "Transfer tokens to recipient with a vesting schedule",
+					Long:      "Transfer tokens from your account to recipient with a vesting schedule. Tokens will vest over the specified number of epochs (default: 180).",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "recipient"},
+						{ProtoField: "amount"},
+						{ProtoField: "vesting_epochs", Optional: true},
+					},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

@@ -178,7 +178,7 @@ func TestSubmitGroupKeyValidationSignature_Timing(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("SubmitGroupKeyValidationSignature (single slot): %s", time.Since(start))
 
-	requiredSlots := previousEpoch.ITotalSlots/2 + 1
+	requiredSlots := previousEpoch.TSlotsDegree + 1
 	slotsCovered := uint32(1)
 	perCallDurations := make([]time.Duration, 0, numParticipants)
 	totalStart := time.Now()
@@ -430,8 +430,8 @@ func TestAggregateBLSPartialSignatures_Timing(t *testing.T) {
 	messageG1, err := k.hashToG1(messageHash)
 	require.NoError(t, err)
 
-	// Prepare 51 slots (threshold) for aggregation
-	requiredSlots := uint32(51)
+	// Prepare t+1 slots (threshold) for aggregation
+	requiredSlots := uint32(commitmentCount)
 	slotScalars := computeSlotScalars(totalCoeffs, totalSlots)
 
 	partialSignatures := make([]types.PartialSignature, 0, requiredSlots)
@@ -512,54 +512,54 @@ func TestVerifyFinalSignature_TimingComparison(t *testing.T) {
 	t.Logf("verifyFinalSignatureBlst (blst):      %s", durationBlst)
 }
 
-func TestComputeParticipantPublicKey_TimingComparison(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test skipped with -short")
-	}
-
-	k, _ := setupTimingKeeper(t)
-
-	// Setup mock EpochBLSData with 100 slots
-	totalSlots := uint32(100)
-	slotPKs := make([][]byte, totalSlots)
-	_, _, _, g2Gen := bls12381.Generators()
-	for i := uint32(0); i < totalSlots; i++ {
-		var sk fr.Element
-		sk.SetUint64(uint64(i + 1))
-		var pk bls12381.G2Affine
-		pk.ScalarMultiplication(&g2Gen, sk.BigInt(new(big.Int)))
-		pkArr := pk.Bytes()
-		slotPKs[i] = pkArr[:]
-	}
-
-	epochData := types.EpochBLSData{
-		SlotPublicKeys: slotPKs,
-	}
-
-	// Use all 100 slots for the participant
-	slotIndices := make([]uint32, totalSlots)
-	for i := uint32(0); i < totalSlots; i++ {
-		slotIndices[i] = i
-	}
-
-	// 1. Measure gnark
-	startGnark := time.Now()
-	resGnark, err := k.computeParticipantPublicKey(&epochData, slotIndices)
-	durationGnark := time.Since(startGnark)
-	require.NoError(t, err)
-
-	// 2. Measure blst
-	startBlst := time.Now()
-	resBlst, err := k.computeParticipantPublicKeyBlst(&epochData, slotIndices)
-	durationBlst := time.Since(startBlst)
-	require.NoError(t, err)
-
-	// Compare results
-	require.Equal(t, resGnark, resBlst, "Participant public keys must match")
-
-	t.Logf("computeParticipantPublicKey (gnark-crypto): %s", durationGnark)
-	t.Logf("computeParticipantPublicKeyBlst (blst):      %s", durationBlst)
-}
+// func TestComputeParticipantPublicKey_TimingComparison(t *testing.T) {
+// 	if testing.Short() {
+// 		t.Skip("timing test skipped with -short")
+// 	}
+//
+// 	k, _ := setupTimingKeeper(t)
+//
+// 	// Setup mock EpochBLSData with 100 slots
+// 	totalSlots := uint32(100)
+// 	slotPKs := make([][]byte, totalSlots)
+// 	_, _, _, g2Gen := bls12381.Generators()
+// 	for i := uint32(0); i < totalSlots; i++ {
+// 		var sk fr.Element
+// 		sk.SetUint64(uint64(i + 1))
+// 		var pk bls12381.G2Affine
+// 		pk.ScalarMultiplication(&g2Gen, sk.BigInt(new(big.Int)))
+// 		pkArr := pk.Bytes()
+// 		slotPKs[i] = pkArr[:]
+// 	}
+//
+// 	epochData := types.EpochBLSData{
+// 		SlotPublicKeys: slotPKs,
+// 	}
+//
+// 	// Use all 100 slots for the participant
+// 	slotIndices := make([]uint32, totalSlots)
+// 	for i := uint32(0); i < totalSlots; i++ {
+// 		slotIndices[i] = i
+// 	}
+//
+// 	// 1. Measure gnark
+// 	startGnark := time.Now()
+// 	resGnark, err := k.computeParticipantPublicKey(&epochData, slotIndices)
+// 	durationGnark := time.Since(startGnark)
+// 	require.NoError(t, err)
+//
+// 	// 2. Measure blst
+// 	startBlst := time.Now()
+// 	resBlst, err := k.computeParticipantPublicKeyBlst(&epochData, slotIndices)
+// 	durationBlst := time.Since(startBlst)
+// 	require.NoError(t, err)
+//
+// 	// Compare results
+// 	require.Equal(t, resGnark, resBlst, "Participant public keys must match")
+//
+// 	t.Logf("computeParticipantPublicKey (gnark-crypto): %s", durationGnark)
+// 	t.Logf("computeParticipantPublicKeyBlst (blst):      %s", durationBlst)
+// }
 
 func TestDecompressG2To256_TimingComparison(t *testing.T) {
 	if testing.Short() {

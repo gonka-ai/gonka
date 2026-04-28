@@ -10,20 +10,24 @@ import (
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
-	"decentralized-api/training"
+	"decentralized-api/statsstorage"
+	"devshard"
 	"net/http"
 	"time"
+
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 )
+
+const httpClientTimeout = 20 * time.Minute
 
 type Server struct {
 	e                   *echo.Echo
 	nodeBroker          *broker.Broker
 	configManager       *apiconfig.ConfigManager
 	recorder            cosmosclient.CosmosMessageClient
-	trainingExecutor    *training.Executor
 	blockQueue          *BridgeQueue
 	bandwidthLimiter    *internal.BandwidthLimiter
 	identityCache       *identityCache
@@ -32,6 +36,8 @@ type Server struct {
 	epochGroupDataCache *internal.EpochGroupDataCache
 	artifactStore       *artifacts.ManagedArtifactStore
 	authzCache          *authzcache.AuthzCache
+	httpClient          *http.Client
+	statsStorage        statsstorage.StatsStorage
 }
 
 // ServerOption configures optional Server dependencies.
@@ -44,11 +50,16 @@ func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 	}
 }
 
+func WithStatsStorage(store statsstorage.StatsStorage) ServerOption {
+	return func(s *Server) {
+		s.statsStorage = store
+	}
+}
+
 func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
-	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	payloadStorage payloadstorage.PayloadStorage,
@@ -64,13 +75,13 @@ func NewServer(
 		nodeBroker:          nodeBroker,
 		configManager:       configManager,
 		recorder:            recorder,
-		trainingExecutor:    trainingExecutor,
 		blockQueue:          blockQueue,
 		identityCache:       newIdentityCache(),
 		payloadStorage:      payloadStorage,
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
+		httpClient:          NewNoRedirectClient(httpClientTimeout),
 	}
 
 	for _, opt := range opts {
@@ -80,23 +91,20 @@ func NewServer(
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
 	e.Use(middleware.LoggingMiddleware)
+	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", s.postChat)
+	g.POST("completions", s.postCompletions)
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
-	g.GET("participants/:address", s.getInferenceParticipantByAddress)
+	g.GET("participants/:address", s.getAccountByAddress)
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
-
-	g.POST("training/tasks", s.postTrainingTask)
-	g.GET("training/tasks", s.getTrainingTasks)
-	g.GET("training/tasks/:id", s.getTrainingTask)
-	g.POST("training/lock-nodes", s.lockTrainingNodes)
 
 	g.POST("verify-proof", s.postVerifyProof)
 	g.POST("verify-block", s.postVerifyBlock)
@@ -105,6 +113,14 @@ func NewServer(
 	g.GET("models", s.getModels)
 	g.GET("governance/pricing", s.getGovernancePricing)
 	g.GET("governance/models", s.getGovernanceModels)
+	//TODO: Remove later - response format used by old dashboard
+	g.GET("governance/models-legacy", s.getGovernanceModelsLegacy)
+	g.GET("stats/models", s.getStatsModels)
+	g.GET("stats/developers/:developer/inferences", s.getStatsDeveloperInferences)
+	g.GET("stats/developers/:developer/summary/epochs", s.getStatsDeveloperSummaryEpochs)
+	g.GET("stats/summary/epochs", s.getStatsSummaryEpochs)
+	g.GET("stats/summary/time", s.getStatsSummaryTime)
+	g.GET("stats/debug/developers", s.getStatsDebugDevelopers)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
@@ -142,7 +158,16 @@ func NewServer(
 	// PoC artifact state endpoint (for testermint/validators to get real count and root_hash)
 	g.GET("poc/artifacts/state", s.getPocArtifactsState)
 
+	v2 := e.Group("/v2/")
+	v2.GET("participants/:address", s.getParticipantByAddress)
+	v2.GET("accounts/:address", s.getAccountByAddress)
 	return s
+}
+
+// DevshardGroup returns an echo group for mounting devshard routes.
+// Mounted under /v1/devshard so nginx's existing /v1/ location proxies it.
+func (s *Server) DevshardGroup() *echo.Group {
+	return s.e.Group(devshard.LegacyRoutePrefix)
 }
 
 func (s *Server) Start(addr string) {

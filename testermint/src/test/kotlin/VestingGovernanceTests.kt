@@ -1,20 +1,10 @@
 package com.productscience
 
 import TestermintTest
-import com.productscience.EpochStage
-import com.productscience.data.AppState
-import com.productscience.data.InferenceState
-import com.productscience.data.InferenceParams
-import com.productscience.data.TokenomicsParams
-import com.productscience.data.UpdateParams
-import com.productscience.data.spec
-import com.productscience.initCluster
-import com.productscience.logSection
-import com.productscience.getInferenceResult
+import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Tag
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty
+import org.junit.jupiter.api.Test
 
 class VestingGovernanceTests : TestermintTest() {
 
@@ -28,7 +18,6 @@ class VestingGovernanceTests : TestermintTest() {
                     this[InferenceParams::tokenomicsParams] = spec<TokenomicsParams> {
                         this[TokenomicsParams::workVestingPeriod] = 2L     // Start with 2 epochs
                         this[TokenomicsParams::rewardVestingPeriod] = 2L   // Start with 2 epochs  
-                        this[TokenomicsParams::topMinerVestingPeriod] = 2L // Start with 2 epochs
                     }
                 }
             }
@@ -48,8 +37,7 @@ class VestingGovernanceTests : TestermintTest() {
         val initialParams = genesis.getParams()
         assertThat(initialParams.tokenomicsParams.workVestingPeriod).isEqualTo(2L)
         assertThat(initialParams.tokenomicsParams.rewardVestingPeriod).isEqualTo(2L)  
-        assertThat(initialParams.tokenomicsParams.topMinerVestingPeriod).isEqualTo(2L)
-        
+
         logSection("2. Submit Governance Proposal to Change Vesting Periods")
         
         // Create modified parameters
@@ -60,7 +48,6 @@ class VestingGovernanceTests : TestermintTest() {
             tokenomicsParams = initialParams.tokenomicsParams.copy(
                 workVestingPeriod = 5L,
                 rewardVestingPeriod = 10L,
-                topMinerVestingPeriod = 15L
             )
         )
 
@@ -75,8 +62,7 @@ class VestingGovernanceTests : TestermintTest() {
         
         assertThat(updatedParams.tokenomicsParams.workVestingPeriod).isEqualTo(5L)
         assertThat(updatedParams.tokenomicsParams.rewardVestingPeriod).isEqualTo(10L)
-        assertThat(updatedParams.tokenomicsParams.topMinerVestingPeriod).isEqualTo(15L)
-        
+
         logSection("6. Test New Vesting Behavior")
         
         // Wait for system to be ready for inferences after governance change

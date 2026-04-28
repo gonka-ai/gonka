@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/bits"
 
 	"cosmossdk.io/log"
+	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -30,7 +32,8 @@ func GetBitcoinSettleAmounts(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
-	participantMLNodes map[string][]*types.MLNodeInfo,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	if participants == nil {
@@ -53,7 +56,15 @@ func GetBitcoinSettleAmounts(
 	// 3. Complete distribution with remainder handling
 	// 4. Invalid participant handling
 	// 5. Error management
-	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, validationParams, participantMLNodes, logger)
+	settleResults, bitcoinResult, err := CalculateParticipantBitcoinRewards(
+		participants,
+		epochGroupData,
+		bitcoinParams,
+		validationParams,
+		participantMLNodes,
+		coefficients,
+		logger,
+	)
 	if err != nil {
 		logger.Error("Error calculating participant bitcoin rewards", "error", err)
 		return settleResults, bitcoinResult, err
@@ -165,49 +176,27 @@ func CalculateFixedEpochReward(epochsSinceGenesis uint64, initialReward uint64, 
 	return uint64(result), nil
 }
 
-// GetPreservedWeight calculates the weight of nodes with POC_SLOT=true
-// These nodes continue serving inference during confirmation PoC and are not subject to verification
-func GetPreservedWeight(participant string, epochGroupData *types.EpochGroupData) int64 {
-	for _, validationWeight := range epochGroupData.ValidationWeights {
-		if validationWeight.MemberAddress == participant {
-			var preservedWeight int64 = 0
-
-			// Sum weights from nodes with POC_SLOT=true (index 1)
-			for _, mlNode := range validationWeight.MlNodes {
-				if mlNode != nil && len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
-					preservedWeight += mlNode.PocWeight
-				}
+// CoefficientAdjustedWeight computes sum(coeff_i * sum(PocWeight for model_i)) for nodes
+// matching the filter. Pass nil filter to include all nodes.
+func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec, filter func(*types.MLNodeInfo) bool) int64 {
+	total := int64(0)
+	for modelId, nodes := range modelNodes {
+		coeff, ok := coefficients[modelId]
+		if !ok {
+			coeff = mathsdk.LegacyOneDec()
+		}
+		rawModel := int64(0)
+		for _, mlNode := range nodes {
+			if mlNode == nil {
+				continue
 			}
-
-			return preservedWeight
+			if filter == nil || filter(mlNode) {
+				rawModel += mlNode.PocWeight
+			}
 		}
+		total += coeff.MulInt64(rawModel).TruncateInt64()
 	}
-	return 0
-}
-
-// RecomputeEffectiveWeightFromMLNodes recalculates participant weight from uncapped MLNode weights
-// This allows integration of confirmation_weight for nodes subject to verification
-func RecomputeEffectiveWeightFromMLNodes(vw *types.ValidationWeight, mlNodes []*types.MLNodeInfo) int64 {
-	preservedWeight := int64(0) // Sum POC_SLOT=true nodes only
-
-	// Use provided mlNodes if available (from model subgroups), otherwise fall back to vw.MlNodes
-	nodesToUse := mlNodes
-	if len(nodesToUse) == 0 {
-		nodesToUse = vw.MlNodes
-	}
-
-	for _, mlNode := range nodesToUse {
-		if mlNode == nil || len(mlNode.TimeslotAllocation) < 2 {
-			continue
-		}
-
-		if mlNode.TimeslotAllocation[1] { // POC_SLOT=true
-			preservedWeight += mlNode.PocWeight
-		}
-	}
-
-	// ConfirmationWeight always initialized - holds verified weight for POC_SLOT=false nodes
-	return preservedWeight + vw.ConfirmationWeight
+	return total
 }
 
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
@@ -412,6 +401,142 @@ func getSmallNetworkLimit(participantCount int) *types.Decimal {
 	}
 }
 
+const (
+	dynamicP0MarginPermille           uint64 = 20
+	dynamicP0MinTotalRequests         uint64 = 1000
+	dynamicP0MinParticipantsWithTotal        = 5
+)
+
+func permilleToP0Decimal(permille uint64) *types.Decimal {
+	return &types.Decimal{Value: int64(permille), Exponent: -3}
+}
+
+func ceilToSupportedP0Permille(targetPermille uint64) uint64 {
+	switch {
+	case targetPermille <= 50:
+		return 50
+	case targetPermille <= 100:
+		return 100
+	case targetPermille <= 200:
+		return 200
+	case targetPermille <= 300:
+		return 300
+	case targetPermille <= 400:
+		return 400
+	default:
+		return 500
+	}
+}
+
+func decimalToPermilleCeil(p0 *types.Decimal) uint64 {
+	if p0 == nil {
+		return 0
+	}
+	permilleFloor := p0.ToDecimal().Mul(decimal.NewFromInt(1000)).IntPart()
+	if permilleFloor <= 0 {
+		return 0
+	}
+	permille := uint64(permilleFloor)
+	if p0.ToDecimal().GreaterThan(decimal.New(permilleFloor, -3)) {
+		permille++
+	}
+	return permille
+}
+
+func getDynamicP0(participants []types.Participant, validationParams *types.ValidationParams, epoch uint64, logger log.Logger) (*types.Decimal, bool) {
+	governanceP0Permille := uint64(100)
+	if validationParams != nil && validationParams.BinomTestP0 != nil {
+		govCeil := decimalToPermilleCeil(validationParams.BinomTestP0)
+		if govCeil > 500 {
+			logger.Info("Bitcoin Rewards: Governance BinomTestP0 unsupported for lookup tables; using governance value directly",
+				"epoch", epoch,
+				"binomTestP0", validationParams.BinomTestP0.ToDecimal().String(),
+			)
+			return validationParams.BinomTestP0, false
+		}
+		if govCeil > 0 {
+			governanceP0Permille = ceilToSupportedP0Permille(govCeil)
+		}
+	}
+
+	var totalRequests uint64
+	var missedRequests uint64
+	participantsUsed := 0
+
+	for _, participant := range participants {
+		if participant.CurrentEpochStats == nil {
+			continue
+		}
+		inferenceCount := participant.CurrentEpochStats.InferenceCount
+		missed := participant.CurrentEpochStats.MissedRequests
+		total, carry := bits.Add64(inferenceCount, missed, 0)
+		if carry != 0 {
+			total = ^uint64(0)
+		}
+		if total == 0 {
+			continue
+		}
+
+		sumTotal, carry := bits.Add64(totalRequests, total, 0)
+		if carry != 0 {
+			sumTotal = ^uint64(0)
+		}
+		totalRequests = sumTotal
+
+		sumMissed, carry := bits.Add64(missedRequests, missed, 0)
+		if carry != 0 {
+			sumMissed = ^uint64(0)
+		}
+		missedRequests = sumMissed
+		participantsUsed++
+	}
+
+	if totalRequests < dynamicP0MinTotalRequests || participantsUsed < dynamicP0MinParticipantsWithTotal {
+		logger.Info("Bitcoin Rewards: Dynamic p0 selection fallback to governance (sample gate)",
+			"epoch", epoch,
+			"totalRequests", totalRequests,
+			"missedRequests", missedRequests,
+			"participantCountUsed", participantsUsed,
+			"minTotalRequests", dynamicP0MinTotalRequests,
+			"minParticipantsWithTotal", dynamicP0MinParticipantsWithTotal,
+			"finalPermille", governanceP0Permille,
+		)
+		return permilleToP0Decimal(governanceP0Permille), false
+	}
+
+	hi, lo := bits.Mul64(missedRequests, 1000)
+	baselinePermille, _ := bits.Div64(hi, lo, totalRequests)
+
+	targetPermille := baselinePermille + dynamicP0MarginPermille
+	if targetPermille > 500 {
+		targetPermille = 500
+	}
+	selectedTablePermille := ceilToSupportedP0Permille(targetPermille)
+
+	finalPermille := selectedTablePermille
+	if governanceP0Permille > finalPermille {
+		finalPermille = governanceP0Permille
+	}
+
+	skipPunishment := selectedTablePermille == 500
+
+	logger.Info("Bitcoin Rewards: Dynamic p0 selection",
+		"epoch", epoch,
+		"totalRequests", totalRequests,
+		"missedRequests", missedRequests,
+		"participantCountUsed", participantsUsed,
+		"baselinePermille", baselinePermille,
+		"marginPermille", dynamicP0MarginPermille,
+		"targetPermille", targetPermille,
+		"selectedTablePermille", selectedTablePermille,
+		"governancePermille", governanceP0Permille,
+		"finalPermille", finalPermille,
+		"skipPunishment", skipPunishment,
+	)
+
+	return permilleToP0Decimal(finalPermille), skipPunishment
+}
+
 // CalculateParticipantBitcoinRewards implements the main Bitcoin reward distribution logic
 // Preserves WorkCoins distribution while implementing fixed RewardCoins based on PoC weight
 func CalculateParticipantBitcoinRewards(
@@ -419,7 +544,8 @@ func CalculateParticipantBitcoinRewards(
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
-	participantMLNodes map[string][]*types.MLNodeInfo,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	// Parameter validation
@@ -486,11 +612,21 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Recompute effective weight from MLNodes (includes confirmation capping)
-		mlNodes := participantMLNodes[participant.Address]
-		effectiveWeight := RecomputeEffectiveWeightFromMLNodes(vw, mlNodes)
+		// Rescale ConfirmationWeight (raw MLNode scale) into fullWeight's
+		// (consensus-weight) scale so the numerator matches the denominator.
+		effectiveWeight := vw.ConfirmationWeight
 		if effectiveWeight < 0 {
 			effectiveWeight = 0
+		}
+		rawTotal := CoefficientAdjustedWeight(participantMLNodes[participant.Address], coefficients, nil)
+		if rawTotal > 0 && vw.Weight < rawTotal {
+			ewBig := big.NewInt(effectiveWeight)
+			ewBig.Mul(ewBig, big.NewInt(vw.Weight))
+			ewBig.Div(ewBig, big.NewInt(rawTotal))
+			effectiveWeight = ewBig.Int64()
+		}
+		if effectiveWeight > int64(fullWeight) {
+			effectiveWeight = int64(fullWeight)
 		}
 
 		logger.Info("Bitcoin Rewards: Calculated effective weight",
@@ -545,11 +681,12 @@ func CalculateParticipantBitcoinRewards(
 
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
-	p0 := types.DecimalFromFloat(0.10)
-	if validationParams != nil && validationParams.BinomTestP0 != nil {
-		p0 = validationParams.BinomTestP0
+	p0, skipPunishment := getDynamicP0(participants, validationParams, currentEpoch, logger)
+	if !skipPunishment {
+		CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
+	} else {
+		logger.Info("Bitcoin Rewards: Skipping downtime punishment (outage circuit breaker)", "epoch", currentEpoch)
 	}
-	CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
 	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,
 	// invalidation, or CPoC reductions. Any "missed" share becomes undistributed and transferred to governance.

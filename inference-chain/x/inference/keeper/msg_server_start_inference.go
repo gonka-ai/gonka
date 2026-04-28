@@ -2,6 +2,9 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"math/bits"
 	"time"
 
 	"encoding/base64"
@@ -13,7 +16,16 @@ import (
 )
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
-	var ctx sdk.Context = sdk.UnwrapSDKContext(goCtx)
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission); err != nil {
+		// return the failure and back out even batch transactions, since permissions will not change in a batch
+		return nil, err
+	}
+
+	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
+	if err != nil {
+		k.LogWarn("StartInference: failed to inject params", types.Inferences, "error", err)
+	}
+
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 
 	// Developer access gating: before the cutoff height, only allowlisted developers may request inferences.
@@ -40,20 +52,8 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		k.LogError("Creator not found", types.Inferences, "creator", msg.Creator, "msg", "StartInference")
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator), msg), nil
 	}
-	dev, found := k.GetParticipant(ctx, msg.RequestedBy)
-	if !found {
-		k.LogError("RequestedBy not found", types.Inferences, "requestedBy", msg.RequestedBy, "msg", "StartInference")
-		return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
-	}
-
-	k.LogInfo("DevPubKey", types.Inferences, "DevPubKey", dev.WorkerPublicKey, "DevAddress", dev.Address)
+	devAddress := msg.RequestedBy
 	k.LogInfo("TransferAgentPubKey", types.Inferences, "TransferAgentPubKey", transferAgent.WorkerPublicKey, "TransferAgentAddress", transferAgent.Address)
-
-	err := k.verifyKeys(ctx, msg, transferAgent, dev)
-	if err != nil {
-		k.LogError("StartInference: verifyKeys failed", types.Inferences, "error", err)
-		return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
-	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
@@ -61,6 +61,34 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		k.LogError("StartInference: inference already started", types.Inferences, "inferenceId", msg.InferenceId)
 		return failedStart(ctx, sdkerrors.Wrap(types.ErrInferenceStartProcessed, "inference has already start processed"), msg), nil
 	}
+
+	// Signature verification policy:
+	// - Start first: verify dev signature once; skip TA signature.
+	// - Finish first: start performs equality checks only (no TA/dev re-verification).
+	// - Executor signature verification is disabled by policy in both paths.
+	if existingInference.FinishedProcessed() {
+		if err := k.compareDevComponents(msg, &existingInference); err != nil {
+			k.LogError("StartInference: dev component mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedStart(ctx, err, msg), nil
+		}
+		if err := k.compareStartTAComponents(msg, &existingInference); err != nil {
+			k.LogError("StartInference: TA component mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedStart(ctx, err, msg), nil
+		}
+		if err := k.compareStartModelField(msg, &existingInference); err != nil {
+			k.LogError("StartInference: model field mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedStart(ctx, err, msg), nil
+		}
+		k.LogDebug("StartInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
+	} else {
+		err := k.verifyStartFirstMessageKeys(ctx, msg, devAddress)
+		if err != nil {
+			k.LogError("StartInference: verifyStartFirstMessageKeys failed", types.Inferences, "error", err)
+			return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
+		}
+		k.LogDebug("StartInference: dev signature cryptographically verified; TA signature deferred to FinishInference", types.Inferences, "inferenceId", msg.InferenceId)
+	}
+	k.LogDebug("StartInference: executor signature verification disabled by policy", types.Inferences, "inferenceId", msg.InferenceId)
 
 	// Record the current price only if this is the first message (FinishInference not processed yet)
 	// This ensures consistent pricing regardless of message arrival order
@@ -79,22 +107,34 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return failedStart(ctx, err, msg), nil
 	}
 
-	finalInference, err := k.processInferencePayments(ctx, inference, payments, false)
+	var executor *types.Participant
+	if inference.ExecutedBy != "" {
+		executorValue, found := k.GetParticipant(ctx, inference.ExecutedBy)
+		if !found {
+			k.LogError("StartInference: executor not found", types.Inferences, "executed_by", inference.ExecutedBy, "inference_id", inference.InferenceId)
+			return failedStart(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy), msg), nil
+		}
+		executor = &executorValue
+	}
+
+	finalInference, err := k.processInferencePayments(ctx, inference, payments, false, executor)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
+	}
+
+	if finalInference.IsCompleted() {
+		k.handleInferenceCompleted(ctx, finalInference, executor)
+	}
+	if shouldPersistParticipant(finalInference, payments, executor) {
+		if err := k.SetParticipant(ctx, *executor); err != nil {
+			return failedStart(ctx, err, msg), nil
+		}
 	}
 	err = k.SetInference(ctx, *finalInference)
 	if err != nil {
 		return failedStart(ctx, err, msg), nil
 	}
-	k.addTimeout(ctx, inference)
-
-	if inference.IsCompleted() {
-		err := k.handleInferenceCompleted(ctx, inference)
-		if err != nil {
-			return failedStart(ctx, err, msg), nil
-		}
-	}
+	k.addTimeout(ctx, finalInference)
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
@@ -111,7 +151,7 @@ func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference)
 	}
 }
 
-func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, agent types.Participant, dev types.Participant) error {
+func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgStartInference, devAddress string) error {
 	devComponents := getDevSignatureComponents(msg)
 
 	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60); err != nil {
@@ -120,20 +160,105 @@ func (k msgServer) verifyKeys(ctx sdk.Context, msg *types.MsgStartInference, age
 
 	// Verify dev signature (original_prompt_hash)
 	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-		DevSignature: msg.InferenceId, Dev: &dev,
+		DevSignature: msg.InferenceId, Dev: devAddress,
 	}, k); err != nil {
 		k.LogError("StartInference: dev signature failed", types.Inferences, "error", err)
 		return err
 	}
 
-	// Verify TA signature (prompt_hash)
-	if err := calculations.VerifyKeys(ctx, getTASignatureComponents(msg), calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: &agent,
-	}, k); err != nil {
-		k.LogError("StartInference: TA signature failed", types.Inferences, "error", err)
-		return err
-	}
+	return nil
+}
 
+type HasDevComponents interface {
+	GetOriginalPromptHash() string
+	GetRequestTimestamp() int64
+	GetRequestedBy() string
+	GetTransferredBy() string
+}
+
+func (k msgServer) compareDevComponents(msg HasDevComponents, inference *types.Inference) error {
+	if inference.OriginalPromptHash != msg.GetOriginalPromptHash() {
+		return sdkerrors.Wrapf(
+			types.ErrDevComponentMismatch,
+			"original_prompt_hash mismatch: message=%s inference=%s",
+			msg.GetOriginalPromptHash(),
+			inference.OriginalPromptHash,
+		)
+	}
+	if inference.RequestTimestamp != msg.GetRequestTimestamp() {
+		return sdkerrors.Wrapf(
+			types.ErrDevComponentMismatch,
+			"request_timestamp mismatch: message=%d inference=%d",
+			msg.GetRequestTimestamp(),
+			inference.RequestTimestamp,
+		)
+	}
+	if inference.TransferredBy != msg.GetTransferredBy() {
+		return sdkerrors.Wrapf(
+			types.ErrDevComponentMismatch,
+			"transfer agent mismatch: message=%s inference=%s",
+			msg.GetTransferredBy(),
+			inference.TransferredBy,
+		)
+	}
+	if inference.RequestedBy != msg.GetRequestedBy() {
+		return sdkerrors.Wrapf(
+			types.ErrDevComponentMismatch,
+			"requested_by mismatch: message=%s inference=%s",
+			msg.GetRequestedBy(),
+			inference.RequestedBy,
+		)
+	}
+	return nil
+}
+
+// TODO: We need to include inferenceId in the TA signature to make sure executor can't substitute the modified prompt
+// TODO: any error here should lead to punishing the TA
+func (k msgServer) compareStartTAComponents(msg *types.MsgStartInference, inference *types.Inference) error {
+	if inference.PromptHash != msg.PromptHash {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"prompt_hash mismatch: start=%s finish=%s",
+			msg.PromptHash,
+			inference.PromptHash,
+		)
+	}
+	if inference.RequestTimestamp != msg.RequestTimestamp {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"request_timestamp mismatch: start=%d finish=%d",
+			msg.RequestTimestamp,
+			inference.RequestTimestamp,
+		)
+	}
+	if inference.TransferredBy != msg.Creator {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"transfer agent mismatch: start=%s finish=%s",
+			msg.Creator,
+			inference.TransferredBy,
+		)
+	}
+	if inference.ExecutedBy != msg.AssignedTo {
+		return sdkerrors.Wrapf(
+			types.ErrTAComponentMismatch,
+			"executor mismatch: start.assigned_to=%s finish.executed_by=%s",
+			msg.AssignedTo,
+			inference.ExecutedBy,
+		)
+	}
+	return nil
+}
+
+func (k msgServer) compareStartModelField(msg *types.MsgStartInference, inference *types.Inference) error {
+	if inference.Model != "" && inference.Model != msg.Model {
+		return sdkerrors.Wrapf(
+			types.ErrInferenceRoleMismatch,
+			"model mismatch: start=%s finish=%s",
+			msg.Model,
+			inference.Model,
+		)
+	}
 	return nil
 }
 
@@ -168,7 +293,7 @@ func (k msgServer) validateTimestamp(
 		k.LogError("StartInference: validateTimestamp failed", types.Inferences, "error", err)
 		return err
 	}
-	return err
+	return nil
 }
 
 func (k msgServer) addTimeout(ctx sdk.Context, inference *types.Inference) {
@@ -199,6 +324,7 @@ func (k msgServer) processInferencePayments(
 	inference *types.Inference,
 	payments *calculations.Payments,
 	allowRefund bool,
+	executor *types.Participant,
 ) (*types.Inference, error) {
 	if payments.EscrowAmount > 0 {
 		escrowAmount, err := k.PutPaymentInEscrow(ctx, inference, payments.EscrowAmount)
@@ -213,25 +339,58 @@ func (k msgServer) processInferencePayments(
 		}
 		err := k.IssueRefund(ctx, -payments.EscrowAmount, inference.RequestedBy, "inference_refund:"+inference.InferenceId)
 		if err != nil {
-			k.LogError("Unable to Issue Refund for started inference", types.Payments, err)
+			k.LogError("Unable to Issue Refund for started inference", types.Payments,
+				"error", err, "inferenceId", inference.InferenceId)
+			return nil, sdkerrors.Wrapf(types.ErrIllegalState, "refund failed for inference %s: %v", inference.InferenceId, err)
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-		executedBy := inference.ExecutedBy
-		executor, found := k.GetParticipant(ctx, executedBy)
-		if !found {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
-		}
-		executor.CoinBalance += payments.ExecutorPayment
-		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-		err := k.SetParticipant(ctx, executor)
+		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment), "inference_finished")
 		if err != nil {
 			return nil, err
 		}
 	}
 	return inference, nil
+}
 
+// AddToCoinBalance adds payout to the participant's claimable work balance and
+// current-epoch earned coins, with overflow protection for both fields.
+func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64, memo string) error {
+	if participant == nil {
+		return sdkerrors.Wrap(types.ErrParticipantNotFound, "nil participant")
+	}
+	if payout > math.MaxInt64 {
+		return sdkerrors.Wrap(types.ErrIntOverflowSettleAmount, "payout exceeds maximum integer value")
+	}
+	ensureParticipantEpochStats(participant)
+	nextCoinBalance := participant.CoinBalance + int64(payout)
+	if nextCoinBalance < participant.CoinBalance {
+		return fmt.Errorf("participant coin balance overflow for %s", participant.Address)
+	}
+	nextEarnedCoins, carry := bits.Add64(participant.CurrentEpochStats.EarnedCoins, payout, 0)
+	if carry != 0 {
+		return fmt.Errorf("participant earned coins overflow for %s", participant.Address)
+	}
+	participant.CoinBalance = nextCoinBalance
+	participant.CurrentEpochStats.EarnedCoins = nextEarnedCoins
+	k.SafeLogSubAccountTransaction(ctx, participant.Address, types.ModuleName, types.OwedSubAccount, participant.CoinBalance, memo)
+	return nil
+}
+
+func shouldPersistParticipant(inference *types.Inference, payments *calculations.Payments, executor *types.Participant) bool {
+	if inference == nil || payments == nil || executor == nil {
+		return false
+	}
+	return inference.IsCompleted() || payments.ExecutorPayment > 0
+}
+
+func ensureParticipantEpochStats(participant *types.Participant) {
+	if participant == nil {
+		return
+	}
+	if participant.CurrentEpochStats == nil {
+		participant.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
 }
 
 // getDevSignatureComponents returns components for dev signature verification

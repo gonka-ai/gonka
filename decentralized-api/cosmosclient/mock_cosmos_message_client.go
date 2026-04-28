@@ -9,8 +9,8 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/golang/protobuf/proto"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/types"
+	inferenceapi "github.com/productscience/inference/api/inference/inference"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/mock"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -68,6 +68,11 @@ func (m *MockCosmosMessageClient) GetAccountPubKey() cryptotypes.PubKey {
 	return args.Get(0).(cryptotypes.PubKey)
 }
 
+func (m *MockCosmosMessageClient) GetSignerPubKey() cryptotypes.PubKey {
+	args := m.Called()
+	return args.Get(0).(cryptotypes.PubKey)
+}
+
 func (m *MockCosmosMessageClient) GetSignerAddress() string {
 	args := m.Called()
 	return args.String(0)
@@ -88,27 +93,27 @@ func (m *MockCosmosMessageClient) EncryptBytes(plaintext []byte) ([]byte, error)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) StartInference(transaction *inference.MsgStartInference) error {
+func (m *MockCosmosMessageClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) FinishInference(transaction *inference.MsgFinishInference) error {
+func (m *MockCosmosMessageClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) ReportValidation(transaction *inference.MsgValidation) error {
+func (m *MockCosmosMessageClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error {
+func (m *MockCosmosMessageClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
+func (m *MockCosmosMessageClient) ClaimRewards(transaction *inferenceapi.MsgClaimRewards) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
@@ -118,68 +123,39 @@ func (m *MockCosmosMessageClient) BankBalances(ctx context.Context, address stri
 	return args.Get(0).([]sdk.Coin), args.Error(1)
 }
 
-// PoC v1 mock methods
-
-func (m *MockCosmosMessageClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
+func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inferencetypes.MsgSubmitPocValidationsV2) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
+func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-// PoC v2 mock methods
-
-func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inference.MsgSubmitPocValidationsV2) error {
+func (m *MockCosmosMessageClient) SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inference.MsgPoCV2StoreCommit) error {
+func (m *MockCosmosMessageClient) SubmitSeed(transaction *inferenceapi.MsgSubmitSeed) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitMLNodeWeightDistribution(transaction *inference.MsgMLNodeWeightDistribution) error {
+func (m *MockCosmosMessageClient) SubmitUnitOfComputePriceProposal(transaction *inferenceapi.MsgSubmitUnitOfComputePriceProposal) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
+func (m *MockCosmosMessageClient) BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
-func (m *MockCosmosMessageClient) SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error) {
-	args := m.Called(transaction)
-	return args.Get(0).(*inference.MsgCreateTrainingTaskResponse), args.Error(1)
-}
-
-func (m *MockCosmosMessageClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
-	args := m.Called(transaction)
-	return args.Get(0).(*inference.MsgClaimTrainingTaskForAssignmentResponse), args.Error(1)
-}
-
-func (m *MockCosmosMessageClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
-	args := m.Called(transaction)
-	return args.Get(0).(*inference.MsgAssignTrainingTaskResponse), args.Error(1)
-}
-
-func (m *MockCosmosMessageClient) BridgeExchange(transaction *types.MsgBridgeExchange) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]types.BridgeContractAddress, error) {
+func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]inferencetypes.BridgeContractAddress, error) {
 	args := m.Called(ctx, chainId)
-	return args.Get(0).([]types.BridgeContractAddress), args.Error(1)
+	return args.Get(0).([]inferencetypes.BridgeContractAddress), args.Error(1)
 }
 
 func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
@@ -197,9 +173,9 @@ func (m *MockCosmosMessageClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPl
 	return args.Get(0).(*upgradetypes.QueryCurrentPlanResponse), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) GetPartialUpgrades() (*types.QueryAllPartialUpgradeResponse, error) {
+func (m *MockCosmosMessageClient) GetPartialUpgrades() (*inferencetypes.QueryAllPartialUpgradeResponse, error) {
 	args := m.Called()
-	return args.Get(0).(*types.QueryAllPartialUpgradeResponse), args.Error(1)
+	return args.Get(0).(*inferencetypes.QueryAllPartialUpgradeResponse), args.Error(1)
 }
 
 func (m *MockCosmosMessageClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
@@ -207,9 +183,9 @@ func (m *MockCosmosMessageClient) NewUpgradeQueryClient() upgradetypes.QueryClie
 	return args.Get(0).(upgradetypes.QueryClient)
 }
 
-func (m *MockCosmosMessageClient) NewInferenceQueryClient() types.QueryClient {
+func (m *MockCosmosMessageClient) NewInferenceQueryClient() inferencetypes.QueryClient {
 	args := m.Called()
-	return args.Get(0).(types.QueryClient)
+	return args.Get(0).(inferencetypes.QueryClient)
 }
 
 func (m *MockCosmosMessageClient) NewCometQueryClient() cmtservice.ServiceClient {
@@ -223,6 +199,11 @@ func (m *MockCosmosMessageClient) SendTransactionSyncNoRetry(transaction proto.M
 }
 
 func (m *MockCosmosMessageClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) RespondDealerComplaints(transaction *blstypes.MsgRespondDealerComplaints) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }

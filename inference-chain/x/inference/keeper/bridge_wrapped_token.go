@@ -225,10 +225,15 @@ func (k Keeper) GetTokenMetadata(ctx sdk.Context, externalChain, externalContrac
 		return TokenMetadata{}, false
 	}
 
+	decimals, err := safeUint8FromUint32(metadata.Decimals)
+	if err != nil {
+		return TokenMetadata{}, false
+	}
+
 	return TokenMetadata{
 		Name:     metadata.Name,
 		Symbol:   metadata.Symbol,
-		Decimals: uint8(metadata.Decimals),
+		Decimals: decimals,
 	}, true
 }
 
@@ -424,11 +429,17 @@ func (k Keeper) ClearWrappedTokenCodeID(ctx sdk.Context) bool {
 }
 
 // MigrateAllWrappedTokenContracts migrates all known wrapped token contract instances to the given code ID.
-// The module account is the admin of these instances, so it can invoke Migrate.
+// The governance account is the admin of these instances, so it can invoke Migrate.
 // migrateMsg can be nil or an empty JSON object when no special migration data is needed.
 func (k Keeper) MigrateAllWrappedTokenContracts(ctx sdk.Context, newCodeID uint64, migrateMsg json.RawMessage) error {
 	permissionedKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
-	adminAddr := k.AccountKeeper.GetModuleAddress(types.ModuleName)
+
+	governanceAddrStr := k.GetAuthority()
+	adminAddr, err := sdk.AccAddressFromBech32(governanceAddrStr)
+	if err != nil {
+		return fmt.Errorf("invalid governance address: %w", err)
+	}
+
 	if len(migrateMsg) == 0 {
 		migrateMsg = json.RawMessage([]byte("{}"))
 	}
@@ -493,6 +504,12 @@ func (k Keeper) MigrateAllWrappedTokenContracts(ctx sdk.Context, newCodeID uint6
 
 func (k Keeper) GetOrCreateWrappedTokenContract(ctx sdk.Context, chainId, contractAddress string) (string, error) {
 	wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
+	if k.IsBridgeContractAddress(ctx, chainId, contractAddress) {
+		return "", fmt.Errorf(
+			"address %s (chain %s) is a registered bridge contract address and cannot be used as a wrapped token",
+			contractAddress, chainId,
+		)
+	}
 	// Check if mapping already exists
 	contract, found := k.GetWrappedTokenContract(ctx, chainId, contractAddress)
 	if found {
@@ -681,7 +698,7 @@ func (k Keeper) MintTokens(ctx sdk.Context, contractAddr string, recipient strin
 // handleCompletedBridgeTransaction handles minting tokens when a bridge transaction is completed
 func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *types.BridgeTransaction) error {
 	// Check if this is a native token release (WGNK burn on Ethereum)
-	isBridgeContract, chainId := k.IsBridgeContractAddress(ctx, bridgeTx.ContractAddress)
+	isBridgeContract := k.IsBridgeContractAddress(ctx, bridgeTx.ChainId, bridgeTx.ContractAddress)
 	if isBridgeContract {
 		// Handle native token release from escrow
 		err := k.HandleNativeTokenRelease(ctx, bridgeTx)
@@ -695,7 +712,7 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 			"contractAddress", bridgeTx.ContractAddress,
 			"recipient", bridgeTx.OwnerAddress,
 			"amount", bridgeTx.Amount,
-			"chainId", chainId)
+			"chainId", bridgeTx.ChainId)
 
 		return nil
 	}

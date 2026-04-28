@@ -156,12 +156,6 @@ class SpecTests {
     }
 
     @Test
-    fun `parse top miner`() {
-        val topMiners = cosmosJson.fromJson(topMinerJson, TopMinersResponse::class.java)
-        println(topMiners)
-    }
-
-    @Test
     fun `invalid argument if type does not match`() {
         val result = runCatching {
             val spec = spec<Person> {
@@ -250,24 +244,6 @@ data class WithCoins(val coins: List<Coin>)
 
 data class WithDuration(val duration: Duration)
 
-
-val topMinerJson = """
-    {
-      "top_miner": [
-        {
-          "address": "cosmos1nrsklffzkzj3lhrmup3vwx9xv8usnz8wqdv0pr",
-          "last_qualified_started": "1739651467",
-          "last_updated_time": "1739651467",
-          "first_qualified_started": "1739651467"
-        }
-      ],
-      "pagination": {
-        "total": "1"
-      }
-    }
-""".trimIndent()
-
-
 val blsDataJson = """
     {
       "epoch_data": {
@@ -310,7 +286,7 @@ val blsDataJson = """
             "slot_end_index": 99
           }
         ],
-        "dkg_phase": 3,
+        "dkg_phase": "COMPLETED",
         "dealing_phase_deadline_block": "100",
         "verifying_phase_deadline_block": "103",
         "group_public_key": "siKm25OFmsUteDpaYKG1uErvK2rI7kgtFFgKsgNNx2Iq8MyX4g7uIcgDd2AvMGduEppwXem/Uln3yGZey+GduxHw+lhhij/RPeIuyCF0e2UucMYdsNEhTP3nEBNUejwy",

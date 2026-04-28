@@ -81,9 +81,15 @@ data class ActiveParticipant(
     val models: List<String>,
     val seed: Seed,
     val mlNodes: List<MlNodes>,
+    val votingPowers: List<ModelVotingPower>? = null,
 ) : ParticipantInfo {
     override fun getParticipantAddress(): String = index
 }
+
+data class ModelVotingPower(
+    val modelId: String,
+    val votingPower: Long,
+)
 
 data class Seed(
     val participant: String,
@@ -115,7 +121,7 @@ data class RawParticipant(
     val joinTime: Long,
     val joinHeight: Long,
     val inferenceUrl: String,
-    val status: Int,
+    val status: String,
     val epochsCompleted: Long,
 ) : ParticipantInfo {
     override fun getParticipantAddress(): String = index

@@ -262,3 +262,139 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 
 	logger.Info("TestActualSettleWithManyParticipants completed successfully", "totalParticipants", many, "totalReward", expectedRewardCoin)
 }
+
+// TestSettleWithGraceEpoch verifies that grace epoch relaxes downtime punishment.
+// Without grace epoch: participant with 50% miss rate would be punished (reward = 0).
+// With grace epoch (BinomTestP0 = 0.5): participant with 50% miss rate is NOT punished.
+func TestSettleWithGraceEpoch(t *testing.T) {
+	logger := createTestLogger(t)
+	logger.Info("Starting TestSettleWithGraceEpoch")
+
+	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+
+	epochIndex := uint64(10)
+
+	// Create participant with high miss rate (50% missed)
+	participantHighMiss := types.Participant{
+		Index:       testutil.Executor,
+		Address:     testutil.Executor,
+		CoinBalance: 1000,
+		Status:      types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 50,  // 50 successful
+			MissedRequests: 50,  // 50 missed = 50% miss rate
+		},
+	}
+
+	keeper.SetParticipant(ctx, participantHighMiss)
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: epochIndex,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      participantHighMiss.Address,
+				Weight:             1000,
+				Reputation:         100,
+				ConfirmationWeight: 1000,
+			},
+		},
+	})
+	keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: epochIndex,
+		Participants: []*types.ActiveParticipant{
+			{Index: participantHighMiss.Address},
+		},
+	})
+
+	// Add grace epoch with relaxed BinomTestP0 = 0.5 (allows 50% miss rate)
+	binomTestP0 := &types.Decimal{Value: 5, Exponent: -1} // 0.5
+	err := keeper.AddPunishmentGraceEpoch(ctx, epochIndex, binomTestP0, 3000)
+	require.NoError(t, err)
+	logger.Info("Added grace epoch", "epoch", epochIndex, "binomTestP0", "0.5")
+
+	params, err := keeper.GetParams(ctx)
+	require.NoError(t, err)
+
+	expectedRewardCoin := calcExpectedRewards(int64(epochIndex), params)
+	logger.Info("Expected reward", "amount", expectedRewardCoin)
+
+	coins, err2 := types.GetCoins(int64(expectedRewardCoin))
+	require.NoError(t, err2)
+
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, coins, gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+	err = keeper.SettleAccounts(ctx, epochIndex, 0)
+	require.NoError(t, err)
+
+	// Verify participant got rewards (not punished due to grace epoch)
+	settleAmount, found := keeper.GetSettleAmount(ctx, participantHighMiss.Address)
+	require.True(t, found)
+	require.Greater(t, settleAmount.RewardCoins, uint64(0), "Participant should receive rewards with grace epoch despite high miss rate")
+	logger.Info("Verified participant received rewards with grace epoch", "rewardCoins", settleAmount.RewardCoins)
+}
+
+// TestSettleWithoutGraceEpoch verifies that without grace epoch, high miss rate leads to punishment.
+func TestSettleWithoutGraceEpoch(t *testing.T) {
+	logger := createTestLogger(t)
+	logger.Info("Starting TestSettleWithoutGraceEpoch")
+
+	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+
+	epochIndex := uint64(10)
+
+	// Create participant with high miss rate (50% missed)
+	participantHighMiss := types.Participant{
+		Index:       testutil.Executor,
+		Address:     testutil.Executor,
+		CoinBalance: 1000,
+		Status:      types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 50,  // 50 successful
+			MissedRequests: 50,  // 50 missed = 50% miss rate
+		},
+	}
+
+	keeper.SetParticipant(ctx, participantHighMiss)
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: epochIndex,
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress:      participantHighMiss.Address,
+				Weight:             1000,
+				Reputation:         100,
+				ConfirmationWeight: 1000,
+			},
+		},
+	})
+	keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: epochIndex,
+		Participants: []*types.ActiveParticipant{
+			{Index: participantHighMiss.Address},
+		},
+	})
+
+	// NO grace epoch added - default BinomTestP0 (0.1) should punish 50% miss rate
+
+	params, err := keeper.GetParams(ctx)
+	require.NoError(t, err)
+
+	expectedRewardCoin := calcExpectedRewards(int64(epochIndex), params)
+	logger.Info("Expected reward", "amount", expectedRewardCoin)
+
+	coins, err2 := types.GetCoins(int64(expectedRewardCoin))
+	require.NoError(t, err2)
+
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, coins, gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	// Expect remainder to go to governance (punished participant's reward)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", "gov", gomock.Any(), gomock.Any()).Return(nil)
+
+	err = keeper.SettleAccounts(ctx, epochIndex, 0)
+	require.NoError(t, err)
+
+	// Verify participant was punished (reward = 0)
+	settleAmount, found := keeper.GetSettleAmount(ctx, participantHighMiss.Address)
+	require.True(t, found)
+	require.Equal(t, uint64(0), settleAmount.RewardCoins, "Participant should be punished without grace epoch")
+	logger.Info("Verified participant was punished without grace epoch", "rewardCoins", settleAmount.RewardCoins)
+}

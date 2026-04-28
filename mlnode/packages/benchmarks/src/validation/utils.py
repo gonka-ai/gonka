@@ -1,5 +1,6 @@
 import requests
 import math
+import threading
 from typing import (
     Dict,
     Any,
@@ -27,6 +28,17 @@ from common.logger import create_logger
 
 
 logger = create_logger(__name__)
+
+_output_path_to_lock: Dict[str, threading.Lock] = {}
+_registry_lock = threading.Lock()
+
+def _get_lock_for_path(path: str) -> threading.Lock:
+    if not path:
+        return threading.Lock()
+    with _registry_lock:
+        if path not in _output_path_to_lock:
+            _output_path_to_lock[path] = threading.Lock()
+        return _output_path_to_lock[path]
 
 
 class EnforcedToken(BaseModel):
@@ -59,6 +71,19 @@ def _prepare_messages(
     ]
 
 
+def _sampling_extras(request_params: RequestParams) -> Dict[str, Any]:
+    """Return optional sampling params that are set (non-None) plus additional_params."""
+    extras: Dict[str, Any] = {}
+    if request_params.top_p is not None:
+        extras["top_p"] = request_params.top_p
+    if request_params.top_k is not None:
+        extras["top_k"] = request_params.top_k
+    if request_params.repetition_penalty is not None:
+        extras["repetition_penalty"] = request_params.repetition_penalty
+    extras.update(request_params.additional_params)
+    return extras
+
+
 def inference(
     model_info: ModelInfo,
     request_params: RequestParams,
@@ -76,7 +101,7 @@ def inference(
         "n": 1,
         "top_logprobs": request_params.top_logprobs,
         "skip_special_tokens": False,
-        "repetition_penalty": 1.2,
+        **_sampling_extras(request_params),
     }
     
     response = requests.post(url, json=payload)
@@ -92,7 +117,7 @@ def validation(
     enforced_str: Optional[str] = None,
     enforced_tokens: Optional[EnforcedTokens] = None,
 ) -> Dict[str, Any]:
-    url = f"{model_info.url}/v1/chat/completions"
+    url = f"{model_info.url.rstrip('/')}/v1/chat/completions"
     payload = {
         "model": model_info.name,
         "messages": _prepare_messages(prompt),
@@ -104,7 +129,7 @@ def validation(
         "top_logprobs": request_params.top_logprobs,
         "n": 1,
         "skip_special_tokens": False,
-        "repetition_penalty": 1.2,
+        **_sampling_extras(request_params),
     }
     
     if enforced_str:
@@ -151,24 +176,29 @@ def generate_and_validate(
         experiment_request.validation_model,
         experiment_request.request_params,
         experiment_request.prompt,
-        # enforced_str=inference_result.text,
         enforced_tokens=enforced_tokens
     )
     validation_result = _extract_logprobs(validation_resp)
     if validation_result.text != inference_result.text:
-        print(
-            f"text sequences don't match\n" +
-            f"inference:\n {inference_result.text}\n" +
-            f"{'-'*10}\n" +
-            f"validation:\n {validation_result.text}\n" +
-            f"{'-'*100}"
+        raise RuntimeError(
+            "Text sequences don't match between inference and validation."
         )
-        exit(-1)
 
-    return experiment_request.to_result(
+    item = experiment_request.to_result(
         inference_result,
         validation_result
     )
+
+    if experiment_request.output_path:
+        lock = _get_lock_for_path(experiment_request.output_path)
+        with lock:
+            try:
+                with open(experiment_request.output_path, 'a') as f:
+                    f.write(item.model_dump_json() + '\n')
+            except Exception as e:
+                logger.error(f"Failed to write result to {experiment_request.output_path}: {e}")
+
+    return item
 
 
 def token_distance(
@@ -223,34 +253,150 @@ def distance(
 
 def token_distance2(
     inf_position_logprobs: PositionResult,
-    val_position_logprobs: PositionResult
+    val_position_logprobs: PositionResult,
 ):
+    """Matches Go customDistance/positionDistance: iterates over validation
+    tokens, builds fallback from inference (original) side."""
     dist = 0.0
     n_matches = 0
 
-    if not val_position_logprobs.logprobs:
-        return len(inf_position_logprobs.logprobs), 0
+    if not inf_position_logprobs.logprobs or not val_position_logprobs.logprobs:
+        return 100.0, 0
 
-    sorted_logprobs = sorted(val_position_logprobs.logprobs.values())
-    
-    if len(sorted_logprobs) >= 2:
-        min_val_logprob_1 = sorted_logprobs[0]
-        min_val_logprob_2 = sorted_logprobs[1]
+    sorted_inf_logprobs = sorted(inf_position_logprobs.logprobs.values())
+
+    if len(sorted_inf_logprobs) >= 2:
+        min_inf_1 = sorted_inf_logprobs[0]
+        min_inf_2 = sorted_inf_logprobs[1]
     else:
-        min_val_logprob_1 = sorted_logprobs[0]
-        min_val_logprob_2 = min_val_logprob_1 - 1.0
+        min_inf_1 = sorted_inf_logprobs[0]
+        min_inf_2 = min_inf_1 - 100.0
 
-    for token, inf_logprob in inf_position_logprobs.logprobs.items():
-        if token in val_position_logprobs.logprobs:
-            val_logprob = val_position_logprobs.logprobs[token]
+    next_inf_logprob = min_inf_1 - (min_inf_2 - min_inf_1)
+
+    for token, val_logprob in val_position_logprobs.logprobs.items():
+        if token in inf_position_logprobs.logprobs:
+            inf_logprob = inf_position_logprobs.logprobs[token]
             n_matches += 1
         else:
-            val_logprob = min_val_logprob_1 - (min_val_logprob_2 - min_val_logprob_1)
+            inf_logprob = next_inf_logprob
 
-        denom = 1e-10 + abs(inf_logprob) + abs(val_logprob)
-        dist += abs(inf_logprob - val_logprob) / denom / 2.0
+        denom = 1e-6 + abs(val_logprob) + abs(inf_logprob)
+        if math.isnan(denom) or denom == 0:
+            continue
+        term = abs(val_logprob - inf_logprob) / denom / 2.0
+        if not math.isnan(term):
+            dist += term
 
     return dist, n_matches
+
+
+_BAD_LOGPROB_FLOOR = -9990.0
+
+
+def _token_distance2_core(
+    inf_position_logprobs: PositionResult,
+    val_position_logprobs: PositionResult,
+    skip_inf: bool = False,
+    skip_zero: bool = False,
+):
+    """Shared core for distance2 clean variants.
+
+    Same structure as token_distance2 (Go-aligned: iterates validation tokens,
+    fallback from inference side) with optional cleaning:
+      skip_inf  — skip pairs where either logprob <= _BAD_LOGPROB_FLOOR (-9999)
+      skip_zero — skip pairs where one side is ~0.0 and the other is the max
+                  logprob of its position (clamped high-confidence artifact)
+    """
+    dist = 0.0
+    n_matches = 0
+
+    if not inf_position_logprobs.logprobs or not val_position_logprobs.logprobs:
+        return 100.0, 0
+
+    sorted_inf_logprobs = sorted(inf_position_logprobs.logprobs.values())
+
+    if len(sorted_inf_logprobs) >= 2:
+        min_inf_1 = sorted_inf_logprobs[0]
+        min_inf_2 = sorted_inf_logprobs[1]
+    else:
+        min_inf_1 = sorted_inf_logprobs[0]
+        min_inf_2 = min_inf_1 - 100.0
+
+    next_inf_logprob = min_inf_1 - (min_inf_2 - min_inf_1)
+
+    if skip_zero:
+        inf_max = max(inf_position_logprobs.logprobs.values())
+        val_max = max(val_position_logprobs.logprobs.values())
+
+    for token, val_logprob in val_position_logprobs.logprobs.items():
+        if token in inf_position_logprobs.logprobs:
+            inf_logprob = inf_position_logprobs.logprobs[token]
+            n_matches += 1
+        else:
+            inf_logprob = next_inf_logprob
+
+        if skip_inf and (inf_logprob <= _BAD_LOGPROB_FLOOR or val_logprob <= _BAD_LOGPROB_FLOOR):
+            continue
+
+        if skip_zero:
+            inf_is_zero = abs(inf_logprob) < 1e-6
+            val_is_zero = abs(val_logprob) < 1e-6
+            if inf_is_zero and not val_is_zero and abs(val_logprob - val_max) < 1e-6:
+                continue
+            if val_is_zero and not inf_is_zero and abs(inf_logprob - inf_max) < 1e-6:
+                continue
+
+        denom = 1e-6 + abs(val_logprob) + abs(inf_logprob)
+        if math.isnan(denom) or denom == 0:
+            continue
+        term = abs(val_logprob - inf_logprob) / denom / 2.0
+        if not math.isnan(term):
+            dist += term
+
+    return dist, n_matches
+
+
+def _distance2_variant(
+    inf_result: Result,
+    val_result: Result,
+    skip_inf: bool = False,
+    skip_zero: bool = False,
+):
+    if not _check_match(inf_result, val_result):
+        return -1, -1
+
+    total_dist = 0
+    total_n_matches = 0
+    for inf_position, val_position in zip(inf_result.results, val_result.results):
+        dist, n_matches = _token_distance2_core(inf_position, val_position, skip_inf=skip_inf, skip_zero=skip_zero)
+        total_dist += dist
+        total_n_matches += n_matches
+
+    n_logprobs = len(inf_result.results[0].logprobs) if inf_result.results[0].logprobs else 1
+    matches_ratio = total_n_matches / (len(inf_result.results) * n_logprobs)
+    total_dist = total_dist / (max(100, len(inf_result.results)) * n_logprobs)
+    return total_dist, matches_ratio
+
+
+def distance2_inf_clean(inf_result: Result, val_result: Result):
+    """distance2 + skip -9999 pairs."""
+    return _distance2_variant(inf_result, val_result, skip_inf=True)
+
+
+def distance2_zero_clean(inf_result: Result, val_result: Result):
+    """distance2 + skip 0.0-vs-max-logprob pairs."""
+    return _distance2_variant(inf_result, val_result, skip_zero=True)
+
+
+def distance2_clean(inf_result: Result, val_result: Result):
+    """distance2 + both -9999 and 0.0 cleaning."""
+    return _distance2_variant(inf_result, val_result, skip_inf=True, skip_zero=True)
+
+
+def distance3(inf_result: Result, val_result: Result):
+    """Alias for distance2_clean (backward compat)."""
+    return distance2_clean(inf_result, val_result)
 
 
 def similarity2(
@@ -263,7 +409,10 @@ def similarity2(
     return 1 - dist, matches_ratio
 
 
-def distance2(inf_result: Result, val_result: Result):
+def distance2(
+    inf_result: Result,
+    val_result: Result,
+):
     if not _check_match(inf_result, val_result):
         return -1, -1
 
@@ -273,9 +422,10 @@ def distance2(inf_result: Result, val_result: Result):
         dist, n_matches = token_distance2(inf_position, val_position)
         total_dist += dist
         total_n_matches += n_matches
-    
-    matches_ratio = total_n_matches / (len(inf_result.results)*len(inf_result.results[0].logprobs))
-    total_dist = (total_dist + 1.0) / (max(100, len(inf_result.results))*len(inf_result.results[0].logprobs) + 1.0)
+
+    n_logprobs = len(inf_result.results[0].logprobs) if inf_result.results[0].logprobs else 1
+    matches_ratio = total_n_matches / (len(inf_result.results) * n_logprobs)
+    total_dist = total_dist / (max(100, len(inf_result.results)) * n_logprobs)
     return total_dist, matches_ratio
 
 

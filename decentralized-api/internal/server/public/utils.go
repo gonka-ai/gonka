@@ -9,9 +9,8 @@ import (
 // validateTransferRequest validates user signature against original_prompt_hash.
 // User signs: hash(original_prompt) + timestamp + ta_address
 func validateTransferRequest(request *ChatRequest, devPubkey string) error {
-	originalPromptHash := utils.GenerateSHA256Hash(string(request.Body))
 	components := calculations.SignatureComponents{
-		Payload:         originalPromptHash,
+		Payload:         request.SignBodyHash,
 		Timestamp:       request.Timestamp,
 		TransferAddress: request.TransferAddress,
 		ExecutorAddress: "",

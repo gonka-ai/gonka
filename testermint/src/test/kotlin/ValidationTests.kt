@@ -43,9 +43,7 @@ class ValidationTests : TestermintTest() {
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
-        assertThat(statuses.map { status ->
-            InferenceStatus.entries.first { it.value == status }
-        }).allMatch {
+        assertThat(statuses).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
         assertThat(statuses).hasSize(requests)
@@ -158,24 +156,28 @@ class ValidationTests : TestermintTest() {
             }
         }
     }
-
 }
-
-val InferencePayload.statusEnum: InferenceStatus
-    get() = InferenceStatus.entries.first { it.value == status }
 
 fun getInferenceValidationState(
     highestFunded: LocalInferencePair,
     oddPair: LocalInferencePair,
     modelName: String? = null
 ): InferencePayload {
-    val invalidResult =
-        generateSequence { getInferenceResult(highestFunded, modelName) }
-            .take(5)
-            .firstOrNull {
-                Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                it.executorBefore.id == oddPair.node.getColdAddress()
+    var invalidResult: InferenceResult? = null
+    for (attempt in 0 until 12) {
+        val result = runCatching { getInferenceResult(highestFunded, modelName) }
+            .onFailure { error ->
+                Logger.warn("Inference probe attempt ${attempt + 1} failed while waiting for invalid executor: $error")
             }
+            .getOrNull()
+            ?: continue
+
+        Logger.warn("Got result: ${result.executorBefore.id} ${result.executorAfter.id}")
+        if (result.executorBefore.id == oddPair.node.getColdAddress()) {
+            invalidResult = result
+            break
+        }
+    }
     if (invalidResult == null) {
         error("Did not get result from invalid pair(${oddPair.node.getColdAddress()}) in time")
     }

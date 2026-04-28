@@ -26,6 +26,39 @@ func TestGenesisState_Validate(t *testing.T) {
 			},
 			valid: true,
 		},
+		{
+			desc: "duplicated epoch id in bls data list",
+			genState: &types.GenesisState{
+				Params: types.DefaultParams(),
+				BlsDataList: []types.EpochBLSData{
+					{EpochId: 1},
+					{EpochId: 1},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated request id in signing requests",
+			genState: &types.GenesisState{
+				Params: types.DefaultParams(),
+				SigningRequests: []types.ThresholdSigningRequest{
+					{RequestId: []byte("request1")},
+					{RequestId: []byte("request1")},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated new epoch id in group validation states",
+			genState: &types.GenesisState{
+				Params: types.DefaultParams(),
+				GroupValidationStates: []types.GroupKeyValidationState{
+					{NewEpochId: 2},
+					{NewEpochId: 2},
+				},
+			},
+			valid: false,
+		},
 		// this line is used by starport scaffolding # types/genesis/testcase
 	}
 	for _, tc := range tests {

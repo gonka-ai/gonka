@@ -18,6 +18,8 @@ on:
       - 'decentralized-api/**'
       - 'local-test-net/**'
       - 'testermint/**'
+      - 'versioned/**'
+      - 'devshard/**'
 
   issue_comment:
     types: [created]
@@ -43,6 +45,7 @@ jobs:
     permissions:
       contents: read
       checks: write
+      packages: write
 
     with:
       test_name: "Integration Tests"

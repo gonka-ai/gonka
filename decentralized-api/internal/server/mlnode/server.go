@@ -1,10 +1,12 @@
 package mlnode
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/poc/artifacts"
+	"net/http"
 
 	"github.com/labstack/echo/v4"
 )
@@ -14,6 +16,7 @@ type Server struct {
 	recorder      cosmos_client.CosmosMessageClient
 	broker        *broker.Broker
 	artifactStore *artifacts.ManagedArtifactStore
+	configManager *apiconfig.ConfigManager
 }
 
 // ServerOption configures optional Server dependencies.
@@ -26,13 +29,19 @@ func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 	}
 }
 
+// WithConfigManager enables serving devshard versions from chain params.
+func WithConfigManager(cm *apiconfig.ConfigManager) ServerOption {
+	return func(s *Server) {
+		s.configManager = cm
+	}
+}
+
 func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker, opts ...ServerOption) *Server {
 	e := echo.New()
 
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
 	e.Use(middleware.LoggingMiddleware)
-	g := e.Group("/mlnode/v1/")
 
 	s := &Server{
 		e:        e,
@@ -44,16 +53,21 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 		opt(s)
 	}
 
-	// V1 callback routes (on-chain batches, used when poc_v2_enabled=false)
-	g.POST("poc-batches/generated", s.postGeneratedBatchesV1)
-	e.POST("/v1/poc-batches/generated", s.postGeneratedBatchesV1)
-	g.POST("poc-batches/validated", s.postValidatedBatchesV1)
-	e.POST("/v1/poc-batches/validated", s.postValidatedBatchesV1)
+	// V2 callback routes (per-model).
+	e.POST("/v2/poc-batches/:model_id/generated", s.postGeneratedArtifactsV2)
+	e.POST("/v2/poc-batches/:model_id/validated", s.postValidatedArtifactsV2)
 
-	// V2 callback routes (off-chain artifacts, used when poc_v2_enabled=true)
-	e.POST("/v2/poc-batches/generated", s.postGeneratedArtifactsV2)
-	e.POST("/v2/poc-batches/validated", s.postValidatedArtifactsV2)
+	// Devshard version list from chain params
+	e.GET("/versions", s.getVersions)
+
 	return s
+}
+
+func (s *Server) getVersions(c echo.Context) error {
+	if s.configManager == nil {
+		return c.JSON(http.StatusOK, apiconfig.DevshardVersionsCache{Versions: []apiconfig.DevshardVersion{}})
+	}
+	return c.JSON(http.StatusOK, s.configManager.GetDevshardVersions())
 }
 
 func (s *Server) Start(addr string) {

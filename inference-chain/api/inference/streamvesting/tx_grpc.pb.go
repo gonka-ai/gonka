@@ -19,7 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName = "/inference.streamvesting.Msg/UpdateParams"
+	Msg_UpdateParams_FullMethodName             = "/inference.streamvesting.Msg/UpdateParams"
+	Msg_TransferWithVesting_FullMethodName      = "/inference.streamvesting.Msg/TransferWithVesting"
+	Msg_BatchTransferWithVesting_FullMethodName = "/inference.streamvesting.Msg/BatchTransferWithVesting"
 )
 
 // MsgClient is the client API for Msg service.
@@ -29,6 +31,11 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
+	// TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
+	// The tokens will vest over the specified number of epochs (default: 180).
+	TransferWithVesting(ctx context.Context, in *MsgTransferWithVesting, opts ...grpc.CallOption) (*MsgTransferWithVestingResponse, error)
+	// BatchTransferWithVesting transfers tokens from sender to multiple recipients with vesting schedules.
+	BatchTransferWithVesting(ctx context.Context, in *MsgBatchTransferWithVesting, opts ...grpc.CallOption) (*MsgBatchTransferWithVestingResponse, error)
 }
 
 type msgClient struct {
@@ -48,6 +55,24 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 	return out, nil
 }
 
+func (c *msgClient) TransferWithVesting(ctx context.Context, in *MsgTransferWithVesting, opts ...grpc.CallOption) (*MsgTransferWithVestingResponse, error) {
+	out := new(MsgTransferWithVestingResponse)
+	err := c.cc.Invoke(ctx, Msg_TransferWithVesting_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) BatchTransferWithVesting(ctx context.Context, in *MsgBatchTransferWithVesting, opts ...grpc.CallOption) (*MsgBatchTransferWithVestingResponse, error) {
+	out := new(MsgBatchTransferWithVestingResponse)
+	err := c.cc.Invoke(ctx, Msg_BatchTransferWithVesting_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -55,6 +80,11 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
+	// TransferWithVesting transfers tokens from sender to recipient with a vesting schedule.
+	// The tokens will vest over the specified number of epochs (default: 180).
+	TransferWithVesting(context.Context, *MsgTransferWithVesting) (*MsgTransferWithVestingResponse, error)
+	// BatchTransferWithVesting transfers tokens from sender to multiple recipients with vesting schedules.
+	BatchTransferWithVesting(context.Context, *MsgBatchTransferWithVesting) (*MsgBatchTransferWithVestingResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -64,6 +94,12 @@ type UnimplementedMsgServer struct {
 
 func (UnimplementedMsgServer) UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateParams not implemented")
+}
+func (UnimplementedMsgServer) TransferWithVesting(context.Context, *MsgTransferWithVesting) (*MsgTransferWithVestingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TransferWithVesting not implemented")
+}
+func (UnimplementedMsgServer) BatchTransferWithVesting(context.Context, *MsgBatchTransferWithVesting) (*MsgBatchTransferWithVestingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchTransferWithVesting not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -96,6 +132,42 @@ func _Msg_UpdateParams_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_TransferWithVesting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgTransferWithVesting)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).TransferWithVesting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_TransferWithVesting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).TransferWithVesting(ctx, req.(*MsgTransferWithVesting))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_BatchTransferWithVesting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBatchTransferWithVesting)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BatchTransferWithVesting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_BatchTransferWithVesting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BatchTransferWithVesting(ctx, req.(*MsgBatchTransferWithVesting))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -106,6 +178,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateParams",
 			Handler:    _Msg_UpdateParams_Handler,
+		},
+		{
+			MethodName: "TransferWithVesting",
+			Handler:    _Msg_TransferWithVesting_Handler,
+		},
+		{
+			MethodName: "BatchTransferWithVesting",
+			Handler:    _Msg_BatchTransferWithVesting_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

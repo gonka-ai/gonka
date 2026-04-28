@@ -1,9 +1,10 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
 VERSION ?= $(shell git describe --always)
+BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 
@@ -22,6 +23,19 @@ WASMVM_VERSION := v2.2.4
 WASMVM_STATIC_DARWIN_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvmstatic_darwin.a
 WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.x86_64.a
 WASMVM_STATIC_LINUX_ARM64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.aarch64.a
+
+USE_REGISTRY_CACHE ?= 0
+ifeq ($(USE_REGISTRY_CACHE),1)
+DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache,mode=min
+DOCKER_CACHE_ARGS_UPGRADE := --cache-from type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache-upgrade --cache-to type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache-upgrade,mode=min
+DOCKER_BUILD_PREFIX := docker buildx build --load $(DOCKER_CACHE_ARGS)
+DOCKER_BUILD_UPGRADE_PREFIX := docker buildx build $(DOCKER_CACHE_ARGS_UPGRADE)
+else
+DOCKER_CACHE_ARGS :=
+DOCKER_CACHE_ARGS_UPGRADE :=
+DOCKER_BUILD_PREFIX := DOCKER_BUILDKIT=1 docker build
+DOCKER_BUILD_UPGRADE_PREFIX := DOCKER_BUILDKIT=1 docker build
+endif
 
 install:
 	@echo "Installing locally with ldflags..."
@@ -79,13 +93,12 @@ define DOCKER_BUILD
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
-	@DOCKER_BUILDKIT=1 \
-	docker build \
-		--load \
+	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
 		--build-arg GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE) \
 		-f $(DOCKER_FILE) \
 		.docker-context \
@@ -107,8 +120,7 @@ define DOCKER_BUILD_UPGRADE
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
-	@DOCKER_BUILDKIT=1 \
-	docker build \
+	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
@@ -295,3 +307,6 @@ mock-expected-keepers:
 	@mockgen -source=x/inference/types/expected_keepers.go \
 		-package keeper \
 		-destination=testutil/keeper/expected_keepers_mocks.go
+
+proto:
+	ignite generate proto-go

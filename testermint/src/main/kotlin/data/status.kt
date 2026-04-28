@@ -45,7 +45,7 @@ data class SyncInfo(
 data class ValidatorInfo(
     val address: String,
     val pubKey: PubKey,
-    val votingPower: Int
+    val votingPower: Long
 )
 
 public data class PubKey(

@@ -145,7 +145,7 @@ func TestUpdateParticipantStatus_TransitionToInvalid(t *testing.T) {
 
 	// Expect slashing to be called
 	mocks.CollateralKeeper.EXPECT().
-		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation).
+		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation, gomock.Any()).
 		Return(sdk.Coin{}, nil).
 		Times(1)
 
@@ -193,7 +193,7 @@ func TestUpdateParticipantStatus_AlreadyInvalid(t *testing.T) {
 
 	// No slashing should be called (already INVALID)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Times(0)
 
 	// Call UpdateParticipantStatus
@@ -231,7 +231,7 @@ func TestUpdateParticipantStatus_AlreadyInactive(t *testing.T) {
 
 	// No slashing should be called (already INACTIVE)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Times(0)
 
 	// Call UpdateParticipantStatus
@@ -281,7 +281,7 @@ func TestInvalidParticipant_ReputationReduced(t *testing.T) {
 
 	// Mock slashing
 	mocks.CollateralKeeper.EXPECT().
-		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation).
+		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation, gomock.Any()).
 		Return(sdk.Coin{}, nil).
 		Times(1)
 
@@ -342,7 +342,7 @@ func TestParticipantStatusFlow_ActiveToInvalid(t *testing.T) {
 
 	// Mock slashing
 	mocks.CollateralKeeper.EXPECT().
-		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation).
+		Slash(ctx, gomock.Any(), gomock.Any(), types.SlashReasonInvalidation, gomock.Any()).
 		Return(sdk.Coin{}, nil).
 		Times(1)
 
@@ -393,7 +393,7 @@ func TestParticipantStatusFlow_InactiveStaysInactive(t *testing.T) {
 
 	// No slashing expected (already INACTIVE)
 	mocks.CollateralKeeper.EXPECT().
-		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Times(0)
 
 	// Save participant

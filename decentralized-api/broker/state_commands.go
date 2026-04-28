@@ -143,23 +143,14 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		return
 	}
 
-	// Check validation phase (regular OR confirmation)
-	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase ||
-		// FIXME: A bit too wide, it should be PoCGenerateWindDownPhase AND after poc end,
-		//  but we rely on node dispatcher to not send it too early
-		//  if we want to be 100% sure we should check based on block height
-		//  by adding some additional methods for getting block height stage cutoffs for current epoch
-		epochState.CurrentPhase == types.PoCGenerateWindDownPhase
-
-	// Confirmation PoC validation during inference phase
+	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase
+	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
+		shouldValidate = epochState.CurrentBlock.Height >= epochState.LatestEpoch.EndOfPoCGeneration()
+	}
 	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 		event := epochState.ActiveConfirmationPoCEvent
 		epochParams := &epochState.LatestEpoch.EpochParams
-		currentHeight := epochState.CurrentBlock.Height
-		// Accept at exchange end (transition) OR during validation window
-		if currentHeight == event.GetExchangeEnd(epochParams) || event.IsInValidationWindow(currentHeight, epochParams) {
-			shouldValidate = true
-		}
+		shouldValidate = event.IsInValidationWindow(epochState.CurrentBlock.Height, epochParams)
 	}
 
 	if !shouldValidate {
@@ -280,23 +271,15 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			logging.Info("Skipping inference up for node in training state", types.PoC,
+		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+			logging.Info("Setting node status to Inference", types.PoC,
 				"node_id", node.Node.Id,
 				"current_epoch", epochState,
-				"current_phase", epochState.CurrentPhase)
-			continue
-		} else {
-			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
-				logging.Info("Setting node status to Inference", types.PoC,
-					"node_id", node.Node.Id,
-					"current_epoch", epochState,
-					"current_phase", epochState.CurrentPhase,
-					"current_intended_status", node.State.IntendedStatus)
-			}
-
-			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+				"current_phase", epochState.CurrentPhase,
+				"current_intended_status", node.State.IntendedStatus)
 		}
+
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 	b.mu.Unlock()
 
@@ -308,10 +291,6 @@ func (c InferenceUpAllCommand) shouldMutateState(b *Broker, epochState *chainpha
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			continue
-		}
-
 		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			return true
 		}
@@ -333,10 +312,11 @@ func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActual
 }
 
 type StatusUpdate struct {
-	NodeId     string
-	PrevStatus types.HardwareNodeStatus
-	NewStatus  types.HardwareNodeStatus
-	Timestamp  time.Time
+	NodeId        string
+	PrevStatus    types.HardwareNodeStatus
+	NewStatus     types.HardwareNodeStatus
+	Timestamp     time.Time
+	MlNodeVersion string
 }
 
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
@@ -369,6 +349,7 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			"node.State.StatusTimestamp", node.State.StatusTimestamp)
 
 		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
+		node.State.MlNodeVersion = update.MlNodeVersion
 	}
 
 	c.Response <- true

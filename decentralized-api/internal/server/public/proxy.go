@@ -5,14 +5,20 @@ import (
 	"decentralized-api/completionapi"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
-func proxyResponse(
+const (
+	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
+	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
+)
+
+func ProxyResponse(
 	resp *http.Response,
 	w http.ResponseWriter,
 	excludeContentLength bool,
@@ -46,6 +52,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 	// Stream the response from the completion server to the client
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), maxScannerBufferSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -53,7 +60,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		logging.Debug("Chunk", types.Inferences, "inferenceId", inferenceId, "line", line)
 
 		var lineToProxy = line
-		if responseProcessor != nil {
+		// Skip empty lines for the processor to match processSSE behavior.
+		// Empty lines are still written to the response writer for SSE framing.
+		if responseProcessor != nil && line != "" {
 			var err error
 			lineToProxy, err = responseProcessor.ProcessStreamedResponse(line)
 			if err != nil {
@@ -79,6 +88,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			logging.Error("Error while streaming response", types.Inferences, "inferenceId", inferenceId, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
 		}
 	}
 

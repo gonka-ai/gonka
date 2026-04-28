@@ -3,6 +3,8 @@ package bls
 import (
 	"encoding/hex"
 	"testing"
+
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 // TestBLSCryptographicFunctions tests the basic functionality of our BLS functions
@@ -225,4 +227,49 @@ func TestDeterministicPolynomialEvaluation(t *testing.T) {
 	if !result1.Equal(result2) {
 		t.Fatal("Polynomial evaluation is not deterministic")
 	}
+}
+
+// TestPolynomialEvaluationEdgeCases verifies explicit behavior for small polynomial lengths.
+func TestPolynomialEvaluationEdgeCases(t *testing.T) {
+	t.Run("empty polynomial returns zero", func(t *testing.T) {
+		result := evaluatePolynomial(nil, 7)
+		if result == nil {
+			t.Fatal("Polynomial evaluation returned nil for empty polynomial")
+		}
+
+		expected := new(fr.Element).SetZero()
+		if !result.Equal(expected) {
+			t.Fatalf("Expected zero element for empty polynomial")
+		}
+	})
+
+	t.Run("constant polynomial returns constant", func(t *testing.T) {
+		constant := new(fr.Element).SetUint64(17)
+		polynomial := []*fr.Element{constant}
+		result := evaluatePolynomial(polynomial, 99)
+		if result == nil {
+			t.Fatal("Polynomial evaluation returned nil for constant polynomial")
+		}
+
+		if !result.Equal(constant) {
+			t.Fatalf("Expected constant polynomial evaluation to equal coefficient")
+		}
+	})
+
+	t.Run("degree one polynomial evaluates correctly", func(t *testing.T) {
+		// P(x) = a0 + a1*x where a0=3, a1=5, x=4 => 23.
+		a0 := new(fr.Element).SetUint64(3)
+		a1 := new(fr.Element).SetUint64(5)
+		polynomial := []*fr.Element{a0, a1}
+
+		result := evaluatePolynomial(polynomial, 4)
+		if result == nil {
+			t.Fatal("Polynomial evaluation returned nil for degree-one polynomial")
+		}
+
+		expected := new(fr.Element).SetUint64(23)
+		if !result.Equal(expected) {
+			t.Fatalf("Expected 23, got different field element")
+		}
+	})
 }

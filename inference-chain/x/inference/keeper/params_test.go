@@ -82,7 +82,6 @@ func TestTokenomicsParamsGovernance(t *testing.T) {
 			updatedParams := params
 			updatedParams.TokenomicsParams.WorkVestingPeriod = tc.workVestingPeriod
 			updatedParams.TokenomicsParams.RewardVestingPeriod = tc.rewardVestingPeriod
-			updatedParams.TokenomicsParams.TopMinerVestingPeriod = tc.topMinerVestingPeriod
 
 			// Set the updated parameters
 			require.NoError(t, k.SetParams(ctx, updatedParams))
@@ -92,7 +91,6 @@ func TestTokenomicsParamsGovernance(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedWorkVesting, retrievedParams.TokenomicsParams.WorkVestingPeriod)
 			require.Equal(t, tc.expectedRewardVesting, retrievedParams.TokenomicsParams.RewardVestingPeriod)
-			require.Equal(t, tc.expectedTopMinerVesting, retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
 		})
 	}
 }
@@ -165,13 +163,12 @@ func TestTokenomicsParamsParamSetPairs(t *testing.T) {
 
 	// Test that ParamSetPairs returns the correct number of pairs
 	pairs := params.ParamSetPairs()
-	require.Len(t, pairs, 3, "TokenomicsParams should have 3 parameter pairs for vesting")
+	require.Len(t, pairs, 2, "TokenomicsParams should have 2 parameter pairs for vesting")
 
 	// Verify the parameter keys are correctly set
 	expectedKeys := [][]byte{
 		types.KeyWorkVestingPeriod,
 		types.KeyRewardVestingPeriod,
-		types.KeyTopMinerVestingPeriod,
 	}
 
 	for i, pair := range pairs {
@@ -216,7 +213,6 @@ func TestTokenomicsParamsValidate(t *testing.T) {
 			params := *types.DefaultTokenomicsParams()
 			params.WorkVestingPeriod = tc.workVestingPeriod
 			params.RewardVestingPeriod = tc.rewardVestingPeriod
-			params.TopMinerVestingPeriod = tc.topMinerVestingPeriod
 
 			err := params.Validate()
 
@@ -239,7 +235,6 @@ func TestParamsValidateCallsTokenomicsValidation(t *testing.T) {
 	// Set valid vesting parameters
 	params.TokenomicsParams.WorkVestingPeriod = 180
 	params.TokenomicsParams.RewardVestingPeriod = 180
-	params.TokenomicsParams.TopMinerVestingPeriod = 180
 
 	// This should pass validation
 	err := params.Validate()
@@ -253,7 +248,6 @@ func TestParamsValidateCallsTokenomicsValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
-	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
 }
 
 func TestParamsValidateNilChecks(t *testing.T) {
@@ -474,15 +468,6 @@ func TestTokenomicsParamsNilFieldChecks(t *testing.T) {
 				return params
 			},
 			expectedErrMsg: "current subsidy percentage cannot be nil",
-		},
-		{
-			name: "nil TopRewardAllowedFailure",
-			setupParams: func() *types.TokenomicsParams {
-				params := types.DefaultTokenomicsParams()
-				params.TopRewardAllowedFailure = nil
-				return params
-			},
-			expectedErrMsg: "top reward allowed failure cannot be nil",
 		},
 		{
 			name: "valid TokenomicsParams",

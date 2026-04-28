@@ -71,6 +71,7 @@
       },
       "params": {
         "epoch_params": {
+        "confirmation_poc_safety_window": "5",
         "epoch_length": "360",
         "epoch_multiplier": "1",
         "epoch_shift": "300",
@@ -103,7 +104,8 @@
             "dist_threshold": { "value": "4", "exponent": -1 },
             "p_mismatch": { "value": "1", "exponent": -1 },
             "p_value_threshold": { "value": "5", "exponent": -2 }
-          }
+          },
+          "poc_normalization_enabled": true
         },
         "confirmation_poc_params": {
           "expected_confirmations_per_epoch": "4"
@@ -205,10 +207,8 @@
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
         "originator_supply": "160000000000000000",
-        "top_reward_amount": "120000000000000000",
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
-        "top_rewards": 3,
         "supply_denom": "ngonka"
       }
     }

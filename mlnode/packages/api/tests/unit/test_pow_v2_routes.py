@@ -62,6 +62,35 @@ class TestInitGenerateFanout:
             assert group_ids == [0, 1, 2]
             assert all(n == 3 for n in n_groups_values)
     
+    @patch('api.proxy.vllm_backend_ports', [5001])
+    @patch('api.proxy.vllm_healthy', {5001: True})
+    @patch('api.proxy.vllm_counts', {5001: 0})
+    @patch('api.proxy.poc_status_by_port', {5001: "IDLE"})
+    def test_stronger_rng_forwarded_to_backend(self, client):
+        """poc_stronger_rng=True must be forwarded verbatim to every vllm backend."""
+        captured = []
+
+        async def mock_post(url, json=None, timeout=None):
+            captured.append(json)
+            return make_mock_response(200, {"status": "OK", "pow_status": {"status": "GENERATING"}})
+
+        with patch('api.proxy.vllm_client') as mock_client:
+            mock_client.post = AsyncMock(side_effect=mock_post)
+
+            client.post("/api/v1/inference/pow/init/generate", json={
+                "block_hash": "0xabc",
+                "block_height": 1,
+                "public_key": "pk",
+                "node_id": 0,
+                "node_count": 1,
+                "batch_size": 32,
+                "params": {"model": "m", "seq_len": 64, "k_dim": 12},
+                "poc_stronger_rng": True,
+            })
+
+        assert len(captured) == 1
+        assert captured[0]["poc_stronger_rng"] is True
+
     @patch('api.proxy.vllm_backend_ports', [])
     @patch('api.proxy.vllm_healthy', {})
     def test_fanout_no_backends(self, client):
@@ -74,7 +103,7 @@ class TestInitGenerateFanout:
             "node_count": 10,
             "params": {"model": "test-model", "seq_len": 256}
         })
-        
+
         assert response.status_code == 503
 
 
@@ -122,6 +151,36 @@ class TestRoundRobinLoadBalancing:
             assert "5001" in captured_urls[2]
             assert "5002" in captured_urls[3]
     
+    @patch('api.proxy.vllm_backend_ports', [5001])
+    @patch('api.proxy.vllm_healthy', {5001: True})
+    @patch('api.proxy.pow_generate_rr_index', 0)
+    def test_stronger_rng_forwarded_to_backend(self, client):
+        """poc_stronger_rng=True must be forwarded to the selected vllm backend."""
+        captured = []
+
+        async def mock_post(url, json=None, timeout=None):
+            captured.append(json)
+            return make_mock_response(200, {"status": "completed", "request_id": "uuid", "artifacts": []})
+
+        with patch('api.proxy.vllm_client') as mock_client:
+            mock_client.post = AsyncMock(side_effect=mock_post)
+
+            response = client.post("/api/v1/inference/pow/generate", json={
+                "block_hash": "0xabc",
+                "block_height": 1,
+                "public_key": "pk",
+                "node_id": 0,
+                "node_count": 1,
+                "nonces": [0],
+                "params": {"model": "m", "seq_len": 64},
+                "wait": True,
+                "poc_stronger_rng": True,
+            })
+
+        assert response.status_code == 200
+        assert len(captured) == 1
+        assert captured[0]["poc_stronger_rng"] is True
+
     @patch('api.proxy.vllm_backend_ports', [5001, 5002, 5003])
     @patch('api.proxy.vllm_healthy', {5001: True, 5002: False, 5003: True})
     @patch('api.proxy.pow_generate_rr_index', 0)

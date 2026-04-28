@@ -14,6 +14,10 @@ export EXPLORER_SERVICE_NAME=${EXPLORER_SERVICE_NAME:-explorer}
 export PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
 export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
 
+export VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-versiond}
+export VERSIOND_PORT=${VERSIOND_PORT:-8080}
+export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
+
 if [ -n "${KEY_NAME}" ] && [ "${KEY_NAME}" != "" ]; then
     export KEY_NAME_PREFIX="${KEY_NAME}-"
 else
@@ -25,6 +29,31 @@ export FINAL_API_SERVICE="${KEY_NAME_PREFIX}${API_SERVICE_NAME}"
 export FINAL_NODE_SERVICE="${KEY_NAME_PREFIX}${NODE_SERVICE_NAME}"
 export FINAL_EXPLORER_SERVICE="${KEY_NAME_PREFIX}${EXPLORER_SERVICE_NAME}"
 export FINAL_PROXY_SSL_SERVICE="${KEY_NAME_PREFIX}${PROXY_SSL_SERVICE_NAME}"
+export FINAL_VERSIOND_SERVICE="${KEY_NAME_PREFIX}${VERSIOND_SERVICE_NAME}"
+
+
+# Real IP Configuration (Access Control List for trusted proxy hops)
+# Secure-by-default: disabled unless PROXY_REAL_IP_FROM is explicitly configured.
+export PROXY_REAL_IP_FROM=${PROXY_REAL_IP_FROM:-""}
+export PROXY_REAL_IP_HEADER=${PROXY_REAL_IP_HEADER:-"X-Forwarded-For"}
+export PROXY_REAL_IP_RECURSIVE=${PROXY_REAL_IP_RECURSIVE:-"off"}
+REAL_IP_CONFIG=""
+
+if [ -n "$PROXY_REAL_IP_FROM" ]; then
+    # Loop through space-separated CIDRs/IPs and generate directives
+    for ip in $PROXY_REAL_IP_FROM; do
+        REAL_IP_CONFIG="${REAL_IP_CONFIG}
+        set_real_ip_from ${ip};"
+    done
+
+    REAL_IP_CONFIG="${REAL_IP_CONFIG}
+        real_ip_header ${PROXY_REAL_IP_HEADER};
+        real_ip_recursive ${PROXY_REAL_IP_RECURSIVE};"
+else
+    REAL_IP_CONFIG="# real_ip disabled (PROXY_REAL_IP_FROM is empty)"
+fi
+
+export REAL_IP_CONFIG
 
 # Check if dashboard is enabled
 DASHBOARD_ENABLED="false"
@@ -71,7 +100,7 @@ if [ "$SSL_ENABLED" = "true" ]; then
 fi
 
 # Log the configuration being used
-echo "🔧 Nginx Proxy Configuration:"
+echo "Nginx Proxy Configuration:"
 echo "   KEY_NAME: $KEY_NAME"
 echo "   PROXY_ADD_NODE_PREFIX: $PROXY_ADD_NODE_PREFIX"
 echo "   API Service: $FINAL_API_SERVICE:$GONKA_API_PORT"
@@ -91,16 +120,28 @@ else
     echo "   SSL: Disabled"
 fi
 
+# Versiond upstream. The matching /devshard/ location is defined later (after
+# streaming, conn-limit, CORS and timeout vars are set).
+if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
+    echo "   Versiond Service: $FINAL_VERSIOND_SERVICE:$VERSIOND_PORT"
+    export VERSIOND_UPSTREAM="upstream versiond_backend {
+        zone versiond_backend 64k;
+        server ${FINAL_VERSIOND_SERVICE}:${VERSIOND_PORT} resolve;
+    }"
+else
+    export VERSIOND_UPSTREAM="# devshard proxy disabled"
+fi
+
 if [ "$DASHBOARD_ENABLED" = "true" ]; then
     echo "   DASHBOARD_PORT: $DASHBOARD_PORT (enabled)"
     echo "Dashboard: Enabled - root path will proxy to explorer"
-    
+
     # Set up dashboard upstream and root location for enabled dashboard
     export DASHBOARD_UPSTREAM="upstream dashboard_backend {
         zone dashboard_backend 64k;
         server ${FINAL_EXPLORER_SERVICE}:${DASHBOARD_PORT} resolve;
     }"
-    
+
     export ROOT_LOCATION="location / {
             proxy_pass http://dashboard_backend/;
             proxy_set_header Host \$\$host;
@@ -116,10 +157,10 @@ if [ "$DASHBOARD_ENABLED" = "true" ]; then
 else
     echo "   DASHBOARD_PORT: not set (disabled)"
     echo "Dashboard: Disabled - root path will show 'not available' page"
-    
+
     # No dashboard upstream needed
     export DASHBOARD_UPSTREAM="# Dashboard not configured"
-    
+
     # Set up root location for disabled dashboard
     export ROOT_LOCATION="location / {
             return 200 '<!DOCTYPE html>
@@ -155,6 +196,36 @@ else
             add_header Content-Type text/html;
         }"
 fi
+
+# Timeout Configuration (Seconds)
+# Gonka API (Inference/Chat)
+# Connect: 75s (Generous handshake)
+# Transfer: 20m (Long inference)
+export GONKA_API_CONNECT_TIMEOUT=${GONKA_API_CONNECT_TIMEOUT:-75}
+export GONKA_API_TRANSFER_TIMEOUT=${GONKA_API_TRANSFER_TIMEOUT:-1200}
+
+# Chain API/RPC/gRPC
+# Connect: 30s (Standard)
+# Transfer: 2m (Standard)
+export CHAIN_API_CONNECT_TIMEOUT=${CHAIN_API_CONNECT_TIMEOUT:-30}
+export CHAIN_API_TRANSFER_TIMEOUT=${CHAIN_API_TRANSFER_TIMEOUT:-120}
+
+export CHAIN_RPC_CONNECT_TIMEOUT=${CHAIN_RPC_CONNECT_TIMEOUT:-30}
+export CHAIN_RPC_TRANSFER_TIMEOUT=${CHAIN_RPC_TRANSFER_TIMEOUT:-120}
+
+export CHAIN_GRPC_CONNECT_TIMEOUT=${CHAIN_GRPC_CONNECT_TIMEOUT:-30}
+export CHAIN_GRPC_TRANSFER_TIMEOUT=${CHAIN_GRPC_TRANSFER_TIMEOUT:-120}
+
+# Streaming Configuration (Gonka API)
+# Enables real-time token streaming by disabling buffering and enforcing HTTP/1.1
+export STREAMING_CONFIG='
+            # Streaming Support
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_buffering off;
+            proxy_request_buffering off;
+            gzip off;'
 
 # If SSL is intended, ensure certificates are present (attempt issuance if missing)
 if [ "$SSL_ENABLED" = "true" ]; then
@@ -194,10 +265,12 @@ fi
 
 if [ "$ENABLE_HTTPS" = "true" ]; then
     export LISTEN_HTTPS="listen 443 ssl;
-        http2 on;"
+        http2 on;
+        http2_max_concurrent_streams 128;"
     export SSL_CONFIG="ssl_certificate /etc/nginx/ssl/cert.pem;
         ssl_certificate_key /etc/nginx/ssl/private.key;
-        
+        add_header Strict-Transport-Security \"max-age=63072000; includeSubDomains; preload\" always;
+
         # SSL Security Settings
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
@@ -214,28 +287,28 @@ fi
 
 if [ "${DISABLE_GONKA_API}" = "true" ]; then
     export API_STATUS="return 404 'App API Disabled';"
-    echo "   🚫 App API: Disabled"
+    echo "App API: Disabled"
 else
     export API_STATUS=""
 fi
 
 if [ -z "${DISABLE_CHAIN_RPC}" ] || [ "${DISABLE_CHAIN_RPC}" = "true" ]; then
     export CHAIN_RPC_STATUS="return 404 'Chain RPC Disabled';"
-    echo "   🚫 Chain RPC: Disabled"
+    echo "Chain RPC: Disabled"
 else
     export CHAIN_RPC_STATUS=""
 fi
 
 if [ -z "${DISABLE_CHAIN_API}" ] || [ "${DISABLE_CHAIN_API}" = "true" ]; then
     export CHAIN_API_STATUS="return 404 'Chain API Disabled';"
-    echo "   🚫 Chain API: Disabled"
+    echo "Chain API: Disabled"
 else
     export CHAIN_API_STATUS=""
 fi
 
 if [ -z "${DISABLE_CHAIN_GRPC}" ] || [ "${DISABLE_CHAIN_GRPC}" = "true" ]; then
     export CHAIN_GRPC_STATUS="return 404 'Chain gRPC Disabled';"
-    echo "   🚫 Chain gRPC: Disabled"
+    echo "Chain gRPC: Disabled"
 else
     export CHAIN_GRPC_STATUS=""
 fi
@@ -259,16 +332,6 @@ export CORS_CONFIG="
             add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
             add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;"
 
-# Streaming Configuration (Gonka API)
-# Enables real-time token streaming by disabling buffering and enforcing HTTP/1.1
-export STREAMING_CONFIG="
-            # Streaming Support
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade \$http_upgrade;
-            proxy_set_header Connection \$connection_upgrade;
-            proxy_buffering off;
-            proxy_request_buffering off;
-            gzip off;"
 
 # Configure DNS resolver for dynamic upstream re-resolution
 if [ -n "${RESOLVER:-}" ]; then
@@ -318,30 +381,12 @@ CHAIN_GRPC_RATE_LIMIT_VAL=${CHAIN_GRPC_RATE_LIMIT_RPS:-20}
 CHAIN_GRPC_RATE_UNIT=${CHAIN_GRPC_RATE_UNIT:-m}
 CHAIN_GRPC_BURST=${CHAIN_GRPC_BURST:-200}
 
-# Timeout Configuration (Seconds)
-# Gonka API (Inference/Chat)
-# Connect: 75s (Generous handshake)
-# Transfer: 20m (Long inference)
-export GONKA_API_CONNECT_TIMEOUT=${GONKA_API_CONNECT_TIMEOUT:-75}
-export GONKA_API_TRANSFER_TIMEOUT=${GONKA_API_TRANSFER_TIMEOUT:-1200}
 
-# Chain API/RPC/gRPC
-# Connect: 30s (Standard)
-# Transfer: 2m (Standard)
-export CHAIN_API_CONNECT_TIMEOUT=${CHAIN_API_CONNECT_TIMEOUT:-30}
-export CHAIN_API_TRANSFER_TIMEOUT=${CHAIN_API_TRANSFER_TIMEOUT:-120}
-
-export CHAIN_RPC_CONNECT_TIMEOUT=${CHAIN_RPC_CONNECT_TIMEOUT:-30}
-export CHAIN_RPC_TRANSFER_TIMEOUT=${CHAIN_RPC_TRANSFER_TIMEOUT:-120}
-
-export CHAIN_GRPC_CONNECT_TIMEOUT=${CHAIN_GRPC_CONNECT_TIMEOUT:-30}
-export CHAIN_GRPC_TRANSFER_TIMEOUT=${CHAIN_GRPC_TRANSFER_TIMEOUT:-120}
-
-echo "   ⏱️  Timeouts (Connect/Transfer):"
-echo "      App API: ${GONKA_API_CONNECT_TIMEOUT}s / ${GONKA_API_TRANSFER_TIMEOUT}s"
-echo "      Chain API: ${CHAIN_API_CONNECT_TIMEOUT}s / ${CHAIN_API_TRANSFER_TIMEOUT}s"
-echo "      Chain RPC: ${CHAIN_RPC_CONNECT_TIMEOUT}s / ${CHAIN_RPC_TRANSFER_TIMEOUT}s"
-echo "      Chain gRPC: ${CHAIN_GRPC_CONNECT_TIMEOUT}s / ${CHAIN_GRPC_TRANSFER_TIMEOUT}s"
+echo "Timeouts (Connect/Transfer):"
+echo "   App API: ${GONKA_API_CONNECT_TIMEOUT}s / ${GONKA_API_TRANSFER_TIMEOUT}s"
+echo "   Chain API: ${CHAIN_API_CONNECT_TIMEOUT}s / ${CHAIN_API_TRANSFER_TIMEOUT}s"
+echo "   Chain RPC: ${CHAIN_RPC_CONNECT_TIMEOUT}s / ${CHAIN_RPC_TRANSFER_TIMEOUT}s"
+echo "   Chain gRPC: ${CHAIN_GRPC_CONNECT_TIMEOUT}s / ${CHAIN_GRPC_TRANSFER_TIMEOUT}s"
 
 # Route Blocking Configuration
 GONKA_API_BLOCKED_ROUTES=${GONKA_API_BLOCKED_ROUTES:-"poc-batches"}
@@ -349,27 +394,144 @@ CHAIN_API_BLOCKED_ROUTES=${CHAIN_API_BLOCKED_ROUTES:-""}
 CHAIN_RPC_BLOCKED_ROUTES=${CHAIN_RPC_BLOCKED_ROUTES:-""}
 CHAIN_GRPC_BLOCKED_ROUTES=${CHAIN_GRPC_BLOCKED_ROUTES:-""}
 
-echo "   🛡️ Rate Limits:"
-echo "      Global: ${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT} (burst=${GLOBAL_BURST})"
-echo "      App API (Standard): ${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT} (burst=${GONKA_API_BURST})"
-echo "      App API (Exempt): ${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT} (burst=${EXEMPT_BURST}) -> [${GONKA_API_EXEMPT_ROUTES}]"
-echo "      Chain API: ${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT} (burst=${CHAIN_API_BURST})"
-echo "      Chain RPC: ${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT} (burst=${CHAIN_RPC_BURST})"
-echo "      Chain gRPC: ${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT} (burst=${CHAIN_GRPC_BURST})"
-echo "   ⛔ Blocked Routes:"
-echo "      App API: [${GONKA_API_BLOCKED_ROUTES}]"
-echo "      Chain API: [${CHAIN_API_BLOCKED_ROUTES}]"
-echo "      Chain RPC: [${CHAIN_RPC_BLOCKED_ROUTES}]"
-echo "      Chain gRPC: [${CHAIN_GRPC_BLOCKED_ROUTES}]"
+echo "Rate Limits:"
+echo "   Global: ${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT} (burst=${GLOBAL_BURST})"
+echo "   App API (Standard): ${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT} (burst=${GONKA_API_BURST})"
+echo "   App API (Exempt): ${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT} (burst=${EXEMPT_BURST}) -> [${GONKA_API_EXEMPT_ROUTES}]"
+echo "   Chain API: ${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT} (burst=${CHAIN_API_BURST})"
+echo "   Chain RPC: ${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT} (burst=${CHAIN_RPC_BURST})"
+echo "   Chain gRPC: ${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT} (burst=${CHAIN_GRPC_BURST})"
+echo "Blocked Routes:"
+echo "   App API: [${GONKA_API_BLOCKED_ROUTES}]"
+echo "   Chain API: [${CHAIN_API_BLOCKED_ROUTES}]"
+echo "   Chain RPC: [${CHAIN_RPC_BLOCKED_ROUTES}]"
+echo "   Chain gRPC: [${CHAIN_GRPC_BLOCKED_ROUTES}]"
 
 # Define Zones
-# Use $$binary_remote_addr so it persists after first envsubst
-export LIMIT_REQ_ZONE_GLOBAL="limit_req_zone \$\$binary_remote_addr zone=global_zone:10m rate=${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT};"
-export LIMIT_REQ_ZONE_GONKA_API="limit_req_zone \$\$binary_remote_addr zone=api_zone:10m rate=${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT};"
-export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$binary_remote_addr zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
-export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$binary_remote_addr zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
-export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$binary_remote_addr zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
-export LIMIT_REQ_ZONE_CHAIN_GRPC="limit_req_zone \$\$binary_remote_addr zone=grpc_zone:10m rate=${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT};"
+# Use $$whitelist_limit_key so it persists after first envsubst
+export LIMIT_REQ_ZONE_GLOBAL="limit_req_zone \$\$whitelist_limit_key zone=global_zone:10m rate=${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT};"
+export LIMIT_REQ_ZONE_GONKA_API="limit_req_zone \$\$whitelist_limit_key zone=api_zone:10m rate=${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT};"
+export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$whitelist_limit_key zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
+export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$whitelist_limit_key zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
+export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$whitelist_limit_key zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
+export LIMIT_REQ_ZONE_CHAIN_GRPC="limit_req_zone \$\$whitelist_limit_key zone=grpc_zone:10m rate=${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT};"
+
+# --------------------------------------------------------------------------------
+# Concurrency Limiting (Connection Limits)
+# --------------------------------------------------------------------------------
+ENABLE_CONN_LIMITS=${ENABLE_CONN_LIMITS:-"true"}
+GLOBAL_CONN_LIMIT=${GLOBAL_CONN_LIMIT:-500}
+GONKA_API_CONN_LIMIT=${GONKA_API_CONN_LIMIT:-100}
+EXEMPT_CONN_LIMIT=${EXEMPT_CONN_LIMIT:-300}
+CHAIN_RPC_CONN_LIMIT=${CHAIN_RPC_CONN_LIMIT:-20}
+CHAIN_API_CONN_LIMIT=${CHAIN_API_CONN_LIMIT:-20}
+CHAIN_GRPC_CONN_LIMIT=${CHAIN_GRPC_CONN_LIMIT:-20}
+
+# Define Zones (Always available to prevent template errors)
+export LIMIT_CONN_ZONE_GLOBAL="limit_conn_zone \$\$whitelist_limit_key zone=conn_global:10m;"
+export LIMIT_CONN_ZONE_GONKA_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_api:10m;"
+export LIMIT_CONN_ZONE_EXEMPT="limit_conn_zone \$\$whitelist_limit_key zone=conn_exempt:10m;"
+export LIMIT_CONN_ZONE_CHAIN_RPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_rpc:10m;"
+export LIMIT_CONN_ZONE_CHAIN_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_chain_api:10m;"
+export LIMIT_CONN_ZONE_CHAIN_GRPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_grpc:10m;"
+
+# Define Rules (Conditional)
+if [ "$ENABLE_CONN_LIMITS" = "true" ]; then
+    export LIMIT_CONN_RULE_GLOBAL="limit_conn conn_global ${GLOBAL_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_GONKA_API="limit_conn conn_api ${GONKA_API_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_EXEMPT="limit_conn conn_exempt ${EXEMPT_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_CHAIN_RPC="limit_conn conn_rpc ${CHAIN_RPC_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_CHAIN_API="limit_conn conn_chain_api ${CHAIN_API_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_CHAIN_GRPC="limit_conn conn_grpc ${CHAIN_GRPC_CONN_LIMIT};"
+    echo "Concurrency Limits: Enabled"
+else
+    # Disabled - Empty strings result in no directive in Nginx
+    export LIMIT_CONN_RULE_GLOBAL=""
+    export LIMIT_CONN_RULE_GONKA_API=""
+    export LIMIT_CONN_RULE_EXEMPT=""
+    export LIMIT_CONN_RULE_CHAIN_RPC=""
+    export LIMIT_CONN_RULE_CHAIN_API=""
+    export LIMIT_CONN_RULE_CHAIN_GRPC=""
+    echo "Concurrency Limits: Disabled"
+fi
+
+# /devshard/ location -- forwards to versiond which dispatches to the matching
+# child binary. Treated as exempt (inference forwarding): streaming, long
+# timeouts, exempt rate/conn limits, CORS.
+if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
+    export DEVSHARD_VERSIOND_LOCATION="location /devshard/ {
+            set \$limit_zone_name \"EXEMPT\";
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend/;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            # Extended timeouts for inference API (devshard forwarding)
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+else
+    export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
+fi
+
+# --------------------------------------------------------------------------------
+# Fail2Ban Configuration (Sidecar)
+# --------------------------------------------------------------------------------
+# Validator nginx whitelist / Fail2Ban: same semantics as DISABLE_CHAIN_* -- unset or true = off, false = on.
+export DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
+export DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+export FAIL2BAN_BAN_DURATION=${FAIL2BAN_BAN_DURATION:-"10m"}
+# Note: Retries is used as the "Score Threshold" (e.g. 20 points)
+export FAIL2BAN_MAX_RETRIES=${FAIL2BAN_MAX_RETRIES:-20}
+
+# Scoring Weights
+export FAIL2BAN_SCORE_401=${FAIL2BAN_SCORE_401:-5}
+export FAIL2BAN_SCORE_403=${FAIL2BAN_SCORE_403:-5}
+export FAIL2BAN_SCORE_400=${FAIL2BAN_SCORE_400:-2}
+
+# Initialize default whitelist properties (Fail-Safe: Apply limits to everyone by default)
+# This ensures that if the sidecar is slow to start, Nginx doesn't fail or run open.
+if [ ! -s /etc/nginx/conf.d/whitelist_ips.conf ]; then
+    echo "geo \$whitelist_limit_key { default \$binary_remote_addr; }" > /etc/nginx/conf.d/whitelist_ips.conf
+    echo "geo \$whitelist_log_type { default \"EXT\"; }" >> /etc/nginx/conf.d/whitelist_ips.conf
+fi
+
+# Initialize JSON Log file for Sidecar
+touch /var/log/nginx/access_json.log
+chmod 644 /var/log/nginx/access_json.log
+
+# Initialize Blacklist file (Startup Integrity)
+# Start with a clean slate for bans on every restart
+# This ensures that bans are ephemeral and cleared on reboot/deployment
+echo "geo \$is_banned { default 0; }" > /etc/nginx/conf.d/blacklist_ips.conf
+chmod 644 /etc/nginx/conf.d/blacklist_ips.conf
+
+# Start sidecar in background with auto-restart logic
+if [ "$DISABLE_VALIDATOR_WHITELIST" = "false" ]; then
+    echo "Proxy sidecar: validator IP whitelist sync enabled (DISABLE_VALIDATOR_WHITELIST=false)"
+else
+    echo "Proxy sidecar: validator IP whitelist disabled (default; set DISABLE_VALIDATOR_WHITELIST=false to enable)"
+fi
+if [ "$DISABLE_FAIL2BAN" = "false" ]; then
+    echo "Proxy sidecar: Fail2Ban-style IP banning enabled (DISABLE_FAIL2BAN=false)"
+else
+    echo "Proxy sidecar: Fail2Ban-style IP banning disabled (set DISABLE_FAIL2BAN=false to enable)"
+fi
+(
+    while true; do
+        /usr/local/bin/sidecar || echo "Sidecar crashed with exit code $?"
+        echo "Sidecar restarting in 5s..."
+        sleep 5
+    done
+) &
 
 # Define Rules
 export LIMIT_REQ_RULE_GLOBAL="limit_req zone=global_zone burst=${GLOBAL_BURST} nodelay;"
@@ -413,10 +575,12 @@ append_exempt_location() {
 
     for route in $routes; do
         clean_route=$(echo "$route" | sed 's|^/||')
-        
+
         EXEMPT_ROUTES_CONFIG="${EXEMPT_ROUTES_CONFIG}
     location ${prefix}${clean_route} {
+        set \$limit_zone_name \"EXEMPT\";
         limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+        ${LIMIT_CONN_RULE_EXEMPT}
         ${status_check}
         "
 
@@ -445,9 +609,9 @@ append_exempt_location() {
         proxy_set_header X-Forwarded-Proto \$\$scheme;
         proxy_set_header Authorization \$\$http_authorization;
         ${CORS_CONFIG}
-        
+
         ${extra_config}
-        
+
         # Timeouts corresponding to zone
         proxy_connect_timeout ${connect_timeout}s;
         proxy_read_timeout ${transfer_timeout}s;
@@ -479,7 +643,7 @@ APP_EXEMPT_PREFIXES=""
 for v in $API_VERSIONS; do
     # 1. Accumulate Prefixes for Blocked/Exempt Logic
     APP_BLOCKED_PREFIXES="${APP_BLOCKED_PREFIXES} /api/${v}/ /${v}/"
-    
+
     # 2. Append Exempt Locations (Gonka API) using helper
     # We pass STREAMING_CONFIG as the extra_config argument
     append_exempt_location "$GONKA_API_EXEMPT_ROUTES" "/api/${v}/" "http://api_backend/${v}/" "${API_STATUS}" "http" "$GONKA_API_CONNECT_TIMEOUT" "$GONKA_API_TRANSFER_TIMEOUT" "${STREAMING_CONFIG}"
@@ -490,7 +654,9 @@ for v in $API_VERSIONS; do
     API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
         # Direct API ${v} routes
         location /${v}/ {
+            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
+            ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
             proxy_pass http://api_backend/${v}/;
             proxy_set_header Host \$\$host;
@@ -510,7 +676,9 @@ for v in $API_VERSIONS; do
 
         # API ${v} routes (via /api/ prefix) - Explicitly defined to ensure longest-prefix match wins over generic /api/
         location /api/${v}/ {
+            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
+            ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
             proxy_pass http://api_backend/${v}/;
             proxy_set_header Host \$\$host;
@@ -567,9 +735,7 @@ export EXEMPT_ROUTES_CONFIG
 
 # Construct envsubst variable list for readability
 # Group 1: Core Configuration & Naming
-# Construct envsubst variable list for readability
-# Group 1: Core Configuration & Naming
-ENVSUBST_VARS='$KEY_NAME,$KEY_NAME_PREFIX,$SERVER_NAME,$DOMAIN_NAME,$RESOLVER_DIRECTIVE,$CORS_CONFIG,$STREAMING_CONFIG'
+ENVSUBST_VARS='$KEY_NAME,$KEY_NAME_PREFIX,$SERVER_NAME,$DOMAIN_NAME,$RESOLVER_DIRECTIVE,$CORS_CONFIG,$STREAMING_CONFIG,$REAL_IP_CONFIG'
 
 # Group 2: Ports & Services
 ENVSUBST_VARS="${ENVSUBST_VARS},\$GONKA_API_PORT,\$CHAIN_RPC_PORT,\$CHAIN_API_PORT,\$CHAIN_GRPC_PORT"
@@ -586,6 +752,12 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$DASHBOARD_PORT,\$DASHBOARD_UPSTREAM,\$ROOT_LOC
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_CHAIN_RPC,\$LIMIT_REQ_ZONE_CHAIN_API,\$LIMIT_REQ_ZONE_CHAIN_GRPC"
 
+# Group 5b: Concurrency Zones and Rules
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_ZONE_GLOBAL,\$LIMIT_CONN_ZONE_GONKA_API,\$LIMIT_CONN_ZONE_EXEMPT"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_ZONE_CHAIN_RPC,\$LIMIT_CONN_ZONE_CHAIN_API,\$LIMIT_CONN_ZONE_CHAIN_GRPC"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_RULE_GLOBAL,\$LIMIT_CONN_RULE_GONKA_API,\$LIMIT_CONN_RULE_CHAIN_RPC"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_RULE_CHAIN_API,\$LIMIT_CONN_RULE_CHAIN_GRPC"
+
 # Group 7: Timeouts
 ENVSUBST_VARS="${ENVSUBST_VARS},\$GONKA_API_CONNECT_TIMEOUT,\$GONKA_API_TRANSFER_TIMEOUT"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$CHAIN_API_CONNECT_TIMEOUT,\$CHAIN_API_TRANSFER_TIMEOUT"
@@ -596,6 +768,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$CHAIN_GRPC_CONNECT_TIMEOUT,\$CHAIN_GRPC_TRANSF
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_GLOBAL,\$LIMIT_REQ_RULE_GONKA_API"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_CHAIN_RPC,\$LIMIT_REQ_RULE_CHAIN_API,\$LIMIT_REQ_RULE_CHAIN_GRPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
 envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
@@ -610,10 +783,10 @@ else
         ENABLE_HTTPS="false"
         export LISTEN_HTTPS="# HTTPS disabled"
         export SSL_CONFIG="# SSL disabled"
-        
+
         # Retry rendering with HTTP-only settings
         envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
-        
+
         if nginx -t; then
             echo "SUCCESS: Nginx configuration is valid (HTTP-only fallback)"
         else
@@ -622,14 +795,14 @@ else
         fi
     else
         echo "ERROR: Nginx configuration is invalid and no fallback available"
-        echo "💥 DEBUG: showing lines around failure (check line number from error above):"
+        echo "DEBUG: showing lines around failure (check line number from error above):"
         grep -nC 5 "proxy_http_version" /etc/nginx/nginx.conf | head -n 20
         echo "--- End Debug ---"
         exit 1
     fi
 fi
 
-echo "🌐 Available endpoints:"
+echo "Available endpoints:"
 if [ "$DASHBOARD_ENABLED" = "true" ]; then
     echo "   / (root)       -> Explorer dashboard"
 else
@@ -639,7 +812,10 @@ echo "   /api/*         -> API backend"
 echo "   /chain-rpc/*   -> Chain RPC"
 echo "   /chain-api/*   -> Chain REST API"
 echo "   /chain-grpc/*  -> Chain gRPC"
+if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
+    echo "   /devshard/*    -> Versiond (devshard binaries)"
+fi
 echo "   /health        -> Health check"
 
 # Execute the command passed to the container
-exec "$@" 
+exec "$@"

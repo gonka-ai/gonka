@@ -22,6 +22,25 @@ import kotlin.io.path.deleteRecursively
 import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
+
+/**
+ * Retry container lookup with exponential backoff.
+ * Docker containers may not be immediately visible after `docker compose up`.
+ */
+fun retryGetCli(config: ApplicationConfig, pairName: String, maxAttempts: Int = 5): ApplicationCLI {
+    var delay = 2000L // start at 2s
+    for (attempt in 1..maxAttempts) {
+        val containers = getRawContainers(config)
+        val cli = containers.getCli(pairName)
+        if (cli != null) return cli
+        if (attempt < maxAttempts) {
+            Logger.warn("Container not found for keyName={}, retrying in {}ms (attempt {}/{})", pairName, delay, attempt, maxAttempts)
+            Thread.sleep(delay)
+            delay = (delay * 2).coerceAtMost(15000L)
+        }
+    }
+    error("Could not find node container for keyName=$pairName after $maxAttempts attempts")
+}
 const val LOCAL_TEST_NET_DIR = "local-test-net"
 val DNS_COMPOSE_FILES = listOf(
     "$LOCAL_TEST_NET_DIR/docker-compose.dns.yml",
@@ -29,7 +48,6 @@ val DNS_COMPOSE_FILES = listOf(
 )
 val BASE_COMPOSE_FILES = listOf(
     "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
-    "${LOCAL_TEST_NET_DIR}/docker-compose.proxy.yml"
 )
 val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml" + DNS_COMPOSE_FILES
 val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml" + DNS_COMPOSE_FILES
@@ -47,6 +65,7 @@ data class DockerGroup(
     val mlPort: Int,
     val adminPort: Int,
     val natsPort: Int,
+    val nodeManagerGrpcPort: Int,
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val mockExternalPort: Int,
@@ -56,7 +75,13 @@ data class DockerGroup(
     val workingDirectory: String,
     val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
-    val publicUrl: String = "http://$pairName-api:9000",
+    // publicUrl is what dapi registers on chain as its participant.inference_url.
+    // Mirrors production: chain points at the per-pair proxy, which routes
+    // /v1/devshard/* to dapi (legacy in-process HostManager via the exempt
+    // route mechanism) and /devshard/<version>/* to versiond when configured.
+    val publicUrl: String = "http://$pairName-proxy",
+    // pocCallbackUrl stays direct -- it's an internal mlnode -> dapi callback
+    // on the ML server port, never routed through nginx.
     val pocCallbackUrl: String = "http://$pairName-api:9100",
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
@@ -168,18 +193,20 @@ data class DockerGroup(
         if (!isGenesis) {
             Thread.sleep(Duration.ofSeconds(10))
 
-            val containers = getRawContainers(config)
-            val node =
-                containers.getCli(this.pairName) ?: error("Could not find node container for keyName=${this.pairName}")
-            val validatorKey = (1..5).fold<Int, String?>(null) { acc, _ ->
-                acc ?: try {
-                    node.getValidatorInfo().key
-                } catch (e: com.google.gson.JsonSyntaxException) {
+            val node = retryGetCli(config, this.pairName)
+            val validatorDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
+            var validatorKey: String? = null
+            while (validatorKey == null) {
+                try {
+                    validatorKey = node.getValidatorInfo().key
+                } catch (e: Exception) {
                     Logger.warn("Validator key not yet available, waiting 5 seconds and trying again", "")
+                    if (System.nanoTime() >= validatorDeadline) {
+                        throw IllegalStateException("Failed to get validator info within 90 seconds", e)
+                    }
                     Thread.sleep(Duration.ofSeconds(5))
-                    null
                 }
-            } ?: throw IllegalStateException("Failed to get validator info after 3 attempts")
+            }
             node.registerNewParticipant(
                 publicUrl,
                 accountPubKey,
@@ -188,7 +215,15 @@ data class DockerGroup(
             )
             node.waitForNextBlock(2)
             node.grantMlOpsPermissionsToWarmAccount()
-            val startRemainingArgs = baseArgs + listOf("api", "mock-server", "proxy")
+            // Services to start after registration. Proxy is in base compose
+            // and started by "up -d" without explicit naming. Versiond is
+            // added when this pair's additional compose files include it.
+            val joinServices = mutableListOf("api", "mock-server", "proxy")
+            val additionalForPair = config.additionalDockerFilesByKeyName[pairName] ?: emptyList()
+            if (additionalForPair.any { it.contains("versiond") }) {
+                joinServices.add("versiond")
+            }
+            val startRemainingArgs = baseArgs + joinServices
             this.coldAccountPubkey = node.getColdPubKey()
             dockerProcess(*startRemainingArgs.toTypedArray()).start().waitFor()
             Thread.sleep(Duration.ofSeconds(10))
@@ -222,9 +257,16 @@ data class DockerGroup(
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
         return buildMap {
             put("KEY_NAME", coldKeyName)
+            put("VERSIOND_SIGNER_KEY_NAME", if (isGenesis) coldKeyName else warmKeyName)
+            // Per-pair keyring backend. Genesis api creates its key inside the
+            // container with `test` backend (init-docker.sh CREATE_KEY=true).
+            // Joins create with `file` backend externally via createColdKey.
+            // Setting it unconditionally lets sibling processes (devshardd)
+            // load the key with the matching backend; existing dapi behavior
+            // is preserved because the value matches what dapi already used.
+            put("KEYRING_BACKEND", if (isGenesis) "test" else "file")
             coldAccountPubkey?.let {
                 put("ACCOUNT_PUBKEY", it)
-                put("KEYRING_BACKEND", "file")
                 put("KEYRING_PASSWORD", warmKeyPassword)
                 put("CREATE_KEY", "false")
                 // KEY_NAME in our docker/compose files is used as pair-name a LOT. We will need to unwind this
@@ -243,6 +285,7 @@ data class DockerGroup(
             put("DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE", "1")
             put("DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_TIMEOUT_SECONDS", "1")
             put("DAPI_TX_BATCHING__POC_COMMIT_INTERVAL_SECONDS", "1")
+            put("DAPI_STATS_FILE_STORAGE_ENABLED", "true")
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
             put("PUBLIC_URL", publicUrl)
@@ -250,6 +293,7 @@ data class DockerGroup(
             put("ML_SERVER_PORT", mlPort.toString())
             put("ADMIN_SERVER_PORT", adminPort.toString())
             put("NATS_SERVER_PORT", natsPort.toString())
+            put("NODE_MANAGER_GRPC_PORT", nodeManagerGrpcPort.toString())
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", mockExternalPort.toString())
@@ -260,6 +304,7 @@ data class DockerGroup(
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
             put("SNAPSHOT_KEEP_RECENT", "5")
+            put("REST_API_ACTIVE", "true")
             put("P2P_EXTERNAL_ADDRESS", p2pExternalAddress)
 
             genesisGroup?.let {
@@ -272,6 +317,11 @@ data class DockerGroup(
                 put("SEED_NODE_P2P_URL", it.p2pUrl)
                 put("SEED_API_URL", it.apiUrl)
             }
+
+            // Test-supplied extras applied last so they override defaults.
+            // DevshardStandaloneTests uses this to set VERSIOND_BINARY_NAME,
+            // VERSIOND_FORCE, VERSIOND_OVERRIDE_v0_2_11, VERSIOND_SERVICE_NAME.
+            putAll(config.additionalEnvVars)
         }
     }
 
@@ -380,6 +430,7 @@ fun createDockerGroup(
         mlPort = 9001 + iteration,
         adminPort = 9002 + iteration,
         natsPort = 9004 + iteration,
+        nodeManagerGrpcPort = 9400 + iteration,
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         mockExternalPort = 8090 + iteration,
@@ -395,11 +446,19 @@ fun createDockerGroup(
 }
 
 fun getRepoRoot(): String {
-    val currentDir = Path.of("").toAbsolutePath()
+    // Allow an explicit override so worktrees / additional checkouts (e.g.
+    // gonka-2) can run tests without renaming their directory.
+    System.getenv("GONKA_REPO_ROOT")?.takeIf { it.isNotBlank() }?.let { return it }
+
+    val currentDir = Path.of("").toAbsolutePath().normalize()
     return generateSequence(currentDir) { it.parent }
-        .firstOrNull { it.fileName.toString() == "gonka" }
+        .firstOrNull { candidate ->
+            Files.isDirectory(candidate.resolve("testermint")) &&
+                Files.isDirectory(candidate.resolve("local-test-net")) &&
+                Files.isDirectory(candidate.resolve("versioned"))
+        }
         ?.toString()
-        ?: throw IllegalStateException("Repository root 'gonka' not found")
+        ?: throw IllegalStateException("Repository root not found from $currentDir (set GONKA_REPO_ROOT to override)")
 }
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentCluster: LocalCluster?): List<DockerGroup> {
@@ -427,8 +486,28 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         Logger.info("Initializing cluster with {} nodes", allGroups.size)
         allGroups.forEach { it.tearDownExisting() }
         genesisGroup.init()
-        // TODO: can we wait here by querying the genesis API?
         Thread.sleep(Duration.ofSeconds(30L))
+        val genesisNode = retryGetCli(config, genesisGroup.pairName)
+        Logger.info("Waiting for genesis RPC readiness", "")
+        val readinessDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos()
+        while (true) {
+            try {
+                if (genesisNode.getStatus().syncInfo.latestBlockHeight >= 1) {
+                    break
+                }
+            } catch (e: Exception) {
+                Logger.debug("Genesis RPC not ready yet: ${e.message}", "")
+            }
+            if (System.nanoTime() >= readinessDeadline) {
+                error("Genesis RPC did not become ready within 90 seconds")
+            }
+            Thread.sleep(1000)
+        }
+        val genesisPair = getLocalInferencePairs(config)
+            .firstOrNull { it.name == genesisGroup.pairName || it.name == "/${genesisGroup.pairName}" }
+            ?: error("Could not find local inference pair for keyName=${genesisGroup.pairName}")
+        Logger.info("Waiting for genesis API and ML nodes readiness", "")
+        genesisPair.waitForMlNodesToLoad(maxWaitAttempts = 18)
         joinGroups.forEach { it.init() }
         return allGroups
     } finally {
@@ -511,7 +590,7 @@ fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
         Logger.error("Expected exactly one genesis pair, found ${genesis.size}", "")
     }
     return genesis.singleOrNull()?.let {
-        LocalCluster(it, join)
+        LocalCluster(it, join.sortedBy { it.name })
     }
 }
 

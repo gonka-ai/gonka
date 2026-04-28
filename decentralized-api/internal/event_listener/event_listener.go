@@ -11,8 +11,7 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
-	"decentralized-api/training"
+	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"errors"
@@ -30,6 +29,8 @@ const (
 	// BLS Typed Event Types (from EmitTypedEvent)
 	blsKeyGenerationInitiatedEvent    = "inference.bls.EventKeyGenerationInitiated"
 	blsVerifyingPhaseStartedEvent     = "inference.bls.EventVerifyingPhaseStarted"
+	blsDisputePhaseStartedEvent       = "inference.bls.EventDisputePhaseStarted"
+	blsDKGFailedEvent                 = "inference.bls.EventDKGFailed"
 	blsGroupPublicKeyGeneratedEvent   = "inference.bls.EventGroupPublicKeyGenerated"
 	blsThresholdSigningRequestedEvent = "inference.bls.EventThresholdSigningRequested"
 
@@ -44,13 +45,13 @@ type EventListener struct {
 	configManager         *apiconfig.ConfigManager
 	validator             *validation.InferenceValidator
 	transactionRecorder   cosmosclient.InferenceCosmosClient
-	trainingExecutor      *training.Executor
 	blsManager            *bls.BlsManager
 	nodeCaughtUp          atomic.Bool
 	phaseTracker          *chainphase.ChainPhaseTracker
 	dispatcher            *OnNewBlockDispatcher
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
+	statsStorage          statsstorage.StatsStorage
 
 	eventHandlers []EventHandler
 
@@ -58,22 +59,30 @@ type EventListener struct {
 	blockObserver *BlockObserver
 }
 
+type EventListenerOption func(*EventListener)
+
+func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
+	return func(el *EventListener) {
+		el.statsStorage = storage
+	}
+}
+
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	pocOrchestrator poc.Orchestrator,
+	offChainValidator pocValidator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
-	trainingExecutor *training.Executor,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
 	blsManager *bls.BlsManager,
+	opts ...EventListenerOption,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
 		nodeBroker,
 		configManager,
-		pocOrchestrator,
+		offChainValidator,
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
@@ -83,19 +92,18 @@ func NewEventListener(
 	eventHandlers := []EventHandler{
 		&BlsTransactionEventHandler{},
 		&InferenceFinishedEventHandler{},
+		&InferenceStatusUpdatedEventHandler{},
 		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
-		&TrainingTaskAssignedEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
 
-	return &EventListener{
+	el := &EventListener{
 		nodeBroker:            nodeBroker,
 		transactionRecorder:   transactionRecorder,
 		configManager:         configManager,
 		validator:             validator,
-		trainingExecutor:      trainingExecutor,
 		phaseTracker:          phaseTracker,
 		dispatcher:            dispatcher,
 		cancelFunc:            cancelFunc,
@@ -104,6 +112,10 @@ func NewEventListener(
 		blockObserver:         bo,
 		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, validator, configManager),
 	}
+	for _, opt := range opts {
+		opt(el)
+	}
+	return el
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
@@ -355,7 +367,7 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Key generation initiated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessKeyGenerationInitiated(event)
 		if err != nil {
-			logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process key generation initiated event", err, workerName)
 		}
 	}
 
@@ -363,7 +375,23 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Verifying phase started event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessVerifyingPhaseStarted(event)
 		if err != nil {
-			logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process verifying phase started event", err, workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsDisputePhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("Dispute phase started event received", types.EventProcessing, "worker", workerName)
+		err := el.blsManager.ProcessDisputePhaseStarted(event)
+		if err != nil {
+			el.logBLSEventError("Failed to process dispute phase started event", err, workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsDKGFailedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("DKG failed event received", types.EventProcessing, "worker", workerName)
+		err := el.blsManager.ProcessDKGFailed(event)
+		if err != nil {
+			el.logBLSEventError("Failed to process DKG failed event", err, workerName)
 		}
 	}
 
@@ -371,9 +399,19 @@ func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, wor
 		logging.Info("Group public key generated event received", types.EventProcessing, "worker", workerName)
 		err := el.blsManager.ProcessGroupPublicKeyGenerated(event)
 		if err != nil {
-			logging.Error("Failed to process group public key generated event", types.EventProcessing, "error", err, "worker", workerName)
+			el.logBLSEventError("Failed to process group public key generated event", err, workerName)
 		}
 	}
+}
+
+func (el *EventListener) logBLSEventError(message string, err error, workerName string) {
+	if errors.Is(err, bls.ErrOperationQueuedForRetry) {
+		logging.Warn(message+" (queued for async retry)", types.EventProcessing,
+			"error", err,
+			"worker", workerName)
+		return
+	}
+	logging.Error(message, types.EventProcessing, "error", err, "worker", workerName)
 }
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
@@ -430,10 +468,198 @@ func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCRespons
 	if el.isNodeSynced() {
 		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
 	}
+	if el.statsStorage == nil {
+		return nil
+	}
+	records, err := parseInferenceFinishedRecords(event.Result.Events)
+	if err != nil {
+		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
+		return nil
+	}
+	for _, rec := range records {
+		if err := el.statsStorage.UpsertInference(context.Background(), rec); err != nil {
+			logging.Error("Failed to upsert inference_finished record to stats storage", types.EventProcessing,
+				"inference_id", rec.InferenceID, "error", err)
+		}
+	}
 	return nil
 }
 
+func parseInferenceFinishedRecords(events map[string][]string) ([]statsstorage.InferenceRecord, error) {
+	ids := events["inference_finished.inference_id"]
+	if len(ids) == 0 {
+		return nil, errors.New("missing inference_finished.inference_id")
+	}
+
+	records := make([]statsstorage.InferenceRecord, 0, len(ids))
+	for i, id := range ids {
+		var (
+			rec statsstorage.InferenceRecord
+			ok  bool
+			err error
+		)
+		rec.InferenceID = id
+		rec.RequestedBy, ok = getEventValue(events, "inference_finished.requested_by", i)
+		if !ok {
+			return nil, fmt.Errorf("missing requested_by for inference %s", id)
+		}
+		rec.Model, ok = getEventValue(events, "inference_finished.model", i)
+		if !ok {
+			return nil, fmt.Errorf("missing model for inference %s", id)
+		}
+		rec.Status, ok = getEventValue(events, "inference_finished.status", i)
+		if !ok {
+			return nil, fmt.Errorf("missing status for inference %s", id)
+		}
+		rec.EpochID, err = parseEventUint64(events, "inference_finished.epoch_id", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse epoch_id for inference %s: %w", id, err)
+		}
+		rec.PromptTokenCount, err = parseEventUint64(events, "inference_finished.prompt_token_count", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse prompt_token_count for inference %s: %w", id, err)
+		}
+		rec.CompletionTokenCount, err = parseEventUint64(events, "inference_finished.completion_token_count", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse completion_token_count for inference %s: %w", id, err)
+		}
+		rec.ActualCostInCoins, err = parseEventInt64(events, "inference_finished.actual_cost_in_coins", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse actual_cost_in_coins for inference %s: %w", id, err)
+		}
+		rec.StartBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.start_block_timestamp", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse start_block_timestamp for inference %s: %w", id, err)
+		}
+		rec.EndBlockTimestamp, err = parseEventUnixMillis(events, "inference_finished.end_block_timestamp", i)
+		if err != nil {
+			return nil, fmt.Errorf("parse end_block_timestamp for inference %s: %w", id, err)
+		}
+		rec.TotalTokenCount = rec.PromptTokenCount + rec.CompletionTokenCount
+		rec.InferenceTimestamp = rec.EndBlockTimestamp
+		if rec.InferenceTimestamp == 0 {
+			rec.InferenceTimestamp = rec.StartBlockTimestamp
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+func getEventValue(events map[string][]string, key string, idx int) (string, bool) {
+	values := events[key]
+	if len(values) == 0 {
+		return "", false
+	}
+	if idx < len(values) {
+		return values[idx], true
+	}
+	return "", false
+}
+
+func parseEventUint64(events map[string][]string, key string, idx int) (uint64, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
+}
+
+func parseEventUnixMillis(events map[string][]string, key string, idx int) (statsstorage.UnixMillis, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if parsed != 0 && parsed < statsstorage.UnixMillisTimestampThreshold {
+		return 0, fmt.Errorf("timestamp is in seconds %s", v)
+	}
+	return statsstorage.UnixMillis(parsed), nil
+}
+
+func parseEventInt64(events map[string][]string, key string, idx int) (int64, error) {
+	v, ok := getEventValue(events, key, idx)
+	if !ok {
+		return 0, fmt.Errorf("missing key %s", key)
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
+}
+
 type InferenceValidationEventHandler struct {
+}
+
+type inferenceStatusUpdateRecord struct {
+	InferenceID string
+	Status      string
+}
+
+type InferenceStatusUpdatedEventHandler struct {
+}
+
+func (e *InferenceStatusUpdatedEventHandler) GetName() string {
+	return "inference_status_updated"
+}
+
+func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
+}
+
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.statsStorage == nil {
+		return nil
+	}
+	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	if err != nil {
+		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
+		return nil
+	}
+	for _, rec := range records {
+		err := el.statsStorage.UpdateInferenceStatus(context.Background(), rec.InferenceID, rec.Status)
+		if err != nil {
+			if errors.Is(err, statsstorage.ErrInferenceRecordNotFound) {
+				logging.Warn("Ignoring inference_status_updated for unknown inference in stats storage", types.EventProcessing,
+					"inference_id", rec.InferenceID, "status", rec.Status)
+				continue
+			}
+			logging.Error("Failed to update inference status in stats storage", types.EventProcessing,
+				"inference_id", rec.InferenceID, "status", rec.Status, "error", err)
+		}
+	}
+	return nil
+}
+
+func parseInferenceStatusUpdatedRecords(events map[string][]string) ([]inferenceStatusUpdateRecord, error) {
+	ids := events["inference_status_updated.inference_id"]
+	if len(ids) == 0 {
+		return nil, errors.New("missing inference_status_updated.inference_id")
+	}
+	statuses := events["inference_status_updated.status"]
+	if len(statuses) == 0 {
+		return nil, errors.New("missing inference_status_updated.status")
+	}
+
+	records := make([]inferenceStatusUpdateRecord, 0, len(ids))
+	for i, id := range ids {
+		status, ok := getEventValue(events, "inference_status_updated.status", i)
+		if !ok {
+			return nil, fmt.Errorf("missing status for inference %s", id)
+		}
+		records = append(records, inferenceStatusUpdateRecord{
+			InferenceID: id,
+			Status:      status,
+		})
+	}
+	return records, nil
 }
 
 func (e *InferenceValidationEventHandler) GetName() string {
@@ -468,30 +694,6 @@ func (e *SubmitProposalEventHandler) Handle(event *chainevents.JSONRPCResponse, 
 		return errors.New("proposal_id not found in event")
 	}
 	logging.Debug("Handling `submit_proposal` event", types.EventProcessing, "proposalId", proposalIds[0])
-	return nil
-}
-
-type TrainingTaskAssignedEventHandler struct{}
-
-func (e *TrainingTaskAssignedEventHandler) GetName() string {
-	return "training_task_assigned"
-}
-
-func (e *TrainingTaskAssignedEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
-	return len(event.Result.Events["training_task_assigned.task_id"]) > 0
-}
-
-func (e *TrainingTaskAssignedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	if el.isNodeSynced() {
-		for _, taskId := range event.Result.Events["training_task_assigned.task_id"] {
-			taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
-			if err != nil {
-				logging.Error("Failed to parse task ID", types.Training, "error", err)
-				continue // Continue to the next task ID
-			}
-			el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
-		}
-	}
 	return nil
 }
 

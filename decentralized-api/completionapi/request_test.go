@@ -2,7 +2,6 @@ package completionapi
 
 import (
 	"encoding/json"
-	"log"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/calculations"
@@ -81,20 +80,55 @@ const (
           { "role": "user", "content": "Hi!" }
         ]
     }`
+
+	jsonBodyMultipartContent = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Hello" },
+              { "type": "image_url", "image_url": { "url": "https://example.com/cat.png" } },
+              { "type": "text", "text": " world" }
+            ]
+          }
+        ]
+    }`
+
+	jsonBodyNullContent = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          { "role": "user", "content": null }
+        ]
+    }`
+
+	jsonBodyToolCalling = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          { "role": "user", "content": "What is the weather?" },
+          { "role": "assistant", "tool_calls": [{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}] },
+          { "role": "tool", "content": "72F sunny", "tool_call_id": "call_1" }
+        ]
+    }`
+
+	jsonBodyMultipartTextPartMissingText = `{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "type": "text" }
+            ]
+          }
+        ]
+    }`
 )
 
-func Test(t *testing.T) {
+func TestModifyRequestBody_NullLogprobsPreserved(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyNullLogprobs), 7)
-	if err != nil {
-		panic(err)
-	}
-	if r.OriginalLogprobsValue != nil {
-		t.Fatalf("expected nil, got %v", r.OriginalLogprobsValue)
-	}
-	if r.OriginalTopLogprobsValue != nil {
-		t.Fatalf("expected nil, got %v", r.OriginalTopLogprobsValue)
-	}
-	log.Print(string(r.NewBody))
+	require.NoError(t, err)
+	require.Nil(t, r.OriginalLogprobsValue)
+	require.Nil(t, r.OriginalTopLogprobsValue)
 }
 
 func TestStreamOptions_NoOptions(t *testing.T) {
@@ -102,13 +136,10 @@ func TestStreamOptions_NoOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(r.NewBody, &requestMap); err != nil {
-		require.NoError(t, err, "failed to unmarshal request body")
-	}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Print(string(r.NewBody))
 }
 
 func TestStreamOptions_WithOptions(t *testing.T) {
@@ -116,13 +147,129 @@ func TestStreamOptions_WithOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(r.NewBody, &requestMap); err != nil {
-		require.NoError(t, err, "failed to unmarshal request body")
-	}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
 	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
-	log.Print(string(r.NewBody))
+}
+
+// TestStreamOptions_MalformedStreamValue tests that malformed "stream" field doesn't cause panic
+func TestStreamOptions_MalformedStreamValue(t *testing.T) {
+	// Test case 1: stream is a string instead of bool
+	jsonBodyStreamString := `{
+        "model": "test",
+        "stream": "true",
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamString), 7)
+	require.NoError(t, err, "Should not panic or error on string stream value")
+	require.NotNil(t, r)
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists := requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+
+	// Test case 2: stream is a number
+	jsonBodyStreamNumber := `{
+        "model": "test",
+        "stream": 1,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamNumber), 7)
+	require.NoError(t, err, "Should not panic or error on number stream value")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists = requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+
+	// Test case 3: stream is null
+	jsonBodyStreamNull := `{
+        "model": "test",
+        "stream": null,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamNull), 7)
+	require.NoError(t, err, "Should not panic or error on null stream value")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	_, exists = requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
+}
+
+// TestStreamOptions_MalformedStreamOptions tests that malformed "stream_options" field doesn't cause panic
+func TestStreamOptions_MalformedStreamOptions(t *testing.T) {
+	// Test case 1: stream_options is a string instead of object
+	jsonBodyStreamOptionsString := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": "invalid",
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamOptionsString), 7)
+	require.NoError(t, err, "Should not panic or error on string stream_options")
+	require.NotNil(t, r)
+
+	// Verify that stream_options was replaced with a valid map
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err)
+	streamOpts, ok := requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+
+	// Test case 2: stream_options is an array
+	jsonBodyStreamOptionsArray := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": [1, 2, 3],
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsArray), 7)
+	require.NoError(t, err, "Should not panic or error on array stream_options")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+
+	// Test case 3: stream_options is a number
+	jsonBodyStreamOptionsNumber := `{
+        "model": "test",
+        "stream": true,
+        "stream_options": 123,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsNumber), 7)
+	require.NoError(t, err, "Should not panic or error on number stream_options")
+	require.NotNil(t, r)
+	requestMap = map[string]interface{}{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	require.True(t, ok, "stream_options should be a map after processing")
+	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
+}
+
+// TestStreamFalse tests that stream=false doesn't modify stream_options
+func TestStreamFalse(t *testing.T) {
+	jsonBodyStreamFalse := `{
+        "model": "test",
+        "stream": false,
+        "messages": [{ "role": "user", "content": "Hi!" }]
+    }`
+	r, err := ModifyRequestBody([]byte(jsonBodyStreamFalse), 7)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	err = json.Unmarshal(r.NewBody, &requestMap)
+	require.NoError(t, err)
+
+	// stream_options should not exist since stream is false
+	_, exists := requestMap["stream_options"]
+	require.False(t, exists, "stream_options should not be added when stream is false")
 }
 
 func TestMaxTokens(t *testing.T) {
@@ -152,4 +299,94 @@ func TestMaxTokens(t *testing.T) {
 			require.Equal(t, float64(tt.expected), maxCompletionTokens)
 		})
 	}
+}
+
+func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
+	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
+	require.NoError(t, err)
+
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+
+	messages := requestMap["messages"].([]interface{})
+	message := messages[0].(map[string]interface{})
+	_, isArray := message["content"].([]interface{})
+	require.True(t, isArray)
+}
+
+func TestModifyRequestBody_RejectsNullMessageContentForUser(t *testing.T) {
+	_, err := ModifyRequestBody([]byte(jsonBodyNullContent), 7)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is required")
+}
+
+func TestModifyRequestBody_AcceptsToolCallingPayload(t *testing.T) {
+	r, err := ModifyRequestBody([]byte(jsonBodyToolCalling), 7)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	messages := requestMap["messages"].([]interface{})
+	require.Len(t, messages, 3)
+	assistantMsg := messages[1].(map[string]interface{})
+	require.Nil(t, assistantMsg["content"])
+	require.NotNil(t, assistantMsg["tool_calls"])
+}
+
+func TestModifyRequestBody_RejectsTextPartWithoutTextField(t *testing.T) {
+	_, err := ModifyRequestBody([]byte(jsonBodyMultipartTextPartMissingText), 7)
+	require.Error(t, err, "text content part without text field should be rejected")
+}
+
+func TestModifyRequestBodyWithLogprobsMode_Processed(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "processed_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_Raw(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "raw_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "raw_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_EmptyNoKey(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	_, exists := m["logprobs_mode"]
+	require.False(t, exists, "logprobs_mode should not be present when empty string is passed")
+}
+
+func TestModifyRequestBodyWithLogprobsMode_OverwritesClientValue(t *testing.T) {
+	body := []byte(`{"model":"x","messages":[{"role":"user","content":"hi"}],"logprobs_mode":"raw_logprobs"}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "processed_logprobs")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
+}
+
+func TestModifyRequestBodyWithLogprobsMode_PromptHashConsistency(t *testing.T) {
+	body := []byte(jsonBody)
+	mode := "processed_logprobs"
+
+	r1, err := ModifyRequestBodyWithLogprobsMode(body, 42, mode)
+	require.NoError(t, err)
+
+	r2, err := ModifyRequestBodyWithLogprobsMode(body, 42, mode)
+	require.NoError(t, err)
+
+	require.Equal(t, r1.NewBody, r2.NewBody, "identical inputs must produce identical outputs for hash consistency")
 }
