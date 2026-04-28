@@ -1,12 +1,35 @@
 package tx_manager
 
 import (
+	"cosmossdk.io/math"
+	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	blstypes "github.com/productscience/inference/x/bls/types"
 	collateraltypes "github.com/productscience/inference/x/collateral/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
+
+// applyGasAndFee writes gasWanted (capped at BatchGasLimit) onto the tx
+// builder and computes the matching fee amount from minGasPriceNgonka.
+// Extracted from getSignedBytes so it's directly unit-testable without
+// requiring keyring + signing setup.
+//
+// Pass minGasPriceNgonka=0 (current v0.2.12 mainnet config) to set zero
+// fees regardless of gasWanted; the network-duty bypass also produces
+// zero-fee txs but at a different layer.
+func applyGasAndFee(tx client.TxBuilder, gasWanted uint64, minGasPriceNgonka int64) {
+	if gasWanted == 0 || gasWanted > BatchGasLimit {
+		gasWanted = BatchGasLimit
+	}
+	tx.SetGasLimit(gasWanted)
+	if minGasPriceNgonka > 0 {
+		feeAmount := math.NewIntFromUint64(gasWanted).MulRaw(minGasPriceNgonka)
+		tx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", feeAmount)))
+	} else {
+		tx.SetFeeAmount(sdk.Coins{})
+	}
+}
 
 // Per-message-type gas estimates for sizing the batch's gasWanted before
 // broadcast. Cosmos charges fees on gasWanted, not gasUsed, so over-sizing
@@ -96,24 +119,35 @@ const (
 // is intended to be the first-attempt gasWanted; OOG retries use a
 // multiplier (see estimateBatchGas).
 func estimateMsgGas(msg sdk.Msg) uint64 {
+	v, _ := lookupMsgGas(msg)
+	return v
+}
+
+// lookupMsgGas is the internal worker behind estimateMsgGas. It returns
+// (estimate, true) if the message type has an explicit case in the switch,
+// or (gasDefaultEstimate, false) if it falls through to the default. The
+// boolean lets tests assert that every message type a host might broadcast
+// is explicitly handled — the value alone can't tell us, since several
+// legitimate estimates happen to coincide with the default.
+func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 	switch m := msg.(type) {
 	// Inference lifecycle.
 	case *inferencetypes.MsgStartInference:
-		return gasStartInference
+		return gasStartInference, true
 	case *inferencetypes.MsgFinishInference:
-		return gasFinishInference
+		return gasFinishInference, true
 	case *inferencetypes.MsgValidation:
-		return gasValidation
+		return gasValidation, true
 	case *inferencetypes.MsgInvalidateInference:
-		return gasInvalidateInference
+		return gasInvalidateInference, true
 	case *inferencetypes.MsgRevalidateInference:
-		return gasRevalidateInference
+		return gasRevalidateInference, true
 
 	// PoC duty.
 	case *inferencetypes.MsgSubmitPocBatch:
-		return gasSubmitPocBatch
+		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
-		return gasSubmitPocValidationsV2
+		return gasSubmitPocValidationsV2, true
 
 	// PoCV2StoreCommit: linear in summed Count across entries.
 	case *inferencetypes.MsgPoCV2StoreCommit:
@@ -121,7 +155,7 @@ func estimateMsgGas(msg sdk.Msg) uint64 {
 		for _, e := range m.Entries {
 			totalCount += uint64(e.Count)
 		}
-		return gasPoCV2Base + totalCount*gasPoCV2PerCount
+		return gasPoCV2Base + totalCount*gasPoCV2PerCount, true
 
 	// MLNodeWeightDistribution: linear in total node entries across models.
 	case *inferencetypes.MsgMLNodeWeightDistribution:
@@ -129,44 +163,44 @@ func estimateMsgGas(msg sdk.Msg) uint64 {
 		for _, e := range m.Entries {
 			totalNodes += uint64(len(e.Weights))
 		}
-		return gasMLNodeBase + totalNodes*gasMLNodePerNode
+		return gasMLNodeBase + totalNodes*gasMLNodePerNode, true
 
 	// Routine host duties (bypass-exempt).
 	case *inferencetypes.MsgSubmitHardwareDiff:
-		return gasSubmitHardwareDiff
+		return gasSubmitHardwareDiff, true
 	case *inferencetypes.MsgClaimRewards:
-		return gasClaimRewards
+		return gasClaimRewards, true
 
 	// Other host operations.
 	case *inferencetypes.MsgSubmitSeed:
-		return gasSubmitSeed
+		return gasSubmitSeed, true
 	case *inferencetypes.MsgSubmitNewParticipant:
-		return gasSubmitNewParticipant
+		return gasSubmitNewParticipant, true
 	case *inferencetypes.MsgSubmitNewUnfundedParticipant:
-		return gasSubmitNewUnfundedParticipant
+		return gasSubmitNewUnfundedParticipant, true
 	case *inferencetypes.MsgBridgeExchange:
-		return gasBridgeExchange
+		return gasBridgeExchange, true
 
 	// BLS DKG.
 	case *blstypes.MsgSubmitDealerPart:
-		return gasSubmitDealerPart
+		return gasSubmitDealerPart, true
 	case *blstypes.MsgSubmitVerificationVector:
-		return gasSubmitVerificationVector
+		return gasSubmitVerificationVector, true
 	case *blstypes.MsgSubmitGroupKeyValidationSignature:
-		return gasSubmitGroupKeyValidationSignature
+		return gasSubmitGroupKeyValidationSignature, true
 	case *blstypes.MsgRespondDealerComplaints:
-		return gasRespondDealerComplaints
+		return gasRespondDealerComplaints, true
 	case *blstypes.MsgRequestThresholdSignature:
-		return gasRequestThresholdSignature
+		return gasRequestThresholdSignature, true
 	case *blstypes.MsgSubmitPartialSignature:
-		return gasSubmitPartialSignature
+		return gasSubmitPartialSignature, true
 
 	// Collateral.
 	case *collateraltypes.MsgDepositCollateral:
-		return gasDepositCollateral
+		return gasDepositCollateral, true
 
 	default:
-		return gasDefaultEstimate
+		return gasDefaultEstimate, false
 	}
 }
 
