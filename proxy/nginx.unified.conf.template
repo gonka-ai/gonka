@@ -152,6 +152,9 @@ http {
         # to devshardctl without colliding with /devshard/<version>/...
         ${DEVSHARD_GATEWAY_PROXY_LOCATION}
 
+        # Optional exact /v1/chat/completions alias to the devshard gateway.
+        ${DEVSHARD_CHAT_ALIAS_LOCATION}
+
         # Devshard direct proxy - legacy transparent routing to per-escrow
         # devshardctl-<escrow-id> containers on /devshard-gateway-direct/...
         ${DEVSHARD_DIRECT_PROXY_LOCATION}

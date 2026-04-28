@@ -17,6 +17,7 @@ export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
 export VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-versiond}
 export VERSIOND_PORT=${VERSIOND_PORT:-8080}
 export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
+export DISABLE_DEVSHARD_CHAT_ALIAS=${DISABLE_DEVSHARD_CHAT_ALIAS:-true}
 
 if [ -n "${KEY_NAME}" ] && [ "${KEY_NAME}" != "" ]; then
     export KEY_NAME_PREFIX="${KEY_NAME}-"
@@ -542,6 +543,34 @@ else
     export DEVSHARD_GATEWAY_PROXY_LOCATION="# devshard gateway proxy disabled"
 fi
 
+# Optional OpenAI-compatible chat alias for clients that cannot change their
+# base URL from /v1 to /devshard-gateway/v1. Keep this exact-path only so other
+# /v1 API routes continue to go to the normal API backend.
+if [ "${DISABLE_DEVSHARD_CHAT_ALIAS:-true}" = "false" ]; then
+    echo "   Devshard chat alias: Enabled (/v1/chat/completions -> devshardctl-multi)"
+    export DEVSHARD_CHAT_ALIAS_LOCATION="location = /v1/chat/completions {
+            set \$\$limit_zone_name EXEMPT;
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://devshardctl-multi:8080;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+else
+    echo "   Devshard chat alias: Disabled"
+    export DEVSHARD_CHAT_ALIAS_LOCATION="# devshard chat alias disabled"
+fi
+
 # Devshard direct proxy routing restores the legacy transparent per-escrow
 # Docker-DNS behavior on a separate prefix. This requires per-escrow containers
 # named devshardctl-<escrow-id> on the proxy network.
@@ -889,7 +918,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$CHAIN_GRPC_CONNECT_TIMEOUT,\$CHAIN_GRPC_TRANSF
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_GLOBAL,\$LIMIT_REQ_RULE_GONKA_API"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_CHAIN_RPC,\$LIMIT_REQ_RULE_CHAIN_API,\$LIMIT_REQ_RULE_CHAIN_GRPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS"
-ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$DEVSHARD_GATEWAY_PROXY_LOCATION,\$DEVSHARD_DIRECT_PROXY_LOCATION"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$DEVSHARD_GATEWAY_PROXY_LOCATION,\$DEVSHARD_CHAT_ALIAS_LOCATION,\$DEVSHARD_DIRECT_PROXY_LOCATION"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
 envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
