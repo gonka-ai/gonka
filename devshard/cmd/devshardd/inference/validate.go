@@ -28,8 +28,6 @@ func validateInference(
 	payloadEpoch uint64,
 	requestPath string,
 	execute mlRequestExecutor,
-	_ string, // logPrefix unused; ExecuteValidation handles logging
-	_ ChainParamsProvider, // chainParams unused; validation uses raw prompt payload
 ) (*devshardpkg.ValidateResult, error) {
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
@@ -48,6 +46,7 @@ func validateInference(
 		func(ctx context.Context, body []byte) (*http.Response, error) {
 			return execute(ctx, req.Model, body)
 		},
+		req.InputTokens, req.OutputTokens,
 	)
 	if err != nil {
 		return nil, err

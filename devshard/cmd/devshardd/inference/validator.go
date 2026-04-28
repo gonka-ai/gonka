@@ -17,7 +17,6 @@ type Validator struct {
 	bridge       bridge.MainnetBridge
 	recorder     PayloadAuthClient
 	engine       *Engine
-	chainParams  ChainParamsProvider
 	phase        *chain.Phase
 	boundVersion string
 }
@@ -28,7 +27,6 @@ func NewValidator(
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
 	engine *Engine,
-	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 	boundVersion string,
 ) *Validator {
@@ -36,7 +34,6 @@ func NewValidator(
 		bridge:       br,
 		recorder:     recorder,
 		engine:       engine,
-		chainParams:  chainParams,
 		phase:        phase,
 		boundVersion: boundVersion,
 	}
@@ -51,8 +48,6 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		v.phase.EpochID(),
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.executeMLRequest,
-		"devshardd",
-		v.chainParams,
 	)
 }
 

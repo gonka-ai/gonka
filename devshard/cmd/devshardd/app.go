@@ -183,7 +183,6 @@ func buildHostManager(
 		chainBridge,
 		chainRuntime.identity,
 		eng,
-		chainParams,
 		phase,
 		normalizedVersion,
 	)

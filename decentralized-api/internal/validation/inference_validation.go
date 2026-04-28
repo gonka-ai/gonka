@@ -878,7 +878,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Failed to unmarshal promptPayload.", Error: err}, nil
 	}
 
-	originalResponse, err := unmarshalResponsePayload(responsePayload)
+	originalResponse, err := commonvalidation.UnmarshalResponsePayload(responsePayload)
 	if err != nil {
 		return &commonvalidation.InvalidInferenceResult{InferenceId: inference.InferenceId, Reason: "Failed to unmarshal responsePayload.", Error: err}, nil
 	}
@@ -977,20 +977,3 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 
 	return commonvalidation.CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
-
-func unmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
-	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
-	if err != nil {
-		logging.Error("Failed to unmarshal responsePayload", types.Validation, "error", err)
-	}
-	switch resp.(type) {
-	case *completionapi.StreamedCompletionResponse:
-		logging.Debug("Unmarshalled responsePayload into StreamedResponse", types.Validation)
-	case *completionapi.JsonCompletionResponse:
-		logging.Debug("Unmarshalled responsePayload into JsonResponse", types.Validation)
-	default:
-		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
-	}
-	return resp, err
-}
-
