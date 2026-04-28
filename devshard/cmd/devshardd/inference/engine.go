@@ -29,14 +29,13 @@ type Engine struct {
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	payloadStore PayloadStore,
-	httpClient *http.Client,
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 ) *Engine {
 	return &Engine{
 		mlClient:     mlClient,
 		payloadStore: payloadStore,
-		httpClient:   httpClient,
+		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
 		chainParams:  chainParams,
 		phase:        phase,
 	}

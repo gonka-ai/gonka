@@ -23,7 +23,6 @@ import (
 func validateInference(
 	ctx context.Context,
 	req devshardpkg.ValidateRequest,
-	httpClient *http.Client,
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
 	payloadEpoch uint64,
@@ -35,7 +34,7 @@ func validateInference(
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
 	promptPayload, responsePayload, err := fetchPayloadsFromExecutor(
-		ctx, httpClient, br, recorder, req, inferenceID, payloadEpoch, requestPath,
+		ctx, br, recorder, req, inferenceID, payloadEpoch, requestPath,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
@@ -111,7 +110,6 @@ func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, exe
 
 func fetchPayloadsFromExecutor(
 	ctx context.Context,
-	httpClient *http.Client,
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
 	req devshardpkg.ValidateRequest,
@@ -140,7 +138,7 @@ func fetchPayloadsFromExecutor(
 	}
 
 	payloadResp, err := commonvalidation.FetchPayloadsHTTP(
-		ctx, httpClient, requestURL, validatorAddress, timestamp, epochID, signature,
+		ctx, requestURL, validatorAddress, timestamp, epochID, signature,
 	)
 	if err != nil {
 		return nil, nil, err

@@ -54,7 +54,7 @@ func RetrievePayloadsFromExecutor(
 	}
 
 	// Fetch payloads
-	payloadResp, err := commonvalidation.FetchPayloadsHTTP(ctx, nil, requestUrl, validatorAddress, timestamp, epochId, signature)
+	payloadResp, err := commonvalidation.FetchPayloadsHTTP(ctx, requestUrl, validatorAddress, timestamp, epochId, signature)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -166,4 +166,3 @@ func signPayloadRequest(
 
 	return calculations.Sign(accountSigner, components, calculations.Developer)
 }
-

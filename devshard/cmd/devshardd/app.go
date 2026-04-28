@@ -173,16 +173,13 @@ func buildHostManager(
 	payloadStore *payloads.Store,
 	closers *closeStack,
 ) (*session.HostManager, error) {
-	httpClient := inference.NewNoRedirectClient(5 * time.Minute)
 	chainParams := inference.NewChainParamsProvider(ctx, chainRuntime.identity)
 	normalizedVersion := devshardtypes.NormalizeSessionVersion(cfg.RuntimeVersion)
 
 	phase := chainRuntime.chainEvents.Phase()
 	chainBridge := chainRuntime.chainEvents.Bridge()
-	eng := inference.NewEngine(mlClient, payloadStore, httpClient, chainParams, phase)
+	eng := inference.NewEngine(mlClient, payloadStore, chainParams, phase)
 	validator := inference.NewValidator(
-		mlClient,
-		httpClient,
 		chainBridge,
 		chainRuntime.identity,
 		eng,
