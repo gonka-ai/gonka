@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"cosmossdk.io/math"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -1010,16 +1009,7 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// Network-duty messages (PoC, inference, validation, hardware-diff,
 	// claim-rewards, BLS DKG) are fee-exempt via NetworkDutyFeeBypassDecorator
 	// and pay nothing regardless of gasWanted.
-	if gasWanted == 0 || gasWanted > BatchGasLimit {
-		gasWanted = BatchGasLimit
-	}
-	unsignedTx.SetGasLimit(gasWanted)
-	if m.minGasPriceNgonka > 0 {
-		feeAmount := math.NewIntFromUint64(gasWanted).MulRaw(m.minGasPriceNgonka)
-		unsignedTx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", feeAmount)))
-	} else {
-		unsignedTx.SetFeeAmount(sdk.Coins{})
-	}
+	applyGasAndFee(unsignedTx, gasWanted, m.minGasPriceNgonka)
 
 	// When the warm key signs on behalf of the cold account (authz mode),
 	// set the cold account as the fee granter so fees are deducted from the
