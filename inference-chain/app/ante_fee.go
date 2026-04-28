@@ -135,6 +135,15 @@ func isExemptMessageType(msg sdk.Msg) bool {
 		*inferencetypes.MsgRevalidateInference:
 		return true
 
+	// Routine host duties on a fixed schedule. Not user-discretionary, not a
+	// sybil-attack vector. Rate-limited implicitly: hardware diff fires only
+	// on changes / per-block heartbeat, claim rewards is once per epoch per
+	// host. Excluding these from fees keeps the per-host yearly budget from
+	// being dominated by mechanical chain bookkeeping.
+	case *inferencetypes.MsgSubmitHardwareDiff,
+		*inferencetypes.MsgClaimRewards:
+		return true
+
 	// BLS DKG protocol messages (epoch-scoped, duplicate-checked, deadline-enforced)
 	case *blstypes.MsgSubmitDealerPart,
 		*blstypes.MsgSubmitVerificationVector,
