@@ -217,7 +217,13 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 
 // Send implements user.HostClient.
 func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.InferenceTimeout)
+	timeout := c.config.InferenceTimeout
+	if req.Payload == nil {
+		// Finalize/catch-up sends only exchange protocol state, so a dead host
+		// should not hold the caller for the full model inference deadline.
+		timeout = c.config.QueryTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ir, err := HostRequestToJSON(req)

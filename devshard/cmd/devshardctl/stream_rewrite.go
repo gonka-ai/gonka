@@ -41,16 +41,22 @@ type rewriteLogprob struct {
 }
 
 // rewriteStreamingPayload is only for the proxy's streaming path. In the hot
-// path it returns bytes unchanged. Only if a host sent SSE-wrapped
-// chat.completion JSON do we synthesize chat.completion.chunk events for the
-// client. The synthetic role chunk exists only in that streaming rewrite.
+// path it returns bytes unchanged. It also strips logprob payloads from
+// client-facing SSE events; devshard internals can still use the original host
+// response before this proxy boundary.
+//
+// Only if a host sent SSE-wrapped chat.completion JSON do we synthesize
+// chat.completion.chunk events for the client. The synthetic role chunk exists
+// only in that streaming rewrite.
 func rewriteStreamingPayload(p []byte) []byte {
-	if !bytes.Contains(p, []byte(`data: {`)) || !bytes.Contains(p, []byte(`"message"`)) {
+	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
+	needsLogprobFilter := bytes.Contains(p, []byte(`"logprob`))
+	if !needsCompletionRewrite && !needsLogprobFilter {
 		return p
 	}
 
 	var out bytes.Buffer
-	rewroteAny := false
+	changed := false
 	for _, eventChunk := range bytes.SplitAfter(p, []byte("\n\n")) {
 		if len(eventChunk) == 0 {
 			continue
@@ -67,13 +73,19 @@ func rewriteStreamingPayload(p []byte) []byte {
 		payload := bytes.TrimSpace(event[len("data: "):])
 		rewritten, ok := rewriteStreamingDataEvent(payload)
 		if !ok {
+			filtered := filterClientLogprobs(payload)
+			if !bytes.Equal(filtered, payload) {
+				fmt.Fprintf(&out, "data: %s\n\n", filtered)
+				changed = true
+				continue
+			}
 			out.Write(eventChunk)
 			continue
 		}
-		rewroteAny = true
+		changed = true
 		out.Write(rewritten)
 	}
-	if !rewroteAny {
+	if !changed {
 		return p
 	}
 	return out.Bytes()
@@ -104,7 +116,7 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 			continue
 		}
 		if role := choice.Message.Role; role != "" {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"role": role}, nil, nil, nil)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"role": role}, nil, nil)
 		}
 
 		tokens := []rewriteLogprob(nil)
@@ -118,16 +130,16 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 				if i == len(tokens)-1 {
 					finish = choice.FinishReason
 				}
-				writeStreamingChunkEvent(&out, resp, choice.Index, delta, []rewriteLogprob{token}, finish, choice.StopReason)
+				writeStreamingChunkEvent(&out, resp, choice.Index, delta, finish, choice.StopReason)
 			}
 			continue
 		}
 
 		if choice.Message.Content != "" {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": choice.Message.Content}, nil, nil, nil)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": choice.Message.Content}, nil, nil)
 		}
 		if choice.FinishReason != nil || len(bytes.TrimSpace(choice.StopReason)) > 0 {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{}, nil, choice.FinishReason, choice.StopReason)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{}, choice.FinishReason, choice.StopReason)
 		}
 	}
 
@@ -152,16 +164,11 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
-func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, index int, delta map[string]any, logprobs []rewriteLogprob, finishReason *string, stopReason json.RawMessage) {
+func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, index int, delta map[string]any, finishReason *string, stopReason json.RawMessage) {
 	choice := map[string]any{
 		"index":         index,
 		"delta":         delta,
 		"finish_reason": finishReason,
-	}
-	if len(logprobs) == 0 {
-		choice["logprobs"] = nil
-	} else {
-		choice["logprobs"] = map[string]any{"content": logprobs}
 	}
 	if len(bytes.TrimSpace(stopReason)) > 0 && !bytes.Equal(bytes.TrimSpace(stopReason), []byte("null")) {
 		choice["stop_reason"] = json.RawMessage(bytes.TrimSpace(stopReason))
@@ -181,4 +188,48 @@ func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, i
 		return
 	}
 	fmt.Fprintf(out, "data: %s\n\n", b)
+}
+
+func filterClientLogprobs(payload []byte) []byte {
+	var v any
+	if err := json.Unmarshal(payload, &v); err != nil {
+		return payload
+	}
+	if !stripLogprobFields(v) {
+		return payload
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+func stripLogprobFields(v any) bool {
+	switch typed := v.(type) {
+	case map[string]any:
+		changed := false
+		for _, key := range []string{"logprob", "logprobs", "top_logprobs"} {
+			if _, ok := typed[key]; ok {
+				delete(typed, key)
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if stripLogprobFields(child) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, child := range typed {
+			if stripLogprobFields(child) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
 }

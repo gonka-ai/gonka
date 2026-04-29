@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,26 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
+}
+
+func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.InferenceTimeout = time.Second
+	cfg.QueryTimeout = 25 * time.Millisecond
+	client := NewHTTPClient(srv.URL, "escrow-1", signer, cfg)
+
+	start := time.Now()
+	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
+
+	require.Error(t, err)
+	require.Less(t, time.Since(start), 200*time.Millisecond)
 }
 
 func TestHTTPClient_LegacyProtocolUsesSubnetAuthHeaders(t *testing.T) {

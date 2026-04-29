@@ -177,10 +177,8 @@ func TestDeferredWriterRewritesCompletionPayloadToStreamingChunks(t *testing.T) 
 	secondDelta := secondChoice["delta"].(map[string]any)
 	require.Equal(t, "Hi", secondDelta["content"])
 	require.Equal(t, "stop", secondChoice["finish_reason"])
-	logprobs := secondChoice["logprobs"].(map[string]any)
-	content := logprobs["content"].([]any)
-	firstToken := content[0].(map[string]any)
-	require.Equal(t, "Hi", firstToken["token"])
+	require.NotContains(t, secondChoice, "logprobs")
+	require.NotContains(t, rec.Body.String(), "logprob")
 
 	require.Equal(t, "chat.completion.chunk", events[2]["object"])
 	require.Empty(t, events[2]["choices"].([]any))
@@ -204,6 +202,23 @@ func TestDeferredWriterTracksForwardedDoneMarker(t *testing.T) {
 func TestRewriteStreamingPayload_PassthroughWhenNoConversionNeeded(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n")
 	require.Equal(t, payload, rewriteStreamingPayload(payload))
+}
+
+func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T) {
+	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]},"finish_reason":null}]}` + "\n\n")
+
+	rewritten := rewriteStreamingPayload(payload)
+
+	require.NotContains(t, string(rewritten), "logprob")
+	require.Contains(t, string(rewritten), `"content":"Hi"`)
+}
+
+func TestFilterClientLogprobs_RemovesNestedLogprobPayloads(t *testing.T) {
+	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]}}]}`)
+
+	filtered := filterClientLogprobs(payload)
+
+	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
 
 func TestRewriteStreamingPayload_PreservesOriginalBytesWhenConvertibleRewriteFails(t *testing.T) {

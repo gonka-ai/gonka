@@ -377,6 +377,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	}
 
 	assembled := assembleSSEChunks(buf.String())
+	assembled = filterClientLogprobs(assembled)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
