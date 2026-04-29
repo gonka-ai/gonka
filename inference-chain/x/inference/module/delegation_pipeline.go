@@ -47,14 +47,19 @@ func (am AppModule) buildDelegationWeightCalculator(
 	initialModelID := params.GetDelegationParams().GetInitialModelId()
 	groups := buildGroupData(activeParticipants, coefficients, initialModelID, am)
 
+	upcomingActiveParticipants := make(map[string]bool, len(activeParticipants))
+	for _, p := range activeParticipants {
+		upcomingActiveParticipants[p.Index] = true
+	}
+
 	return &DelegationWeightCalculator{
-		Groups:               groups,
-		ConsensusWeights:     consensusWeights,
-		TotalNetworkWeight:   totalWeight,
-		Delegations:          nextEpochDelegations,
-		Refusals:             nextEpochRefusals,
-		Params:               buildWeightParams(params),
-		PrevMemberPocWeights: prevState.perModelPocWeights,
+		Groups:                     groups,
+		ConsensusWeights:           consensusWeights,
+		UpcomingActiveParticipants: upcomingActiveParticipants,
+		TotalNetworkWeight:         totalWeight,
+		Delegations:                nextEpochDelegations,
+		Refusals:                   nextEpochRefusals,
+		Params:                     buildWeightParams(params),
 	}
 }
 
@@ -214,8 +219,8 @@ func (am AppModule) loadRegularDelegationSnapshotState(
 
 // captureDelegationSnapshot stores the frozen delegation state used later at
 // validation start. Intents are intentionally excluded from this snapshot.
-func (am AppModule) captureDelegationSnapshot(ctx context.Context, blockHeight int64) {
-	snapshot, err := am.buildDelegationSnapshot(ctx, blockHeight)
+func (am AppModule) captureDelegationSnapshot(ctx context.Context, blockHeight, pocStageStartBlockHeight int64) {
+	snapshot, err := am.buildDelegationSnapshot(ctx, blockHeight, pocStageStartBlockHeight)
 	if err != nil {
 		am.LogError("captureDelegationSnapshot: failed to build", types.PoC, "error", err)
 		return
@@ -232,16 +237,30 @@ func (am AppModule) captureDelegationSnapshot(ctx context.Context, blockHeight i
 		"refusals", len(snapshot.Refusals))
 }
 
-func (am AppModule) buildDelegationSnapshot(ctx context.Context, blockHeight int64) (types.DelegationSnapshot, error) {
+// buildDelegationSnapshot captures delegations and refusals from N-1 effective
+// participants plus current-stage PoC store committers.
+func (am AppModule) buildDelegationSnapshot(ctx context.Context, blockHeight, pocStageStartBlockHeight int64) (types.DelegationSnapshot, error) {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return types.DelegationSnapshot{}, err
 	}
 
 	effectiveState := am.getEffectiveValidationBaseState(ctx)
-	effectiveParticipants := effectiveState.participants
+	committers, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, pocStageStartBlockHeight)
+	if err != nil {
+		return types.DelegationSnapshot{}, err
+	}
+
+	addrs := make(map[string]struct{}, len(effectiveState.participants)+len(committers))
+	for _, p := range effectiveState.participants {
+		addrs[p.Index] = struct{}{}
+	}
+	for k := range committers {
+		addrs[k.ParticipantAddress] = struct{}{}
+	}
+
 	modelIDs := approvedModelIDs(params.PocParams)
-	delegationEntries, refusalEntries := am.loadFilteredDelegationSnapshotState(ctx, effectiveParticipants, modelIDs)
+	delegationEntries, refusalEntries := am.loadFilteredDelegationSnapshotState(ctx, addrs, modelIDs)
 
 	return types.DelegationSnapshot{
 		SnapshotHeight: blockHeight,
@@ -398,24 +417,30 @@ func approvedModelIDs(pocParams *types.PocParams) []string {
 
 func (am AppModule) loadFilteredDelegationSnapshotState(
 	ctx context.Context,
-	effectiveParticipants []*types.ActiveParticipant,
+	addrs map[string]struct{},
 	modelIDs []string,
 ) ([]*types.PoCDelegation, []*types.PoCRefusal) {
 	delegationEntries := make([]*types.PoCDelegation, 0)
 	refusalEntries := make([]*types.PoCRefusal, 0)
 
-	for _, participant := range effectiveParticipants {
+	sortedAddrs := make([]string, 0, len(addrs))
+	for addr := range addrs {
+		sortedAddrs = append(sortedAddrs, addr)
+	}
+	slices.Sort(sortedAddrs)
+
+	for _, addr := range sortedAddrs {
 		for _, modelID := range modelIDs {
-			delegation, found := am.keeper.GetPoCDelegation(ctx, modelID, participant.Index)
+			delegation, found := am.keeper.GetPoCDelegation(ctx, modelID, addr)
 			if found {
 				delegationCopy := delegation
 				delegationEntries = append(delegationEntries, &delegationCopy)
 			}
 
-			if am.keeper.HasPoCRefusal(ctx, modelID, participant.Index) {
+			if am.keeper.HasPoCRefusal(ctx, modelID, addr) {
 				refusalEntries = append(refusalEntries, &types.PoCRefusal{
 					ModelId:     modelID,
-					Participant: participant.Index,
+					Participant: addr,
 				})
 			}
 		}

@@ -2,14 +2,17 @@ package v0_2_12
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	sdkmath "cosmossdk.io/math"
 	"cosmossdk.io/x/feegrant"
 	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/authz"
@@ -19,6 +22,7 @@ import (
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 )
 
 // MigratedFeeAllowance is the BasicAllowance limit auto-granted during the
@@ -30,6 +34,68 @@ var MigratedFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(100
 // MigratedFeeAllowanceExpiration is how long the auto-granted allowance lasts.
 const MigratedFeeAllowanceExpiration = 365 * 24 * time.Hour
 
+const kimiModelID = "moonshotai/Kimi-K2.6"
+
+// Initial approved devshard binary registered by the v0.2.12 upgrade so that
+// `versiond` has at least one approved version to download and run after the
+// upgrade goes live. Governance can append new versions later via
+// MsgUpdateParams.
+const (
+	DevshardV1Name   = "v1"
+	DevshardV1Binary = "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.12/devshardd.zip"
+	DevshardV1Sha256 = "15f722444e6545bc787f1ef6d1011557d25a8b05cb9f6aaf1a514349d36d4715"
+)
+
+const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
+const DefaultBountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
+
+func USDT(amount int64) int64 {
+	return amount * 1_000_000
+}
+
+type BountyReward struct {
+	Address string
+	Amount  int64
+}
+
+var bountyRewards = []BountyReward{
+	// CertiK audit fixes (GEB-29, GEB-35, GEB-44, GEB-45, GEB-51).
+	// PR: #988, #1020, #1021
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(6000)},
+	// DKG dealer consensus.
+	// PR: #825
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(3000)},
+	// Developer inference access / account API changes.
+	// PR: #750
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(1000)},
+	// OpenAI compatibility and API error handling.
+	// PR: #614
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(500)},
+	// v0.2.12 release management.
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(2500)},
+	// v0.2.12 release management.
+	{Address: "gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56", Amount: USDT(5000)},
+	// Inference validation optimization.
+	// Issue: #929
+	{Address: "gonka1yhdhp4vwsvdsplv4acksntx0zxh8saueq6lj9m", Amount: USDT(9000)},
+	// Acquire node gRPC.
+	// PR: #945
+	{Address: "gonka1vu28c7w5zxqe28lakrrfdrkvscft326rxur3dv", Amount: USDT(3000)},
+	// Fund atomicity error safety.
+	// PR: #789
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(2000)},
+	// Align validator slashing with required collateral.
+	// PR: #940
+	{Address: "gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8", Amount: USDT(1500)},
+	// Report of free inference vulnerability (fixed by devshards release).
+	{Address: "gonka1c34w3r45f0uftjckt2yy4k22vnc3zqjnp0umyz", Amount: USDT(500)},
+	// Chat completions fix (missed from v0.2.10).
+	// Issue: #499
+	{Address: "gonka139f7x4gur2yuyty64dkqxep8jk3d7ku8ayjaqg", Amount: USDT(200)},
+	// Review of upgrade v0.2.11.
+	{Address: "gonka12jaf7m4eysyqt32mrgarum6z96vt55tckvcleq", Amount: USDT(1000)},
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
@@ -39,7 +105,7 @@ func CreateUpgradeHandler(
 	authzKeeper authzkeeper.Keeper,
 	feegrantKeeper feegrantkeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
-	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
 
 		// Keep capability module version explicit to avoid re-running InitGenesis
@@ -65,6 +131,11 @@ func CreateUpgradeHandler(
 		}
 
 		err = migrateParams(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+
+		err = updateGovernanceModels(ctx, k)
 		if err != nil {
 			return nil, err
 		}
@@ -132,6 +203,14 @@ func CreateUpgradeHandler(
 		}
 
 		if err := setFeeParams(ctx, k); err != nil {
+			return nil, err
+		}
+
+		if err := setDevshardApprovedVersions(ctx, k); err != nil {
+			return nil, err
+		}
+
+		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -258,6 +337,11 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 		params.ValidationParams = types.DefaultValidationParams()
 	}
 	params.ValidationParams.LogprobsMode = types.DefaultLogprobsMode
+
+	if params.EpochParams == nil {
+		params.EpochParams = types.DefaultEpochParams()
+	}
+	params.EpochParams.ConfirmationPocSafetyWindow = 500
 
 	err = k.SetParams(ctx, params)
 	if err != nil {
@@ -480,6 +564,54 @@ func clearLegacyPoCv2Data(ctx context.Context, k keeper.Keeper) error {
 	return k.ClearLegacyPoCv2Data(ctx)
 }
 
+func kimiWeightScaleFactor(base *types.Decimal) *types.Decimal {
+	baseDec := decimal.NewFromInt(1)
+	if base != nil {
+		baseDec = base.ToDecimal()
+	}
+	scaled := baseDec.
+		Mul(decimal.NewFromInt(6400)).
+		Div(decimal.NewFromInt(1822))
+	return types.DecimalFromDecimal(scaled)
+}
+
+func kimiPoCModelConfig(baseWeightScaleFactor *types.Decimal, penaltyStartEpoch uint64) *types.PoCModelConfig {
+	return &types.PoCModelConfig{
+		ModelId: kimiModelID,
+		SeqLen:  1024,
+		StatTest: &types.PoCStatTestParams{
+			DistThreshold:   &types.Decimal{Value: 4, Exponent: -1},
+			PMismatch:       &types.Decimal{Value: 1, Exponent: -1},
+			PValueThreshold: &types.Decimal{Value: 5, Exponent: -2},
+		},
+		WeightScaleFactor: kimiWeightScaleFactor(baseWeightScaleFactor),
+		PenaltyStartEpoch: penaltyStartEpoch,
+	}
+}
+
+func kimiPenaltyStartEpoch(ctx context.Context, k keeper.Keeper) uint64 {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogInfo("no effective epoch for Kimi penalty start; using fallback", types.Upgrades,
+			"model_id", kimiModelID, "penalty_start_epoch", 2)
+		return 2
+	}
+	return epochIndex + 3
+}
+
+func ensureKimiPoCModelConfig(ctx context.Context, k keeper.Keeper, poc *types.PocParams) bool {
+	if poc == nil {
+		return false
+	}
+	for _, model := range poc.Models {
+		if model != nil && model.ModelId == kimiModelID {
+			return false
+		}
+	}
+	poc.Models = append(poc.Models, kimiPoCModelConfig(poc.WeightScaleFactor, kimiPenaltyStartEpoch(ctx, k)))
+	return true
+}
+
 // migrateParams populates PocParams.Models from the deprecated singular fields
 // (ModelId, SeqLen, StatTest, WeightScaleFactor) and initializes
 // DelegationParams with defaults. Idempotent: skips work if Models is already
@@ -504,6 +636,10 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 		k.LogInfo("migrated PocParams singular fields into models[]", types.Upgrades,
 			"model_id", poc.ModelId, "seq_len", poc.SeqLen)
 	}
+	if ensureKimiPoCModelConfig(ctx, k, poc) {
+		k.LogInfo("added Kimi model to PocParams models[]", types.Upgrades,
+			"model_id", kimiModelID, "seq_len", 1024)
+	}
 
 	if params.DelegationParams == nil {
 		defaults := types.DefaultDelegationParams()
@@ -512,17 +648,87 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 			"deploy_window", defaults.DeployWindow,
 			"v_min", defaults.VMin)
 	}
+	params.DelegationParams.RefusalPenalty = types.DecimalFromFloat(0.1)
+	params.DelegationParams.NoParticipationPenalty = types.DecimalFromFloat(0.15)
+	params.DelegationParams.DelegationShare = types.DecimalFromFloat(0.05)
+	params.DelegationParams.CapFactor = types.DecimalFromFloat(0.75)
+	params.DelegationParams.DeployWindow = 500
 	if poc != nil && params.DelegationParams.InitialModelId == "" {
 		params.DelegationParams.InitialModelId = poc.ModelId
 	}
 
-	// Per-model voting-power concentration cap (field 9) is new in v0.2.12.
-	// Set explicitly to 0 (disabled) so the on-chain params struct carries
-	// the new field from day one. Governance can raise it later via
-	// MsgUpdateParams once real network concentration is observable.
-	params.DelegationParams.MaxModelVotingPowerPercentage = types.DecimalFromFloat(0)
+	// MaxModelVotingPowerPercentage is a fraction, so 0.3 means 30%.
+	params.DelegationParams.MaxModelVotingPowerPercentage = types.DecimalFromFloat(0.3)
+	clearDeprecatedPocParams(poc)
 
 	return k.SetParams(ctx, params)
+}
+
+func clearDeprecatedPocParams(poc *types.PocParams) {
+	if poc == nil {
+		return
+	}
+	poc.WeightScaleFactor = nil
+	poc.ModelParams = nil
+	poc.ModelId = ""
+	poc.SeqLen = 0
+	poc.StatTest = nil
+}
+
+func kimiGovernanceModel(authority string) *types.Model {
+	return &types.Model{
+		ProposedBy:             authority,
+		Id:                     kimiModelID,
+		UnitsOfComputePerToken: 10000,
+		HfRepo:                 kimiModelID,
+		HfCommit:               "5a49d036ab7472b7d5912ded487150ec1358c11d",
+		ModelArgs: []string{
+			"--max-model-len", "240000",
+			"--tool-call-parser", "kimi_k2",
+			"--reasoning-parser", "kimi_k2",
+		},
+		VRam:                720,
+		ThroughputPerNonce:  1500,
+		ValidationThreshold: &types.Decimal{Value: 920, Exponent: -3},
+	}
+}
+
+func updateGovernanceModels(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		return errors.New("poc params not found")
+	}
+
+	approved := make(map[string]bool)
+	for _, modelConfig := range params.PocParams.GetModelConfigs() {
+		if modelConfig == nil || modelConfig.ModelId == "" {
+			continue
+		}
+		approved[modelConfig.ModelId] = true
+	}
+
+	k.SetModel(ctx, kimiGovernanceModel(k.GetAuthority()))
+
+	models, err := k.GetGovernanceModels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if !approved[model.Id] {
+			k.DeleteGovernanceModel(ctx, model.Id)
+			k.LogInfo("removed governance model not present in PocParams", types.Upgrades,
+				"model_id", model.Id)
+		}
+	}
+	k.LogInfo("updated governance models for PocParams", types.Upgrades,
+		"approved_count", len(approved), "kimi_model_id", kimiModelID)
+	return nil
 }
 
 // initNewPruningState seeds the four pruning-state fields introduced in
@@ -645,6 +851,41 @@ func backfillVotingPower(ctx context.Context, k keeper.Keeper) error {
 	return nil
 }
 
+func setDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+
+	for _, v := range params.DevshardEscrowParams.ApprovedVersions {
+		if v != nil && v.Name == DevshardV1Name {
+			k.LogInfo("devshard approved version already present, skipping", types.Upgrades,
+				"name", DevshardV1Name)
+			return nil
+		}
+	}
+
+	params.DevshardEscrowParams.ApprovedVersions = append(params.DevshardEscrowParams.ApprovedVersions,
+		&types.DevshardApprovedVersion{
+			Name:   DevshardV1Name,
+			Binary: DevshardV1Binary,
+			Sha256: DevshardV1Sha256,
+		},
+	)
+
+	if err := k.SetParams(ctx, params); err != nil {
+		k.LogError("failed to set devshard approved versions during upgrade", types.Upgrades, "error", err)
+		return err
+	}
+	k.LogInfo("registered initial devshard approved version", types.Upgrades,
+		"name", DevshardV1Name, "binary", DevshardV1Binary, "sha256", DevshardV1Sha256)
+	return nil
+}
+
 func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -652,6 +893,8 @@ func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	fp := types.DefaultFeeParams()
+	// Note: temporary due to issue in gas estimations.
+	fp.MinGasPriceNgonka = 0
 	params.FeeParams = fp
 	if err := k.SetParams(ctx, params); err != nil {
 		k.LogError("failed to set fee params during upgrade", types.Upgrades, "error", err)
@@ -661,5 +904,71 @@ func setFeeParams(ctx context.Context, k keeper.Keeper) error {
 		"min_gas_price_ngonka", fp.MinGasPriceNgonka,
 		"base_validation_gas", fp.BaseValidationGas,
 		"gas_per_poc_count", fp.GasPerPocCount)
+	return nil
+}
+
+func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
+	if len(bountyRewards) == 0 {
+		k.Logger().Info("No bounty rewards to distribute")
+		return nil
+	}
+
+	communitySaleAddr, err := sdk.AccAddressFromBech32(BountyCommunitySaleContractAddress)
+	if err != nil {
+		k.Logger().Error("invalid hardcoded community sale contract address", "address", BountyCommunitySaleContractAddress, "error", err)
+		return nil
+	}
+	authorityAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.Logger().Error("invalid authority address", "authority", k.GetAuthority(), "error", err)
+		return nil
+	}
+
+	var totalRequired int64
+	for _, bounty := range bountyRewards {
+		totalRequired += bounty.Amount
+	}
+
+	available := k.BankView.SpendableCoin(ctx, communitySaleAddr, DefaultBountyIbcUsdtDenom).Amount.Int64()
+	if available < totalRequired {
+		k.Logger().Warn("insufficient community sale balance, skipping bounty distribution",
+			"required", totalRequired, "available", available, "denom", DefaultBountyIbcUsdtDenom)
+		return nil
+	}
+
+	k.Logger().Info("community sale balance sufficient for bounty distribution",
+		"required", totalRequired, "available", available, "denom", DefaultBountyIbcUsdtDenom)
+
+	permissionedKeeper := wasmkeeper.NewGovPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, bounty := range bountyRewards {
+		recipient, err := sdk.AccAddressFromBech32(bounty.Address)
+		if err != nil {
+			k.Logger().Error("invalid bounty address", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		msgBz, err := json.Marshal(map[string]any{
+			"withdraw_ibc": map[string]string{
+				"denom":     DefaultBountyIbcUsdtDenom,
+				"amount":    strconv.FormatInt(bounty.Amount, 10),
+				"recipient": recipient.String(),
+			},
+		})
+		if err != nil {
+			k.Logger().Error("failed to marshal community sale withdraw message", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		if _, err := permissionedKeeper.Execute(sdkCtx, communitySaleAddr, authorityAddr, msgBz, sdk.NewCoins()); err != nil {
+			k.Logger().Error("failed to distribute bounty from community sale contract",
+				"address", bounty.Address, "amount", bounty.Amount, "denom", DefaultBountyIbcUsdtDenom, "error", err)
+			continue
+		}
+
+		k.Logger().Info("bounty distributed from community sale contract",
+			"address", bounty.Address, "amount", bounty.Amount, "denom", DefaultBountyIbcUsdtDenom)
+	}
+
 	return nil
 }

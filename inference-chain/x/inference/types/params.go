@@ -372,7 +372,7 @@ func DefaultDelegationParams() *DelegationParams {
 		DelegationShare:        DecimalFromFloat(0.1),
 		WThreshold:             DecimalFromFloat(0.3),
 		VMin:                   3,
-		CapFactor:              DecimalFromFloat(1),
+		CapFactor:              DecimalFromFloat(0.5),
 		InitialModelId:         "",
 		// Per-model voting-power concentration cap is OFF by default.
 		// Governance must set a concrete value via MsgUpdateParams after
@@ -590,14 +590,8 @@ func (p Params) Validate() error {
 		if err := validateDecimalFraction(p.DelegationParams.WThreshold, "delegation w_threshold"); err != nil {
 			return err
 		}
-		if p.DelegationParams.CapFactor != nil {
-			dec, err := p.DelegationParams.CapFactor.ToLegacyDec()
-			if err != nil {
-				return fmt.Errorf("delegation cap_factor: invalid decimal: %w", err)
-			}
-			if dec.IsNegative() {
-				return fmt.Errorf("delegation cap_factor must be non-negative, got %s", dec.String())
-			}
+		if err := validateDecimalFraction(p.DelegationParams.CapFactor, "delegation cap_factor"); err != nil {
+			return err
 		}
 	}
 

@@ -50,7 +50,7 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
             modelId = extractSingleModelId(genesisNodes),
             honestGenesisWeight = honestGenesisWeight,
             dishonestGenesisWeight = dishonestGenesisWeight,
-            assertRewards = { changes, expectedFinalWeight ->
+            assertRewards = { changes, expectedFinalWeight, _ ->
                 val genesisChange = changes.getValue(genesis.node.getColdAddress())
                 val join1Change = changes.getValue(join1.node.getColdAddress())
                 val join2Change = changes.getValue(join2.node.getColdAddress())
@@ -108,8 +108,9 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
             modelId = extractSingleModelId(genesisNodes),
             honestGenesisWeight = honestGenesisWeight,
             dishonestGenesisWeight = dishonestGenesisWeight,
-            assertRewards = { changes, expectedFinalWeight ->
-                val genesisChange = changes.getValue(genesis.node.getColdAddress())
+            assertRewards = { changes, expectedFinalWeight, cappedWeights ->
+                val genesisAddr = genesis.node.getColdAddress()
+                val genesisChange = changes.getValue(genesisAddr)
                 val join1Change = changes.getValue(join1.node.getColdAddress())
                 val join2Change = changes.getValue(join2.node.getColdAddress())
 
@@ -122,12 +123,21 @@ class ConfirmationPoCMultiNodeTests : TestermintTest() {
                 val join1Ratio = join1Change / totalChange
                 val join2Ratio = join2Change / totalChange
 
-                // Joins are symmetric (both 200) so no single participant exceeds the
-                // 40% per-participant power cap in CalculateParticipantBitcoinRewards.
-                // With genesis folded to 153 via CPoC, shares are 27.7 / 36.2 / 36.2 --
-                // pure-proportional reward distribution holds within tolerance.
-                val totalExpectedWeight = expectedFinalWeight + 200.0 + 200.0
-                assertThat(genesisRatio).isCloseTo(expectedFinalWeight / totalExpectedWeight, Percentage.withPercentage(1.5))
+                // Genesis raw consensus = 101 * 3 = 303, then voting-power cap reduces
+                // it to ~266 (Weight). CalculateParticipantBitcoinRewards rescales
+                // ConfirmationWeight to the post-cap scale:
+                //   effective = ConfirmationWeight * Weight / rawTotal
+                //              = expectedFinalWeight * cappedGenesis / 303
+                // Joins (200 each) are uncapped (Weight == rawTotal), so their share
+                // is unchanged. Reward distribution is then proportional to effective.
+                val genesisRawTotal = honestGenesisWeight * 3
+                val cappedGenesis = cappedWeights.getValue(genesisAddr)
+                val effectiveGenesis = if (cappedGenesis < genesisRawTotal)
+                    expectedFinalWeight * cappedGenesis / genesisRawTotal
+                else
+                    expectedFinalWeight
+                val totalExpectedWeight = effectiveGenesis + 200.0 + 200.0
+                assertThat(genesisRatio).isCloseTo(effectiveGenesis / totalExpectedWeight, Percentage.withPercentage(1.5))
                 assertThat(join1Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
                 assertThat(join2Ratio).isCloseTo(200.0 / totalExpectedWeight, Percentage.withPercentage(1.5))
             }
@@ -262,7 +272,11 @@ fun runConfirmationPoCScenario(
     modelId: String,
     honestGenesisWeight: Long,
     dishonestGenesisWeight: Long,
-    assertRewards: (changes: Map<String, Long>, expectedFinalWeight: Long) -> Unit,
+    assertRewards: (
+        changes: Map<String, Long>,
+        expectedFinalWeight: Long,
+        cappedWeights: Map<String, Long>,
+    ) -> Unit,
 ) {
     logSection("Starting test epoch (honest regular PoC; CPoC events will measure dishonest weight)")
     genesis.waitForStage(EpochStage.START_OF_POC)
@@ -293,14 +307,15 @@ fun runConfirmationPoCScenario(
     val expectedFinalWeight = capturedReadings.fold(initialReading) { acc, r -> minOf(acc, r) }
     Logger.info("Simulated expectedFinalWeight=$expectedFinalWeight over ${capturedReadings.size} events")
 
-    // Cross-check simulation against chain-stored ConfirmationWeight.
+    // Cross-check simulation against chain-stored ConfirmationWeight, and capture
+    // post-cap consensus Weight per participant for the rescaling assertion below.
     val genesisAddr = genesis.node.getColdAddress()
-    val storedFinalWeight = genesis.node
+    val vws = genesis.node
         .queryEpochGroupData(testEpoch, modelId = "")
         .epochGroupData
         .validationWeights
-        .first { it.memberAddress == genesisAddr }
-        .confirmationWeight
+    val storedFinalWeight = vws.first { it.memberAddress == genesisAddr }.confirmationWeight
+    val cappedWeights = vws.associate { it.memberAddress to it.weight }
     assertThat(storedFinalWeight)
         .describedAs("simulation should match chain-stored ConfirmationWeight for genesis")
         .isEqualTo(expectedFinalWeight)
@@ -322,7 +337,7 @@ fun runConfirmationPoCScenario(
     }
     changes.forEach { (addr, delta) -> Logger.info("  $addr: change=$delta") }
 
-    assertRewards(changes, expectedFinalWeight)
+    assertRewards(changes, expectedFinalWeight, cappedWeights)
 }
 
 // captureConfirmationPoCReadings runs until the test epoch ends, capturing one reading

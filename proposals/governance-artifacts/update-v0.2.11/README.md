@@ -115,7 +115,7 @@ PR #835 | 5000 | Batch Transfer With Vesting implementation, huge kudos for figu
 PR #868 | 5000 | collateral slashing vulnerability and fix; low severity: low risk, medium likelyhood, organic | @qdanik
 v0.2.11 | 7500 | release management | @akup
 v0.2.11 | 7500 | release management | @x0152
-v0.2.10 | 2500 | upgrade review | @yapion
+v0.2.10 | 2500 | upgrade review | @0xMayoor
 v0.2.10 | 2500 | upgrade review | @blizko
 v0.2.10 | 2500 | upgrade review | @x0152
 

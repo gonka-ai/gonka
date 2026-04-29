@@ -296,7 +296,7 @@ func TestResolveBootstrapPenaltyModes_PreEligibleFalse(t *testing.T) {
 	}
 
 	modes := ResolveBootstrapPenaltyModes(participants, reportByModel, delegations, intents, directCommitters)
-	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["direct"])
+	require.Equal(t, BootstrapPenaltyDirect, modes["bootstrap-model"]["direct"])
 	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["delegator"])
 	require.Equal(t, BootstrapPenaltyIntentOK, modes["bootstrap-model"]["intender"])
 	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
@@ -358,6 +358,35 @@ func TestAccumulateBootstrapPenalties_MapsIntentMissedAndNone(t *testing.T) {
 	require.Equal(t, int64(80), participants[1].Weight)  // Delegate: no penalty
 	require.Equal(t, int64(25), participants[2].Weight)  // IntentMissed: no_participation_penalty 50*0.5=25
 	require.Equal(t, int64(25), participants[3].Weight)  // None: no_participation_penalty 50*0.5=25
+}
+
+func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalized(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "direct", Weight: 100},
+		{Index: "none", Weight: 100},
+	}
+	reportByModel := map[string]*types.BootstrapModelPreEligibility{
+		"bootstrap-model": {ModelId: "bootstrap-model", PreEligible: false},
+	}
+	directCommitters := map[string]map[string]bool{
+		"bootstrap-model": {"direct": true},
+	}
+
+	modes := ResolveBootstrapPenaltyModes(participants, reportByModel, nil, nil, directCommitters)
+	require.Equal(t, BootstrapPenaltyDirect, modes["bootstrap-model"]["direct"])
+	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
+
+	params := DelegationAdjustmentParams{
+		RefusalPenalty:         mathsdk.LegacyZeroDec(),
+		NoParticipationPenalty: mathsdk.LegacyMustNewDecFromStr("0.5"),
+		DelegationShare:        mathsdk.LegacyZeroDec(),
+	}
+	acc := NewPenaltyAccumulator(participants)
+	AccumulateBootstrapPenalties(acc, modes, nil, params, 1, nil)
+	acc.Apply(participants)
+
+	require.Equal(t, int64(100), participants[0].Weight) // Direct: untouched
+	require.Equal(t, int64(50), participants[1].Weight)  // None: 100*0.5=50
 }
 
 func TestAccumulateDelegationPenalties_MixedModesAcrossModels(t *testing.T) {

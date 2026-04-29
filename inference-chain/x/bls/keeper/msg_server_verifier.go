@@ -278,6 +278,9 @@ func validateComplaintIndices(epochBLSData *types.EpochBLSData, dealerIndex, com
 	if complainerIndex < 0 || complainerIndex >= len(epochBLSData.Participants) {
 		return fmt.Errorf("complainer index %d out of range", complainerIndex)
 	}
+	if dealerIndex == complainerIndex {
+		return fmt.Errorf("self complaint is not allowed for dealer %d", dealerIndex)
+	}
 
 	participant := epochBLSData.Participants[complainerIndex]
 	if participant.SlotEndIndex < participant.SlotStartIndex {

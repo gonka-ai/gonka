@@ -1298,6 +1298,21 @@ func (mr *MockBlsKeeperMockRecorder) GetEpochBLSData(ctx, epochID any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochBLSData", reflect.TypeOf((*MockBlsKeeper)(nil).GetEpochBLSData), ctx, epochID)
 }
 
+// GetParams mocks base method.
+func (m *MockBlsKeeper) GetParams(ctx context.Context) (types4.Params, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetParams", ctx)
+	ret0, _ := ret[0].(types4.Params)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetParams indicates an expected call of GetParams.
+func (mr *MockBlsKeeperMockRecorder) GetParams(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParams", reflect.TypeOf((*MockBlsKeeper)(nil).GetParams), ctx)
+}
+
 // GetSigningStatus mocks base method.
 func (m *MockBlsKeeper) GetSigningStatus(ctx types1.Context, requestID []byte) (*types4.ThresholdSigningRequest, error) {
 	m.ctrl.T.Helper()

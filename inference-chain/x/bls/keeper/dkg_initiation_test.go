@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -407,4 +408,49 @@ func TestAssignSlotsWithMoreParticipantsThanSlotsDeterminism(t *testing.T) {
 		require.Equal(t, result[i].SlotStartIndex, result2[i].SlotStartIndex)
 		require.Equal(t, result[i].SlotEndIndex, result2[i].SlotEndIndex)
 	}
+}
+func TestInitiateKeyGenerationForEpoch_RejectsOversizeShape(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, _ := k.GetParams(ctx)
+	params.ITotalSlots = 200
+	k.SetParams(ctx, params)
+
+	participants := []types.ParticipantWithWeightAndKey{
+		{
+			Address:            "cosmos1val",
+			PercentageWeight:   math.LegacyNewDec(100),
+			Secp256k1PublicKey: []byte("val_key"),
+			AllowedSecp256k1PublicKeys: make([][]byte, 100),
+		},
+	}
+	
+	for i := range participants[0].AllowedSecp256k1PublicKeys {
+		participants[0].AllowedSecp256k1PublicKeys[i] = []byte(fmt.Sprintf("warm_key_%d", i))
+	}
+
+	err := k.InitiateKeyGenerationForEpoch(ctx, 1, participants)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum")
+}
+
+func TestInitiateKeyGenerationForEpoch_RejectsOversizeParticipantsOrCommitments(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, _ := k.GetParams(ctx)
+	params.ITotalSlots = types.MaxDealerPartCommitmentsCount // 4096 => degree 4096 => commits 4097 => reject
+	params.TSlotsDegreeOffset = 0
+	k.SetParams(ctx, params)
+
+	participants := []types.ParticipantWithWeightAndKey{
+		{
+			Address:            "cosmos1val",
+			PercentageWeight:   math.LegacyNewDec(100),
+			Secp256k1PublicKey: []byte("val_key"),
+		},
+	}
+
+	err := k.InitiateKeyGenerationForEpoch(ctx, 1, participants)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum commitments count")
 }

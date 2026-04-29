@@ -457,11 +457,13 @@ class DelegationTests : TestermintTest() {
         logSection("Node A: weight=${pA.weight}, votingPowers=${pA.votingPowers}")
         logSection("Node B: weight=${pB.weight}, votingPowers=${pB.votingPowers}")
 
-        // Model B ineligible -> no consensus contribution from model B
-        // Both get weight only from model A: pocWeightA * coeffA = 50
-        // Bootstrap penalty: model B is governance-approved but non-eligible,
-        // both participants have BootstrapPenaltyNone -> no_participation_penalty=0.5
-        assertThat(pA.weight).isEqualTo(25) // 50 - floor(50*0.5) = 25
+        // Model B ineligible -> no consensus contribution from model B.
+        // Both get base weight from model A only: pocWeightA * coeffA = 50.
+        // Bootstrap penalty for non-pre-eligible model B: direct committers are
+        // exempt (BootstrapPenaltyDirect), only non-committers get penalized.
+        // Node A committed to model B -> no penalty -> 50.
+        // Node B did not commit to model B -> BootstrapPenaltyNone -> 50*0.5 = 25.
+        assertThat(pA.weight).isEqualTo(50)
         assertThat(pB.weight).isEqualTo(25)
 
         // Voting powers: only model A entries (model B ineligible -> no VP computed)
@@ -473,7 +475,7 @@ class DelegationTests : TestermintTest() {
         assertThat(vpB).containsKey(defaultModel)
         assertThat(vpB).doesNotContainKey(secondModel)
 
-        assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(25)
+        assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(50)
         assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(25)
     }
 
@@ -525,8 +527,10 @@ class DelegationTests : TestermintTest() {
 
         // The runtime compares against the upcoming epoch being formed, so the
         // active set for penaltyStartEpoch is the first one where the penalty applies.
+        // Node A committed to model B -> exempt from no-participation penalty (Direct).
+        // Node B did not commit to model B -> penalized: 50 * 0.5 = 25.
         assertThat(atGate.activeParticipants.epochId).isEqualTo(penaltyStartEpoch)
-        assertThat(atGateA.weight).isEqualTo(25)
+        assertThat(atGateA.weight).isEqualTo(50)
         assertThat(atGateB.weight).isEqualTo(25)
     }
 

@@ -432,61 +432,40 @@ func TestComputeGroupCap_TwoGroups_CapLimitsNonInitial(t *testing.T) {
 	wc := &DelegationWeightCalculator{
 		Groups: map[string]*GroupData{
 			"model-a": {
-				Members:          []string{"alice"},
-				MemberPocWeights: map[string]int64{"alice": 100},
-				ConsensusKoeff:   mathsdk.LegacyOneDec(),
-				IsInitialGroup:   true,
+				Members:        []string{"alice"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+				IsInitialGroup: true,
 			},
 			"model-b": {
-				Members:          []string{"alice"},
-				MemberPocWeights: map[string]int64{"alice": 50},
-				ConsensusKoeff:   mathsdk.LegacyOneDec(),
-				IsInitialGroup:   false,
+				Members:        []string{"alice"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+				IsInitialGroup: false,
 			},
 		},
-		ConsensusWeights:     map[string]int64{"alice": 150},
-		Params:               WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("2.0")},
-		PrevMemberPocWeights: map[string]map[string]int64{"model-b": {"alice": 50}},
+		ConsensusWeights:   map[string]int64{"alice": 150},
+		TotalNetworkWeight: 150,
+		Params:             WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("0.5")},
 	}
 
 	// model-a: uncapped (initial)
 	require.Equal(t, int64(-1), wc.ComputeGroupCap("model-a"))
 
-	// model-b: other = 150 - 1.0*50 = 100, cap = 2.0 * 100 = 200
-	require.Equal(t, int64(200), wc.ComputeGroupCap("model-b"))
+	// model-b: cap = 0.5 * 150 = 75
+	require.Equal(t, int64(75), wc.ComputeGroupCap("model-b"))
 }
 
 func TestComputeGroupCap_CapFactorZero_FullyCapped(t *testing.T) {
 	wc := &DelegationWeightCalculator{
 		Groups: map[string]*GroupData{
 			"model-a": {
-				Members:          []string{"alice"},
-				MemberPocWeights: map[string]int64{"alice": 100},
-				ConsensusKoeff:   mathsdk.LegacyOneDec(),
-				IsInitialGroup:   false,
+				Members:        []string{"alice"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+				IsInitialGroup: false,
 			},
 		},
-		ConsensusWeights: map[string]int64{"alice": 100},
-		Params:           WeightParams{CapFactor: mathsdk.LegacyZeroDec()},
-	}
-	require.Equal(t, int64(0), wc.ComputeGroupCap("model-a"))
-}
-
-func TestComputeGroupCap_MemberOnlyInCappedGroup_ZeroCap(t *testing.T) {
-	wc := &DelegationWeightCalculator{
-		Groups: map[string]*GroupData{
-			"model-a": {
-				Members:          []string{"alice"},
-				MemberPocWeights: map[string]int64{"alice": 100},
-				ConsensusKoeff:   mathsdk.LegacyOneDec(),
-				IsInitialGroup:   false,
-			},
-		},
-		// N-1 consensus weight = 100, all from model-a (koeff*poc = 1*100 = 100)
-		// other = 100 - 100 = 0
-		ConsensusWeights:     map[string]int64{"alice": 100},
-		Params:               WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("2.0")},
-		PrevMemberPocWeights: map[string]map[string]int64{"model-a": {"alice": 100}},
+		ConsensusWeights:   map[string]int64{"alice": 100},
+		TotalNetworkWeight: 100,
+		Params:             WeightParams{CapFactor: mathsdk.LegacyZeroDec()},
 	}
 	require.Equal(t, int64(0), wc.ComputeGroupCap("model-a"))
 }
@@ -509,27 +488,22 @@ func TestComputeConsensusWeights_GroupExceedsCap_ProportionalScaling(t *testing.
 				IsInitialGroup:   false,
 			},
 		},
-		// N-1 consensus weights: alice had 200, bob had 200
-		// model-b's "other" per member: alice = 200-1000=-800 clamped to 0, bob = 200-500=-300 clamped to 0
-		// total other = 0, cap = 0
-		// All model-b contributions capped to 0
-		ConsensusWeights:     map[string]int64{"alice": 200, "bob": 200},
-		Params:               WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("2.0")},
-		PrevMemberPocWeights: map[string]map[string]int64{"model-b": {"alice": 1000, "bob": 500}},
+		// total N-1 = 400, cap_factor = 0.5 -> model-b cap = 200.
+		// raw model-b = 1500, scale = 200/1500 = 2/15.
+		// alice scaled = floor(1000 * 2/15) = 133, bob scaled = floor(500 * 2/15) = 66.
+		ConsensusWeights:   map[string]int64{"alice": 200, "bob": 200},
+		TotalNetworkWeight: 400,
+		Params:             WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("0.5")},
 	}
 
 	result, _ := wc.ComputeConsensusWeights([]string{"model-a", "model-b"})
-	// model-a: uncapped, alice=100, bob=200
-	// model-b: cap=0, scaled to 0
-	require.Equal(t, int64(100), result["alice"])
-	require.Equal(t, int64(200), result["bob"])
+	require.Equal(t, int64(100+133), result["alice"])
+	require.Equal(t, int64(200+66), result["bob"])
 }
 
-// Regression: if N-1 only had this non-initial group eligible, reconstructing
-// the per-member contribution from raw pocWeight yields thisGroupContrib >=
-// totalWeight for every member, other = 0, cap = 0, and scaling collapses
-// every contribution to 0 -- stalling the chain. A sole eligible group has
-// nothing to cap against, so capping must be skipped.
+// A sole eligible group has nothing meaningful to cap against. Even if the cap
+// would otherwise bind, ComputeConsensusWeights must skip it -- otherwise a
+// network with a single non-initial eligible group stalls.
 func TestComputeConsensusWeights_SoleNonInitialGroup_SkipsCap(t *testing.T) {
 	wc := &DelegationWeightCalculator{
 		Groups: map[string]*GroupData{
@@ -540,9 +514,9 @@ func TestComputeConsensusWeights_SoleNonInitialGroup_SkipsCap(t *testing.T) {
 				IsInitialGroup:   false,
 			},
 		},
-		ConsensusWeights:     map[string]int64{"a": 8912, "b": 4098},
-		Params:               WeightParams{CapFactor: mathsdk.LegacyOneDec()},
-		PrevMemberPocWeights: map[string]map[string]int64{"qwen2.5": {"a": 7202, "b": 2547}},
+		ConsensusWeights:   map[string]int64{"a": 8912, "b": 4098},
+		TotalNetworkWeight: 13010,
+		Params:             WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("0.5")},
 	}
 
 	result, _ := wc.ComputeConsensusWeights([]string{"qwen2.5"})
@@ -566,15 +540,14 @@ func TestComputeConsensusWeights_GroupUnderCap_NoScaling(t *testing.T) {
 				IsInitialGroup:   false,
 			},
 		},
-		// N-1: alice had 110. model-b other = 110 - 10 = 100. cap = 2*100 = 200
-		// model-b raw = 10, well under cap 200
-		ConsensusWeights:     map[string]int64{"alice": 110},
-		Params:               WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("2.0")},
-		PrevMemberPocWeights: map[string]map[string]int64{"model-b": {"alice": 10}},
+		// total N-1 = 110, cap_factor = 0.5 -> cap = 55. raw model-b = 10, well under.
+		ConsensusWeights:   map[string]int64{"alice": 110},
+		TotalNetworkWeight: 110,
+		Params:             WeightParams{CapFactor: mathsdk.LegacyMustNewDecFromStr("0.5")},
 	}
 
 	result, _ := wc.ComputeConsensusWeights([]string{"model-a", "model-b"})
-	// model-a: 100, model-b: 10 (no scaling), total: 110
+	// model-a: 100, model-b: 10, total: 110
 	require.Equal(t, int64(110), result["alice"])
 }
 
@@ -824,6 +797,76 @@ func TestResolveGroupParticipation_DelegationToZeroWeightTarget_ModeNone(t *test
 
 	modes := wc.ResolveGroupParticipation("model-a")
 	require.Equal(t, ModeNone, modes["delegator"])
+}
+
+// Newcomer (absent from N-1 ConsensusWeights, present in UpcomingActiveParticipants)
+// gets ModeDelegate so their delegation applies in their first active epoch.
+func TestResolveGroupParticipation_NewcomerWithDelegation(t *testing.T) {
+	wc := &DelegationWeightCalculator{
+		Groups: map[string]*GroupData{
+			"model-a": {
+				Members:        []string{"target"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+			},
+		},
+		ConsensusWeights: map[string]int64{
+			"target": 100,
+		},
+		UpcomingActiveParticipants: map[string]bool{
+			"target":   true,
+			"newcomer": true,
+		},
+		Delegations: map[string]map[string]string{
+			"model-a": {"newcomer": "target"},
+		},
+	}
+
+	modes := wc.ResolveGroupParticipation("model-a")
+	require.Equal(t, ModeDelegate, modes["newcomer"])
+	require.Equal(t, ModeDirect, modes["target"])
+}
+
+// Newcomer's delegation lands on the target's per-model voting power.
+func TestComputeGroupVotingPowers_NewcomerDelegationFlows(t *testing.T) {
+	wc := &DelegationWeightCalculator{
+		Groups: map[string]*GroupData{
+			"model-a": {
+				Members:        []string{"target"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+			},
+		},
+		ConsensusWeights:     map[string]int64{"target": 100},
+		UpcomingActiveParticipants: map[string]bool{"target": true, "newcomer": true},
+		Delegations: map[string]map[string]string{
+			"model-a": {"newcomer": "target"},
+		},
+	}
+
+	modes := wc.ResolveGroupParticipation("model-a")
+	finalWeights := map[string]int64{"target": 100, "newcomer": 50}
+	vp := wc.ComputeGroupVotingPowers("model-a", modes, finalWeights)
+	require.Equal(t, int64(150), vp["target"])
+	require.Len(t, vp, 1)
+}
+
+// Newcomer who refuses gets ModeRefuse in their first active epoch.
+func TestResolveGroupParticipation_NewcomerRefusal(t *testing.T) {
+	wc := &DelegationWeightCalculator{
+		Groups: map[string]*GroupData{
+			"model-a": {
+				Members:        []string{"target"},
+				ConsensusKoeff: mathsdk.LegacyOneDec(),
+			},
+		},
+		ConsensusWeights:     map[string]int64{"target": 100},
+		UpcomingActiveParticipants: map[string]bool{"target": true, "newcomer": true},
+		Refusals: map[string]map[string]bool{
+			"model-a": {"newcomer": true},
+		},
+	}
+
+	modes := wc.ResolveGroupParticipation("model-a")
+	require.Equal(t, ModeRefuse, modes["newcomer"])
 }
 
 func newMinimalInferenceKeeper(t *testing.T) (keeper.Keeper, sdk.Context) {

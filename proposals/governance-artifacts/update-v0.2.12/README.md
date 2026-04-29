@@ -28,14 +28,15 @@ The on-chain migration logic is defined in [`upgrades.go`](https://github.com/go
 
 Migrations:
 
-- Auto-creates `x/feegrant` allowances for every existing cold-to-warm ML ops authz grant to support transaction fees.
-- Initializes `FeeParams`.
+- Auto-creates `x/feegrant` allowances for every existing cold-to-warm ML ops authz grant in case transaction fees are later turned on.
+- Initializes `FeeParams` with `min_gas_price_ngonka = 0` (fees are effectively disabled at upgrade time, see Changes).
 - Migrates singular PoC model parameters into the new multi-model `PocParams.Models` list and initializes `DelegationParams`.
+- Adds the `moonshotai/Kimi-K2.6` governance model and its PoC model config (`seq_len=1024`, scaled weight coefficient, penalty start at effective epoch + 2).
+- Seeds `DevshardEscrowParams.ApprovedVersions` with the initial `v1` devshard binary (sha256 `15f72244...d36d4715`) so `versiond` has an approved version to download and run immediately after the upgrade.
+- Sets `EpochParams.ConfirmationPocSafetyWindow` to `500` blocks and `DelegationParams.DeployWindow` to `500` blocks.
 - Clears legacy PoC v2 data (which used old key layouts) and seeds new pruning state markers for the new multi-model collections.
 - Backfills `ActiveParticipant.VotingPowers` and `EpochGroupData` subgroup voting power for the current epoch to ensure seamless PoC validation post-upgrade.
 - Removes unused `TopMiners` and training states (training will be moved to an off-chain architecture similar to devshards).
-
-- [ ] Add koeff and params for new model
 
 ## Changes
 
@@ -54,15 +55,13 @@ To support multiple models, this upgrade runs PoC for each model independently i
 
 The current base model remains the starting group for bootstrapping additional models. The exact model coefficients and final parameter values are not yet part of this PR.
 
-### Transaction fees for spam prevention ([#937](https://github.com/gonka-ai/gonka/pull/937), [#981](https://github.com/gonka-ai/gonka/pull/981))
+### Transaction fees for spam prevention ([#937](https://github.com/gonka-ai/gonka/pull/937), [#981](https://github.com/gonka-ai/gonka/pull/981), [#1120](https://github.com/gonka-ai/gonka/pull/1120))
 
-v0.2.12 turns on consensus-level transaction fees for the first time. Before this upgrade, any funded account could broadcast an unlimited number of transactions at zero cost, because the chain relied only on per-validator `minimum-gas-prices` configuration, which is mempool-only and trivially bypassed by a malicious block proposer. This left governance proposals, bank sends, staking operations, collateral management, reward claims, bridge operations, and CosmWasm calls without any economic friction against abuse.
+v0.2.12 lays the groundwork for consensus-level transaction fees. Before this upgrade, any funded account could broadcast an unlimited number of transactions at zero cost, because the chain relied only on per-validator `minimum-gas-prices` configuration, which is mempool-only and trivially bypassed by a malicious block proposer. This left governance proposals, bank sends, staking operations, collateral management, reward claims, bridge operations, and CosmWasm calls without any economic friction against abuse.
 
-v0.2.12 introduces a governance-controlled `FeeParams.min_gas_price_ngonka` enforced during both `CheckTx` and `DeliverTx`. The initial value is **10 ngonka per gas unit**, which works out to ~800,000 ngonka (0.0008 GNK) for a typical 80k-gas transaction. Negligible for legitimate users, but meaningful at spam volumes: flooding 100,000 transactions would cost an attacker around 80 GNK. Governance can adjust the parameter without a chain upgrade.
+v0.2.12 introduces a governance-controlled `FeeParams.min_gas_price_ngonka` enforced during both `CheckTx` and `DeliverTx`. The full machinery is in place: a `NetworkDutyFeeBypassDecorator` that exempts protocol-obligation messages (PoC submissions, validation messages, inference start/finish, BLS DKG rounds), and a two-component fee on `MsgPoCV2StoreCommit` for Host sybil resistance (a base validation cost per participant per epoch plus a count-proportional cost per count delta).
 
-Protocol-obligation messages — PoC submissions, validation messages, inference start/finish, BLS DKG rounds — are made fee-exempt via a `NetworkDutyFeeBypassDecorator`. These are already rate-limited by timing windows, duplicate checks, and epoch-scoping, so adding fees would not improve their spam resistance while complicating automated node operation.
-
-For Host sybil resistance specifically, `MsgPoCV2StoreCommit` charges a two-component fee: a base validation cost charged once per participant per epoch (covering the GPU work validators have to perform), plus a count-proportional cost charged on each count delta. A sybil claiming high compute weight across many fake participants pays proportionally to the weight they are trying to claim, making large-scale sybil attacks economically prohibitive.
+**Fees are effectively disabled at upgrade time.** `min_gas_price_ngonka` is initialized to `0` due to remaining issues in client-side gas estimation. Once those are resolved, governance can flip on a non-zero value without a chain upgrade. No host action is required to support fees in this release; the upgrade still installs `x/feegrant` allowances from cold to warm keys so the switch can be flipped without a follow-up migration.
 
 ### Devshards (formerly "subnets") — standalone, versioned runtime ([#1045](https://github.com/gonka-ai/gonka/pull/1045))
 
@@ -75,6 +74,26 @@ To solve this, v0.2.12 decouples devshards into a standalone, versioned runtime 
 - The standalone devshard directly communicates with MLNodes during inference but does not manage their lifecycle, cleanly separating the roles of MLNode manager (DAPI) and client.
 - Each session is cryptographically bound to the specific binary version that served it. The settlement payload now includes a cleartext `version` field, ensuring a session cannot mix responses from different versions.
 - The term "subnet" is entirely replaced by "devshard" across the codebase. Additionally, float math in devshard settlement has been replaced with deterministic integer arithmetic to eliminate consensus-failure risks.
+
+### Random selection of preserved MLNodes ([#1089](https://github.com/gonka-ai/gonka/pull/1089))
+
+Previously, "preserved" nodes (the ones that stay on inference instead of running PoC) were chosen once per epoch via the static `MLNodeInfo.timeslot_allocation[POC_SLOT]` flag. Because the flag was visible at epoch start and held for the entire epoch, an operator knew well in advance which boxes would skip both the epoch-start PoC and every confirmation PoC event in that epoch. That made hardware downgrade or partial-capacity substitution easy to plan around.
+
+v0.2.12 replaces epoch-long preservation with episode-scoped preservation. An episode is a single PoC execution window: either the epoch-start regular PoC, or one confirmation PoC event during the inference phase. At each PoC anchor (`upcomingEpoch.PocStartBlockHeight` for regular PoC, `event.TriggerHeight` for confirmation), the chain materializes a fresh preserved snapshot for that single episode and overwrites a singleton state slot. The next episode gets a new sample.
+
+Key properties:
+
+- Late-binding: an operator cannot predict far in advance whether a given node will be preserved for the next PoC window.
+- The candidate pool is the current model subgroup `EpochGroupData.ValidationWeights` / `MlNodes`, applying existing protocol exclusions.
+- `ActiveParticipants` stays stable for the whole epoch; `timeslot_allocation[POC_SLOT]` is deprecated for scheduling.
+- The broker reads the current episode snapshot instead of the static epoch-long flag.
+- Reward weight collapses from the old "preserved + measured" split into a single `vw.ConfirmationWeight` that starts at the participant's full coefficient-adjusted total and is lowered per event via `min(ConfirmationWeight, preserved(event) + measured(event))`. Honest operation keeps it at full; missed or invalid readings pull it down.
+
+Local admin-disable behavior is unchanged: it still runs before the preserved check on the broker side and is not an input to the chain-side snapshot. Chain-visible hardware withdrawal still goes through `MsgSubmitHardwareDiff` and only takes effect at the next `ActiveParticipants` generation.
+
+### New governance model: Kimi K2.6 (`moonshotai/Kimi-K2.6`)
+
+The upgrade introduces `moonshotai/Kimi-K2.6` as a second governance-approved model, exercising the new multi-model PoC infrastructure end to end. The migration registers both the governance `Model` entry (HF repo, commit, tool/reasoning parsers, VRAM and throughput hints) and the corresponding `PoCModelConfig` (`seq_len=1024`, scaled weight coefficient relative to the base model, validation threshold `0.92`). The penalty for not choosing a participation mode (DIRECT / DELEGATE / REFUSE / INTENT) starts at the effective epoch + 2, giving Hosts a grace period to decide.
 
 ### Certik audit fixes
 
@@ -115,19 +134,3 @@ For Hosts, participation logic is now evaluated on a model-by-model basis. For e
 - NONE mode means the Host does nothing for that model (this will result in a penalty).
 
 *Note: Delegation is necessary because not every Host can realistically run every model due to hardware constraints. Without delegation, a model group whose direct members hold less than 2/3 of the total network weight could never pass PoC validation.*
-
-- [ ] Instruction with exact commands to be published
-
-##### Fees — but only minimally
-
-The v0.2.12 upgrade introduces transaction fees, which means the warm key (ML operational key) needs to pay for automated transactions like reward claims and hardware diff updates. Because the warm key holds zero balance by design, it needs an `x/feegrant` allowance from the cold account.
-
-For existing Hosts, this migration is fully automatic. The upgrade handler will automatically create an `x/feegrant` allowance (valid for 1 year) from the cold key to the warm key.
-
-**Host's responsibility:** Ensure the cold account holds at least **100 GNK**. This balance will be enough to cover the expected automated fee burden for several years, plus any manual operations.
-
-New Hosts onboarding after the upgrade will run the same `grant-ml-ops-permissions` command as before; the command has been updated to issue both the authz grants and the `x/feegrant` allowance in a single transaction.
-
-The full onboarding and upgrade flows are documented in [`docs/host_onboarding.md`](https://github.com/gonka-ai/gonka/blob/upgrade-v0.2.12/docs/host_onboarding.md).
-
-- [ ] Instruction with exact commands to be published

@@ -540,6 +540,38 @@ func TestSubmitVerificationVector_MalformedSharesDoNotRequireComplaintEvidence(t
 	require.Empty(t, storedData.DealerComplaints)
 }
 
+func TestSubmitVerificationVector_SelfComplaintRejected(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(117)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, false, false},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             0,
+				DisputedSlotIndex:       participant.SlotStartIndex,
+				DisputedCiphertextIndex: 0,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	require.Equal(t, codes.InvalidArgument, st.Code())
+	require.Contains(t, st.Message(), "self complaint is not allowed")
+}
+
 func TestSubmitVerificationVector_InvalidComplaintSlotRejected(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)

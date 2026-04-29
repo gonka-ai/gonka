@@ -123,25 +123,17 @@ func ResolveBootstrapPenaltyModes(
 			}
 
 			addr := participant.Index
+			intentMode := BootstrapPenaltyIntentOK
 			if preEligible {
-				switch {
-				case modelCommitters[addr]:
-					modelModes[addr] = BootstrapPenaltyDirect
-				case modelDelegations != nil && modelDelegations[addr] != "":
-					modelModes[addr] = BootstrapPenaltyDelegate
-				case modelIntents != nil && modelIntents[addr]:
-					modelModes[addr] = BootstrapPenaltyIntentMissed
-				default:
-					modelModes[addr] = BootstrapPenaltyNone
-				}
-				continue
+				intentMode = BootstrapPenaltyIntentMissed
 			}
-
 			switch {
+			case modelCommitters[addr]:
+				modelModes[addr] = BootstrapPenaltyDirect
 			case modelDelegations != nil && modelDelegations[addr] != "":
 				modelModes[addr] = BootstrapPenaltyDelegate
 			case modelIntents != nil && modelIntents[addr]:
-				modelModes[addr] = BootstrapPenaltyIntentOK
+				modelModes[addr] = intentMode
 			default:
 				modelModes[addr] = BootstrapPenaltyNone
 			}

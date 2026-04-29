@@ -295,7 +295,7 @@ func TestBuildBootstrapDelegationSnapshot_OnlyVotingPowerModelsTreatedAsActive(t
 	require.Equal(t, "new-model", snapshot.Preeligibility[0].ModelId)
 }
 
-func TestBuildDelegationSnapshot_FiltersActiveParticipantsAndExcludesIntents(t *testing.T) {
+func TestBuildDelegationSnapshot_IncludesUpcomingCommittersAndExcludesIntents(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
 	params, err := k.GetParams(ctx)
@@ -308,11 +308,13 @@ func TestBuildDelegationSnapshot_FiltersActiveParticipantsAndExcludesIntents(t *
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
+	const pocStageStart = int64(100)
+
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
 	ap := types.ActiveParticipants{
 		EpochId:             1,
 		EpochGroupId:        1,
-		PocStartBlockHeight: 100,
+		PocStartBlockHeight: pocStageStart,
 		Participants: []*types.ActiveParticipant{
 			{Index: testutil.Executor, Weight: 100, Models: []string{"active-model"}},
 			{Index: testutil.Executor2, Weight: 60, Models: []string{"active-model"}},
@@ -321,6 +323,7 @@ func TestBuildDelegationSnapshot_FiltersActiveParticipantsAndExcludesIntents(t *
 	require.NoError(t, k.SetActiveParticipants(ctx, ap))
 	setupEpochGroupDataFromAP(k, ctx, ap)
 
+	// Incumbent: delegation + refusal kept, intent dropped.
 	require.NoError(t, k.SetPoCDelegation(ctx, types.PoCDelegation{
 		ModelId:    "new-model",
 		Delegator:  testutil.Executor,
@@ -329,7 +332,22 @@ func TestBuildDelegationSnapshot_FiltersActiveParticipantsAndExcludesIntents(t *
 	require.NoError(t, k.SetPoCRefusal(ctx, "new-model", testutil.Executor2))
 	require.NoError(t, k.SetPoCDirectIntent(ctx, "new-model", testutil.Executor))
 
-	outsider := testutil.Bech32Addr(100)
+	// Newcomer: not in N-1, but committed PoC this stage; entries kept.
+	newcomer := testutil.Bech32Addr(100)
+	require.NoError(t, k.SetPoCDelegation(ctx, types.PoCDelegation{
+		ModelId:    "new-model",
+		Delegator:  newcomer,
+		DelegateTo: testutil.Executor,
+	}))
+	require.NoError(t, k.SetPoCRefusal(ctx, "active-model", newcomer))
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+		ParticipantAddress:       newcomer,
+		PocStageStartBlockHeight: pocStageStart,
+		ModelId:                  "active-model",
+	}))
+
+	// Outsider: no N-1 entry, no commit; dropped.
+	outsider := testutil.Bech32Addr(101)
 	require.NoError(t, k.SetPoCDelegation(ctx, types.PoCDelegation{
 		ModelId:    "new-model",
 		Delegator:  outsider,
@@ -338,13 +356,22 @@ func TestBuildDelegationSnapshot_FiltersActiveParticipantsAndExcludesIntents(t *
 	require.NoError(t, k.SetPoCRefusal(ctx, "new-model", outsider))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	snapshot, err := am.buildDelegationSnapshot(ctx, 197)
+	snapshot, err := am.buildDelegationSnapshot(ctx, 197, pocStageStart)
 	require.NoError(t, err)
 
-	require.Len(t, snapshot.Delegations, 1)
-	require.Equal(t, testutil.Executor, snapshot.Delegations[0].Delegator)
-	require.Len(t, snapshot.Refusals, 1)
-	require.Equal(t, testutil.Executor2, snapshot.Refusals[0].Participant)
+	delegators := make([]string, 0, len(snapshot.Delegations))
+	for _, d := range snapshot.Delegations {
+		delegators = append(delegators, d.Delegator)
+	}
+	require.ElementsMatch(t, []string{testutil.Executor, newcomer}, delegators)
+	require.NotContains(t, delegators, outsider)
+
+	refusers := make([]string, 0, len(snapshot.Refusals))
+	for _, r := range snapshot.Refusals {
+		refusers = append(refusers, r.Participant)
+	}
+	require.ElementsMatch(t, []string{testutil.Executor2, newcomer}, refusers)
+	require.NotContains(t, refusers, outsider)
 }
 
 func TestBuildBootstrapModelPreEligibilityResults_Conditions(t *testing.T) {
@@ -521,7 +548,7 @@ func TestCaptureDelegationSnapshot_StoresFrozenState(t *testing.T) {
 	require.NoError(t, k.SetPoCDirectIntent(ctx, "candidate", testutil.Executor))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	am.captureDelegationSnapshot(ctx, 197)
+	am.captureDelegationSnapshot(ctx, 197, 100)
 
 	snapshot, found := k.GetDelegationSnapshot(ctx)
 	require.True(t, found)
