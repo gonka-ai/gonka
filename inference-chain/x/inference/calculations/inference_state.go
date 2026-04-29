@@ -69,6 +69,13 @@ func ProcessStartInference(
 			PerTokenPrice: existingPerTokenPrice,
 		}
 	}
+	maxTokens := getMaxTokens(startMessage)
+	if currentInference.FinishedProcessed() {
+		if err := validateFinishedTokenCountsAgainstStart(currentInference, startMessage, maxTokens); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// Works if FinishInference came before
 	currentInference.RequestTimestamp = startMessage.RequestTimestamp
 	currentInference.TransferredBy = startMessage.Creator
@@ -82,7 +89,7 @@ func ProcessStartInference(
 	currentInference.Model = startMessage.Model
 	currentInference.StartBlockHeight = blockContext.BlockHeight
 	currentInference.StartBlockTimestamp = blockContext.BlockTimestamp
-	currentInference.MaxTokens = getMaxTokens(startMessage)
+	currentInference.MaxTokens = maxTokens
 	currentInference.AssignedTo = startMessage.AssignedTo
 	currentInference.NodeVersion = startMessage.NodeVersion
 
@@ -106,6 +113,26 @@ func ProcessStartInference(
 	}
 
 	return currentInference, payments, nil
+}
+
+func validateFinishedTokenCountsAgainstStart(currentInference *types.Inference, startMessage *types.MsgStartInference, maxTokens uint64) error {
+	if currentInference.CompletionTokenCount > maxTokens {
+		return sdkerrors.Wrapf(
+			types.ErrTokenCountOutOfRange,
+			"completion_token_count exceeds start max_tokens (%d > %d)",
+			currentInference.CompletionTokenCount,
+			maxTokens,
+		)
+	}
+	if startMessage.PromptTokenCount != 0 && currentInference.PromptTokenCount != 0 && currentInference.PromptTokenCount != startMessage.PromptTokenCount {
+		return sdkerrors.Wrapf(
+			types.ErrTokenCountOutOfRange,
+			"prompt_token_count mismatch: finish=%d start=%d",
+			currentInference.PromptTokenCount,
+			startMessage.PromptTokenCount,
+		)
+	}
+	return nil
 }
 
 func setEscrowForFinished(currentInference *types.Inference, escrowAmount int64, payments *Payments) error {
@@ -175,6 +202,9 @@ func ProcessFinishInference(
 	actualCost, err := CalculateCost(currentInference)
 	if err != nil {
 		return nil, nil, err
+	}
+	if currentInference.StartProcessed() && actualCost > currentInference.EscrowAmount {
+		actualCost = currentInference.EscrowAmount
 	}
 	currentInference.ActualCost = actualCost
 	if currentInference.StartProcessed() {

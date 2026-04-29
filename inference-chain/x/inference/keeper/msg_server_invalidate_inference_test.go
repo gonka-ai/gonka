@@ -81,6 +81,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 		RequestedBy:     payerAddr,
 		Status:          types.InferenceStatus_FINISHED,
 		ActualCost:      actualCost,
+		EscrowAmount:    actualCost,
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
 		EpochId:         1,
 	})
@@ -149,6 +150,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 		RequestedBy:     payerAddr,
 		Status:          types.InferenceStatus_FINISHED,
 		ActualCost:      actualCost,
+		EscrowAmount:    actualCost,
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
 		EpochId:         1,
 	})
@@ -178,6 +180,61 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 	updatedInf, found := k.GetInference(ctx, inferenceID)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_INVALIDATED, updatedInf.Status)
+}
+
+func TestInvalidateInference_CapsRefundAndExecutorChargeToEscrow(t *testing.T) {
+	k, ms, ctx, mocks := setupInvalidateHarness(t)
+
+	params := types.DefaultParams()
+	k.SetParams(ctx, params)
+
+	err := setEffectiveEpoch(ctx, k, 1, mocks)
+	require.NoError(t, err)
+
+	executorAddr := sample.AccAddress()
+	payerAddr := sample.AccAddress()
+
+	initialBalance := int64(1_000)
+	executor := types.Participant{
+		Index:                        executorAddr,
+		Address:                      executorAddr,
+		Status:                       types.ParticipantStatus_ACTIVE,
+		ConsecutiveInvalidInferences: 0,
+		CurrentEpochStats:            &types.CurrentEpochStats{},
+		CoinBalance:                  initialBalance,
+	}
+	k.SetParticipant(ctx, executor)
+
+	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, payer)
+	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor))
+
+	inferenceID := "refund-capped-to-escrow"
+	actualCost := int64(1_000)
+	escrowAmount := int64(10)
+	k.SetInference(ctx, types.Inference{
+		Index:           inferenceID,
+		InferenceId:     inferenceID,
+		ExecutedBy:      executorAddr,
+		RequestedBy:     payerAddr,
+		Status:          types.InferenceStatus_FINISHED,
+		ActualCost:      actualCost,
+		EscrowAmount:    escrowAmount,
+		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
+		EpochId:         1,
+	})
+
+	expectedRefund := sdk.NewCoins(sdk.NewCoin(types.BaseCoin, math.NewInt(escrowAmount)))
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), expectedRefund, gomock.Any()).Return(nil).Times(1)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	_, err = ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
+	require.NoError(t, err)
+
+	updatedExecutor, ok := k.GetParticipant(ctx, executorAddr)
+	require.True(t, ok)
+	require.Equal(t, initialBalance-escrowAmount, updatedExecutor.CoinBalance)
 }
 
 func TestInvalidateInference_NextEpoch_NoRefundNoCharge_NoSlash(t *testing.T) {
