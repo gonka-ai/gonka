@@ -89,10 +89,15 @@ func (c RegisterNode) Execute(b *Broker) {
 
 	for modelId := range c.Node.Models {
 		if _, ok := modelMap[modelId]; !ok {
-			logging.Error("RegisterNode. Model is not a valid governance model", types.Nodes, "model_id", modelId)
-			c.Response <- NodeCommandResponse{Node: nil, Error: err}
-			return
+			logging.Warn("RegisterNode. Dropping non-governance model", types.Nodes, "node_id", c.Node.Id, "model_id", modelId)
+			delete(c.Node.Models, modelId)
 		}
+	}
+	if len(c.Node.Models) == 0 {
+		err := fmt.Errorf("node %s has no governance-valid models", c.Node.Id)
+		logging.Error("RegisterNode. No valid models after filter", types.Nodes, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: err}
+		return
 	}
 
 	b.curMaxNodesNum.Add(1)
