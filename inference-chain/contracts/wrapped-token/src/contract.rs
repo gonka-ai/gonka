@@ -22,6 +22,7 @@ pub const CREATOR: Item<Addr> = Item::new("creator");
 
 const CONTRACT_NAME: &str = "wrapped-token";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const CW20_BASE_CONTRACT_NAME: &str = "crates.io:cw20-base";
 
 #[entry_point]
 pub fn instantiate(
@@ -318,10 +319,10 @@ pub fn migrate(
     let old = get_contract_version(deps.storage)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
     
-    if old.contract != CONTRACT_NAME {
+    if old.contract != CONTRACT_NAME && old.contract != CW20_BASE_CONTRACT_NAME {
         return Err(ContractError::Std(StdError::generic_err(format!(
-            "wrong contract: expected {}, got {}",
-            CONTRACT_NAME, old.contract
+            "wrong contract: expected {} or {}, got {}",
+            CONTRACT_NAME, CW20_BASE_CONTRACT_NAME, old.contract
         ))));
     }
 
@@ -411,4 +412,78 @@ where
     let bytes = query_grpc(deps, path, Binary::from(buf))?;
     TResponse::decode(bytes.as_slice())
         .map_err(|e| StdError::generic_err(format!("Decode response: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+    use cosmwasm_std::attr;
+
+    fn instantiate_msg() -> InstantiateMsg {
+        InstantiateMsg {
+            chain_id: "ethereum".to_string(),
+            contract_address: "0x0000000000000000000000000000000000000001".to_string(),
+            initial_balances: vec![],
+            mint: None,
+            admin: None,
+        }
+    }
+
+    #[test]
+    fn instantiate_leaves_cw20_base_contract_marker() {
+        let mut deps = mock_dependencies();
+        let info = message_info(&deps.api.addr_make("creator"), &[]);
+
+        instantiate(deps.as_mut(), mock_env(), info, instantiate_msg()).unwrap();
+
+        let version = get_contract_version(&deps.storage).unwrap();
+        assert_eq!(version.contract, CW20_BASE_CONTRACT_NAME);
+    }
+
+    #[test]
+    fn migrate_accepts_cw20_base_marker_and_rewrites_to_wrapped_token() {
+        let mut deps = mock_dependencies();
+        let info = message_info(&deps.api.addr_make("creator"), &[]);
+        instantiate(deps.as_mut(), mock_env(), info, instantiate_msg()).unwrap();
+
+        let response = migrate(deps.as_mut(), mock_env(), Binary::default()).unwrap();
+
+        assert_eq!(
+            response.attributes,
+            vec![
+                attr("action", "migrate"),
+                attr("from_contract", CW20_BASE_CONTRACT_NAME),
+                attr("from_version", "2.0.0"),
+                attr("to_version", CONTRACT_VERSION),
+            ]
+        );
+        let version = get_contract_version(&deps.storage).unwrap();
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_accepts_canonical_wrapped_token_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "0.0.1").unwrap();
+
+        migrate(deps.as_mut(), mock_env(), Binary::default()).unwrap();
+
+        let version = get_contract_version(&deps.storage).unwrap();
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_rejects_unrelated_contract_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, "other-contract", "0.0.1").unwrap();
+
+        let err = migrate(deps.as_mut(), mock_env(), Binary::default()).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("wrong contract: expected wrapped-token or crates.io:cw20-base"));
+    }
 }
