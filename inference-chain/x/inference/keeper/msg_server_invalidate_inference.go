@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -69,19 +70,91 @@ func (k msgServer) refundInvalidatedInference(executor *types.Participant, infer
 		return types.ErrParticipantNotFound
 	}
 
+	clawbackAdjustments, clawbacks, err := k.loadInvalidatedInferenceClawbacks(ctx, executor, inference)
+	if err != nil {
+		return err
+	}
+
 	// Attempt refund BEFORE modifying executor balance
 	// If refund fails (e.g. underfunded escrow), don't corrupt state
-	err := k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
+	err = k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
 		return err
 	}
 
-	// Only deduct from executor after successful refund
-	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
-	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
+	if err := k.applyInvalidatedInferenceClawbacks(ctx, executor, inference, clawbackAdjustments, clawbacks); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (k msgServer) loadInvalidatedInferenceClawbacks(ctx context.Context, executor *types.Participant, inference *types.Inference) ([]calculations.Adjustment, map[string]*types.Participant, error) {
+	if inference.ActualCost < 0 {
+		return nil, nil, errorsmod.Wrapf(types.ErrIllegalState, "inference %s has negative actual cost %d", inference.InferenceId, inference.ActualCost)
+	}
+
+	clawbackAdjustments, err := invalidatedInferenceClawbackAdjustments(inference)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	clawbacks := make(map[string]*types.Participant, len(clawbackAdjustments))
+	for _, adjustment := range clawbackAdjustments {
+		if adjustment.WorkAdjustment == 0 || adjustment.ParticipantId == executor.Address {
+			continue
+		}
+		if _, loaded := clawbacks[adjustment.ParticipantId]; loaded {
+			continue
+		}
+		participant, found := k.GetParticipant(ctx, adjustment.ParticipantId)
+		if !found {
+			return nil, nil, errorsmod.Wrapf(types.ErrParticipantNotFound, "validated inference worker %s not found", adjustment.ParticipantId)
+		}
+		participantCopy := participant
+		clawbacks[adjustment.ParticipantId] = &participantCopy
+	}
+
+	return clawbackAdjustments, clawbacks, nil
+}
+
+func invalidatedInferenceClawbackAdjustments(inference *types.Inference) ([]calculations.Adjustment, error) {
+	workers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
+	adjustments := calculations.ShareWork(nil, workers, inference.ActualCost)
+	for _, adjustment := range adjustments {
+		if adjustment.WorkAdjustment < 0 {
+			return nil, errorsmod.Wrapf(types.ErrIllegalState, "invalidated inference clawback for %s cannot be negative: %d", adjustment.ParticipantId, adjustment.WorkAdjustment)
+		}
+	}
+	return adjustments, nil
+}
+
+func (k msgServer) applyInvalidatedInferenceClawbacks(ctx context.Context, executor *types.Participant, inference *types.Inference, clawbackAdjustments []calculations.Adjustment, clawbacks map[string]*types.Participant) error {
+	for _, adjustment := range clawbackAdjustments {
+		participantID := adjustment.ParticipantId
+		amount := adjustment.WorkAdjustment
+		if amount == 0 {
+			continue
+		}
+		if participantID == executor.Address {
+			executor.CoinBalance -= amount
+			k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, amount, "invalidated_inference:"+inference.InferenceId)
+			k.LogInfo("Invalid inference clawed back from executor CoinBalance", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "amount", amount, "coinBalance", executor.CoinBalance)
+			continue
+		}
+
+		participant, found := clawbacks[participantID]
+		if !found {
+			return errorsmod.Wrapf(types.ErrParticipantNotFound, "validated inference worker %s not found", participantID)
+		}
+		participant.CoinBalance -= amount
+		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, participant.Address, types.OwedSubAccount, amount, "invalidated_inference:"+inference.InferenceId)
+		k.LogInfo("Invalid inference clawed back from validator CoinBalance", types.Balances, "inferenceId", inference.InferenceId, "validator", participant.Address, "amount", amount, "coinBalance", participant.CoinBalance)
+		if err := k.SetParticipant(ctx, *participant); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

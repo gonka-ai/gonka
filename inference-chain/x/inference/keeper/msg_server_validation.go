@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -62,14 +63,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return &types.MsgValidationResponse{}, nil
 	}
 
-	if !msg.Revalidation {
-		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
-		if err != nil {
-			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
-			return nil, err
-		}
-	}
-
 	if inference.Status == types.InferenceStatus_INVALIDATED {
 		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
@@ -78,6 +71,31 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
+
+	if !msg.Revalidation {
+		alreadyValidated, err := k.EpochGroupValidationEntry.Has(ctx, collections.Join3(inference.EpochId, msg.Creator, msg.InferenceId))
+		if err != nil {
+			return nil, err
+		}
+		if alreadyValidated {
+			k.LogInfo("Inference already validated", types.Validation, "inferenceId", msg.InferenceId)
+			return nil, types.ErrDuplicateValidation
+		}
+	}
+
+	if !msg.Revalidation && inference.Status != types.InferenceStatus_FINISHED {
+		k.LogInfo("Ignoring validation for inference that is no longer finish-pending", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status)
+		return &types.MsgValidationResponse{}, nil
+	}
+
+	if !msg.Revalidation {
+		err := k.addInferenceToEpochGroupValidations(ctx, msg, inference)
+		if err != nil {
+			k.LogError("Failed to add inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "error", err)
+			return nil, err
+		}
+	}
+
 	previousStatus := inference.Status
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
@@ -156,7 +174,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		shouldShare, information := k.inferenceIsBeforeClaimsSet(ctx, inference, currentEpochIndex)
 		k.LogInfo("Validation sharing decision", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "shouldShare", shouldShare, "information", information)
 		if shouldShare {
-			k.shareWorkWithValidators(ctx, inference, msg, &executor)
+			if err := k.shareWorkWithValidators(ctx, inference, msg, &executor); err != nil {
+				return nil, err
+			}
 			inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
 		}
 		executor.ConsecutiveInvalidInferences = 0
@@ -432,10 +452,12 @@ func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference typ
 	}
 }
 
-func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Inference, msg *types.MsgValidation, executor *types.Participant) {
+func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Inference, msg *types.MsgValidation, executor *types.Participant) error {
 	originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
 	adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
-	k.validateAdjustments(adjustments, msg)
+	if err := k.validateAdjustments(adjustments, msg); err != nil {
+		return err
+	}
 	for _, adjustment := range adjustments {
 		// A note about the bookkeeping here:
 		// ShareWork will return negative adjustments for all existing shareholders, and a positive for the new (msg.Creator)
@@ -463,18 +485,21 @@ func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Infe
 			err := k.SetParticipant(ctx, worker)
 			if err != nil {
 				k.LogError("Unable to update participant to share work", types.Validation, "worker", worker.Address)
+				return err
 			}
 		}
 	}
+	return nil
 }
 
-func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, msg *types.MsgValidation) {
+func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, msg *types.MsgValidation) error {
 	positiveAdjustmentTotal := int64(0)
 	negativeAdjustmentTotal := int64(0)
 	for _, adjustment := range adjustments {
 		if adjustment.ParticipantId == msg.Creator {
 			if adjustment.WorkAdjustment < 0 {
 				k.LogError("Validation adjustment for new validator cannot be negative", types.Validation, "adjustment", adjustment)
+				return errorsmod.Wrapf(types.ErrIllegalState, "validation adjustment for new validator %s cannot be negative: %d", msg.Creator, adjustment.WorkAdjustment)
 			} else {
 				// must be a positive number or zero
 				positiveAdjustmentTotal += adjustment.WorkAdjustment
@@ -482,6 +507,7 @@ func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, ms
 		} else {
 			if adjustment.WorkAdjustment > 0 {
 				k.LogError("Validation adjustment for existing validator cannot be positive", types.Validation, "adjustment", adjustment)
+				return errorsmod.Wrapf(types.ErrIllegalState, "validation adjustment for existing validator %s cannot be positive: %d", adjustment.ParticipantId, adjustment.WorkAdjustment)
 			} else {
 				// must be a negative number or zero
 				negativeAdjustmentTotal += -adjustment.WorkAdjustment
@@ -490,7 +516,9 @@ func (k msgServer) validateAdjustments(adjustments []calculations.Adjustment, ms
 	}
 	if positiveAdjustmentTotal != negativeAdjustmentTotal {
 		k.LogError("Validation adjustment totals do not match", types.Validation, "positiveAdjustmentTotal", positiveAdjustmentTotal, "negativeAdjustmentTotal", negativeAdjustmentTotal)
+		return errorsmod.Wrapf(types.ErrIllegalState, "validation adjustment totals do not match: positive %d negative %d", positiveAdjustmentTotal, negativeAdjustmentTotal)
 	}
+	return nil
 }
 
 func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *types.MsgValidation, inference types.Inference) error {

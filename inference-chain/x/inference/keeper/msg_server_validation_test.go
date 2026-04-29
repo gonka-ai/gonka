@@ -46,6 +46,45 @@ func TestMsgServer_Validation(t *testing.T) {
 	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
 }
 
+func TestMsgServer_Validation_IgnoresNonRevalidationAfterValidated(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
+	})
+	require.NoError(t, err)
+
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Requester,
+		ValueDecimal: types.DecimalFromFloat(0.10),
+	})
+	require.NoError(t, err)
+
+	inference, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
+	require.Equal(t, []string{testutil.Validator}, inference.ValidatedBy)
+
+	has, err := k.EpochGroupValidationEntry.Has(ctx, collections.Join3(inference.EpochId, testutil.Requester, expected.InferenceId))
+	require.NoError(t, err)
+	require.False(t, has)
+}
+
 func createParticipants(t *testing.T, ms types.MsgServer, ctx context.Context) {
 	mockRequester := NewMockAccount(testutil.Requester)
 	mockExecutor := NewMockAccount(testutil.Executor)
@@ -118,6 +157,67 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	has, err := k.ActiveInvalidations.Has(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), expected.InferenceId))
 	require.NoError(t, err)
 	require.True(t, has)
+}
+
+func TestMsgServer_Validation_IgnoresNonRevalidationWhileVoting(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
+	inferenceHelper.Mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.10),
+	})
+	require.NoError(t, err)
+
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Requester,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
+	})
+	require.NoError(t, err)
+
+	inference, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
+	require.Empty(t, inference.ValidatedBy)
+}
+
+func TestMsgServer_Validation_InvalidatedInferenceDoesNotRecordCredit(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", MODEL_ID, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+
+	inference, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	inference.Status = types.InferenceStatus_INVALIDATED
+	require.NoError(t, k.SetInference(ctx, inference))
+
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.9999),
+	})
+	require.NoError(t, err)
+
+	_, found = k.GetEpochGroupValidations(ctx, testutil.Validator, inference.EpochId)
+	require.False(t, found, "already invalidated inferences must not grant validation credit")
 }
 
 func addMembersToGroupData(k keeper.Keeper, ctx sdk.Context) {
