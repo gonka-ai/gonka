@@ -24,13 +24,18 @@ validate.py        Deploy a model on the MLNode, measure full-system PoC
 make_artifact.py   Bake a new golden reference from a trusted, locally
                    deployed MLNode (so the same flow works for any
                    model, e.g. local Qwen3-0.6B experiments).
-artifacts/         Golden reference vectors -- committed in the repo, one
-                   JSON per supported model. Filename is the lower-cased
-                   model id with '/' replaced by '-'. Currently shipped:
-                   - qwen-qwen3-235b-a22b-instruct-2507-fp8.json (4xH100, FP8)
-                   - qwen-qwen3-32b-fp8.json                     (smaller FP8 alt.)
-                   - qwen-qwen3-0.6b.json                        (local dev / single GPU)
+artifacts/         Golden reference vectors -- committed in the repo. One
+                   JSON per (model, deploy variant). Default lookup is
+                   <sanitized model>.json; variants take an explicit
+                   --reference path. Currently shipped:
+                   - qwen-qwen3-0.6b.json                                 (local dev, single GPU; 32 nonces)
+                   - qwen-qwen3-235b-a22b-instruct-2507-fp8.json          (qwen235b default: tp=4, FlashInfer; 32 nonces)
+                   - qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json (qwen235b extended: tp=2, DeepGEMM MoE; 2000 nonces)
 ```
+
+For Qwen3-235B run validate.py against both qwen235b references in
+separate runs (the default lookup picks the 32-nonce one; pass
+`--reference <path>` for the deepgemm variant).
 
 Per-run output goes to
 `mlnode/packages/benchmarks/data/experiments/<exp_name>_<YYYY-MM-DD_HHMMSS>/`,

@@ -35,6 +35,44 @@ The skill works with two distinct artifact kinds. Do not conflate:
 When this skill says "reference", it means the golden file. When it
 says "report", it means the per-run output.
 
+## Available golden references
+
+The repo ships these references under
+`mlnode/packages/benchmarks/scripts/poc_validation/artifacts/`. Each
+one is keyed by model id; the auto-lookup `<sanitized model>.json`
+picks one filename per model. Variants beyond the default require an
+explicit `--reference <path>`.
+
+| Model | Filename | Vectors | Deploy notes |
+|-------|----------|---------|--------------|
+| `Qwen/Qwen3-0.6B` | `qwen-qwen3-0.6b.json` | 32 | local dev / single GPU |
+| `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (default lookup) | `qwen-qwen3-235b-a22b-instruct-2507-fp8.json` | 32 | tp=4, FlashInfer baseline. Quick smoke test. |
+| `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (extended) | `qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json` | 2000 | tp=2, DeepGEMM MoE backend (`VLLM_USE_DEEP_GEMM=1`, `VLLM_MOE_USE_DEEP_GEMM=1`), recorded on 4xB200. Pass with `--reference`. |
+
+For Qwen3-235B the same model id has two references, and they
+exercise different code paths (tp-size + MoE backend). When
+validating qwen235b, run `validate.py` **twice** -- once with the
+default lookup, once with the deepgemm variant -- and report both
+verdicts. Example:
+
+```bash
+# Run 1: default 32-nonce reference (FlashInfer, tp=4)
+python3 mlnode/packages/benchmarks/scripts/poc_validation/validate.py \
+    --mlnode-url "$MLNODE_URL" \
+    --model     Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
+
+# Run 2: extended 2000-nonce reference (DeepGEMM, tp=2)
+python3 mlnode/packages/benchmarks/scripts/poc_validation/validate.py \
+    --mlnode-url "$MLNODE_URL" \
+    --model     Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 \
+    --reference mlnode/packages/benchmarks/scripts/poc_validation/artifacts/qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json
+```
+
+Each run lands in its own experiment directory, so reports do not
+collide. If the caller is short on time and explicitly asks for a
+quick check, the default-lookup run alone is acceptable; otherwise
+both should be run.
+
 ## Required inputs
 
 The caller MUST supply both:
