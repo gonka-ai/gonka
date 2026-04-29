@@ -285,7 +285,7 @@ def get_pow_status(base_url: str) -> Dict[str, Any]:
 def init_generate(
     base_url: str,
     artifact: Dict[str, Any],
-    batch_size: int,
+    batch_size: Optional[int],
     max_retries: int = 12,
     retry_delay: int = 5,
 ) -> Dict[str, Any]:
@@ -293,6 +293,9 @@ def init_generate(
 
     No callback `url` is sent: throughput is measured from server-side counters
     via /pow/status, so we don't need to receive batches locally.
+
+    `batch_size=None` means: do not include batch_size in the payload, so the
+    server uses its POC_BATCH_SIZE_DEFAULT.
     """
     payload = {
         "block_hash": artifact["block_hash"],
@@ -300,13 +303,14 @@ def init_generate(
         "public_key": artifact["public_key"],
         "node_id": int(artifact.get("node_id", 0)),
         "node_count": int(artifact.get("node_count", 1)),
-        "batch_size": int(batch_size),
         "params": {
             "model": artifact["model"],
             "seq_len": int(artifact["seq_len"]),
             "k_dim": int(artifact["k_dim"]),
         },
     }
+    if batch_size is not None:
+        payload["batch_size"] = int(batch_size)
     url = f"{base_url}{API}/inference/pow/init/generate"
     last_err: Optional[str] = None
     for attempt in range(max_retries):
@@ -397,7 +401,7 @@ def validate_vectors(
     base_url: str,
     artifact: Dict[str, Any],
     stat_test: Dict[str, float],
-    batch_size: int,
+    batch_size: Optional[int],
     timeout_s: float,
 ) -> Dict[str, Any]:
     """Send pre-computed vectors for validation and return the server result.
@@ -426,11 +430,12 @@ def validate_vectors(
             "seq_len": int(artifact["seq_len"]),
             "k_dim": int(artifact["k_dim"]),
         },
-        "batch_size": int(batch_size),
         "wait": True,
         "validation": {"artifacts": pieces},
         "stat_test": dict(stat_test),
     }
+    if batch_size is not None:
+        payload["batch_size"] = int(batch_size)
     r = requests.post(
         f"{base_url}{API}/inference/pow/generate",
         json=payload,
@@ -598,11 +603,13 @@ def write_report(
         f"  seq_len={artifact['seq_len']}  k_dim={artifact['k_dim']}  "
         f"block_hash={artifact['block_hash']!r}  public_key={artifact['public_key']!r}"
     )
+    def _bs(v: Optional[int]) -> str:
+        return f"{v} (cli)" if v is not None else "unset (server POC_BATCH_SIZE_DEFAULT)"
     lines.append(
         f"  node_id={artifact.get('node_id', 0)}  "
         f"node_count={artifact.get('node_count', 1)}  "
-        f"throughput_batch_size={args.batch_size} (cli)  "
-        f"validation_batch_size={args.validation_batch_size} (cli)"
+        f"throughput_batch_size={_bs(args.batch_size)}  "
+        f"validation_batch_size={_bs(args.validation_batch_size)}"
     )
     lines.append("Deploy config (reference.additional_args + CLI overrides; --tp-size / --max-model-len add-or-update):")
     lines.append(f"  dtype={args.dtype}  additional_args={effective_additional_args}")
@@ -733,14 +740,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--warmup-seconds", type=int, default=DEFAULT_WARMUP_SECONDS)
     p.add_argument("--measure-seconds", type=int, default=DEFAULT_MEASURE_SECONDS)
     p.add_argument("--sample-interval", type=int, default=10)
-    p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    p.add_argument("--batch-size", type=int, default=None,
+                   help="batch_size sent to /pow/init/generate for the throughput phase. "
+                        "Unset means: do not send batch_size in the request, so the server uses POC_BATCH_SIZE_DEFAULT.")
 
     # validation controls
     p.add_argument("--skip-validate", action="store_true", help="Skip the validation phase (only deploy + throughput)")
     p.add_argument("--validation-timeout", type=float, default=DEFAULT_VALIDATION_TIMEOUT_SECONDS)
-    p.add_argument("--validation-batch-size", type=int, default=64,
+    p.add_argument("--validation-batch-size", type=int, default=None,
                    help="batch_size sent to /pow/generate. Must match generation batch size for the same numerical "
-                        "trajectory; default 64 matches POC_BATCH_SIZE_DEFAULT.")
+                        "trajectory. Unset means: do not send batch_size in the request, so the server uses POC_BATCH_SIZE_DEFAULT.")
     return p.parse_args(argv)
 
 

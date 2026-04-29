@@ -9,9 +9,11 @@
       "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8": {
         "args": [
           "--tensor-parallel-size",
-          "4",
+          "2",
           "--max-model-len",
-          "240000"
+          "240000",
+          "--gpu-memory-utilization",
+          "0.88"
         ]
       }
     }
