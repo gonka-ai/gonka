@@ -102,6 +102,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			k.LogError("FinishInference: model field mismatch", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
 			return failedFinish(ctx, err, msg), nil
 		}
+		if err := k.validateFinishTokenCounts(msg, &existingInference); err != nil {
+			k.LogError("FinishInference: token count exceeds start bounds", types.Inferences, "error", err, "inferenceId", msg.InferenceId)
+			return failedFinish(ctx, err, msg), nil
+		}
 		k.LogDebug("FinishInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
 	} else {
 		err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor)
@@ -292,6 +296,30 @@ func (k msgServer) compareFinishModelField(msg *types.MsgFinishInference, infere
 			"model mismatch: finish=%s start=%s",
 			msg.Model,
 			inference.Model,
+		)
+	}
+	return nil
+}
+
+func (k msgServer) validateFinishTokenCounts(msg *types.MsgFinishInference, inference *types.Inference) error {
+	maxTokens := inference.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = calculations.DefaultMaxTokens
+	}
+	if msg.CompletionTokenCount > maxTokens {
+		return sdkerrors.Wrapf(
+			types.ErrTokenCountOutOfRange,
+			"completion_token_count exceeds start max_tokens (%d > %d)",
+			msg.CompletionTokenCount,
+			maxTokens,
+		)
+	}
+	if inference.PromptTokenCount != 0 && msg.PromptTokenCount != 0 && msg.PromptTokenCount != inference.PromptTokenCount {
+		return sdkerrors.Wrapf(
+			types.ErrTokenCountOutOfRange,
+			"prompt_token_count mismatch: finish=%d start=%d",
+			msg.PromptTokenCount,
+			inference.PromptTokenCount,
 		)
 	}
 	return nil
