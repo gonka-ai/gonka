@@ -107,6 +107,76 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 	require.Equal(t, types.InferenceStatus_INVALIDATED, updatedInf.Status)
 }
 
+func TestInvalidateInference_ClawsBackValidatorShares(t *testing.T) {
+	k, ms, ctx, mocks := setupInvalidateHarness(t)
+
+	params := types.DefaultParams()
+	k.SetParams(ctx, params)
+	require.NoError(t, setEffectiveEpoch(ctx, k, 1, mocks))
+
+	executorAddr := sample.AccAddress()
+	payerAddr := sample.AccAddress()
+	validatorOneAddr := sample.AccAddress()
+	validatorTwoAddr := sample.AccAddress()
+
+	actualCost := int64(101)
+	executorShare := int64(35)
+	validatorShare := int64(33)
+
+	executor := types.Participant{
+		Index:                        executorAddr,
+		Address:                      executorAddr,
+		Status:                       types.ParticipantStatus_ACTIVE,
+		ConsecutiveInvalidInferences: 0,
+		CurrentEpochStats:            &types.CurrentEpochStats{},
+		CoinBalance:                  1_000 + executorShare,
+	}
+	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	validatorOne := types.Participant{Index: validatorOneAddr, Address: validatorOneAddr, CurrentEpochStats: &types.CurrentEpochStats{}, CoinBalance: 2_000 + validatorShare}
+	validatorTwo := types.Participant{Index: validatorTwoAddr, Address: validatorTwoAddr, CurrentEpochStats: &types.CurrentEpochStats{}, CoinBalance: 3_000 + validatorShare}
+	k.SetParticipant(ctx, executor)
+	k.SetParticipant(ctx, payer)
+	k.SetParticipant(ctx, validatorOne)
+	k.SetParticipant(ctx, validatorTwo)
+	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor, validatorOne, validatorTwo))
+
+	inferenceID := "refund-claws-back-validator-shares"
+	k.SetInference(ctx, types.Inference{
+		Index:           inferenceID,
+		InferenceId:     inferenceID,
+		ExecutedBy:      executorAddr,
+		RequestedBy:     payerAddr,
+		Status:          types.InferenceStatus_VALIDATED,
+		ActualCost:      actualCost,
+		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
+		EpochId:         1,
+		ValidatedBy:     []string{validatorOneAddr, validatorTwoAddr},
+	})
+
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	_, err := ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
+	require.NoError(t, err)
+
+	updatedExecutor, ok := k.GetParticipant(ctx, executorAddr)
+	require.True(t, ok)
+	require.Equal(t, int64(1_000), updatedExecutor.CoinBalance)
+
+	updatedValidatorOne, ok := k.GetParticipant(ctx, validatorOneAddr)
+	require.True(t, ok)
+	require.Equal(t, int64(2_000), updatedValidatorOne.CoinBalance)
+
+	updatedValidatorTwo, ok := k.GetParticipant(ctx, validatorTwoAddr)
+	require.True(t, ok)
+	require.Equal(t, int64(3_000), updatedValidatorTwo.CoinBalance)
+
+	updatedInf, found := k.GetInference(ctx, inferenceID)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_INVALIDATED, updatedInf.Status)
+}
+
 func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *testing.T) {
 	k, ms, ctx, mocks := setupInvalidateHarness(t)
 
