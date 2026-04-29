@@ -359,6 +359,54 @@ func TestProcessStartInference(t *testing.T) {
 			expectError:    false,
 			expectedStatus: types.InferenceStatus_STARTED,
 		},
+		{
+			name: "Finished inference completion exceeds start max tokens",
+			currentInference: &types.Inference{
+				InferenceId:          "test-id",
+				ExecutedBy:           "executor",
+				PromptTokenCount:     1,
+				CompletionTokenCount: 1_000_000,
+			},
+			startMessage: &types.MsgStartInference{
+				InferenceId:      "test-id",
+				PromptHash:       "hash",
+				PromptTokenCount: 1,
+				RequestedBy:      "requester",
+				Model:            "model",
+				MaxTokens:        1,
+				AssignedTo:       "assignee",
+				NodeVersion:      "1.0",
+			},
+			blockContext: BlockContext{
+				BlockHeight:    100,
+				BlockTimestamp: 1000,
+			},
+			expectError: true,
+		},
+		{
+			name: "Finished inference prompt mismatches nonzero start prompt",
+			currentInference: &types.Inference{
+				InferenceId:          "test-id",
+				ExecutedBy:           "executor",
+				PromptTokenCount:     20,
+				CompletionTokenCount: 1,
+			},
+			startMessage: &types.MsgStartInference{
+				InferenceId:      "test-id",
+				PromptHash:       "hash",
+				PromptTokenCount: 10,
+				RequestedBy:      "requester",
+				Model:            "model",
+				MaxTokens:        10,
+				AssignedTo:       "assignee",
+				NodeVersion:      "1.0",
+			},
+			blockContext: BlockContext{
+				BlockHeight:    100,
+				BlockTimestamp: 1000,
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -392,6 +440,37 @@ func TestProcessStartInference(t *testing.T) {
 			assert.Equal(t, tt.startMessage.NodeVersion, inference.NodeVersion)
 		})
 	}
+}
+
+func TestProcessFinishInference_CapsActualCostToEscrowWhenStarted(t *testing.T) {
+	mockLogger := &MockInferenceLogger{}
+	currentInference := &types.Inference{
+		InferenceId:      "test-id",
+		AssignedTo:       "executor",
+		PromptTokenCount: 1,
+		MaxTokens:        1,
+		EscrowAmount:     2 * PerTokenCost,
+		PerTokenPrice:    PerTokenCost,
+	}
+	finishMessage := &types.MsgFinishInference{
+		InferenceId:          "test-id",
+		ResponseHash:         "hash",
+		PromptTokenCount:     1_000_000,
+		CompletionTokenCount: 1_000_000,
+		ExecutedBy:           "executor",
+	}
+
+	inference, payments, err := ProcessFinishInference(
+		currentInference,
+		finishMessage,
+		BlockContext{BlockHeight: 100, BlockTimestamp: 1000},
+		mockLogger,
+	)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2*PerTokenCost), inference.ActualCost)
+	assert.Equal(t, int64(2*PerTokenCost), payments.ExecutorPayment)
+	assert.Zero(t, payments.EscrowAmount)
 }
 
 func TestProcessFinishInference(t *testing.T) {

@@ -62,20 +62,35 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 }
 
 func (k msgServer) refundInvalidatedInference(executor *types.Participant, inference *types.Inference, ctx context.Context) error {
+	refundAmount, err := invalidatedInferenceRefundAmount(inference)
+	if err != nil {
+		return err
+	}
+
 	// Attempt refund BEFORE modifying executor balance.
 	// If refund fails (e.g. underfunded escrow), don't corrupt state.
-	err := k.IssueRefund(ctx, inference.ActualCost, inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
+	err = k.IssueRefund(ctx, refundAmount, inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
 		return err
 	}
 
 	// Only deduct from executor after successful refund
-	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
-	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
+	executor.CoinBalance -= refundAmount
+	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, refundAmount, "invalidated_inference:"+inference.InferenceId)
+	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "refundAmount", refundAmount, "coinBalance", executor.CoinBalance)
 
 	return nil
+}
+
+func invalidatedInferenceRefundAmount(inference *types.Inference) (int64, error) {
+	if inference.ActualCost < 0 {
+		return 0, errorsmod.Wrapf(types.ErrIllegalState, "inference %s has negative actual cost %d", inference.InferenceId, inference.ActualCost)
+	}
+	if inference.EscrowAmount < 0 {
+		return 0, errorsmod.Wrapf(types.ErrInvalidEscrowAmount, "inference %s has negative escrow amount %d", inference.InferenceId, inference.EscrowAmount)
+	}
+	return min(inference.ActualCost, inference.EscrowAmount), nil
 }
 
 type ValidationDecision interface {
