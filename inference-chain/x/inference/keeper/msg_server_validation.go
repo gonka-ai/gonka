@@ -63,6 +63,15 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return &types.MsgValidationResponse{}, nil
 	}
 
+	if inference.Status == types.InferenceStatus_INVALIDATED {
+		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
+		return &types.MsgValidationResponse{}, nil
+	}
+	if inference.Status == types.InferenceStatus_STARTED {
+		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
+		return nil, types.ErrInferenceNotFinished
+	}
+
 	if !msg.Revalidation {
 		alreadyValidated, err := k.EpochGroupValidationEntry.Has(ctx, collections.Join3(inference.EpochId, msg.Creator, msg.InferenceId))
 		if err != nil {
@@ -74,14 +83,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		}
 	}
 
-	if inference.Status == types.InferenceStatus_INVALIDATED {
-		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
-		return &types.MsgValidationResponse{}, nil
-	}
-	if inference.Status == types.InferenceStatus_STARTED {
-		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
-		return nil, types.ErrInferenceNotFinished
-	}
 	if !msg.Revalidation && inference.Status != types.InferenceStatus_FINISHED {
 		k.LogInfo("Ignoring validation for inference that is no longer finish-pending", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status)
 		return &types.MsgValidationResponse{}, nil
