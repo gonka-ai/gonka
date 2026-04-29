@@ -8,6 +8,9 @@ services:
     environment:
       - HF_HOME=/root/.cache
       - VLLM_ATTENTION_BACKEND=FLASHINFER
+      # DEEPGEMM MoE: ~+20% PoC on Qwen3-235B / 4xB200
+      # - VLLM_USE_DEEP_GEMM=1
+      # - VLLM_MOE_USE_DEEP_GEMM=1
     deploy:
       resources:
         reservations:
