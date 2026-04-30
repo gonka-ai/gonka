@@ -37,18 +37,30 @@ http {
         default $time_iso8601;
     }
 
+    map $request_uri $log_zone_name {
+        ~^/chain-rpc/ "CHAINRPC";
+        ~^/chain-api/ "CHAINAPI";
+        ~^/chain-grpc/ "CHAINGRPC";
+        ~^/api/ "GNKAPI";
+        ~^/v[0-9]+/ "GNKAPI";
+        ~^/devshard/ "EXEMPT";
+        default "GLOBAL";
+    }
+
     # Custom Log Format with Timing and Whitelist Indicator
     # Using tabs (\t) for better visual alignment
-    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$limit_zone_name]\t$log_status_symbol\t'
+    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$log_zone_name]\t$log_status_symbol\t'
                         '"$request" $status $body_bytes_sent '
                         '"$http_referer" "$http_user_agent" '
-                        'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time"';
+                        'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time" '
+                        'request_id="$request_id"';
 
     # JSON Log Format (Machine Readable for Sidecar)
     # escape=json ensures characters like quotes are properly escaped, preventing parser injection
     log_format json_combined escape=json
         '{'
         '"time_local":"$time_rfc3339",'
+        '"request_id":"$request_id",'
         '"remote_addr":"$remote_addr",'
         '"request":"$request",'
         '"status": $status,'
@@ -115,9 +127,6 @@ http {
         # Real IP Configuration
         ${REAL_IP_CONFIG}
 
-        # Default Zone Label
-        set $$limit_zone_name "GLOBAL";
-
         # Global Ban Check
         if ($$is_banned) {
             return 444; # Drop connection
@@ -164,7 +173,6 @@ http {
 
         # Generic API routes
         location /api/ {
-            set $limit_zone_name "GNKAPI";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
@@ -186,7 +194,8 @@ http {
 
         # Chain RPC endpoint
         location /chain-rpc/ {
-            set $limit_zone_name "CHAINRPC";
+            mirror /__rpc_method_log;
+            mirror_request_body on;
             ${LIMIT_REQ_RULE_CHAIN_RPC}
             ${LIMIT_CONN_RULE_CHAIN_RPC}
             ${CHAIN_RPC_STATUS}
@@ -205,9 +214,22 @@ http {
             proxy_read_timeout ${CHAIN_RPC_TRANSFER_TIMEOUT}s;
         }
 
+        location = /__rpc_method_log {
+            internal;
+            proxy_pass http://unix:/var/log/nginx/rpc_method_log.sock:/rpc-method-log;
+            proxy_pass_request_headers off;
+            proxy_set_header Content-Type $$content_type;
+            proxy_set_header X-Request-ID $$request_id;
+            proxy_set_header X-Original-Time "$$time_rfc3339";
+            proxy_set_header X-Original-Request "$$request";
+            proxy_set_header X-Original-Remote-Addr $$remote_addr;
+            proxy_set_header X-Original-Whitelist "$$whitelist_log_type";
+            proxy_set_header X-Original-Referer "$$http_referer";
+            proxy_set_header X-Original-User-Agent "$$http_user_agent";
+        }
+
         # Chain API endpoint (REST API)
         location /chain-api/ {
-            set $limit_zone_name "CHAINAPI";
             ${LIMIT_REQ_RULE_CHAIN_API}
             ${LIMIT_CONN_RULE_CHAIN_API}
             ${CHAIN_API_STATUS}
@@ -228,7 +250,6 @@ http {
 
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
-            set $limit_zone_name "CHAINGRPC";
             ${LIMIT_REQ_RULE_CHAIN_GRPC}
             ${LIMIT_CONN_RULE_CHAIN_GRPC}
             ${CHAIN_GRPC_STATUS}

@@ -461,7 +461,6 @@ fi
 # timeouts, exempt rate/conn limits, CORS.
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     export DEVSHARD_VERSIOND_LOCATION="location /devshard/ {
-            set \$limit_zone_name \"EXEMPT\";
             limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
             ${LIMIT_CONN_RULE_EXEMPT}
             proxy_pass http://versiond_backend/;
@@ -670,9 +669,10 @@ geo $whitelist_log_type {
 WLEOF
 fi
 
-# Initialize JSON Log file for Sidecar
+# Initialize sidecar log artifacts
 touch /var/log/nginx/access_json.log
 chmod 644 /var/log/nginx/access_json.log
+rm -f /var/log/nginx/rpc_method_log.sock
 
 # Initialize Blacklist file (Startup Integrity)
 # Start with a clean slate for bans on every restart
@@ -744,7 +744,6 @@ append_exempt_location() {
 
         EXEMPT_ROUTES_CONFIG="${EXEMPT_ROUTES_CONFIG}
     location ${prefix}${clean_route} {
-        set \$limit_zone_name \"EXEMPT\";
         limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
         ${LIMIT_CONN_RULE_EXEMPT}
         ${status_check}
@@ -820,7 +819,6 @@ for v in $API_VERSIONS; do
     API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
         # Direct API ${v} routes
         location /${v}/ {
-            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
@@ -842,7 +840,6 @@ for v in $API_VERSIONS; do
 
         # API ${v} routes (via /api/ prefix) - Explicitly defined to ensure longest-prefix match wins over generic /api/
         location /api/${v}/ {
-            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
