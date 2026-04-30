@@ -460,7 +460,6 @@ fi
 # timeouts, exempt rate/conn limits, CORS.
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     export DEVSHARD_VERSIOND_LOCATION="location /devshard/ {
-            set \$limit_zone_name \"EXEMPT\";
             limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
             ${LIMIT_CONN_RULE_EXEMPT}
             proxy_pass http://versiond_backend/;
@@ -499,14 +498,31 @@ export FAIL2BAN_SCORE_400=${FAIL2BAN_SCORE_400:-2}
 
 # Initialize default whitelist properties (Fail-Safe: Apply limits to everyone by default)
 # This ensures that if the sidecar is slow to start, Nginx doesn't fail or run open.
+#
+# IMPORTANT: nginx's geo module does NOT expand variables in values.
+# "geo $var { default $binary_remote_addr; }" sets the LITERAL STRING
+# "$binary_remote_addr" as the key for ALL clients, collapsing every IP
+# into a single shared rate-limit bucket.
+# Fix: use geo for 0/1 classification, then map to expand $binary_remote_addr.
 if [ ! -s /etc/nginx/conf.d/whitelist_ips.conf ]; then
-    echo "geo \$whitelist_limit_key { default \$binary_remote_addr; }" > /etc/nginx/conf.d/whitelist_ips.conf
-    echo "geo \$whitelist_log_type { default \"EXT\"; }" >> /etc/nginx/conf.d/whitelist_ips.conf
+    cat > /etc/nginx/conf.d/whitelist_ips.conf <<'WLEOF'
+geo $whitelist_class {
+    default 0;
+}
+map $whitelist_class $whitelist_limit_key {
+    0 $binary_remote_addr;
+    1 "";
+}
+geo $whitelist_log_type {
+    default "EXT";
+}
+WLEOF
 fi
 
-# Initialize JSON Log file for Sidecar
+# Initialize sidecar log artifacts
 touch /var/log/nginx/access_json.log
 chmod 644 /var/log/nginx/access_json.log
+rm -f /var/log/nginx/rpc_method_log.sock
 
 # Initialize Blacklist file (Startup Integrity)
 # Start with a clean slate for bans on every restart
@@ -578,7 +594,6 @@ append_exempt_location() {
 
         EXEMPT_ROUTES_CONFIG="${EXEMPT_ROUTES_CONFIG}
     location ${prefix}${clean_route} {
-        set \$limit_zone_name \"EXEMPT\";
         limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
         ${LIMIT_CONN_RULE_EXEMPT}
         ${status_check}
@@ -654,7 +669,6 @@ for v in $API_VERSIONS; do
     API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
         # Direct API ${v} routes
         location /${v}/ {
-            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
@@ -676,7 +690,6 @@ for v in $API_VERSIONS; do
 
         # API ${v} routes (via /api/ prefix) - Explicitly defined to ensure longest-prefix match wins over generic /api/
         location /api/${v}/ {
-            set \$limit_zone_name \"GNKAPI\";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
