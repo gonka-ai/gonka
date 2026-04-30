@@ -11,7 +11,7 @@ services:
   node:
     container_name: node
     image: ghcr.io/product-science/inferenced:0.2.12
-    command: ["sh", "./init-docker.sh"]
+    command: [ "sh", "./init-docker.sh" ]
     volumes:
       - .inference:/root/.inference
       - ../../genesis/genesis.json:/root/genesis.json
@@ -119,41 +119,87 @@ services:
       - .inference-eth/persistent-db:/persistent-db
     depends_on:
       - api
-  
+
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.12
+    image: ghcr.io/product-science/proxy:0.2.12-post1
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
       - SERVER_NAME=${SERVER_NAME:-}
+      # Proxy Ports
       - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard devshard-gateway devshard-gateway-direct
-      - GLOBAL_CONN_LIMIT=1024
-      - EXEMPT_CONN_LIMIT=1024
-      - GONKA_API_BLOCKED_ROUTES=poc-batches training
       - CHAIN_RPC_PORT=26657
       - CHAIN_API_PORT=1317
       - CHAIN_GRPC_PORT=9090
       - DASHBOARD_PORT=5173
-      - PROXY_REAL_IP_FROM=172.18.0.1
+      # Proxy Disable Flags
+      - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
+      - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
+      - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
+      - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
+      - ENABLE_CONN_LIMITS=${ENABLE_CONN_LIMITS:-false}
+      - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
+      - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+      - DISABLE_DEVSHARD_GATEWAY_PROXY=${DISABLE_DEVSHARD_GATEWAY_PROXY:-false}
+      - DISABLE_DEVSHARD_CHAT_ALIAS=${DISABLE_DEVSHARD_CHAT_ALIAS:-true}
+      - DISABLE_DEVSHARD_DIRECT_PROXY=${DISABLE_DEVSHARD_DIRECT_PROXY:-true}
+      # Proxy Exempt Routes
+      - GONKA_API_EXEMPT_ROUTES=${GONKA_API_EXEMPT_ROUTES:-chat inference poc/proofs subnet devshard devshard-gateway devshard-gateway-direct}
+      - CHAIN_API_EXEMPT_ROUTES=${CHAIN_API_EXEMPT_ROUTES:-}
+      - CHAIN_RPC_EXEMPT_ROUTES=${CHAIN_RPC_EXEMPT_ROUTES:-status genesis}
+      - CHAIN_GRPC_EXEMPT_ROUTES=${CHAIN_GRPC_EXEMPT_ROUTES:-}
+      # Proxy Blocked Routes
+      - GONKA_API_BLOCKED_ROUTES=${GONKA_API_BLOCKED_ROUTES:-poc-batches training}
+      - CHAIN_API_BLOCKED_ROUTES=${CHAIN_API_BLOCKED_ROUTES:-}
+      - CHAIN_RPC_BLOCKED_ROUTES=${CHAIN_RPC_BLOCKED_ROUTES:-}
+      - CHAIN_GRPC_BLOCKED_ROUTES=${CHAIN_GRPC_BLOCKED_ROUTES:-}
+      # Proxy Connection Limits
+      - GLOBAL_CONN_LIMIT=${GLOBAL_CONN_LIMIT:-600}
+      - GONKA_API_CONN_LIMIT=${GONKA_API_CONN_LIMIT:-600}
+      - EXEMPT_CONN_LIMIT=${EXEMPT_CONN_LIMIT:-600}
+      - CHAIN_RPC_CONN_LIMIT=${CHAIN_RPC_CONN_LIMIT:-50}
+      - CHAIN_API_CONN_LIMIT=${CHAIN_API_CONN_LIMIT:-50}
+      - CHAIN_GRPC_CONN_LIMIT=${CHAIN_GRPC_CONN_LIMIT:-50}
+      # Proxy Rate Limits
+      - GLOBAL_RATE_LIMIT_RPS=${GLOBAL_RATE_LIMIT_RPS:-1000}
+      - GLOBAL_RATE_UNIT=${GLOBAL_RATE_UNIT:-s}
+      - GLOBAL_BURST=${GLOBAL_BURST:-5000}
+      - GONKA_API_RATE_LIMIT_RPS=${GONKA_API_RATE_LIMIT_RPS:-10}
+      - GONKA_API_RATE_UNIT=${GONKA_API_RATE_UNIT:-m}
+      - GONKA_API_BURST=${GONKA_API_BURST:-1000}
+      - EXEMPT_RATE_LIMIT_RPS=${EXEMPT_RATE_LIMIT_RPS:-500}
+      - EXEMPT_RATE_UNIT=${EXEMPT_RATE_UNIT:-s}
+      - EXEMPT_BURST=${EXEMPT_BURST:-2000}
+      - CHAIN_API_RATE_LIMIT_RPS=${CHAIN_API_RATE_LIMIT_RPS:-20}
+      - CHAIN_API_RATE_UNIT=${CHAIN_API_RATE_UNIT:-m}
+      - CHAIN_API_BURST=${CHAIN_API_BURST:-500}
+      - CHAIN_RPC_RATE_LIMIT_RPS=${CHAIN_RPC_RATE_LIMIT_RPS:-20}
+      - CHAIN_RPC_RATE_UNIT=${CHAIN_RPC_RATE_UNIT:-m}
+      - CHAIN_RPC_BURST=${CHAIN_RPC_BURST:-500}
+      - CHAIN_GRPC_RATE_LIMIT_RPS=${CHAIN_GRPC_RATE_LIMIT_RPS:-20}
+      - CHAIN_GRPC_RATE_UNIT=${CHAIN_GRPC_RATE_UNIT:-m}
+      - CHAIN_GRPC_BURST=${CHAIN_GRPC_BURST:-500}
+      # Proxy Timeouts
+      - GONKA_API_CONNECT_TIMEOUT=${GONKA_API_CONNECT_TIMEOUT:-10}
+      - GONKA_API_TRANSFER_TIMEOUT=${GONKA_API_TRANSFER_TIMEOUT:-60}
+      - CHAIN_API_CONNECT_TIMEOUT=${CHAIN_API_CONNECT_TIMEOUT:-10}
+      - CHAIN_API_TRANSFER_TIMEOUT=${CHAIN_API_TRANSFER_TIMEOUT:-60}
+      - CHAIN_RPC_CONNECT_TIMEOUT=${CHAIN_RPC_CONNECT_TIMEOUT:-10}
+      - CHAIN_RPC_TRANSFER_TIMEOUT=${CHAIN_RPC_TRANSFER_TIMEOUT:-60}
+      - CHAIN_GRPC_CONNECT_TIMEOUT=${CHAIN_GRPC_CONNECT_TIMEOUT:-10}
+      - CHAIN_GRPC_TRANSFER_TIMEOUT=${CHAIN_GRPC_TRANSFER_TIMEOUT:-60}
+      # Optional: Proxy Real IP From
+      - PROXY_REAL_IP_FROM=${PROXY_REAL_IP_FROM:-172.18.0.1}
+      # Optional: SSL Configuration
       # SSL enablement (entrypoint enables SSL if CERT_ISSUER_DOMAIN is set)
       - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
       - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
       # Optional: override proxy-ssl discovery
       - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
       - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
-      - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
-      - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
-      - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
-      - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
-      - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
-      - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-      - DISABLE_DEVSHARD_GATEWAY_PROXY=${DISABLE_DEVSHARD_GATEWAY_PROXY:-false}
-      - DISABLE_DEVSHARD_CHAT_ALIAS=${DISABLE_DEVSHARD_CHAT_ALIAS:-true}
-      - DISABLE_DEVSHARD_DIRECT_PROXY=${DISABLE_DEVSHARD_DIRECT_PROXY:-true}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
     depends_on:
@@ -174,7 +220,7 @@ services:
         soft: 16384
         hard: 16384
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -219,7 +265,7 @@ services:
       - ./secrets/certbot:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -231,5 +277,3 @@ services:
     expose:
       - "5173"
     restart: unless-stopped
-
-
