@@ -8,6 +8,8 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - REST_API_ACTIVE=${REST_API_ACTIVE:-false}
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-false}
+      - CONFIG_instrumentation__prometheus=${TELEMETRY_ENABLED:-false}
       - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
@@ -18,6 +20,7 @@ services:
       - "${P2P_PORT:-26656}:26656"  # P2P
     networks:
       - chain-public
+      - observability
 
   api:
     container_name: ${KEY_NAME}-api
@@ -107,3 +110,6 @@ networks:
       driver: default
       config:
         - subnet: 172.25.0.0/16
+  observability:
+    name: observability
+    driver: bridge

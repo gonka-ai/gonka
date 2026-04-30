@@ -8,6 +8,9 @@ export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
 export PROXY_PORT=$PUBLIC_SERVER_PORT
 export KEY_NAME=genesis
+export REST_API_ACTIVE=true
+export TELEMETRY_ENABLED=true
+export CHAIN_NODE=genesis-node
 export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
 docker run --rm -v "$(pwd):/workdir" -w /workdir alpine:3.19 rm -rf prod-local 2>/dev/null || true
 export PUBLIC_URL="http://${KEY_NAME}-proxy"

@@ -1,0 +1,320 @@
+{
+  "uid": "all-panels",
+  "title": "Cosmos SDK & CometBFT",
+  "description": "Operational dashboard for inference chain profiling and monitoring.",
+  "tags": [],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+
+    { "id": 1, "title": "Overview", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+    {
+      "id": 2, "title": "CPU %", "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 0.9 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [{ "expr": "rate(process_cpu_seconds_total{job=\"cometbft\"}[5m])" }]
+    },
+    {
+      "id": 3, "title": "RSS Memory", "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1073741824 }, { "color": "red", "value": 4294967296 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [{ "expr": "process_resident_memory_bytes{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 4, "title": "Height", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 0, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_consensus_height{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 5, "title": "Peers", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 4, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 1 }, { "color": "green", "value": 3 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_p2p_peers{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 6, "title": "Mempool TXs", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 8, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 200 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_mempool_size{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 7, "title": "Validators", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_consensus_validators{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 8, "title": "Missing", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 16, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_consensus_missing_validators{job=\"cometbft\"}" }]
+    },
+    {
+      "id": 9, "title": "Rounds", "type": "stat",
+      "gridPos": { "h": 3, "w": 4, "x": 20, "y": 7 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "expr": "cometbft_consensus_rounds{job=\"cometbft\"}" }]
+    },
+
+    { "id": 100, "title": "Block Production", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 }, "collapsed": false },
+    {
+      "id": 101, "title": "Consensus Step Duration (avg by step)", "type": "timeseries",
+      "description": "How long each consensus step takes on average. Propose, Prevote, Precommit, Commit etc.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [{ "expr": "sum by (step) (rate(cometbft_consensus_step_duration_seconds_sum{job=\"cometbft\"}[5m])) / sum by (step) (rate(cometbft_consensus_step_duration_seconds_count{job=\"cometbft\"}[5m]))", "legendFormat": "{{step}}" }]
+    },
+    {
+      "id": 102, "title": "Block Processing Time", "type": "timeseries",
+      "description": "Total time to process a block (all ABCI calls). p50/p95/p99.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, rate(cometbft_state_block_processing_time_bucket{job=\"cometbft\"}[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(cometbft_state_block_processing_time_bucket{job=\"cometbft\"}[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(cometbft_state_block_processing_time_bucket{job=\"cometbft\"}[5m]))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 103, "title": "Block Interval", "type": "timeseries",
+      "description": "Time between consecutive blocks.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, rate(cometbft_consensus_block_interval_seconds_bucket{job=\"cometbft\"}[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(cometbft_consensus_block_interval_seconds_bucket{job=\"cometbft\"}[5m]))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 104, "title": "Block Size & TXs per Block", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byName", "options": "block size" }, "properties": [{ "id": "unit", "value": "bytes" }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "targets": [
+        { "expr": "cometbft_consensus_num_txs{job=\"cometbft\"}", "legendFormat": "txs/block" },
+        { "expr": "cometbft_consensus_block_size_bytes{job=\"cometbft\"}", "legendFormat": "block size" }
+      ]
+    },
+
+    { "id": 200, "title": "ABCI Methods (RPC)", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "collapsed": false },
+    {
+      "id": 201, "title": "ABCI Method Duration (p95)", "type": "timeseries",
+      "description": "p95 latency of each ABCI method: PrepareProposal, ProcessProposal, FinalizeBlock, etc.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (method, le) (rate(cometbft_abci_connection_method_timing_seconds_bucket{job=\"cometbft\"}[5m])))", "legendFormat": "{{method}}" }]
+    },
+    {
+      "id": 202, "title": "ABCI Method Call Rate", "type": "timeseries",
+      "description": "How often each ABCI method is called per second.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [{ "expr": "sum by (method) (rate(cometbft_abci_connection_method_timing_seconds_count{job=\"cometbft\"}[5m]))", "legendFormat": "{{method}}" }]
+    },
+    {
+      "id": 203, "title": "Pre / Begin / End Blocker (avg)", "type": "timeseries",
+      "description": "Average duration of each blocker phase per block. Shows where SDK time is spent.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(inference_chain_pre_blocker_sum{job=\"cosmos-sdk\"}[5m])) / sum(rate(inference_chain_pre_blocker_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "pre_blocker" },
+        { "expr": "sum(rate(inference_chain_begin_blocker_sum{job=\"cosmos-sdk\"}[5m])) / sum(rate(inference_chain_begin_blocker_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "begin_blocker" },
+        { "expr": "sum(rate(inference_chain_end_blocker_sum{job=\"cosmos-sdk\"}[5m])) / sum(rate(inference_chain_end_blocker_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "end_blocker" }
+      ]
+    },
+    {
+      "id": 204, "title": "TX Throughput & Gas", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "gas.*" }, "properties": [{ "id": "unit", "value": "none" }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "targets": [
+        { "expr": "sum(rate(inference_chain_tx_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "tx/s" },
+        { "expr": "sum(rate(inference_chain_tx_successful{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "successful/s" },
+        { "expr": "sum(rate(inference_chain_tx_gas_used{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "gas used/s" },
+        { "expr": "sum(rate(inference_chain_tx_gas_wanted{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "gas wanted/s" }
+      ]
+    },
+
+    { "id": 300, "title": "gRPC Query Profiling", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 }, "collapsed": false },
+    {
+      "id": 301, "title": "Query Avg Duration", "type": "timeseries",
+      "description": "Average duration of each gRPC query. Auto-discovers new queries via query_name label.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 45 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "targets": [{
+        "expr": "sum by (query_name) (rate({__name__=~\"inference_chain__.+_Query_[A-Za-z]+_sum\", job=\"cosmos-sdk\", query_name!=\"\"}[5m])) / on(query_name) sum by (query_name) (rate({__name__=~\"inference_chain__.+_Query_[A-Za-z]+_count\", job=\"cosmos-sdk\", query_name!=\"\"}[5m]))",
+        "legendFormat": "{{query_name}}"
+      }]
+    },
+    {
+      "id": 302, "title": "Query Call Rate", "type": "timeseries",
+      "description": "Calls per second for each gRPC query. Auto-discovers new queries via query_name label.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 45 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [{
+        "expr": "sum by (query_name) (rate({__name__=~\"inference_chain__.+_Query_[A-Za-z]+_count\", job=\"cosmos-sdk\", query_name!=\"\"}[5m]))",
+        "legendFormat": "{{query_name}}"
+      }]
+    },
+
+    { "id": 500, "title": "Mempool", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 }, "collapsed": false },
+    {
+      "id": 501, "title": "Mempool Size", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byName", "options": "bytes" }, "properties": [{ "id": "unit", "value": "bytes" }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "targets": [
+        { "expr": "cometbft_mempool_size{job=\"cometbft\"}", "legendFormat": "pending txs" },
+        { "expr": "cometbft_mempool_size_bytes{job=\"cometbft\"}", "legendFormat": "bytes" }
+      ]
+    },
+    {
+      "id": 502, "title": "Mempool Failures & Rechecks", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(cometbft_mempool_failed_txs{job=\"cometbft\"}[5m])", "legendFormat": "failed/s" },
+        { "expr": "rate(cometbft_mempool_rejected_txs{job=\"cometbft\"}[5m])", "legendFormat": "rejected/s" },
+        { "expr": "rate(cometbft_mempool_evicted_txs{job=\"cometbft\"}[5m])", "legendFormat": "evicted/s" },
+        { "expr": "rate(cometbft_mempool_recheck_times{job=\"cometbft\"}[5m])", "legendFormat": "rechecks/s" }
+      ]
+    },
+
+    { "id": 600, "title": "P2P Network", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 64 }, "collapsed": false },
+    {
+      "id": 601, "title": "P2P Bandwidth", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(cometbft_p2p_message_receive_bytes_total{job=\"cometbft\"}[5m]))", "legendFormat": "rx" },
+        { "expr": "sum(rate(cometbft_p2p_message_send_bytes_total{job=\"cometbft\"}[5m]))", "legendFormat": "tx" }
+      ]
+    },
+    {
+      "id": 602, "title": "Peers & Pending Bytes", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byName", "options": "pending bytes" }, "properties": [{ "id": "unit", "value": "bytes" }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "targets": [
+        { "expr": "cometbft_p2p_peers{job=\"cometbft\"}", "legendFormat": "peers" },
+        { "expr": "sum(cometbft_p2p_peer_pending_send_bytes{job=\"cometbft\"})", "legendFormat": "pending bytes" }
+      ]
+    },
+
+    { "id": 700, "title": "Runtime & Resources", "type": "row", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 73 }, "collapsed": false },
+    {
+      "id": 701, "title": "CPU Usage", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 74 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "fillOpacity": 10, "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(process_cpu_seconds_total{job=\"cometbft\"}[5m])", "legendFormat": "CometBFT CPU" },
+        { "expr": "rate(process_cpu_seconds_total{job=\"cosmos-sdk\"}[5m])", "legendFormat": "Cosmos SDK CPU" }
+      ]
+    },
+    {
+      "id": 702, "title": "RSS & Total Memory", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 74 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "process_resident_memory_bytes{job=\"cometbft\"}", "legendFormat": "CometBFT RSS" },
+        { "expr": "go_memstats_sys_bytes{job=\"cometbft\"}", "legendFormat": "CometBFT total sys" },
+        { "expr": "sum(inference_chain_runtime_alloc_bytes{job=\"cosmos-sdk\"})", "legendFormat": "SDK alloc" }
+      ]
+    },
+    {
+      "id": 703, "title": "Goroutines", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 82 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "go_goroutines{job=\"cometbft\"}", "legendFormat": "cometbft" },
+        { "expr": "sum(inference_chain_runtime_num_goroutines{job=\"cosmos-sdk\"})", "legendFormat": "cosmos-sdk" }
+      ]
+    },
+    {
+      "id": 704, "title": "Heap Memory", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 82 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "go_memstats_heap_inuse_bytes{job=\"cometbft\"}", "legendFormat": "heap in use" },
+        { "expr": "go_memstats_heap_idle_bytes{job=\"cometbft\"}", "legendFormat": "heap idle" },
+        { "expr": "go_memstats_heap_sys_bytes{job=\"cometbft\"}", "legendFormat": "heap sys" }
+      ]
+    },
+    {
+      "id": 705, "title": "GC Pause Duration", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 90 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "go_gc_duration_seconds{job=\"cometbft\", quantile=\"0.5\"}", "legendFormat": "p50" },
+        { "expr": "go_gc_duration_seconds{job=\"cometbft\", quantile=\"0.75\"}", "legendFormat": "p75" },
+        { "expr": "go_gc_duration_seconds{job=\"cometbft\", quantile=\"1\"}", "legendFormat": "max" }
+      ]
+    },
+    {
+      "id": 706, "title": "Process Info", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 90 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "go_goroutines{job=\"cometbft\"}", "legendFormat": "goroutines" },
+        { "expr": "go_threads{job=\"cometbft\"}", "legendFormat": "OS threads" },
+        { "expr": "process_open_fds{job=\"cometbft\"}", "legendFormat": "open FDs" }
+      ]
+    },
+    {
+      "id": 707, "title": "Allocations", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 98 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(inference_chain_runtime_malloc_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "mallocs/s" },
+        { "expr": "sum(rate(inference_chain_runtime_free_count{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "frees/s" }
+      ]
+    },
+    {
+      "id": 708, "title": "GC Runs & Pause Total", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 98 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byName", "options": "total pause/s" }, "properties": [{ "id": "unit", "value": "s" }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "targets": [
+        { "expr": "sum(rate(inference_chain_runtime_total_gc_runs{job=\"cosmos-sdk\"}[5m]))", "legendFormat": "GC runs/s" },
+        { "expr": "sum(rate(inference_chain_runtime_total_gc_pause_ns{job=\"cosmos-sdk\"}[5m])) / 1e9", "legendFormat": "total pause/s" }
+      ]
+    }
+
+  ],
+  "schemaVersion": 39
+}

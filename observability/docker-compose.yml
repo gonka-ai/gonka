@@ -1,0 +1,41 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.9.1
+    entrypoint: ["sh", "/etc/prometheus/entrypoint.sh"]
+    environment:
+      - CHAIN_NODE=${CHAIN_NODE:-node}
+      - PROMETHEUS_RETENTION=${PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.template.yml:ro
+      - ./prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9099:9090"
+    networks:
+      - default
+      - observability
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.3.2
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  observability:
+    name: observability
+    driver: bridge

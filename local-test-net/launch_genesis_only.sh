@@ -6,6 +6,8 @@ export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
 export KEY_NAME=genesis
+export TELEMETRY_ENABLED=true
+export CHAIN_NODE=genesis-node
 export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 rm -r "prod-local" || true
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"

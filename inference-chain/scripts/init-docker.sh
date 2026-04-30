@@ -114,10 +114,11 @@ SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
 TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2}"
 
 update_configs() {
-  if [ "${REST_API_ACTIVE:-}" = true ]; then
+  if [ "${REST_API_ACTIVE:-}" = true ] || [ "${TELEMETRY_ENABLED:-}" = true ]; then
     "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
-  else
-    echo "Skipping update node config"
+  fi
+  if [ "${TELEMETRY_ENABLED:-}" = true ] && [ -f "config_overrides.toml" ]; then
+    "$APP_NAME" patch-toml "$STATE_DIR/config/config.toml" config_overrides.toml
   fi
 }
 

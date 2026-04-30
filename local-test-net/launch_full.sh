@@ -3,6 +3,8 @@
 set -e
 
 export REST_API_ACTIVE=true
+export TELEMETRY_ENABLED=true
+export CHAIN_NODE=genesis-node
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
