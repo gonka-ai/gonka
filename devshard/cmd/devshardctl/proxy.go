@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"devshard/host"
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -60,6 +61,17 @@ func writeStreamReset(w io.Writer) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// inferenceStatusName maps status codes to human-readable names.
+var inferenceStatusName = map[types.InferenceStatus]string{
+	types.StatusPending:     "pending",
+	types.StatusStarted:     "started",
+	types.StatusFinished:    "finished",
+	types.StatusChallenged:  "challenged",
+	types.StatusValidated:   "validated",
+	types.StatusInvalidated: "invalidated",
+	types.StatusTimedOut:    "timed_out",
 }
 
 // Proxy is the OpenAI-compatible HTTP proxy backed by a devshard session.
@@ -134,6 +146,9 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 	}
 
 	nonce := prepared.Nonce()
+	hostIdx := prepared.HostIdx()
+	logging.Info("inference request", "subsystem", "proxy",
+		"nonce", nonce, "host", hostIdx, "model", params.Model, "max_tokens", params.MaxTokens)
 	if w != nil {
 		p.registry.register(nonce, w)
 		defer p.registry.unregister(nonce)
@@ -145,9 +160,11 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 	// Attempt 1.
 	finished, confirmedAt, err := p.sendAndProcess(ctx, prepared, nonce)
 	if err != nil {
-		return err
+		return fmt.Errorf("nonce %d host %d: %w", nonce, hostIdx, err)
 	}
 	if finished {
+		logging.Info("inference complete", "subsystem", "proxy",
+			"nonce", nonce, "host", hostIdx, "attempt", 1)
 		return nil
 	}
 
@@ -157,13 +174,13 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		deadline := time.Unix(confirmedAt, 0).Add(
 			time.Duration(cfg.ExecutionTimeout)*time.Second + timeoutBuffer)
 		if !sleepUntil(ctx, deadline) {
-			return ctx.Err()
+			return fmt.Errorf("nonce %d host %d: %w", nonce, hostIdx, ctx.Err())
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
 		deadline := now.Add(time.Duration(cfg.RefusalTimeout)*time.Second + timeoutBuffer)
 		if !sleepUntil(ctx, deadline) {
-			return ctx.Err()
+			return fmt.Errorf("nonce %d host %d: %w", nonce, hostIdx, ctx.Err())
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
@@ -174,9 +191,11 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 	}
 	finished, confirmedAt, err = p.sendAndProcess(ctx, prepared, nonce)
 	if err != nil {
-		return err
+		return fmt.Errorf("nonce %d host %d: %w", nonce, hostIdx, err)
 	}
 	if finished {
+		logging.Info("inference complete", "subsystem", "proxy",
+			"nonce", nonce, "host", hostIdx, "attempt", 2)
 		return nil
 	}
 
@@ -185,7 +204,7 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	}
 
-	return p.handleTimeout(ctx, prepared, nonce, reason, params)
+	return p.handleTimeout(ctx, prepared, reason, params)
 }
 
 // sendAndProcess sends the prepared inference and processes the response.
@@ -243,7 +262,11 @@ func sleep(ctx context.Context, d time.Duration) bool {
 // handleTimeout collects timeout votes from verifier hosts and submits
 // MsgTimeoutInference. Single attempt -- the timeoutBuffer ensures verifiers
 // have already passed their own deadline before the proxy fires.
-func (p *Proxy) handleTimeout(ctx context.Context, prepared *user.PreparedInference, nonce uint64, reason types.TimeoutReason, params user.InferenceParams) error {
+func (p *Proxy) handleTimeout(ctx context.Context, prepared *user.PreparedInference, reason types.TimeoutReason, params user.InferenceParams) error {
+	nonce := prepared.Nonce()
+	hostIdx := prepared.HostIdx()
+	logging.Info("timeout handling", "subsystem", "proxy",
+		"nonce", nonce, "host", hostIdx, "reason", reason.String())
 	payload := &host.InferencePayload{
 		Prompt:      params.Prompt,
 		Model:       params.Model,
@@ -268,7 +291,8 @@ func (p *Proxy) handleTimeout(ctx context.Context, prepared *user.PreparedInfere
 		return fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
-	log.Printf("inference %d: insufficient timeout votes, skipping timeout tx", nonce)
+	logging.Warn("insufficient timeout votes, skipping timeout tx", "subsystem", "proxy",
+		"nonce", nonce, "host", hostIdx)
 	return fmt.Errorf("inference %d timed out but insufficient votes to prove it", nonce)
 }
 
@@ -310,7 +334,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		// Already streaming -- send error as SSE data.
-		log.Printf("inference error (mid-stream): %v", err)
+		logging.Error("inference error (mid-stream)", "subsystem", "proxy", "error", err)
 		fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
 		dw.Flush()
 		return
@@ -354,19 +378,9 @@ func assembleSSEChunks(raw string) []byte {
 	return []byte(`{"error":{"message":"no response data"}}`)
 }
 
-func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if err := p.session.Finalize(r.Context()); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-
-	st := p.sm.SnapshotState()
+func (p *Proxy) writeSettlement(w http.ResponseWriter) {
 	finalNonce := p.session.Nonce()
+	st := p.sm.SnapshotState()
 	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -381,6 +395,31 @@ func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
+	logging.Info("finalize request received", "subsystem", "proxy",
+		"phase", p.sm.Phase())
+	start := time.Now()
+
+	if err := p.session.Finalize(r.Context()); err != nil {
+		logging.Error("finalize failed", "subsystem", "proxy",
+			"error", err, "elapsed", time.Since(start).String())
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	logging.Info("session finalized", "subsystem", "proxy",
+		"nonce", p.session.Nonce(), "elapsed", time.Since(start).String())
+	p.writeSettlement(w)
+}
+
+func (p *Proxy) handleGetFinalize(w http.ResponseWriter, r *http.Request) {
+	if p.sm.Phase() != types.PhaseSettlement {
+		http.Error(w, `{"error":{"message":"session not yet finalized"}}`, http.StatusConflict)
+		return
+	}
+	p.writeSettlement(w)
 }
 
 type statusResponse struct {
@@ -442,19 +481,9 @@ func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	st := p.sm.SnapshotState()
 
-	statusNames := map[types.InferenceStatus]string{
-		types.StatusPending:     "pending",
-		types.StatusStarted:     "started",
-		types.StatusFinished:    "finished",
-		types.StatusChallenged:  "challenged",
-		types.StatusValidated:   "validated",
-		types.StatusInvalidated: "invalidated",
-		types.StatusTimedOut:    "timed_out",
-	}
-
 	counts := make(map[string]int)
 	for _, rec := range st.Inferences {
-		name := statusNames[rec.Status]
+		name := inferenceStatusName[rec.Status]
 		if name == "" {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
 		}
@@ -467,6 +496,55 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 		"total_inferences": len(st.Inferences),
 		"status_counts":    counts,
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (p *Proxy) handleDebugSignatures(w http.ResponseWriter, r *http.Request) {
+	entries, highestQuorum, hasQuorum := p.session.SignatureStatus()
+
+	resp := map[string]any{
+		"current_nonce":        p.session.Nonce(),
+		"total_slots":          p.sm.TotalSlots(),
+		"quorum_threshold":     p.sm.QuorumThreshold(),
+		"highest_quorum_nonce": highestQuorum,
+		"has_quorum":           hasQuorum,
+		"nonces":               entries,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (p *Proxy) handleCollectSignatures(w http.ResponseWriter, r *http.Request) {
+	nonceStr := r.URL.Query().Get("nonce")
+	if nonceStr == "" {
+		http.Error(w, `{"error":{"message":"missing 'nonce' query parameter"}}`, http.StatusBadRequest)
+		return
+	}
+	nonce, err := strconv.ParseUint(nonceStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":{"message":"invalid 'nonce' parameter"}}`, http.StatusBadRequest)
+		return
+	}
+
+	currentNonce := p.session.Nonce()
+	if nonce > currentNonce {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":"nonce %d is ahead of current nonce %d"}}`, nonce, currentNonce),
+			http.StatusBadRequest)
+		return
+	}
+
+	weight, threshold, total := p.session.CollectSignatures(r.Context(), nonce)
+
+	resp := map[string]any{
+		"nonce":           nonce,
+		"sig_weight":      weight,
+		"quorum_threshold": threshold,
+		"total_slots":     total,
+		"has_quorum":      weight >= threshold,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -539,4 +617,103 @@ func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(inference)
+}
+
+func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
+	st := p.sm.SnapshotState()
+
+	var phaseStr string
+	switch st.Phase {
+	case types.PhaseActive:
+		phaseStr = "active"
+	case types.PhaseFinalizing:
+		phaseStr = "finalizing"
+	case types.PhaseSettlement:
+		phaseStr = "settlement"
+	default:
+		phaseStr = fmt.Sprintf("unknown(%d)", st.Phase)
+	}
+
+	session := map[string]any{
+		"escrow_id":      st.EscrowID,
+		"phase":          phaseStr,
+		"balance":        st.Balance,
+		"latest_nonce":   st.LatestNonce,
+		"finalize_nonce": st.FinalizeNonce,
+		"config": map[string]any{
+			"refusal_timeout":   st.Config.RefusalTimeout,
+			"execution_timeout": st.Config.ExecutionTimeout,
+			"token_price":       st.Config.TokenPrice,
+			"vote_threshold":    st.Config.VoteThreshold,
+			"validation_rate":   st.Config.ValidationRate,
+		},
+	}
+
+	group := make([]map[string]any, len(st.Group))
+	for i, s := range st.Group {
+		group[i] = map[string]any{
+			"slot_id":           s.SlotID,
+			"validator_address": s.ValidatorAddress,
+		}
+	}
+
+	inferences := make(map[string]any, len(st.Inferences))
+	for id, rec := range st.Inferences {
+		name := inferenceStatusName[rec.Status]
+		if name == "" {
+			name = fmt.Sprintf("unknown(%d)", rec.Status)
+		}
+		inf := map[string]any{
+			"status":        name,
+			"executor_slot": rec.ExecutorSlot,
+			"model":         rec.Model,
+			"prompt_hash":   hex.EncodeToString(rec.PromptHash),
+			"response_hash": hex.EncodeToString(rec.ResponseHash),
+			"input_length":  rec.InputLength,
+			"max_tokens":    rec.MaxTokens,
+			"input_tokens":  rec.InputTokens,
+			"output_tokens": rec.OutputTokens,
+			"reserved_cost": rec.ReservedCost,
+			"actual_cost":   rec.ActualCost,
+			"started_at":    rec.StartedAt,
+			"confirmed_at":  rec.ConfirmedAt,
+			"votes_valid":   rec.VotesValid,
+			"votes_invalid": rec.VotesInvalid,
+			"validated_by":  rec.ValidatedBy.SetBits(),
+		}
+		inferences[fmt.Sprintf("%d", id)] = inf
+	}
+
+	hostStats := make(map[string]any, len(st.HostStats))
+	for slot, hs := range st.HostStats {
+		hostStats[fmt.Sprintf("%d", slot)] = map[string]any{
+			"missed":                hs.Missed,
+			"invalid":               hs.Invalid,
+			"cost":                  hs.Cost,
+			"required_validations":  hs.RequiredValidations,
+			"completed_validations": hs.CompletedValidations,
+		}
+	}
+
+	revealedSeeds := make(map[string]int64, len(st.RevealedSeeds))
+	for slot, seed := range st.RevealedSeeds {
+		revealedSeeds[fmt.Sprintf("%d", slot)] = seed
+	}
+
+	warmKeys := make(map[string]string, len(st.WarmKeys))
+	for slot, addr := range st.WarmKeys {
+		warmKeys[fmt.Sprintf("%d", slot)] = addr
+	}
+
+	resp := map[string]any{
+		"session":        session,
+		"group":          group,
+		"inferences":     inferences,
+		"host_stats":     hostStats,
+		"revealed_seeds": revealedSeeds,
+		"warm_keys":      warmKeys,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

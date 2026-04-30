@@ -585,7 +585,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
-	logging.Debug("new inference", "subsystem", "state", "inference_id", msg.InferenceId, "executor_slot", executorSlot)
+	logging.Info("inference -> pending", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", executorSlot,
+		"model", msg.Model,
+		"reserved_cost", reservedCost,
+	)
 	return nil
 }
 
@@ -629,6 +634,11 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
+	logging.Info("inference pending -> started", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"confirmed_at", msg.ConfirmedAt,
+	)
 	return nil
 }
 
@@ -680,6 +690,13 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
+	logging.Info("inference started -> finished", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", msg.ExecutorSlot,
+		"input_tokens", msg.InputTokens,
+		"output_tokens", msg.OutputTokens,
+		"actual_cost", actualCost,
+	)
 	return nil
 }
 
@@ -732,6 +749,10 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			logging.Info("inference finished -> challenged", "subsystem", "state",
+				"inference_id", msg.InferenceId,
+				"validator_slot", msg.ValidatorSlot,
+			)
 		}
 	}
 
@@ -810,8 +831,18 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 			hs.Cost -= rec.ActualCost
 		}
 		sm.state.Balance += rec.ActualCost
+		logging.Info("inference challenged -> invalidated", "subsystem", "state",
+			"inference_id", msg.InferenceId,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
+		logging.Info("inference challenged -> validated", "subsystem", "state",
+			"inference_id", msg.InferenceId,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
 	}
 
 	return nil
@@ -894,6 +925,11 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	// Release reserved cost back to escrow.
 	sm.state.Balance += rec.ReservedCost
 
+	logging.Info("inference -> timed_out", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"reason", msg.Reason.String(),
+	)
 	return nil
 }
 
@@ -1140,6 +1176,11 @@ func (sm *StateMachine) CheckWarmKey(warmAddr, coldAddr string) bool {
 
 func (sm *StateMachine) TotalSlots() uint32 {
 	return sm.totalSlots
+}
+
+// QuorumThreshold returns the minimum slot-weighted signature count for 2/3+1 quorum.
+func (sm *StateMachine) QuorumThreshold() uint32 {
+	return 2*sm.totalSlots/3 + 1
 }
 
 func (sm *StateMachine) SlotAddress(slotID uint32) string {

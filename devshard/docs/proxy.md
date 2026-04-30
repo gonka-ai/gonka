@@ -1,5 +1,11 @@
 # devshardctl
 
+## Build
+
+```
+go build -o devshardctl ./cmd/devshardctl/
+```
+
 Local HTTP proxy that exposes an OpenAI-compatible API for devshard inference.
 Users point any OpenAI client at `localhost:8080` and make chat completion requests; the proxy handles all devshard protocol complexity internally.
 
@@ -12,32 +18,62 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `--private-key` | `DEVSHARD_PRIVATE_KEY` | yes | - | Hex-encoded secp256k1 private key |
 | `--escrow-id` | `DEVSHARD_ESCROW_ID` | yes | - | On-chain escrow ID |
 | `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL |
-| `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen2.5-7B-Instruct` | Default model (used when request omits `model`) |
+| `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen3-4B-Instruct-2507` | Default model (used when request omits `model`) |
 | `--port` | `DEVSHARD_PORT` | no | `8080` | Listen port |
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 
 ## Quick start
 
+## Create Escrow
+
+```
+./inferenced tx inference \
+  create-devshard-escrow 5000000000 \
+  --from dev1 \
+  --keyring-backend file \
+  --home ~/testnet-2 \
+  --chain-id gonka-testnet-2 \
+  --node http://89.169.110.61:8000/chain-rpc/ \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 500000ngonka -y
+```
+
+## Start proxy
+
 ```bash
 devshardctl \
   --private-key "deadbeef..." \
   --escrow-id 42 \
-  --chain-rest "http://localhost:1317"
+  --chain-rest http://89.169.110.61:8000/chain-api/ \
+  --model Qwen/Qwen3-4B-Instruct-2507
 
 # In another terminal:
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2.5-7B-Instruct","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}'
+  -d '{"model":"Qwen/Qwen3-4B-Instruct-2507","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}'
 ```
 
-Or using environment variables:
+## Finalize Escrow 
 
-```bash
-export DEVSHARD_PRIVATE_KEY="deadbeef..."
-export DEVSHARD_ESCROW_ID="42"
-export DEVSHARD_CHAIN_REST="http://localhost:1317"
+```
+curl -X 'POST' http://localhost:8080/v1/finalize > ./settle.json
+```
 
-devshardctl
+## Settle Escrow
+
+```
+./inferenced tx inference \
+  settle-devshard-escrow \
+  settle.json \
+  --from dev1 \
+  --keyring-backend file \
+  --home ~/testnet-2 \
+  --chain-id gonka-testnet-2 \
+  --node http://89.169.110.61:8000/chain-rpc/ \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 500000ngonka -y
 ```
 
 ## Endpoints
@@ -51,39 +87,12 @@ Request fields used by the proxy:
 - `max_tokens` -- passed to InferenceParams (default 2048)
 - `stream` -- if true, response is SSE; if false, response is a single JSON object
 
-Returns 429 if another inference is already in flight.
 
 ### POST /v1/finalize
 
 Triggers devshard finalization and returns settlement JSON.
 
-No request body needed. Response is the settlement payload ready for `inferenced tx inference settle-devshard-escrow`.
-
 ### GET /v1/status
-
-Returns current session state.
-
-```json
-{"escrow_id":"42","nonce":15,"phase":"active","balance":5000000000}
-```
-
-Phase values: `active`, `finalizing`, `settlement`.
-
-## OpenAI Python SDK
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="Qwen/Qwen2.5-7B-Instruct",
-    messages=[{"role": "user", "content": "Hello"}],
-    max_tokens=100,
-)
-print(response.choices[0].message.content)
-```
-
-The `api_key` is required by the SDK but ignored by the proxy.
 
 ## Finalization and settlement
 
@@ -94,8 +103,3 @@ After all inferences are done:
 
 The proxy holds the session open until finalization. Once finalized, the session cannot accept new inferences.
 
-## Non-streaming vs streaming
-
-Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks from the ML node and returns the final assembled JSON response.
-
-Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.

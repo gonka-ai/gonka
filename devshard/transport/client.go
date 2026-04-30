@@ -378,13 +378,13 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http post %s: %w", path, err)
+		return nil, fmt.Errorf("POST %s: %w", url, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("http %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
 	return resp, nil
