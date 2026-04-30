@@ -982,6 +982,124 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
 }
 
+// TestMsgServer_ClaimRewards_DeterministicSampling verifies the fix for Report 13:
+// Reservoir sampling must produce the same result regardless of which block the claim
+// is included in. The validator missed all validations, so both attempts (at different
+// block heights) must consistently fail. Previously, block-hash seeding allowed retry
+// grinding where different blocks could produce different sample outcomes.
+func TestMsgServer_ClaimRewards_DeterministicSampling(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	privKey := secp256k1.GenPrivKey()
+	pubKey := privKey.PubKey()
+
+	seed := uint64(12345)
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, seed)
+	signature, err := privKey.Sign(seedBytes)
+	require.NoError(t, err)
+	signatureHex := hex.EncodeToString(signature)
+
+	epochIndex := uint64(100)
+	epoch := types.Epoch{Index: epochIndex, PocStartBlockHeight: 1000}
+	k.SetEpoch(sdkCtx, &epoch)
+
+	currentEpochIndex := uint64(101)
+	currentEpoch := types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000}
+	k.SetEpoch(sdkCtx, &currentEpoch)
+	_ = k.SetEffectiveEpochIndex(sdkCtx, currentEpoch.Index)
+
+	currentEpochData := types.EpochGroupData{
+		EpochIndex:          currentEpoch.Index,
+		EpochGroupId:        101,
+		PocStartBlockHeight: currentEpochIndex,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Creator, Weight: 50},
+		},
+	}
+	k.SetEpochGroupData(sdkCtx, currentEpochData)
+
+	settleAmount := types.SettleAmount{
+		Participant:   testutil.Creator,
+		EpochIndex:    epochIndex,
+		WorkCoins:     1000,
+		RewardCoins:   500,
+		SeedSignature: signatureHex,
+	}
+	_ = k.SetSettleAmount(sdkCtx, settleAmount)
+
+	epochData := types.EpochGroupData{
+		EpochIndex:          epoch.Index,
+		EpochGroupId:        9000,
+		PocStartBlockHeight: epochIndex,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Creator, Weight: 80},
+			{MemberAddress: testutil.Executor, Weight: 10},
+			{MemberAddress: testutil.Executor2, Weight: 10},
+		},
+	}
+	k.SetEpochGroupData(sdkCtx, epochData)
+
+	perfSummary := types.EpochPerformanceSummary{
+		EpochIndex:    epochIndex,
+		ParticipantId: testutil.Creator,
+		Claimed:       false,
+	}
+	k.SetEpochPerformanceSummary(sdkCtx, perfSummary)
+
+	params := types.DefaultParams()
+	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(0.1)
+	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	k.SetParams(sdkCtx, params)
+
+	// Create 10 inferences — validator has NOT validated any of them
+	for i := 1; i <= 10; i++ {
+		executor := testutil.Executor
+		if i%2 == 0 {
+			executor = testutil.Executor2
+		}
+		k.SetInferenceValidationDetails(sdkCtx, types.InferenceValidationDetails{
+			EpochId:            epoch.Index,
+			InferenceId:        fmt.Sprintf("inference%d", i),
+			ExecutorId:         executor,
+			ExecutorReputation: int32(i * 10),
+			TrafficBasis:       1000,
+		})
+	}
+
+	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount).AnyTimes()
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+		&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
+	// First attempt at block height 31 — should fail (missed all validations)
+	resp1, err1 := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
+		Creator:    testutil.Creator,
+		EpochIndex: epochIndex,
+		Seed:       int64(seed),
+	})
+	require.NoError(t, err1)
+	require.NotNil(t, resp1)
+
+	// Second attempt at a much later block height — must produce the same outcome.
+	// With the old block-hash seed, a different block would yield a different sample.
+	resp2, err2 := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks*3+1), &types.MsgClaimRewards{
+		Creator:    testutil.Creator,
+		EpochIndex: epochIndex,
+		Seed:       int64(seed),
+	})
+	require.NoError(t, err2)
+	require.NotNil(t, resp2)
+
+	// Both attempts must yield the same validation result
+	require.Equal(t, resp1.Result, resp2.Result,
+		"Claim outcome must be deterministic regardless of block height")
+	require.Equal(t, resp1.Amount, resp2.Amount)
+}
+
 func TestMsgServer_ClaimRewards_SkippedValidationDuringPoC_NotAvailable(t *testing.T) {
 	pocAvailabilityTest(t, false)
 }

@@ -411,9 +411,12 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
-	blockHash := ctx.HeaderInfo().Hash
-	blockHashSeed := int64(binary.BigEndian.Uint64(blockHash[:8]))
-	rng := rand.New(rand.NewSource(blockHashSeed))
+	// Use msg.Seed (signed by the validator, verified against settleAmount.SeedSignature)
+	// instead of the block hash for reservoir sampling. The block hash changes per block,
+	// which allowed retry grinding: a validator could re-submit ClaimRewards in different
+	// blocks until a favorable sample under-represented their missed validations.
+	// msg.Seed is fixed per validator per epoch and cannot be changed between retries.
+	rng := rand.New(rand.NewSource(msg.Seed))
 
 	// Reservoir sampling: iterate all inferences, filter by model, sample filtered items
 	sample := make([]types.InferenceValidationDetails, 0, maxInferenceSampleSize)
