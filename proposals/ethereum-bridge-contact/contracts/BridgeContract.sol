@@ -289,7 +289,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         uint64 epochId,
         bytes calldata groupPublicKey,
         bytes calldata validationSig
-    ) public {
+    ) public onlyNormalOperation {
         // Disallow external submission for genesis epoch
         require(epochId > 1, "Epoch 1 must be set via Admin");
 
@@ -446,6 +446,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      */
     function transfer(address to, uint256 amount) public override returns (bool) {
         if (to == address(this)) {
+            if (epochMeta.currentState != ContractState.NORMAL_OPERATION) {
+                revert BridgeNotOperational();
+            }
             // Auto-burn: sending tokens to contract burns them
             _burn(msg.sender, amount);
             emit WGNKBurned(msg.sender, amount, block.timestamp);
@@ -464,6 +467,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      */
     function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
         if (to == address(this)) {
+            if (epochMeta.currentState != ContractState.NORMAL_OPERATION) {
+                revert BridgeNotOperational();
+            }
             // Auto-burn: sending tokens to contract burns them
             _spendAllowance(from, msg.sender, amount);
             _burn(from, amount);

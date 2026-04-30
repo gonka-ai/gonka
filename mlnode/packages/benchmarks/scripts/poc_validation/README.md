@@ -1,10 +1,63 @@
 # PoC Validation Scripts
 
-This folder contains the data collection pipeline for **PoC (Proof-of-Computation) vector validation** against already running vLLM servers with PoC support.
+This folder contains the data collection pipeline for PoC (Proof-of-Computation) vector validation against already running vLLM servers with PoC support.
 
-The goal is to verify that PoC vector generation is consistent across different GPUs, vLLM versions, and model configurations — and to detect fraud (e.g., a node running INT4 instead of FP8).
+The goal is to verify that PoC vector generation is consistent across different GPUs, vLLM versions, and model configurations -- and to detect fraud (e.g., a node running INT4 instead of FP8).
 
-## Pipeline Overview
+## Two flows in this folder
+
+End-to-end validation (deploy + throughput + golden-artifact check) is the
+`validate.py` flow under "End-to-end validation" below. It is what the
+`mlnode-validate` skill runs.
+
+The original cross-version L2 comparison flow (`collect_data.py` +
+`poc_l2_histogram.py`) is unchanged and lives below "Cross-run comparison".
+Use it when you want to compare two collection runs (e.g. two vLLM versions)
+rather than validate against a fixed reference.
+
+## End-to-end validation
+
+```
+validate.py        Deploy a model on the MLNode, measure full-system PoC
+                   throughput, send the golden reference vectors for
+                   validation, write a JSON + text report.
+make_artifact.py   Bake a new golden reference from a trusted, locally
+                   deployed MLNode (so the same flow works for any
+                   model, e.g. local Qwen3-0.6B experiments).
+artifacts/         Golden reference vectors -- committed in the repo. One
+                   JSON per (model, deploy variant). Default lookup is
+                   <sanitized model>.json; variants take an explicit
+                   --reference path. Currently shipped:
+                   - qwen-qwen3-0.6b.json                                 (local dev, single GPU; 32 nonces)
+                   - qwen-qwen3-235b-a22b-instruct-2507-fp8.json          (qwen235b default: tp=4, FlashInfer; 32 nonces)
+                   - qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json (qwen235b extended: tp=2, DeepGEMM MoE; 2000 nonces)
+```
+
+For Qwen3-235B run validate.py against both qwen235b references in
+separate runs (the default lookup picks the 32-nonce one; pass
+`--reference <path>` for the deepgemm variant).
+
+Per-run output goes to
+`mlnode/packages/benchmarks/data/experiments/<exp_name>_<YYYY-MM-DD_HHMMSS>/`,
+matching the layout in `mlnode/packages/benchmarks/scripts/README.md`.
+Each experiment directory holds `validate_config.json`,
+`validate_report.json`, and `validate_report.txt`.
+
+Quickstart (vLLM already up, validate against the 235B reference):
+
+```bash
+python3 validate.py \
+  --mlnode-url http://127.0.0.1:8080 \
+  --model      Qwen/Qwen3-235B-A22B-Instruct-2507-FP8 \
+  --skip-download --skip-deploy
+```
+
+`validate.py` looks the reference up by model id; pass
+`--reference <path>` (legacy alias: `--artifact`) to override that
+lookup. See `skills/mlnode-validate/SKILL.md` for the full procedure
+and the agent-facing contract.
+
+## Cross-run comparison (legacy)
 
 ```
 1. collect_data.py          Collect PoC vectors from one or more servers

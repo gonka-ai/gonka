@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/product-science/vllm:v0.15.1-alpha3 AS base
+FROM ghcr.io/gonka-ai/vllm:v0.15.1 AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -11,8 +11,8 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     checkinstall \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade setuptools wheel pip \
-    && curl -fLO https://www.openssl.org/source/old/1.1.1/openssl-1.1.1u.tar.gz \
+    && pip install --upgrade "setuptools<81" wheel pip \
+    && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
     && tar -xzf openssl-1.1.1u.tar.gz \
     && cd openssl-1.1.1u \
     && ./config --prefix=/usr/local/openssl-1.1 \
