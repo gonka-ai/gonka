@@ -9,13 +9,13 @@
 
 ## Theory
 
-The current PoC procedure looks like this:
+The **current PoC** procedure looks like this:
 
 ![curr_poc](img/curr_poc.png)
 
 After prefill, `k_dim=12` dimensions are selected from the hidden state, forming a new vector that is then transformed and returned.
 
-The proposed PoC-decode works as follows:
+The **proposed PoC-decode** works as follows:
 
 ![poc_decode](img/poc_decode.png)
 
@@ -29,10 +29,16 @@ An interactive 3D sphere plot is available [here](https://axeltec-software.githu
 
 K-point selection statistics across different block hashes are also available as a [chart](https://axeltec-software.github.io/ReportsHelper/poc-decode/nearest_k_point_dist.html).
 
+**Final output:** an array of selected k-point IDs for every decode step.
+
+### Validation
+
 The method operates in two modes: inference and validation.
 
 - **Inference mode** uses the pipeline described above.
 - **Validation mode** works as follows: the PoC request passes the `k_point_ids` obtained during inference; at each decode step the model produces a `k_point_id` which is compared against the one from inference. If the IDs differ, a mismatch is recorded and the inference `k_point_id` is used instead of the newly generated one.
+
+**Main idea:** both servers return an array of selected k-point IDs for every step. By comparing these two arrays we can count how many steps diverged. The assumption is that a fraud model will produce significantly more mismatches than an honest one.
 
 
 ## Detailed Analysis
