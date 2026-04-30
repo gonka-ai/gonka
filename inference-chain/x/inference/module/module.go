@@ -256,6 +256,7 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
+		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
 
