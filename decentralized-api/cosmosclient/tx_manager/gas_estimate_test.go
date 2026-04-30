@@ -232,6 +232,33 @@ func TestApplyGasAndFee_CapsAtBatchGasLimit(t *testing.T) {
 	require.Equal(t, uint64(BatchGasLimit), b2.GetTx().GetGas())
 }
 
+// TestBroadcastMessages_EmptyBatch_NoOp pins the early-return guard at
+// the top of broadcastMessagesAtAttempt: a zero-message batch returns
+// (nil, zero-time, nil) without touching the factory or the wire. Without
+// this guard a refactor could route an empty batch into BuildUnsignedTx,
+// which produces a confusing chain-side decode error far from the
+// cause. The guard fields none of the manager's other state, so a zero-
+// value manager is enough to exercise the path.
+func TestBroadcastMessages_EmptyBatch_NoOp(t *testing.T) {
+	m := &manager{}
+
+	resp, ts, err := m.BroadcastMessages("test-id")
+	require.NoError(t, err)
+	require.Nil(t, resp)
+	require.True(t, ts.IsZero())
+
+	// Same for the internal helper that retry uses, with a non-zero attempt.
+	resp, ts, err = m.broadcastMessagesAtAttempt("test-id", 5, nil)
+	require.NoError(t, err)
+	require.Nil(t, resp)
+	require.True(t, ts.IsZero())
+
+	resp, ts, err = m.broadcastMessagesAtAttempt("test-id", 0, []sdk.Msg{})
+	require.NoError(t, err)
+	require.Nil(t, resp)
+	require.True(t, ts.IsZero())
+}
+
 // TestEstimateMsgGas_AllInferenceOperationKeyPermsHaveExplicitEstimate
 // catches the case where someone adds a new message type to the warm key's
 // authz permission list (InferenceOperationKeyPerms) but forgets to add it

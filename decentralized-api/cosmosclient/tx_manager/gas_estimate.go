@@ -54,8 +54,13 @@ func applyGasAndFee(tx client.TxBuilder, gasWanted uint64, minGasPriceNgonka int
 //     observed numbers in this table assume PoCV2 base/count gas is being
 //     metered; if FeeParams changes the formula constants, refresh)
 const (
-	// txOverheadGas covers signature verification, fee deduction, and the
-	// other ante-handler decorators that run regardless of payload.
+	// txOverheadGas covers signature verification, fee deduction, the
+	// other ante-handler decorators that run regardless of payload, AND
+	// the cost of unwrapping the authz MsgExec wrapper that the warm key
+	// uses to sign on behalf of the cold account. Mainnet hosts almost
+	// always run in authz mode (warm key signs, cold pays), so anyone
+	// retuning this number should keep the wrap cost in mind — direct
+	// signing (no MsgExec) would consume slightly less.
 	txOverheadGas = uint64(50_000)
 
 	// gasRetryMultiplier is applied per retry attempt to escape the OOG
@@ -78,6 +83,17 @@ const (
 
 	// PoCV2StoreCommit linear-scaling formula (mirrors on-chain
 	// chargePoCV2StoreCommitGas in msg_server_poc_v2_commit.go).
+	//
+	// IMPORTANT: these mirror governance-tunable params:
+	//   - gasPoCV2Base  ≈ FeeParams.base_validation_gas (default 500K) + sdk overhead
+	//   - gasPoCV2PerCount ≈ FeeParams.gas_per_poc_count (default 100)
+	// If governance bumps either FeeParams field, this estimator silently
+	// underestimates and PoCV2 batches start OOG-retrying. The OOG retry
+	// path will eventually succeed via the per-attempt doubling, so this
+	// degrades gracefully — but it costs extra block time. Re-tune these
+	// constants in the same governance window that changes FeeParams, or
+	// (better, future work) read FeeParams at DAPI startup and use those
+	// values dynamically with a fixed headroom multiplier.
 	gasPoCV2Base    = uint64(600_000) // base + sdk overhead + 50% headroom
 	gasPoCV2PerCount = uint64(150)    // 100 on-chain + 50% headroom
 
