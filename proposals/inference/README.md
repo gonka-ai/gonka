@@ -42,7 +42,7 @@ Sub-chains will be able to process only the inference related transactions and t
 
 ```
 +-----------+     +-------------------+     +----------------------------+
-|   User    |     |      Mainnet      |     |  Subnet (one per session)  |
+|   User    |     |      Mainnet      |     |  Devshard (one per session)  |
 +-----------+     +-------------------+     +----------------------------+
       |                    |                             |
       | 1. MsgCreateEscrow |                             |
@@ -66,7 +66,7 @@ Sub-chains will be able to process only the inference related transactions and t
 ```
 
 User sends exactly 2 transactions to mainnet: `MsgCreateEscrow` to open the session, `MsgSettleEscrow` to close it.
-All inference requests happen directly with the assigned subnet group; mainnet never sees individual requests.
+All inference requests happen directly with the assigned devshard group; mainnet never sees individual requests.
 
 ## User Flow
 
@@ -99,9 +99,9 @@ MsgCreateEscrow(
 Settlement does not require individual inference records. The mandatory finalizing round ensures all seeds are revealed and validation compliance is computed before settlement. Once verified, each host is paid from escrow proportionally to compute delivered; the remaining balance is refunded to the user.
 
 
-## Subnet Protocol
+## Devshard Protocol
 
-The subnet is a lightweight shard with voting weight provided by mainnet. It settles back to mainnet when the session ends.
+The devshard is a lightweight shard with voting weight provided by mainnet. It settles back to mainnet when the session ends.
 
 Design goals: lightweight, parallelizable, enforce that the user uses all hosts from the group.
 
@@ -118,7 +118,7 @@ The chain needs these properties but does not want to process this data on mainn
 
 ### Transaction Types
 
-The subnet uses 8 off-chain transaction types (see [design.md Transaction List](./design.md#transaction-list)).
+The devshard uses 8 off-chain transaction types (see [design.md Transaction List](./design.md#transaction-list)).
 
 Only transactions change state. Host state signatures (over state_root at each nonce) remain outside state -- they are metadata accumulated alongside diffs, not processed by the state machine.
 
@@ -182,7 +182,7 @@ Timeout votes are signed statements (format in [design.md What Gets Signed](./de
 
 ----
 
-**Per-user state.** State is saved per user independently. Each user's history is a chain of diffs. Each diff is essentially a block. Since there is no cross-user state, a node operator can shard its database and resources per user. Each node can participate in any number of subnets simultaneously. Subnet processing scales linearly with user count. Only escrow creation and settlement on mainnet do not.
+**Per-user state.** State is saved per user independently. Each user's history is a chain of diffs. Each diff is essentially a block. Since there is no cross-user state, a node operator can shard its database and resources per user. Each node can participate in any number of devshards simultaneously. Devshard processing scales linearly with user count. Only escrow creation and settlement on mainnet do not.
 
 **User-driven propagation.** The user is responsible for sequencing and propagating transactions. User attaches accumulated diffs to each inference request. This piggybacks propagation on normal API usage.
 
@@ -271,7 +271,7 @@ User -> h2: POST /chat/completions (nonce 2)
 
 User detects: inference 1 stuck in pending, no receipt from h1.
 User initiates timeout verification (out-of-band):
-  POST /subnet/v1/sessions/{id}/verify-timeout to h2..h5
+  POST /devshard/v1/sessions/{id}/verify-timeout to h2..h5
   User provides prompt data for inference 1
   Each host contacts h1, forwards prompt data
   h1 unreachable -> hosts return signed votes (accept)
@@ -313,7 +313,7 @@ User -> h2: POST /chat/completions (nonce 2)
 User detects: inference 1 still started, no MsgFinishInference from h1.
 Deadline passed (started_at attested by h1's receipt, T >= 20 min).
 User initiates timeout verification (out-of-band):
-  POST /subnet/v1/sessions/{id}/verify-timeout to h2..h5
+  POST /devshard/v1/sessions/{id}/verify-timeout to h2..h5
   Each host contacts h1, checks for result
   h1 unreachable or no result + deadline passed -> signed votes (accept)
 
@@ -339,7 +339,7 @@ User -> h1: POST /chat/completions (nonce 1)
 
 User wants to timeout h1 unfairly.
 User initiates timeout verification:
-  POST /subnet/v1/sessions/{id}/verify-timeout to h2..h5
+  POST /devshard/v1/sessions/{id}/verify-timeout to h2..h5
   User must provide prompt data (prompt_hash is in MsgStartInference)
   Hosts forward data to h1
   h1 receives valid data via hosts, signs receipt, starts computing
@@ -365,7 +365,7 @@ User -> h1: POST /chat/completions (nonce 1)
 
 User wants to timeout h1 unfairly.
 User initiates timeout verification:
-  POST /subnet/v1/sessions/{id}/verify-timeout to h2..h5
+  POST /devshard/v1/sessions/{id}/verify-timeout to h2..h5
   User provides prompt data
   Hosts forward data to h1, independently assess max_cost sufficiency
   Hosts determine max_cost is too low for the prompt -> votes reject timeout
@@ -400,11 +400,11 @@ Session terminates. Any host submits equivocation proof to mainnet
 
 Validation is probabilistic, same as on mainnet. Each host independently decides which inferences to validate using a deterministic seed and the same `ShouldValidate` logic.
 
-On mainnet, hosts commit a seed at epoch start and reveal it at epoch end. The subnet has no epochs. Instead, the seed is derived deterministically from the host's private key and the escrow_id: `seed_i = first_8_bytes(sign(escrow_id_bytes))`. One seed per host per session. The host has no freedom to choose a different seed since signing is deterministic and the public key is known.
+On mainnet, hosts commit a seed at epoch start and reveal it at epoch end. The devshard has no epochs. Instead, the seed is derived deterministically from the host's private key and the escrow_id: `seed_i = first_8_bytes(sign(escrow_id_bytes))`. One seed per host per session. The host has no freedom to choose a different seed since signing is deterministic and the public key is known.
 
 The signing key is pinned by the host's first diff-contained signature in the session (`proposer_sig` or `executor_sig`). This binding enters `state.WarmKeys` and becomes part of the state root. At reveal time, `MsgRevealSeed` is verified against the same session binding, not against a separately learned state-signature key. A validator cannot try different keys at reveal time to influence which inferences it must validate. See [storage.md Warm Keys](./storage.md#warm-keys) for the binding rule and replay implications.
 
-During the session, each host uses its seed to decide which finished inferences to validate. If selected, host_i re-executes the inference, compares logits, and submits MsgValidation into subnet state.
+During the session, each host uses its seed to decide which finished inferences to validate. If selected, host_i re-executes the inference, compares logits, and submits MsgValidation into devshard state.
 
 Seed reveal happens during the mandatory finalizing round (see Settlement). Each host submits MsgRevealSeed(signature). Other hosts derive the seed from the signature, verify it against the known public key, re-run ShouldValidate for all finished inferences, and count misses. Compliance results go into host_stats before settlement.
 
@@ -467,16 +467,16 @@ First request (to h1):
 ```
 
 
-## Weights in Subnet
+## Weights in Devshard
 
-Subnet group formation reuses the slot sampling mechanism from PoC validation (see [proposals/poc/optimize.md](../poc/optimize.md)).
+Devshard group formation reuses the slot sampling mechanism from PoC validation (see [proposals/poc/optimize.md](../poc/optimize.md)).
 
 Slot assignment is a deterministic function of (app_hash after escrow creation, escrow_id, validator_weights) using the same `GetSlotsFromSorted` algorithm as in PoC. The chain does not need to compute it at escrow creation. Anyone can derive the group independently. The chain only verifies the group was correct at settlement time (MsgSettleEscrow).
 
-Each slot maps to a host. If a host is sampled into 3 slots, it has weight 3 in the subnet. Each slot carries weight 1. This preserves the mainnet weight distribution inside the subnet without requiring any additional weight tracking.
+Each slot maps to a host. If a host is sampled into 3 slots, it has weight 3 in the devshard. Each slot carries weight 1. This preserves the mainnet weight distribution inside the devshard without requiring any additional weight tracking.
 
 The slot sequence also defines the round-robin order for user requests.
 
-Requirements for slot count are less strict than in PoC. In PoC, slots protect against adversarial validation (fake participant attacks). In the subnet, the group only needs enough redundancy for availability and settlement signatures. The exact slot count (64 vs 128) is TBD.
+Requirements for slot count are less strict than in PoC. In PoC, slots protect against adversarial validation (fake participant attacks). In the devshard, the group only needs enough redundancy for availability and settlement signatures. The exact slot count (64 vs 128) is TBD.
 
 TODO: define settlement signature threshold relative to slot count

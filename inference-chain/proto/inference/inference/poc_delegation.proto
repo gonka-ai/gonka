@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package inference.inference;
+
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// --- State messages ---
+
+message PoCDelegation {
+  string model_id    = 1;
+  string delegator   = 2;
+  string delegate_to = 3;
+}
+
+message PoCRefusal {
+  string model_id    = 1;
+  string participant = 2;
+}
+
+message PoCDirectIntent {
+  string model_id    = 1;
+  string participant = 2;
+}
+
+message ModelVotingPower {
+  string model_id     = 1;
+  int64  voting_power = 2;
+}
+
+// DelegationSnapshot captures the frozen delegation state used during PoC
+// validation and later epoch-local voting power calculations.
+// Intents are intentionally excluded.
+message DelegationSnapshot {
+  int64 snapshot_height              = 1;
+  repeated PoCDelegation delegations = 2;
+  repeated PoCRefusal refusals       = 3;
+}
+
+message BootstrapModelPreEligibility {
+  string model_id                 = 1;
+  bool pre_eligible               = 2;
+  bool meets_weight_threshold     = 3;
+  bool meets_v_min                = 4;
+  bool meets_reachability         = 5;
+  int64 intent_host_count         = 6;
+  int64 intent_weight             = 7;
+  int64 reachable_voting_power    = 8;
+}
+
+// BootstrapDelegationSnapshot captures the delegation and intent state
+// needed to evaluate whether a not-yet-active approved model is pre-eligible.
+// Overwritten on each start_poc - deploy_window capture.
+message BootstrapDelegationSnapshot {
+  int64 snapshot_height                               = 1;
+  repeated PoCDelegation delegations                  = 2;
+  repeated PoCDirectIntent intents                    = 3;
+  int64 total_network_weight                          = 4;
+  repeated BootstrapModelPreEligibility preeligibility = 5;
+}
+
+// --- Transaction messages ---
+
+message MsgSetPoCDelegation {
+  option (cosmos.msg.v1.signer) = "sender";
+  string sender      = 1;
+  string model_id    = 2;
+  string delegate_to = 3;  // empty to clear
+}
+
+message MsgSetPoCDelegationResponse {}
+
+message MsgRefusePoCDelegation {
+  option (cosmos.msg.v1.signer) = "sender";
+  string sender   = 1;
+  string model_id = 2;
+}
+
+message MsgRefusePoCDelegationResponse {}
+
+message MsgDeclarePoCIntent {
+  option (cosmos.msg.v1.signer) = "sender";
+  string sender   = 1;
+  string model_id = 2;
+}
+
+message MsgDeclarePoCIntentResponse {}
+
+// --- Query messages ---
+
+message QueryPoCDelegationRequest {
+  string participant = 1;
+  string model_id    = 2;  // empty to return all models
+}
+
+message QueryPoCDelegationResponse {
+  repeated PoCDelegation   delegations = 1;
+  repeated PoCRefusal      refusals    = 2;
+  repeated PoCDirectIntent intents     = 3;
+}

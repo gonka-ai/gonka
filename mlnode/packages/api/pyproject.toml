@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mlnode-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "MLNode API package"
 readme = "README.md"
 authors = [

@@ -3,6 +3,9 @@ vue/dist
 release/
 .idea/
 .vscode/
+/.claude
+.cursor/
+/.claude
 .DS_Store
 *.dot
 *.log
@@ -22,6 +25,7 @@ prod-local/
 /payload.json
 /prod-local/genesis
 /inference-chain/output/
+/inference-chain/inferenced
 /decentralized-api/output/
 /jq_test/
 /public-html/

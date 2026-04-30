@@ -16,16 +16,12 @@ import "inference/inference/pocbatch.proto";
 import "inference/inference/tokenomics_data.proto";
 import "inference/inference/unit_of_compute.proto";
 import "inference/inference/model.proto";
-import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
-import "inference/inference/training_task.proto";
-import "inference/inference/training_task_sync.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
-import "inference/inference/network_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/stats_developer.proto";
 import "inference/inference/epoch.proto";
@@ -36,7 +32,9 @@ import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
-import "inference/inference/subnet_escrow.proto";
+import "inference/inference/devshard_escrow.proto";
+import "inference/inference/preserved_nodes_snapshot.proto";
+import "inference/inference/poc_delegation.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -69,8 +67,8 @@ service Query {
 
   }
 
-  // Queries a list of InferenceParticipant items.
-  rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
+  // Queries account public key and balance by address.
+  rpc AccountByAddress (QueryAccountByAddressRequest) returns (QueryAccountByAddressResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
 
   }
@@ -131,12 +129,12 @@ service Query {
 
   // PoC v2 off-chain commit queries
   rpc PoCV2StoreCommit (QueryPoCV2StoreCommitRequest) returns (QueryPoCV2StoreCommitResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/poc_v2_store_commit/{poc_stage_start_block_height}/{participant_address}";
+    option (google.api.http).get = "/productscience/inference/inference/poc_v2_store_commit/{poc_stage_start_block_height}/{participant_address}/{model_id}";
 
   }
 
   rpc MLNodeWeightDistribution (QueryMLNodeWeightDistributionRequest) returns (QueryMLNodeWeightDistributionResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/mlnode_weight_distribution/{poc_stage_start_block_height}/{participant_address}";
+    option (google.api.http).get = "/productscience/inference/inference/mlnode_weight_distribution/{poc_stage_start_block_height}/{participant_address}/{model_id}";
 
   }
 
@@ -177,16 +175,6 @@ service Query {
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-
-  }
-
-  // Queries a list of TopMiner items.
-  rpc TopMiner    (QueryGetTopMinerRequest) returns (QueryGetTopMinerResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/top_miner/{address}";
-
-  }
-  rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/top_miner";
 
   }
 
@@ -234,12 +222,6 @@ service Query {
 
   }
 
-  // Queries a list of TrainingTask items.
-  rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_task";
-
-  }
-
   // Queries a list of HardwareNodes items.
   rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
@@ -249,18 +231,6 @@ service Query {
   // Queries a list of HardwareNodesAll items.
   rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
-
-  }
-
-  // Queries a list of QueuedTrainingTasks items.
-  rpc QueuedTrainingTasks (QueryQueuedTrainingTasksRequest) returns (QueryQueuedTrainingTasksResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
-
-  }
-
-  // Queries a list of TrainingTaskAll items.
-  rpc TrainingTaskAll (QueryTrainingTaskAllRequest) returns (QueryTrainingTaskAllResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_task_all";
 
   }
 
@@ -311,12 +281,6 @@ service Query {
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
-
-  }
-
-  // Queries a list of InProgressTrainingTasks items.
-  rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
 
   }
 
@@ -377,30 +341,6 @@ service Query {
 
   }
 
-  // Queries a list of TrainingKvRecord items.
-  rpc TrainingKvRecord (QueryTrainingKvRecordRequest) returns (QueryTrainingKvRecordResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{key}";
-
-  }
-
-  // Queries a list of ListTrainingKvRecordKeys items.
-  rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}";
-
-  }
-
-  // Queries a list of TrainingBarrier items.
-  rpc TrainingBarrier (QueryTrainingBarrierRequest) returns (QueryTrainingBarrierResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_barrier";
-
-  }
-
-  // Queries a list of TrainingAliveNodes items.
-  rpc TrainingAliveNodes (QueryTrainingAliveNodesRequest) returns (QueryTrainingAliveNodesResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
-
-  }
-
   // Queries a list of EpochInfo items.
   rpc EpochInfo (QueryEpochInfoRequest) returns (QueryEpochInfoResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_info";
@@ -449,12 +389,6 @@ service Query {
 
   }
 
-  // Queries a list of TrainingAllowList items.
-  rpc TrainingAllowList (QueryTrainingAllowListRequest) returns (QueryTrainingAllowListResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_allow_list";
-
-  }
-
   // Queries the participant allowlist.
   rpc ParticipantAllowList (QueryParticipantAllowListRequest) returns (QueryParticipantAllowListResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant_allow_list";
@@ -492,12 +426,21 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
   }
 
-  rpc SubnetEscrow (QueryGetSubnetEscrowRequest) returns (QueryGetSubnetEscrowResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/subnet_escrow/{id}";
+  rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/devshard_escrow/{id}";
   }
 
-  rpc SubnetHostEpochStats (QueryGetSubnetHostEpochStatsRequest) returns (QueryGetSubnetHostEpochStatsResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/subnet_host_epoch_stats/{epoch_index}/{participant}";
+  // Queries preserved nodes snapshot for the active PoC episode.
+  rpc PreservedNodesSnapshot (QueryPreservedNodesSnapshotRequest) returns (QueryPreservedNodesSnapshotResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/preserved_nodes_snapshot";
+  }
+
+  rpc DevshardHostEpochStats (QueryGetDevshardHostEpochStatsRequest) returns (QueryGetDevshardHostEpochStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/devshard_host_epoch_stats/{epoch_index}/{participant}";
+  }
+
+  rpc PoCDelegation (QueryPoCDelegationRequest) returns (QueryPoCDelegationResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_delegation/{participant}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -545,13 +488,14 @@ message QueryAllParticipantResponse {
            int64                                  block_height = 3;
 }
 
-message QueryInferenceParticipantRequest {
+message QueryAccountByAddressRequest {
   string address = 1;
 }
 
-message QueryInferenceParticipantResponse {
+message QueryAccountByAddressResponse {
   string pubkey  = 1;
   int64  balance = 2;
+  string denom   = 3;
 }
 
 message QueryGetRandomExecutorRequest {
@@ -660,12 +604,14 @@ message PoCValidationsWithParticipantsV2 {
            string           pub_key        = 2;
            string           hex_pub_key    = 3;
   repeated PoCValidationV2  poc_validation = 4 [(gogoproto.nullable) = false];
+           string           model_id       = 5;
 }
 
 // PoC v2 off-chain commit query messages
 message QueryPoCV2StoreCommitRequest {
   int64  poc_stage_start_block_height = 1;
   string participant_address = 2;
+  string model_id = 3;
 }
 
 message QueryPoCV2StoreCommitResponse {
@@ -677,6 +623,7 @@ message QueryPoCV2StoreCommitResponse {
 message QueryMLNodeWeightDistributionRequest {
   int64  poc_stage_start_block_height = 1;
   string participant_address = 2;
+  string model_id = 3;
 }
 
 message QueryMLNodeWeightDistributionResponse {
@@ -697,6 +644,7 @@ message PoCV2StoreCommitWithAddress {
   uint32 count = 2;
   bytes root_hash = 3;
   string hex_pub_key = 4;
+  string model_id = 5;
 }
 
 message QueryAllMLNodeWeightDistributionsForStageRequest {
@@ -710,6 +658,7 @@ message QueryAllMLNodeWeightDistributionsForStageResponse {
 message MLNodeWeightDistributionWithAddress {
   string participant_address = 1;
   repeated MLNodeWeight weights = 2;
+  string model_id = 3;
 }
 
 message QueryGetCurrentEpochRequest {}
@@ -753,23 +702,6 @@ message QueryModelsAllRequest {
 message QueryModelsAllResponse {
   repeated Model model = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
-}
-
-message QueryGetTopMinerRequest {
-  string address = 1;
-}
-
-message QueryGetTopMinerResponse {
-  TopMiner top_miner = 1 [(gogoproto.nullable) = false];
-}
-
-message QueryAllTopMinerRequest {
-  cosmos.base.query.v1beta1.PageRequest pagination = 1;
-}
-
-message QueryAllTopMinerResponse {
-  repeated TopMiner                               top_miner  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetInferenceTimeoutRequest {
@@ -849,14 +781,6 @@ message QueryAllEpochPerformanceSummaryResponse {
            cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 
-message QueryTrainingTaskRequest {
-  uint64 id = 1;
-}
-
-message QueryTrainingTaskResponse {
-  TrainingTask task = 1;
-}
-
 message QueryHardwareNodesRequest {
   string participant = 1;
 }
@@ -869,18 +793,6 @@ message QueryHardwareNodesAllRequest {}
 
 message QueryHardwareNodesAllResponse {
   repeated HardwareNodes nodes = 1;
-}
-
-message QueryQueuedTrainingTasksRequest {}
-
-message QueryQueuedTrainingTasksResponse {
-  repeated TrainingTask tasks = 1;
-}
-
-message QueryTrainingTaskAllRequest {}
-
-message QueryTrainingTaskAllResponse {
-  repeated TrainingTask tasks = 1;
 }
 
 message QueryGetParticipantCurrentStatsRequest {
@@ -999,12 +911,6 @@ message QueryGetMinimumValidationAverageResponse {
   uint64 block_height               = 3;
 }
 
-message QueryInProgressTrainingTasksRequest {}
-
-message QueryInProgressTrainingTasksResponse {
-  repeated TrainingTask tasks = 1;
-}
-
 message QueryGetPartialUpgradeRequest {
   uint64 height = 1;
 }
@@ -1020,39 +926,6 @@ message QueryAllPartialUpgradeRequest {
 message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
-}
-
-message QueryTrainingKvRecordRequest {
-  uint64 taskId = 1;
-  string key    = 2;
-}
-
-message QueryTrainingKvRecordResponse {
-  TrainingTaskKVRecord record = 1;
-}
-
-message QueryListTrainingKvRecordKeysRequest {
-  uint64 taskId = 1;
-}
-
-message QueryListTrainingKvRecordKeysResponse {
-  repeated string keys = 1;
-}
-
-message QueryTrainingBarrierRequest {
-  GetBarrierStatusRequest req = 1;
-}
-
-message QueryTrainingBarrierResponse {
-  GetBarrierStatusResponse resp = 2;
-}
-
-message QueryTrainingAliveNodesRequest {
-  GetAliveNodesRequest req = 1;
-}
-
-message QueryTrainingAliveNodesResponse {
-  GetAliveNodesResponse resp = 2;
 }
 
 message QueryGetBridgeTransactionRequest {
@@ -1210,14 +1083,6 @@ message QueryGranteesByMessageTypeResponse {
   repeated Grantee grantees = 1;
 }
 
-message QueryTrainingAllowListRequest {
-  int32 role = 1;
-}
-
-message QueryTrainingAllowListResponse {
-  repeated string addresses = 1;
-}
-
 message QueryParticipantAllowListRequest {}
 
 message QueryParticipantAllowListResponse {
@@ -1297,21 +1162,28 @@ message QueryPoCValidationSnapshotResponse {
   bool found = 2;
 }
 
-message QueryGetSubnetEscrowRequest {
-  uint64 id = 1;
-}
+message QueryPreservedNodesSnapshotRequest {}
 
-message QueryGetSubnetEscrowResponse {
-  SubnetEscrow escrow = 1;
+message QueryPreservedNodesSnapshotResponse {
+  PreservedNodesSnapshot snapshot = 1;
   bool found = 2;
 }
 
-message QueryGetSubnetHostEpochStatsRequest {
+message QueryGetDevshardEscrowRequest {
+  uint64 id = 1;
+}
+
+message QueryGetDevshardEscrowResponse {
+  DevshardEscrow escrow = 1;
+  bool found = 2;
+}
+
+message QueryGetDevshardHostEpochStatsRequest {
   uint64 epoch_index = 1;
   string participant = 2;
 }
 
-message QueryGetSubnetHostEpochStatsResponse {
-  SubnetHostEpochStats stats = 1;
+message QueryGetDevshardHostEpochStatsResponse {
+  DevshardHostEpochStats stats = 1;
   bool found = 2;
 }

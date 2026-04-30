@@ -271,23 +271,15 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			logging.Info("Skipping inference up for node in training state", types.PoC,
+		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+			logging.Info("Setting node status to Inference", types.PoC,
 				"node_id", node.Node.Id,
 				"current_epoch", epochState,
-				"current_phase", epochState.CurrentPhase)
-			continue
-		} else {
-			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
-				logging.Info("Setting node status to Inference", types.PoC,
-					"node_id", node.Node.Id,
-					"current_epoch", epochState,
-					"current_phase", epochState.CurrentPhase,
-					"current_intended_status", node.State.IntendedStatus)
-			}
-
-			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+				"current_phase", epochState.CurrentPhase,
+				"current_intended_status", node.State.IntendedStatus)
 		}
+
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 	b.mu.Unlock()
 
@@ -299,10 +291,6 @@ func (c InferenceUpAllCommand) shouldMutateState(b *Broker, epochState *chainpha
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			continue
-		}
-
 		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			return true
 		}
@@ -324,10 +312,11 @@ func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActual
 }
 
 type StatusUpdate struct {
-	NodeId     string
-	PrevStatus types.HardwareNodeStatus
-	NewStatus  types.HardwareNodeStatus
-	Timestamp  time.Time
+	NodeId        string
+	PrevStatus    types.HardwareNodeStatus
+	NewStatus     types.HardwareNodeStatus
+	Timestamp     time.Time
+	MlNodeVersion string
 }
 
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
@@ -360,6 +349,7 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			"node.State.StatusTimestamp", node.State.StatusTimestamp)
 
 		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
+		node.State.MlNodeVersion = update.MlNodeVersion
 	}
 
 	c.Response <- true

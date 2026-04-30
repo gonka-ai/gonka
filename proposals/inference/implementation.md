@@ -1,6 +1,6 @@
-# Inference Subnet: Implementation Plan
+# Inference Devshard: Implementation Plan
 
-Phased implementation of the subnet described in [README.md](./README.md) and [design.md](./design.md). Each phase is self-contained: define scope, write tests first, implement, verify. Later phases build on earlier ones.
+Phased implementation of the devshard described in [README.md](./README.md) and [design.md](./design.md). Each phase is self-contained: define scope, write tests first, implement, verify. Later phases build on earlier ones.
 
 General approach: plan one phase at a time, implement, then plan the next. Test design is the priority -- tests define the contract before any implementation exists.
 
@@ -8,10 +8,10 @@ Implementation status: the codebase is ahead of this phased plan in some areas (
 
 Test levels:
 - Unit tests: per-package, in-process, no I/O
-- Subnet integration tests: multi-node, mock MainnetBridge, stub InferenceEngine/ValidationEngine
-- Testermint: full system (chain + dapi + subnet + mock ML nodes)
+- Devshard integration tests: multi-node, mock MainnetBridge, stub InferenceEngine/ValidationEngine
+- Testermint: full system (chain + dapi + devshard + mock ML nodes)
 
-| Phase | Unit | Subnet integration | Testermint |
+| Phase | Unit | Devshard integration | Testermint |
 |-------|------|--------------------|------------|
 | 1     | x    |                    |            |
 | 2     | x    | in-process         |            |
@@ -27,11 +27,11 @@ Test levels:
 
 ## Phase 1: Foundation and State Machine [COMMITTED]
 
-Goal: standalone `subnet/` Go module that can apply diffs, track state, compute hashes, and verify signatures. No networking, no mainnet integration, no gossip. Everything runs in-process, driven by Go tests.
+Goal: standalone `devshard/` Go module that can apply diffs, track state, compute hashes, and verify signatures. No networking, no mainnet integration, no gossip. Everything runs in-process, driven by Go tests.
 
 Deliverables:
 1. Project structure and Go module
-2. Proto definitions for all 8 subnet transaction types
+2. Proto definitions for all 8 devshard transaction types
 3. Domain types (EscrowState, InferenceRecord, HostStats, Diff)
 4. State machine: apply diffs, verify nonces, update balances/stats
 5. State hashing (two-level Merkle)
@@ -41,18 +41,18 @@ Deliverables:
 
 ### 1.1 Project and Module Setup
 
-Create `subnet/` at repo root with its own `go.mod`. Dependencies: `go-ethereum/crypto` (secp256k1), `google.golang.org/protobuf` (proto). No cosmos-sdk.
+Create `devshard/` at repo root with its own `go.mod`. Dependencies: `go-ethereum/crypto` (secp256k1), `google.golang.org/protobuf` (proto). No cosmos-sdk.
 
 Package layout: see [design.md Package Structure](./design.md#package-structure). Phase 1 additions: `engine.go` and `types.go` are stubs. `bridge/interface.go` and `gossip/interface.go` define interfaces with no implementation. `storage/` uses in-memory implementation only.
 
 ### 1.2 Proto Definitions
 
-`proto/subnet/v1/tx.proto` -- all 8 subnet transaction types plus TimeoutVote:
+`proto/devshard/v1/tx.proto` -- all 8 devshard transaction types plus TimeoutVote:
 
 ```protobuf
 syntax = "proto3";
-package subnet.v1;
-option go_package = "subnet/types";
+package devshard.v1;
+option go_package = "devshard/types";
 
 message MsgStartInference {
   uint64 inference_id = 1;
@@ -115,12 +115,12 @@ message MsgFinalizeRound {
 }
 ```
 
-`proto/subnet/v1/state.proto` -- for deterministic serialization in hash computation:
+`proto/devshard/v1/state.proto` -- for deterministic serialization in hash computation:
 
 ```protobuf
 syntax = "proto3";
-package subnet.v1;
-option go_package = "subnet/types";
+package devshard.v1;
+option go_package = "devshard/types";
 
 // Used for deterministic serialization when computing state hashes.
 // Not the runtime state representation (that's domain types in Go).
@@ -163,7 +163,7 @@ message InferencesMapProto {
 }
 ```
 
-Generate Go code from protos using `protoc` (not ignite -- subnet is standalone).
+Generate Go code from protos using `protoc` (not ignite -- devshard is standalone).
 
 ### 1.3 Domain Types
 
@@ -233,7 +233,7 @@ type EscrowState struct {
   LatestNonce   uint64
 }
 
-type SubnetTx struct {
+type DevshardTx struct {
   // one-of: each tx type
   StartInference   *MsgStartInference
   ConfirmStart     *MsgConfirmStart
@@ -249,7 +249,7 @@ type SubnetTx struct {
 // UserSig covers hash(serialize(DiffContent{nonce, txs, escrow_id, post_state_root})).
 type Diff struct {
   Nonce         uint64
-  Txs           []SubnetTx
+  Txs           []DevshardTx
   UserSig       []byte
   PostStateRoot []byte     // claimed state root after applying this diff's txs
 }
@@ -287,7 +287,7 @@ type StateMachine interface {
 
   // ApplyLocal replays a previously verified diff (skip user signature verification).
   // Used during restart recovery. Warm keys must be injected before calling this.
-  ApplyLocal(nonce uint64, txs []*SubnetTx) (stateRoot []byte, err error)
+  ApplyLocal(nonce uint64, txs []*DevshardTx) (stateRoot []byte, err error)
 
   // InjectWarmKeys writes warm key bindings into state without overwriting existing ones.
   // Used during replay to restore bindings before ApplyLocal.
@@ -547,14 +547,14 @@ Testable deliverable: user composes correct diffs in round-robin order, hosts ex
 Goal: real HTTP transport between nodes. Gossip protocol. Timeout verification flow.
 
 Scope:
-- HTTP handlers for all subnet endpoints (see design.md API Surface):
-  - POST /subnet/v1/sessions/{id}/chat/completions (inference with diffs)
-  - POST /subnet/v1/sessions/{id}/verify-timeout (timeout verification)
-  - POST /subnet/v1/sessions/{id}/gossip/nonce (nonce propagation)
-  - POST /subnet/v1/sessions/{id}/gossip/txs (lazy tx gossip)
-  - GET /subnet/v1/sessions/{id}/diffs (state recovery)
-  - GET /subnet/v1/sessions/{id}/mempool (unsettled txs)
-- Request authentication: X-Subnet-Signature header (see design.md Request Authentication)
+- HTTP handlers for all devshard endpoints (see design.md API Surface):
+  - POST /devshard/v1/sessions/{id}/chat/completions (inference with diffs)
+  - POST /devshard/v1/sessions/{id}/verify-timeout (timeout verification)
+  - POST /devshard/v1/sessions/{id}/gossip/nonce (nonce propagation)
+  - POST /devshard/v1/sessions/{id}/gossip/txs (lazy tx gossip)
+  - GET /devshard/v1/sessions/{id}/diffs (state recovery)
+  - GET /devshard/v1/sessions/{id}/mempool (unsettled txs)
+- Request authentication: X-Devshard-Signature header (see design.md Request Authentication)
 - Gossip: nonce propagation to K=10 random peers, lazy tx gossip after K rounds, re-propagation on gap detection (120s)
 - Timeout verification: user contacts non-executor hosts, hosts contact executor, return signed votes
 - Equivocation detection: conflicting state hashes at same nonce via gossip
@@ -563,7 +563,7 @@ Multi-node test infrastructure: nodes as goroutines with real HTTP listeners on 
 
 Tests: multi-node integration tests. Happy path over HTTP. Host-down + timeout verification (reason=refused and reason=execution). Equivocation detection and session termination. Lazy tx gossip triggers when user withholds host txs.
 
-Testable deliverable: subnet cluster of N nodes communicates over HTTP, gossip detects gaps and equivocation, timeout verification works end-to-end.
+Testable deliverable: devshard cluster of N nodes communicates over HTTP, gossip detects gaps and equivocation, timeout verification works end-to-end.
 
 
 ## Phase 4: Validation and Settlement
@@ -572,15 +572,15 @@ Goal: probabilistic validation protocol, seed reveal, settlement data constructi
 
 Scope:
 - Seed derivation: `first_8_bytes(sign(escrow_id_bytes))` per host per session. Pure function, ~10 lines.
-- ShouldValidate: pure function using DeterministicFloat (sha256-based, same approach as chain). Flat probability per session via `SessionConfig.ValidationRate`. No reputation or traffic basis -- subnet has no cross-session state. All hosts compute the same result from the same inputs. ~20 lines.
+- ShouldValidate: pure function using DeterministicFloat (sha256-based, same approach as chain). Flat probability per session via `SessionConfig.ValidationRate`. No reputation or traffic basis -- devshard has no cross-session state. All hosts compute the same result from the same inputs. ~20 lines.
 - MsgRevealSeed state effect: derive seed from revealed signature, run ShouldValidate for all finished inferences, update required_validations and completed_validations in HostStats.
 - Host: produce MsgRevealSeed during finalization (sign escrow_id_bytes, add to mempool).
 - Compliance computation: deterministic from revealed seeds + existing MsgValidation txs.
 - Settlement payload construction: extract (state_root, rest_hash, host_stats, signatures) for MsgSettleEscrow.
 
 Existing code reference (not imported, reimplemented):
-- `inference-chain/x/inference/calculations/should_validate.go`: `DeterministicFloat()` pattern reused (sha256 + first 8 bytes -> float). `ShouldValidate()` simplified -- subnet uses flat rate instead of reputation-weighted probability.
-- `decentralized-api/internal/seed/seed.go`: `CreateSeedForEpoch()` signs bytes and takes first 8 bytes -- same pattern as subnet seed derivation (signs escrow_id instead of epoch index).
+- `inference-chain/x/inference/calculations/should_validate.go`: `DeterministicFloat()` pattern reused (sha256 + first 8 bytes -> float). `ShouldValidate()` simplified -- devshard uses flat rate instead of reputation-weighted probability.
+- `decentralized-api/internal/seed/seed.go`: `CreateSeedForEpoch()` signs bytes and takes first 8 bytes -- same pattern as devshard seed derivation (signs escrow_id instead of epoch index).
 
 Not in Phase 4:
 - Dispute detection (requires MainnetBridge `OnSettlementProposed` notification -> Phase 7).
@@ -603,10 +603,10 @@ Scope:
 - Keeper logic: escrow creation (lock funds, store escrow info, record app_hash), settlement verification (recompute host_stats_hash, verify Merkle proof `hash(host_stats_hash || rest_hash) == state_root`, check 2/3+ slot-weighted signatures)
 - Escrow distribution: pay each host from host_stats[slot].cost, refund remaining balance to user
 - Record host_stats on chain (for reputation, future punishment logic)
-- ~~Dispute window: X blocks after settlement proposal. Competing state with higher nonce and valid signatures overrides.~~ Replaced by finalization round in the subnet protocol. The user proposes MsgFinalizeRound, hosts reveal seeds and complete pending validations, then the user settles with a single MsgSettleSubnetEscrow that includes 2/3+ slot signatures on the finalized state root. No on-chain dispute window needed because settlement requires quorum agreement on the final state before submission.
+- ~~Dispute window: X blocks after settlement proposal. Competing state with higher nonce and valid signatures overrides.~~ Replaced by finalization round in the devshard protocol. The user proposes MsgFinalizeRound, hosts reveal seeds and complete pending validations, then the user settles with a single MsgSettleDevshardEscrow that includes 2/3+ slot signatures on the finalized state root. No on-chain dispute window needed because settlement requires quorum agreement on the final state before submission.
 - Unsettled escrow pruning: escrows older than 2 epochs are pruned by the chain. Unsettled escrows split funds equally among unique validators in the group.
 
-Tests: keeper unit tests in `inference-chain/x/inference/keeper/`. Settlement verification using test vectors from Phase 4 (known state_root, host_stats, signatures from subnet integration tests).
+Tests: keeper unit tests in `inference-chain/x/inference/keeper/`. Settlement verification using test vectors from Phase 4 (known state_root, host_stats, signatures from devshard integration tests).
 
 Testable deliverable: chain correctly creates escrows, verifies settlement Merkle proofs and signatures, distributes funds.
 
@@ -619,7 +619,7 @@ Goal: support warm keys (operator keys authorized via authz grants) so hosts can
 
 On mainnet, hosts sign with warm keys -- operator keys authorized via on-chain authz grants. The dapi config separates `account_public_key` (cold/validator key) from `signer_key_name` (warm key loaded from keyring). The warm key address differs from the validator address.
 
-The subnet needs to accept signatures from both cold keys (validator's own) and warm keys (authorized operator keys). The validator address identifies the slot for settlement; the signing address proves the host controls an authorized key.
+The devshard needs to accept signatures from both cold keys (validator's own) and warm keys (authorized operator keys). The validator address identifies the slot for settlement; the signing address proves the host controls an authorized key.
 
 ### Design
 
@@ -704,7 +704,7 @@ Deferred:
 - Warm key verification on first contact (VerifyWarmKey bridge call, depends on Phase 6)
 - Event subscription for escrow creation/settlement (OnEscrowCreated, OnSettlementProposed, OnSettlementFinalized)
 - SubmitDisputeState (needs tx submission)
-- GetSlotsFromSorted port (unnecessary -- chain stores pre-computed slots in SubnetEscrow)
+- GetSlotsFromSorted port (unnecessary -- chain stores pre-computed slots in DevshardEscrow)
 - Slot assignment derivation from (app_hash, escrow_id, validator_weights) -- chain does this at escrow creation
 
 ### Scope Boundary
@@ -716,18 +716,18 @@ Deferred:
 
 ## Phase 8: dapi Integration and ML Node Adapters
 
-Goal: subnet runs as part of decentralized-api. Real ML node interaction via existing infrastructure.
+Goal: devshard runs as part of decentralized-api. Real ML node interaction via existing infrastructure.
 
 Scope:
 - InferenceEngine adapter wrapping broker + completionapi (execute inference on vLLM node, stream response, extract hashes and token counts)
 - ValidationEngine adapter wrapping broker + validation logic (re-execute with enforced tokens, compareLogits)
-- Router: mount `/subnet/v1/` echo group on existing dapi public server
+- Router: mount `/devshard/v1/` echo group on existing dapi public server
 - MainnetBridge adapter using dapi's chain client (alternative to REST bridge from Phase 7)
 - SQLite storage (WAL mode, single writer goroutine, as specified in design.md)
 
-Tests: subnet running inside dapi, mock ML node (WireMock), real signing, real SQLite, real gossip over localhost. Full session with actual inference execution and streaming.
+Tests: devshard running inside dapi, mock ML node (WireMock), real signing, real SQLite, real gossip over localhost. Full session with actual inference execution and streaming.
 
-Testable deliverable: dapi serves subnet inference requests, executes on ML node via existing broker, returns streaming results with subnet protocol (diffs, signatures, mempool).
+Testable deliverable: dapi serves devshard inference requests, executes on ML node via existing broker, returns streaming results with devshard protocol (diffs, signatures, mempool).
 
 
 ## Phase 9: User Client Library
@@ -737,11 +737,11 @@ Goal: Go library for the user side of the protocol. Callable from code, usable i
 Scope:
 - User SDK: open session (escrow_id, bridge), send inference requests (OpenAI-compatible), handle receipts and pipelining, collect signatures, trigger finalizing rounds, construct settlement payload
 - Go library API: no HTTP server, direct function calls
-- Later iteration: proxy mode wrapping the library behind an OpenAI-compatible HTTP server (user sends normal /chat/completions, proxy handles all subnet protocol transparently)
+- Later iteration: proxy mode wrapping the library behind an OpenAI-compatible HTTP server (user sends normal /chat/completions, proxy handles all devshard protocol transparently)
 
-Tests: Go test creates user client, sends inference requests to a subnet cluster, gets streaming responses, verifies session settles correctly.
+Tests: Go test creates user client, sends inference requests to a devshard cluster, gets streaming responses, verifies session settles correctly.
 
-Testable deliverable: user client library drives a full session against real subnet nodes. No manual diff construction or protocol handling from test code.
+Testable deliverable: user client library drives a full session against real devshard nodes. No manual diff construction or protocol handling from test code.
 
 
 ## Phase 10: End-to-End (Testermint)
@@ -752,7 +752,7 @@ Scope:
 - Testermint test: MsgCreateEscrow -> inference requests via user client library -> MsgSettleEscrow
 - Verify mainnet state after settlement: host balances increased, user refund correct, host_stats recorded
 - Edge cases: host down during session (timeout recovery), user disappears (host-initiated settlement)
-- Verify integration with existing epoch/PoC system (subnet sessions coexist with current inference flow)
+- Verify integration with existing epoch/PoC system (devshard sessions coexist with current inference flow)
 
 Tests: testermint integration tests using user client library from Phase 9 against full local cluster (chain nodes + dapi + mock ML nodes).
 

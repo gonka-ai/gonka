@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math"
 
@@ -18,9 +19,8 @@ var (
 	KeyBaseWeightRatio                   = []byte("BaseWeightRatio")
 	KeyCollateralPerWeightUnit           = []byte("CollateralPerWeightUnit")
 	// Vesting parameter keys for TokenomicsParams
-	KeyWorkVestingPeriod     = []byte("WorkVestingPeriod")
-	KeyRewardVestingPeriod   = []byte("RewardVestingPeriod")
-	KeyTopMinerVestingPeriod = []byte("TopMinerVestingPeriod")
+	KeyWorkVestingPeriod   = []byte("WorkVestingPeriod")
+	KeyRewardVestingPeriod = []byte("RewardVestingPeriod")
 	// Bitcoin reward parameter keys
 	KeyUseBitcoinRewards          = []byte("UseBitcoinRewards")
 	KeyInitialEpochReward         = []byte("InitialEpochReward")
@@ -88,26 +88,26 @@ func WindowBlocksToSize(windowBlocks uint64) int64 {
 }
 
 const (
-	DefaultSubnetEscrowMinAmount    uint64 = 5_000_000_000
-	DefaultSubnetEscrowMaxAmount    uint64 = 10_000_000_000
-	DefaultSubnetMaxEscrowsPerEpoch uint32 = 100
-	DefaultSubnetGroupSize          uint32 = 16
-	DefaultSubnetTokenPrice         uint64 = 1
+	LogprobsModeProcessed = "processed_logprobs"
+	LogprobsModeRaw       = "raw_logprobs"
+	DefaultLogprobsMode   = LogprobsModeProcessed
+)
+
+const (
+	DefaultDevshardEscrowMinAmount    uint64 = 5_000_000_000
+	DefaultDevshardEscrowMaxAmount    uint64 = 10_000_000_000
+	DefaultDevshardMaxEscrowsPerEpoch uint32 = 100
+	DefaultDevshardGroupSize          uint32 = 16
+	DefaultDevshardTokenPrice         uint64 = 1
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
 		TotalSupply:                             1_000 * million * billion,
 		OriginatorSupply:                        160 * million * billion,
-		TopRewardAmount:                         120 * million * billion,
 		PreProgrammedSaleAmount:                 120 * million * billion,
-		TopRewards:                              3,
 		SupplyDenom:                             BaseCoin,
 		StandardRewardAmount:                    600 * million * billion,
-		TopRewardPeriod:                         year,
-		TopRewardPayouts:                        12,
-		TopRewardPayoutsPerMiner:                4,
-		TopRewardMaxDuration:                    year * 4,
 		MaxIndividualPowerPercentage:            DecimalFromFloat(0.25),
 		GenesisGuardianEnabled:                  true, // Enable genesis guardian system by default
 		GenesisGuardianNetworkMaturityThreshold: 2_000_000,
@@ -158,7 +158,8 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-		SubnetEscrowParams: DefaultSubnetEscrowParams(),
+		DevshardEscrowParams: DefaultDevshardEscrowParams(),
+		DelegationParams:     DefaultDelegationParams(),
 	}
 }
 
@@ -209,6 +210,7 @@ func DefaultValidationParams() *ValidationParams {
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
 		ClaimValidationEnabled:         false,
+		LogprobsMode:                   DefaultLogprobsMode,
 	}
 }
 
@@ -222,6 +224,7 @@ func DefaultPocParams() *PocParams {
 		ModelId:                      "",                      // Model identifier for PoC
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
+		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
 	}
 }
 
@@ -230,6 +233,16 @@ func DefaultPoCStatTestParams() *PoCStatTestParams {
 		DistThreshold:   DecimalFromFloat(0.4),
 		PMismatch:       DecimalFromFloat(0.1),
 		PValueThreshold: DecimalFromFloat(0.05),
+	}
+}
+
+func DefaultPoCModelConfig() *PoCModelConfig {
+	return &PoCModelConfig{
+		ModelId:           "",
+		SeqLen:            256,
+		StatTest:          DefaultPoCStatTestParams(),
+		WeightScaleFactor: DecimalFromFloat(1.0),
+		PenaltyStartEpoch: 0,
 	}
 }
 
@@ -264,11 +277,8 @@ func DefaultTokenomicsParams() *TokenomicsParams {
 		SubsidyReductionInterval: DecimalFromFloat(0.05),
 		SubsidyReductionAmount:   DecimalFromFloat(0.20),
 		CurrentSubsidyPercentage: DecimalFromFloat(0.90),
-		TopRewardAllowedFailure:  DecimalFromFloat(0.10),
-		TopMinerPocQualification: 10,
 		WorkVestingPeriod:        0, // Default: no vesting (production: 180, E2E tests: 2)
 		RewardVestingPeriod:      0, // Default: no vesting (production: 180, E2E tests: 2)
-		TopMinerVestingPeriod:    0, // Default: no vesting (production: 180, E2E tests: 2)
 	}
 }
 
@@ -308,26 +318,81 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 	}
 }
 
-func DefaultSubnetEscrowParams() *SubnetEscrowParams {
-	return &SubnetEscrowParams{
-		MinAmount:               DefaultSubnetEscrowMinAmount,
-		MaxAmount:               DefaultSubnetEscrowMaxAmount,
-		MaxEscrowsPerEpoch:      DefaultSubnetMaxEscrowsPerEpoch,
-		GroupSize:               DefaultSubnetGroupSize,
+func DefaultDevshardEscrowParams() *DevshardEscrowParams {
+	return &DevshardEscrowParams{
+		MinAmount:               DefaultDevshardEscrowMinAmount,
+		MaxAmount:               DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:      DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:               DefaultDevshardGroupSize,
 		AllowedCreatorAddresses: nil,
-		TokenPrice:              DefaultSubnetTokenPrice,
+		TokenPrice:              DefaultDevshardTokenPrice,
 	}
 }
 
-func (p *SubnetEscrowParams) Validate() error {
+func (p *DevshardEscrowParams) Validate() error {
 	if p.MinAmount == 0 {
-		return fmt.Errorf("subnet escrow min_amount must be positive")
+		return fmt.Errorf("devshard escrow min_amount must be positive")
 	}
 	if p.MaxAmount < p.MinAmount {
-		return fmt.Errorf("subnet escrow max_amount (%d) must be >= min_amount (%d)", p.MaxAmount, p.MinAmount)
+		return fmt.Errorf("devshard escrow max_amount (%d) must be >= min_amount (%d)", p.MaxAmount, p.MinAmount)
 	}
 	if p.GroupSize == 0 {
-		return fmt.Errorf("subnet escrow group_size must be positive")
+		return fmt.Errorf("devshard escrow group_size must be positive")
+	}
+	seen := make(map[string]struct{}, len(p.ApprovedVersions))
+	for i, v := range p.ApprovedVersions {
+		if v.Name == "" {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: name cannot be empty", i)
+		}
+		if v.Binary == "" {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: binary cannot be empty", i)
+		}
+		if v.Sha256 == "" {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 cannot be empty", i)
+		}
+		if len(v.Sha256) != 64 {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 must be 64 hex characters, got %d", i, len(v.Sha256))
+		}
+		if _, err := hex.DecodeString(v.Sha256); err != nil {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 is not valid hex: %w", i, err)
+		}
+		if _, dup := seen[v.Name]; dup {
+			return fmt.Errorf("devshard_escrow_params.approved_versions: duplicate name %q", v.Name)
+		}
+		seen[v.Name] = struct{}{}
+	}
+	return nil
+}
+
+func DefaultDelegationParams() *DelegationParams {
+	return &DelegationParams{
+		DeployWindow:           1,
+		RefusalPenalty:         DecimalFromFloat(0.1),
+		NoParticipationPenalty: DecimalFromFloat(0.25),
+		DelegationShare:        DecimalFromFloat(0.1),
+		WThreshold:             DecimalFromFloat(0.3),
+		VMin:                   3,
+		CapFactor:              DecimalFromFloat(0.5),
+		InitialModelId:         "",
+		// Per-model voting-power concentration cap is OFF by default.
+		// Governance must set a concrete value via MsgUpdateParams after
+		// observing real network concentration. Zero disables the cap; see
+		// computeAndSetVotingPowers for enforcement semantics.
+		MaxModelVotingPowerPercentage: DecimalFromFloat(0),
+	}
+}
+
+// validateDecimalFraction checks that a Decimal is in [0, 1]. Nil is allowed (treated as 0).
+func validateDecimalFraction(d *Decimal, name string) error {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return nil
+	}
+	dec, err := d.ToLegacyDec()
+	if err != nil {
+		return fmt.Errorf("%s: invalid decimal: %w", name, err)
+	}
+	if dec.IsNegative() || dec.GT(sdkmath.LegacyOneDec()) {
+		return fmt.Errorf("%s must be between 0 and 1, got %s", name, dec.String())
 	}
 	return nil
 }
@@ -353,7 +418,6 @@ func (p *TokenomicsParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{
 		paramtypes.NewParamSetPair(KeyWorkVestingPeriod, &p.WorkVestingPeriod, validateVestingPeriod),
 		paramtypes.NewParamSetPair(KeyRewardVestingPeriod, &p.RewardVestingPeriod, validateVestingPeriod),
-		paramtypes.NewParamSetPair(KeyTopMinerVestingPeriod, &p.TopMinerVestingPeriod, validateVestingPeriod),
 	}
 }
 
@@ -501,8 +565,51 @@ func (p Params) Validate() error {
 		}
 	}
 
-	if p.SubnetEscrowParams != nil {
-		if err := p.SubnetEscrowParams.Validate(); err != nil {
+	if p.DevshardEscrowParams != nil {
+		if err := p.DevshardEscrowParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.DelegationParams != nil {
+		if p.DelegationParams.DeployWindow < 0 {
+			return fmt.Errorf("delegation deploy_window cannot be negative")
+		}
+		if p.DelegationParams.VMin < 0 {
+			return fmt.Errorf("delegation v_min cannot be negative")
+		}
+		if err := validateDecimalFraction(p.DelegationParams.RefusalPenalty, "delegation refusal_penalty"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.NoParticipationPenalty, "delegation no_participation_penalty"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.DelegationShare, "delegation delegation_share"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.WThreshold, "delegation w_threshold"); err != nil {
+			return err
+		}
+		if err := validateDecimalFraction(p.DelegationParams.CapFactor, "delegation cap_factor"); err != nil {
+			return err
+		}
+	}
+
+	if p.DelegationParams != nil && p.DelegationParams.InitialModelId != "" && p.PocParams != nil {
+		found := false
+		for _, model := range p.PocParams.GetModelConfigs() {
+			if model != nil && model.ModelId == p.DelegationParams.InitialModelId {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("delegation initial_model_id %q not found in poc_params models", p.DelegationParams.InitialModelId)
+		}
+	}
+
+	if p.FeeParams != nil {
+		if err := p.FeeParams.Validate(); err != nil {
 			return err
 		}
 	}
@@ -514,8 +621,20 @@ func (p *PocParams) Validate() error {
 	if p == nil {
 		return nil
 	}
-	if p.SeqLen < 0 {
-		return fmt.Errorf("poc_params.seq_len cannot be negative")
+	seen := make(map[string]bool)
+	for _, model := range p.GetModelConfigs() {
+		if model == nil {
+			return fmt.Errorf("poc_params.models cannot contain nil entries")
+		}
+		if model.ModelId != "" {
+			if seen[model.ModelId] {
+				return fmt.Errorf("poc_params.models contains duplicate model_id %q", model.ModelId)
+			}
+			seen[model.ModelId] = true
+		}
+		if model.SeqLen < 0 {
+			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
+		}
 	}
 	return nil
 }
@@ -578,6 +697,12 @@ func (p *ValidationParams) Validate() error {
 	if p.TimestampAdvance <= 0 {
 		return fmt.Errorf("timestamp advance must be positive")
 	}
+	switch p.LogprobsMode {
+	case LogprobsModeProcessed, LogprobsModeRaw:
+		// ok
+	default:
+		return fmt.Errorf("invalid logprobs_mode: %q, must be %q or %q", p.LogprobsMode, LogprobsModeProcessed, LogprobsModeRaw)
+	}
 	return nil
 }
 
@@ -592,9 +717,6 @@ func (p *TokenomicsParams) Validate() error {
 	if p.CurrentSubsidyPercentage == nil {
 		return fmt.Errorf("current subsidy percentage cannot be nil")
 	}
-	if p.TopRewardAllowedFailure == nil {
-		return fmt.Errorf("top reward allowed failure cannot be nil")
-	}
 
 	// Validate vesting parameters
 	if err := validateVestingPeriod(p.WorkVestingPeriod); err != nil {
@@ -602,9 +724,6 @@ func (p *TokenomicsParams) Validate() error {
 	}
 	if err := validateVestingPeriod(p.RewardVestingPeriod); err != nil {
 		return errors.Wrap(err, "invalid reward_vesting_period")
-	}
-	if err := validateVestingPeriod(p.TopMinerVestingPeriod); err != nil {
-		return errors.Wrap(err, "invalid top_miner_vesting_period")
 	}
 
 	return nil
@@ -1040,8 +1159,40 @@ func DecimalFromFloat32(f float32) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
+func (p *PocParams) GetModelConfigs() []*PoCModelConfig {
+	if p == nil {
+		return nil
+	}
+	return p.Models
+}
+
+func (p *PocParams) GetPrimaryModelConfig() *PoCModelConfig {
+	configs := p.GetModelConfigs()
+	if len(configs) == 0 || configs[0] == nil {
+		return DefaultPoCModelConfig()
+	}
+	return configs[0]
+}
+
+func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {
+	configs := p.GetModelConfigs()
+	if len(configs) == 0 {
+		return nil, false
+	}
+	for _, config := range configs {
+		if config != nil && config.ModelId == modelID {
+			return config, true
+		}
+	}
+	return nil, false
+}
+
 func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
+	return p.GetPrimaryModelConfig().GetWeightScaleFactorDec()
+}
+
+func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
+	if p == nil || p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
 		return sdkmath.LegacyOneDec()
 	}
 	dec, err := p.WeightScaleFactor.ToLegacyDec()

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
+	sdkmath "cosmossdk.io/math"
+	"cosmossdk.io/x/feegrant"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -15,31 +18,31 @@ import (
 	// this line is used by starport scaffolding # 1
 )
 
+// DefaultMLOpsFeeAllowance is the spend limit on the feegrant allowance from
+// cold to warm key when granting ML ops permissions. At ~10 ngonka per gas
+// and typical transaction sizes, this covers many months of routine DAPI
+// operation (claim rewards, hardware diff updates, seeds). Hosts can re-grant
+// when the allowance is depleted.
+var DefaultMLOpsFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(10_000_000_000))) // 10 GNK
+
 var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgStartInference{},
 	&types.MsgFinishInference{},
 	&types.MsgClaimRewards{},
 	&types.MsgValidation{},
 	&types.MsgSubmitPocBatch{},
-	&types.MsgSubmitPocValidation{},
 	&types.MsgSubmitPocValidationsV2{},   // PoC v2 validations
 	&types.MsgPoCV2StoreCommit{},         // PoC v2 off-chain store commits
 	&types.MsgMLNodeWeightDistribution{}, // PoC v2 ML node weight distribution
 	&types.MsgSubmitSeed{},
 	&types.MsgBridgeExchange{},
-	&types.MsgSubmitTrainingKvRecord{},
-	&types.MsgJoinTraining{},
-	&types.MsgJoinTrainingStatus{},
-	&types.MsgTrainingHeartbeat{},
-	&types.MsgSetBarrier{},
-	&types.MsgClaimTrainingTaskForAssignment{},
-	&types.MsgAssignTrainingTask{},
 	&types.MsgSubmitNewUnfundedParticipant{},
 	&types.MsgSubmitHardwareDiff{},
 	&types.MsgInvalidateInference{},
 	&types.MsgRevalidateInference{},
 	&blstypes.MsgSubmitDealerPart{},
 	&blstypes.MsgSubmitVerificationVector{},
+	&blstypes.MsgRespondDealerComplaints{},
 	&blstypes.MsgRequestThresholdSignature{},
 	&blstypes.MsgSubmitPartialSignature{},
 	&blstypes.MsgSubmitGroupKeyValidationSignature{},
@@ -91,6 +94,55 @@ func GrantMLOperationalKeyPermissionsToAccount(
 			return fmt.Errorf("failed to create MsgGrant for %s: %w", sdk.MsgTypeURL(msgType), err)
 		}
 		grantMsgs = append(grantMsgs, grantMsg)
+	}
+
+	// Also grant a fee allowance from cold to warm so the warm key can pay
+	// transaction fees on behalf of the cold account. The DAPI sets the cold
+	// account as the fee_granter on every tx; without this allowance, the
+	// chain rejects the tx because the warm key has no balance.
+	//
+	// We check for an existing allowance first because the chain rejects
+	// duplicate MsgGrantAllowance with "fee allowance already exists". Hosts
+	// who upgraded from v0.2.11 already have an allowance auto-created by the
+	// v0.2.12 upgrade handler; in that case we skip this message and only
+	// re-grant the authz permissions. To refresh an expired or depleted
+	// allowance, hosts must first run `inferenced tx feegrant revoke`.
+	hasExistingAllowance, err := checkFeegrantExists(ctx, clientCtx, operatorAddress, aiOperationalAddress)
+	if err != nil {
+		fmt.Printf("Warning: could not check existing feegrant allowance: %v\n", err)
+		// Continue and let the chain reject the duplicate if necessary.
+	}
+	if !hasExistingAllowance {
+		allowance := &feegrant.BasicAllowance{
+			SpendLimit: DefaultMLOpsFeeAllowance,
+			Expiration: &expirationTime,
+		}
+		feeGrantMsg, err := feegrant.NewMsgGrantAllowance(
+			allowance,
+			operatorAddress,
+			aiOperationalAddress,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create MsgGrantAllowance: %w", err)
+		}
+		grantMsgs = append(grantMsgs, feeGrantMsg)
+		fmt.Println("Including new feegrant allowance from cold to warm in this transaction.")
+	} else {
+		fmt.Println("Existing feegrant allowance from cold to warm detected; skipping MsgGrantAllowance. " +
+			"Run `inferenced tx feegrant revoke <warm-address>` first if you want to refresh it.")
+	}
+
+	// This command bypasses GenerateOrBroadcastTxCLI, so we replicate its
+	// --gas auto handling here: when the factory is set to simulate, run
+	// CalculateGas and apply the adjustment before building the tx. Without
+	// this, --gas auto produces a tx with gasWanted=0 and OOGs immediately.
+	if txFactory.SimulateAndExecute() {
+		_, adjusted, err := tx.CalculateGas(clientCtx, txFactory, grantMsgs...)
+		if err != nil {
+			return fmt.Errorf("failed to simulate gas: %w", err)
+		}
+		txFactory = txFactory.WithGas(adjusted)
+		fmt.Printf("gas estimate: %d\n", adjusted)
 	}
 
 	txb, err := txFactory.BuildUnsignedTx(grantMsgs...)
@@ -150,4 +202,23 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	}
 
 	return fmt.Errorf("\nTimed out waiting for transaction %s to be confirmed in a block", txHash)
+}
+
+// checkFeegrantExists queries the chain for an existing feegrant allowance
+// from granter to grantee. Returns true if one exists, false if not (including
+// when the query returns "not found"). Any other error is propagated.
+func checkFeegrantExists(ctx context.Context, clientCtx client.Context, granter, grantee sdk.AccAddress) (bool, error) {
+	queryClient := feegrant.NewQueryClient(clientCtx)
+	resp, err := queryClient.Allowance(ctx, &feegrant.QueryAllowanceRequest{
+		Granter: granter.String(),
+		Grantee: grantee.String(),
+	})
+	if err != nil {
+		// "not found" is the expected case for new hosts; treat it as "no allowance".
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+			return false, nil
+		}
+		return false, err
+	}
+	return resp != nil && resp.Allowance != nil, nil
 }

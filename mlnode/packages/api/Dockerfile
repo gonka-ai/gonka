@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/gonka-ai/vllm:v0.9.1-poc-v2-post6-blackwell-sm120 AS base
+FROM ghcr.io/gonka-ai/vllm:v0.15.1 AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -11,8 +11,8 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     checkinstall \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade setuptools wheel pip \
-    && curl -fLO https://www.openssl.org/source/old/1.1.1/openssl-1.1.1u.tar.gz \
+    && pip install --upgrade "setuptools<81" wheel pip \
+    && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
     && tar -xzf openssl-1.1.1u.tar.gz \
     && cd openssl-1.1.1u \
     && ./config --prefix=/usr/local/openssl-1.1 \
@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && . /app/packages/api/.venv/bin/activate \
     && cd /app/packages/api \
     && poetry install --no-interaction \
-    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.2cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 
 ################################################################################
 FROM base AS app
@@ -82,8 +82,9 @@ COPY packages/train/resources /app/packages/train/resources
 
 COPY packages/common/src /app/packages/common/src
 
-ENV PYTHONPATH="/app"
-ENV PYTHONPATH="${PYTHONPATH}:/app/packages/api/src"
+ENV PYTHONPATH="/app:/app/packages/api/src"
+ENV VLLM_ALLOW_INSECURE_SERIALIZATION=1
+ENV LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
 
 COPY packages/api/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

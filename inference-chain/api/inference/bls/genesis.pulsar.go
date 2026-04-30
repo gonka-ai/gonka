@@ -14,10 +14,167 @@ import (
 	sync "sync"
 )
 
+var _ protoreflect.List = (*_GenesisState_3_list)(nil)
+
+type _GenesisState_3_list struct {
+	list *[]*EpochBLSData
+}
+
+func (x *_GenesisState_3_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_3_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_3_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochBLSData)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_3_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochBLSData)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_3_list) AppendMutable() protoreflect.Value {
+	v := new(EpochBLSData)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_3_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_3_list) NewElement() protoreflect.Value {
+	v := new(EpochBLSData)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_3_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_4_list)(nil)
+
+type _GenesisState_4_list struct {
+	list *[]*ThresholdSigningRequest
+}
+
+func (x *_GenesisState_4_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_4_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_4_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*ThresholdSigningRequest)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_4_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*ThresholdSigningRequest)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_4_list) AppendMutable() protoreflect.Value {
+	v := new(ThresholdSigningRequest)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_4_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_4_list) NewElement() protoreflect.Value {
+	v := new(ThresholdSigningRequest)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_4_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_5_list)(nil)
+
+type _GenesisState_5_list struct {
+	list *[]*GroupKeyValidationState
+}
+
+func (x *_GenesisState_5_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_5_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*GroupKeyValidationState)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_5_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*GroupKeyValidationState)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_5_list) AppendMutable() protoreflect.Value {
+	v := new(GroupKeyValidationState)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_5_list) NewElement() protoreflect.Value {
+	v := new(GroupKeyValidationState)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_5_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_GenesisState                 protoreflect.MessageDescriptor
-	fd_GenesisState_params          protoreflect.FieldDescriptor
-	fd_GenesisState_active_epoch_id protoreflect.FieldDescriptor
+	md_GenesisState                          protoreflect.MessageDescriptor
+	fd_GenesisState_params                   protoreflect.FieldDescriptor
+	fd_GenesisState_active_epoch_id          protoreflect.FieldDescriptor
+	fd_GenesisState_current_signing_epoch_id protoreflect.FieldDescriptor
+	fd_GenesisState_bls_data_list            protoreflect.FieldDescriptor
+	fd_GenesisState_signing_requests         protoreflect.FieldDescriptor
+	fd_GenesisState_group_validation_states  protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -25,6 +182,10 @@ func init() {
 	md_GenesisState = File_inference_bls_genesis_proto.Messages().ByName("GenesisState")
 	fd_GenesisState_params = md_GenesisState.Fields().ByName("params")
 	fd_GenesisState_active_epoch_id = md_GenesisState.Fields().ByName("active_epoch_id")
+	fd_GenesisState_current_signing_epoch_id = md_GenesisState.Fields().ByName("current_signing_epoch_id")
+	fd_GenesisState_bls_data_list = md_GenesisState.Fields().ByName("bls_data_list")
+	fd_GenesisState_signing_requests = md_GenesisState.Fields().ByName("signing_requests")
+	fd_GenesisState_group_validation_states = md_GenesisState.Fields().ByName("group_validation_states")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisState)(nil)
@@ -104,6 +265,30 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if x.CurrentSigningEpochId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CurrentSigningEpochId)
+		if !f(fd_GenesisState_current_signing_epoch_id, value) {
+			return
+		}
+	}
+	if len(x.BlsDataList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_3_list{list: &x.BlsDataList})
+		if !f(fd_GenesisState_bls_data_list, value) {
+			return
+		}
+	}
+	if len(x.SigningRequests) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_4_list{list: &x.SigningRequests})
+		if !f(fd_GenesisState_signing_requests, value) {
+			return
+		}
+	}
+	if len(x.GroupValidationStates) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_5_list{list: &x.GroupValidationStates})
+		if !f(fd_GenesisState_group_validation_states, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -123,6 +308,14 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.Params != nil
 	case "inference.bls.GenesisState.active_epoch_id":
 		return x.ActiveEpochId != uint64(0)
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		return x.CurrentSigningEpochId != uint64(0)
+	case "inference.bls.GenesisState.bls_data_list":
+		return len(x.BlsDataList) != 0
+	case "inference.bls.GenesisState.signing_requests":
+		return len(x.SigningRequests) != 0
+	case "inference.bls.GenesisState.group_validation_states":
+		return len(x.GroupValidationStates) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -143,6 +336,14 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 		x.Params = nil
 	case "inference.bls.GenesisState.active_epoch_id":
 		x.ActiveEpochId = uint64(0)
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		x.CurrentSigningEpochId = uint64(0)
+	case "inference.bls.GenesisState.bls_data_list":
+		x.BlsDataList = nil
+	case "inference.bls.GenesisState.signing_requests":
+		x.SigningRequests = nil
+	case "inference.bls.GenesisState.group_validation_states":
+		x.GroupValidationStates = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -165,6 +366,27 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.bls.GenesisState.active_epoch_id":
 		value := x.ActiveEpochId
 		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		value := x.CurrentSigningEpochId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.GenesisState.bls_data_list":
+		if len(x.BlsDataList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_3_list{})
+		}
+		listValue := &_GenesisState_3_list{list: &x.BlsDataList}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.bls.GenesisState.signing_requests":
+		if len(x.SigningRequests) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_4_list{})
+		}
+		listValue := &_GenesisState_4_list{list: &x.SigningRequests}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.bls.GenesisState.group_validation_states":
+		if len(x.GroupValidationStates) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_5_list{})
+		}
+		listValue := &_GenesisState_5_list{list: &x.GroupValidationStates}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -189,6 +411,20 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 		x.Params = value.Message().Interface().(*Params)
 	case "inference.bls.GenesisState.active_epoch_id":
 		x.ActiveEpochId = value.Uint()
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		x.CurrentSigningEpochId = value.Uint()
+	case "inference.bls.GenesisState.bls_data_list":
+		lv := value.List()
+		clv := lv.(*_GenesisState_3_list)
+		x.BlsDataList = *clv.list
+	case "inference.bls.GenesisState.signing_requests":
+		lv := value.List()
+		clv := lv.(*_GenesisState_4_list)
+		x.SigningRequests = *clv.list
+	case "inference.bls.GenesisState.group_validation_states":
+		lv := value.List()
+		clv := lv.(*_GenesisState_5_list)
+		x.GroupValidationStates = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -214,8 +450,28 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 			x.Params = new(Params)
 		}
 		return protoreflect.ValueOfMessage(x.Params.ProtoReflect())
+	case "inference.bls.GenesisState.bls_data_list":
+		if x.BlsDataList == nil {
+			x.BlsDataList = []*EpochBLSData{}
+		}
+		value := &_GenesisState_3_list{list: &x.BlsDataList}
+		return protoreflect.ValueOfList(value)
+	case "inference.bls.GenesisState.signing_requests":
+		if x.SigningRequests == nil {
+			x.SigningRequests = []*ThresholdSigningRequest{}
+		}
+		value := &_GenesisState_4_list{list: &x.SigningRequests}
+		return protoreflect.ValueOfList(value)
+	case "inference.bls.GenesisState.group_validation_states":
+		if x.GroupValidationStates == nil {
+			x.GroupValidationStates = []*GroupKeyValidationState{}
+		}
+		value := &_GenesisState_5_list{list: &x.GroupValidationStates}
+		return protoreflect.ValueOfList(value)
 	case "inference.bls.GenesisState.active_epoch_id":
 		panic(fmt.Errorf("field active_epoch_id of message inference.bls.GenesisState is not mutable"))
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		panic(fmt.Errorf("field current_signing_epoch_id of message inference.bls.GenesisState is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -234,6 +490,17 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.bls.GenesisState.active_epoch_id":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.GenesisState.current_signing_epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.GenesisState.bls_data_list":
+		list := []*EpochBLSData{}
+		return protoreflect.ValueOfList(&_GenesisState_3_list{list: &list})
+	case "inference.bls.GenesisState.signing_requests":
+		list := []*ThresholdSigningRequest{}
+		return protoreflect.ValueOfList(&_GenesisState_4_list{list: &list})
+	case "inference.bls.GenesisState.group_validation_states":
+		list := []*GroupKeyValidationState{}
+		return protoreflect.ValueOfList(&_GenesisState_5_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.GenesisState"))
@@ -310,6 +577,27 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		if x.ActiveEpochId != 0 {
 			n += 1 + runtime.Sov(uint64(x.ActiveEpochId))
 		}
+		if x.CurrentSigningEpochId != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentSigningEpochId))
+		}
+		if len(x.BlsDataList) > 0 {
+			for _, e := range x.BlsDataList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.SigningRequests) > 0 {
+			for _, e := range x.SigningRequests {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.GroupValidationStates) > 0 {
+			for _, e := range x.GroupValidationStates {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -338,6 +626,59 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CurrentSigningEpochId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentSigningEpochId))
+			i--
+			dAtA[i] = 0x30
+		}
+		if len(x.GroupValidationStates) > 0 {
+			for iNdEx := len(x.GroupValidationStates) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.GroupValidationStates[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x2a
+			}
+		}
+		if len(x.SigningRequests) > 0 {
+			for iNdEx := len(x.SigningRequests) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.SigningRequests[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x22
+			}
+		}
+		if len(x.BlsDataList) > 0 {
+			for iNdEx := len(x.BlsDataList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.BlsDataList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x1a
+			}
 		}
 		if x.ActiveEpochId != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.ActiveEpochId))
@@ -462,6 +803,127 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentSigningEpochId", wireType)
+				}
+				x.CurrentSigningEpochId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentSigningEpochId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlsDataList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.BlsDataList = append(x.BlsDataList, &EpochBLSData{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.BlsDataList[len(x.BlsDataList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SigningRequests", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.SigningRequests = append(x.SigningRequests, &ThresholdSigningRequest{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SigningRequests[len(x.SigningRequests)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GroupValidationStates", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.GroupValidationStates = append(x.GroupValidationStates, &GroupKeyValidationState{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.GroupValidationStates[len(x.GroupValidationStates)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -522,6 +984,14 @@ type GenesisState struct {
 	// Only one epoch can have active DKG at a time
 	// 0 means no active DKG
 	ActiveEpochId uint64 `protobuf:"varint,2,opt,name=active_epoch_id,json=activeEpochId,proto3" json:"active_epoch_id,omitempty"`
+	// current_signing_epoch_id is the epoch ID that external threshold-signing requests must use.
+	CurrentSigningEpochId uint64 `protobuf:"varint,6,opt,name=current_signing_epoch_id,json=currentSigningEpochId,proto3" json:"current_signing_epoch_id,omitempty"`
+	// bls_data_list contains all epoch data created
+	BlsDataList []*EpochBLSData `protobuf:"bytes,3,rep,name=bls_data_list,json=blsDataList,proto3" json:"bls_data_list,omitempty"`
+	// signing_requests contains all threshold signing requests
+	SigningRequests []*ThresholdSigningRequest `protobuf:"bytes,4,rep,name=signing_requests,json=signingRequests,proto3" json:"signing_requests,omitempty"`
+	// group_validation_states contains all ongoing and completed group key validation states
+	GroupValidationStates []*GroupKeyValidationState `protobuf:"bytes,5,rep,name=group_validation_states,json=groupValidationStates,proto3" json:"group_validation_states,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -558,6 +1028,34 @@ func (x *GenesisState) GetActiveEpochId() uint64 {
 	return 0
 }
 
+func (x *GenesisState) GetCurrentSigningEpochId() uint64 {
+	if x != nil {
+		return x.CurrentSigningEpochId
+	}
+	return 0
+}
+
+func (x *GenesisState) GetBlsDataList() []*EpochBLSData {
+	if x != nil {
+		return x.BlsDataList
+	}
+	return nil
+}
+
+func (x *GenesisState) GetSigningRequests() []*ThresholdSigningRequest {
+	if x != nil {
+		return x.SigningRequests
+	}
+	return nil
+}
+
+func (x *GenesisState) GetGroupValidationStates() []*GroupKeyValidationState {
+	if x != nil {
+		return x.GroupValidationStates
+	}
+	return nil
+}
+
 var File_inference_bls_genesis_proto protoreflect.FileDescriptor
 
 var file_inference_bls_genesis_proto_rawDesc = []byte{
@@ -568,24 +1066,50 @@ var file_inference_bls_genesis_proto_rawDesc = []byte{
 	0x14, 0x67, 0x6f, 0x67, 0x6f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x1a, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2f, 0x62, 0x6c, 0x73, 0x2f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x22, 0x70, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74, 0x61, 0x74,
-	0x65, 0x12, 0x38, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x0b, 0x32, 0x15, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c,
-	0x73, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7,
-	0xb0, 0x2a, 0x01, 0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x26, 0x0a, 0x0f, 0x61,
-	0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x45, 0x70, 0x6f, 0x63,
-	0x68, 0x49, 0x64, 0x42, 0x96, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73,
-	0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
-	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa,
-	0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca,
-	0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2,
-	0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x33,
+	0x6f, 0x1a, 0x19, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73,
+	0x2f, 0x74, 0x79, 0x70, 0x65, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x25, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c, 0x73, 0x2f, 0x74, 0x68, 0x72, 0x65,
+	0x73, 0x68, 0x6f, 0x6c, 0x64, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x2e, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x1a, 0x24, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62,
+	0x6c, 0x73, 0x2f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xaf, 0x03, 0x0a, 0x0c, 0x47, 0x65,
+	0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12, 0x38, 0x0a, 0x06, 0x70, 0x61,
+	0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x15, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d,
+	0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x06, 0x70, 0x61,
+	0x72, 0x61, 0x6d, 0x73, 0x12, 0x26, 0x0a, 0x0f, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x61,
+	0x63, 0x74, 0x69, 0x76, 0x65, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x37, 0x0a, 0x18,
+	0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x5f,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52, 0x15,
+	0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x45, 0x70,
+	0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x45, 0x0a, 0x0d, 0x62, 0x6c, 0x73, 0x5f, 0x64, 0x61, 0x74,
+	0x61, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x42, 0x4c, 0x53, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52,
+	0x0b, 0x62, 0x6c, 0x73, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x57, 0x0a, 0x10,
+	0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73,
+	0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64,
+	0x53, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0f, 0x73, 0x69, 0x67, 0x6e, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x73, 0x12, 0x64, 0x0a, 0x17, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x65, 0x73,
+	0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x2e, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x56,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x65, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x15, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x65, 0x73, 0x42, 0x96, 0x01, 0x0a, 0x11,
+	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c,
+	0x73, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x62, 0x6c,
+	0x73, 0xa2, 0x02, 0x03, 0x49, 0x42, 0x58, 0xaa, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x42, 0x6c, 0x73, 0xca, 0x02, 0x0d, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0xe2, 0x02, 0x19, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x42, 0x6c, 0x73, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0xea, 0x02, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
+	0x3a, 0x42, 0x6c, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -602,16 +1126,22 @@ func file_inference_bls_genesis_proto_rawDescGZIP() []byte {
 
 var file_inference_bls_genesis_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_inference_bls_genesis_proto_goTypes = []interface{}{
-	(*GenesisState)(nil), // 0: inference.bls.GenesisState
-	(*Params)(nil),       // 1: inference.bls.Params
+	(*GenesisState)(nil),            // 0: inference.bls.GenesisState
+	(*Params)(nil),                  // 1: inference.bls.Params
+	(*EpochBLSData)(nil),            // 2: inference.bls.EpochBLSData
+	(*ThresholdSigningRequest)(nil), // 3: inference.bls.ThresholdSigningRequest
+	(*GroupKeyValidationState)(nil), // 4: inference.bls.GroupKeyValidationState
 }
 var file_inference_bls_genesis_proto_depIdxs = []int32{
 	1, // 0: inference.bls.GenesisState.params:type_name -> inference.bls.Params
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 1: inference.bls.GenesisState.bls_data_list:type_name -> inference.bls.EpochBLSData
+	3, // 2: inference.bls.GenesisState.signing_requests:type_name -> inference.bls.ThresholdSigningRequest
+	4, // 3: inference.bls.GenesisState.group_validation_states:type_name -> inference.bls.GroupKeyValidationState
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_inference_bls_genesis_proto_init() }
@@ -620,6 +1150,9 @@ func file_inference_bls_genesis_proto_init() {
 		return
 	}
 	file_inference_bls_params_proto_init()
+	file_inference_bls_types_proto_init()
+	file_inference_bls_threshold_signing_proto_init()
+	file_inference_bls_group_validation_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_inference_bls_genesis_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GenesisState); i {

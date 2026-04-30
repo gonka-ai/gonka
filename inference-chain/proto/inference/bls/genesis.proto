@@ -4,6 +4,9 @@ package inference.bls;
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
 import "inference/bls/params.proto";
+import "inference/bls/types.proto";
+import "inference/bls/threshold_signing.proto";
+import "inference/bls/group_validation.proto";
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
@@ -19,4 +22,16 @@ message GenesisState {
   // Only one epoch can have active DKG at a time
   // 0 means no active DKG
   uint64 active_epoch_id = 2;
+
+  // current_signing_epoch_id is the epoch ID that external threshold-signing requests must use.
+  uint64 current_signing_epoch_id = 6;
+
+  // bls_data_list contains all epoch data created
+  repeated EpochBLSData bls_data_list = 3 [(gogoproto.nullable) = false];
+
+  // signing_requests contains all threshold signing requests
+  repeated ThresholdSigningRequest signing_requests = 4 [(gogoproto.nullable) = false];
+
+  // group_validation_states contains all ongoing and completed group key validation states
+  repeated GroupKeyValidationState group_validation_states = 5 [(gogoproto.nullable) = false];
 }

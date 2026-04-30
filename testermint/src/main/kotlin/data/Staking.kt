@@ -9,6 +9,8 @@ data class ValidatorsResponse(
     val pagination: Pagination,
 )
 
+data class Pagination(val total: String)
+
 data class StakeValidator(
     val operatorAddress: String,
     val consensusPubkey: ConsensusPubkey,

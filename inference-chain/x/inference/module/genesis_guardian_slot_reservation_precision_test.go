@@ -95,14 +95,8 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 	genesisParams := types.GenesisOnlyParams{
 		TotalSupply:               1_000_000_000,
 		OriginatorSupply:          160_000_000,
-		TopRewardAmount:           120_000_000,
 		PreProgrammedSaleAmount:   120_000_000,
-		TopRewards:                3,
 		SupplyDenom:               "gonka",
-		TopRewardPeriod:           365 * 24 * 60 * 60,
-		TopRewardPayouts:          12,
-		TopRewardPayoutsPerMiner:  4,
-		TopRewardMaxDuration:      4 * 365 * 24 * 60 * 60,
 		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
 		GenesisGuardianEnabled:    true,
 	}
@@ -164,14 +158,8 @@ func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	genesisParams := types.GenesisOnlyParams{
 		TotalSupply:               1_000_000_000,
 		OriginatorSupply:          160_000_000,
-		TopRewardAmount:           120_000_000,
 		PreProgrammedSaleAmount:   120_000_000,
-		TopRewards:                3,
 		SupplyDenom:               "gonka",
-		TopRewardPeriod:           365 * 24 * 60 * 60,
-		TopRewardPayouts:          12,
-		TopRewardPayoutsPerMiner:  4,
-		TopRewardMaxDuration:      4 * 365 * 24 * 60 * 60,
 		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
 		GenesisGuardianEnabled:    true,
 	}

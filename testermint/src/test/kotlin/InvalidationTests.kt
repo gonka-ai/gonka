@@ -91,10 +91,18 @@ class InvalidationTests : TestermintTest() {
 
         Logger.warn("Got invalid result, waiting for validation.")
         logSection("Waiting for revalidation")
-        genesis.node.waitForNextBlock(10)
+        // Poll for VALIDATED status instead of fixed block wait — validation
+        // timing depends on epoch length, validator count, and network conditions.
+        val maxWaitBlocks = 30
+        var newState = genesis.api.getInference(invalidResult.inference.inferenceId)
+        var waited = 0
+        while (newState.statusEnum != InferenceStatus.VALIDATED && waited < maxWaitBlocks) {
+            genesis.node.waitForNextBlock(2)
+            waited += 2
+            newState = genesis.api.getInference(invalidResult.inference.inferenceId)
+            Logger.info("Revalidation status after $waited blocks: ${newState.statusEnum}")
+        }
         logSection("Verifying revalidation")
-        val newState = genesis.api.getInference(invalidResult.inference.inferenceId)
-
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.VALIDATED)
 
     }

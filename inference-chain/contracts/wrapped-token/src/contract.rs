@@ -17,26 +17,20 @@ use crate::msg::{
 };
 use crate::state::{ BridgeInfo, BRIDGE_INFO, TOKEN_METADATA, TokenMetadataOverride };
 
-// Admin storage: stores the address of the contract admin (governance module)
-pub const ADMIN: Item<Addr> = Item::new("admin");
-
 // Creator storage: stores the address of the contract creator (inference module) 
 pub const CREATOR: Item<Addr> = Item::new("creator");
 
 const CONTRACT_NAME: &str = "wrapped-token";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const LEGACY_CW20_BASE_CONTRACT_NAME: &str = "crates.io:cw20-base";
 
 #[entry_point]
 pub fn instantiate(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    // Note: We don't set_contract_version here because cw20_base_contract::instantiate
-    // will set it to "crates.io:cw20-base". Our migrate function handles this by
-    // allowing migration from both "wrapped-token" and "crates.io:cw20-base".
-    
     // Save creator (instantiator = inference module) - controls operations
     CREATOR.save(deps.storage, &info.sender)?;
     
@@ -55,7 +49,6 @@ pub fn instantiate(
             }
         }
     };
-    ADMIN.save(deps.storage, &admin_addr)?;
     
     // Persist bridge info (extra state)
     BRIDGE_INFO.save(deps.storage, &BridgeInfo { chain_id: msg.chain_id.clone(), contract_address: msg.contract_address.clone() })?;
@@ -77,8 +70,12 @@ pub fn instantiate(
             logo: None,
         }),
     };
-    let resp = cw20_base_contract::instantiate(deps, env, info, cw20_init)
+    let resp = cw20_base_contract::instantiate(deps.branch(), env, info, cw20_init)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
+        .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
+
     Ok(resp)
 }
 
@@ -93,8 +90,12 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         // Custom extras
-        ExecuteMsg::Withdraw { amount, destination_address } => withdraw(deps, env, info, amount, destination_address),
-        ExecuteMsg::UpdateMetadata { name, symbol, decimals } => update_metadata(deps, info, name, symbol, decimals),
+        ExecuteMsg::Withdraw {
+            amount,
+            destination_address,
+            destination_bridge_address,
+        } => withdraw(deps, env, info, amount, destination_address, destination_bridge_address),
+        ExecuteMsg::UpdateMetadata { name, symbol, decimals } => update_metadata(deps, env, info, name, symbol, decimals),
         // Delegate all standard cw20 ops
         ExecuteMsg::Transfer { recipient, amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::Transfer { recipient, amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
         ExecuteMsg::Burn { amount } => cw20_base_contract::execute(deps, env, info, cw20_base_msg::ExecuteMsg::Burn { amount }).map_err(|e| ContractError::Std(StdError::generic_err(e.to_string()))),
@@ -128,21 +129,46 @@ fn map_expiration(exp: Option<crate::msg::Expiration>) -> Option<CwExpiration> {
     })
 }
 
+/// Validates a 42-character `0x`-prefixed hex string (matches chain `isValidEthereumAddress`).
+fn validate_ethereum_address(field: &str, raw: &str) -> Result<String, ContractError> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "{field} cannot be empty"
+        ))));
+    }
+    if t.len() != 42 || !(t.starts_with("0x") || t.starts_with("0X")) {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "{field} must be a 42-character hex address starting with 0x"
+        ))));
+    }
+    if !t[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "{field} contains invalid characters"
+        ))));
+    }
+    Ok(t.to_string())
+}
+
 /// Allows both creator (inference module) and admin (governance module) to update token metadata.
 fn update_metadata(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
     name: String,
     symbol: String,
     decimals: u8,
 ) -> Result<Response, ContractError> {
-    // Load both creator and admin addresses
+    // Load creator (inference module)
     let creator = CREATOR.load(deps.storage)?;
-    let admin = ADMIN.load(deps.storage)?;
+    
+    // Dynamically query admin (governance module)
+    let is_admin = deps.querier.query_wasm_contract_info(&env.contract.address)
+        .map(|contract_info| contract_info.admin.map_or(false, |admin| admin == info.sender))
+        .unwrap_or(false);
     
     // Allow both creator (inference module) and admin (governance module) to update metadata
     let is_creator = info.sender == creator;
-    let is_admin = info.sender == admin;
     
     if !is_creator && !is_admin {
         return Err(ContractError::Unauthorized {});
@@ -168,6 +194,7 @@ fn withdraw(
     info: MessageInfo,
     amount: Uint128,
     destination_address: String,
+    destination_bridge_address: String,
 ) -> Result<Response, ContractError> {
     if amount.is_zero() {
         return Err(ContractError::InsufficientFunds {
@@ -176,19 +203,9 @@ fn withdraw(
         });
     }
 
-    let dest_trimmed = destination_address.trim();
-    // Validate destination address is not empty
-    if dest_trimmed.is_empty() {
-        return Err(ContractError::Std(StdError::generic_err("destination_address cannot be empty")));
-    }
-    // Validate destination address is a 42-character hex address starting with 0x
-    if dest_trimmed.len() != 42 || !(dest_trimmed.starts_with("0x") || dest_trimmed.starts_with("0X")) {
-        return Err(ContractError::Std(StdError::generic_err("destination_address must be a 42-character hex address starting with 0x")));
-    }
-    // Validate destination address contains only hex characters
-    if !dest_trimmed[2..].chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ContractError::Std(StdError::generic_err("destination_address contains invalid characters")));
-    }
+    let destination_address = validate_ethereum_address("destination_address", &destination_address)?;
+    let destination_bridge_address =
+        validate_ethereum_address("destination_bridge_address", &destination_bridge_address)?;
 
     // Delegate to cw20-base burn
     let mut resp = cw20_base_contract::execute(
@@ -203,14 +220,16 @@ fn withdraw(
         env.contract.address.to_string(), // creator (this contract - will be the transaction signer)
         info.sender.to_string(),          // user_address (the caller)
         amount.to_string(),               // amount
-        destination_address.clone(),      // destination_address
+        destination_address.clone(),
+        destination_bridge_address.clone(),
     )?;
 
     resp = resp
         .add_message(bridge_msg)
         .add_attribute("method", "withdraw")
         .add_attribute("burn_amount", amount)
-        .add_attribute("destination_address", destination_address);
+        .add_attribute("destination_address", destination_address)
+        .add_attribute("destination_bridge_address", destination_bridge_address);
 
     Ok(resp)
 }
@@ -226,6 +245,8 @@ pub struct MsgRequestBridgeWithdrawal {
     pub amount: String,
     #[prost(string, tag = "4")]
     pub destination_address: String,
+    #[prost(string, tag = "5")]
+    pub destination_bridge_address: String,
 }
 
 // Helper function to create the bridge withdrawal message
@@ -234,6 +255,7 @@ fn create_bridge_withdrawal_msg(
     user_address: String,
     amount: String,
     destination_address: String,
+    destination_bridge_address: String,
 ) -> Result<CosmosMsg, ContractError> {
     // Create the protobuf message
     let msg = MsgRequestBridgeWithdrawal {
@@ -241,6 +263,7 @@ fn create_bridge_withdrawal_msg(
         user_address,
         amount,
         destination_address,
+        destination_bridge_address,
     };
 
     // Encode the message as protobuf
@@ -295,13 +318,22 @@ pub fn migrate(
 ) -> Result<Response, ContractError> {
     let old = get_contract_version(deps.storage)
         .map_err(|e| ContractError::Std(StdError::generic_err(e.to_string())))?;
-    
-    // Allow migration from both cw20-base (legacy) and wrapped-token contracts
-    if old.contract != CONTRACT_NAME && old.contract != "crates.io:cw20-base" {
+
+    let is_legacy_cw20_base = old.contract == LEGACY_CW20_BASE_CONTRACT_NAME;
+    if old.contract != CONTRACT_NAME && !is_legacy_cw20_base {
         return Err(ContractError::Std(StdError::generic_err(format!(
-            "wrong contract: expected {} or crates.io:cw20-base, got {}",
-            CONTRACT_NAME, old.contract
+            "wrong contract: expected {} or {}, got {}",
+            CONTRACT_NAME, LEGACY_CW20_BASE_CONTRACT_NAME, old.contract
         ))));
+    }
+
+    if is_legacy_cw20_base {
+        CREATOR
+            .may_load(deps.storage)?
+            .ok_or_else(|| StdError::generic_err("missing wrapped-token legacy state: creator"))?;
+        BRIDGE_INFO
+            .may_load(deps.storage)?
+            .ok_or_else(|| StdError::generic_err("missing wrapped-token legacy state: bridge_info"))?;
     }
 
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
@@ -390,4 +422,79 @@ where
     let bytes = query_grpc(deps, path, Binary::from(buf))?;
     TResponse::decode(bytes.as_slice())
         .map_err(|e| StdError::generic_err(format!("Decode response: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+    fn instantiate_msg() -> InstantiateMsg {
+        InstantiateMsg {
+            chain_id: "ethereum-mainnet".to_string(),
+            contract_address: "0x1111111111111111111111111111111111111111".to_string(),
+            initial_balances: vec![],
+            mint: None,
+            admin: None,
+        }
+    }
+
+    fn seed_legacy_wrapped_token_state(mut deps: DepsMut) {
+        let creator = deps.api.addr_make("inference-module");
+        CREATOR
+            .save(deps.storage, &creator)
+            .expect("creator should be stored");
+        BRIDGE_INFO
+            .save(
+                deps.storage,
+                &BridgeInfo {
+                    chain_id: "ethereum-mainnet".to_string(),
+                    contract_address: "0x1111111111111111111111111111111111111111".to_string(),
+                },
+            )
+            .expect("bridge info should be stored");
+    }
+
+    #[test]
+    fn instantiate_sets_wrapped_token_cw2_marker() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("inference-module");
+        let info = message_info(&sender, &[]);
+
+        instantiate(deps.as_mut(), env, info, instantiate_msg()).expect("instantiate should succeed");
+
+        let version = get_contract_version(&deps.storage).expect("contract version should be stored");
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_accepts_legacy_cw20_base_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, LEGACY_CW20_BASE_CONTRACT_NAME, "2.0.0")
+            .expect("legacy marker should be stored");
+        seed_legacy_wrapped_token_state(deps.as_mut());
+
+        migrate(deps.as_mut(), mock_env(), Binary::default()).expect("migration should succeed");
+
+        let version = get_contract_version(&deps.storage).expect("contract version should be updated");
+        assert_eq!(version.contract, CONTRACT_NAME);
+        assert_eq!(version.version, CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn migrate_rejects_foreign_legacy_cw20_base_marker() {
+        let mut deps = mock_dependencies();
+        set_contract_version(deps.as_mut().storage, LEGACY_CW20_BASE_CONTRACT_NAME, "2.0.0")
+            .expect("legacy marker should be stored");
+
+        let err = migrate(deps.as_mut(), mock_env(), Binary::default())
+            .expect_err("migration should fail without wrapped-token legacy state");
+        assert!(
+            err.to_string()
+                .contains("missing wrapped-token legacy state"),
+            "unexpected error: {err}"
+        );
+    }
 }

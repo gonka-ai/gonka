@@ -1,14 +1,14 @@
-# Inference Subnet: Technical Design
+# Inference Devshard: Technical Design
 
-Working document. Captures design decisions and open questions for the subnet implementation described in [README.md](./README.md).
+Working document. Captures design decisions and open questions for the devshard implementation described in [README.md](./README.md).
 
-## No Cosmos SDK in Subnet
+## No Cosmos SDK in Devshard
 
-The subnet does not depend on Cosmos SDK. Cosmos SDK is slow, heavyweight, and the subnet is not a blockchain.
+The devshard does not depend on Cosmos SDK. Cosmos SDK is slow, heavyweight, and the devshard is not a blockchain.
 
 Mainnet keeps Cosmos SDK for `MsgCreateEscrow` and `MsgSettleEscrow` in `inference-chain/x/inference/`.
 
-Crypto: `go-ethereum/crypto` for secp256k1 signing/ecrecover, `crypto/sha256` for hashing. Proto definitions are self-contained within the subnet package.
+Crypto: `go-ethereum/crypto` for secp256k1 signing/ecrecover, `crypto/sha256` for hashing. Proto definitions are self-contained within the devshard package.
 
 Keys are secp256k1, same as mainnet. A host signs with its warm key (authz grant) or cold key (validator account key).
 
@@ -24,9 +24,9 @@ Defined in `inference-chain/proto/` alongside existing 43 tx types.
 | MsgCreateEscrow | user | Lock funds, source of data for group sampling |
 | MsgSettleEscrow | user or host | Finalize session, initiate escrow distribution |
 
-### Subnet (8 txs)
+### Devshard (8 txs)
 
-Defined in the subnet package's own proto files. No shared types with mainnet protos.
+Defined in the devshard package's own proto files. No shared types with mainnet protos.
 
 | Tx | Proposer | Purpose |
 |----|----------|---------|
@@ -39,7 +39,7 @@ Defined in the subnet package's own proto files. No shared types with mainnet pr
 | MsgRevealSeed | host | Reveal validation seed during finalizing round |
 | MsgFinalizeRound | user | Enter finalization. Irreversible, blocks further MsgStartInference |
 
-10 total (2 mainnet + 8 subnet). No governance, staking, or other chain overhead in the subnet.
+10 total (2 mainnet + 8 devshard). No governance, staking, or other chain overhead in the devshard.
 
 No separate `MsgInvalidateInference`. Invalidation is the result of a challenge voting round: `MsgValidation(valid=false)` opens the vote, `MsgValidationVote` collects votes, majority decides.
 
@@ -48,7 +48,7 @@ MsgTimeoutInference is user-proposed with votes from other hosts as evidence. Th
 
 ## Package Structure
 
-Top-level Go module: `subnet/` at repo root. Imported by `decentralized-api` as a library.
+Top-level Go module: `devshard/` at repo root. Imported by `decentralized-api` as a library.
 
 ### Both Roles in One Library
 
@@ -61,11 +61,11 @@ User-specific: create MsgStartInference, sequence diffs, round-robin host select
 A single Go test can create 30 host nodes and 1 user node, drive a full session, and verify everything in-process. When we need a JS/Python client later, the Go library is the reference and the wire protocol is the contract.
 
 ```
-subnet/
+devshard/
   go.mod                    # standalone module, deps: go-ethereum/crypto, protobuf. no cosmos-sdk
   engine.go                 # InferenceEngine, ValidationEngine interfaces (contract with dapi)
   types.go                  # ExecuteRequest, ExecuteResult, ValidateRequest, ValidateResult
-  proto/                    # subnet-specific proto definitions
+  proto/                    # devshard-specific proto definitions
   types/                    # generated proto types + domain types
   state/                    # state machine: apply diffs, verify nonces, track balances
   host/                     # host role: request handling, signing, gossip, inclusion enforcement
@@ -77,22 +77,22 @@ subnet/
 
 decentralized-api/
   internal/
-    subnet/
-      engine_adapter.go     # implements subnet.InferenceEngine using broker + completionapi
-      validation_adapter.go # implements subnet.ValidationEngine using broker + compareLogits
-      router.go             # mounts /subnet/v1/ routes, wires adapters to subnet host
+    devshard/
+      engine_adapter.go     # implements devshard.InferenceEngine using broker + completionapi
+      validation_adapter.go # implements devshard.ValidationEngine using broker + compareLogits
+      router.go             # mounts /devshard/v1/ routes, wires adapters to devshard host
 ```
 
-The engine interfaces at the subnet root are the contract between subnet and dapi. They define what the subnet needs from the ML node infrastructure without importing any dapi or cosmos-sdk types. dapi adapters implement them by wrapping existing broker, completionapi, and validation logic.
+The engine interfaces at the devshard root are the contract between devshard and dapi. They define what the devshard needs from the ML node infrastructure without importing any dapi or cosmos-sdk types. dapi adapters implement them by wrapping existing broker, completionapi, and validation logic.
 
 Module boundary enforces no cosmos-sdk at compile time. During development, dapi uses a replace directive:
 
 ```
 // decentralized-api/go.mod
-replace subnet => ../subnet
+replace devshard => ../devshard
 ```
 
-First release: `decentralized-api` imports `subnet/` and mounts a new echo router group on the existing public server port, e.g. `/subnet/v1/`. The user flow is available as a Go client library (`subnet/user`) for integration tests and future standalone client tooling.
+First release: `decentralized-api` imports `devshard/` and mounts a new echo router group on the existing public server port, e.g. `/devshard/v1/`. The user flow is available as a Go client library (`devshard/user`) for integration tests and future standalone client tooling.
 
 
 ## State Machine
@@ -232,7 +232,7 @@ If any diff fails validation (bad signature, bad nonce, malformed tx), reject th
 
 ### Timestamp and Request Validation
 
-Nonce is the subnet's block height -- the authoritative ordering. The state machine is deterministic: same diffs at same nonces produce the same state on every host.
+Nonce is the devshard's block height -- the authoritative ordering. The state machine is deterministic: same diffs at same nonces produce the same state on every host.
 
 Wall-clock time is a local observable, not consensus truth. Different hosts have different clocks.
 
@@ -314,22 +314,22 @@ Each step uses the same primitive: diffs in round-robin order.
 
 ## Interface Boundaries
 
-Every subnet subpackage exposes a minimal interface in a dedicated `interface.go` file. The full subnet must be testable without mainnet, dapi, or containers.
+Every devshard subpackage exposes a minimal interface in a dedicated `interface.go` file. The full devshard must be testable without mainnet, dapi, or containers.
 
 ### Mainnet Boundary
 
-`MainnetBridge` (7 methods, full definition with types in Chain Data Requirements below). Both host and user use it, but all calls are expensive by design. The subnet derives everything it can locally (slot assignment from deterministic function of app_hash/escrow_id/validator_weights, signature verification from cached public keys) and only queries the bridge for what it cannot compute (escrow existence, validator info, warm key authorization).
+`MainnetBridge` (7 methods, full definition with types in Chain Data Requirements below). Both host and user use it, but all calls are expensive by design. The devshard derives everything it can locally (slot assignment from deterministic function of app_hash/escrow_id/validator_weights, signature verification from cached public keys) and only queries the bridge for what it cannot compute (escrow existence, validator info, warm key authorization).
 
-Bridge calls are batched at session start. During the session, the only bridge call is warm key verification on cache miss (host rotates warm key mid-session). This is rare but possible. The bridge adapter can target any mainnet data source: local chain client (dapi), public REST endpoint, or dedicated RPC. REST is preferred for the bridge adapter -- the data is small and infrequent, and it avoids proto coupling between subnet and chain. The chain already exposes REST via grpc-gateway (standard Cosmos SDK). A JS/Python user SDK implements the bridge adapter with plain HTTP + JSON.
+Bridge calls are batched at session start. During the session, the only bridge call is warm key verification on cache miss (host rotates warm key mid-session). This is rare but possible. The bridge adapter can target any mainnet data source: local chain client (dapi), public REST endpoint, or dedicated RPC. REST is preferred for the bridge adapter -- the data is small and infrequent, and it avoids proto coupling between devshard and chain. The chain already exposes REST via grpc-gateway (standard Cosmos SDK). A JS/Python user SDK implements the bridge adapter with plain HTTP + JSON.
 
-In production, `decentralized-api` provides an implementation that talks to the local chain node. In tests, a struct literal with preset return values drives the full subnet through any scenario.
+In production, `decentralized-api` provides an implementation that talks to the local chain node. In tests, a struct literal with preset return values drives the full devshard through any scenario.
 
 ### Per-Package Interfaces
 
 Each subpackage defines its own interface file. The package never imports concrete implementations from sibling packages directly. Wiring happens at the top level.
 
 ```
-subnet/
+devshard/
   bridge/interface.go        # MainnetBridge
   state/interface.go         # StateMachine (apply diffs, verify nonces)
   storage/interface.go       # Storage (already defined above)
@@ -341,7 +341,7 @@ This means any component can be replaced with a test double. A test can run the 
 
 ### In-Process Unit Tests
 
-The target: a Go test file that creates a subnet session, sends inference requests, collects signatures, and settles -- all in-process, all deterministic. All nodes run in the same process, no network I/O. The test constructs the dependency graph manually:
+The target: a Go test file that creates a devshard session, sends inference requests, collects signatures, and settles -- all in-process, all deterministic. All nodes run in the same process, no network I/O. The test constructs the dependency graph manually:
 
 ```go
 bridge := &FakeBridge{escrows: map[string]EscrowInfo{...}}
@@ -349,7 +349,7 @@ store  := storage.NewMemory()
 signer := signing.NewSecp256k1(privateKey)
 gossip := &NoOpGossip{}
 
-node := subnet.New(bridge, store, signer, gossip)
+node := devshard.New(bridge, store, signer, gossip)
 // now drive the full protocol with real data
 ```
 
@@ -357,7 +357,7 @@ No docker-compose, no chain binary, no dapi binary. Every scenario from README.m
 
 ### Multi-Node Integration Tests
 
-Unit tests cover one node in-process. Integration tests cover a real subnet cluster: multiple nodes running as separate processes, communicating over real HTTP, with real gossip, real storage, real signing. The only mock is `MainnetBridge`.
+Unit tests cover one node in-process. Integration tests cover a real devshard cluster: multiple nodes running as separate processes, communicating over real HTTP, with real gossip, real storage, real signing. The only mock is `MainnetBridge`.
 
 Each node is a standalone binary (or a Go test spawning goroutines with real listeners). A test harness spins up N nodes, injects escrow info through the fake bridge, then drives user traffic against the cluster. Nodes gossip to each other over localhost. Storage is real SQLite (or PostgreSQL). Signatures are real secp256k1.
 
@@ -370,14 +370,14 @@ This is the level where stress testing happens. Scenarios:
 
 The fake bridge is trivial -- a shared in-memory map protected by a mutex. It returns preset escrow data and records settlement calls. No chain, no blocks, no Cosmos SDK, but the rest of the system is production code running under production conditions.
 
-This is the key payoff of the narrow mainnet boundary: the entire subnet is real, only the 7-method bridge is fake. Stress tests hit real concurrency, real network, real disk I/O.
+This is the key payoff of the narrow mainnet boundary: the entire devshard is real, only the 7-method bridge is fake. Stress tests hit real concurrency, real network, real disk I/O.
 
 
 ## Chain Data Requirements
 
-The subnet needs a small set of data from mainnet. All of it flows through the `MainnetBridge` interface.
+The devshard needs a small set of data from mainnet. All of it flows through the `MainnetBridge` interface.
 
-### What the Subnet Needs
+### What the Devshard Needs
 
 1. Escrow info: amount, creator address, creation height, app_hash at creation.
 2. Validator list and weights for the current epoch (to derive slot assignment locally).
@@ -388,9 +388,9 @@ Slot assignment is derived locally from items 1+2 using the same `GetSlotsFromSo
 
 ### Signing and Verification
 
-Mainnet uses Cosmos SDK's secp256k1 module for signature verification. That module is heavyweight and depends on the full SDK. The subnet cannot import it (no Cosmos SDK dependency).
+Mainnet uses Cosmos SDK's secp256k1 module for signature verification. That module is heavyweight and depends on the full SDK. The devshard cannot import it (no Cosmos SDK dependency).
 
-The subnet uses `go-ethereum/crypto` for secp256k1 operations. This is the same library Ethereum has used since its initial version -- well-tested, standalone, no chain dependencies. The key operation is `ecrecover`: given a message hash and signature, recover the signer's public key and derive their address. No public key lookup needed.
+The devshard uses `go-ethereum/crypto` for secp256k1 operations. This is the same library Ethereum has used since its initial version -- well-tested, standalone, no chain dependencies. The key operation is `ecrecover`: given a message hash and signature, recover the signer's public key and derive their address. No public key lookup needed.
 
 Verification flow:
 
@@ -416,7 +416,7 @@ type WarmKeyInfo struct {
 
 Each validator has a primary URL recorded on mainnet as `participant.inference_url`. This is the entrypoint. All initial discovery goes through it.
 
-A validator may run multiple dapi instances behind this entrypoint, each capable of serving different subnets. The `/v1/identity` endpoint advertises which instances are available:
+A validator may run multiple dapi instances behind this entrypoint, each capable of serving different devshards. The `/v1/identity` endpoint advertises which instances are available:
 
 ```go
 type IdentityData struct {
@@ -433,46 +433,46 @@ type DelegateGroup struct {
 }
 ```
 
-`DelegateTAs` is an indexed list of (URL, warm key) pairs. Selection for a given subnet is deterministic:
+`DelegateTAs` is an indexed list of (URL, warm key) pairs. Selection for a given devshard is deterministic:
 
 ```
 groupIndex = hash(escrow_id, app_hash) % len(DelegateTAs)
 ```
 
-All subnet participants compute the same index for each host, so everyone agrees on which URL and warm key to use. If `DelegateTAs` is empty or has one entry, the primary URL is used (the common case at launch).
+All devshard participants compute the same index for each host, so everyone agrees on which URL and warm key to use. If `DelegateTAs` is empty or has one entry, the primary URL is used (the common case at launch).
 
 - Phase 1: single dapi, `DelegateTAs` has one entry or is omitted. No behavioral change.
-- Phase N: validator runs 4 dapi instances. Each advertises itself as a delegate group. Subnets get distributed across instances deterministically.
+- Phase N: validator runs 4 dapi instances. Each advertises itself as a delegate group. Devshards get distributed across instances deterministically.
 
 ### Discovery Flow
 
-When a subnet session starts:
+When a devshard session starts:
 
 1. The node has escrow info (from `OnEscrowCreated` notification or `GetEscrow` query).
 2. The node derives the slot assignment locally from (app_hash, escrow_id, validator weights).
 3. For each validator in the assignment, the node fetches `/v1/identity` from the validator's primary URL (from `participant.inference_url` on chain, provided by `GetValidatorInfo`).
 4. The response includes `DelegateTAs`. The node selects the entry at `hash(escrow_id, app_hash) % len(DelegateTAs)`.
-5. That entry's URL becomes the communication endpoint and its warm key becomes the expected signer for that host in this subnet.
+5. That entry's URL becomes the communication endpoint and its warm key becomes the expected signer for that host in this devshard.
 
 Step 3 happens once per session start, not per request. The result is cached for the session lifetime.
 
 ### MainnetBridge Interface
 
-Minimal. The subnet derives everything it can locally and only asks the bridge what it cannot compute.
+Minimal. The devshard derives everything it can locally and only asks the bridge what it cannot compute.
 
 ```go
 type MainnetBridge interface {
-    // Notifications: mainnet -> subnet
+    // Notifications: mainnet -> devshard
     OnEscrowCreated(escrow EscrowInfo) error
     OnSettlementProposed(escrowID string, stateRoot []byte, nonce uint64) error
     OnSettlementFinalized(escrowID string) error
 
-    // Queries: subnet -> mainnet
+    // Queries: devshard -> mainnet
     GetEscrow(escrowID string) (*EscrowInfo, error)
     GetValidatorInfo(validatorAddress string) (*ValidatorInfo, error)
     VerifyWarmKey(warmAddress, validatorAddress string) (*WarmKeyInfo, error)
 
-    // Actions: subnet -> mainnet
+    // Actions: devshard -> mainnet
     SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
 }
 
@@ -503,7 +503,7 @@ type WarmKeyInfo struct {
 
 Full storage design is in [storage.md](./storage.md). Summary of key decisions:
 
-Single SQLite file, WAL mode. All sessions share one `subnet.db`. Sessions are logically separated by `escrow_id`. Three tables: `sessions` (metadata), `diffs` (append-only log), `signatures` (async arrival). Write serialization via goroutine + buffered channel. Reads are concurrent.
+Single SQLite file, WAL mode. All sessions share one `devshard.db`. Sessions are logically separated by `escrow_id`. Three tables: `sessions` (metadata), `diffs` (append-only log), `signatures` (async arrival). Write serialization via goroutine + buffered channel. Reads are concurrent.
 
 EscrowState is a deterministic function of the ordered sequence of diffs applied from nonce 1 to latest_nonce. The state machine owns the in-memory state; storage persists diffs. On restart, diffs are replayed through the state machine to reconstruct state.
 
@@ -557,26 +557,26 @@ Total cost per inference request: K=10 outbound HTTP calls with ~100 byte body. 
 
 ### Endpoints
 
-See [API Surface](#api-surface) for all subnet endpoints including gossip routes.
+See [API Surface](#api-surface) for all devshard endpoints including gossip routes.
 
 No new ports. No peer discovery (group is deterministic from mainnet). Connection pooling with short idle timeout handles the 10 calls per request without accumulation.
 
 ### Future Optimization
 
-K=10 random peers over REST is the simplest correct approach. Gossip can be optimized independently of the rest of the system since the interface is just "notify peers about nonce N." Possible future directions: libp2p gossipsub, QUIC transport, adaptive K based on group size, or persistent WebSocket connections within a session. None of these affect the subnet state machine or storage layer.
+K=10 random peers over REST is the simplest correct approach. Gossip can be optimized independently of the rest of the system since the interface is just "notify peers about nonce N." Possible future directions: libp2p gossipsub, QUIC transport, adaptive K based on group size, or persistent WebSocket connections within a session. None of these affect the devshard state machine or storage layer.
 
 
 ## API Surface
 
-All routes mounted on the existing dapi public server under `/subnet/v1/`. No new ports. Group members are known from mainnet slot assignment, each has a public URL.
+All routes mounted on the existing dapi public server under `/devshard/v1/`. No new ports. Group members are known from mainnet slot assignment, each has a public URL.
 
 ### Request Authentication
 
 All POST endpoints include sender authentication in HTTP headers:
 
 ```
-X-Subnet-Signature: <hex>
-X-Subnet-Timestamp: <unix>
+X-Devshard-Signature: <hex>
+X-Devshard-Timestamp: <unix>
 ```
 
 Signature covers `sha256(escrow_id || request_body || timestamp_bytes)`. Receiver recovers the sender's address via ecrecover, verifies it belongs to a group member (host-to-host endpoints) or the escrow creator (user-to-host endpoints), and checks the timestamp is within bounds (+-30s). Requests failing authentication are rejected before any body processing.
@@ -586,10 +586,10 @@ For `/chat/completions`, diff signatures already authenticate the user. The head
 ### Inference Request
 
 ```
-POST /subnet/v1/sessions/{escrow_id}/chat/completions
+POST /devshard/v1/sessions/{escrow_id}/chat/completions
 ```
 
-Main endpoint. User sends OpenAI-compatible request body with subnet extensions:
+Main endpoint. User sends OpenAI-compatible request body with devshard extensions:
 
 ```json
 {
@@ -606,7 +606,7 @@ Main endpoint. User sends OpenAI-compatible request body with subnet extensions:
 Host applies diffs, validates nonce ordering and round-robin assignment, executes inference via InferenceEngine. Response is a streaming SSE stream identical to OpenAI format. After the stream completes, host returns state signature and mempool in a final SSE event:
 
 ```json
-{"type": "subnet_meta", "signature": "<hex>", "mempool": [...]}
+{"type": "devshard_meta", "signature": "<hex>", "mempool": [...]}
 ```
 
 During finalizing rounds: same endpoint, same format, but no `messages` field and no MsgStartInference in diffs. Host processes diffs (MsgRevealSeed, remaining txs), returns signature + mempool.
@@ -614,10 +614,10 @@ During finalizing rounds: same endpoint, same format, but no `messages` field an
 ### Timeout Verification
 
 ```
-POST /subnet/v1/sessions/{escrow_id}/verify-timeout
+POST /devshard/v1/sessions/{escrow_id}/verify-timeout
 ```
 
-User requests timeout verification from non-executor hosts. Authenticated via `X-Subnet-Signature` (see Request Authentication). Host verifies the sender is the escrow creator before contacting executor.
+User requests timeout verification from non-executor hosts. Authenticated via `X-Devshard-Signature` (see Request Authentication). Host verifies the sender is the escrow creator before contacting executor.
 
 Host contacts executor, assesses validity, returns signed vote.
 
@@ -641,12 +641,12 @@ Host contacts executor, assesses validity, returns signed vote.
 
 Vote signature covers: `(escrow_id, inference_id, reason, vote, host_timestamp)`. See README.md Timeout Verification for the full flow per reason type.
 
-During verification, the verifying host contacts the executor to forward prompt data (reason=refused) or check for MsgFinishInference (reason=execution). This uses existing subnet endpoints -- the host sends diffs to the executor via `/chat/completions` or fetches state via `/diffs`.
+During verification, the verifying host contacts the executor to forward prompt data (reason=refused) or check for MsgFinishInference (reason=execution). This uses existing devshard endpoints -- the host sends diffs to the executor via `/chat/completions` or fetches state via `/diffs`.
 
 ### Gossip
 
 ```
-POST /subnet/v1/sessions/{escrow_id}/gossip/nonce
+POST /devshard/v1/sessions/{escrow_id}/gossip/nonce
 ```
 
 Nonce propagation. Sent to K=10 random group members after processing a user request.
@@ -663,7 +663,7 @@ Nonce propagation. Sent to K=10 random group members after processing a user req
 `state_hash` and `state_signature` enable equivocation detection. If a host sees different state hashes for the same nonce, it requests diffs from both sources.
 
 ```
-POST /subnet/v1/sessions/{escrow_id}/gossip/txs
+POST /devshard/v1/sessions/{escrow_id}/gossip/txs
 ```
 
 Lazy tx propagation. Sent only when host-proposed txs are not included by the user after K rounds.
@@ -680,13 +680,13 @@ Each tx in `txs` carries `proposer_sig` -- the proposer's signature over the ser
 ### State Recovery
 
 ```
-GET /subnet/v1/sessions/{escrow_id}/diffs?from_nonce=N&to_nonce=M
+GET /devshard/v1/sessions/{escrow_id}/diffs?from_nonce=N&to_nonce=M
 ```
 
 Fetch diffs for state recovery. Used by hosts that detected a gap via nonce gossip, by hosts preparing for host-initiated settlement, and by users reconnecting after disconnect.
 
 ```
-GET /subnet/v1/sessions/{escrow_id}/mempool
+GET /devshard/v1/sessions/{escrow_id}/mempool
 ```
 
 Fetch host's unsettled proposed transactions for this session. Fallback when lazy gossip fails. Returns all transactions in the host's mempool: both the host's own proposed txs and txs received from other hosts via gossip. Each tx carries `proposer_sig` from its original proposer.
@@ -746,7 +746,7 @@ If the user disappears, any group member can submit MsgSettleEscrow after a time
 
 ## ML Node Integration
 
-The subnet reuses the existing dapi infrastructure for ML node interaction. Two interfaces defined in the subnet package, implemented by dapi as thin adapters over existing code. Zero cosmos-sdk in subnet, minimal changes in dapi.
+The devshard reuses the existing dapi infrastructure for ML node interaction. Two interfaces defined in the devshard package, implemented by dapi as thin adapters over existing code. Zero cosmos-sdk in devshard, minimal changes in dapi.
 
 ### What dapi Already Has
 
@@ -757,14 +757,14 @@ Inference execution and validation re-execution share the same core: send an Ope
 - `broker/` -- ML node locking, retry on transport/5xx errors, model-based node selection (`DoWithLockedNodeHTTPRetry`, `LockNode`).
 - `internal/validation/inference_validation.go` -- `validateWithPayloads()` re-executes inference with enforced tokens, `compareLogits()` computes similarity score. Core logic is pure compute, only depends on node URL and payloads.
 
-Chain-coupled parts that the subnet does NOT need: MsgStartInference/MsgFinishInference/MsgValidation chain transactions (subnet tracks its own state), transfer agent logic, escrow validation. Authz verification is still needed for warm key grants.
+Chain-coupled parts that the devshard does NOT need: MsgStartInference/MsgFinishInference/MsgValidation chain transactions (devshard tracks its own state), transfer agent logic, escrow validation. Authz verification is still needed for warm key grants.
 
-### Subnet Interfaces
+### Devshard Interfaces
 
-Defined at the subnet module root (`subnet/engine.go`, `subnet/types.go`). These are the contract between subnet and dapi.
+Defined at the devshard module root (`devshard/engine.go`, `devshard/types.go`). These are the contract between devshard and dapi.
 
 ```go
-// subnet/engine.go
+// devshard/engine.go
 
 // InferenceEngine executes inference on an ML node.
 // Implemented by dapi using existing broker + completionapi.
@@ -780,7 +780,7 @@ type ValidationEngine interface {
 ```
 
 ```go
-// subnet/types.go
+// devshard/types.go
 
 type ExecuteRequest struct {
     Model       string
@@ -812,15 +812,15 @@ type ValidateResult struct {
 
 ### dapi Adapters
 
-Adapters live in dapi, not in the subnet package. Each wraps existing functions with no modifications to the originals.
+Adapters live in dapi, not in the devshard package. Each wraps existing functions with no modifications to the originals.
 
 ```
 decentralized-api/
   internal/
-    subnet/
+    devshard/
       engine_adapter.go       # implements InferenceEngine
       validation_adapter.go   # implements ValidationEngine
-      router.go               # mounts /subnet/v1/ routes, wires adapters
+      router.go               # mounts /devshard/v1/ routes, wires adapters
 ```
 
 InferenceEngine adapter (~50-80 lines):
@@ -840,25 +840,25 @@ ValidationEngine adapter (~40-60 lines):
 
 ### Integration Point
 
-The subnet mounts on the existing dapi server as a new echo router group:
+The devshard mounts on the existing dapi server as a new echo router group:
 
 ```go
-// decentralized-api/internal/subnet/router.go
+// decentralized-api/internal/devshard/router.go
 
 func Mount(group *echo.Group, engine InferenceEngine, validator ValidationEngine, ...) {
-    host := subnet.NewHost(engine, validator, storage, signer, ...)
+    host := devshard.NewHost(engine, validator, storage, signer, ...)
     group.POST("/sessions/:escrow_id/chat/completions", host.HandleInference)
     group.POST("/sessions/:escrow_id/gossip/nonce", host.HandleNonceGossip)
     group.POST("/sessions/:escrow_id/gossip/txs", host.HandleTxGossip)
 }
 ```
 
-The dapi server startup wires the adapters and mounts the group at `/subnet/v1/`. The subnet handler receives user requests with diffs, applies them to subnet state, calls `InferenceEngine.Execute()`, creates MsgFinishInference for subnet state, signs the new state, returns signature + streaming response.
+The dapi server startup wires the adapters and mounts the group at `/devshard/v1/`. The devshard handler receives user requests with diffs, applies them to devshard state, calls `InferenceEngine.Execute()`, creates MsgFinishInference for devshard state, signs the new state, returns signature + streaming response.
 
 
 ## Attack Vectors
 
-Documented in `subnet/docs/attacks.md`. Each attack gets one section:
+Documented in `devshard/docs/attacks.md`. Each attack gets one section:
 header names the attack, body lists mitigations as a numbered list.
 Add new entries there when identifying new vectors.
 

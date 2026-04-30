@@ -20,30 +20,34 @@ type PoCParamsV2 struct {
 
 // PoCInitGenerateRequestV2 represents the request body for /api/v1/inference/pow/init/generate.
 type PoCInitGenerateRequestV2 struct {
-	BlockHash   string      `json:"block_hash"`
-	BlockHeight int64       `json:"block_height"`
-	PublicKey   string      `json:"public_key"`
-	NodeId      int         `json:"node_id"`
-	NodeCount   int         `json:"node_count"`
-	Params      PoCParamsV2 `json:"params"`
-	URL         string      `json:"url,omitempty"`
+	BlockHash      string      `json:"block_hash"`
+	BlockHeight    int64       `json:"block_height"`
+	PublicKey      string      `json:"public_key"`
+	NodeId         int         `json:"node_id"`
+	NodeCount      int         `json:"node_count"`
+	Params         PoCParamsV2 `json:"params"`
+	URL            string      `json:"url,omitempty"`
+	PocStrongerRng bool        `json:"poc_stronger_rng,omitempty"`
+	// PocStrongerRng should be in PocParamsV2, but vllm code forbids extra fields in the params object, so for
+	// backwards compatibility we put it at the top level.
 	// batch_size is intentionally omitted - MLNode will use its default
 }
 
 // PoCGenerateRequestV2 represents the request body for /api/v1/inference/pow/generate.
 // Used for both generation (nonces only) and validation (with validation.artifacts).
 type PoCGenerateRequestV2 struct {
-	BlockHash   string            `json:"block_hash"`
-	BlockHeight int64             `json:"block_height"`
-	PublicKey   string            `json:"public_key"`
-	NodeId      int               `json:"node_id"`
-	NodeCount   int               `json:"node_count"`
-	Nonces      []int64           `json:"nonces"`
-	Params      PoCParamsV2       `json:"params"`
-	Wait        bool              `json:"wait,omitempty"`
-	URL         string            `json:"url,omitempty"`
-	Validation  *ValidationV2     `json:"validation,omitempty"`
-	StatTest    *StatTestParamsV2 `json:"stat_test,omitempty"`
+	BlockHash      string            `json:"block_hash"`
+	BlockHeight    int64             `json:"block_height"`
+	PublicKey      string            `json:"public_key"`
+	NodeId         int               `json:"node_id"`
+	NodeCount      int               `json:"node_count"`
+	Nonces         []int64           `json:"nonces"`
+	Params         PoCParamsV2       `json:"params"`
+	Wait           bool              `json:"wait,omitempty"`
+	URL            string            `json:"url,omitempty"`
+	Validation     *ValidationV2     `json:"validation,omitempty"`
+	StatTest       *StatTestParamsV2 `json:"stat_test,omitempty"`
+	PocStrongerRng bool              `json:"poc_stronger_rng,omitempty"`
 	// batch_size is intentionally omitted - MLNode will use its default
 }
 

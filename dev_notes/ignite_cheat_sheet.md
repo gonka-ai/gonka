@@ -1,4 +1,7 @@
 # Ignite Cheat Sheet
+
+Ensure you're using [v28.11.0](https://github.com/ignite/cli/releases/tag/v28.11.0).
+
 Some tips for how to use Cosmos Ignite to update and create things:
 
 ## Add new store object:

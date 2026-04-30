@@ -164,6 +164,39 @@ func TestVerificationCacheEdgeCases(t *testing.T) {
 	assert.NotNil(t, cache.Get(1))
 }
 
+func TestVerificationCacheDelete(t *testing.T) {
+	cache := NewVerificationCache()
+
+	result1 := &VerificationResult{EpochID: 10, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING}
+	result2 := &VerificationResult{EpochID: 11, DkgPhase: types.DKGPhase_DKG_PHASE_COMPLETED}
+	cache.Store(result1)
+	cache.Store(result2)
+
+	cache.Delete(10)
+
+	assert.Nil(t, cache.Get(10))
+	assert.Equal(t, result2, cache.Get(11))
+}
+
+func TestProcessDKGFailedClearsVerificationCache(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+	blsManager.cache.Store(&VerificationResult{EpochID: 77, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING})
+	blsManager.cache.Store(&VerificationResult{EpochID: 78, DkgPhase: types.DKGPhase_DKG_PHASE_VERIFYING})
+
+	event := &chainevents.JSONRPCResponse{
+		Result: chainevents.Result{
+			Events: map[string][]string{
+				"inference.bls.EventDKGFailed.epoch_id": {"77"},
+			},
+		},
+	}
+
+	err := blsManager.ProcessDKGFailed(event)
+	assert.NoError(t, err)
+	assert.Nil(t, blsManager.GetVerificationResult(77))
+	assert.NotNil(t, blsManager.GetVerificationResult(78))
+}
+
 func TestVerifierCacheIntegration(t *testing.T) {
 	blsManager := NewBlsManager(createMockCosmosClient())
 
@@ -372,4 +405,53 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 	err = blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEpochEvent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse epoch_id")
+}
+
+func TestRecomputeAggregatedSharesFromConsensusValidDealers(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+
+	var d0s0, d0s1, d1s0, d1s1 fr.Element
+	d0s0.SetUint64(1)
+	d0s1.SetUint64(2)
+	d1s0.SetUint64(10)
+	d1s1.SetUint64(20)
+
+	result := &VerificationResult{
+		EpochID:   42,
+		SlotRange: [2]uint32{0, 1},
+		DealerShares: [][]fr.Element{
+			{d0s0, d0s1},
+			{d1s0, d1s1},
+		},
+		ValidDealers:     []bool{true, false},
+		AggregatedShares: []fr.Element{d1s0, d1s1}, // intentionally wrong baseline
+	}
+
+	blsManager.recomputeAggregatedSharesFromConsensusValidDealers(result)
+
+	assert.Len(t, result.AggregatedShares, 2)
+	assert.Equal(t, d0s0.String(), result.AggregatedShares[0].String())
+	assert.Equal(t, d0s1.String(), result.AggregatedShares[1].String())
+}
+
+func TestRecomputeAggregatedSharesFromConsensusValidDealers_MismatchNoChange(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+
+	var s0 fr.Element
+	s0.SetUint64(7)
+
+	result := &VerificationResult{
+		EpochID:   43,
+		SlotRange: [2]uint32{0, 0},
+		DealerShares: [][]fr.Element{
+			{s0},
+			{s0},
+		},
+		ValidDealers:     []bool{true}, // mismatched length
+		AggregatedShares: []fr.Element{s0},
+	}
+
+	before := result.AggregatedShares[0].String()
+	blsManager.recomputeAggregatedSharesFromConsensusValidDealers(result)
+	assert.Equal(t, before, result.AggregatedShares[0].String())
 }

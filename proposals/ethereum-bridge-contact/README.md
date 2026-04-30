@@ -168,6 +168,12 @@ function checkAndHandleTimeout() external  // Callable by anyone
 
 **Timeout:** 30 days without new epochs triggers automatic admin control.
 
+### Access Control & Multisig Deployment
+
+The `owner` role controls two privileged functions — `setGroupKey()` and `resetToNormalOperation()` — both gated by `onlyAdminControl`, meaning they are only callable in `ADMIN_CONTROL` state (triggered by a 30-day epoch timeout or a BLS key conflict). They are unreachable during normal bridge operation.
+
+The contract will be deployed with a **multisig wallet as owner** (no single EOA), eliminating single-key risk for these admin-state scenarios.
+
 ### View Functions
 
 ```solidity

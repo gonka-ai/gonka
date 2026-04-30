@@ -111,6 +111,8 @@ func TestStartPoCNodeCommandV2_Success(t *testing.T) {
 	assert.Equal(t, 1, mockClient.GetPowStatusV2Called, "GetPowStatusV2() should be called for idempotency check")
 	assert.Equal(t, 0, mockClient.StopPowV2Called, "StopPowV2() should NOT be called (status is IDLE)")
 	assert.Equal(t, 1, mockClient.InitGenerateV2Called, "InitGenerateV2() should be called once")
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, "http://localhost:8080/callback/test-model", mockClient.LastInitGenerateV2Req.URL)
 }
 
 // TestStartPoCNodeCommandV2_AlreadyGenerating verifies idempotency - if already generating, return success without restart.
@@ -145,6 +147,30 @@ func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	assert.Equal(t, 0, mockClient.InitGenerateV2Called, "InitGenerateV2() should NOT be called (already generating)")
 }
 
+func TestStartPoCNodeCommandV2_EncodesCallbackModelID(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	broker := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, broker)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 1000,
+		BlockHash:   "test-block-hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "org/model-b",
+		SeqLen:      256,
+	}
+
+	result := cmd.Execute(context.Background(), worker)
+
+	assert.True(t, result.Succeeded)
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, "http://localhost:8080/callback/org%252Fmodel-b", mockClient.LastInitGenerateV2Req.URL)
+}
+
 // TestStopPowV2_MockBehavior verifies the mock StopPowV2 works correctly.
 func TestStopPowV2_MockBehavior(t *testing.T) {
 	mockClient := mlnodeclient.NewMockClient()
@@ -156,4 +182,34 @@ func TestStopPowV2_MockBehavior(t *testing.T) {
 	assert.Equal(t, "OK", resp.Status, "Status should be OK")
 	assert.Len(t, resp.Results, 1, "Should have one backend result")
 	assert.Equal(t, "stopped", resp.Results[0].Status, "Backend status should be stopped")
+}
+
+// TestStartPoCNodeCommandV2_StrongerRngPropagated verifies that PocStrongerRng is forwarded to InitGenerateV2.
+func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
+	node := createTestNode("test-node-rng")
+	mockClient := mlnodeclient.NewMockClient()
+	broker := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-rng", node, mockClient, broker)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight:    1000,
+		BlockHash:      "test-hash",
+		PubKey:         "test-pub",
+		CallbackUrl:    "http://localhost/cb",
+		TotalNodes:     3,
+		Model:          "test-model",
+		SeqLen:         256,
+		PocStrongerRng: true,
+	}
+
+	result := cmd.Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	require.Equal(t, 1, mockClient.InitGenerateV2Called)
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.True(t, mockClient.LastInitGenerateV2Req.PocStrongerRng, "PocStrongerRng must be forwarded to InitGenerateV2")
 }

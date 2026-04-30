@@ -1,13 +1,18 @@
 services:
   mlnode-308:
     # ghcr.io/product-science/mlnode:3.0.12-post6-blackwell
-    image: ghcr.io/product-science/mlnode:3.0.12-post6
+    image: ghcr.io/gonka-ai/mlnode:3.0.13
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
       - VLLM_ATTENTION_BACKEND=FLASHINFER
+      - POC_BATCH_SIZE_DEFAULT=32
+      # Warning: more risk of false positives
+      # DEEPGEMM MoE: ~+20% PoC on Qwen3-235B / 4xB200
+      # - VLLM_USE_DEEP_GEMM=1
+      # - VLLM_MOE_USE_DEEP_GEMM=1
     deploy:
       resources:
         reservations:

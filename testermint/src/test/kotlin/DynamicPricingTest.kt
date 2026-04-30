@@ -53,21 +53,22 @@ class DynamicPricingTest : TestermintTest() {
         logSection("DPTEST: BLOCK_START - Starting load generation at block $startBlock")
 
         // Generate high load to trigger price increase using regular inference requests
-        // Strategy: Single batch of 20 regular inferences for high utilization testing
-        // Regular requests generate ~85 tokens each (20 × 85 = 1,700 tokens vs 1,800 capacity = 94% utilization)
+        // Strategy: Single batch of 30 regular inferences to exceed stability zone upper bound (60%)
+        // Mock response yields 63 tokens each; need >17 successes (17×63=1071 < 60% of 1800)
+        // to clear the threshold. 30 requests provide margin for bandwidth-limiter 429 rejections.
         val loadGenerationStart = System.currentTimeMillis()
-        logSection("DPTEST: LOAD_START - Generating 20 regular parallel inferences for 94% utilization")
+        logSection("DPTEST: LOAD_START - Generating 30 regular parallel inferences to exceed stability zone")
 
         val allLoadResults = runParallelInferencesWithResults(
             genesis = genesis,
-            count = 20,  // 20 inferences for 94% utilization (high overload)
+            count = 30,  // 30 inferences: even with ~30% rejection rate, enough succeed to cross 60% utilization
             waitForBlocks = 4,  // Optimized from performance test
             maxConcurrentRequests = 200,  // Proven working configuration
             inferenceRequest = inferenceRequestObject  // Back to regular size requests
         )
 
         val loadGenerationEnd = System.currentTimeMillis()
-        logSection("DPTEST: LOAD_COMPLETE - Generated ${allLoadResults.size}/20 regular inferences in ${loadGenerationEnd - loadGenerationStart}ms")
+        logSection("DPTEST: LOAD_COMPLETE - Generated ${allLoadResults.size}/30 regular inferences in ${loadGenerationEnd - loadGenerationStart}ms")
 
         val successfulLoadResults = allLoadResults.filter { it.actualCost != null }
         logSection("DPTEST: LOAD_SUCCESS - ${successfulLoadResults.size} successful inferences")

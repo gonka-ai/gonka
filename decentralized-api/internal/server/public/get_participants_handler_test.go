@@ -22,8 +22,12 @@ import (
 
 type fakeQueryServer struct {
 	types.UnimplementedQueryServer
-	firstPage  []types.ParticipantWithBalance
-	secondPage []types.ParticipantWithBalance
+	firstPage                   []types.ParticipantWithBalance
+	secondPage                  []types.ParticipantWithBalance
+	participantByAddressResp    *types.QueryGetParticipantResponse
+	accountByAddressResp        *types.QueryAccountByAddressResponse
+	lastParticipantQueryAddress string
+	lastAccountQueryAddress     string
 }
 
 func (f *fakeQueryServer) ParticipantsWithBalances(ctx context.Context, req *types.QueryParticipantsWithBalancesRequest) (*types.QueryParticipantsWithBalancesResponse, error) {
@@ -39,6 +43,22 @@ func (f *fakeQueryServer) ParticipantsWithBalances(ctx context.Context, req *typ
 		Pagination:   &query.PageResponse{NextKey: nil},
 		BlockHeight:  12345,
 	}, nil
+}
+
+func (f *fakeQueryServer) Participant(_ context.Context, req *types.QueryGetParticipantRequest) (*types.QueryGetParticipantResponse, error) {
+	f.lastParticipantQueryAddress = req.Index
+	if f.participantByAddressResp != nil {
+		return f.participantByAddressResp, nil
+	}
+	return &types.QueryGetParticipantResponse{}, nil
+}
+
+func (f *fakeQueryServer) AccountByAddress(_ context.Context, req *types.QueryAccountByAddressRequest) (*types.QueryAccountByAddressResponse, error) {
+	f.lastAccountQueryAddress = req.Address
+	if f.accountByAddressResp != nil {
+		return f.accountByAddressResp, nil
+	}
+	return &types.QueryAccountByAddressResponse{}, nil
 }
 
 func startBufGRPCServer(t *testing.T, srv types.QueryServer) (*grpc.ClientConn, func()) {
@@ -92,6 +112,84 @@ func TestGetAllParticipants_PaginationAndPinnedHeight(t *testing.T) {
 	require.Len(t, dto.Participants, 150)
 	require.Equal(t, "addr000", dto.Participants[0].Id)
 	require.Equal(t, int64(42), dto.Participants[0].Balance)
+
+	mc.AssertExpectations(t)
+}
+
+func TestGetAccountByAddress_HappyPath(t *testing.T) {
+	const address = "gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqy2m5g"
+
+	fq := &fakeQueryServer{
+		accountByAddressResp: &types.QueryAccountByAddressResponse{
+			Pubkey:  "test-pubkey",
+			Balance: 0,
+			Denom:   "ngonka",
+		},
+	}
+	conn, cleanup := startBufGRPCServer(t, fq)
+	defer cleanup()
+
+	mc := &cosmosclient.MockCosmosMessageClient{}
+	mc.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
+
+	e := echo.New()
+	s := &Server{e: e, recorder: mc}
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/accounts/"+address, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("address")
+	c.SetParamValues(address)
+
+	require.NoError(t, s.getAccountByAddress(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var dto AccountDto
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	require.Equal(t, "test-pubkey", dto.Pubkey)
+	require.Equal(t, int64(0), dto.Balance)
+	require.Equal(t, "ngonka", dto.Denom)
+	require.Equal(t, address, fq.lastAccountQueryAddress)
+
+	mc.AssertExpectations(t)
+}
+
+func TestGetParticipantByAddress_HappyPath(t *testing.T) {
+	const address = "gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqy2m5g"
+
+	fq := &fakeQueryServer{
+		participantByAddressResp: &types.QueryGetParticipantResponse{
+			Participant: types.Participant{
+				Address:      address,
+				InferenceUrl: "http://node:8080",
+				Status:       types.ParticipantStatus_ACTIVE,
+			},
+		},
+	}
+	conn, cleanup := startBufGRPCServer(t, fq)
+	defer cleanup()
+
+	mc := &cosmosclient.MockCosmosMessageClient{}
+	mc.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
+
+	e := echo.New()
+	s := &Server{e: e, recorder: mc}
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/participants/"+address, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("address")
+	c.SetParamValues(address)
+
+	require.NoError(t, s.getParticipantByAddress(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response types.QueryGetParticipantResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Equal(t, address, response.Participant.Address)
+	require.Equal(t, "http://node:8080", response.Participant.InferenceUrl)
+	require.Equal(t, types.ParticipantStatus_ACTIVE, response.Participant.Status)
+	require.Equal(t, address, fq.lastParticipantQueryAddress)
 
 	mc.AssertExpectations(t)
 }

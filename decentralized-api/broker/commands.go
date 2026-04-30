@@ -83,18 +83,6 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			stateCopy.ReconcileInfo = &reconcileInfoCopy
 		}
 
-		if nodeWithState.State.TrainingTask != nil {
-			trainingTaskCopy := *nodeWithState.State.TrainingTask // shallow copy of struct
-
-			if nodeWithState.State.TrainingTask.NodeRanks != nil {
-				trainingTaskCopy.NodeRanks = make(map[string]int, len(nodeWithState.State.TrainingTask.NodeRanks))
-				for k, v := range nodeWithState.State.TrainingTask.NodeRanks {
-					trainingTaskCopy.NodeRanks[k] = v
-				}
-			}
-			stateCopy.TrainingTask = &trainingTaskCopy
-		}
-
 		nodeResponses = append(nodeResponses, NodeResponse{
 			Node:  nodeCopy,
 			State: stateCopy,
@@ -144,23 +132,6 @@ func NewSyncNodesCommand() SyncNodesCommand {
 
 func (s SyncNodesCommand) GetResponseChannelCapacity() int {
 	return cap(s.Response)
-}
-
-type LockNodesForTrainingCommand struct {
-	NodeIds []string
-	// FIXME: maybe add description which exact nodes were busy?
-	Response chan bool
-}
-
-func NewLockNodesForTrainingCommand(nodeIds []string) LockNodesForTrainingCommand {
-	return LockNodesForTrainingCommand{
-		NodeIds:  nodeIds,
-		Response: make(chan bool, 2),
-	}
-}
-
-func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
-	return cap(c.Response)
 }
 
 type PocStatus string

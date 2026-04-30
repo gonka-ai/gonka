@@ -57,10 +57,15 @@ Key runtime environment variables:
 | `EXPLORER_SERVICE_NAME` | explorer | Service name for explorer upstream |
 | `KEY_NAME` | - | Optional stack key; when set, service names are prefixed as `<KEY_NAME>-*` |
 | `RESOLVER` | 127.0.0.11 | DNS resolver for dynamic upstream resolution (override if needed) |
+| `PROXY_REAL_IP_FROM` | - | Space-separated trusted proxy CIDRs/IPs for nginx `set_real_ip_from` (for example `172.18.0.1/32`). Empty by default (real IP parsing disabled). |
+| `PROXY_REAL_IP_HEADER` | `X-Forwarded-For` | Header used by nginx `real_ip_header` when trusted proxies are configured. |
+| `PROXY_REAL_IP_RECURSIVE` | off | Value for nginx `real_ip_recursive`. Keep `off` unless you explicitly trust a multi-hop proxy chain. |
 | `DISABLE_GONKA_API` | false | Set to `true` to disable `/api/v1/` and `/v1/` routes |
 | `DISABLE_CHAIN_RPC` | false | Set to `true` to disable `/chain-rpc/` routes |
 | `DISABLE_CHAIN_API` | false | Set to `true` to disable `/chain-api/` routes |
 | `DISABLE_CHAIN_GRPC` | false | Set to `true` to disable `/chain-grpc/` routes |
+| `DISABLE_VALIDATOR_WHITELIST` | true | Unset or `true` keeps participant IP whitelist sync off (all clients use per-IP rate limits only). Set to `false` to sync participant inference IPs into nginx (separate rate-limit key and log tag `INT` vs `EXT`). |
+| `DISABLE_FAIL2BAN` | true | Unset or `true` disables automatic IP banning from access logs. Set to `false` to enable scoring (401/403/400 by default) and temporary nginx bans via `geo $is_banned`. Validator IPs are exempt from bans when validator whitelist sync is enabled (`DISABLE_VALIDATOR_WHITELIST=false`). |
 | `CORS_ALLOW_ORIGIN` | * | Allowed Origin for CORS headers. Defaults to wildcard `*`. |
 | `GLOBAL_RATE_LIMIT_RPS` | 1000 | Global "safety net" rate limit (default: 1000). |
 | `GLOBAL_RATE_UNIT` | s | Unit for global limit (`s` or `m`). |
@@ -90,6 +95,53 @@ Key runtime environment variables:
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
 
 > **Note**: `GLOBAL_RATE_LIMIT_RPS` acts as a total ceiling for a single IP. It must be higher than your highest specific limit (e.g. higher than Exempt limit).
+
+### Trusted Proxy / Real IP
+
+- `PROXY_REAL_IP_FROM` should include only the immediate proxy/LB hop(s) that connect to nginx.
+- Prefer exact addresses or narrow CIDRs (`/32`) over broad private ranges.
+- If your proxy is directly internet-facing (no upstream LB/reverse-proxy), leave `PROXY_REAL_IP_FROM` unset.
+
+Example (Docker bridge gateway):
+
+```
+PROXY_REAL_IP_FROM=172.18.0.1/32
+PROXY_REAL_IP_HEADER=X-Forwarded-For
+PROXY_REAL_IP_RECURSIVE=off
+```
+
+#### Recommended Setup By Scenario
+
+Direct Docker proxy on a server (no ingress/LB in front):
+
+```
+# Best: disable real_ip parsing (nginx already sees client IP)
+PROXY_REAL_IP_FROM=
+PROXY_REAL_IP_HEADER=X-Forwarded-For
+PROXY_REAL_IP_RECURSIVE=off
+```
+
+Docker proxy behind one trusted ingress/LB hop:
+
+```
+# Trust only the ingress/LB source IP(s)
+PROXY_REAL_IP_FROM=172.18.0.1/32
+PROXY_REAL_IP_HEADER=X-Forwarded-For
+PROXY_REAL_IP_RECURSIVE=off
+```
+
+Docker proxy behind multiple trusted proxy layers:
+
+```
+# Only if every proxy in chain is trusted and controlled by you
+PROXY_REAL_IP_FROM=10.42.16.0/20 10.42.32.0/20
+PROXY_REAL_IP_HEADER=X-Forwarded-For
+PROXY_REAL_IP_RECURSIVE=on
+```
+
+Avoid:
+- Broad defaults like `10.0.0.0/8 172.16.0.0/12 192.168.0.0/16`.
+- Enabling `PROXY_REAL_IP_RECURSIVE=on` unless you intentionally trust a full proxy chain.
 
 ### Modes
 

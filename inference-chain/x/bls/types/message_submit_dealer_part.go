@@ -10,9 +10,9 @@ var _ sdk.Msg = &MsgSubmitDealerPart{}
 
 const (
 	commitmentCompressedG2Len             = 96
-	maxDealerPartCommitmentsCount         = 4096
-	maxEncryptedSharesParticipantsCount   = 4096
-	maxEncryptedSharesPerParticipantCount = 16384
+	MaxDealerPartCommitmentsCount         = 4096
+	MaxEncryptedSharesParticipantsCount   = 4096
+	MaxEncryptedSharesPerParticipantCount = 16384
 	maxEncryptedShareCiphertextLen        = 1024
 )
 
@@ -29,7 +29,7 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 	if len(m.Commitments) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "commitments must be non-empty")
 	}
-	if len(m.Commitments) > maxDealerPartCommitmentsCount {
+	if len(m.Commitments) > MaxDealerPartCommitmentsCount {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "commitments exceeds maximum allowed count")
 	}
 	for i, commitment := range m.Commitments {
@@ -51,14 +51,14 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 	if len(m.EncryptedSharesForParticipants) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants must be non-empty")
 	}
-	if len(m.EncryptedSharesForParticipants) > maxEncryptedSharesParticipantsCount {
+	if len(m.EncryptedSharesForParticipants) > MaxEncryptedSharesParticipantsCount {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants exceeds maximum allowed count")
 	}
 	for i, participantShares := range m.EncryptedSharesForParticipants {
 		if len(participantShares.EncryptedShares) == 0 {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares must be non-empty", i)
 		}
-		if len(participantShares.EncryptedShares) > maxEncryptedSharesPerParticipantCount {
+		if len(participantShares.EncryptedShares) > MaxEncryptedSharesPerParticipantCount {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares exceeds maximum allowed count", i)
 		}
 		for j, shareCiphertext := range participantShares.EncryptedShares {

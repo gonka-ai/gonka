@@ -24,21 +24,24 @@ message Params {
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
-  SubnetEscrowParams subnet_escrow_params = 14;
+  DevshardEscrowParams devshard_escrow_params = 14;
+  reserved "subnet_escrow_params";
+  FeeParams fee_params = 15;
+  DelegationParams delegation_params = 16;
 }
 
 message GenesisOnlyParams {
   int64 total_supply = 1;
   int64 originator_supply = 2;
-  int64 top_reward_amount = 3;
+  reserved 3;
+  reserved "top_reward_amount";
   int64 standard_reward_amount = 4;
   int64 pre_programmed_sale_amount = 5;
-  int32 top_rewards = 6;
+  reserved 6;
+  reserved "top_rewards";
   string supply_denom = 7;
-  int64 top_reward_period = 8;
-  int64 top_reward_payouts = 9;
-  int64 top_reward_payouts_per_miner = 10;
-  int64 top_reward_max_duration = 11;
+  reserved 8, 9, 10, 11;
+  reserved "top_reward_period", "top_reward_payouts", "top_reward_payouts_per_miner", "top_reward_max_duration";
   Decimal max_individual_power_percentage = 12;
   bool genesis_guardian_enabled = 13;
   int64 genesis_guardian_network_maturity_threshold = 14;
@@ -51,11 +54,12 @@ message TokenomicsParams {
   Decimal subsidy_reduction_interval = 1;
   Decimal subsidy_reduction_amount = 2;
   Decimal current_subsidy_percentage = 3;
-  Decimal top_reward_allowed_failure = 4;
-  int64 top_miner_poc_qualification = 5;
+  reserved 4, 5;
+  reserved "top_reward_allowed_failure", "top_miner_poc_qualification";
   uint64 work_vesting_period = 6;
   uint64 reward_vesting_period = 7;
-  uint64 top_miner_vesting_period = 8;
+  reserved 8;
+  reserved "top_miner_vesting_period";
 }
 
 message EpochParams {
@@ -104,6 +108,7 @@ message ValidationParams {
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
   Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
   bool claim_validation_enabled = 25; // Enables claim-time validation checks in MsgClaimRewards
+  string logprobs_mode = 26; // allowed: "processed_logprobs", "raw_logprobs"
 }
 
 message PoCModelParams {
@@ -130,20 +135,31 @@ message PoCStatTestParams {
   Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
 }
 
+message PoCModelConfig {
+  option (gogoproto.equal) = true;
+  string model_id = 1;
+  int64 seq_len = 2;
+  PoCStatTestParams stat_test = 3;
+  Decimal weight_scale_factor = 4;
+  uint64 penalty_start_epoch = 5;
+}
+
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
-  Decimal weight_scale_factor = 4;
+  Decimal weight_scale_factor = 4 [deprecated = true]; // Deprecated: use models[*].weight_scale_factor
   PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
-  string model_id = 6;  // Model identifier for PoC generation/validation
-  int64 seq_len = 7;    // Sequence length for PoC generation/validation
+  string model_id = 6 [deprecated = true];  // Deprecated: use models[*].model_id
+  int64 seq_len = 7 [deprecated = true];    // Deprecated: use models[*].seq_len
   bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
   bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
-  PoCStatTestParams stat_test = 10;  // Statistical test parameters for V2 validation
+  PoCStatTestParams stat_test = 10 [deprecated = true];  // Deprecated: use models[*].stat_test
   uint32 validation_slots = 11;  // Number of slots sampled per participant (0 = disabled)
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
+  bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
+  repeated PoCModelConfig models = 14;
 }
 
 message Decimal {
@@ -328,8 +344,34 @@ message TransferAgentAccessParams {
   repeated string allowed_transfer_addresses = 1;
 }
 
-// SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
-message SubnetEscrowParams {
+// DelegationParams defines parameters for PoC delegation in the multi-model system.
+message DelegationParams {
+  option (gogoproto.equal) = true;
+  int64 deploy_window = 1; // blocks before start_poc for delegation snapshot
+  Decimal refusal_penalty = 2; // REFUSE penalty applied per model after penalty_start_epoch
+  Decimal no_participation_penalty = 3; // NONE penalty applied per model after penalty_start_epoch
+  Decimal delegation_share = 4; // DELEGATE share transferred per model after penalty_start_epoch
+  Decimal w_threshold = 5; // min fraction of total weight from members for eligibility
+  int64 v_min = 6; // min hosts with non-zero consensus weight
+  Decimal cap_factor = 7; // max group weight as multiple of members' weight in other groups
+  string initial_model_id = 8; // model exempt from group cap; set during migration to the founding model
+  // Max fraction of voting power any single host can hold within a single
+  // model group (after delegation is resolved). Prevents a host that
+  // attracts many delegations from unilaterally controlling validation
+  // within a model's slot allocation. Zero means disabled.
+  Decimal max_model_voting_power_percentage = 9;
+}
+
+// DevshardApprovedVersion describes a single approved devshard binary.
+message DevshardApprovedVersion {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  string binary = 2;
+  string sha256 = 3;
+}
+
+// DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.
+message DevshardEscrowParams {
   option (gogoproto.equal) = true;
   uint64 min_amount = 1;
   uint64 max_amount = 2;
@@ -337,4 +379,17 @@ message SubnetEscrowParams {
   uint32 group_size = 4;
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
+  repeated DevshardApprovedVersion approved_versions = 7;
+}
+
+// FeeParams defines governance-controlled parameters for consensus-level
+// transaction fee enforcement. Adjustable via MsgUpdateParams governance proposal.
+message FeeParams {
+  option (gogoproto.equal) = true;
+  // Minimum gas price in ngonka enforced at consensus level.
+  uint64 min_gas_price_ngonka = 1;
+  // Extra gas consumed on the first MsgPoCV2StoreCommit per participant per epoch.
+  uint64 base_validation_gas = 2;
+  // Additional gas consumed per unit of Count delta in MsgPoCV2StoreCommit.
+  uint64 gas_per_poc_count = 3;
 }

@@ -31,7 +31,6 @@ type MockClient struct {
 	NodeStateError        error
 	InferenceHealthError  error
 	InferenceUpError      error
-	StartTrainingError    error
 	GetGPUDevicesError    error
 	GetGPUDriverError     error
 	CheckModelStatusError error
@@ -39,17 +38,12 @@ type MockClient struct {
 	DeleteModelError      error
 	ListModelsError       error
 	GetDiskSpaceError     error
-	InitGenerateV1Error   error
-	InitValidateV1Error   error
-	ValidateBatchV1Error  error
-	GetPowStatusV1Error   error
 
 	// Call tracking
 	StopCalled             int
 	NodeStateCalled        int
 	InferenceHealthCalled  int
 	InferenceUpCalled      int
-	StartTrainingCalled    int
 	GetGPUDevicesCalled    int
 	GetGPUDriverCalled     int
 	CheckModelStatusCalled int
@@ -58,38 +52,20 @@ type MockClient struct {
 	ListModelsCalled       int
 	GetDiskSpaceCalled     int
 
-	// PoC v1 call tracking
-	InitGenerateV1Called  int
-	InitValidateV1Called  int
-	ValidateBatchV1Called int
-	GetPowStatusV1Called  int
-
 	// PoC v2 call tracking
 	InitGenerateV2Called int
 	GenerateV2Called     int
 	GetPowStatusV2Called int
 	StopPowV2Called      int
 
-	// Track Init/Validate attempts (for testing)
-	InitValidateCalled int
-
-	// PoC v1 state
-	PowStatusV1 PowStateV1 // V1 status enum
-
 	// PoC v2 state
 	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
 	// Capture parameters
-	LastInferenceModel string
-	LastInferenceArgs  []string
-	LastTrainingParams struct {
-		TaskId         uint64
-		Participant    string
-		NodeId         string
-		MasterNodeAddr string
-		Rank           int
-		WorldSize      int
-	}
+	LastInferenceModel    string
+	LastInferenceArgs     []string
+	LastInitGenerateV2Req *PoCInitGenerateRequestV2
+	LastGenerateV2Req     *PoCGenerateRequestV2
 	LastModelStatusCheck *Model
 	LastModelDownload    *Model
 	LastModelDelete      *Model
@@ -165,7 +141,6 @@ func (m *MockClient) Reset() {
 	m.NodeStateError = nil
 	m.InferenceHealthError = nil
 	m.InferenceUpError = nil
-	m.StartTrainingError = nil
 	m.GetGPUDevicesError = nil
 	m.GetGPUDriverError = nil
 	m.CheckModelStatusError = nil
@@ -173,17 +148,11 @@ func (m *MockClient) Reset() {
 	m.DeleteModelError = nil
 	m.ListModelsError = nil
 	m.GetDiskSpaceError = nil
-	m.InitGenerateV1Error = nil
-	m.InitValidateV1Error = nil
-	m.ValidateBatchV1Error = nil
-	m.GetPowStatusV1Error = nil
 
 	m.StopCalled = 0
 	m.NodeStateCalled = 0
-	m.InitValidateCalled = 0
 	m.InferenceHealthCalled = 0
 	m.InferenceUpCalled = 0
-	m.StartTrainingCalled = 0
 	m.GetGPUDevicesCalled = 0
 	m.GetGPUDriverCalled = 0
 	m.CheckModelStatusCalled = 0
@@ -191,10 +160,6 @@ func (m *MockClient) Reset() {
 	m.DeleteModelCalled = 0
 	m.ListModelsCalled = 0
 	m.GetDiskSpaceCalled = 0
-	m.InitGenerateV1Called = 0
-	m.InitValidateV1Called = 0
-	m.ValidateBatchV1Called = 0
-	m.GetPowStatusV1Called = 0
 	m.InitGenerateV2Called = 0
 	m.GenerateV2Called = 0
 	m.GetPowStatusV2Called = 0
@@ -202,18 +167,11 @@ func (m *MockClient) Reset() {
 
 	m.LastInferenceModel = ""
 	m.LastInferenceArgs = nil
-	m.LastTrainingParams = struct {
-		TaskId         uint64
-		Participant    string
-		NodeId         string
-		MasterNodeAddr string
-		Rank           int
-		WorldSize      int
-	}{}
+	m.LastInitGenerateV2Req = nil
+	m.LastGenerateV2Req = nil
 	m.LastModelStatusCheck = nil
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
-	m.PowStatusV1 = ""
 	m.PowStatusV2 = ""
 }
 
@@ -273,92 +231,6 @@ func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
 		return []string{m.LastInferenceModel}, nil
 	}
 	return nil, nil
-}
-
-func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	m.StartTrainingCalled++
-	m.LastTrainingParams.TaskId = taskId
-	m.LastTrainingParams.Participant = participant
-	m.LastTrainingParams.NodeId = nodeId
-	m.LastTrainingParams.MasterNodeAddr = masterNodeAddr
-	m.LastTrainingParams.Rank = rank
-	m.LastTrainingParams.WorldSize = worldSize
-	if m.StartTrainingError != nil {
-		return m.StartTrainingError
-	}
-	m.CurrentState = MlNodeState_TRAIN
-	return nil
-}
-
-func (m *MockClient) GetTrainingStatus(ctx context.Context) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	// Not implemented for now
-	return nil
-}
-
-// PoC v1 mock methods
-
-func (m *MockClient) InitGenerateV1(ctx context.Context, dto InitDtoV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.InitGenerateV1Called++
-	if m.InitGenerateV1Error != nil {
-		return m.InitGenerateV1Error
-	}
-
-	m.CurrentState = MlNodeState_POW
-	m.PowStatusV1 = PowStateV1Generating
-	m.InferenceIsHealthy = false
-	return nil
-}
-
-func (m *MockClient) InitValidateV1(ctx context.Context, dto InitDtoV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.InitValidateV1Called++
-	m.InitValidateCalled++
-	if m.InitValidateV1Error != nil {
-		return m.InitValidateV1Error
-	}
-
-	m.CurrentState = MlNodeState_POW
-	m.PowStatusV1 = PowStateV1Validating
-	return nil
-}
-
-func (m *MockClient) ValidateBatchV1(ctx context.Context, batch ProofBatchV1) error {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.ValidateBatchV1Called++
-	if m.ValidateBatchV1Error != nil {
-		return m.ValidateBatchV1Error
-	}
-	return nil
-}
-
-func (m *MockClient) GetPowStatusV1(ctx context.Context) (*PowStatusResponseV1, error) {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	m.GetPowStatusV1Called++
-	if m.GetPowStatusV1Error != nil {
-		return nil, m.GetPowStatusV1Error
-	}
-
-	status := m.PowStatusV1
-	if status == "" {
-		status = PowStateV1Idle
-	}
-	return &PowStatusResponseV1{
-		Status:             status,
-		IsModelInitialized: m.CurrentState == MlNodeState_POW,
-	}, nil
 }
 
 // GPU operations
@@ -526,19 +398,6 @@ func getModelKey(model Model) string {
 	return model.HfRepo + ":latest"
 }
 
-// Getter methods for thread-safe access
-func (m *MockClient) GetInitGenerateCalled() int {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	return m.InitGenerateV1Called
-}
-
-func (m *MockClient) GetInitValidateCalled() int {
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	return m.InitValidateCalled
-}
-
 // PoC v2 mock methods
 
 func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV2) (*PoCInitGenerateResponseV2, error) {
@@ -546,6 +405,8 @@ func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequ
 	defer m.Mu.Unlock()
 
 	m.InitGenerateV2Called++
+	reqCopy := req
+	m.LastInitGenerateV2Req = &reqCopy
 
 	// Update mock state: node is now in PoC generation mode, not inference
 	m.CurrentState = MlNodeState_POW
@@ -564,6 +425,8 @@ func (m *MockClient) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (
 	defer m.Mu.Unlock()
 
 	m.GenerateV2Called++
+	reqCopy := req
+	m.LastGenerateV2Req = &reqCopy
 
 	// Default success response
 	return &PoCGenerateResponseV2{

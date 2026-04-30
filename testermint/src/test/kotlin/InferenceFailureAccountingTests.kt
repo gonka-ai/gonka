@@ -1,5 +1,10 @@
 import com.productscience.*
+import com.productscience.data.AppState
+import com.productscience.data.EpochParams
+import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceState
 import com.productscience.data.InferenceStatus
+import com.productscience.data.spec
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
@@ -8,7 +13,10 @@ class InferenceFailureAccountingTests : TestermintTest() {
 
     @Test
     fun `verify failed inference is refunded`() {
-        val (cluster, genesis) = initCluster()
+        val (cluster, genesis) = initCluster(config = extendedExpiryWindowConfig, reboot = true)
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
+        }
         logSection("Waiting to clear claims")
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference that will fail")
@@ -69,4 +77,19 @@ class InferenceFailureAccountingTests : TestermintTest() {
 
     }
 
+    private val extendedExpiryWindowSpec = spec {
+        this[AppState::inference] = spec<InferenceState> {
+            this[InferenceState::params] = spec<InferenceParams> {
+                this[InferenceParams::epochParams] = spec<EpochParams> {
+                    // Keep the inference window long enough for timeout expiry to happen
+                    // before the next PoC cycle starts.
+                    this[EpochParams::epochLength] = 80L
+                }
+            }
+        }
+    }
+
+    private val extendedExpiryWindowConfig = inferenceConfig.copy(
+        genesisSpec = inferenceConfig.genesisSpec?.merge(extendedExpiryWindowSpec) ?: extendedExpiryWindowSpec,
+    )
 }

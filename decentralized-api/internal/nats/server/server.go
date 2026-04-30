@@ -18,10 +18,6 @@ const (
 	TxsBatchFinishStream       = "txs_batch_finish"
 	TxsBatchValidationV2Stream = "txs_batch_validation_v2"
 
-	// V1 PoC batching streams
-	TxsBatchPocBatchStream      = "txs_batch_poc_batch"
-	TxsBatchPocValidationStream = "txs_batch_poc_validation"
-
 	storageDir    = "/root/.dapi/.nats"
 	defaultMaxAge = 24 * 60 * 60 // 24 hours
 
@@ -90,8 +86,6 @@ func (s *server) Start() error {
 		TxsBatchStartStream,
 		TxsBatchFinishStream,
 		TxsBatchValidationV2Stream,
-		TxsBatchPocBatchStream,
-		TxsBatchPocValidationStream,
 	})
 }
 

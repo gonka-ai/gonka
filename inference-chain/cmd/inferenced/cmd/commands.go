@@ -47,6 +47,7 @@ func initRootCmd(
 	)
 
 	server.AddCommands(rootCmd, app.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
+	server.AddTestnetCreatorCommand(rootCmd, newApp, addModuleInitFlags)
 
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
@@ -56,6 +57,7 @@ func initRootCmd(
 		txCommand(),
 		keys.Commands(),
 		SignatureCommands(),
+		PublishPubKeyCommand(),
 		CreateClientCommand(),
 		RegisterNewParticipantCommand(),
 		DownloadGenesisCommand(),

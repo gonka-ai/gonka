@@ -31,7 +31,7 @@ func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
 	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
 	// StakingKeeper and InferenceKeeper can be nil for basic tests
-	k, ctx := CollateralKeeperWithMock(t, bankKeeper)
+	k, ctx := CollateralKeeperWithMockAndProvider(t, bankKeeper, nil)
 
 	return k, ctx
 }
@@ -40,7 +40,7 @@ func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, C
 	ctrl := gomock.NewController(t)
 	bankKeeper := NewMockBookkeepingBankKeeper(ctrl)
 
-	k, ctx := CollateralKeeperWithMock(t, bankKeeper)
+	k, ctx := CollateralKeeperWithMockAndProvider(t, bankKeeper, nil)
 
 	mocks := CollateralMocks{
 		BankKeeper: bankKeeper,
@@ -52,6 +52,14 @@ func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, C
 func CollateralKeeperWithMock(
 	t testing.TB,
 	bankKeeper *MockBookkeepingBankKeeper,
+) (keeper.Keeper, sdk.Context) {
+	return CollateralKeeperWithMockAndProvider(t, bankKeeper, nil)
+}
+
+func CollateralKeeperWithMockAndProvider(
+	t testing.TB,
+	bankKeeper *MockBookkeepingBankKeeper,
+	collateralProvider types.RequiredCollateralProvider,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -72,6 +80,9 @@ func CollateralKeeperWithMock(
 		nil,
 		bankKeeper,
 	)
+	if collateralProvider != nil {
+		k.SetRequiredCollateralProvider(collateralProvider)
+	}
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 

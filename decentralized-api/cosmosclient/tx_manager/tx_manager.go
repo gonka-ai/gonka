@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"cosmossdk.io/math"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -51,6 +52,11 @@ const (
 	idHeader   = "TX_ID"
 
 	maxBlockTimeDrift = 120 * time.Second
+
+	// BatchGasLimit is the gas limit for batch transactions.
+	// Must not exceed NetworkDutyFeeBypassDecorator.GasCap so that fee-exempt
+	// duty transactions are not rejected by the gas cap check.
+	BatchGasLimit = 1_000_000_000
 )
 
 type TxManager interface {
@@ -76,17 +82,18 @@ type blockTimeTracker struct {
 }
 
 type manager struct {
-	ctx              context.Context
-	client           *cosmosclient.Client
-	apiAccount       *apiconfig.ApiAccount
-	txFactory        *tx.Factory
-	accountRetriever client.AccountRetriever
-	address          string
-	defaultTimeout   time.Duration
-	natsConnection   *nats.Conn
-	natsJetStream    nats.JetStreamContext
-	blockTimeTracker *blockTimeTracker
-	getHeightFunc    func() int64
+	ctx               context.Context
+	client            *cosmosclient.Client
+	apiAccount        *apiconfig.ApiAccount
+	txFactory         *tx.Factory
+	accountRetriever  client.AccountRetriever
+	address           string
+	defaultTimeout    time.Duration
+	natsConnection    *nats.Conn
+	natsJetStream     nats.JetStreamContext
+	blockTimeTracker  *blockTimeTracker
+	getHeightFunc     func() int64
+	minGasPriceNgonka int64
 }
 
 func StartTxManager(
@@ -96,6 +103,7 @@ func StartTxManager(
 	defaultTimeout time.Duration,
 	natsConnection *nats.Conn,
 	address string,
+	minGasPriceNgonka int64,
 	getHeight func() int64) (*manager, error) {
 	js, err := natsConnection.JetStream()
 	if err != nil {
@@ -114,15 +122,16 @@ func StartTxManager(
 	streamvestingtypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
-		ctx:              ctx,
-		client:           client,
-		address:          address,
-		apiAccount:       account,
-		accountRetriever: authtypes.AccountRetriever{},
-		defaultTimeout:   defaultTimeout,
-		natsConnection:   natsConnection,
-		natsJetStream:    js,
-		getHeightFunc:    getHeight,
+		ctx:               ctx,
+		client:            client,
+		address:           address,
+		apiAccount:        account,
+		accountRetriever:  authtypes.AccountRetriever{},
+		defaultTimeout:    defaultTimeout,
+		natsConnection:    natsConnection,
+		natsJetStream:     js,
+		getHeightFunc:     getHeight,
+		minGasPriceNgonka: minGasPriceNgonka,
 		blockTimeTracker: &blockTimeTracker{
 			maxBlockTimeout: 10 * time.Second,
 		},
@@ -191,7 +200,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 
 		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put in queue", types.Messages, "tx_id", id, "resend_err", err)
-			return nil, ErrTxFailedToBroadcastAndPutOnRetry
+			return nil, fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return &sdk.TxResponse{}, nil
 	}
@@ -202,8 +211,9 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 		if isRetryableBroadcastError(broadcastErr) {
 			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
 				logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+				return nil, fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
-			return nil, ErrTxFailedToBroadcastAndPutOnRetry
+			return nil, ErrTxQueuedForRetry
 		}
 		// Non-retryable broadcast error - fail immediately
 		logging.Error("SendTransactionAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
@@ -222,8 +232,9 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
 		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
 			logging.Error("tx failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
+			return nil, fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
-		return nil, ErrTxFailedToBroadcastAndPutOnRetry
+		return nil, ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
 		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, deadlineBlock); err != nil {
@@ -234,7 +245,7 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 
 	// Should never reach here, but fail safe
 	logging.Error("Unexpected classification result", types.Messages, "tx_id", id)
-	return nil, ErrTxFailedToBroadcastAndPutOnRetry
+	return nil, fmt.Errorf("unexpected broadcast classification result for tx_id %s", id)
 }
 
 func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...int64) error {
@@ -268,7 +279,7 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 
 		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, deadlineBlock); err != nil {
 			logging.Error("failed to put batch in queue", types.Messages, "tx_id", id, "resend_err", err)
-			return ErrTxFailedToBroadcastAndPutOnRetry
+			return fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return nil
 	}
@@ -279,8 +290,9 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 		if isRetryableBroadcastError(broadcastErr) {
 			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
 				logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
+				return fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
-			return ErrTxFailedToBroadcastAndPutOnRetry
+			return ErrTxQueuedForRetry
 		}
 		// Non-retryable broadcast error - fail immediately
 		logging.Error("SendBatchAsyncWithRetry: non-retryable broadcast error", types.Messages, "tx_id", id, "err", broadcastErr)
@@ -299,8 +311,9 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
 		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
 			logging.Error("batch failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
+			return fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
-		return ErrTxFailedToBroadcastAndPutOnRetry
+		return ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
 		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, deadlineBlock); err != nil {
@@ -311,7 +324,7 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 
 	// Should never reach here, but fail safe
 	logging.Error("Unexpected classification result for batch", types.Messages, "tx_id", id)
-	return ErrTxFailedToBroadcastAndPutOnRetry
+	return fmt.Errorf("unexpected broadcast classification result for batch tx_id %s", id)
 }
 
 func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
@@ -822,10 +835,47 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 	}
 	if resp.Code != 0 {
 		logging.Error("Batch broadcast failed", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "msgCount", len(msgs))
+		logFeeRelatedHint(resp.RawLog)
 	} else {
 		logging.Debug("Batch broadcast successful", types.Messages, "tx_id", id, "msgCount", len(msgs))
 	}
 	return resp, timestamp, nil
+}
+
+// logFeeRelatedHint inspects a tx broadcast error message and logs an
+// actionable hint when the failure is fee-related. Helps hosts understand
+// when they need to re-run grant-ml-ops-permissions post-upgrade to get a
+// feegrant allowance.
+func logFeeRelatedHint(rawLog string) {
+	if rawLog == "" {
+		return
+	}
+	if containsAny(rawLog, "fee-grant not found", "fee allowance", "feegrant: not found") {
+		logging.Error(
+			"Fee-grant from cold to warm key is missing or expired. Run "+
+				"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' "+
+				"to refresh the authz grants AND the feegrant allowance in one transaction.",
+			types.Messages,
+			"rawLog", rawLog,
+		)
+	}
+	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
+		logging.Error(
+			"Transaction fees are below the chain minimum. Set min_gas_price_ngonka in "+
+				"the DAPI config to at least the value of FeeParams.min_gas_price_ngonka on chain.",
+			types.Messages,
+			"rawLog", rawLog,
+		)
+	}
+}
+
+func containsAny(s string, substrs ...string) bool {
+	for _, sub := range substrs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
@@ -915,8 +965,7 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	factory := m.client.TxFactory.
 		WithAccountNumber(accountNumber).
 		WithGasAdjustment(10).
-		WithFees("").
-		WithGasPrices("").
+		WithGasPrices(fmt.Sprintf("%dngonka", m.minGasPriceNgonka)).
 		WithGas(0).
 		WithUnordered(true).
 		WithKeybase(*m.GetKeyring())
@@ -936,9 +985,28 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 
 	timestamp := getTimestamp(blockTs.UnixNano(), m.defaultTimeout)
 
-	// Gas is not charged, but without a high gas limit the transactions fail
-	unsignedTx.SetGasLimit(10000000000000)
-	unsignedTx.SetFeeAmount(sdk.Coins{})
+	// Fee amount = gas limit × gas price. Network-duty messages (validations,
+	// PoC, inference) are fee-exempt via the bypass decorator, so this fee
+	// will not be charged for exempt messages.
+	unsignedTx.SetGasLimit(BatchGasLimit)
+	if m.minGasPriceNgonka > 0 {
+		unsignedTx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", math.NewInt(BatchGasLimit*m.minGasPriceNgonka))))
+	} else {
+		unsignedTx.SetFeeAmount(sdk.Coins{})
+	}
+
+	// When the warm key signs on behalf of the cold account (authz mode),
+	// set the cold account as the fee granter so fees are deducted from the
+	// cold account's balance instead of the warm key (which is unfunded).
+	// This requires the host to have set up a feegrant allowance from cold
+	// to warm during onboarding.
+	if !m.apiAccount.IsSignerTheMainAccount() {
+		coldAddr, err := m.apiAccount.AccountAddress()
+		if err == nil {
+			unsignedTx.SetFeeGranter(coldAddr)
+		}
+	}
+
 	unsignedTx.SetUnordered(true)
 	unsignedTx.SetTimeoutTimestamp(timestamp)
 	name := m.apiAccount.SignerAccount.Name

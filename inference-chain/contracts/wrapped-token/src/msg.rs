@@ -99,7 +99,10 @@ pub enum ExecuteMsg {
     /// Special bridge withdraw function that burns tokens and triggers bridge withdrawal
     Withdraw { 
         amount: Uint128,
-        destination_address: String, // Ethereum address to receive tokens
+        /// Ethereum address to receive tokens
+        destination_address: String,
+        /// Ethereum address of the bridge contract that will process the withdrawal
+        destination_bridge_address: String,
     },
     UpdateMetadata {
         name: String,

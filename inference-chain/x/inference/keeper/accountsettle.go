@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"cosmossdk.io/log"
+	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -63,29 +64,30 @@ func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) 
 	return reward
 }
 
-// AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their aggregated MLNodes
-// by collecting MLNode data from all model-specific EpochGroup subgroups for the given epoch.
-func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string][]*types.MLNodeInfo {
-	participantMLNodes := make(map[string][]*types.MLNodeInfo)
+// AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their
+// per-model MLNodes by collecting MLNode data from all model-specific subgroups.
+// Model identity is preserved so callers can apply per-model coefficients.
+func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string]map[string][]*types.MLNodeInfo {
+	participantMLNodes := make(map[string]map[string][]*types.MLNodeInfo)
 	allEpochGroups := k.GetAllEpochGroupData(ctx)
 
 	for _, vw := range validationWeights {
-		aggregated := make([]*types.MLNodeInfo, 0)
+		modelNodes := make(map[string][]*types.MLNodeInfo)
 		for _, subgroup := range allEpochGroups {
 			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
 				continue // Skip wrong epoch or parent group
 			}
 			for _, subVw := range subgroup.ValidationWeights {
 				if subVw.MemberAddress == vw.MemberAddress {
-					aggregated = append(aggregated, subVw.MlNodes...)
+					modelNodes[subgroup.ModelId] = subVw.MlNodes
 					break
 				}
 			}
 		}
-		participantMLNodes[vw.MemberAddress] = aggregated
+		participantMLNodes[vw.MemberAddress] = modelNodes
 		k.LogInfo("Settlement: Aggregated MLNodes for participant", types.Settle,
 			"participant", vw.MemberAddress,
-			"numMLNodes", len(aggregated))
+			"numModels", len(modelNodes))
 	}
 
 	return participantMLNodes
@@ -144,8 +146,11 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Use Bitcoin-style fixed reward system with its own parameters
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
-	// Aggregate MLNodes from model-specific subgroups for preservedWeight calculation
+	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
+
+	// Extract per-model coefficients for cross-model weight aggregation
+	coefficients := modelCoefficients(params.PocParams)
 
 	// Check if this is a grace epoch and override BinomTestP0 if so
 	validationParams := params.ValidationParams
@@ -161,8 +166,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		k.LogInfo("using grace BinomTestP0", types.Settle, "epoch", currentEpochIndex)
 	}
 
-	collateralAdjustmentActive := params.CollateralParams != nil && currentEpochIndex > params.CollateralParams.GracePeriodEndEpoch
-
 	var bitcoinResult BitcoinResult
 	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(
 		allParticipants,
@@ -171,11 +174,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		validationParams,
 		settleParameters,
 		participantMLNodes,
-		collateralAdjustmentActive,
+		coefficients,
 		k.Logger(),
 	)
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
+		return err
 	}
 	if bitcoinResult.Amount < 0 {
 		k.LogError("Bitcoin reward amount is negative", types.Settle, "amount", bitcoinResult.Amount)
@@ -185,12 +189,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	rewardAmount = bitcoinResult.Amount
 	governanceRewardAmount = bitcoinResult.GovernanceAmount
 
-	err = k.MintRewardCoins(ctx, rewardAmount, "reward_distribution")
+	// Use CacheContext so all current-epoch state mutations are atomic.
+	// If any step fails (minting, balance resets, settle writes),
+	// nothing is committed and the caller sees a clean error with no partial state.
+	// Old settle cleanup runs after commit on the real context.
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+
+	err = k.MintRewardCoins(cacheCtx, rewardAmount, "reward_distribution")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
 	}
-	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)})
+	if err := k.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)}); err != nil {
+		k.LogError("Error updating tokenomics data", types.Settle, "error", err)
+		return err
+	}
 
 	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
 	// are transferred to governance instead of being redistributed to other participants.
@@ -200,7 +213,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return err
 		}
 		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
-		if err := k.BankKeeper.SendCoinsFromModuleToModule(ctx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
 			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
 			return err
 		}
@@ -216,7 +229,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		if participant.Status == types.ParticipantStatus_ACTIVE {
 			participant.EpochsCompleted += 1
 		}
-		k.SafeLogSubAccountTransaction(ctx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
+		k.SafeLogSubAccountTransaction(cacheCtx, types.ModuleName, participant.Address, "balance", participant.CoinBalance, "settling")
 		participant.CoinBalance = 0
 		participant.CurrentEpochStats.EarnedCoins = 0
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
@@ -231,12 +244,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
 			Claimed:               false,
 		}
-		err = k.SetEpochPerformanceSummary(ctx, epochPerformance)
+		err = k.SetEpochPerformanceSummary(cacheCtx, epochPerformance)
 		if err != nil {
 			return err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(ctx, participant)
+		err := k.SetParticipant(cacheCtx, participant)
 		if err != nil {
 			return err
 		}
@@ -261,18 +274,28 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 		amount.Settle.EpochIndex = currentEpochIndex
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
-		k.SetSettleAmountWithGovernanceTransfer(ctx, *amount.Settle)
+		if err := k.SetSettleAmountWithGovernanceTransfer(cacheCtx, *amount.Settle); err != nil {
+			k.LogError("Error writing settle amount", types.Settle, "error", err, "participant", amount.Settle.Participant)
+			return err
+		}
 	}
 
-	if previousEpochIndex == 0 {
-		return nil
+	// All current-epoch mutations succeeded — commit atomically.
+	writeFn()
+
+	// Old settle cleanup is independent of current-epoch settlement.
+	// A failure here should not roll back current participants' rewards.
+	if previousEpochIndex > 0 {
+		k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
+		if err := k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex); err != nil {
+			k.LogError("Error transferring old settle amounts to governance (non-fatal, will retry next epoch)",
+				types.Settle, "error", err, "previousEpochIndex", previousEpochIndex)
+			// Non-fatal: old settle cleanup is independent of current-epoch settlement.
+			// The unclaimed amounts remain in the module account and can be transferred
+			// on the next epoch's settlement pass.
+		}
 	}
 
-	k.LogInfo("Transferring old settle amounts", types.Settle, "previousEpochIndex", previousEpochIndex)
-	err = k.TransferOldSettleAmountsToGovernance(ctx, previousEpochIndex)
-	if err != nil {
-		k.LogError("Error burning old settle amounts", types.Settle, "error", err)
-	}
 	return nil
 }
 
@@ -298,4 +321,19 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 type SettleResult struct {
 	Settle *types.SettleAmount
 	Error  error
+}
+
+// modelCoefficients extracts per-model weight_scale_factor from PocParams.
+// Mirrors module.ModelCoefficients but lives in keeper to avoid circular imports.
+func modelCoefficients(pocParams *types.PocParams) map[string]mathsdk.LegacyDec {
+	coeffs := make(map[string]mathsdk.LegacyDec)
+	if pocParams == nil {
+		return coeffs
+	}
+	for _, config := range pocParams.GetModelConfigs() {
+		if config != nil && config.ModelId != "" {
+			coeffs[config.ModelId] = config.GetWeightScaleFactorDec()
+		}
+	}
+	return coeffs
 }

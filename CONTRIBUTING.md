@@ -174,6 +174,7 @@ Once a Proposal has enough clarity and support, break it into scoped Issues with
 		- How do you know this PR fixes the problem?
 		- Which components are affected?
 		- Explain how this PR was tested and attach evidence.
+		- Optional: note if you ran [ai-reviewer](https://github.com/gonka-ai/ai-reviewer) and attach non-sensitive highlights from the summary.
 	- Tag relevant reviewers using @username.
 	- PRs without a meaningful description will not be reviewed. The description is part of the contribution.
 - Review:
@@ -183,6 +184,23 @@ Once a Proposal has enough clarity and support, break it into scoped Issues with
 - Merge.
 	- PRs (involving protocol logic or architecture) must go through a governance voting process (described below). Voting follows a simple majority unless otherwise stated.
 	- Once approved, a maintainer will merge the PR.
+
+**Optional: AI-assisted self-review (`ai-reviewer`)**
+
+Before opening or updating a PR, contributors are strongly encouraged to use [gonka-ai/ai-reviewer](https://github.com/gonka-ai/ai-reviewer), a single-binary CLI for structured, repo-aware review. It runs multiple specialized review personas, such as security, correctness, architecture, and project-specific lenses, and supports primers for project context and waivers for explicit policy. It is intended to complement human review, not replace it, especially as the volume of change grows.
+It is also recommended to review the full presentation before using the tool in practice.
+
+- [Full presentation recording on Discord](https://discord.com/channels/1336477374442770503/1415622117629624362/1485979219711234058)
+- [Supplemental video](https://www.youtube.com/watch?v=N4F74vd_pKQ)
+
+**Why contributors use it**
+
+- Helps surface cross-cutting risks early, including consensus, API, and operational edge cases, by using focused review prompts rather than one generic review pass.
+- Review rules and project context can live in the repository, for example, under `.ai-review/<owner>/<repo>/` or in committed files with `ai_review` frontmatter, so feedback can stay aligned with how Gonka evolves in practice.
+- Each run writes auditable artifacts, including reports, findings, and token or cost statistics, under `.ai-review/.../runs/...`, making results inspectable and easier to debug.
+- `--dry-run` shows which personas and primers would run without calling model APIs, which is useful for validating configuration without incurring costs.
+
+**Disclaimer:** AI output can be wrong or incomplete; maintainers retain final judgment on all merges. Do not paste secrets into prompts or reports.
 
 ## From Issue to PR to reward proposal (public lifecycle)
 This project aims for an auditable flow from work request to delivery to governance recognition (when applicable).

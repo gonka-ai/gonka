@@ -35,7 +35,7 @@ var payloadRetrievalClient = &http.Client{
 }
 
 // PayloadResponse matches the executor endpoint response.
-// Used by both chain validation and subnet validation paths.
+// Used by both chain validation and devshard validation paths.
 type PayloadResponse struct {
 	InferenceId       string `json:"inference_id"`
 	PromptPayload     []byte `json:"prompt_payload"`
@@ -204,7 +204,8 @@ func RetrievePayloadsFromExecutor(
 	for _, g := range grantees.Grantees {
 		executorPubkeys = append(executorPubkeys, g.PubKey)
 	}
-	executorParticipant, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{
+	// Get executor's own pubkey
+	executorParticipant, err := queryClient.AccountByAddress(ctx, &types.QueryAccountByAddressRequest{
 		Address: executorAddress,
 	})
 	if err != nil {

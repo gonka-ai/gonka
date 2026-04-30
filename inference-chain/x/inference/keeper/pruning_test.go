@@ -428,7 +428,7 @@ func TestPoCBatchesPruningMaxLimit_MultiCall_EpochAdvanceAfterEmpty(t *testing.T
 	require.Equal(t, int64(2), st.PocBatchesPrunedEpoch)
 }
 
-func TestSubnetPruningPostPruneHook(t *testing.T) {
+func TestDevshardPruningPostPruneHook(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
@@ -437,50 +437,50 @@ func TestSubnetPruningPostPruneHook(t *testing.T) {
 	addr2 := sdk.AccAddress([]byte("addr2_______________"))
 
 	// 1. Setup data that should be cleared by PostPruneEpoch
-	// SubnetHostEpochStatsMap
-	err := k.SubnetHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr1), types.SubnetHostEpochStats{
+	// DevshardHostEpochStatsMap
+	err := k.DevshardHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr1), types.DevshardHostEpochStats{
 		Participant: addr1.String(),
 		EpochIndex:  prunedEpoch,
 	})
 	require.NoError(t, err)
-	err = k.SubnetHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr2), types.SubnetHostEpochStats{
+	err = k.DevshardHostEpochStatsMap.Set(ctx, collections.Join(prunedEpoch, addr2), types.DevshardHostEpochStats{
 		Participant: addr2.String(),
 		EpochIndex:  prunedEpoch,
 	})
 	require.NoError(t, err)
 
-	// SubnetEscrowEpochCount
-	err = k.SubnetEscrowEpochCount.Set(ctx, prunedEpoch, 10)
+	// DevshardEscrowEpochCount
+	err = k.DevshardEscrowEpochCount.Set(ctx, prunedEpoch, 10)
 	require.NoError(t, err)
 
 	// Add an escrow to the epoch to be pruned
 	escrowID := uint64(1)
-	err = k.SubnetEscrows.Set(ctx, escrowID, types.SubnetEscrow{
+	err = k.DevshardEscrows.Set(ctx, escrowID, types.DevshardEscrow{
 		Id:         escrowID,
 		EpochIndex: prunedEpoch,
 		Settled:    true,
 	})
 	require.NoError(t, err)
-	err = k.SubnetEscrowsByEpoch.Set(ctx, collections.Join(prunedEpoch, escrowID), collections.NoValue{})
+	err = k.DevshardEscrowsByEpoch.Set(ctx, collections.Join(prunedEpoch, escrowID), collections.NoValue{})
 	require.NoError(t, err)
 
 	// 2. Configure pruning
-	// SubnetPruningThreshold is 2. currentEpoch = 3 => endEpoch = 3 - 2 = 1.
+	// DevshardPruningThreshold is 2. currentEpoch = 3 => endEpoch = 3 - 2 = 1.
 	currentEpoch := int64(3)
-	// InferencePruningMax is used for SubnetPruning too
+	// InferencePruningMax is used for DevshardPruning too
 	setPruningConfig(ctx, k, PruningSettings{InferenceMaxPrune: 100})
 
 	// 3. Run first prune call - this should prune the escrow
 	require.NoError(t, k.Prune(ctx, currentEpoch))
 
 	// Verify escrow is pruned but epoch is not yet marked complete in PruningState (generic Pruner behavior)
-	_, err = k.SubnetEscrows.Get(ctx, escrowID)
+	_, err = k.DevshardEscrows.Get(ctx, escrowID)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	st, _ := k.PruningState.Get(ctx)
-	require.Equal(t, int64(0), st.SubnetPrunedEpoch)
+	require.Equal(t, int64(0), st.DevshardPrunedEpoch)
 
 	// Verify PostPruneEpoch NOT yet called (it's called when prunedForEpoch == 0)
-	count, _ := k.SubnetEscrowEpochCount.Get(ctx, prunedEpoch)
+	count, _ := k.DevshardEscrowEpochCount.Get(ctx, prunedEpoch)
 	require.Equal(t, uint64(10), count)
 
 	// 4. Run second prune call - this should verify epoch is empty and call PostPruneEpoch
@@ -488,17 +488,17 @@ func TestSubnetPruningPostPruneHook(t *testing.T) {
 
 	// Verify markers advanced
 	st, _ = k.PruningState.Get(ctx)
-	require.Equal(t, int64(1), st.SubnetPrunedEpoch)
+	require.Equal(t, int64(1), st.DevshardPrunedEpoch)
 
 	// Verify PostPruneEpoch cleared the data
-	_, err = k.SubnetEscrowEpochCount.Get(ctx, prunedEpoch)
+	_, err = k.DevshardEscrowEpochCount.Get(ctx, prunedEpoch)
 	require.ErrorIs(t, err, collections.ErrNotFound)
 
 	statsFound := false
-	iter, _ := k.SubnetHostEpochStatsMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, sdk.AccAddress](prunedEpoch))
+	iter, _ := k.DevshardHostEpochStatsMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, sdk.AccAddress](prunedEpoch))
 	if iter.Valid() {
 		statsFound = true
 	}
 	iter.Close()
-	require.False(t, statsFound, "SubnetHostEpochStats should be cleared")
+	require.False(t, statsFound, "DevshardHostEpochStats should be cleared")
 }

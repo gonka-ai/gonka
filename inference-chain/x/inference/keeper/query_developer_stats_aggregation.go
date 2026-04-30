@@ -43,16 +43,20 @@ func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *typ
 
 	summary := k.GetSummaryLastNEpochsByDeveloper(ctx, req.Developer, int(req.EpochsN))
 	return &types.QueryInferencesAndTokensStatsResponse{
-		AiTokens:             summary.TokensUsed,
-		Inferences:           int32(summary.InferenceCount),
+		AiTokens: summary.TokensUsed,
+		Inferences: clampInt32FromInt(summary.InferenceCount, func(msg string, kv ...interface{}) {
+			k.LogWarn(msg, types.Stat, kv...)
+		}),
 		ActualInferencesCost: summary.ActualCost}, nil
 }
 
 func (k Keeper) InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, req *types.QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
 	summary := k.GetSummaryLastNEpochs(ctx, int(req.EpochsN))
 	return &types.QueryInferencesAndTokensStatsResponse{
-		AiTokens:             summary.TokensUsed,
-		Inferences:           int32(summary.InferenceCount),
+		AiTokens: summary.TokensUsed,
+		Inferences: clampInt32FromInt(summary.InferenceCount, func(msg string, kv ...interface{}) {
+			k.LogWarn(msg, types.Stat, kv...)
+		}),
 		ActualInferencesCost: summary.ActualCost}, nil
 }
 
@@ -72,8 +76,10 @@ func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *t
 	k.LogInfo("InferencesAndTokensStatsByTimePeriod", types.Stat, "time_from", req.TimeFrom, "time_to", req.TimeTo)
 	summary := k.GetSummaryByTime(ctx, req.TimeFrom, req.TimeTo)
 	return &types.QueryInferencesAndTokensStatsResponse{
-		AiTokens:             summary.TokensUsed,
-		Inferences:           int32(summary.InferenceCount),
+		AiTokens: summary.TokensUsed,
+		Inferences: clampInt32FromInt(summary.InferenceCount, func(msg string, kv ...interface{}) {
+			k.LogWarn(msg, types.Stat, kv...)
+		}),
 		ActualInferencesCost: summary.ActualCost,
 	}, nil
 }
@@ -95,9 +101,11 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	statsPerModels := k.GetSummaryByModelAndTime(ctx, req.TimeFrom, req.TimeTo)
 	for modelName, summary := range statsPerModels {
 		stats = append(stats, &types.ModelStats{
-			Model:      modelName,
-			AiTokens:   summary.TokensUsed,
-			Inferences: int32(summary.InferenceCount),
+			Model:    modelName,
+			AiTokens: summary.TokensUsed,
+			Inferences: clampInt32FromInt(summary.InferenceCount, func(msg string, kv ...interface{}) {
+				k.LogWarn(msg, types.Stat, kv...)
+			}),
 		})
 	}
 	return &types.QueryInferencesAndTokensStatsByModelsResponse{StatsModels: stats}, nil

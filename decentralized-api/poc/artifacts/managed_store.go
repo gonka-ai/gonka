@@ -3,8 +3,10 @@ package artifacts
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -15,22 +17,129 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// ManagedArtifactStore wraps per-stage ArtifactStores with automatic pruning.
-//
-// Lifecycle:
-//   - Short-lived stores, one per PoC stage (poc_stage_start_block_height)
-//   - Writes go only to the newest store (via GetOrCreateStore)
-//   - Reads happen from the newest store after writes complete
-//   - Old stores are pruned when count exceeds retainCount (default 10)
-//
+// ManagedArtifactStore wraps per-(stage, model) ArtifactStores with stage-based pruning.
 // The large retention buffer ensures pruned stores are "cold" with no active use.
 type ManagedArtifactStore struct {
 	mu          sync.RWMutex
 	baseDir     string
-	stores      map[int64]*ArtifactStore // poc_stage_start_block_height -> store
-	retainCount int                      // keep newest N stores
-	cancel      context.CancelFunc       // cancels cleanup goroutine
-	flushCancel context.CancelFunc       // cancels periodic flush goroutine
+	stores      map[storeKey]*ArtifactStore
+	retainCount int
+	cancel      context.CancelFunc
+	flushCancel context.CancelFunc
+}
+
+type storeKey struct {
+	stage   int64
+	modelID string
+}
+
+type StageModelStore struct {
+	ModelID string
+	Store   *ArtifactStore
+}
+
+func (m *ManagedArtifactStore) withReadLock(fn func()) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	fn()
+}
+
+func (m *ManagedArtifactStore) withWriteLock(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fn()
+}
+
+func (m *ManagedArtifactStore) getCachedStore(key storeKey) (*ArtifactStore, bool) {
+	var (
+		store *ArtifactStore
+		ok    bool
+	)
+	m.withReadLock(func() {
+		store, ok = m.stores[key]
+	})
+	return store, ok
+}
+
+func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store *ArtifactStore) (*ArtifactStore, bool) {
+	var (
+		existing *ArtifactStore
+		loaded   bool
+	)
+	m.withWriteLock(func() {
+		existing, loaded = m.stores[key]
+		if !loaded {
+			m.stores[key] = store
+			existing = store
+		}
+	})
+	return existing, loaded
+}
+
+func (m *ManagedArtifactStore) snapshotStores() []*ArtifactStore {
+	var stores []*ArtifactStore
+	m.withReadLock(func() {
+		stores = make([]*ArtifactStore, 0, len(m.stores))
+		for _, store := range m.stores {
+			stores = append(stores, store)
+		}
+	})
+	return stores
+}
+
+func (m *ManagedArtifactStore) snapshotStageModelIDs(pocStageStartHeight int64) []string {
+	modelSet := make(map[string]struct{})
+	m.withReadLock(func() {
+		for key := range m.stores {
+			if key.stage == pocStageStartHeight {
+				modelSet[key.modelID] = struct{}{}
+			}
+		}
+	})
+
+	modelIDs := make([]string, 0, len(modelSet))
+	for modelID := range modelSet {
+		modelIDs = append(modelIDs, modelID)
+	}
+	return modelIDs
+}
+
+func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []*ArtifactStore {
+	var stores []*ArtifactStore
+	m.withWriteLock(func() {
+		for key, store := range m.stores {
+			if key.stage != pocStageStartHeight {
+				continue
+			}
+			stores = append(stores, store)
+			delete(m.stores, key)
+		}
+	})
+	return stores
+}
+
+func (m *ManagedArtifactStore) drainStores() []struct {
+	key   storeKey
+	store *ArtifactStore
+} {
+	var stores []struct {
+		key   storeKey
+		store *ArtifactStore
+	}
+	m.withWriteLock(func() {
+		stores = make([]struct {
+			key   storeKey
+			store *ArtifactStore
+		}, 0, len(m.stores))
+		for key, store := range m.stores {
+			stores = append(stores, struct {
+				key   storeKey
+				store *ArtifactStore
+			}{key: key, store: store})
+		}
+		m.stores = make(map[storeKey]*ArtifactStore)
+	})
+	return stores
 }
 
 // NewManagedArtifactStore creates a new managed store with automatic pruning.
@@ -39,7 +148,7 @@ func NewManagedArtifactStore(baseDir string, retainCount int) *ManagedArtifactSt
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &ManagedArtifactStore{
 		baseDir:     baseDir,
-		stores:      make(map[int64]*ArtifactStore),
+		stores:      make(map[storeKey]*ArtifactStore),
 		retainCount: retainCount,
 		cancel:      cancel,
 	}
@@ -47,87 +156,176 @@ func NewManagedArtifactStore(baseDir string, retainCount int) *ManagedArtifactSt
 	return m
 }
 
-// GetOrCreateStore returns the store for the given PoC stage, creating it if needed.
-func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64) (*ArtifactStore, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *ManagedArtifactStore) storeKey(pocStageStartHeight int64, modelID string) (storeKey, error) {
+	if modelID == "" {
+		return storeKey{}, fmt.Errorf("model_id is required")
+	}
+	return storeKey{stage: pocStageStartHeight, modelID: modelID}, nil
+}
 
-	if store, ok := m.stores[pocStageStartHeight]; ok {
+func (m *ManagedArtifactStore) stageDir(pocStageStartHeight int64) string {
+	return filepath.Join(m.baseDir, strconv.FormatInt(pocStageStartHeight, 10))
+}
+
+func (m *ManagedArtifactStore) modelDir(pocStageStartHeight int64, modelID string) string {
+	return filepath.Join(m.stageDir(pocStageStartHeight), encodeModelID(modelID))
+}
+
+func encodeModelID(modelID string) string {
+	return url.PathEscape(modelID)
+}
+
+func decodeModelID(encoded string) (string, error) {
+	modelID, err := url.PathUnescape(encoded)
+	if err != nil {
+		return "", fmt.Errorf("decode model_id %q: %w", encoded, err)
+	}
+	if modelID == "" {
+		return "", fmt.Errorf("decoded empty model_id")
+	}
+	return modelID, nil
+}
+
+// GetOrCreateStore returns the store for the given PoC stage/model, creating it if needed.
+func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+	key, err := m.storeKey(pocStageStartHeight, modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	if store, ok := m.getCachedStore(key); ok {
 		return store, nil
 	}
 
-	storeDir := filepath.Join(m.baseDir, strconv.FormatInt(pocStageStartHeight, 10))
+	storeDir := m.modelDir(pocStageStartHeight, modelID)
 	store, err := Open(storeDir)
 	if err != nil {
-		return nil, fmt.Errorf("open store for stage %d: %w", pocStageStartHeight, err)
+		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}
 
-	m.stores[pocStageStartHeight] = store
-	return store, nil
+	existing, loaded := m.putStoreIfAbsent(key, store)
+	if loaded {
+		_ = store.Close()
+		return existing, nil
+	}
+
+	return existing, nil
 }
 
-// GetStore returns the store for the given PoC stage, or an error if it doesn't exist.
+// GetStore returns the store for the given PoC stage/model, or an error if it doesn't exist.
 // Does not create new stores (for proof requests).
-func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64) (*ArtifactStore, error) {
-	m.mu.RLock()
-	store, ok := m.stores[pocStageStartHeight]
-	m.mu.RUnlock()
+func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+	key, err := m.storeKey(pocStageStartHeight, modelID)
+	if err != nil {
+		return nil, err
+	}
 
+	store, ok := m.getCachedStore(key)
 	if ok {
 		return store, nil
 	}
 
 	// Try to open from disk (may exist from previous run)
-	storeDir := filepath.Join(m.baseDir, strconv.FormatInt(pocStageStartHeight, 10))
+	storeDir := m.modelDir(pocStageStartHeight, modelID)
 	if _, err := os.Stat(storeDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("store for stage %d not found", pocStageStartHeight)
+		return nil, fmt.Errorf("store for stage %d model %q not found", pocStageStartHeight, modelID)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if store, ok := m.stores[pocStageStartHeight]; ok {
-		return store, nil
-	}
-
-	store, err := Open(storeDir)
+	store, err = Open(storeDir)
 	if err != nil {
-		return nil, fmt.Errorf("open store for stage %d: %w", pocStageStartHeight, err)
+		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}
 
-	m.stores[pocStageStartHeight] = store
-	return store, nil
+	existing, loaded := m.putStoreIfAbsent(key, store)
+	if loaded {
+		_ = store.Close()
+		return existing, nil
+	}
+	return existing, nil
+}
+
+func (m *ManagedArtifactStore) GetStoresForStage(pocStageStartHeight int64) ([]StageModelStore, error) {
+	modelIDs, err := m.listModelIDsForStage(pocStageStartHeight)
+	if err != nil {
+		return nil, err
+	}
+
+	stores := make([]StageModelStore, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		store, err := m.GetStore(pocStageStartHeight, modelID)
+		if err != nil {
+			return nil, err
+		}
+		stores = append(stores, StageModelStore{
+			ModelID: modelID,
+			Store:   store,
+		})
+	}
+	return stores, nil
+}
+
+func (m *ManagedArtifactStore) listModelIDsForStage(pocStageStartHeight int64) ([]string, error) {
+	modelSet := make(map[string]struct{})
+
+	stageDir := m.stageDir(pocStageStartHeight)
+	entries, err := os.ReadDir(stageDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read stage dir for stage %d: %w", pocStageStartHeight, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		modelID, err := decodeModelID(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		modelSet[modelID] = struct{}{}
+	}
+
+	for _, modelID := range m.snapshotStageModelIDs(pocStageStartHeight) {
+		modelSet[modelID] = struct{}{}
+	}
+
+	modelIDs := make([]string, 0, len(modelSet))
+	for modelID := range modelSet {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+	return modelIDs, nil
 }
 
 // PruneStore removes the store directory and closes any open store.
 func (m *ManagedArtifactStore) PruneStore(pocStageStartHeight int64) error {
-	m.mu.Lock()
-	if store, ok := m.stores[pocStageStartHeight]; ok {
-		store.Close()
-		delete(m.stores, pocStageStartHeight)
-	}
-	m.mu.Unlock()
+	stores := m.removeStageStores(pocStageStartHeight)
 
-	storeDir := filepath.Join(m.baseDir, strconv.FormatInt(pocStageStartHeight, 10))
+	var errs []error
+	for _, store := range stores {
+		if err := store.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	storeDir := m.stageDir(pocStageStartHeight)
 	if err := os.RemoveAll(storeDir); err != nil {
-		return fmt.Errorf("remove store dir: %w", err)
+		errs = append(errs, fmt.Errorf("remove store dir: %w", err))
 	}
 
 	logging.Info("Pruned artifact store", types.PoC, "height", pocStageStartHeight)
+	if len(errs) > 0 {
+		return fmt.Errorf("prune store errors: %v", errs)
+	}
 	return nil
 }
 
 func (m *ManagedArtifactStore) Flush() error {
-	m.mu.RLock()
-	stores := make([]*ArtifactStore, 0, len(m.stores))
-	for _, s := range m.stores {
-		stores = append(stores, s)
-	}
-	m.mu.RUnlock()
+	stores := m.snapshotStores()
 
 	var errs []error
 	for _, s := range stores {
+		if s == nil {
+			continue
+		}
 		if err := s.Flush(); err != nil {
 			errs = append(errs, err)
 		}
@@ -142,14 +340,22 @@ func (m *ManagedArtifactStore) Flush() error {
 // StartPeriodicFlush flushes all open stores at the specified interval.
 // Can be stopped with StopPeriodicFlush().
 func (m *ManagedArtifactStore) StartPeriodicFlush(interval time.Duration) {
-	m.mu.Lock()
-	if m.flushCancel != nil {
-		m.mu.Unlock()
-		return // already running
+	var (
+		ctx context.Context
+		ok  bool
+	)
+	m.withWriteLock(func() {
+		if m.flushCancel != nil {
+			return
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		m.flushCancel = cancel
+		ok = true
+	})
+	if !ok {
+		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	m.flushCancel = cancel
-	m.mu.Unlock()
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -169,12 +375,12 @@ func (m *ManagedArtifactStore) StartPeriodicFlush(interval time.Duration) {
 
 // StopPeriodicFlush stops the periodic flush goroutine and performs a final flush.
 func (m *ManagedArtifactStore) StopPeriodicFlush() {
-	m.mu.Lock()
-	if m.flushCancel != nil {
-		m.flushCancel()
-		m.flushCancel = nil
-	}
-	m.mu.Unlock()
+	m.withWriteLock(func() {
+		if m.flushCancel != nil {
+			m.flushCancel()
+			m.flushCancel = nil
+		}
+	})
 
 	// Final flush to persist any remaining data
 	if err := m.Flush(); err != nil {
@@ -193,16 +399,17 @@ func (m *ManagedArtifactStore) Close() error {
 		m.flushCancel()
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	stores := m.drainStores()
 
 	var errs []error
-	for height, store := range m.stores {
-		if err := store.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close stage %d: %w", height, err))
+	for _, item := range stores {
+		if item.store == nil {
+			continue
+		}
+		if err := item.store.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close stage %d model %q: %w", item.key.stage, item.key.modelID, err))
 		}
 	}
-	m.stores = make(map[int64]*ArtifactStore)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("close errors: %v", errs)

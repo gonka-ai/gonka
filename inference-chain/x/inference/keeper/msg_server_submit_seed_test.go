@@ -23,7 +23,7 @@ func TestSubmitSeed(t *testing.T) {
 			inputMsg: &types.MsgSubmitSeed{
 				Creator:    testutil.Executor,
 				EpochIndex: 10,
-				Signature:  "signature",
+				Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 			},
 			expectErr:    nil,
 			expectCalled: true,
@@ -34,10 +34,32 @@ func TestSubmitSeed(t *testing.T) {
 			inputMsg: &types.MsgSubmitSeed{
 				Creator:    testutil.Creator,
 				EpochIndex: 11,
-				Signature:  "signature",
+				Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 			},
 			expectErr:    nil,
 			expectCalled: true,
+		},
+		{
+			name:                "unsuccessful submission for previous epoch",
+			effectiveEpochIndex: 10,
+			inputMsg: &types.MsgSubmitSeed{
+				Creator:    testutil.Creator,
+				EpochIndex: 9,
+				Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			},
+			expectErr:    types.ErrEpochIndexOutOfRange,
+			expectCalled: false,
+		},
+		{
+			name:                "unsuccessful submission for 2 epochs ahead",
+			effectiveEpochIndex: 10,
+			inputMsg: &types.MsgSubmitSeed{
+				Creator:    testutil.Creator,
+				EpochIndex: 12,
+				Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			},
+			expectErr:    types.ErrEpochIndexOutOfRange,
+			expectCalled: false,
 		},
 	}
 

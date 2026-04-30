@@ -98,6 +98,21 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	err = k.SetPocValidationV2(ctx, validation)
 	require.NoError(t, err)
 
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 100,
+		SnapshotHeight:      100,
+		ModelVotingPowers: []*types.ModelVotingPowers{
+			{
+				ModelId: "",
+				VotingPowers: []*types.VotingPowerEntry{
+					{Address: validatorAccAddress1, VotingPower: 100},
+					{Address: validatorAccAddress2, VotingPower: 201},
+				},
+			},
+		},
+		TotalNetworkWeight: 301,
+	}))
+
 	// Set up participant
 	participant := types.Participant{
 		Index:        testutil.Executor2,
@@ -124,7 +139,6 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Call the function
 	result := am.ComputeNewWeights(ctx, upcomingEpoch)
 
-	// Verify the result
 	require.Equal(t, 1, len(result))
 }
 
@@ -394,10 +408,10 @@ func TestComputeNewWeights(t *testing.T) {
 				}
 				k.SetRandomSeed(ctx, seed)
 			},
-			expectedParticipants: 1,
+			expectedParticipants: 0,
 		},
 		{
-			name:       "Participant didn't receive enough validations (total voted weight < required) - should default to accepting",
+			name:       "Participant didn't receive enough validations (total voted weight < required) - should be rejected",
 			epochIndex: 2,
 			setupState: func(t *testing.T, k *keeper.Keeper, ctx sdk.Context, mocks *keepertest.InferenceMocks) {
 				// Set up previous epoch group data with high weight validators
@@ -731,7 +745,6 @@ func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 
 	result := am.ComputeNewWeights(ctx, upcomingEpoch)
 
-	// Only participantA should be in the result
-	require.Len(t, result, 1)
-	require.Equal(t, participantA, result[0].Index)
+	// Without model voting powers, both participants are rejected.
+	require.Len(t, result, 0)
 }

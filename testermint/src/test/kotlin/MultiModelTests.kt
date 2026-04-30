@@ -1,7 +1,5 @@
 import com.productscience.*
-import com.productscience.data.InferencePayload
-import com.productscience.data.InferenceStatus
-import com.productscience.data.ModelConfig
+import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
@@ -10,9 +8,30 @@ import org.tinylog.Logger
 import java.time.Duration
 
 class MultiModelTests : TestermintTest() {
+
+    // Tests deploy `secondModel` on nodes via setSecondModel(). The broker filter
+    // (filterNodeModelsByPoCParams in decentralized-api) strips models without a
+    // PoC config from hardware diffs, so secondModel must be declared in
+    // pocParams.models for the chain to register node support for it.
+    private val secondModelSpec = spec {
+        this[AppState::inference] = spec<InferenceState> {
+            this[InferenceState::params] = spec<InferenceParams> {
+                this[InferenceParams::pocParams] = spec<PocParams> {
+                    this[PocParams::models] = listOf(
+                        PoCModelConfig(modelId = defaultModel, seqLen = 256L),
+                        PoCModelConfig(modelId = secondModel, seqLen = 256L),
+                    )
+                    this[PocParams::pocV2Enabled] = true
+                    this[PocParams::validationSlots] = 2L
+                    this[PocParams::pocNormalizationEnabled] = false
+                }
+            }
+        }
+    }
+
     @Test
     fun `simple multi model`() {
-        val (cluster, genesis) = initCluster(3)
+        val (cluster, genesis) = initCluster(3, mergeSpec = secondModelSpec)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
         logSection("Checking for nodes being updated")
         secondModelPairs.forEach {
@@ -63,7 +82,7 @@ class MultiModelTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun `invalidate invalid multi model response`() {
-        val (cluster, genesis) = initCluster(3)
+        val (cluster, genesis) = initCluster(3, mergeSpec = secondModelSpec)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         var tries = 5
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
@@ -85,7 +104,7 @@ class MultiModelTests : TestermintTest() {
 
     @Test
     fun `multi model inferences get validated and claimed`() {
-        val (cluster, genesis) = initCluster(3, reboot = true)
+        val (cluster, genesis) = initCluster(3, reboot = true, mergeSpec = secondModelSpec)
         logSection("Setting up second model")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)

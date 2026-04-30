@@ -27,11 +27,14 @@ services:
       - ./prod-local/${KEY_NAME}/.nats:/root/.nats
       - ./${NODE_CONFIG}:/root/node_config.json
     ports:
-      - "${PUBLIC_SERVER_PORT}:9000"
+      # Public port 9000 is NOT exposed to the host. All public access goes
+      # through the per-pair proxy (mirroring production). The proxy forwards
+      # /v1/*, /api/*, /devshard/* to api:9000 internally.
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"
       - "${ML_GRPC_SERVER_PORT}:9300"
       - "${NATS_SERVER_PORT}:4222"
+      - "${NODE_MANAGER_GRPC_PORT}:9400"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
@@ -41,6 +44,7 @@ services:
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
+      - DAPI_API__NODE_MANAGER_GRPC_PORT=9400
       - DAPI_API__TEST_MODE=true
       - DAPI_TX_BATCHING__FLUSH_TIMEOUT_SECONDS=1
       - DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE=${DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE:-10}
@@ -53,6 +57,32 @@ services:
       - DAPI_STATS_FILE_STORAGE_ENABLED=true
     networks:
       - chain-public
+
+  proxy:
+    container_name: ${KEY_NAME}-proxy
+    image: ghcr.io/product-science/proxy:latest
+    build:
+      context: ../proxy
+      dockerfile: Dockerfile
+    ports:
+      - "${PROXY_PORT:-80}:80"
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - PROXY_ADD_NODE_PREFIX=true
+      - GONKA_API_PORT=${GONKA_API_PORT:-9000}
+      - CHAIN_RPC_PORT=${CHAIN_RPC_PORT:-26657}
+      - CHAIN_API_PORT=${CHAIN_API_PORT:-1317}
+      - CHAIN_GRPC_PORT=${CHAIN_GRPC_PORT:-9090}
+      - GONKA_API_EXEMPT_ROUTES=${GONKA_API_EXEMPT_ROUTES:-chat inference poc/proofs devshard}
+      - VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-}
+      - VERSIOND_PORT=${VERSIOND_PORT_INTERNAL:-8080}
+      - DASHBOARD_PORT=${DASHBOARD_PORT}
+    depends_on:
+      - chain-node
+      - api
+    networks:
+      - chain-public
+    restart: unless-stopped
 
   mock-server:
     container_name: ${KEY_NAME}-mock-server

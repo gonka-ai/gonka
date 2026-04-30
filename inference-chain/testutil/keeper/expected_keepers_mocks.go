@@ -184,18 +184,6 @@ func (mr *MockBankKeeperMockRecorder) GetDenomMetaData(ctx, denom any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDenomMetaData", reflect.TypeOf((*MockBankKeeper)(nil).GetDenomMetaData), ctx, denom)
 }
 
-// SetDenomMetaData mocks base method.
-func (m *MockBankKeeper) SetDenomMetaData(ctx context.Context, denomMetaData types2.Metadata) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "SetDenomMetaData", ctx, denomMetaData)
-}
-
-// SetDenomMetaData indicates an expected call of SetDenomMetaData.
-func (mr *MockBankKeeperMockRecorder) SetDenomMetaData(ctx, denomMetaData any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDenomMetaData", reflect.TypeOf((*MockBankKeeper)(nil).SetDenomMetaData), ctx, denomMetaData)
-}
-
 // IterateAllBalances mocks base method.
 func (m *MockBankKeeper) IterateAllBalances(ctx context.Context, cb func(types1.AccAddress, types1.Coin) bool) {
 	m.ctrl.T.Helper()
@@ -206,6 +194,18 @@ func (m *MockBankKeeper) IterateAllBalances(ctx context.Context, cb func(types1.
 func (mr *MockBankKeeperMockRecorder) IterateAllBalances(ctx, cb any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IterateAllBalances", reflect.TypeOf((*MockBankKeeper)(nil).IterateAllBalances), ctx, cb)
+}
+
+// SetDenomMetaData mocks base method.
+func (m *MockBankKeeper) SetDenomMetaData(ctx context.Context, denomMetaData types2.Metadata) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetDenomMetaData", ctx, denomMetaData)
+}
+
+// SetDenomMetaData indicates an expected call of SetDenomMetaData.
+func (mr *MockBankKeeperMockRecorder) SetDenomMetaData(ctx, denomMetaData any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDenomMetaData", reflect.TypeOf((*MockBankKeeper)(nil).SetDenomMetaData), ctx, denomMetaData)
 }
 
 // SpendableCoin mocks base method.
@@ -1268,6 +1268,21 @@ func (mr *MockBlsKeeperMockRecorder) GetActiveEpochID(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).GetActiveEpochID), ctx)
 }
 
+// GetCurrentSigningEpochID mocks base method.
+func (m *MockBlsKeeper) GetCurrentSigningEpochID(ctx types1.Context) (uint64, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCurrentSigningEpochID", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetCurrentSigningEpochID indicates an expected call of GetCurrentSigningEpochID.
+func (mr *MockBlsKeeperMockRecorder) GetCurrentSigningEpochID(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentSigningEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).GetCurrentSigningEpochID), ctx)
+}
+
 // GetEpochBLSData mocks base method.
 func (m *MockBlsKeeper) GetEpochBLSData(ctx types1.Context, epochID uint64) (types4.EpochBLSData, error) {
 	m.ctrl.T.Helper()
@@ -1281,6 +1296,21 @@ func (m *MockBlsKeeper) GetEpochBLSData(ctx types1.Context, epochID uint64) (typ
 func (mr *MockBlsKeeperMockRecorder) GetEpochBLSData(ctx, epochID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochBLSData", reflect.TypeOf((*MockBlsKeeper)(nil).GetEpochBLSData), ctx, epochID)
+}
+
+// GetParams mocks base method.
+func (m *MockBlsKeeper) GetParams(ctx context.Context) (types4.Params, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetParams", ctx)
+	ret0, _ := ret[0].(types4.Params)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetParams indicates an expected call of GetParams.
+func (mr *MockBlsKeeperMockRecorder) GetParams(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParams", reflect.TypeOf((*MockBlsKeeper)(nil).GetParams), ctx)
 }
 
 // GetSigningStatus mocks base method.
@@ -1327,6 +1357,20 @@ func (mr *MockBlsKeeperMockRecorder) ListActiveSigningRequests(ctx, currentEpoch
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActiveSigningRequests", reflect.TypeOf((*MockBlsKeeper)(nil).ListActiveSigningRequests), ctx, currentEpochID)
 }
 
+// CancelThresholdSignature mocks base method.
+func (m *MockBlsKeeper) CancelThresholdSignature(ctx types1.Context, requestID []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelThresholdSignature", ctx, requestID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CancelThresholdSignature indicates an expected call of CancelThresholdSignature.
+func (mr *MockBlsKeeperMockRecorder) CancelThresholdSignature(ctx, requestID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelThresholdSignature", reflect.TypeOf((*MockBlsKeeper)(nil).CancelThresholdSignature), ctx, requestID)
+}
+
 // RequestThresholdSignature mocks base method.
 func (m *MockBlsKeeper) RequestThresholdSignature(ctx types1.Context, signingData types4.SigningData) error {
 	m.ctrl.T.Helper()
@@ -1351,6 +1395,18 @@ func (m *MockBlsKeeper) SetActiveEpochID(ctx types1.Context, epochID uint64) {
 func (mr *MockBlsKeeperMockRecorder) SetActiveEpochID(ctx, epochID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetActiveEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).SetActiveEpochID), ctx, epochID)
+}
+
+// SetCurrentSigningEpochID mocks base method.
+func (m *MockBlsKeeper) SetCurrentSigningEpochID(ctx types1.Context, epochID uint64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetCurrentSigningEpochID", ctx, epochID)
+}
+
+// SetCurrentSigningEpochID indicates an expected call of SetCurrentSigningEpochID.
+func (mr *MockBlsKeeperMockRecorder) SetCurrentSigningEpochID(ctx, epochID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetCurrentSigningEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).SetCurrentSigningEpochID), ctx, epochID)
 }
 
 // MockUpgradeKeeper is a mock of UpgradeKeeper interface.

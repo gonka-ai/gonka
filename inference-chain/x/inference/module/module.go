@@ -1,8 +1,10 @@
 package inference
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -171,7 +173,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 13 }
+func (AppModule) ConsensusVersion() uint64 { return 14 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -231,20 +233,20 @@ func (am AppModule) expireInferences(
 	return nil
 }
 
-// expireInferenceAndIssueRefund marks an inference as expired and issues a refund
-// Returns the updated inference
+// expireInferenceAndIssueRefund marks an inference as expired and issues a refund.
+// Returns the updated inference.
 func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference types.Inference) types.Inference {
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
 
 	err := am.keeper.IssueRefund(ctx, inference.EscrowAmount, inference.RequestedBy, "expired_inference:"+inference.InferenceId)
 	if err != nil {
-		am.LogError("Error issuing refund", types.Inferences, "error", err)
+		am.LogError("Error issuing refund", types.Inferences, "error", err, "inferenceId", inference.InferenceId)
 	}
 
 	err = am.keeper.SetInference(ctx, inference)
 	if err != nil {
-		am.LogError("Error updating inference", types.Inferences, "error", err)
+		am.LogError("Error updating inference", types.Inferences, "error", err, "inferenceId", inference.InferenceId)
 	}
 
 	return inference
@@ -285,7 +287,7 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 	checkPreserveNode := expiryCtx.ShouldCheckPreserveNode(inference)
 
 	// Check if executor has the required node for the model (using cached active participants)
-	hasNode := am.HasNodeForModel(inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants)
+	hasNode := am.HasNodeForModel(ctx, inference.AssignedTo, inference.Model, checkPreserveNode, activeParticipants)
 
 	if !hasNode {
 		nodeType := "mlnode"
@@ -324,6 +326,21 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 }
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
+//
+// Error handling philosophy:
+//   - UNRECOVERABLE (return err, halts chain): Missing params (line 357), failed epoch
+//     state writes -- SetEffectiveEpochIndex (line 443), SetEpoch (line 452),
+//     CreateEpochGroup (line 459), CreateGroup (line 464). These mean the chain cannot
+//     advance to the next epoch and would be in an inconsistent state if we continued.
+//   - RECOVERABLE (log + continue): Inference expiry failures, pruning errors, upgrade
+//     tracking errors, compute result errors, confirmation PoC failures. These affect
+//     individual operations but the chain can safely continue without them.
+//   - CROSS-MODULE (log + continue): Collateral AdvanceEpoch, StreamVesting AdvanceEpoch,
+//     BLS key generation. Failures here should not block the inference module's epoch
+//     transition.
+//
+// Sub-functions (onEndOfPoCValidationStage, onSetNewValidatorsStage) handle errors
+// internally with log+return patterns. They do NOT propagate errors to EndBlock.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
@@ -339,6 +356,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
+		// UNRECOVERABLE: Missing params means chain state is corrupt or uninitialized.
+		// Cannot proceed with epoch processing without params.
 		return err
 	}
 	epochParams := params.EpochParams
@@ -413,6 +432,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	// 2. IsSetNewValidatorsStage: Switch validators and activate epoch (onSetNewValidatorsStage)
 	// This separation ensures clean boundaries between epoch preparation and validator switching
 	// and allow time for api nodes to load models on ml nodes.
+	//
+	// NOTE: Validator activation is intentionally delayed by two blocks: the new validator
+	// set becomes active at H+2, not H+1. This provides a buffer for nodes to
+	// prepare before the validator set rotates.
 
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
@@ -422,13 +445,22 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("StartStage:onSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
+		// UNRECOVERABLE: Failed to set effective epoch index means the chain would
+		// continue on the old epoch indefinitely, processing stale data.
 		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
+		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
+			types.Stages,
+			"blockHeight", blockHeight,
+			"expectedActivation", blockHeight+2,
+		)
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		upcomingEpoch := createNewEpoch(*currentEpoch, blockHeight)
+		// UNRECOVERABLE: SetEpoch failure means the upcoming epoch cannot be persisted.
+		// Without a valid epoch record, all subsequent epoch processing would be invalid.
 		err = am.keeper.SetEpoch(ctx, upcomingEpoch)
 		if err != nil {
 			am.LogError("Unable to set upcoming epoch", types.EpochGroup, "error", err.Error())
@@ -436,30 +468,59 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 
 		am.LogInfo("StartStage:PocStart", types.Stages, "blockHeight", blockHeight)
+		// UNRECOVERABLE: CreateEpochGroup failure means the DKG/BLS group for the new
+		// epoch cannot be formed. Validators would have no group to sign under.
 		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight), upcomingEpoch.Index)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		// UNRECOVERABLE: CreateGroup failure means the DKG group record cannot be
+		// persisted. The epoch group exists but has no underlying signing group.
 		err = newGroup.CreateGroup(ctx)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		err = am.initializeUpcomingEpochModelGroups(ctx, newGroup)
+		if err != nil {
+			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
+			return err
+		}
 
-		am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight)
+		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
+		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
+		if err != nil {
+			// Downstream readers (broker filter, claim validation) soft-fail on a missing
+			// preserved snapshot, so a transient sampler failure should not halt the chain.
+			am.LogError("Unable to sample preserved nodes for regular PoC", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		} else if err := am.captureGenerationStartTimestamp(ctx, blockTime, upcomingEpoch.PocStartBlockHeight, preservedSnapshot); err != nil {
+			am.LogError("Unable to store generation start snapshots for regular PoC", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+				"error", err.Error())
+		}
+	}
+
+	// Capture the pre-eligibility snapshot at start_poc - deploy_window.
+	if params.DelegationParams != nil &&
+		epochContext.IsDelegationSnapshotHeight(blockHeight, params.DelegationParams.DeployWindow) {
+		am.captureBootstrapDelegationSnapshot(ctx, blockHeight)
 	}
 
 	// Capture validation snapshot at poc_validation_start for deterministic sampling
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 		if found && upcomingEpoch != nil {
+			am.captureDelegationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight)
 			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
 		} else {
 			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
 		}
 	}
 
+	// Intentionally operates on the previous epoch's group here; the new group
+	// triggers SetComputeValidators on the next block. See activation note above.
 	if currentEpochGroup.IsChanged(ctx) {
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight)
 		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
@@ -489,6 +550,34 @@ func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	}
 }
 
+func (am AppModule) initializeUpcomingEpochModelGroups(ctx context.Context, parentGroup *epochgroup.EpochGroup) error {
+	if parentGroup == nil {
+		return nil
+	}
+
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, modelConfig := range params.PocParams.GetModelConfigs() {
+		if modelConfig == nil || modelConfig.ModelId == "" {
+			continue
+		}
+
+		model, found := am.keeper.GetGovernanceModel(ctx, modelConfig.ModelId)
+		if !found || model == nil {
+			return fmt.Errorf("poc model %q missing from governance models", modelConfig.ModelId)
+		}
+
+		if _, err := parentGroup.CreateSubGroup(ctx, model); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
@@ -516,6 +605,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
 		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onEndOfPoCValidationStage: Unable to advance collateral epoch", types.Tokenomics, "error", err.Error())
+			sdkCtx := sdk.UnwrapSDKContext(ctx)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"epoch_error",
+				sdk.NewAttribute("stage", "advance_collateral_epoch"),
+				sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+				sdk.NewAttribute("error_category", "cross_module"),
+			))
 		}
 	} else {
 		am.LogError("collateral keeper is null", types.Tokenomics)
@@ -538,6 +634,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -546,18 +649,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	// Dispatch to V1 or V2 weight calculation based on poc_v2_enabled flag
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err.Error())
-		return
-	}
-	var activeParticipants []*types.ActiveParticipant
-	if params.PocParams.PocV2Enabled {
-		activeParticipants = am.ComputeNewWeights(ctx, *upcomingEpoch)
-	} else {
-		activeParticipants = am.ComputeNewWeightsV1(ctx, *upcomingEpoch)
-	}
+	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
 	if activeParticipants == nil {
 		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
@@ -566,24 +658,89 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err)
+		return
+	}
+
+	participationState, err := am.prepareEpochParticipationState(
+		ctx,
+		activeParticipants,
+		params,
+		upcomingEpoch.PocStartBlockHeight,
+	)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
+		return
+	}
+
+	// Compute consensus weights with caps applied and write to participants
+	consensusWeights, groupSummaries := participationState.calculator.ComputeConsensusWeights(participationState.eligibleModels)
+	for _, p := range activeParticipants {
+		p.Weight = consensusWeights[p.Index]
+	}
+
+	// Delegation and bootstrap penalties are accumulated additively across all
+	// models and applied once, capped at 1.0.
+	adjParams := am.delegationAdjustmentParams(params)
+	penaltyStartEpochByModel := modelPenaltyStartEpochs(params.PocParams)
+	acc := NewPenaltyAccumulator(activeParticipants)
+	AccumulateDelegationPenalties(
+		acc,
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	AccumulateBootstrapPenalties(
+		acc,
+		participationState.bootstrapPenaltyByModel,
+		participationState.eligibleModels,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	acc.Apply(activeParticipants)
+
+	afterPenalty := make(map[string]int64, len(activeParticipants))
+	for _, p := range activeParticipants {
+		afterPenalty[p.Index] = p.Weight
+	}
+
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
 	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
 		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
 		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
 		// which means participants will proceed with their unadjusted PotentialWeight.
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "adjust_weights_by_collateral"),
+			sdk.NewAttribute("error_category", "cross_module"),
+		))
 	}
 
 	// Apply universal power capping to epoch powers
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
 
-	modelAssigner.AllocateMLNodesForPoC(ctx, *upcomingEpoch, activeParticipants)
-	am.LogInfo("Finished PoC allocation for all participants", types.EpochGroup, "step", "poc_allocation_complete")
+	// Write per-model voting powers to ActiveParticipant for visibility.
+	// Pass the governance-controlled per-model concentration cap, which
+	// defaults to zero (disabled) until governance sets a concrete value.
+	am.computeAndSetVotingPowers(
+		activeParticipants,
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		am.delegationVotingPowerCapParams(params),
+	)
 
-	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
-		return
-	}
+	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
+		participationState.eligibleModels, activeParticipants,
+		participationState.participationByModel,
+		consensusWeights, afterPenalty, acc)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -622,6 +779,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Call BLS module to initiate key generation for the new epoch
 	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
+
+	// Cleanup: delete consumed PoCRefusal and PoCDirectIntent entries
+	if err := am.keeper.DeleteAllPoCRefusals(ctx); err != nil {
+		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC refusals", types.PoC, "error", err)
+	}
+	if err := am.keeper.DeleteAllPoCDirectIntents(ctx); err != nil {
+		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC direct intents", types.PoC, "error", err)
+	}
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -634,6 +799,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 // all epoch formation logic has completed in onEndOfPoCValidationStage.
 // The stage focuses solely on validator switching, with all epoch preparation
 // handled by the previous stage for clean separation of concerns.
+// The new validator set becomes active at H+2.
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 
@@ -666,37 +832,250 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
 
-	// Clean up validation snapshot after epoch transition
-	am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight)
+	// The validation snapshot is only needed during PoC validation of this epoch and
+	// can be dropped now. The preserved-nodes snapshot must survive until settlement
+	// and claims for this epoch are done -- the Prune pass reclaims it later.
+	if err := am.keeper.DeletePoCValidationSnapshot(ctx, upcomingEpoch.PocStartBlockHeight); err != nil {
+		am.LogWarn("onSetNewValidatorsStage: Failed to delete validation snapshot", types.PoC,
+			"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err)
+	}
 }
 
-func (am AppModule) captureGenerationStartTimestamp(ctx context.Context, blockTime, pocStartBlockHeight int64) {
-	snapshot := types.PoCValidationSnapshot{
+func (am AppModule) captureGenerationStartTimestamp(
+	ctx context.Context,
+	blockTime, pocStartBlockHeight int64,
+	preservedSnapshot types.PreservedNodesSnapshot,
+) error {
+	validationSnapshot := types.PoCValidationSnapshot{
 		PocStageStartHeight:      pocStartBlockHeight,
 		GenerationStartTimestamp: blockTime,
 	}
-	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
-		am.LogError("captureGenerationStartTimestamp: Failed to store", types.PoC, "error", err)
-		return
+	if err := am.keeper.SetPoCValidationSnapshot(ctx, validationSnapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store validation snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+		return err
+	}
+	if err := am.keeper.SetPreservedNodesSnapshot(ctx, preservedSnapshot); err != nil {
+		am.LogError("captureGenerationStartTimestamp: Failed to store preserved snapshot", types.PoC,
+			"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+		return err
 	}
 	am.LogInfo("captureGenerationStartTimestamp: Stored", types.PoC,
 		"pocStartBlockHeight", pocStartBlockHeight,
 		"generationStartTimestamp", blockTime)
+	return nil
 }
 
-// captureValidationSnapshot stores validator weights and app_hash at validation phase start
+// captureValidationSnapshot stores per-model voting powers and app_hash at validation phase start
 // for deterministic sampling synchronization between chain and DAPI.
-// Used by both regular PoC and confirmation PoC.
+//
+// For regular PoC:
+// - models already present in AP(N).voting_powers reuse those voting powers
+// - new models derive voting powers from bootstrap delegation + AP(N).weight + store commits
+// DIRECT = who submitted store commits for the new-model branch.
+//
+// For confirmation PoC: voting powers come from AP(N).voting_powers (already delegation-resolved
+// at epoch formation). DIRECT = who was assigned models in AP(N).
 func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
+	baseState := am.getEffectiveValidationBaseState(ctx)
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, snapshotKey, logContext)
+	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, logContext, modelWeights, totalWeight)
+}
+
+// captureConfirmationValidationSnapshot is like captureValidationSnapshot but uses
+// stored voting powers instead of computing from store commits. Uses the filtered
+// path to exclude members removed mid-epoch.
+func (am AppModule) captureConfirmationValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64) {
+	baseState := am.getEffectiveValidationBaseState(ctx)
+	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, "confirmation PoC",
+		baseState.existingModelVotingPowers, baseState.totalWeight)
+}
+
+type effectiveValidationBaseState struct {
+	participants              []*types.ActiveParticipant
+	weights                   map[string]int64
+	totalWeight               int64
+	existingModelVotingPowers []*types.ModelVotingPowers
+}
+
+// getEffectiveValidationBaseState reads consensus weights and per-model voting
+// powers from EpochGroupData, filtered by SDK group membership. Members removed
+// mid-epoch (weight set to 0 in SDK group) are excluded because GetGroupMembers
+// does not return them.
+//
+// Epoch 0 has no model-aware voting powers yet.
+//
+// TODO: upgrade handler must populate ValidationWeight.voting_power in existing
+// EpochGroupData from AP.VotingPowers so the first post-upgrade epoch reads
+// correct values.
+func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effectiveValidationBaseState {
+	epochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return emptyValidationBaseState()
+	}
+
+	if epochIndex == 0 {
+		return am.getEpochZeroValidationBaseState(ctx)
+	}
+
+	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil || currentGroup == nil {
+		am.LogError("getEffectiveValidationBaseState: failed to get current epoch group", types.PoC, "error", err)
+		return emptyValidationBaseState()
+	}
+
+	rootMembers, err := currentGroup.GetGroupMembers(ctx)
+	if err != nil {
+		am.LogError("getEffectiveValidationBaseState: failed to get root group members", types.PoC, "error", err)
+		return emptyValidationBaseState()
+	}
+	liveMemberSet := make(map[string]bool, len(rootMembers))
+	for _, m := range rootMembers {
+		liveMemberSet[m.Member.Address] = true
+	}
+
+	rootGroupData := currentGroup.GroupData
+	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
+	totalWeight := int64(0)
+	participants := make([]*types.ActiveParticipant, 0, len(rootGroupData.ValidationWeights))
+	for _, vw := range rootGroupData.ValidationWeights {
+		if vw == nil || !liveMemberSet[vw.MemberAddress] {
+			continue
+		}
+		consensusWeights[vw.MemberAddress] = vw.Weight
+		totalWeight += vw.Weight
+		participants = append(participants, &types.ActiveParticipant{
+			Index:  vw.MemberAddress,
+			Weight: vw.Weight,
+		})
+	}
+
+	modelVPMap := make(map[string]map[string]int64)
+	for _, modelID := range rootGroupData.SubGroupModels {
+		subGroup, err := currentGroup.GetSubGroup(ctx, modelID)
+		if err != nil || subGroup == nil {
+			continue
+		}
+		subMembers, err := subGroup.GetGroupMembers(ctx)
+		if err != nil {
+			continue
+		}
+		liveSubSet := make(map[string]bool, len(subMembers))
+		for _, m := range subMembers {
+			liveSubSet[m.Member.Address] = true
+		}
+		for _, vw := range subGroup.GroupData.ValidationWeights {
+			if vw == nil || !liveSubSet[vw.MemberAddress] {
+				continue
+			}
+			if vw.VotingPower > 0 {
+				if modelVPMap[modelID] == nil {
+					modelVPMap[modelID] = make(map[string]int64)
+				}
+				modelVPMap[modelID][vw.MemberAddress] = vw.VotingPower
+			}
+		}
+	}
+
+	return effectiveValidationBaseState{
+		participants:              participants,
+		weights:                   consensusWeights,
+		totalWeight:               totalWeight,
+		existingModelVotingPowers: modelVPMapToSlice(modelVPMap),
+	}
+}
+
+func modelVPMapToSlice(modelVPMap map[string]map[string]int64) []*types.ModelVotingPowers {
+	modelWeights := make([]*types.ModelVotingPowers, 0, len(modelVPMap))
+	for modelID, vps := range modelVPMap {
+		modelWeights = append(modelWeights, &types.ModelVotingPowers{
+			ModelId:      modelID,
+			VotingPowers: types.VotingPowerMapToSlice(vps),
+		})
+	}
+	slices.SortFunc(modelWeights, func(a, b *types.ModelVotingPowers) int {
+		return cmp.Compare(a.ModelId, b.ModelId)
+	})
+	return modelWeights
+}
+
+func emptyValidationBaseState() effectiveValidationBaseState {
+	return effectiveValidationBaseState{
+		weights: map[string]int64{},
+	}
+}
+
+// computeStoreCommitVotingPowers builds validation-time voting powers by combining:
+// - existing model voting powers from the provided base state
+// - bootstrap-model voting powers derived from bootstrap delegation + consensus weights + store commits
+func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseState effectiveValidationBaseState, snapshotKey int64, logContext string) ([]*types.ModelVotingPowers, int64) {
+	consensusWeights := baseState.weights
+	totalNetworkWeight := baseState.totalWeight
+	if totalNetworkWeight == 0 {
+		return nil, 0
+	}
+
+	mergedValidationVotingPowers := make(map[string]map[string]int64, len(baseState.existingModelVotingPowers))
+	for _, mvw := range baseState.existingModelVotingPowers {
+		mergedValidationVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
+	}
+
+	_, bootstrapDelegations, _, found := am.loadBootstrapSnapshotState(ctx)
+	if !found {
+		am.LogError("computeStoreCommitVotingPowers: bootstrap delegation snapshot not found", types.PoC,
+			"context", logContext)
+		bootstrapDelegations = map[string]map[string]string{}
+	}
+
+	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, snapshotKey)
+	if err != nil {
+		am.LogError("computeStoreCommitVotingPowers: Failed to get store commits", types.PoC,
+			"context", logContext, "error", err)
+		return nil, totalNetworkWeight
+	}
+	// Bootstrap intent is frozen at start_poc - deploy_window. If a participant
+	// switches from intent to delegation after that snapshot, the late delegation
+	// is intentionally ignored for the current bootstrap-model validation path.
+	bootstrapModelStoreCommitKeys := make([]types.PoCParticipantModelKey, 0, len(allStoreCommits))
+	for _, key := range sortedStoreCommitKeys(allStoreCommits) {
+		if _, alreadyActive := mergedValidationVotingPowers[key.ModelID]; alreadyActive {
+			continue
+		}
+		bootstrapModelStoreCommitKeys = append(bootstrapModelStoreCommitKeys, key)
+	}
+
+	bootstrapModelVotingPowers := ComputeModelVotingPowers(bootstrapModelStoreCommitKeys, consensusWeights, bootstrapDelegations)
+	for _, modelID := range sortedKeys(bootstrapModelVotingPowers) {
+		vps := bootstrapModelVotingPowers[modelID]
+		mergedValidationVotingPowers[modelID] = vps
+	}
+	if len(allStoreCommits) > 0 && len(mergedValidationVotingPowers) == 0 {
+		am.LogError("computeStoreCommitVotingPowers: store commits exist but validation snapshot has no models", types.PoC,
+			"context", logContext,
+			"numStoreCommits", len(allStoreCommits),
+		)
+	}
+
+	var modelWeights []*types.ModelVotingPowers
+	for modelID, vps := range mergedValidationVotingPowers {
+		modelWeights = append(modelWeights, &types.ModelVotingPowers{
+			ModelId:      modelID,
+			VotingPowers: types.VotingPowerMapToSlice(vps),
+		})
+	}
+	slices.SortFunc(modelWeights, func(a, b *types.ModelVotingPowers) int {
+		return cmp.Compare(a.ModelId, b.ModelId)
+	})
+	return modelWeights, totalNetworkWeight
+}
+
+// writeValidationSnapshot writes a PoCValidationSnapshot with the given voting powers.
+func (am AppModule) writeValidationSnapshot(
+	ctx context.Context, blockHeight, snapshotKey int64, logContext string,
+	modelWeights []*types.ModelVotingPowers, totalWeight int64,
+) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockTime := sdkCtx.BlockTime().Unix()
-
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
-	if err != nil {
-		am.LogError("captureValidationSnapshot: Failed to get validator weights", types.PoC,
-			"context", logContext, "error", err)
-		return
-	}
 
 	var generationStartTimestamp int64
 	existingSnapshot, found, _ := am.keeper.GetPoCValidationSnapshot(ctx, snapshotKey)
@@ -708,36 +1087,26 @@ func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, 
 		PocStageStartHeight:      snapshotKey,
 		SnapshotHeight:           blockHeight,
 		AppHash:                  hex.EncodeToString(sdkCtx.HeaderInfo().AppHash),
-		ValidatorWeights:         validatorWeightsMapToSlice(currentValidatorWeights),
+		ModelVotingPowers:        modelWeights,
+		TotalNetworkWeight:       totalWeight,
 		GenerationStartTimestamp: generationStartTimestamp,
 		ExchangeEndTimestamp:     blockTime,
 	}
 
 	if err := am.keeper.SetPoCValidationSnapshot(ctx, snapshot); err != nil {
-		am.LogError("captureValidationSnapshot: Failed to store snapshot", types.PoC,
+		am.LogError("writeValidationSnapshot: Failed to store", types.PoC,
 			"context", logContext, "error", err)
 		return
 	}
 
-	am.LogInfo("captureValidationSnapshot: Stored validation snapshot", types.PoC,
+	am.LogInfo("writeValidationSnapshot: Stored validation snapshot", types.PoC,
 		"context", logContext,
 		"snapshotKey", snapshotKey,
 		"snapshotHeight", blockHeight,
-		"numValidators", len(currentValidatorWeights),
-		"generationStartTimestamp", generationStartTimestamp,
+		"numModels", len(modelWeights),
+		"totalNetworkWeight", totalWeight,
 		"exchangeEndTimestamp", blockTime,
 	)
-}
-
-func validatorWeightsMapToSlice(weights map[string]int64) []*types.ValidatorWeight {
-	result := make([]*types.ValidatorWeight, 0, len(weights))
-	for addr, w := range weights {
-		result = append(result, &types.ValidatorWeight{Address: addr, Weight: w})
-	}
-	slices.SortFunc(result, func(a, b *types.ValidatorWeight) int {
-		return cmp.Compare(a.Address, b.Address)
-	})
-	return result
 }
 
 func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
@@ -747,6 +1116,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		return
 	}
 	validationParams := params.ValidationParams
+	coefficients := ModelCoefficients(params.PocParams)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -760,7 +1130,9 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			continue
 		}
 
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, 0)
+		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
+		initialConfirmationWeight := epochgroup.CalculateMLNodesTotalWeight(p.Models, p.MlNodes, coefficients)
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight, coefficients)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
@@ -993,7 +1365,7 @@ func GetTxCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(GrantMLOpsPermissionsCmd())
-	cmd.AddCommand(SettleSubnetEscrowCmd())
+	cmd.AddCommand(SettleDevshardEscrowCmd())
 
 	return cmd
 }
@@ -1038,6 +1410,7 @@ type ModuleOutputs struct {
 	InferenceKeeper keeper.Keeper
 	Module          appmodule.AppModule
 	Hooks           stakingtypes.StakingHooksWrapper
+	BlsHooks        blstypes.BlsHooksWrapper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -1080,6 +1453,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		InferenceKeeper: k,
 		Module:          m,
 		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+		BlsHooks:        blstypes.BlsHooksWrapper{BlsHooks: NewBlsHooks(k)},
 	}
 }
 
@@ -1127,6 +1501,23 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	// Compute adjusted percentages if genesis guardian reservation applies
 	adjustedPercentages := ApplyBLSGuardianSlotReservation(ctx, am.keeper, activeParticipants)
 
+	// Fetch BLS params to compute maximum allowed warm keys per participant
+	blsParams, err := am.keeper.BlsKeeper.GetParams(ctx)
+	var maxAdditionalKeys int
+	if err != nil || blsParams.ITotalSlots == 0 {
+		am.LogError("Failed to get BLS params or ITotalSlots is zero, defaulting to minimal allowed keys", types.EpochGroup, "epochID", epochID, "error", err)
+		maxAdditionalKeys = 0
+	} else {
+		// Cap keys so that slotCount * (1 + additionalKeys) <= MaxEncryptedSharesPerParticipantCount.
+		// Since slotCount can be at most ITotalSlots, dividing the max limit by ITotalSlots gives
+		// the safe upper bound per slot.
+		maxKeysPerSlot := blstypes.MaxEncryptedSharesPerParticipantCount / int(blsParams.ITotalSlots)
+		maxAdditionalKeys = maxKeysPerSlot - 1
+		if maxAdditionalKeys < 0 {
+			maxAdditionalKeys = 0 // Paranoia fallback
+		}
+	}
+
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, ap := range activeParticipants {
 		accAddr, err := sdk.AccAddressFromBech32(ap.Index)
@@ -1157,6 +1548,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
 
 		// Determine percentage weight: use adjusted reservation if present, else raw share
 		var percentage math.LegacyDec
@@ -1172,9 +1564,10 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		}
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
-			Address:            ap.Index,
-			PercentageWeight:   percentage,
-			Secp256k1PublicKey: pubKeyBytes,
+			Address:                    ap.Index,
+			PercentageWeight:           percentage,
+			Secp256k1PublicKey:         pubKeyBytes,
+			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
 
@@ -1183,7 +1576,8 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			"weight", ap.Weight,
 			"percentage", percentage.String(),
 			"epochID", epochID,
-			"keyLength", len(pubKeyBytes))
+			"keyLength", len(pubKeyBytes),
+			"additionalKeyCount", len(additionalPubKeys))
 	}
 
 	if len(finalizedParticipants) == 0 {
@@ -1192,7 +1586,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	}
 
 	// Call the BLS module to initiate key generation
-	err := am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
+	err = am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
 	if err != nil {
 		am.LogError("Failed to initiate BLS key generation", types.EpochGroup, "epochID", epochID, "error", err.Error())
 		return
@@ -1201,4 +1595,76 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	am.LogInfo("Successfully initiated BLS key generation", types.EpochGroup,
 		"epochID", epochID,
 		"participantCount", len(finalizedParticipants))
+}
+
+func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, participantAddress string, primaryPubKey []byte, maxAdditionalKeys int) [][]byte {
+	const blsDealerPartMsgTypeURL = "/inference.bls.MsgSubmitDealerPart"
+
+	resp, err := am.keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: participantAddress,
+		MessageTypeUrl: blsDealerPartMsgTypeURL,
+	})
+	if err != nil {
+		am.LogWarn("Failed to query BLS grantee keys, falling back to primary key only", types.EpochGroup,
+			"participant", participantAddress,
+			"messageType", blsDealerPartMsgTypeURL,
+			"error", err)
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(resp.Grantees))
+	additionalPubKeys := make([][]byte, 0, len(resp.Grantees))
+	for _, grantee := range resp.Grantees {
+		if grantee == nil || grantee.PubKey == "" {
+			continue
+		}
+
+		pubKeyBytes, err := base64.StdEncoding.DecodeString(grantee.PubKey)
+		if err != nil {
+			am.LogWarn("Skipping invalid grantee public key encoding for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"error", err)
+			continue
+		}
+		if len(pubKeyBytes) != 33 {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key length for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"length", len(pubKeyBytes))
+			continue
+		}
+		if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key prefix for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+			continue
+		}
+		if bytes.Equal(pubKeyBytes, primaryPubKey) {
+			continue
+		}
+
+		keyID := string(pubKeyBytes)
+		if _, exists := seen[keyID]; exists {
+			continue
+		}
+		seen[keyID] = struct{}{}
+		additionalPubKeys = append(additionalPubKeys, append([]byte(nil), pubKeyBytes...))
+	}
+
+	// Keep deterministic key ordering so ciphertext index mapping stays aligned across chain and DAPI
+	slices.SortFunc(additionalPubKeys, func(a, b []byte) int {
+		return bytes.Compare(a, b)
+	})
+
+	if len(additionalPubKeys) > maxAdditionalKeys {
+		am.LogWarn("Pruning excess additional BLS participant public keys", types.EpochGroup,
+			"participant", participantAddress,
+			"found", len(additionalPubKeys),
+			"max_allowed", maxAdditionalKeys)
+		additionalPubKeys = additionalPubKeys[:maxAdditionalKeys]
+	}
+
+	return additionalPubKeys
 }

@@ -55,6 +55,7 @@ func TestValidateTransferRequest_ValidSignature(t *testing.T) {
 		Timestamp:       timestamp,
 		TransferAddress: transferAddress,
 		AuthKey:         signature,
+		SignBodyHash:    originalPromptHash,
 	}
 
 	err = validateTransferRequest(request, devKey.GetPubKeyBase64())
@@ -84,6 +85,7 @@ func TestValidateTransferRequest_InvalidSignature(t *testing.T) {
 		Timestamp:       timestamp,
 		TransferAddress: transferAddress,
 		AuthKey:         signature,
+		SignBodyHash:    originalPromptHash,
 	}
 
 	// Validate with dev's pubkey - should fail
@@ -114,6 +116,7 @@ func TestValidateTransferRequest_WrongTimestamp(t *testing.T) {
 		Timestamp:       timestamp + 1000, // Different timestamp
 		TransferAddress: transferAddress,
 		AuthKey:         signature,
+		SignBodyHash:    originalPromptHash,
 	}
 
 	err = validateTransferRequest(request, devKey.GetPubKeyBase64())
@@ -235,4 +238,3 @@ func TestValidateExecuteRequestWithGrantees_FallbackToHashedBody(t *testing.T) {
 	err = validateExecuteRequestWithGrantees(request, []string{taKey.GetPubKeyBase64()}, executorAddress, signature)
 	require.NoError(t, err)
 }
-

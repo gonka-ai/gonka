@@ -32,6 +32,7 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^4.0.3",
     "@nomicfoundation/hardhat-ledger": "^3.0.1",
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.4",
     "@openzeppelin/contracts": "^4.9.0",
     "dotenv": "^16.4.5",
     "ethers": "^6.15.0",

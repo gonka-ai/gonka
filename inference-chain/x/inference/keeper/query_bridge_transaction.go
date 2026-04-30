@@ -38,6 +38,11 @@ func (k Keeper) BridgeTransactions(goCtx context.Context, req *types.QueryAllBri
 		k.BridgeTransactionsMap,
 		req.Pagination,
 		func(_ collections.Triple[string, string, string], v types.BridgeTransaction) (types.BridgeTransaction, error) {
+			// Rehydrate per-validator confirmations from the sub-key set
+			// so query consumers see the full validator list. The stored
+			// value persists Validators empty by design (see
+			// SetBridgeTransaction).
+			k.hydrateBridgeTransactionValidators(goCtx, &v)
 			return v, nil
 		},
 	)

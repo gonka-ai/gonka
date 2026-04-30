@@ -204,7 +204,7 @@ var (
 		{Account: icatypes.ModuleName},
 		{Account: bookkeepermoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
-		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
+		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
 		{Account: inferencemoduletypes.BridgeEscrowAccName},
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},

@@ -65,7 +65,9 @@ func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRP
 		return fmt.Errorf("failed to get verification result: %w", err)
 	}
 
-	if !result.IsParticipant {
+	// result can be nil if the VerificationResult was evicted from the cache before retrieval,
+	// or if the participation check failed and returned an empty result entirely.
+	if result == nil || !result.IsParticipant {
 		logging.Debug(thresholdSigningLogTag+"Not a participant in this epoch, skipping", inferenceTypes.BLS, "epoch_id", epochId)
 		return nil
 	}
@@ -123,8 +125,8 @@ func (bm *BlsManager) submitPartialSignatures(epochId uint64, requestId []byte, 
 // for legacy/reference purposes and is intended to be removed in a future cleanup.
 // Returns a concatenation of 48-byte compressed G1 signatures (one per slot in our assigned range).
 func (bm *BlsManager) computePartialSignature(messageHash []byte, result *VerificationResult) ([]byte, error) {
-	if len(result.AggregatedShares) == 0 {
-		return nil, fmt.Errorf("no aggregated shares available for signing")
+	if err := bm.ensureConsensusSharesComplete(result); err != nil {
+		return nil, fmt.Errorf("cannot sign with incomplete consensus shares: %w", err)
 	}
 
 	// Hash the message to a G1 point for signing
@@ -147,8 +149,8 @@ func (bm *BlsManager) computePartialSignature(messageHash []byte, result *Verifi
 
 // computePartialSignatureBlst computes per-slot BLS partial signatures using blst.
 func (bm *BlsManager) computePartialSignatureBlst(messageHash []byte, result *VerificationResult) ([]byte, error) {
-	if len(result.AggregatedShares) == 0 {
-		return nil, fmt.Errorf("no aggregated shares available for signing")
+	if err := bm.ensureConsensusSharesComplete(result); err != nil {
+		return nil, fmt.Errorf("cannot sign with incomplete consensus shares: %w", err)
 	}
 
 	// Hash the message to a G1 point for signing (using gnark-crypto for consistency)

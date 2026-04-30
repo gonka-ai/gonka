@@ -189,8 +189,8 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 // Returns a concatenation of 48-byte compressed G1 signatures (one per slot, in SlotIndices order),
 // and the corresponding absolute SlotIndices.
 func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochResult *VerificationResult) ([]byte, []uint32, error) {
-	if len(previousEpochResult.AggregatedShares) == 0 {
-		return nil, nil, fmt.Errorf("no aggregated shares available for previous epoch")
+	if err := bm.ensureConsensusSharesComplete(previousEpochResult); err != nil {
+		return nil, nil, fmt.Errorf("cannot sign group validation with incomplete consensus shares: %w", err)
 	}
 
 	// Hash message to G1 point
@@ -240,8 +240,8 @@ func (bm *BlsManager) createPartialSignature(messageHash []byte, previousEpochRe
 
 // createPartialSignatureBlst creates per-slot BLS partial signatures using blst.
 func (bm *BlsManager) createPartialSignatureBlst(messageHash []byte, previousEpochResult *VerificationResult) ([]byte, []uint32, error) {
-	if len(previousEpochResult.AggregatedShares) == 0 {
-		return nil, nil, fmt.Errorf("no aggregated shares available for previous epoch")
+	if err := bm.ensureConsensusSharesComplete(previousEpochResult); err != nil {
+		return nil, nil, fmt.Errorf("cannot sign group validation with incomplete consensus shares: %w", err)
 	}
 
 	// Hash message to G1 point (using gnark-crypto for consistency)

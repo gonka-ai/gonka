@@ -82,9 +82,9 @@ class LogAnalyzer(private val logFile: File) {
      */
     fun printBasicStats() {
         val stats = getBasicStats()
-        println("Total lines: ${stats["totalLines"]}")
-        println("Total errors: ${stats["totalErrors"]}")
-        println("Total warns: ${stats["totalWarns"]}")
+        System.err.println("Total lines: ${stats["totalLines"]}")
+        System.err.println("Total errors: ${stats["totalErrors"]}")
+        System.err.println("Total warns: ${stats["totalWarns"]}")
     }
 
     /**

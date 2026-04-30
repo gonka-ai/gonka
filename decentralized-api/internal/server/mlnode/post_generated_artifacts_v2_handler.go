@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
@@ -12,19 +13,24 @@ import (
 	"decentralized-api/poc/artifacts"
 
 	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+func decodeCallbackModelID(encoded string) (string, error) {
+	if encoded == "" {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "model_id required")
+	}
+	modelID, err := url.PathUnescape(encoded)
+	if err != nil || modelID == "" {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "invalid model_id")
+	}
+	return modelID, nil
+}
 
 // postGeneratedArtifactsV2 handles PoC v2 artifact batch callbacks from MLNode.
 // Stores artifacts locally for off-chain proofs. Store commits and weight distributions
 // are submitted to chain separately by CommitWorker and the block dispatcher.
 func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
-	// V2 endpoints disabled when not in V2 mode and not in migration mode
-	if s.broker != nil && !s.broker.IsV2EndpointsEnabled() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "V2 endpoints disabled")
-	}
-
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
@@ -36,8 +42,13 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
+	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
+	if err != nil {
+		return err
+	}
 	logging.Debug("ArtifactBatchV2-callback. Received", types.PoC,
 		"blockHeight", body.BlockHeight,
+		"modelId", modelID,
 		"publicKey", body.PublicKey,
 		"nodeId", body.NodeId,
 		"artifactsCount", len(body.Artifacts))
@@ -61,7 +72,7 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 		"nodeNum", body.NodeId)
 
 	// Convert artifacts from JSON format to proto format for local storage
-	protoArtifacts := make([]*inference.PoCArtifactV2, 0, len(body.Artifacts))
+	protoArtifacts := make([]*types.PoCArtifactV2, 0, len(body.Artifacts))
 	for _, a := range body.Artifacts {
 		vectorBytes, err := base64.StdEncoding.DecodeString(a.VectorB64)
 		if err != nil {
@@ -74,7 +85,7 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 				"nonce", a.Nonce)
 			return echo.NewHTTPError(http.StatusBadRequest, "empty artifact vector")
 		}
-		protoArtifacts = append(protoArtifacts, &inference.PoCArtifactV2{
+		protoArtifacts = append(protoArtifacts, &types.PoCArtifactV2{
 			Nonce:  int32(a.Nonce),
 			Vector: vectorBytes,
 		})
@@ -83,10 +94,11 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	// Store artifacts locally for off-chain proofs
 	// Store commits (MsgPoCV2StoreCommit) are submitted by CommitWorker
 	// Weight distributions (MsgMLNodeWeightDistribution) are submitted at end of generation
-	totalCount, nodeDistribution := s.addToLocalStorage(body.BlockHeight, nodeId, protoArtifacts)
+	totalCount, nodeDistribution := s.addToLocalStorage(body.BlockHeight, modelID, nodeId, protoArtifacts)
 
 	logging.Debug("ArtifactBatchV2-callback. Stored locally", types.PoC,
 		"blockHeight", body.BlockHeight,
+		"modelId", modelID,
 		"nodeId", nodeId,
 		"artifactsCount", len(protoArtifacts),
 		"totalInStore", totalCount,
@@ -98,11 +110,6 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 // postValidatedArtifactsV2 handles PoC v2 validation result callbacks from MLNode.
 // Receives validation results and submits them to chain via MsgSubmitPocValidationsV2 (batch).
 func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
-	// V2 endpoints disabled when not in V2 mode and not in migration mode
-	if s.broker != nil && !s.broker.IsV2EndpointsEnabled() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "V2 endpoints disabled")
-	}
-
 	var body mlnodeclient.ValidatedResultV2
 
 	if err := ctx.Bind(&body); err != nil {
@@ -115,6 +122,11 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"publicKey", body.PublicKey,
 		"nTotal", body.NTotal,
 		"fraudDetected", body.FraudDetected)
+
+	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
+	if err != nil {
+		return err
+	}
 
 	epochState := s.broker.GetPhaseTracker().GetCurrentEpochState()
 	if !poc.ShouldAcceptValidatedArtifacts(epochState) {
@@ -140,15 +152,17 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 
 	logging.Info("ValidatedArtifactsV2-callback. Submitting validation", types.PoC,
 		"participant", address,
+		"modelId", modelID,
 		"validatedWeight", validatedWeight,
 		"fraudDetected", body.FraudDetected)
 
 	// Use batch submission (even for single validation - no single-validation RPC exists)
-	msg := &inference.MsgSubmitPocValidationsV2{
+	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: body.BlockHeight,
-		Validations: []*inference.PoCValidationPayloadV2{
+		Validations: []*types.PoCValidationEntryV2{
 			{
 				ParticipantAddress: address,
+				ModelId:            modelID,
 				ValidatedWeight:    validatedWeight,
 			},
 		},
@@ -164,15 +178,15 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 	return ctx.NoContent(http.StatusOK)
 }
 
-func (s *Server) addToLocalStorage(pocStageStartHeight int64, nodeId string, protoArtifacts []*inference.PoCArtifactV2) (uint32, map[string]uint32) {
+func (s *Server) addToLocalStorage(pocStageStartHeight int64, modelID, nodeId string, protoArtifacts []*types.PoCArtifactV2) (uint32, map[string]uint32) {
 	if s.artifactStore == nil {
 		return 0, nil
 	}
 
-	store, err := s.artifactStore.GetOrCreateStore(pocStageStartHeight)
+	store, err := s.artifactStore.GetOrCreateStore(pocStageStartHeight, modelID)
 	if err != nil {
 		logging.Error("Failed to get artifact store", types.PoC,
-			"pocStageStartHeight", pocStageStartHeight, "error", err)
+			"pocStageStartHeight", pocStageStartHeight, "modelId", modelID, "error", err)
 		return 0, nil
 	}
 

@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -252,7 +253,7 @@ func TestAssignSlotsWithDecimalWeights(t *testing.T) {
 	require.Equal(t, uint32(999), result[2].SlotEndIndex)
 }
 
-func TestAssignSlotsEnsuresMinimumSlotForNonZeroWeight(t *testing.T) {
+func TestAssignSlots_DoesNotForceMinimumSlotForNonZeroWeight(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
 	participants := []types.ParticipantWithWeightAndKey{
@@ -280,129 +281,86 @@ func TestAssignSlotsEnsuresMinimumSlotForNonZeroWeight(t *testing.T) {
 
 	result, err := k.AssignSlots(ctx, participants, 100)
 	require.NoError(t, err)
-	require.Len(t, result, 4)
+	require.Len(t, result, 2)
 
 	slotsByAddress := make(map[string]uint32)
 	for _, participant := range result {
 		slotsByAddress[participant.Address] = participant.SlotEndIndex - participant.SlotStartIndex + 1
 	}
 
-	require.Equal(t, uint32(97), slotsByAddress["cosmos1guardian"])
+	require.Equal(t, uint32(99), slotsByAddress["cosmos1guardian"])
 	require.Equal(t, uint32(1), slotsByAddress["cosmos1small1"])
-	require.Equal(t, uint32(1), slotsByAddress["cosmos1small2"])
-	require.Equal(t, uint32(1), slotsByAddress["cosmos1small3"])
+	_, hasSmall2 := slotsByAddress["cosmos1small2"]
+	_, hasSmall3 := slotsByAddress["cosmos1small3"]
+	require.False(t, hasSmall2)
+	require.False(t, hasSmall3)
 }
 
 func TestAssignSlotsWithMoreParticipantsThanSlots(t *testing.T) {
 	k, ctx := keepertest.BlsKeeper(t)
 
-	// Create 10 participants with varying weights
+	// Oversubscribed case: strict weight allocation should not normalize to top-N and
+	// should allow a dominant participant to receive multiple slots.
 	participants := []types.ParticipantWithWeightAndKey{
 		{
 			Address:            "cosmos1addr01",
-			PercentageWeight:   math.LegacyNewDec(25), // Top 1
+			PercentageWeight:   math.LegacyNewDec(90),
 			Secp256k1PublicKey: []byte("key01"),
 		},
 		{
 			Address:            "cosmos1addr02",
-			PercentageWeight:   math.LegacyNewDec(20), // Top 2
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key02"),
 		},
 		{
 			Address:            "cosmos1addr03",
-			PercentageWeight:   math.LegacyNewDec(15), // Top 3
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key03"),
 		},
 		{
 			Address:            "cosmos1addr04",
-			PercentageWeight:   math.LegacyNewDec(10), // Top 4 (tie)
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key04"),
 		},
 		{
 			Address:            "cosmos1addr05",
-			PercentageWeight:   math.LegacyNewDec(10), // Top 5 (tie, selected by address)
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key05"),
 		},
 		{
 			Address:            "cosmos1addr06",
-			PercentageWeight:   math.LegacyNewDec(10), // Excluded (tie, but address is higher)
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key06"),
 		},
 		{
 			Address:            "cosmos1addr07",
-			PercentageWeight:   math.LegacyNewDec(5), // Excluded
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key07"),
 		},
 		{
 			Address:            "cosmos1addr08",
-			PercentageWeight:   math.LegacyNewDec(3), // Excluded
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key08"),
 		},
 		{
 			Address:            "cosmos1addr09",
-			PercentageWeight:   math.LegacyNewDec(1), // Excluded
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key09"),
 		},
 		{
 			Address:            "cosmos1addr10",
-			PercentageWeight:   math.LegacyNewDec(1), // Excluded
+			PercentageWeight:   math.LegacyNewDec(1),
 			Secp256k1PublicKey: []byte("key10"),
 		},
 	}
 
-	// Set totalSlots to 5, so only top 5 by weight should be selected
 	result, err := k.AssignSlots(ctx, participants, 5)
 	require.NoError(t, err)
+	require.Len(t, result, 1)
 
-	// Should only have 5 participants selected
-	require.Len(t, result, 5)
-
-	// Verify the top 5 by weight were selected
-	expectedAddresses := []string{
-		"cosmos1addr01", // 25%
-		"cosmos1addr02", // 20%
-		"cosmos1addr03", // 15%
-		"cosmos1addr04", // 10%
-		"cosmos1addr05", // 10%
-	}
-
-	selectedAddresses := make([]string, len(result))
-	for i, participant := range result {
-		selectedAddresses[i] = participant.Address
-	}
-
-	// Verify correct participants were selected (order may vary based on slot assignment)
-	for _, expectedAddr := range expectedAddresses {
-		found := false
-		for _, actualAddr := range selectedAddresses {
-			if actualAddr == expectedAddr {
-				found = true
-				break
-			}
-		}
-		require.True(t, found, "Expected participant %s to be selected", expectedAddr)
-	}
-
-	// Verify addr06 was NOT selected (even though it has same weight as addr04 and addr05,
-	// it should be excluded because address is lexicographically higher)
-	for _, participant := range result {
-		require.NotEqual(t, "cosmos1addr06", participant.Address, "cosmos1addr06 should not be selected")
-	}
-
-	// Verify all 5 slots are assigned
-	totalSlots := uint32(0)
-	for _, participant := range result {
-		totalSlots += participant.SlotEndIndex - participant.SlotStartIndex + 1
-	}
-	require.Equal(t, uint32(5), totalSlots)
-
-	// Verify contiguous slot assignment
+	require.Equal(t, "cosmos1addr01", result[0].Address)
 	require.Equal(t, uint32(0), result[0].SlotStartIndex)
-	for i := 0; i < len(result)-1; i++ {
-		require.Equal(t, result[i].SlotEndIndex+1, result[i+1].SlotStartIndex,
-			"Slot ranges should be contiguous")
-	}
-	require.Equal(t, uint32(4), result[len(result)-1].SlotEndIndex)
+	require.Equal(t, uint32(4), result[0].SlotEndIndex)
 }
 
 func TestAssignSlotsWithMoreParticipantsThanSlotsDeterminism(t *testing.T) {
@@ -450,4 +408,49 @@ func TestAssignSlotsWithMoreParticipantsThanSlotsDeterminism(t *testing.T) {
 		require.Equal(t, result[i].SlotStartIndex, result2[i].SlotStartIndex)
 		require.Equal(t, result[i].SlotEndIndex, result2[i].SlotEndIndex)
 	}
+}
+func TestInitiateKeyGenerationForEpoch_RejectsOversizeShape(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, _ := k.GetParams(ctx)
+	params.ITotalSlots = 200
+	k.SetParams(ctx, params)
+
+	participants := []types.ParticipantWithWeightAndKey{
+		{
+			Address:            "cosmos1val",
+			PercentageWeight:   math.LegacyNewDec(100),
+			Secp256k1PublicKey: []byte("val_key"),
+			AllowedSecp256k1PublicKeys: make([][]byte, 100),
+		},
+	}
+	
+	for i := range participants[0].AllowedSecp256k1PublicKeys {
+		participants[0].AllowedSecp256k1PublicKeys[i] = []byte(fmt.Sprintf("warm_key_%d", i))
+	}
+
+	err := k.InitiateKeyGenerationForEpoch(ctx, 1, participants)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum")
+}
+
+func TestInitiateKeyGenerationForEpoch_RejectsOversizeParticipantsOrCommitments(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+
+	params, _ := k.GetParams(ctx)
+	params.ITotalSlots = types.MaxDealerPartCommitmentsCount // 4096 => degree 4096 => commits 4097 => reject
+	params.TSlotsDegreeOffset = 0
+	k.SetParams(ctx, params)
+
+	participants := []types.ParticipantWithWeightAndKey{
+		{
+			Address:            "cosmos1val",
+			PercentageWeight:   math.LegacyNewDec(100),
+			Secp256k1PublicKey: []byte("val_key"),
+		},
+	}
+
+	err := k.InitiateKeyGenerationForEpoch(ctx, 1, participants)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum commitments count")
 }

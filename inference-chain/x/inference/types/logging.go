@@ -20,7 +20,6 @@ const (
 	EventProcessing
 	Upgrades
 	Server
-	Training
 	Stages
 	Balances
 	Stat

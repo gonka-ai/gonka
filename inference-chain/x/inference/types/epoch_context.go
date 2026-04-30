@@ -251,6 +251,13 @@ func (ec *EpochContext) IsStartOfPoCValidationStage(blockHeight int64) bool {
 	return blockHeight == ec.StartOfPoCValidation()
 }
 
+func (ec *EpochContext) IsDelegationSnapshotHeight(blockHeight, deployWindow int64) bool {
+	if deployWindow <= 0 {
+		return false
+	}
+	return blockHeight == ec.NextPoCStart()-deployWindow
+}
+
 func (ec *EpochContext) IsEndOfPoCValidationStage(blockHeight int64) bool {
 	if ec.EpochIndex == 0 {
 		return false

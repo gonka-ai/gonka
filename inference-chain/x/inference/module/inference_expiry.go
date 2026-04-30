@@ -188,10 +188,12 @@ func (ec *InferenceExpiryContext) ShouldCheckPreserveNode(inference types.Infere
 	return ec.IsBlockInPoCRange(startBlock) || ec.IsBlockInPoCRange(timeoutBlock)
 }
 
-// HasNodeForModel checks if a participant has the required node for the model
-// Checks preserve nodes if in PoC, otherwise checks regular mlnodes
-// Uses cached active participants from the expiry context to avoid repeated reads
+// HasNodeForModel checks if a participant has the required node for the model.
+// If checkPreserveNode is true, reads the current preserved snapshot and requires one
+// of the participant's nodes for the model to be preserved. Otherwise any mlnode is
+// sufficient.
 func (am AppModule) HasNodeForModel(
+	ctx context.Context,
 	participantAddr string,
 	modelId string,
 	checkPreserveNode bool,
@@ -201,7 +203,6 @@ func (am AppModule) HasNodeForModel(
 		return false
 	}
 
-	// Find the participant
 	var participant *types.ActiveParticipant
 	for _, p := range activeParticipants.Participants {
 		if p.Index == participantAddr {
@@ -209,12 +210,10 @@ func (am AppModule) HasNodeForModel(
 			break
 		}
 	}
-
 	if participant == nil {
 		return false
 	}
 
-	// Find the model index in the Models array
 	modelIndex := -1
 	for i, model := range participant.Models {
 		if model == modelId {
@@ -222,8 +221,6 @@ func (am AppModule) HasNodeForModel(
 			break
 		}
 	}
-
-	// Model not found in participant's models
 	if modelIndex == -1 || modelIndex >= len(participant.MlNodes) {
 		return false
 	}
@@ -233,18 +230,27 @@ func (am AppModule) HasNodeForModel(
 		return false
 	}
 
-	// Check if participant has the model
-	if checkPreserveNode {
-		// Check preserve nodes (POC_SLOT = true, which is index 1 in TimeslotAllocation)
-		for _, mlNode := range modelMLNodes.MlNodes {
-			// Check if this is a preserve node (POC_SLOT = true)
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] {
-				return true
-			}
-		}
-		return false
-	} else {
-		// Any mlnode for this model is sufficient
+	if !checkPreserveNode {
 		return true
 	}
+
+	snapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
+	if err != nil {
+		am.LogWarn("HasNodeForModel: failed to read preserved snapshot", types.Inferences,
+			"participant", participantAddr, "model", modelId, "error", err)
+		return false
+	}
+	if !found {
+		return false
+	}
+	preservedNodeSet := keeper.PreservedNodeSetByModel(&snapshot, modelId)
+	for _, mlNode := range modelMLNodes.MlNodes {
+		if mlNode == nil {
+			continue
+		}
+		if keeper.IsPreservedNode(preservedNodeSet, participantAddr, mlNode.NodeId) {
+			return true
+		}
+	}
+	return false
 }

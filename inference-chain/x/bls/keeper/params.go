@@ -69,3 +69,15 @@ func (k Keeper) GetVerificationPhaseDurationBlocks(ctx context.Context) int64 {
 	}
 	return params.VerificationPhaseDurationBlocks
 }
+
+// GetDisputePhaseDurationBlocks returns the disputing phase duration in blocks.
+func (k Keeper) GetDisputePhaseDurationBlocks(ctx context.Context) int64 {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return types.DefaultParams().DisputePhaseDurationBlocks
+	}
+	if params.DisputePhaseDurationBlocks <= 0 {
+		return types.DefaultParams().DisputePhaseDurationBlocks
+	}
+	return params.DisputePhaseDurationBlocks
+}

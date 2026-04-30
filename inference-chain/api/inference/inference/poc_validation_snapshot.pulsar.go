@@ -12,54 +12,54 @@ import (
 	sync "sync"
 )
 
-var _ protoreflect.List = (*_PoCValidationSnapshot_4_list)(nil)
+var _ protoreflect.List = (*_PoCValidationSnapshot_7_list)(nil)
 
-type _PoCValidationSnapshot_4_list struct {
-	list *[]*ValidatorWeight
+type _PoCValidationSnapshot_7_list struct {
+	list *[]*ModelVotingPowers
 }
 
-func (x *_PoCValidationSnapshot_4_list) Len() int {
+func (x *_PoCValidationSnapshot_7_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_PoCValidationSnapshot_4_list) Get(i int) protoreflect.Value {
+func (x *_PoCValidationSnapshot_7_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_PoCValidationSnapshot_4_list) Set(i int, value protoreflect.Value) {
+func (x *_PoCValidationSnapshot_7_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*ValidatorWeight)
+	concreteValue := valueUnwrapped.Interface().(*ModelVotingPowers)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_PoCValidationSnapshot_4_list) Append(value protoreflect.Value) {
+func (x *_PoCValidationSnapshot_7_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*ValidatorWeight)
+	concreteValue := valueUnwrapped.Interface().(*ModelVotingPowers)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_PoCValidationSnapshot_4_list) AppendMutable() protoreflect.Value {
-	v := new(ValidatorWeight)
+func (x *_PoCValidationSnapshot_7_list) AppendMutable() protoreflect.Value {
+	v := new(ModelVotingPowers)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_PoCValidationSnapshot_4_list) Truncate(n int) {
+func (x *_PoCValidationSnapshot_7_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_PoCValidationSnapshot_4_list) NewElement() protoreflect.Value {
-	v := new(ValidatorWeight)
+func (x *_PoCValidationSnapshot_7_list) NewElement() protoreflect.Value {
+	v := new(ModelVotingPowers)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_PoCValidationSnapshot_4_list) IsValid() bool {
+func (x *_PoCValidationSnapshot_7_list) IsValid() bool {
 	return x.list != nil
 }
 
@@ -68,9 +68,10 @@ var (
 	fd_PoCValidationSnapshot_poc_stage_start_height     protoreflect.FieldDescriptor
 	fd_PoCValidationSnapshot_snapshot_height            protoreflect.FieldDescriptor
 	fd_PoCValidationSnapshot_app_hash                   protoreflect.FieldDescriptor
-	fd_PoCValidationSnapshot_validator_weights          protoreflect.FieldDescriptor
 	fd_PoCValidationSnapshot_generation_start_timestamp protoreflect.FieldDescriptor
 	fd_PoCValidationSnapshot_exchange_end_timestamp     protoreflect.FieldDescriptor
+	fd_PoCValidationSnapshot_model_voting_powers        protoreflect.FieldDescriptor
+	fd_PoCValidationSnapshot_total_network_weight       protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -79,9 +80,10 @@ func init() {
 	fd_PoCValidationSnapshot_poc_stage_start_height = md_PoCValidationSnapshot.Fields().ByName("poc_stage_start_height")
 	fd_PoCValidationSnapshot_snapshot_height = md_PoCValidationSnapshot.Fields().ByName("snapshot_height")
 	fd_PoCValidationSnapshot_app_hash = md_PoCValidationSnapshot.Fields().ByName("app_hash")
-	fd_PoCValidationSnapshot_validator_weights = md_PoCValidationSnapshot.Fields().ByName("validator_weights")
 	fd_PoCValidationSnapshot_generation_start_timestamp = md_PoCValidationSnapshot.Fields().ByName("generation_start_timestamp")
 	fd_PoCValidationSnapshot_exchange_end_timestamp = md_PoCValidationSnapshot.Fields().ByName("exchange_end_timestamp")
+	fd_PoCValidationSnapshot_model_voting_powers = md_PoCValidationSnapshot.Fields().ByName("model_voting_powers")
+	fd_PoCValidationSnapshot_total_network_weight = md_PoCValidationSnapshot.Fields().ByName("total_network_weight")
 }
 
 var _ protoreflect.Message = (*fastReflection_PoCValidationSnapshot)(nil)
@@ -167,12 +169,6 @@ func (x *fastReflection_PoCValidationSnapshot) Range(f func(protoreflect.FieldDe
 			return
 		}
 	}
-	if len(x.ValidatorWeights) != 0 {
-		value := protoreflect.ValueOfList(&_PoCValidationSnapshot_4_list{list: &x.ValidatorWeights})
-		if !f(fd_PoCValidationSnapshot_validator_weights, value) {
-			return
-		}
-	}
 	if x.GenerationStartTimestamp != int64(0) {
 		value := protoreflect.ValueOfInt64(x.GenerationStartTimestamp)
 		if !f(fd_PoCValidationSnapshot_generation_start_timestamp, value) {
@@ -182,6 +178,18 @@ func (x *fastReflection_PoCValidationSnapshot) Range(f func(protoreflect.FieldDe
 	if x.ExchangeEndTimestamp != int64(0) {
 		value := protoreflect.ValueOfInt64(x.ExchangeEndTimestamp)
 		if !f(fd_PoCValidationSnapshot_exchange_end_timestamp, value) {
+			return
+		}
+	}
+	if len(x.ModelVotingPowers) != 0 {
+		value := protoreflect.ValueOfList(&_PoCValidationSnapshot_7_list{list: &x.ModelVotingPowers})
+		if !f(fd_PoCValidationSnapshot_model_voting_powers, value) {
+			return
+		}
+	}
+	if x.TotalNetworkWeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TotalNetworkWeight)
+		if !f(fd_PoCValidationSnapshot_total_network_weight, value) {
 			return
 		}
 	}
@@ -206,12 +214,14 @@ func (x *fastReflection_PoCValidationSnapshot) Has(fd protoreflect.FieldDescript
 		return x.SnapshotHeight != int64(0)
 	case "inference.inference.PoCValidationSnapshot.app_hash":
 		return x.AppHash != ""
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		return len(x.ValidatorWeights) != 0
 	case "inference.inference.PoCValidationSnapshot.generation_start_timestamp":
 		return x.GenerationStartTimestamp != int64(0)
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
 		return x.ExchangeEndTimestamp != int64(0)
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		return len(x.ModelVotingPowers) != 0
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
+		return x.TotalNetworkWeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCValidationSnapshot"))
@@ -234,12 +244,14 @@ func (x *fastReflection_PoCValidationSnapshot) Clear(fd protoreflect.FieldDescri
 		x.SnapshotHeight = int64(0)
 	case "inference.inference.PoCValidationSnapshot.app_hash":
 		x.AppHash = ""
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		x.ValidatorWeights = nil
 	case "inference.inference.PoCValidationSnapshot.generation_start_timestamp":
 		x.GenerationStartTimestamp = int64(0)
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
 		x.ExchangeEndTimestamp = int64(0)
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		x.ModelVotingPowers = nil
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
+		x.TotalNetworkWeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCValidationSnapshot"))
@@ -265,17 +277,20 @@ func (x *fastReflection_PoCValidationSnapshot) Get(descriptor protoreflect.Field
 	case "inference.inference.PoCValidationSnapshot.app_hash":
 		value := x.AppHash
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		if len(x.ValidatorWeights) == 0 {
-			return protoreflect.ValueOfList(&_PoCValidationSnapshot_4_list{})
-		}
-		listValue := &_PoCValidationSnapshot_4_list{list: &x.ValidatorWeights}
-		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.PoCValidationSnapshot.generation_start_timestamp":
 		value := x.GenerationStartTimestamp
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
 		value := x.ExchangeEndTimestamp
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		if len(x.ModelVotingPowers) == 0 {
+			return protoreflect.ValueOfList(&_PoCValidationSnapshot_7_list{})
+		}
+		listValue := &_PoCValidationSnapshot_7_list{list: &x.ModelVotingPowers}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
+		value := x.TotalNetworkWeight
 		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
@@ -303,14 +318,16 @@ func (x *fastReflection_PoCValidationSnapshot) Set(fd protoreflect.FieldDescript
 		x.SnapshotHeight = value.Int()
 	case "inference.inference.PoCValidationSnapshot.app_hash":
 		x.AppHash = value.Interface().(string)
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		lv := value.List()
-		clv := lv.(*_PoCValidationSnapshot_4_list)
-		x.ValidatorWeights = *clv.list
 	case "inference.inference.PoCValidationSnapshot.generation_start_timestamp":
 		x.GenerationStartTimestamp = value.Int()
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
 		x.ExchangeEndTimestamp = value.Int()
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		lv := value.List()
+		clv := lv.(*_PoCValidationSnapshot_7_list)
+		x.ModelVotingPowers = *clv.list
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
+		x.TotalNetworkWeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCValidationSnapshot"))
@@ -331,11 +348,11 @@ func (x *fastReflection_PoCValidationSnapshot) Set(fd protoreflect.FieldDescript
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_PoCValidationSnapshot) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		if x.ValidatorWeights == nil {
-			x.ValidatorWeights = []*ValidatorWeight{}
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		if x.ModelVotingPowers == nil {
+			x.ModelVotingPowers = []*ModelVotingPowers{}
 		}
-		value := &_PoCValidationSnapshot_4_list{list: &x.ValidatorWeights}
+		value := &_PoCValidationSnapshot_7_list{list: &x.ModelVotingPowers}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.PoCValidationSnapshot.poc_stage_start_height":
 		panic(fmt.Errorf("field poc_stage_start_height of message inference.inference.PoCValidationSnapshot is not mutable"))
@@ -347,6 +364,8 @@ func (x *fastReflection_PoCValidationSnapshot) Mutable(fd protoreflect.FieldDesc
 		panic(fmt.Errorf("field generation_start_timestamp of message inference.inference.PoCValidationSnapshot is not mutable"))
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
 		panic(fmt.Errorf("field exchange_end_timestamp of message inference.inference.PoCValidationSnapshot is not mutable"))
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
+		panic(fmt.Errorf("field total_network_weight of message inference.inference.PoCValidationSnapshot is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCValidationSnapshot"))
@@ -366,12 +385,14 @@ func (x *fastReflection_PoCValidationSnapshot) NewField(fd protoreflect.FieldDes
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.PoCValidationSnapshot.app_hash":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCValidationSnapshot.validator_weights":
-		list := []*ValidatorWeight{}
-		return protoreflect.ValueOfList(&_PoCValidationSnapshot_4_list{list: &list})
 	case "inference.inference.PoCValidationSnapshot.generation_start_timestamp":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.PoCValidationSnapshot.exchange_end_timestamp":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.PoCValidationSnapshot.model_voting_powers":
+		list := []*ModelVotingPowers{}
+		return protoreflect.ValueOfList(&_PoCValidationSnapshot_7_list{list: &list})
+	case "inference.inference.PoCValidationSnapshot.total_network_weight":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -452,17 +473,20 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.ValidatorWeights) > 0 {
-			for _, e := range x.ValidatorWeights {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
 		if x.GenerationStartTimestamp != 0 {
 			n += 1 + runtime.Sov(uint64(x.GenerationStartTimestamp))
 		}
 		if x.ExchangeEndTimestamp != 0 {
 			n += 1 + runtime.Sov(uint64(x.ExchangeEndTimestamp))
+		}
+		if len(x.ModelVotingPowers) > 0 {
+			for _, e := range x.ModelVotingPowers {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if x.TotalNetworkWeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.TotalNetworkWeight))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -493,19 +517,14 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.ExchangeEndTimestamp != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExchangeEndTimestamp))
+		if x.TotalNetworkWeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TotalNetworkWeight))
 			i--
-			dAtA[i] = 0x30
+			dAtA[i] = 0x40
 		}
-		if x.GenerationStartTimestamp != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.GenerationStartTimestamp))
-			i--
-			dAtA[i] = 0x28
-		}
-		if len(x.ValidatorWeights) > 0 {
-			for iNdEx := len(x.ValidatorWeights) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.ValidatorWeights[iNdEx])
+		if len(x.ModelVotingPowers) > 0 {
+			for iNdEx := len(x.ModelVotingPowers) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.ModelVotingPowers[iNdEx])
 				if err != nil {
 					return protoiface.MarshalOutput{
 						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -516,8 +535,18 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x22
+				dAtA[i] = 0x3a
 			}
+		}
+		if x.ExchangeEndTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExchangeEndTimestamp))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.GenerationStartTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.GenerationStartTimestamp))
+			i--
+			dAtA[i] = 0x28
 		}
 		if len(x.AppHash) > 0 {
 			i -= len(x.AppHash)
@@ -655,40 +684,6 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 				}
 				x.AppHash = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 4:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatorWeights", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ValidatorWeights = append(x.ValidatorWeights, &ValidatorWeight{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ValidatorWeights[len(x.ValidatorWeights)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
 			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GenerationStartTimestamp", wireType)
@@ -723,6 +718,59 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.ExchangeEndTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelVotingPowers", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ModelVotingPowers = append(x.ModelVotingPowers, &ModelVotingPowers{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ModelVotingPowers[len(x.ModelVotingPowers)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TotalNetworkWeight", wireType)
+				}
+				x.TotalNetworkWeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TotalNetworkWeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -762,28 +810,79 @@ func (x *fastReflection_PoCValidationSnapshot) ProtoMethods() *protoiface.Method
 	}
 }
 
+var _ protoreflect.List = (*_ModelVotingPowers_2_list)(nil)
+
+type _ModelVotingPowers_2_list struct {
+	list *[]*VotingPowerEntry
+}
+
+func (x *_ModelVotingPowers_2_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_ModelVotingPowers_2_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_ModelVotingPowers_2_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*VotingPowerEntry)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_ModelVotingPowers_2_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*VotingPowerEntry)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_ModelVotingPowers_2_list) AppendMutable() protoreflect.Value {
+	v := new(VotingPowerEntry)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_ModelVotingPowers_2_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_ModelVotingPowers_2_list) NewElement() protoreflect.Value {
+	v := new(VotingPowerEntry)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_ModelVotingPowers_2_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_ValidatorWeight         protoreflect.MessageDescriptor
-	fd_ValidatorWeight_address protoreflect.FieldDescriptor
-	fd_ValidatorWeight_weight  protoreflect.FieldDescriptor
+	md_ModelVotingPowers               protoreflect.MessageDescriptor
+	fd_ModelVotingPowers_model_id      protoreflect.FieldDescriptor
+	fd_ModelVotingPowers_voting_powers protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_poc_validation_snapshot_proto_init()
-	md_ValidatorWeight = File_inference_inference_poc_validation_snapshot_proto.Messages().ByName("ValidatorWeight")
-	fd_ValidatorWeight_address = md_ValidatorWeight.Fields().ByName("address")
-	fd_ValidatorWeight_weight = md_ValidatorWeight.Fields().ByName("weight")
+	md_ModelVotingPowers = File_inference_inference_poc_validation_snapshot_proto.Messages().ByName("ModelVotingPowers")
+	fd_ModelVotingPowers_model_id = md_ModelVotingPowers.Fields().ByName("model_id")
+	fd_ModelVotingPowers_voting_powers = md_ModelVotingPowers.Fields().ByName("voting_powers")
 }
 
-var _ protoreflect.Message = (*fastReflection_ValidatorWeight)(nil)
+var _ protoreflect.Message = (*fastReflection_ModelVotingPowers)(nil)
 
-type fastReflection_ValidatorWeight ValidatorWeight
+type fastReflection_ModelVotingPowers ModelVotingPowers
 
-func (x *ValidatorWeight) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_ValidatorWeight)(x)
+func (x *ModelVotingPowers) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_ModelVotingPowers)(x)
 }
 
-func (x *ValidatorWeight) slowProtoReflect() protoreflect.Message {
+func (x *ModelVotingPowers) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_poc_validation_snapshot_proto_msgTypes[1]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -795,43 +894,43 @@ func (x *ValidatorWeight) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_ValidatorWeight_messageType fastReflection_ValidatorWeight_messageType
-var _ protoreflect.MessageType = fastReflection_ValidatorWeight_messageType{}
+var _fastReflection_ModelVotingPowers_messageType fastReflection_ModelVotingPowers_messageType
+var _ protoreflect.MessageType = fastReflection_ModelVotingPowers_messageType{}
 
-type fastReflection_ValidatorWeight_messageType struct{}
+type fastReflection_ModelVotingPowers_messageType struct{}
 
-func (x fastReflection_ValidatorWeight_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_ValidatorWeight)(nil)
+func (x fastReflection_ModelVotingPowers_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_ModelVotingPowers)(nil)
 }
-func (x fastReflection_ValidatorWeight_messageType) New() protoreflect.Message {
-	return new(fastReflection_ValidatorWeight)
+func (x fastReflection_ModelVotingPowers_messageType) New() protoreflect.Message {
+	return new(fastReflection_ModelVotingPowers)
 }
-func (x fastReflection_ValidatorWeight_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_ValidatorWeight
+func (x fastReflection_ModelVotingPowers_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_ModelVotingPowers
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_ValidatorWeight) Descriptor() protoreflect.MessageDescriptor {
-	return md_ValidatorWeight
+func (x *fastReflection_ModelVotingPowers) Descriptor() protoreflect.MessageDescriptor {
+	return md_ModelVotingPowers
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_ValidatorWeight) Type() protoreflect.MessageType {
-	return _fastReflection_ValidatorWeight_messageType
+func (x *fastReflection_ModelVotingPowers) Type() protoreflect.MessageType {
+	return _fastReflection_ModelVotingPowers_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_ValidatorWeight) New() protoreflect.Message {
-	return new(fastReflection_ValidatorWeight)
+func (x *fastReflection_ModelVotingPowers) New() protoreflect.Message {
+	return new(fastReflection_ModelVotingPowers)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_ValidatorWeight) Interface() protoreflect.ProtoMessage {
-	return (*ValidatorWeight)(x)
+func (x *fastReflection_ModelVotingPowers) Interface() protoreflect.ProtoMessage {
+	return (*ModelVotingPowers)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -839,16 +938,16 @@ func (x *fastReflection_ValidatorWeight) Interface() protoreflect.ProtoMessage {
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_ValidatorWeight) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Address != "" {
-		value := protoreflect.ValueOfString(x.Address)
-		if !f(fd_ValidatorWeight_address, value) {
+func (x *fastReflection_ModelVotingPowers) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.ModelId != "" {
+		value := protoreflect.ValueOfString(x.ModelId)
+		if !f(fd_ModelVotingPowers_model_id, value) {
 			return
 		}
 	}
-	if x.Weight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.Weight)
-		if !f(fd_ValidatorWeight_weight, value) {
+	if len(x.VotingPowers) != 0 {
+		value := protoreflect.ValueOfList(&_ModelVotingPowers_2_list{list: &x.VotingPowers})
+		if !f(fd_ModelVotingPowers_voting_powers, value) {
 			return
 		}
 	}
@@ -865,17 +964,17 @@ func (x *fastReflection_ValidatorWeight) Range(f func(protoreflect.FieldDescript
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_ValidatorWeight) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_ModelVotingPowers) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.ValidatorWeight.address":
-		return x.Address != ""
-	case "inference.inference.ValidatorWeight.weight":
-		return x.Weight != int64(0)
+	case "inference.inference.ModelVotingPowers.model_id":
+		return x.ModelId != ""
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		return len(x.VotingPowers) != 0
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -885,17 +984,17 @@ func (x *fastReflection_ValidatorWeight) Has(fd protoreflect.FieldDescriptor) bo
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_ValidatorWeight) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_ModelVotingPowers) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.ValidatorWeight.address":
-		x.Address = ""
-	case "inference.inference.ValidatorWeight.weight":
-		x.Weight = int64(0)
+	case "inference.inference.ModelVotingPowers.model_id":
+		x.ModelId = ""
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		x.VotingPowers = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -905,19 +1004,22 @@ func (x *fastReflection_ValidatorWeight) Clear(fd protoreflect.FieldDescriptor) 
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_ValidatorWeight) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_ModelVotingPowers) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.ValidatorWeight.address":
-		value := x.Address
+	case "inference.inference.ModelVotingPowers.model_id":
+		value := x.ModelId
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.ValidatorWeight.weight":
-		value := x.Weight
-		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		if len(x.VotingPowers) == 0 {
+			return protoreflect.ValueOfList(&_ModelVotingPowers_2_list{})
+		}
+		listValue := &_ModelVotingPowers_2_list{list: &x.VotingPowers}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -931,17 +1033,19 @@ func (x *fastReflection_ValidatorWeight) Get(descriptor protoreflect.FieldDescri
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_ValidatorWeight) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_ModelVotingPowers) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.ValidatorWeight.address":
-		x.Address = value.Interface().(string)
-	case "inference.inference.ValidatorWeight.weight":
-		x.Weight = value.Int()
+	case "inference.inference.ModelVotingPowers.model_id":
+		x.ModelId = value.Interface().(string)
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		lv := value.List()
+		clv := lv.(*_ModelVotingPowers_2_list)
+		x.VotingPowers = *clv.list
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -955,44 +1059,49 @@ func (x *fastReflection_ValidatorWeight) Set(fd protoreflect.FieldDescriptor, va
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_ValidatorWeight) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_ModelVotingPowers) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ValidatorWeight.address":
-		panic(fmt.Errorf("field address of message inference.inference.ValidatorWeight is not mutable"))
-	case "inference.inference.ValidatorWeight.weight":
-		panic(fmt.Errorf("field weight of message inference.inference.ValidatorWeight is not mutable"))
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		if x.VotingPowers == nil {
+			x.VotingPowers = []*VotingPowerEntry{}
+		}
+		value := &_ModelVotingPowers_2_list{list: &x.VotingPowers}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.ModelVotingPowers.model_id":
+		panic(fmt.Errorf("field model_id of message inference.inference.ModelVotingPowers is not mutable"))
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_ValidatorWeight) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_ModelVotingPowers) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ValidatorWeight.address":
+	case "inference.inference.ModelVotingPowers.model_id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.ValidatorWeight.weight":
-		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ModelVotingPowers.voting_powers":
+		list := []*VotingPowerEntry{}
+		return protoreflect.ValueOfList(&_ModelVotingPowers_2_list{list: &list})
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidatorWeight"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ModelVotingPowers"))
 		}
-		panic(fmt.Errorf("message inference.inference.ValidatorWeight does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.ModelVotingPowers does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_ValidatorWeight) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_ModelVotingPowers) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.ValidatorWeight", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.ModelVotingPowers", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -1000,7 +1109,7 @@ func (x *fastReflection_ValidatorWeight) WhichOneof(d protoreflect.OneofDescript
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_ValidatorWeight) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_ModelVotingPowers) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -1011,7 +1120,7 @@ func (x *fastReflection_ValidatorWeight) GetUnknown() protoreflect.RawFields {
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_ValidatorWeight) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_ModelVotingPowers) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -1023,7 +1132,7 @@ func (x *fastReflection_ValidatorWeight) SetUnknown(fields protoreflect.RawField
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_ValidatorWeight) IsValid() bool {
+func (x *fastReflection_ModelVotingPowers) IsValid() bool {
 	return x != nil
 }
 
@@ -1033,9 +1142,9 @@ func (x *fastReflection_ValidatorWeight) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_ModelVotingPowers) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*ValidatorWeight)
+		x := input.Message.Interface().(*ModelVotingPowers)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1047,12 +1156,15 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		l = len(x.Address)
+		l = len(x.ModelId)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.Weight != 0 {
-			n += 1 + runtime.Sov(uint64(x.Weight))
+		if len(x.VotingPowers) > 0 {
+			for _, e := range x.VotingPowers {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -1064,7 +1176,7 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*ValidatorWeight)
+		x := input.Message.Interface().(*ModelVotingPowers)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1083,15 +1195,26 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.Weight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Weight))
-			i--
-			dAtA[i] = 0x10
+		if len(x.VotingPowers) > 0 {
+			for iNdEx := len(x.VotingPowers) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.VotingPowers[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x12
+			}
 		}
-		if len(x.Address) > 0 {
-			i -= len(x.Address)
-			copy(dAtA[i:], x.Address)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Address)))
+		if len(x.ModelId) > 0 {
+			i -= len(x.ModelId)
+			copy(dAtA[i:], x.ModelId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelId)))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -1106,7 +1229,7 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*ValidatorWeight)
+		x := input.Message.Interface().(*ModelVotingPowers)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1138,10 +1261,493 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: ValidatorWeight: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: ModelVotingPowers: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: ValidatorWeight: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: ModelVotingPowers: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ModelId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field VotingPowers", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.VotingPowers = append(x.VotingPowers, &VotingPowerEntry{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.VotingPowers[len(x.VotingPowers)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_VotingPowerEntry              protoreflect.MessageDescriptor
+	fd_VotingPowerEntry_address      protoreflect.FieldDescriptor
+	fd_VotingPowerEntry_voting_power protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_poc_validation_snapshot_proto_init()
+	md_VotingPowerEntry = File_inference_inference_poc_validation_snapshot_proto.Messages().ByName("VotingPowerEntry")
+	fd_VotingPowerEntry_address = md_VotingPowerEntry.Fields().ByName("address")
+	fd_VotingPowerEntry_voting_power = md_VotingPowerEntry.Fields().ByName("voting_power")
+}
+
+var _ protoreflect.Message = (*fastReflection_VotingPowerEntry)(nil)
+
+type fastReflection_VotingPowerEntry VotingPowerEntry
+
+func (x *VotingPowerEntry) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_VotingPowerEntry)(x)
+}
+
+func (x *VotingPowerEntry) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_poc_validation_snapshot_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_VotingPowerEntry_messageType fastReflection_VotingPowerEntry_messageType
+var _ protoreflect.MessageType = fastReflection_VotingPowerEntry_messageType{}
+
+type fastReflection_VotingPowerEntry_messageType struct{}
+
+func (x fastReflection_VotingPowerEntry_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_VotingPowerEntry)(nil)
+}
+func (x fastReflection_VotingPowerEntry_messageType) New() protoreflect.Message {
+	return new(fastReflection_VotingPowerEntry)
+}
+func (x fastReflection_VotingPowerEntry_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_VotingPowerEntry
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_VotingPowerEntry) Descriptor() protoreflect.MessageDescriptor {
+	return md_VotingPowerEntry
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_VotingPowerEntry) Type() protoreflect.MessageType {
+	return _fastReflection_VotingPowerEntry_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_VotingPowerEntry) New() protoreflect.Message {
+	return new(fastReflection_VotingPowerEntry)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_VotingPowerEntry) Interface() protoreflect.ProtoMessage {
+	return (*VotingPowerEntry)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_VotingPowerEntry) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Address != "" {
+		value := protoreflect.ValueOfString(x.Address)
+		if !f(fd_VotingPowerEntry_address, value) {
+			return
+		}
+	}
+	if x.VotingPower != int64(0) {
+		value := protoreflect.ValueOfInt64(x.VotingPower)
+		if !f(fd_VotingPowerEntry_voting_power, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_VotingPowerEntry) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		return x.Address != ""
+	case "inference.inference.VotingPowerEntry.voting_power":
+		return x.VotingPower != int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_VotingPowerEntry) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		x.Address = ""
+	case "inference.inference.VotingPowerEntry.voting_power":
+		x.VotingPower = int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_VotingPowerEntry) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		value := x.Address
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.VotingPowerEntry.voting_power":
+		value := x.VotingPower
+		return protoreflect.ValueOfInt64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_VotingPowerEntry) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		x.Address = value.Interface().(string)
+	case "inference.inference.VotingPowerEntry.voting_power":
+		x.VotingPower = value.Int()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_VotingPowerEntry) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		panic(fmt.Errorf("field address of message inference.inference.VotingPowerEntry is not mutable"))
+	case "inference.inference.VotingPowerEntry.voting_power":
+		panic(fmt.Errorf("field voting_power of message inference.inference.VotingPowerEntry is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_VotingPowerEntry) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.VotingPowerEntry.address":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.VotingPowerEntry.voting_power":
+		return protoreflect.ValueOfInt64(int64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.VotingPowerEntry"))
+		}
+		panic(fmt.Errorf("message inference.inference.VotingPowerEntry does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_VotingPowerEntry) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.VotingPowerEntry", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_VotingPowerEntry) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_VotingPowerEntry) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_VotingPowerEntry) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_VotingPowerEntry) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*VotingPowerEntry)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Address)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.VotingPower != 0 {
+			n += 1 + runtime.Sov(uint64(x.VotingPower))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*VotingPowerEntry)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.VotingPower != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.VotingPower))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.Address) > 0 {
+			i -= len(x.Address)
+			copy(dAtA[i:], x.Address)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Address)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*VotingPowerEntry)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: VotingPowerEntry: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: VotingPowerEntry: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -1178,9 +1784,9 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field VotingPower", wireType)
 				}
-				x.Weight = 0
+				x.VotingPower = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1190,7 +1796,7 @@ func (x *fastReflection_ValidatorWeight) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.Weight |= int64(b&0x7F) << shift
+					x.VotingPower |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1243,19 +1849,22 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// PoCValidationSnapshot captures validator weights at validation phase start
+// PoCValidationSnapshot captures per-model voting powers at validation phase start
 // for deterministic sampling synchronization between chain and DAPI.
+// Voting powers are delegation-resolved: each DIRECT member's weight includes
+// delegated consensus weight from non-members of that model group.
 type PoCValidationSnapshot struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocStageStartHeight      int64              `protobuf:"varint,1,opt,name=poc_stage_start_height,json=pocStageStartHeight,proto3" json:"poc_stage_start_height,omitempty"`
-	SnapshotHeight           int64              `protobuf:"varint,2,opt,name=snapshot_height,json=snapshotHeight,proto3" json:"snapshot_height,omitempty"`
-	AppHash                  string             `protobuf:"bytes,3,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
-	ValidatorWeights         []*ValidatorWeight `protobuf:"bytes,4,rep,name=validator_weights,json=validatorWeights,proto3" json:"validator_weights,omitempty"`
-	GenerationStartTimestamp int64              `protobuf:"varint,5,opt,name=generation_start_timestamp,json=generationStartTimestamp,proto3" json:"generation_start_timestamp,omitempty"`
-	ExchangeEndTimestamp     int64              `protobuf:"varint,6,opt,name=exchange_end_timestamp,json=exchangeEndTimestamp,proto3" json:"exchange_end_timestamp,omitempty"`
+	PocStageStartHeight      int64                `protobuf:"varint,1,opt,name=poc_stage_start_height,json=pocStageStartHeight,proto3" json:"poc_stage_start_height,omitempty"`
+	SnapshotHeight           int64                `protobuf:"varint,2,opt,name=snapshot_height,json=snapshotHeight,proto3" json:"snapshot_height,omitempty"`
+	AppHash                  string               `protobuf:"bytes,3,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
+	GenerationStartTimestamp int64                `protobuf:"varint,5,opt,name=generation_start_timestamp,json=generationStartTimestamp,proto3" json:"generation_start_timestamp,omitempty"`
+	ExchangeEndTimestamp     int64                `protobuf:"varint,6,opt,name=exchange_end_timestamp,json=exchangeEndTimestamp,proto3" json:"exchange_end_timestamp,omitempty"`
+	ModelVotingPowers        []*ModelVotingPowers `protobuf:"bytes,7,rep,name=model_voting_powers,json=modelVotingPowers,proto3" json:"model_voting_powers,omitempty"`
+	TotalNetworkWeight       int64                `protobuf:"varint,8,opt,name=total_network_weight,json=totalNetworkWeight,proto3" json:"total_network_weight,omitempty"`
 }
 
 func (x *PoCValidationSnapshot) Reset() {
@@ -1299,13 +1908,6 @@ func (x *PoCValidationSnapshot) GetAppHash() string {
 	return ""
 }
 
-func (x *PoCValidationSnapshot) GetValidatorWeights() []*ValidatorWeight {
-	if x != nil {
-		return x.ValidatorWeights
-	}
-	return nil
-}
-
 func (x *PoCValidationSnapshot) GetGenerationStartTimestamp() int64 {
 	if x != nil {
 		return x.GenerationStartTimestamp
@@ -1320,17 +1922,34 @@ func (x *PoCValidationSnapshot) GetExchangeEndTimestamp() int64 {
 	return 0
 }
 
-type ValidatorWeight struct {
+func (x *PoCValidationSnapshot) GetModelVotingPowers() []*ModelVotingPowers {
+	if x != nil {
+		return x.ModelVotingPowers
+	}
+	return nil
+}
+
+func (x *PoCValidationSnapshot) GetTotalNetworkWeight() int64 {
+	if x != nil {
+		return x.TotalNetworkWeight
+	}
+	return 0
+}
+
+// ModelVotingPowers holds delegation-resolved voting powers for one model group.
+// Only DIRECT members (participants who submitted PoC for this model) get entries.
+// Each member's voting power = own N-1 consensus weight + delegated consensus weight.
+type ModelVotingPowers struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Weight  int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	ModelId      string              `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	VotingPowers []*VotingPowerEntry `protobuf:"bytes,2,rep,name=voting_powers,json=votingPowers,proto3" json:"voting_powers,omitempty"`
 }
 
-func (x *ValidatorWeight) Reset() {
-	*x = ValidatorWeight{}
+func (x *ModelVotingPowers) Reset() {
+	*x = ModelVotingPowers{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_poc_validation_snapshot_proto_msgTypes[1]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1338,27 +1957,71 @@ func (x *ValidatorWeight) Reset() {
 	}
 }
 
-func (x *ValidatorWeight) String() string {
+func (x *ModelVotingPowers) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ValidatorWeight) ProtoMessage() {}
+func (*ModelVotingPowers) ProtoMessage() {}
 
-// Deprecated: Use ValidatorWeight.ProtoReflect.Descriptor instead.
-func (*ValidatorWeight) Descriptor() ([]byte, []int) {
+// Deprecated: Use ModelVotingPowers.ProtoReflect.Descriptor instead.
+func (*ModelVotingPowers) Descriptor() ([]byte, []int) {
 	return file_inference_inference_poc_validation_snapshot_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ValidatorWeight) GetAddress() string {
+func (x *ModelVotingPowers) GetModelId() string {
+	if x != nil {
+		return x.ModelId
+	}
+	return ""
+}
+
+func (x *ModelVotingPowers) GetVotingPowers() []*VotingPowerEntry {
+	if x != nil {
+		return x.VotingPowers
+	}
+	return nil
+}
+
+// VotingPowerEntry is a single participant's voting power for a model group.
+type VotingPowerEntry struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Address     string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	VotingPower int64  `protobuf:"varint,2,opt,name=voting_power,json=votingPower,proto3" json:"voting_power,omitempty"`
+}
+
+func (x *VotingPowerEntry) Reset() {
+	*x = VotingPowerEntry{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_poc_validation_snapshot_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VotingPowerEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VotingPowerEntry) ProtoMessage() {}
+
+// Deprecated: Use VotingPowerEntry.ProtoReflect.Descriptor instead.
+func (*VotingPowerEntry) Descriptor() ([]byte, []int) {
+	return file_inference_inference_poc_validation_snapshot_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *VotingPowerEntry) GetAddress() string {
 	if x != nil {
 		return x.Address
 	}
 	return ""
 }
 
-func (x *ValidatorWeight) GetWeight() int64 {
+func (x *VotingPowerEntry) GetVotingPower() int64 {
 	if x != nil {
-		return x.Weight
+		return x.VotingPower
 	}
 	return 0
 }
@@ -1370,7 +2033,7 @@ var file_inference_inference_poc_validation_snapshot_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
 	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x2e, 0x70, 0x72,
 	0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xd7, 0x02, 0x0a, 0x15, 0x50, 0x6f, 0x43,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x94, 0x03, 0x0a, 0x15, 0x50, 0x6f, 0x43,
 	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68,
 	0x6f, 0x74, 0x12, 0x33, 0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f,
 	0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01,
@@ -1379,37 +2042,49 @@ var file_inference_inference_poc_validation_snapshot_proto_rawDesc = []byte{
 	0x68, 0x6f, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
 	0x52, 0x0e, 0x73, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
 	0x12, 0x19, 0x0a, 0x08, 0x61, 0x70, 0x70, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x07, 0x61, 0x70, 0x70, 0x48, 0x61, 0x73, 0x68, 0x12, 0x51, 0x0a, 0x11, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73,
-	0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x61, 0x6c,
-	0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x10, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x12, 0x3c,
-	0x0a, 0x1a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x74, 0x61,
-	0x72, 0x74, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x18, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74,
-	0x61, 0x72, 0x74, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x34, 0x0a, 0x16,
-	0x65, 0x78, 0x63, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x5f, 0x65, 0x6e, 0x64, 0x5f, 0x74, 0x69, 0x6d,
-	0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x65, 0x78,
-	0x63, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x45, 0x6e, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61,
-	0x6d, 0x70, 0x22, 0x43, 0x0a, 0x0f, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x57,
-	0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12,
-	0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xc8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x42, 0x1a, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
-	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x28, 0x09, 0x52, 0x07, 0x61, 0x70, 0x70, 0x48, 0x61, 0x73, 0x68, 0x12, 0x3c, 0x0a, 0x1a, 0x67,
+	0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f,
+	0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x18, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x72, 0x74,
+	0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x34, 0x0a, 0x16, 0x65, 0x78, 0x63,
+	0x68, 0x61, 0x6e, 0x67, 0x65, 0x5f, 0x65, 0x6e, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74,
+	0x61, 0x6d, 0x70, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x65, 0x78, 0x63, 0x68, 0x61,
+	0x6e, 0x67, 0x65, 0x45, 0x6e, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12,
+	0x56, 0x0a, 0x13, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f,
+	0x70, 0x6f, 0x77, 0x65, 0x72, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x56, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f,
+	0x77, 0x65, 0x72, 0x73, 0x52, 0x11, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x56, 0x6f, 0x74, 0x69, 0x6e,
+	0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x73, 0x12, 0x30, 0x0a, 0x14, 0x74, 0x6f, 0x74, 0x61, 0x6c,
+	0x5f, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
+	0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x12, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x4e, 0x65, 0x74, 0x77,
+	0x6f, 0x72, 0x6b, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x4a, 0x04, 0x08, 0x04, 0x10, 0x05, 0x22,
+	0x7a, 0x0a, 0x11, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x56, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f,
+	0x77, 0x65, 0x72, 0x73, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12,
+	0x4a, 0x0a, 0x0d, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x73,
+	0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x6f, 0x74,
+	0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x52, 0x0c, 0x76,
+	0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x73, 0x22, 0x4f, 0x0a, 0x10, 0x56,
+	0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x12,
+	0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x76, 0x6f, 0x74,
+	0x69, 0x6e, 0x67, 0x5f, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x0b, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x42, 0xc8, 0x01, 0x0a,
+	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x1a, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c,
+	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
+	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
+	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
+	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
+	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1424,18 +2099,20 @@ func file_inference_inference_poc_validation_snapshot_proto_rawDescGZIP() []byte
 	return file_inference_inference_poc_validation_snapshot_proto_rawDescData
 }
 
-var file_inference_inference_poc_validation_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_inference_inference_poc_validation_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_inference_inference_poc_validation_snapshot_proto_goTypes = []interface{}{
 	(*PoCValidationSnapshot)(nil), // 0: inference.inference.PoCValidationSnapshot
-	(*ValidatorWeight)(nil),       // 1: inference.inference.ValidatorWeight
+	(*ModelVotingPowers)(nil),     // 1: inference.inference.ModelVotingPowers
+	(*VotingPowerEntry)(nil),      // 2: inference.inference.VotingPowerEntry
 }
 var file_inference_inference_poc_validation_snapshot_proto_depIdxs = []int32{
-	1, // 0: inference.inference.PoCValidationSnapshot.validator_weights:type_name -> inference.inference.ValidatorWeight
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 0: inference.inference.PoCValidationSnapshot.model_voting_powers:type_name -> inference.inference.ModelVotingPowers
+	2, // 1: inference.inference.ModelVotingPowers.voting_powers:type_name -> inference.inference.VotingPowerEntry
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_poc_validation_snapshot_proto_init() }
@@ -1457,7 +2134,19 @@ func file_inference_inference_poc_validation_snapshot_proto_init() {
 			}
 		}
 		file_inference_inference_poc_validation_snapshot_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ValidatorWeight); i {
+			switch v := v.(*ModelVotingPowers); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_poc_validation_snapshot_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*VotingPowerEntry); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1475,7 +2164,7 @@ func file_inference_inference_poc_validation_snapshot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_poc_validation_snapshot_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

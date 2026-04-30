@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cosmos/cosmos-sdk/types/query"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -128,4 +129,37 @@ func TestGranteesByMessageTypeQueryWithValidMessageTypes(t *testing.T) {
 			require.Equal(t, 0, len(response.Grantees))
 		})
 	}
+}
+
+func TestGranteesByMessageTypeQuery_PaginatesAllPages(t *testing.T) {
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	req := &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: "cosmos1jmjfq0tplp9tmx4v9uemw72y4d2wa5nr3xn9d3",
+		MessageTypeUrl: "/inference.bls.MsgSubmitDealerPart",
+	}
+
+	gomock.InOrder(
+		mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+			&authztypes.QueryGranterGrantsResponse{
+				Grants: []*authztypes.GrantAuthorization{},
+				Pagination: &query.PageResponse{
+					NextKey: []byte("next-page"),
+				},
+			},
+			nil,
+		),
+		mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+			&authztypes.QueryGranterGrantsResponse{
+				Grants:      []*authztypes.GrantAuthorization{},
+				Pagination:  &query.PageResponse{},
+			},
+			nil,
+		),
+	)
+
+	response, err := keeper.GranteesByMessageType(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Empty(t, response.Grantees)
 }

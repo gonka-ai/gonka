@@ -47,7 +47,7 @@ func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddr
 	if err != nil || bwr.IsNegative() || bwr.GTE(math.LegacyOneDec()) {
 		return math.ZeroInt()
 	}
-	
+
 	cpwu, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
 	if err != nil || cpwu.IsNegative() || cpwu.IsZero() {
 		return math.ZeroInt()
@@ -57,6 +57,18 @@ func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddr
 	weightDec := math.LegacyNewDec(participantWeight)
 	requiredDec := weightDec.Mul(math.LegacyOneDec().Sub(bwr)).Mul(cpwu)
 	return requiredDec.TruncateInt()
+}
+
+// GetRequiredCollateralForSlash returns the collateral amount that should be used as the slashing base
+// for a participant under the current inference tokenomics rules.
+func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("failed to get params for required collateral calculation", types.Tokenomics, "participant", participantAddress.String(), "error", err)
+		return math.ZeroInt()
+	}
+
+	return k.calculateRequiredCollateral(ctx, participantAddress.String(), params.CollateralParams)
 }
 
 // AdjustWeightsByCollateral adjusts participant weights based on their collateral deposit,

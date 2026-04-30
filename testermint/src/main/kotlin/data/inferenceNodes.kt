@@ -37,6 +37,7 @@ data class NodeState(
     val adminState: AdminState? = null,
     val epochModels: Map<String, EpochModel>?,
     val epochMlNodes: Map<String, EpochMlNode>?,
+    val preservedModels: Map<String, Boolean>? = null,
 )
 
 data class AdminState(

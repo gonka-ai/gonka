@@ -3388,6 +3388,1486 @@ func (x *fastReflection_BridgeWrappedTokenContract) ProtoMethods() *protoiface.M
 	}
 }
 
+var (
+	md_BridgePendingMintRefund                    protoreflect.MessageDescriptor
+	fd_BridgePendingMintRefund_requestId          protoreflect.FieldDescriptor
+	fd_BridgePendingMintRefund_creator            protoreflect.FieldDescriptor
+	fd_BridgePendingMintRefund_amount             protoreflect.FieldDescriptor
+	fd_BridgePendingMintRefund_destinationAddress protoreflect.FieldDescriptor
+	fd_BridgePendingMintRefund_chainId            protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_bridge_proto_init()
+	md_BridgePendingMintRefund = File_inference_inference_bridge_proto.Messages().ByName("BridgePendingMintRefund")
+	fd_BridgePendingMintRefund_requestId = md_BridgePendingMintRefund.Fields().ByName("requestId")
+	fd_BridgePendingMintRefund_creator = md_BridgePendingMintRefund.Fields().ByName("creator")
+	fd_BridgePendingMintRefund_amount = md_BridgePendingMintRefund.Fields().ByName("amount")
+	fd_BridgePendingMintRefund_destinationAddress = md_BridgePendingMintRefund.Fields().ByName("destinationAddress")
+	fd_BridgePendingMintRefund_chainId = md_BridgePendingMintRefund.Fields().ByName("chainId")
+}
+
+var _ protoreflect.Message = (*fastReflection_BridgePendingMintRefund)(nil)
+
+type fastReflection_BridgePendingMintRefund BridgePendingMintRefund
+
+func (x *BridgePendingMintRefund) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_BridgePendingMintRefund)(x)
+}
+
+func (x *BridgePendingMintRefund) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_bridge_proto_msgTypes[5]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_BridgePendingMintRefund_messageType fastReflection_BridgePendingMintRefund_messageType
+var _ protoreflect.MessageType = fastReflection_BridgePendingMintRefund_messageType{}
+
+type fastReflection_BridgePendingMintRefund_messageType struct{}
+
+func (x fastReflection_BridgePendingMintRefund_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_BridgePendingMintRefund)(nil)
+}
+func (x fastReflection_BridgePendingMintRefund_messageType) New() protoreflect.Message {
+	return new(fastReflection_BridgePendingMintRefund)
+}
+func (x fastReflection_BridgePendingMintRefund_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_BridgePendingMintRefund
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_BridgePendingMintRefund) Descriptor() protoreflect.MessageDescriptor {
+	return md_BridgePendingMintRefund
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_BridgePendingMintRefund) Type() protoreflect.MessageType {
+	return _fastReflection_BridgePendingMintRefund_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_BridgePendingMintRefund) New() protoreflect.Message {
+	return new(fastReflection_BridgePendingMintRefund)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_BridgePendingMintRefund) Interface() protoreflect.ProtoMessage {
+	return (*BridgePendingMintRefund)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_BridgePendingMintRefund) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.RequestId != "" {
+		value := protoreflect.ValueOfString(x.RequestId)
+		if !f(fd_BridgePendingMintRefund_requestId, value) {
+			return
+		}
+	}
+	if x.Creator != "" {
+		value := protoreflect.ValueOfString(x.Creator)
+		if !f(fd_BridgePendingMintRefund_creator, value) {
+			return
+		}
+	}
+	if x.Amount != "" {
+		value := protoreflect.ValueOfString(x.Amount)
+		if !f(fd_BridgePendingMintRefund_amount, value) {
+			return
+		}
+	}
+	if x.DestinationAddress != "" {
+		value := protoreflect.ValueOfString(x.DestinationAddress)
+		if !f(fd_BridgePendingMintRefund_destinationAddress, value) {
+			return
+		}
+	}
+	if x.ChainId != "" {
+		value := protoreflect.ValueOfString(x.ChainId)
+		if !f(fd_BridgePendingMintRefund_chainId, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_BridgePendingMintRefund) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		return x.RequestId != ""
+	case "inference.inference.BridgePendingMintRefund.creator":
+		return x.Creator != ""
+	case "inference.inference.BridgePendingMintRefund.amount":
+		return x.Amount != ""
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		return x.DestinationAddress != ""
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		return x.ChainId != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingMintRefund) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		x.RequestId = ""
+	case "inference.inference.BridgePendingMintRefund.creator":
+		x.Creator = ""
+	case "inference.inference.BridgePendingMintRefund.amount":
+		x.Amount = ""
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		x.DestinationAddress = ""
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		x.ChainId = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_BridgePendingMintRefund) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		value := x.RequestId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingMintRefund.creator":
+		value := x.Creator
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingMintRefund.amount":
+		value := x.Amount
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		value := x.DestinationAddress
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		value := x.ChainId
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingMintRefund) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		x.RequestId = value.Interface().(string)
+	case "inference.inference.BridgePendingMintRefund.creator":
+		x.Creator = value.Interface().(string)
+	case "inference.inference.BridgePendingMintRefund.amount":
+		x.Amount = value.Interface().(string)
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		x.DestinationAddress = value.Interface().(string)
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		x.ChainId = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingMintRefund) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		panic(fmt.Errorf("field requestId of message inference.inference.BridgePendingMintRefund is not mutable"))
+	case "inference.inference.BridgePendingMintRefund.creator":
+		panic(fmt.Errorf("field creator of message inference.inference.BridgePendingMintRefund is not mutable"))
+	case "inference.inference.BridgePendingMintRefund.amount":
+		panic(fmt.Errorf("field amount of message inference.inference.BridgePendingMintRefund is not mutable"))
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		panic(fmt.Errorf("field destinationAddress of message inference.inference.BridgePendingMintRefund is not mutable"))
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		panic(fmt.Errorf("field chainId of message inference.inference.BridgePendingMintRefund is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_BridgePendingMintRefund) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingMintRefund.requestId":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingMintRefund.creator":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingMintRefund.amount":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingMintRefund.destinationAddress":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingMintRefund.chainId":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingMintRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingMintRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_BridgePendingMintRefund) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.BridgePendingMintRefund", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_BridgePendingMintRefund) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingMintRefund) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_BridgePendingMintRefund) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_BridgePendingMintRefund) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*BridgePendingMintRefund)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.RequestId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Creator)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Amount)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.DestinationAddress)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ChainId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*BridgePendingMintRefund)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ChainId) > 0 {
+			i -= len(x.ChainId)
+			copy(dAtA[i:], x.ChainId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ChainId)))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if len(x.DestinationAddress) > 0 {
+			i -= len(x.DestinationAddress)
+			copy(dAtA[i:], x.DestinationAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.DestinationAddress)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if len(x.Amount) > 0 {
+			i -= len(x.Amount)
+			copy(dAtA[i:], x.Amount)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Amount)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if len(x.Creator) > 0 {
+			i -= len(x.Creator)
+			copy(dAtA[i:], x.Creator)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Creator)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.RequestId) > 0 {
+			i -= len(x.RequestId)
+			copy(dAtA[i:], x.RequestId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*BridgePendingMintRefund)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: BridgePendingMintRefund: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: BridgePendingMintRefund: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Creator = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Amount = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DestinationAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.DestinationAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ChainId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ChainId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_BridgePendingWithdrawalRefund                    protoreflect.MessageDescriptor
+	fd_BridgePendingWithdrawalRefund_requestId          protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_creator            protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_userAddress        protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_amount             protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_destinationAddress protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_chainId            protoreflect.FieldDescriptor
+	fd_BridgePendingWithdrawalRefund_contractAddress    protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_bridge_proto_init()
+	md_BridgePendingWithdrawalRefund = File_inference_inference_bridge_proto.Messages().ByName("BridgePendingWithdrawalRefund")
+	fd_BridgePendingWithdrawalRefund_requestId = md_BridgePendingWithdrawalRefund.Fields().ByName("requestId")
+	fd_BridgePendingWithdrawalRefund_creator = md_BridgePendingWithdrawalRefund.Fields().ByName("creator")
+	fd_BridgePendingWithdrawalRefund_userAddress = md_BridgePendingWithdrawalRefund.Fields().ByName("userAddress")
+	fd_BridgePendingWithdrawalRefund_amount = md_BridgePendingWithdrawalRefund.Fields().ByName("amount")
+	fd_BridgePendingWithdrawalRefund_destinationAddress = md_BridgePendingWithdrawalRefund.Fields().ByName("destinationAddress")
+	fd_BridgePendingWithdrawalRefund_chainId = md_BridgePendingWithdrawalRefund.Fields().ByName("chainId")
+	fd_BridgePendingWithdrawalRefund_contractAddress = md_BridgePendingWithdrawalRefund.Fields().ByName("contractAddress")
+}
+
+var _ protoreflect.Message = (*fastReflection_BridgePendingWithdrawalRefund)(nil)
+
+type fastReflection_BridgePendingWithdrawalRefund BridgePendingWithdrawalRefund
+
+func (x *BridgePendingWithdrawalRefund) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_BridgePendingWithdrawalRefund)(x)
+}
+
+func (x *BridgePendingWithdrawalRefund) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_bridge_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_BridgePendingWithdrawalRefund_messageType fastReflection_BridgePendingWithdrawalRefund_messageType
+var _ protoreflect.MessageType = fastReflection_BridgePendingWithdrawalRefund_messageType{}
+
+type fastReflection_BridgePendingWithdrawalRefund_messageType struct{}
+
+func (x fastReflection_BridgePendingWithdrawalRefund_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_BridgePendingWithdrawalRefund)(nil)
+}
+func (x fastReflection_BridgePendingWithdrawalRefund_messageType) New() protoreflect.Message {
+	return new(fastReflection_BridgePendingWithdrawalRefund)
+}
+func (x fastReflection_BridgePendingWithdrawalRefund_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_BridgePendingWithdrawalRefund
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Descriptor() protoreflect.MessageDescriptor {
+	return md_BridgePendingWithdrawalRefund
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Type() protoreflect.MessageType {
+	return _fastReflection_BridgePendingWithdrawalRefund_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_BridgePendingWithdrawalRefund) New() protoreflect.Message {
+	return new(fastReflection_BridgePendingWithdrawalRefund)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Interface() protoreflect.ProtoMessage {
+	return (*BridgePendingWithdrawalRefund)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.RequestId != "" {
+		value := protoreflect.ValueOfString(x.RequestId)
+		if !f(fd_BridgePendingWithdrawalRefund_requestId, value) {
+			return
+		}
+	}
+	if x.Creator != "" {
+		value := protoreflect.ValueOfString(x.Creator)
+		if !f(fd_BridgePendingWithdrawalRefund_creator, value) {
+			return
+		}
+	}
+	if x.UserAddress != "" {
+		value := protoreflect.ValueOfString(x.UserAddress)
+		if !f(fd_BridgePendingWithdrawalRefund_userAddress, value) {
+			return
+		}
+	}
+	if x.Amount != "" {
+		value := protoreflect.ValueOfString(x.Amount)
+		if !f(fd_BridgePendingWithdrawalRefund_amount, value) {
+			return
+		}
+	}
+	if x.DestinationAddress != "" {
+		value := protoreflect.ValueOfString(x.DestinationAddress)
+		if !f(fd_BridgePendingWithdrawalRefund_destinationAddress, value) {
+			return
+		}
+	}
+	if x.ChainId != "" {
+		value := protoreflect.ValueOfString(x.ChainId)
+		if !f(fd_BridgePendingWithdrawalRefund_chainId, value) {
+			return
+		}
+	}
+	if x.ContractAddress != "" {
+		value := protoreflect.ValueOfString(x.ContractAddress)
+		if !f(fd_BridgePendingWithdrawalRefund_contractAddress, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		return x.RequestId != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		return x.Creator != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		return x.UserAddress != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		return x.Amount != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		return x.DestinationAddress != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		return x.ChainId != ""
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		return x.ContractAddress != ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		x.RequestId = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		x.Creator = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		x.UserAddress = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		x.Amount = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		x.DestinationAddress = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		x.ChainId = ""
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		x.ContractAddress = ""
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		value := x.RequestId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		value := x.Creator
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		value := x.UserAddress
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		value := x.Amount
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		value := x.DestinationAddress
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		value := x.ChainId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		value := x.ContractAddress
+		return protoreflect.ValueOfString(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		x.RequestId = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		x.Creator = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		x.UserAddress = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		x.Amount = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		x.DestinationAddress = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		x.ChainId = value.Interface().(string)
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		x.ContractAddress = value.Interface().(string)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingWithdrawalRefund) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		panic(fmt.Errorf("field requestId of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		panic(fmt.Errorf("field creator of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		panic(fmt.Errorf("field userAddress of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		panic(fmt.Errorf("field amount of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		panic(fmt.Errorf("field destinationAddress of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		panic(fmt.Errorf("field chainId of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		panic(fmt.Errorf("field contractAddress of message inference.inference.BridgePendingWithdrawalRefund is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_BridgePendingWithdrawalRefund) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.BridgePendingWithdrawalRefund.requestId":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.creator":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.userAddress":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.amount":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.destinationAddress":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.chainId":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.BridgePendingWithdrawalRefund.contractAddress":
+		return protoreflect.ValueOfString("")
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.BridgePendingWithdrawalRefund"))
+		}
+		panic(fmt.Errorf("message inference.inference.BridgePendingWithdrawalRefund does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_BridgePendingWithdrawalRefund) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.BridgePendingWithdrawalRefund", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_BridgePendingWithdrawalRefund) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_BridgePendingWithdrawalRefund) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_BridgePendingWithdrawalRefund) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_BridgePendingWithdrawalRefund) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*BridgePendingWithdrawalRefund)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.RequestId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Creator)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.UserAddress)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Amount)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.DestinationAddress)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ChainId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ContractAddress)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*BridgePendingWithdrawalRefund)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ContractAddress) > 0 {
+			i -= len(x.ContractAddress)
+			copy(dAtA[i:], x.ContractAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ContractAddress)))
+			i--
+			dAtA[i] = 0x3a
+		}
+		if len(x.ChainId) > 0 {
+			i -= len(x.ChainId)
+			copy(dAtA[i:], x.ChainId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ChainId)))
+			i--
+			dAtA[i] = 0x32
+		}
+		if len(x.DestinationAddress) > 0 {
+			i -= len(x.DestinationAddress)
+			copy(dAtA[i:], x.DestinationAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.DestinationAddress)))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if len(x.Amount) > 0 {
+			i -= len(x.Amount)
+			copy(dAtA[i:], x.Amount)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Amount)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if len(x.UserAddress) > 0 {
+			i -= len(x.UserAddress)
+			copy(dAtA[i:], x.UserAddress)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.UserAddress)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if len(x.Creator) > 0 {
+			i -= len(x.Creator)
+			copy(dAtA[i:], x.Creator)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Creator)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.RequestId) > 0 {
+			i -= len(x.RequestId)
+			copy(dAtA[i:], x.RequestId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RequestId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*BridgePendingWithdrawalRefund)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: BridgePendingWithdrawalRefund: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: BridgePendingWithdrawalRefund: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.RequestId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Creator = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field UserAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.UserAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Amount = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DestinationAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.DestinationAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ChainId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ChainId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContractAddress", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ContractAddress = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 var _ protoreflect.List = (*_Bridge_1_list)(nil)
 
 type _Bridge_1_list struct {
@@ -3541,11 +5021,115 @@ func (x *_Bridge_3_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_Bridge_4_list)(nil)
+
+type _Bridge_4_list struct {
+	list *[]*BridgePendingMintRefund
+}
+
+func (x *_Bridge_4_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_Bridge_4_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_Bridge_4_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*BridgePendingMintRefund)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_Bridge_4_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*BridgePendingMintRefund)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_Bridge_4_list) AppendMutable() protoreflect.Value {
+	v := new(BridgePendingMintRefund)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_Bridge_4_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_Bridge_4_list) NewElement() protoreflect.Value {
+	v := new(BridgePendingMintRefund)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_Bridge_4_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_Bridge_5_list)(nil)
+
+type _Bridge_5_list struct {
+	list *[]*BridgePendingWithdrawalRefund
+}
+
+func (x *_Bridge_5_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_Bridge_5_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_Bridge_5_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*BridgePendingWithdrawalRefund)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_Bridge_5_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*BridgePendingWithdrawalRefund)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_Bridge_5_list) AppendMutable() protoreflect.Value {
+	v := new(BridgePendingWithdrawalRefund)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_Bridge_5_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_Bridge_5_list) NewElement() protoreflect.Value {
+	v := new(BridgePendingWithdrawalRefund)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_Bridge_5_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_Bridge                       protoreflect.MessageDescriptor
-	fd_Bridge_contract_addresses    protoreflect.FieldDescriptor
-	fd_Bridge_token_metadata        protoreflect.FieldDescriptor
-	fd_Bridge_trade_approved_tokens protoreflect.FieldDescriptor
+	md_Bridge                            protoreflect.MessageDescriptor
+	fd_Bridge_contract_addresses         protoreflect.FieldDescriptor
+	fd_Bridge_token_metadata             protoreflect.FieldDescriptor
+	fd_Bridge_trade_approved_tokens      protoreflect.FieldDescriptor
+	fd_Bridge_pending_mint_refunds       protoreflect.FieldDescriptor
+	fd_Bridge_pending_withdrawal_refunds protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -3554,6 +5138,8 @@ func init() {
 	fd_Bridge_contract_addresses = md_Bridge.Fields().ByName("contract_addresses")
 	fd_Bridge_token_metadata = md_Bridge.Fields().ByName("token_metadata")
 	fd_Bridge_trade_approved_tokens = md_Bridge.Fields().ByName("trade_approved_tokens")
+	fd_Bridge_pending_mint_refunds = md_Bridge.Fields().ByName("pending_mint_refunds")
+	fd_Bridge_pending_withdrawal_refunds = md_Bridge.Fields().ByName("pending_withdrawal_refunds")
 }
 
 var _ protoreflect.Message = (*fastReflection_Bridge)(nil)
@@ -3565,7 +5151,7 @@ func (x *Bridge) ProtoReflect() protoreflect.Message {
 }
 
 func (x *Bridge) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_bridge_proto_msgTypes[5]
+	mi := &file_inference_inference_bridge_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3639,6 +5225,18 @@ func (x *fastReflection_Bridge) Range(f func(protoreflect.FieldDescriptor, proto
 			return
 		}
 	}
+	if len(x.PendingMintRefunds) != 0 {
+		value := protoreflect.ValueOfList(&_Bridge_4_list{list: &x.PendingMintRefunds})
+		if !f(fd_Bridge_pending_mint_refunds, value) {
+			return
+		}
+	}
+	if len(x.PendingWithdrawalRefunds) != 0 {
+		value := protoreflect.ValueOfList(&_Bridge_5_list{list: &x.PendingWithdrawalRefunds})
+		if !f(fd_Bridge_pending_withdrawal_refunds, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -3660,6 +5258,10 @@ func (x *fastReflection_Bridge) Has(fd protoreflect.FieldDescriptor) bool {
 		return len(x.TokenMetadata) != 0
 	case "inference.inference.Bridge.trade_approved_tokens":
 		return len(x.TradeApprovedTokens) != 0
+	case "inference.inference.Bridge.pending_mint_refunds":
+		return len(x.PendingMintRefunds) != 0
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		return len(x.PendingWithdrawalRefunds) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3682,6 +5284,10 @@ func (x *fastReflection_Bridge) Clear(fd protoreflect.FieldDescriptor) {
 		x.TokenMetadata = nil
 	case "inference.inference.Bridge.trade_approved_tokens":
 		x.TradeApprovedTokens = nil
+	case "inference.inference.Bridge.pending_mint_refunds":
+		x.PendingMintRefunds = nil
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		x.PendingWithdrawalRefunds = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3716,6 +5322,18 @@ func (x *fastReflection_Bridge) Get(descriptor protoreflect.FieldDescriptor) pro
 		}
 		listValue := &_Bridge_3_list{list: &x.TradeApprovedTokens}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.Bridge.pending_mint_refunds":
+		if len(x.PendingMintRefunds) == 0 {
+			return protoreflect.ValueOfList(&_Bridge_4_list{})
+		}
+		listValue := &_Bridge_4_list{list: &x.PendingMintRefunds}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		if len(x.PendingWithdrawalRefunds) == 0 {
+			return protoreflect.ValueOfList(&_Bridge_5_list{})
+		}
+		listValue := &_Bridge_5_list{list: &x.PendingWithdrawalRefunds}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3748,6 +5366,14 @@ func (x *fastReflection_Bridge) Set(fd protoreflect.FieldDescriptor, value proto
 		lv := value.List()
 		clv := lv.(*_Bridge_3_list)
 		x.TradeApprovedTokens = *clv.list
+	case "inference.inference.Bridge.pending_mint_refunds":
+		lv := value.List()
+		clv := lv.(*_Bridge_4_list)
+		x.PendingMintRefunds = *clv.list
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		lv := value.List()
+		clv := lv.(*_Bridge_5_list)
+		x.PendingWithdrawalRefunds = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3786,6 +5412,18 @@ func (x *fastReflection_Bridge) Mutable(fd protoreflect.FieldDescriptor) protore
 		}
 		value := &_Bridge_3_list{list: &x.TradeApprovedTokens}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.Bridge.pending_mint_refunds":
+		if x.PendingMintRefunds == nil {
+			x.PendingMintRefunds = []*BridgePendingMintRefund{}
+		}
+		value := &_Bridge_4_list{list: &x.PendingMintRefunds}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		if x.PendingWithdrawalRefunds == nil {
+			x.PendingWithdrawalRefunds = []*BridgePendingWithdrawalRefund{}
+		}
+		value := &_Bridge_5_list{list: &x.PendingWithdrawalRefunds}
+		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3808,6 +5446,12 @@ func (x *fastReflection_Bridge) NewField(fd protoreflect.FieldDescriptor) protor
 	case "inference.inference.Bridge.trade_approved_tokens":
 		list := []*BridgeTokenReference{}
 		return protoreflect.ValueOfList(&_Bridge_3_list{list: &list})
+	case "inference.inference.Bridge.pending_mint_refunds":
+		list := []*BridgePendingMintRefund{}
+		return protoreflect.ValueOfList(&_Bridge_4_list{list: &list})
+	case "inference.inference.Bridge.pending_withdrawal_refunds":
+		list := []*BridgePendingWithdrawalRefund{}
+		return protoreflect.ValueOfList(&_Bridge_5_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Bridge"))
@@ -3895,6 +5539,18 @@ func (x *fastReflection_Bridge) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if len(x.PendingMintRefunds) > 0 {
+			for _, e := range x.PendingMintRefunds {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.PendingWithdrawalRefunds) > 0 {
+			for _, e := range x.PendingWithdrawalRefunds {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3923,6 +5579,38 @@ func (x *fastReflection_Bridge) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.PendingWithdrawalRefunds) > 0 {
+			for iNdEx := len(x.PendingWithdrawalRefunds) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.PendingWithdrawalRefunds[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x2a
+			}
+		}
+		if len(x.PendingMintRefunds) > 0 {
+			for iNdEx := len(x.PendingMintRefunds) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.PendingMintRefunds[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x22
+			}
 		}
 		if len(x.TradeApprovedTokens) > 0 {
 			for iNdEx := len(x.TradeApprovedTokens) - 1; iNdEx >= 0; iNdEx-- {
@@ -4120,6 +5808,74 @@ func (x *fastReflection_Bridge) ProtoMethods() *protoiface.Methods {
 				}
 				x.TradeApprovedTokens = append(x.TradeApprovedTokens, &BridgeTokenReference{})
 				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.TradeApprovedTokens[len(x.TradeApprovedTokens)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PendingMintRefunds", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.PendingMintRefunds = append(x.PendingMintRefunds, &BridgePendingMintRefund{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PendingMintRefunds[len(x.PendingMintRefunds)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PendingWithdrawalRefunds", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.PendingWithdrawalRefunds = append(x.PendingWithdrawalRefunds, &BridgePendingWithdrawalRefund{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PendingWithdrawalRefunds[len(x.PendingWithdrawalRefunds)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -4556,21 +6312,173 @@ func (x *BridgeWrappedTokenContract) GetWrappedContractAddress() string {
 	return ""
 }
 
+type BridgePendingMintRefund struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	RequestId          string `protobuf:"bytes,1,opt,name=requestId,proto3" json:"requestId,omitempty"`
+	Creator            string `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
+	Amount             string `protobuf:"bytes,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	DestinationAddress string `protobuf:"bytes,4,opt,name=destinationAddress,proto3" json:"destinationAddress,omitempty"`
+	ChainId            string `protobuf:"bytes,5,opt,name=chainId,proto3" json:"chainId,omitempty"`
+}
+
+func (x *BridgePendingMintRefund) Reset() {
+	*x = BridgePendingMintRefund{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_bridge_proto_msgTypes[5]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *BridgePendingMintRefund) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BridgePendingMintRefund) ProtoMessage() {}
+
+// Deprecated: Use BridgePendingMintRefund.ProtoReflect.Descriptor instead.
+func (*BridgePendingMintRefund) Descriptor() ([]byte, []int) {
+	return file_inference_inference_bridge_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *BridgePendingMintRefund) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *BridgePendingMintRefund) GetCreator() string {
+	if x != nil {
+		return x.Creator
+	}
+	return ""
+}
+
+func (x *BridgePendingMintRefund) GetAmount() string {
+	if x != nil {
+		return x.Amount
+	}
+	return ""
+}
+
+func (x *BridgePendingMintRefund) GetDestinationAddress() string {
+	if x != nil {
+		return x.DestinationAddress
+	}
+	return ""
+}
+
+func (x *BridgePendingMintRefund) GetChainId() string {
+	if x != nil {
+		return x.ChainId
+	}
+	return ""
+}
+
+type BridgePendingWithdrawalRefund struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	RequestId          string `protobuf:"bytes,1,opt,name=requestId,proto3" json:"requestId,omitempty"`
+	Creator            string `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
+	UserAddress        string `protobuf:"bytes,3,opt,name=userAddress,proto3" json:"userAddress,omitempty"`
+	Amount             string `protobuf:"bytes,4,opt,name=amount,proto3" json:"amount,omitempty"`
+	DestinationAddress string `protobuf:"bytes,5,opt,name=destinationAddress,proto3" json:"destinationAddress,omitempty"`
+	ChainId            string `protobuf:"bytes,6,opt,name=chainId,proto3" json:"chainId,omitempty"`
+	ContractAddress    string `protobuf:"bytes,7,opt,name=contractAddress,proto3" json:"contractAddress,omitempty"`
+}
+
+func (x *BridgePendingWithdrawalRefund) Reset() {
+	*x = BridgePendingWithdrawalRefund{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_bridge_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *BridgePendingWithdrawalRefund) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BridgePendingWithdrawalRefund) ProtoMessage() {}
+
+// Deprecated: Use BridgePendingWithdrawalRefund.ProtoReflect.Descriptor instead.
+func (*BridgePendingWithdrawalRefund) Descriptor() ([]byte, []int) {
+	return file_inference_inference_bridge_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *BridgePendingWithdrawalRefund) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetCreator() string {
+	if x != nil {
+		return x.Creator
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetUserAddress() string {
+	if x != nil {
+		return x.UserAddress
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetAmount() string {
+	if x != nil {
+		return x.Amount
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetDestinationAddress() string {
+	if x != nil {
+		return x.DestinationAddress
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetChainId() string {
+	if x != nil {
+		return x.ChainId
+	}
+	return ""
+}
+
+func (x *BridgePendingWithdrawalRefund) GetContractAddress() string {
+	if x != nil {
+		return x.ContractAddress
+	}
+	return ""
+}
+
 // Bridge groups all bridge-related entities under a single parent structure
 type Bridge struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ContractAddresses   []*BridgeContractAddress `protobuf:"bytes,1,rep,name=contract_addresses,json=contractAddresses,proto3" json:"contract_addresses,omitempty"`
-	TokenMetadata       []*BridgeTokenMetadata   `protobuf:"bytes,2,rep,name=token_metadata,json=tokenMetadata,proto3" json:"token_metadata,omitempty"`
-	TradeApprovedTokens []*BridgeTokenReference  `protobuf:"bytes,3,rep,name=trade_approved_tokens,json=tradeApprovedTokens,proto3" json:"trade_approved_tokens,omitempty"`
+	ContractAddresses        []*BridgeContractAddress         `protobuf:"bytes,1,rep,name=contract_addresses,json=contractAddresses,proto3" json:"contract_addresses,omitempty"`
+	TokenMetadata            []*BridgeTokenMetadata           `protobuf:"bytes,2,rep,name=token_metadata,json=tokenMetadata,proto3" json:"token_metadata,omitempty"`
+	TradeApprovedTokens      []*BridgeTokenReference          `protobuf:"bytes,3,rep,name=trade_approved_tokens,json=tradeApprovedTokens,proto3" json:"trade_approved_tokens,omitempty"`
+	PendingMintRefunds       []*BridgePendingMintRefund       `protobuf:"bytes,4,rep,name=pending_mint_refunds,json=pendingMintRefunds,proto3" json:"pending_mint_refunds,omitempty"`
+	PendingWithdrawalRefunds []*BridgePendingWithdrawalRefund `protobuf:"bytes,5,rep,name=pending_withdrawal_refunds,json=pendingWithdrawalRefunds,proto3" json:"pending_withdrawal_refunds,omitempty"`
 }
 
 func (x *Bridge) Reset() {
 	*x = Bridge{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_bridge_proto_msgTypes[5]
+		mi := &file_inference_inference_bridge_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4584,7 +6492,7 @@ func (*Bridge) ProtoMessage() {}
 
 // Deprecated: Use Bridge.ProtoReflect.Descriptor instead.
 func (*Bridge) Descriptor() ([]byte, []int) {
-	return file_inference_inference_bridge_proto_rawDescGZIP(), []int{5}
+	return file_inference_inference_bridge_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Bridge) GetContractAddresses() []*BridgeContractAddress {
@@ -4604,6 +6512,20 @@ func (x *Bridge) GetTokenMetadata() []*BridgeTokenMetadata {
 func (x *Bridge) GetTradeApprovedTokens() []*BridgeTokenReference {
 	if x != nil {
 		return x.TradeApprovedTokens
+	}
+	return nil
+}
+
+func (x *Bridge) GetPendingMintRefunds() []*BridgePendingMintRefund {
+	if x != nil {
+		return x.PendingMintRefunds
+	}
+	return nil
+}
+
+func (x *Bridge) GetPendingWithdrawalRefunds() []*BridgePendingWithdrawalRefund {
+	if x != nil {
+		return x.PendingWithdrawalRefunds
 	}
 	return nil
 }
@@ -4674,24 +6596,65 @@ var file_inference_inference_bridge_proto_rawDesc = []byte{
 	0x73, 0x12, 0x36, 0x0a, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x74,
 	0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28,
 	0x09, 0x52, 0x16, 0x77, 0x72, 0x61, 0x70, 0x70, 0x65, 0x64, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x61,
-	0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x93, 0x02, 0x0a, 0x06, 0x42, 0x72,
-	0x69, 0x64, 0x67, 0x65, 0x12, 0x59, 0x0a, 0x12, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74,
-	0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x43, 0x6f, 0x6e,
-	0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x11, 0x63, 0x6f,
-	0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12,
-	0x4f, 0x0a, 0x0e, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
-	0x61, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72,
-	0x69, 0x64, 0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
-	0x61, 0x52, 0x0d, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
-	0x12, 0x5d, 0x0a, 0x15, 0x74, 0x72, 0x61, 0x64, 0x65, 0x5f, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76,
-	0x65, 0x64, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65,
-	0x6e, 0x52, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x13, 0x74, 0x72, 0x61, 0x64,
-	0x65, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x2a,
+	0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xb3, 0x01, 0x0a, 0x17, 0x42, 0x72,
+	0x69, 0x64, 0x67, 0x65, 0x50, 0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x4d, 0x69, 0x6e, 0x74, 0x52,
+	0x65, 0x66, 0x75, 0x6e, 0x64, 0x12, 0x1c, 0x0a, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x49, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x16, 0x0a,
+	0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x61,
+	0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2e, 0x0a, 0x12, 0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x12, 0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x64,
+	0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x22,
+	0x85, 0x02, 0x0a, 0x1d, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x50, 0x65, 0x6e, 0x64, 0x69, 0x6e,
+	0x67, 0x57, 0x69, 0x74, 0x68, 0x64, 0x72, 0x61, 0x77, 0x61, 0x6c, 0x52, 0x65, 0x66, 0x75, 0x6e,
+	0x64, 0x12, 0x1c, 0x0a, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12,
+	0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b, 0x75, 0x73, 0x65,
+	0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b,
+	0x75, 0x73, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x61,
+	0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x61, 0x6d, 0x6f,
+	0x75, 0x6e, 0x74, 0x12, 0x2e, 0x0a, 0x12, 0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x12, 0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x64, 0x64, 0x72,
+	0x65, 0x73, 0x73, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x18, 0x06,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x49, 0x64, 0x12, 0x28, 0x0a,
+	0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
+	0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74,
+	0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xe5, 0x03, 0x0a, 0x06, 0x42, 0x72, 0x69, 0x64,
+	0x67, 0x65, 0x12, 0x59, 0x0a, 0x12, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x61, 0x63, 0x74, 0x5f, 0x61,
+	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72,
+	0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x11, 0x63, 0x6f, 0x6e, 0x74,
+	0x72, 0x61, 0x63, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12, 0x4f, 0x0a,
+	0x0e, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x6d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x18,
+	0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64,
+	0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x52,
+	0x0d, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0x12, 0x5d,
+	0x0a, 0x15, 0x74, 0x72, 0x61, 0x64, 0x65, 0x5f, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64,
+	0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x29, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x52,
+	0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x13, 0x74, 0x72, 0x61, 0x64, 0x65, 0x41,
+	0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x5e, 0x0a,
+	0x14, 0x70, 0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x5f, 0x6d, 0x69, 0x6e, 0x74, 0x5f, 0x72, 0x65,
+	0x66, 0x75, 0x6e, 0x64, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x50, 0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x4d,
+	0x69, 0x6e, 0x74, 0x52, 0x65, 0x66, 0x75, 0x6e, 0x64, 0x52, 0x12, 0x70, 0x65, 0x6e, 0x64, 0x69,
+	0x6e, 0x67, 0x4d, 0x69, 0x6e, 0x74, 0x52, 0x65, 0x66, 0x75, 0x6e, 0x64, 0x73, 0x12, 0x70, 0x0a,
+	0x1a, 0x70, 0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x5f, 0x77, 0x69, 0x74, 0x68, 0x64, 0x72, 0x61,
+	0x77, 0x61, 0x6c, 0x5f, 0x72, 0x65, 0x66, 0x75, 0x6e, 0x64, 0x73, 0x18, 0x05, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x50, 0x65,
+	0x6e, 0x64, 0x69, 0x6e, 0x67, 0x57, 0x69, 0x74, 0x68, 0x64, 0x72, 0x61, 0x77, 0x61, 0x6c, 0x52,
+	0x65, 0x66, 0x75, 0x6e, 0x64, 0x52, 0x18, 0x70, 0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x57, 0x69,
+	0x74, 0x68, 0x64, 0x72, 0x61, 0x77, 0x61, 0x6c, 0x52, 0x65, 0x66, 0x75, 0x6e, 0x64, 0x73, 0x2a,
 	0x43, 0x0a, 0x17, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x54, 0x72, 0x61, 0x6e, 0x73, 0x61, 0x63,
 	0x74, 0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x12, 0x0a, 0x0e, 0x42, 0x52,
 	0x49, 0x44, 0x47, 0x45, 0x5f, 0x50, 0x45, 0x4e, 0x44, 0x49, 0x4e, 0x47, 0x10, 0x00, 0x12, 0x14,
@@ -4724,26 +6687,30 @@ func file_inference_inference_bridge_proto_rawDescGZIP() []byte {
 }
 
 var file_inference_inference_bridge_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_inference_inference_bridge_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_inference_inference_bridge_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_inference_inference_bridge_proto_goTypes = []interface{}{
-	(BridgeTransactionStatus)(0),       // 0: inference.inference.BridgeTransactionStatus
-	(*BridgeContractAddress)(nil),      // 1: inference.inference.BridgeContractAddress
-	(*BridgeTokenMetadata)(nil),        // 2: inference.inference.BridgeTokenMetadata
-	(*BridgeTokenReference)(nil),       // 3: inference.inference.BridgeTokenReference
-	(*BridgeTransaction)(nil),          // 4: inference.inference.BridgeTransaction
-	(*BridgeWrappedTokenContract)(nil), // 5: inference.inference.BridgeWrappedTokenContract
-	(*Bridge)(nil),                     // 6: inference.inference.Bridge
+	(BridgeTransactionStatus)(0),          // 0: inference.inference.BridgeTransactionStatus
+	(*BridgeContractAddress)(nil),         // 1: inference.inference.BridgeContractAddress
+	(*BridgeTokenMetadata)(nil),           // 2: inference.inference.BridgeTokenMetadata
+	(*BridgeTokenReference)(nil),          // 3: inference.inference.BridgeTokenReference
+	(*BridgeTransaction)(nil),             // 4: inference.inference.BridgeTransaction
+	(*BridgeWrappedTokenContract)(nil),    // 5: inference.inference.BridgeWrappedTokenContract
+	(*BridgePendingMintRefund)(nil),       // 6: inference.inference.BridgePendingMintRefund
+	(*BridgePendingWithdrawalRefund)(nil), // 7: inference.inference.BridgePendingWithdrawalRefund
+	(*Bridge)(nil),                        // 8: inference.inference.Bridge
 }
 var file_inference_inference_bridge_proto_depIdxs = []int32{
 	0, // 0: inference.inference.BridgeTransaction.status:type_name -> inference.inference.BridgeTransactionStatus
 	1, // 1: inference.inference.Bridge.contract_addresses:type_name -> inference.inference.BridgeContractAddress
 	2, // 2: inference.inference.Bridge.token_metadata:type_name -> inference.inference.BridgeTokenMetadata
 	3, // 3: inference.inference.Bridge.trade_approved_tokens:type_name -> inference.inference.BridgeTokenReference
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	6, // 4: inference.inference.Bridge.pending_mint_refunds:type_name -> inference.inference.BridgePendingMintRefund
+	7, // 5: inference.inference.Bridge.pending_withdrawal_refunds:type_name -> inference.inference.BridgePendingWithdrawalRefund
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_bridge_proto_init() }
@@ -4813,6 +6780,30 @@ func file_inference_inference_bridge_proto_init() {
 			}
 		}
 		file_inference_inference_bridge_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*BridgePendingMintRefund); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_bridge_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*BridgePendingWithdrawalRefund); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_bridge_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*Bridge); i {
 			case 0:
 				return &v.state
@@ -4831,7 +6822,7 @@ func file_inference_inference_bridge_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_bridge_proto_rawDesc,
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

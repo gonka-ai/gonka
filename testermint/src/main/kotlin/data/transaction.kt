@@ -26,7 +26,7 @@ data class TxResponse(
     }
 
     fun getEscrowId(): Long? {
-        val event = events.firstOrNull { it.type == "subnet_escrow_created" }
+        val event = events.firstOrNull { it.type == "devshard_escrow_created" }
         return event?.attributes?.firstOrNull { it.key == "escrow_id" }?.value?.toLongOrNull()
     }
 }

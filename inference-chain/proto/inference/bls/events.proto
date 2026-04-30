@@ -65,6 +65,33 @@ message EventVerificationVectorSubmitted {
   string participant_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 }
 
+// EventDisputePhaseStarted is emitted when DKG transitions to disputing phase
+message EventDisputePhaseStarted {
+  // epoch_id identifies the DKG round entering disputing phase
+  uint64 epoch_id = 1;
+
+  // disputing_phase_deadline_block is the block height deadline for the disputing phase
+  uint64 disputing_phase_deadline_block = 2;
+
+  // epoch_data contains the complete epoch BLS data at the time of transition
+  EpochBLSData epoch_data = 3 [(gogoproto.nullable) = false];
+}
+
+// EventDealerComplaintResponded is emitted when a dealer responds to a complaint
+message EventDealerComplaintResponded {
+  // epoch_id identifies the DKG round
+  uint64 epoch_id = 1;
+
+  // dealer_index identifies the responding dealer index in EpochBLSData.participants
+  uint32 dealer_index = 2;
+
+  // complainer_index identifies the complaint author participant index
+  uint32 complainer_index = 3;
+
+  // responder_address is the dealer address that submitted the response
+  string responder_address = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
 // EventGroupPublicKeyGenerated is emitted when the DKG completes successfully and group public key is computed
 message EventGroupPublicKeyGenerated {
   // epoch_id uniquely identifies this DKG round

@@ -16,6 +16,9 @@ message HardwareNode {
   repeated Hardware hardware = 4;
   string host = 5;
   string port = 6;
+  // Self-reported by the node via its /state endpoint. Informational only —
+  // do not use for authorization or capability gating without independent verification.
+  string version = 7;
 }
 
 enum HardwareNodeStatus {

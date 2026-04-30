@@ -18,8 +18,19 @@ type ModifiedRequest struct {
 }
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
+	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
+}
+
+func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, logprobsMode string) (*ModifiedRequest, error) {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
+		return nil, err
+	}
+	if err := validateOpenAICompatRequestMap(requestMap); err != nil {
+		return nil, err
+	}
+
+	if err := validateMessageContents(requestMap); err != nil {
 		return nil, err
 	}
 
@@ -58,6 +69,11 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		}
 	}
 
+	if logprobsMode != "" {
+		delete(requestMap, "logprobs_mode")
+		requestMap["logprobs_mode"] = logprobsMode
+	}
+
 	modifiedRequestBytes, err := json.Marshal(requestMap)
 	if err != nil {
 		return nil, err
@@ -68,6 +84,76 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		OriginalLogprobsValue:    originalLogprobsValue,
 		OriginalTopLogprobsValue: originalTopLogprobsValue,
 	}, nil
+}
+
+func validateMessageContents(requestMap map[string]interface{}) error {
+	rawMessages, ok := requestMap["messages"]
+	if !ok || rawMessages == nil {
+		return nil
+	}
+
+	messages, ok := rawMessages.([]interface{})
+	if !ok {
+		return fmt.Errorf("messages must be an array")
+	}
+
+	for i, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("messages[%d] must be an object", i)
+		}
+
+		content, exists := message["content"]
+		if !exists {
+			continue
+		}
+		if content == nil {
+			continue
+		}
+
+		switch typedContent := content.(type) {
+		case string:
+			continue
+		case []interface{}:
+			for j, rawPart := range typedContent {
+				part, ok := rawPart.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("messages[%d].content[%d] must be an object", i, j)
+				}
+
+				partType, ok := part["type"].(string)
+				if !ok || partType == "" {
+					return fmt.Errorf("messages[%d].content[%d].type must be a string", i, j)
+				}
+
+				// TODO(vision-costs): We currently validate and pass through non-text parts
+				// (e.g. image_url) but downstream prompt token accounting still often uses
+				// flattened text-only content. This can underfund/gas-underprice vision
+				// requests. Future fix: include non-text token costs in promptTokenCount
+				// before transaction construction.
+				if partType != "text" {
+					continue
+				}
+
+				rawText, exists := part["text"]
+				if !exists {
+					return fmt.Errorf("messages[%d].content[%d].text is required for type %q", i, j, partType)
+				}
+
+				text, ok := rawText.(string)
+				if !ok {
+					return fmt.Errorf("messages[%d].content[%d].text must be a string", i, j)
+				}
+				if text == "" {
+					return fmt.Errorf("messages[%d].content[%d].text must be a non-empty string", i, j)
+				}
+			}
+		default:
+			return fmt.Errorf("messages[%d].content must be a string or an array of typed content parts", i)
+		}
+	}
+
+	return nil
 }
 
 func getMaxTokens(requestMap map[string]interface{}) int {

@@ -316,6 +316,20 @@ func (cm *ConfigManager) GetBandwidthParams() BandwidthParamsCache {
 	return cm.currentConfig.BandwidthParams
 }
 
+func (cm *ConfigManager) SetPoCParams(params PoCParamsCache) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.PoCParams = params
+	logging.Info("Setting poc params", types.Config, "params", params)
+	return nil
+}
+
+func (cm *ConfigManager) GetPoCParams() PoCParamsCache {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.currentConfig.PoCParams
+}
+
 func (cm *ConfigManager) SetTransferAgentAccessCache(cache TransferAgentAccessCache) {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
@@ -326,6 +340,18 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 	return cm.currentConfig.TransferAgentAccessCache
+}
+
+func (cm *ConfigManager) SetDevshardVersions(cache DevshardVersionsCache) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.DevshardVersionsCache = cache
+}
+
+func (cm *ConfigManager) GetDevshardVersions() DevshardVersionsCache {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return cm.currentConfig.DevshardVersionsCache
 }
 
 func (cm *ConfigManager) GetHeight() int64 {
@@ -733,6 +759,10 @@ func (cm *ConfigManager) migrateDynamicDataToDb(ctx context.Context) (bool, erro
 	if ok, _ := func() (bool, error) { return KVGetJSON(ctx, cm.sqlDb.GetDb(), kvKeyBandwidthParams, &bp) }(); !ok && (config.BandwidthParams.EstimatedLimitsPerBlockKb != 0) {
 		_ = KVSetJSON(ctx, cm.sqlDb.GetDb(), kvKeyBandwidthParams, config.BandwidthParams)
 	}
+	var pp PoCParamsCache
+	if ok, _ := func() (bool, error) { return KVGetJSON(ctx, cm.sqlDb.GetDb(), kvKeyPoCParams, &pp) }(); !ok && len(config.PoCParams.Models) > 0 {
+		_ = KVSetJSON(ctx, cm.sqlDb.GetDb(), kvKeyPoCParams, config.PoCParams)
+	}
 
 	// ML node key config
 	var mk MLNodeKeyConfig
@@ -806,6 +836,11 @@ func (cm *ConfigManager) HydrateFromDB(_ context.Context) error {
 			logging.Info("Reading bandwidth params from DB", types.Config, "params", bp)
 			cm.currentConfig.BandwidthParams = bp
 		}
+		var pp PoCParamsCache
+		if ok, err := KVGetJSON(ctx, db, kvKeyPoCParams, &pp); err == nil && ok {
+			logging.Info("Reading poc params from DB", types.Config, "params", pp)
+			cm.currentConfig.PoCParams = pp
+		}
 		var mk MLNodeKeyConfig
 		if ok, err := KVGetJSON(ctx, db, kvKeyMLNodeKeyConfig, &mk); err == nil && ok {
 			cm.currentConfig.MLNodeKeyConfig = mk
@@ -875,6 +910,7 @@ func (cm *ConfigManager) flushToDB(ctx context.Context) error {
 	_ = KVSetJSON(ctx, db, kvKeyMLNodeKeyConfig, cfg.MLNodeKeyConfig)
 	_ = KVSetJSON(ctx, db, kvKeyValidationParams, cfg.ValidationParams)
 	_ = KVSetJSON(ctx, db, kvKeyBandwidthParams, cfg.BandwidthParams)
+	_ = KVSetJSON(ctx, db, kvKeyPoCParams, cfg.PoCParams)
 
 	logging.Info("Flushed dynamic config to DB", types.Config)
 
@@ -964,6 +1000,7 @@ func (cm *ConfigManager) getStaticConfigCopyUnsafe() Config {
 	c.LastUsedVersion = ""
 	c.ValidationParams = ValidationParamsCache{}
 	c.BandwidthParams = BandwidthParamsCache{}
+	c.PoCParams = PoCParamsCache{}
 	return c
 }
 
@@ -979,6 +1016,7 @@ const (
 	kvKeyLastUsedVersion     = "last_used_version"
 	kvKeyValidationParams    = "validation_params"
 	kvKeyBandwidthParams     = "bandwidth_params"
+	kvKeyPoCParams           = "poc_params"
 	kvKeyMLNodeKeyConfig     = "ml_node_key_config"
 	kvKeyNodeConfigMerged    = "node_config_merged"
 	kvKeyConfigMigrated      = "config_migrated"

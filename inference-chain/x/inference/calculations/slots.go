@@ -50,7 +50,15 @@ func PrepareSortedEntries(weights map[string]int64) ([]WeightEntry, int64) {
 }
 
 // GetSlotsFromSorted uses pre-sorted entries to avoid sorting per call.
-func GetSlotsFromSorted(appHash, participantAddress string, sortedEntries []WeightEntry, totalWeight int64, nSlots int) []string {
+// modelID is included in the sampling seed so different models get independent validator assignments.
+func GetSlotsFromSorted(
+	appHash string,
+	participantAddress string,
+	modelID string,
+	sortedEntries []WeightEntry,
+	totalWeight int64,
+	nSlots int,
+) []string {
 	if nSlots == 0 || totalWeight <= 0 {
 		return nil
 	}
@@ -58,7 +66,7 @@ func GetSlotsFromSorted(appHash, participantAddress string, sortedEntries []Weig
 	randoms := make([]slotRandom, nSlots)
 	for i := 0; i < nSlots; i++ {
 		randoms[i] = slotRandom{
-			randomVal: slotRandomVal(appHash, participantAddress, i, totalWeight),
+			randomVal: slotRandomVal(appHash, participantAddress, modelID, i, totalWeight),
 			origIdx:   i,
 		}
 	}
@@ -82,12 +90,19 @@ func GetSlotsFromSorted(appHash, participantAddress string, sortedEntries []Weig
 }
 
 // GetSlotFromSorted returns a single slot by index using pre-sorted entries.
-func GetSlotFromSorted(appHash, participantAddress string, sortedEntries []WeightEntry, totalWeight int64, slotIdx int) string {
+func GetSlotFromSorted(
+	appHash string,
+	participantAddress string,
+	modelID string,
+	sortedEntries []WeightEntry,
+	totalWeight int64,
+	slotIdx int,
+) string {
 	if len(sortedEntries) == 0 || totalWeight <= 0 {
 		return ""
 	}
 
-	randomVal := slotRandomVal(appHash, participantAddress, slotIdx, totalWeight)
+	randomVal := slotRandomVal(appHash, participantAddress, modelID, slotIdx, totalWeight)
 
 	cumulative := int64(0)
 	for _, entry := range sortedEntries {
@@ -100,8 +115,30 @@ func GetSlotFromSorted(appHash, participantAddress string, sortedEntries []Weigh
 	return sortedEntries[len(sortedEntries)-1].Address
 }
 
-func slotRandomVal(appHash, participantAddress string, slotIdx int, totalWeight int64) int64 {
-	seedData := fmt.Sprintf("%s%s%d", appHash, participantAddress, slotIdx)
+// ComputeSampledSlotCount returns the number of slots that should be sampled
+// from a model-local voting-power set when the full threshold is still checked
+// against the total network slot count. Conservative rounding is used so any
+// fractional remainder becomes abstention rather than additional sampled power.
+func ComputeSampledSlotCount(modelVotingPower, totalNetworkWeight int64, nSlots int) int {
+	if nSlots <= 0 || modelVotingPower <= 0 || totalNetworkWeight <= 0 {
+		return 0
+	}
+	if modelVotingPower >= totalNetworkWeight {
+		return nSlots
+	}
+
+	groupSlots := (modelVotingPower * int64(nSlots)) / totalNetworkWeight
+	if groupSlots <= 0 {
+		return 0
+	}
+	if groupSlots >= int64(nSlots) {
+		return nSlots
+	}
+	return int(groupSlots)
+}
+
+func slotRandomVal(appHash, participantAddress, modelID string, slotIdx int, totalWeight int64) int64 {
+	seedData := fmt.Sprintf("%s%s%s%d", appHash, participantAddress, modelID, slotIdx)
 	hash := sha256.Sum256([]byte(seedData))
 	// Use uint64 for modulo to avoid negative values
 	return int64(binary.BigEndian.Uint64(hash[:8]) % uint64(totalWeight))

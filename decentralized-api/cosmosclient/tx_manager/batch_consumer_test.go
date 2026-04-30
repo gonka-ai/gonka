@@ -16,7 +16,8 @@ import (
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
-	"github.com/productscience/inference/api/inference/inference"
+	inference "github.com/productscience/inference/api/inference/inference"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	testutil "github.com/productscience/inference/testutil/cosmoclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -313,10 +314,10 @@ func TestBatchConsumer_ValidationV2Batching(t *testing.T) {
 
 	// Publish 10 validation V2 messages (validationV2FlushSize = 10)
 	for i := 0; i < 10; i++ {
-		msg := &inference.MsgSubmitPocValidationsV2{
+		msg := &inferencetypes.MsgSubmitPocValidationsV2{
 			Creator:                  "creator",
 			PocStageStartBlockHeight: int64(i),
-			Validations: []*inference.PoCValidationPayloadV2{
+			Validations: []*inferencetypes.PoCValidationEntryV2{
 				{
 					ParticipantAddress: "cosmos1abc",
 					ValidatedWeight:    100,
@@ -364,10 +365,10 @@ func TestBatchConsumer_AllQueuesIndependent(t *testing.T) {
 		})
 	}
 	for i := 0; i < 10; i++ {
-		consumer.PublishPocValidationV2(&inference.MsgSubmitPocValidationsV2{
+		consumer.PublishPocValidationV2(&inferencetypes.MsgSubmitPocValidationsV2{
 			Creator:                  "creator",
 			PocStageStartBlockHeight: 100,
-			Validations:              []*inference.PoCValidationPayloadV2{{ParticipantAddress: "cosmos1abc"}},
+			Validations:              []*inferencetypes.PoCValidationEntryV2{{ParticipantAddress: "cosmos1abc"}},
 		})
 	}
 

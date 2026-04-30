@@ -12,7 +12,6 @@ import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/tokenomics_data.proto";
 import "inference/inference/model.proto";
-import "inference/inference/top_miner.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";

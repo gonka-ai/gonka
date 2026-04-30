@@ -1,0 +1,19 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message PreservedNodesSnapshot {
+  int64 episode_anchor_height = 1;
+  repeated ModelPreservedNodes model_preserved_nodes = 2;
+}
+
+message ModelPreservedNodes {
+  string model_id = 1;
+  repeated ParticipantPreservedNodes participants = 2;
+}
+
+message ParticipantPreservedNodes {
+  string participant_id = 1;
+  repeated string node_ids = 2;
+}

@@ -100,3 +100,36 @@ enum class ConfirmationPoCPhase(val value: Int) {
 data class ConfirmationPoCEventsResponse(
     val events: List<ConfirmationPoCEvent> = emptyList()
 )
+
+data class EpochGroupDataResponse(
+    @SerializedName("epoch_group_data")
+    val epochGroupData: EpochGroupData
+)
+
+data class EpochGroupData(
+    @SerializedName("epoch_index")
+    val epochIndex: Long = 0,
+    @SerializedName("poc_start_block_height")
+    val pocStartBlockHeight: Long = 0,
+    @SerializedName("model_id")
+    val modelId: String = "",
+    @SerializedName("validation_weights")
+    val validationWeights: List<ValidationWeight> = emptyList()
+)
+
+data class ValidationWeight(
+    @SerializedName("member_address")
+    val memberAddress: String,
+    val weight: Long = 0,
+    @SerializedName("confirmation_weight")
+    val confirmationWeight: Long = 0,
+    @SerializedName("ml_nodes")
+    val mlNodes: List<MLNodeInfo> = emptyList()
+)
+
+data class MLNodeInfo(
+    @SerializedName("node_id")
+    val nodeId: String,
+    @SerializedName("poc_weight")
+    val pocWeight: Long = 0
+)

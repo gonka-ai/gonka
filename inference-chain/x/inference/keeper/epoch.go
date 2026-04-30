@@ -2,12 +2,29 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// SetEffectiveEpochIndex updates the inference effective epoch and keeps the BLS
+// signing epoch in sync when a BLS keeper is configured.
 func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error {
-	return k.EffectiveEpochIndex.Set(ctx, epoch)
+	sdkCtx, ok := ctx.(sdk.Context)
+	if !ok {
+		return fmt.Errorf("SetEffectiveEpochIndex requires sdk.Context")
+	}
+
+	if err := k.EffectiveEpochIndex.Set(sdkCtx, epoch); err != nil {
+		return err
+	}
+
+	if k.BlsKeeper != nil {
+		k.BlsKeeper.SetCurrentSigningEpochID(sdkCtx, epoch)
+	}
+
+	return nil
 }
 
 func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {

@@ -34,10 +34,11 @@ class PruningTests : TestermintTest() {
         
         // Check if PoC v2 is enabled - v1 batch queries won't return data when v2 is active
         val params = genesis.getParams()
-        val isPocV2Enabled = !params.pocParams.modelId.isNullOrEmpty()
+        val primaryPoCModel = params.pocParams.primaryModelConfig()
+        val isPocV2Enabled = !primaryPoCModel?.modelId.isNullOrEmpty()
         if (isPocV2Enabled) {
             logSection("PoC v2 is enabled - skipping v1-specific pruning test (v2 uses different storage)")
-            Logger.info("PoC v2 enabled with modelId=${params.pocParams.modelId}, seqLen=${params.pocParams.seqLen}")
+            Logger.info("PoC v2 enabled with modelId=${primaryPoCModel?.modelId}, seqLen=${primaryPoCModel?.seqLen}")
             // With v2 enabled, v1 batch/validation counts should always be 0 since no v1 batches are submitted
             // V2 pruning would need dedicated v2 count queries which aren't implemented yet
             return

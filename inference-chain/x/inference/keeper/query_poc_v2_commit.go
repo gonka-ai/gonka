@@ -25,7 +25,7 @@ func (k Keeper) PoCV2StoreCommit(goCtx context.Context, req *types.QueryPoCV2Sto
 		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
 	}
 
-	pk := collections.Join(req.PocStageStartBlockHeight, addr)
+	pk := pocV2StoreCommitKey(req.PocStageStartBlockHeight, addr, req.ModelId)
 	commit, err := k.PoCV2StoreCommits.Get(ctx, pk)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -51,7 +51,7 @@ func (k Keeper) AllPoCV2StoreCommitsForStage(goCtx context.Context, req *types.Q
 
 	var commits []*types.PoCV2StoreCommitWithAddress
 
-	iter, err := k.PoCV2StoreCommits.Iterate(ctx, collections.NewPrefixedPairRange[int64, sdk.AccAddress](req.PocStageStartBlockHeight))
+	iter, err := k.PoCV2StoreCommits.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](req.PocStageStartBlockHeight))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to iterate commits: %v", err)
 	}
@@ -82,6 +82,7 @@ func (k Keeper) AllPoCV2StoreCommitsForStage(goCtx context.Context, req *types.Q
 
 		commits = append(commits, &types.PoCV2StoreCommitWithAddress{
 			ParticipantAddress: addr.String(),
+			ModelId:            value.ModelId,
 			Count:              value.Count,
 			RootHash:           value.RootHash,
 			HexPubKey:          utils.PubKeyToHexString(pubKey),
@@ -106,7 +107,7 @@ func (k Keeper) MLNodeWeightDistribution(goCtx context.Context, req *types.Query
 		return nil, status.Errorf(codes.InvalidArgument, "invalid participant address: %v", err)
 	}
 
-	pk := collections.Join(req.PocStageStartBlockHeight, addr)
+	pk := pocV2StoreCommitKey(req.PocStageStartBlockHeight, addr, req.ModelId)
 	distribution, err := k.MLNodeWeightDistributions.Get(ctx, pk)
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -131,7 +132,7 @@ func (k Keeper) AllMLNodeWeightDistributionsForStage(goCtx context.Context, req 
 
 	var distributions []*types.MLNodeWeightDistributionWithAddress
 
-	iter, err := k.MLNodeWeightDistributions.Iterate(ctx, collections.NewPrefixedPairRange[int64, sdk.AccAddress](req.PocStageStartBlockHeight))
+	iter, err := k.MLNodeWeightDistributions.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](req.PocStageStartBlockHeight))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to iterate distributions: %v", err)
 	}
@@ -150,6 +151,7 @@ func (k Keeper) AllMLNodeWeightDistributionsForStage(goCtx context.Context, req 
 		addr := key.K2()
 		distributions = append(distributions, &types.MLNodeWeightDistributionWithAddress{
 			ParticipantAddress: addr.String(),
+			ModelId:            value.ModelId,
 			Weights:            value.Weights,
 		})
 	}

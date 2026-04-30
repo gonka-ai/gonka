@@ -82,14 +82,17 @@ func (k Keeper) transferUnclaimedSettleAmountToGovernance(ctx context.Context, s
 	return nil
 }
 
-// SetSettleAmountWithGovernanceTransfer sets a settle amount, transferring any existing unclaimed amount to governance first.
+// SetSettleAmountWithGovernanceTransfer writes settleAmount, first moving any prior
+// unclaimed amount to governance. The prior transfer error is logged and swallowed:
+// if a numeric bug elsewhere leaves the module account underfunded, one broken
+// participant must not halt payments for everyone else.
 func (k Keeper) SetSettleAmountWithGovernanceTransfer(ctx context.Context, settleAmount types.SettleAmount) error {
-	// Transfer existing settle amount if it exists
-	existingSettle, found := k.GetSettleAmount(ctx, settleAmount.Participant)
-	if found {
-		err := k.transferUnclaimedSettleAmountToGovernance(ctx, existingSettle, "expired claim")
-		if err != nil {
-			return err
+	if existingSettle, found := k.GetSettleAmount(ctx, settleAmount.Participant); found {
+		if err := k.transferUnclaimedSettleAmountToGovernance(ctx, existingSettle, "expired claim"); err != nil {
+			k.LogError("Prior settle transfer to governance failed; proceeding with new settle write",
+				types.Settle, "error", err,
+				"participant", settleAmount.Participant,
+				"priorEpochIndex", existingSettle.EpochIndex)
 		}
 	}
 

@@ -20,6 +20,8 @@ message EpochGroupData {
   int64 effective_block_height = 4;
   int64 last_block_height = 5;
   repeated SeedSignature member_seed_signatures = 6;
+  reserved 7;
+  reserved "finishedInferences";
   repeated ValidationWeight validation_weights = 8;
   int64 unit_of_compute_price = 9;
   int64 number_of_requests = 10;
@@ -45,6 +47,9 @@ message ValidationWeight {
   repeated MLNodeInfo ml_nodes = 4;
   // confirmation_weight is the final confirmed weight for epoch (from confirmation PoC events)
   int64 confirmation_weight = 5;
+  // voting_power is the delegation-resolved voting power for this model.
+  // Only meaningful in model subgroups. Root group entries have voting_power = 0.
+  int64 voting_power = 6;
 }
 
 message SeedSignature {
@@ -56,5 +61,8 @@ message MLNodeInfo {
   string node_id = 1;
   int64 throughput = 2;
   int64 poc_weight = 3;
-  repeated bool timeslot_allocation = 4;
+  // Deprecated: preserved scheduling moved to PreservedNodesSnapshot keyed by
+  // each PoC episode's anchor height. Kept on the wire for compatibility; no
+  // live reader should interpret this as scheduling state.
+  repeated bool timeslot_allocation = 4 [deprecated = true];
 }

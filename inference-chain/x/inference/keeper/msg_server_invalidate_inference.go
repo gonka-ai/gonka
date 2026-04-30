@@ -62,16 +62,9 @@ func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvali
 }
 
 func (k msgServer) refundInvalidatedInference(executor *types.Participant, inference *types.Inference, ctx context.Context) error {
-	// Lookup the payer first
-	payer, found := k.GetParticipant(ctx, inference.RequestedBy)
-	if !found {
-		k.LogError("Payer not found", types.Validation, "address", inference.RequestedBy)
-		return types.ErrParticipantNotFound
-	}
-
-	// Attempt refund BEFORE modifying executor balance
-	// If refund fails (e.g. underfunded escrow), don't corrupt state
-	err := k.IssueRefund(ctx, inference.ActualCost, payer.Address, "invalidated_inference:"+inference.InferenceId)
+	// Attempt refund BEFORE modifying executor balance.
+	// If refund fails (e.g. underfunded escrow), don't corrupt state.
+	err := k.IssueRefund(ctx, inference.ActualCost, inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
 		return err

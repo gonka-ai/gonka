@@ -11,7 +11,7 @@ The binary versions will be updated via an on-chain upgrade proposal. For more i
 
 Existing hosts are **not** required to upgrade their `api` and `node` containers. The updated container versions are intended for new hosts who join after the on-chain upgrade is complete.
 
-It also updates CosmWasm contract artifacts for the community sale and liquidity pool, adds bridge/testnet operational scripts for IBC trading support, and introduces a new `subnet/` package used by the new inference architecture.
+It also updates CosmWasm contract artifacts for the community sale and liquidity pool, adds bridge/testnet operational scripts for IBC trading support, and introduces a new `devshard/` package used by the new inference architecture.
 
 ## Proposed Process
 
@@ -37,9 +37,9 @@ Migrations:
 ## Changes
 
 ### [PR #877](https://github.com/gonka-ai/gonka/pull/877) Inference shards (Experimental)
-- Introduces subnet-based inference flow, moving per-inference coordination off-chain.
+- Introduces devshard-based inference flow, moving per-inference coordination off-chain.
 - The chain now handles only session setup, escrow, and settlement.
-- Adds support for subnet state, transport, signing, storage, settlement, and API integration.
+- Adds support for devshard state, transport, signing, storage, settlement, and API integration.
 - **Note:** This feature is currently experimental and under limited access. For reference design and architecture, see [`proposals/inference/`](https://github.com/gonka-ai/gonka/tree/main/proposals/inference).
 
 
@@ -115,7 +115,7 @@ PR #835 | 5000 | Batch Transfer With Vesting implementation, huge kudos for figu
 PR #868 | 5000 | collateral slashing vulnerability and fix; low severity: low risk, medium likelyhood, organic | @qdanik
 v0.2.11 | 7500 | release management | @akup
 v0.2.11 | 7500 | release management | @x0152
-v0.2.10 | 2500 | upgrade review | @yapion
+v0.2.10 | 2500 | upgrade review | @0xMayoor
 v0.2.10 | 2500 | upgrade review | @blizko
 v0.2.10 | 2500 | upgrade review | @x0152
 

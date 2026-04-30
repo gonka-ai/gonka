@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	mathsdk "cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -25,19 +26,14 @@ type EpochMember struct {
 	Reputation         int64
 	Models             []string
 	MlNodes            []*types.ModelMLNodes
+	VotingPowers       []*types.ModelVotingPower
 	ConfirmationWeight int64 // Minimum confirmation weight from confirmation PoC events
 }
 
-func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64) EpochMember {
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64, coefficients map[string]mathsdk.LegacyDec) EpochMember {
 	seedSignature := ""
 	if p.Seed != nil {
 		seedSignature = p.Seed.Signature
-	}
-
-	// If the confirmation weight is not provided (0), initialize it with the weight of PoC participating nodes
-	// This is the baseline weight that can be verified through confirmation PoC
-	if confirmationWeight == 0 {
-		confirmationWeight = calculatePocParticipatingNodesWeight(p.MlNodes)
 	}
 
 	return EpochMember{
@@ -48,30 +44,36 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		Reputation:         reputation,
 		Models:             p.Models,
 		MlNodes:            p.MlNodes,
+		VotingPowers:       p.VotingPowers,
 		ConfirmationWeight: confirmationWeight,
 	}
 }
 
-// calculatePocParticipatingNodesWeight calculates the total weight of nodes participating in PoC
-func calculatePocParticipatingNodesWeight(mlNodes []*types.ModelMLNodes) int64 {
+func CalculateMLNodesTotalWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
 	totalWeight := int64(0)
 
-	for _, modelNodes := range mlNodes {
+	for i, modelNodes := range mlNodes {
 		if modelNodes == nil {
 			continue
 		}
 
+		if i >= len(models) || models[i] == "" {
+			continue
+		}
+		modelId := models[i]
+		coeff, ok := coefficients[modelId]
+		if !ok {
+			coeff = mathsdk.LegacyOneDec()
+		}
+
+		rawModel := int64(0)
 		for _, node := range modelNodes.MlNodes {
 			if node == nil {
 				continue
 			}
-
-			// POC_SLOT is at index 1 (second timeslot)
-			// false => participant in PoC phase, true => continues inference during PoC
-			if len(node.TimeslotAllocation) > 1 && !node.TimeslotAllocation[1] {
-				totalWeight += node.PocWeight
-			}
+			rawModel += node.PocWeight
 		}
+		totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
 	}
 
 	return totalWeight
@@ -206,6 +208,7 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 	})
 
 	mlNodes := eg.getMLNodeInfo(member, eg.GroupData.ModelId)
+	votingPower := eg.getVotingPowerForModel(member, eg.GroupData.ModelId)
 
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress:      member.Address,
@@ -213,6 +216,7 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		Reputation:         int32(member.Reputation),
 		MlNodes:            mlNodes,
 		ConfirmationWeight: member.ConfirmationWeight, // Populated by confirmation PoC weight calculation
+		VotingPower:        votingPower,
 	})
 	eg.GroupData.TotalWeight += member.Weight
 
@@ -248,6 +252,20 @@ func (eg *EpochGroup) getMLNodeInfo(member EpochMember, modelId string) []*types
 	return nil
 }
 
+// getVotingPowerForModel extracts the voting power for a specific model from the member.
+// Returns 0 for root group (modelId == "") or if no matching model is found.
+func (eg *EpochGroup) getVotingPowerForModel(member EpochMember, modelId string) int64 {
+	if modelId == "" {
+		return 0
+	}
+	for _, vp := range member.VotingPowers {
+		if vp != nil && vp.ModelId == modelId {
+			return vp.VotingPower
+		}
+	}
+	return 0
+}
+
 func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
 	for _, modelId := range member.Models {
 		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", modelId, "address", member.Address)
@@ -272,11 +290,20 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 			}
 		}
 
-		// Copy only the MLNode array for this specific model
+		// Copy only the MLNode array for this specific model.
+		// Subgroup weight = sum of raw PocWeights for this model (no coefficient).
 		if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
 			subMember.MlNodes = []*types.ModelMLNodes{member.MlNodes[modelIndex]}
+			modelWeight := int64(0)
+			for _, node := range member.MlNodes[modelIndex].MlNodes {
+				if node != nil {
+					modelWeight += node.PocWeight
+				}
+			}
+			subMember.Weight = modelWeight
 		} else {
 			subMember.MlNodes = []*types.ModelMLNodes{}
+			subMember.Weight = 0
 		}
 
 		err = subGroup.AddMember(ctx, subMember)

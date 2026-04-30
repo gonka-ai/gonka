@@ -9,6 +9,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/payloadstorage"
 
+	"cosmossdk.io/x/feegrant"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	blstypes "github.com/productscience/inference/x/bls/types"
 
@@ -79,8 +80,6 @@ func NewServer(
 
 	g.POST("bls/request", s.postRequestThresholdSignature)
 
-	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
-
 	// Export DB state (human-readable JSON) for admin purposes
 	g.GET("export/db", s.exportDb)
 
@@ -108,6 +107,7 @@ func getCodec() *codec.ProtoCodec {
 	types.RegisterInterfaces(interfaceRegistry)
 	banktypes.RegisterInterfaces(interfaceRegistry)
 	authztypes.RegisterInterfaces(interfaceRegistry)
+	feegrant.RegisterInterfaces(interfaceRegistry)
 	v1.RegisterInterfaces(interfaceRegistry)
 	upgradetypes.RegisterInterfaces(interfaceRegistry)
 	collateraltypes.RegisterInterfaces(interfaceRegistry)

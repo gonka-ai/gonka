@@ -421,6 +421,32 @@ func TestClient_ListModels(t *testing.T) {
 	})
 }
 
+func TestClient_NodeState_EnrichedResponse(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("extra fields in enriched state response are ignored", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/state" {
+				t.Errorf("expected path /api/v1/state, got %s", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusOK)
+			// Enriched response with extra fields the client doesn't know about
+			w.Write([]byte(`{"state":"INFERENCE","poc_status":"IDLE","inference_healthy":true,"loaded_model":"qwen3"}`))
+		}))
+		defer server.Close()
+
+		client := NewNodeClient(server.URL, "")
+		resp, err := client.NodeState(ctx)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.State != MlNodeState_INFERENCE {
+			t.Errorf("expected state INFERENCE, got %s", resp.State)
+		}
+	})
+}
+
 func TestClient_GetDiskSpace(t *testing.T) {
 	ctx := context.Background()
 

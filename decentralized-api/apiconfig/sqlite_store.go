@@ -103,7 +103,20 @@ CREATE TABLE IF NOT EXISTS seed_info (
   claimed BOOLEAN NOT NULL DEFAULT 0,
   is_active BOOLEAN NOT NULL DEFAULT 1,
   created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now'))
-);`
+);
+
+CREATE TABLE IF NOT EXISTS bls_dealer_openings (
+  epoch_id INTEGER NOT NULL,
+  recipient_index INTEGER NOT NULL,
+  ciphertext_index INTEGER NOT NULL,
+  slot_index INTEGER NOT NULL,
+  share_bytes BLOB NOT NULL,
+  seed BLOB NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
+  created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
+  PRIMARY KEY(epoch_id, recipient_index, ciphertext_index)
+);
+CREATE INDEX IF NOT EXISTS idx_bls_dealer_openings_epoch_id ON bls_dealer_openings(epoch_id);`
 	_, err := db.ExecContext(ctx, stmt)
 	return err
 }
@@ -348,6 +361,104 @@ func IsSeedClaimed(ctx context.Context, db *sql.DB, seedType string) (claimed bo
 		return false, false, err
 	}
 	return c, true, nil
+}
+
+type BLSDealerOpening struct {
+	EpochID         uint64
+	RecipientIndex  uint32
+	CiphertextIndex uint32
+	SlotIndex       uint32
+	ShareBytes      []byte
+	Seed            []byte
+}
+
+func UpsertBLSDealerOpening(ctx context.Context, db *sql.DB, opening BLSDealerOpening) error {
+	return UpsertBLSDealerOpenings(ctx, db, []BLSDealerOpening{opening})
+}
+
+func UpsertBLSDealerOpenings(ctx context.Context, db *sql.DB, openings []BLSDealerOpening) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	if len(openings) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	q := `INSERT INTO bls_dealer_openings (
+  epoch_id, recipient_index, ciphertext_index, slot_index, share_bytes, seed
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(epoch_id, recipient_index, ciphertext_index) DO UPDATE SET
+  slot_index = excluded.slot_index,
+  share_bytes = excluded.share_bytes,
+  seed = excluded.seed,
+  updated_at = (STRFTIME('%Y-%m-%d %H:%M:%f','now'))`
+	stmt, err := tx.PrepareContext(ctx, q)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, opening := range openings {
+		if _, err := stmt.ExecContext(
+			ctx,
+			opening.EpochID,
+			opening.RecipientIndex,
+			opening.CiphertextIndex,
+			opening.SlotIndex,
+			opening.ShareBytes,
+			opening.Seed,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func ReadBLSDealerOpenings(ctx context.Context, db *sql.DB) ([]BLSDealerOpening, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT epoch_id, recipient_index, ciphertext_index, slot_index, share_bytes, seed
+FROM bls_dealer_openings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]BLSDealerOpening, 0)
+	for rows.Next() {
+		var opening BLSDealerOpening
+		if err := rows.Scan(
+			&opening.EpochID,
+			&opening.RecipientIndex,
+			&opening.CiphertextIndex,
+			&opening.SlotIndex,
+			&opening.ShareBytes,
+			&opening.Seed,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, opening)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func DeleteBLSDealerOpeningsByEpoch(ctx context.Context, db *sql.DB, epochID uint64) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM bls_dealer_openings WHERE epoch_id = ?`, epochID)
+	return err
 }
 
 // ExportAllDb returns a JSON-friendly dump of all user tables in the database.

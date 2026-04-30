@@ -1,4 +1,4 @@
-import hardhatEthers from "@nomicfoundation/hardhat-ethers";
+import hardhatToolboxMochaEthers from "@nomicfoundation/hardhat-toolbox-mocha-ethers";
 import hardhatLedger from "@nomicfoundation/hardhat-ledger";
 import dotenv from "dotenv";
 
@@ -9,7 +9,7 @@ const LEDGER_ADDRESS = process.env.LEDGER_ADDRESS || "0xc0eF863B1c566F82da3cD2Dd
 
 /** @type import('hardhat/config').HardhatUserConfig */
 export default {
-  plugins: [hardhatEthers, hardhatLedger],
+  plugins: [hardhatToolboxMochaEthers, hardhatLedger],
   solidity: {
     version: "0.8.19",
     settings: {

@@ -163,3 +163,5 @@ cython_debug/
 
 **/*.jsonl
 **/*.sqlite
+packages/benchmarks/data
+packages/benchmarks/misc_plots

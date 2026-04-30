@@ -22,15 +22,18 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-// PoCValidationSnapshot captures validator weights at validation phase start
+// PoCValidationSnapshot captures per-model voting powers at validation phase start
 // for deterministic sampling synchronization between chain and DAPI.
+// Voting powers are delegation-resolved: each DIRECT member's weight includes
+// delegated consensus weight from non-members of that model group.
 type PoCValidationSnapshot struct {
-	PocStageStartHeight      int64              `protobuf:"varint,1,opt,name=poc_stage_start_height,json=pocStageStartHeight,proto3" json:"poc_stage_start_height,omitempty"`
-	SnapshotHeight           int64              `protobuf:"varint,2,opt,name=snapshot_height,json=snapshotHeight,proto3" json:"snapshot_height,omitempty"`
-	AppHash                  string             `protobuf:"bytes,3,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
-	ValidatorWeights         []*ValidatorWeight `protobuf:"bytes,4,rep,name=validator_weights,json=validatorWeights,proto3" json:"validator_weights,omitempty"`
-	GenerationStartTimestamp int64              `protobuf:"varint,5,opt,name=generation_start_timestamp,json=generationStartTimestamp,proto3" json:"generation_start_timestamp,omitempty"`
-	ExchangeEndTimestamp     int64              `protobuf:"varint,6,opt,name=exchange_end_timestamp,json=exchangeEndTimestamp,proto3" json:"exchange_end_timestamp,omitempty"`
+	PocStageStartHeight      int64                `protobuf:"varint,1,opt,name=poc_stage_start_height,json=pocStageStartHeight,proto3" json:"poc_stage_start_height,omitempty"`
+	SnapshotHeight           int64                `protobuf:"varint,2,opt,name=snapshot_height,json=snapshotHeight,proto3" json:"snapshot_height,omitempty"`
+	AppHash                  string               `protobuf:"bytes,3,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
+	GenerationStartTimestamp int64                `protobuf:"varint,5,opt,name=generation_start_timestamp,json=generationStartTimestamp,proto3" json:"generation_start_timestamp,omitempty"`
+	ExchangeEndTimestamp     int64                `protobuf:"varint,6,opt,name=exchange_end_timestamp,json=exchangeEndTimestamp,proto3" json:"exchange_end_timestamp,omitempty"`
+	ModelVotingPowers        []*ModelVotingPowers `protobuf:"bytes,7,rep,name=model_voting_powers,json=modelVotingPowers,proto3" json:"model_voting_powers,omitempty"`
+	TotalNetworkWeight       int64                `protobuf:"varint,8,opt,name=total_network_weight,json=totalNetworkWeight,proto3" json:"total_network_weight,omitempty"`
 }
 
 func (m *PoCValidationSnapshot) Reset()         { *m = PoCValidationSnapshot{} }
@@ -87,13 +90,6 @@ func (m *PoCValidationSnapshot) GetAppHash() string {
 	return ""
 }
 
-func (m *PoCValidationSnapshot) GetValidatorWeights() []*ValidatorWeight {
-	if m != nil {
-		return m.ValidatorWeights
-	}
-	return nil
-}
-
 func (m *PoCValidationSnapshot) GetGenerationStartTimestamp() int64 {
 	if m != nil {
 		return m.GenerationStartTimestamp
@@ -108,23 +104,40 @@ func (m *PoCValidationSnapshot) GetExchangeEndTimestamp() int64 {
 	return 0
 }
 
-type ValidatorWeight struct {
-	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Weight  int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+func (m *PoCValidationSnapshot) GetModelVotingPowers() []*ModelVotingPowers {
+	if m != nil {
+		return m.ModelVotingPowers
+	}
+	return nil
 }
 
-func (m *ValidatorWeight) Reset()         { *m = ValidatorWeight{} }
-func (m *ValidatorWeight) String() string { return proto.CompactTextString(m) }
-func (*ValidatorWeight) ProtoMessage()    {}
-func (*ValidatorWeight) Descriptor() ([]byte, []int) {
+func (m *PoCValidationSnapshot) GetTotalNetworkWeight() int64 {
+	if m != nil {
+		return m.TotalNetworkWeight
+	}
+	return 0
+}
+
+// ModelVotingPowers holds delegation-resolved voting powers for one model group.
+// Only DIRECT members (participants who submitted PoC for this model) get entries.
+// Each member's voting power = own N-1 consensus weight + delegated consensus weight.
+type ModelVotingPowers struct {
+	ModelId      string              `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	VotingPowers []*VotingPowerEntry `protobuf:"bytes,2,rep,name=voting_powers,json=votingPowers,proto3" json:"voting_powers,omitempty"`
+}
+
+func (m *ModelVotingPowers) Reset()         { *m = ModelVotingPowers{} }
+func (m *ModelVotingPowers) String() string { return proto.CompactTextString(m) }
+func (*ModelVotingPowers) ProtoMessage()    {}
+func (*ModelVotingPowers) Descriptor() ([]byte, []int) {
 	return fileDescriptor_b9d995e793da19be, []int{1}
 }
-func (m *ValidatorWeight) XXX_Unmarshal(b []byte) error {
+func (m *ModelVotingPowers) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *ValidatorWeight) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *ModelVotingPowers) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_ValidatorWeight.Marshal(b, m, deterministic)
+		return xxx_messageInfo_ModelVotingPowers.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -134,35 +147,89 @@ func (m *ValidatorWeight) XXX_Marshal(b []byte, deterministic bool) ([]byte, err
 		return b[:n], nil
 	}
 }
-func (m *ValidatorWeight) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ValidatorWeight.Merge(m, src)
+func (m *ModelVotingPowers) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ModelVotingPowers.Merge(m, src)
 }
-func (m *ValidatorWeight) XXX_Size() int {
+func (m *ModelVotingPowers) XXX_Size() int {
 	return m.Size()
 }
-func (m *ValidatorWeight) XXX_DiscardUnknown() {
-	xxx_messageInfo_ValidatorWeight.DiscardUnknown(m)
+func (m *ModelVotingPowers) XXX_DiscardUnknown() {
+	xxx_messageInfo_ModelVotingPowers.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_ValidatorWeight proto.InternalMessageInfo
+var xxx_messageInfo_ModelVotingPowers proto.InternalMessageInfo
 
-func (m *ValidatorWeight) GetAddress() string {
+func (m *ModelVotingPowers) GetModelId() string {
+	if m != nil {
+		return m.ModelId
+	}
+	return ""
+}
+
+func (m *ModelVotingPowers) GetVotingPowers() []*VotingPowerEntry {
+	if m != nil {
+		return m.VotingPowers
+	}
+	return nil
+}
+
+// VotingPowerEntry is a single participant's voting power for a model group.
+type VotingPowerEntry struct {
+	Address     string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	VotingPower int64  `protobuf:"varint,2,opt,name=voting_power,json=votingPower,proto3" json:"voting_power,omitempty"`
+}
+
+func (m *VotingPowerEntry) Reset()         { *m = VotingPowerEntry{} }
+func (m *VotingPowerEntry) String() string { return proto.CompactTextString(m) }
+func (*VotingPowerEntry) ProtoMessage()    {}
+func (*VotingPowerEntry) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b9d995e793da19be, []int{2}
+}
+func (m *VotingPowerEntry) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *VotingPowerEntry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_VotingPowerEntry.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *VotingPowerEntry) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_VotingPowerEntry.Merge(m, src)
+}
+func (m *VotingPowerEntry) XXX_Size() int {
+	return m.Size()
+}
+func (m *VotingPowerEntry) XXX_DiscardUnknown() {
+	xxx_messageInfo_VotingPowerEntry.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_VotingPowerEntry proto.InternalMessageInfo
+
+func (m *VotingPowerEntry) GetAddress() string {
 	if m != nil {
 		return m.Address
 	}
 	return ""
 }
 
-func (m *ValidatorWeight) GetWeight() int64 {
+func (m *VotingPowerEntry) GetVotingPower() int64 {
 	if m != nil {
-		return m.Weight
+		return m.VotingPower
 	}
 	return 0
 }
 
 func init() {
 	proto.RegisterType((*PoCValidationSnapshot)(nil), "inference.inference.PoCValidationSnapshot")
-	proto.RegisterType((*ValidatorWeight)(nil), "inference.inference.ValidatorWeight")
+	proto.RegisterType((*ModelVotingPowers)(nil), "inference.inference.ModelVotingPowers")
+	proto.RegisterType((*VotingPowerEntry)(nil), "inference.inference.VotingPowerEntry")
 }
 
 func init() {
@@ -170,30 +237,35 @@ func init() {
 }
 
 var fileDescriptor_b9d995e793da19be = []byte{
-	// 361 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x92, 0xcf, 0x4e, 0x32, 0x31,
-	0x14, 0xc5, 0x19, 0xf8, 0x3e, 0xd0, 0x9a, 0x88, 0x16, 0x25, 0xa3, 0x8b, 0x09, 0x21, 0x26, 0xb2,
-	0x1a, 0xa2, 0xe8, 0xce, 0x95, 0xc4, 0x84, 0x9d, 0x0a, 0x06, 0x13, 0x37, 0x93, 0xd2, 0xa9, 0xd3,
-	0x26, 0xd2, 0x36, 0x6d, 0xf9, 0xe3, 0x5b, 0xf8, 0x58, 0x2e, 0xd9, 0xe9, 0xd2, 0xc0, 0x8b, 0x98,
-	0xa9, 0x33, 0xc3, 0x48, 0xdc, 0x4c, 0x6e, 0x7b, 0x7e, 0x67, 0x7a, 0xcf, 0xcd, 0x05, 0x67, 0x8c,
-	0x3f, 0x13, 0x45, 0x38, 0x26, 0xed, 0x75, 0x25, 0x05, 0x0e, 0xa6, 0xe8, 0x85, 0x85, 0xc8, 0x30,
-	0xc1, 0x03, 0xcd, 0x91, 0xd4, 0x54, 0x18, 0x5f, 0x2a, 0x61, 0x04, 0xac, 0x65, 0xa0, 0x9f, 0x55,
-	0xcd, 0x8f, 0x22, 0x38, 0xbc, 0x13, 0xdd, 0x61, 0xe6, 0x1a, 0x24, 0x26, 0xd8, 0x01, 0xf5, 0xf8,
-	0x7f, 0xda, 0xa0, 0x88, 0xc4, 0x5f, 0x65, 0x02, 0x4a, 0x58, 0x44, 0x8d, 0xeb, 0x34, 0x9c, 0x56,
-	0xa9, 0x5f, 0x93, 0x02, 0x0f, 0x62, 0x71, 0x10, 0x6b, 0x3d, 0x2b, 0xc1, 0x53, 0x50, 0x4d, 0x5f,
-	0x4d, 0xe9, 0xa2, 0xa5, 0x77, 0xd3, 0xeb, 0x04, 0x3c, 0x02, 0x5b, 0x48, 0xca, 0x80, 0x22, 0x4d,
-	0xdd, 0x52, 0xc3, 0x69, 0x6d, 0xf7, 0x2b, 0x48, 0xca, 0x1e, 0xd2, 0x14, 0xde, 0x83, 0xfd, 0x24,
-	0x84, 0x50, 0xc1, 0xcc, 0xe2, 0xda, 0xfd, 0xd7, 0x28, 0xb5, 0x76, 0xce, 0x4f, 0xfc, 0x3f, 0x32,
-	0xf8, 0xc3, 0x94, 0x7e, 0xb4, 0x70, 0x7f, 0x6f, 0xfa, 0xfb, 0x42, 0xc3, 0x2b, 0x70, 0x1c, 0x11,
-	0x4e, 0x54, 0x32, 0x17, 0x1b, 0xc6, 0xb0, 0x31, 0xd1, 0x06, 0x8d, 0xa5, 0xfb, 0xdf, 0x76, 0xe8,
-	0xae, 0x09, 0x9b, 0xe8, 0x21, 0xd5, 0xe1, 0x05, 0xa8, 0x93, 0x39, 0xa6, 0x88, 0x47, 0x24, 0x20,
-	0x3c, 0xcc, 0x39, 0xcb, 0xd6, 0x79, 0x90, 0xaa, 0x37, 0x3c, 0xcc, 0x5c, 0xcd, 0x2e, 0xa8, 0x6e,
-	0x34, 0x06, 0x5d, 0x50, 0x41, 0x61, 0xa8, 0x88, 0xd6, 0x76, 0x86, 0x71, 0xe6, 0x9f, 0x23, 0xac,
-	0x83, 0xf2, 0x2c, 0x3f, 0xae, 0xe4, 0x74, 0x7d, 0xfb, 0xbe, 0xf4, 0x9c, 0xc5, 0xd2, 0x73, 0xbe,
-	0x96, 0x9e, 0xf3, 0xb6, 0xf2, 0x0a, 0x8b, 0x95, 0x57, 0xf8, 0x5c, 0x79, 0x85, 0xa7, 0xcb, 0x88,
-	0x19, 0x3a, 0x19, 0xf9, 0x58, 0x8c, 0xdb, 0x52, 0x89, 0x70, 0x82, 0x8d, 0xc6, 0x6c, 0x63, 0x21,
-	0xe6, 0xb9, 0xda, 0xbc, 0x4a, 0xa2, 0x47, 0x65, 0xbb, 0x0b, 0x9d, 0xef, 0x00, 0x00, 0x00, 0xff,
-	0xff, 0x2b, 0xf1, 0x4d, 0x25, 0x40, 0x02, 0x00, 0x00,
+	// 445 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x52, 0xcf, 0x6e, 0xd3, 0x30,
+	0x18, 0x6f, 0xd6, 0x6d, 0xed, 0xbc, 0x01, 0x9b, 0x3b, 0xa6, 0xc0, 0x21, 0x2a, 0x95, 0x80, 0x9e,
+	0x32, 0x60, 0x70, 0xe3, 0x04, 0x9a, 0x34, 0x26, 0xc1, 0xa6, 0x14, 0x15, 0x89, 0x8b, 0xe5, 0xc5,
+	0x26, 0xb6, 0x68, 0x6c, 0xcb, 0xfe, 0xd6, 0x6e, 0x3c, 0x05, 0x07, 0x1e, 0x8a, 0xe3, 0x8e, 0x1c,
+	0x51, 0xfb, 0x22, 0x28, 0x6e, 0xd2, 0x86, 0x6e, 0x97, 0xc8, 0xf6, 0xef, 0x6f, 0x3e, 0x1b, 0xbd,
+	0x94, 0xea, 0x1b, 0xb7, 0x5c, 0xa5, 0xfc, 0x70, 0xb9, 0x32, 0x3a, 0x25, 0x63, 0x3a, 0x92, 0x8c,
+	0x82, 0xd4, 0x8a, 0x38, 0x45, 0x8d, 0x13, 0x1a, 0x62, 0x63, 0x35, 0x68, 0xdc, 0x59, 0x10, 0xe3,
+	0xc5, 0xaa, 0xf7, 0xab, 0x89, 0x1e, 0x9e, 0xeb, 0xf7, 0xc3, 0x85, 0x6a, 0x50, 0x8a, 0xf0, 0x11,
+	0x3a, 0x28, 0xfc, 0x1c, 0xd0, 0x8c, 0x17, 0x5f, 0x0b, 0x44, 0x70, 0x99, 0x09, 0x08, 0x83, 0x6e,
+	0xd0, 0x6f, 0x26, 0x1d, 0xa3, 0xd3, 0x41, 0x01, 0x0e, 0x0a, 0xec, 0xc4, 0x43, 0xf8, 0x39, 0x7a,
+	0x50, 0xa5, 0x56, 0xec, 0x35, 0xcf, 0xbe, 0x5f, 0x1d, 0x97, 0xc4, 0x47, 0xa8, 0x4d, 0x8d, 0x21,
+	0x82, 0x3a, 0x11, 0x36, 0xbb, 0x41, 0x7f, 0x2b, 0x69, 0x51, 0x63, 0x4e, 0xa8, 0x13, 0xf8, 0x2d,
+	0x7a, 0x9c, 0x71, 0xc5, 0x6d, 0xf9, 0x13, 0x3e, 0x19, 0x64, 0xce, 0x1d, 0xd0, 0xdc, 0x84, 0x1b,
+	0xde, 0x2e, 0x5c, 0x32, 0x7c, 0xfc, 0xe7, 0x0a, 0xc7, 0xaf, 0xd1, 0x01, 0xbf, 0x4a, 0x05, 0x55,
+	0x19, 0x27, 0x5c, 0xb1, 0x9a, 0x72, 0xd3, 0x2b, 0xf7, 0x2b, 0xf4, 0x58, 0xb1, 0xa5, 0x6a, 0x88,
+	0x3a, 0xb9, 0x66, 0x7c, 0x44, 0xc6, 0x1a, 0xa4, 0xca, 0x88, 0xd1, 0x13, 0x6e, 0x5d, 0xd8, 0xea,
+	0x36, 0xfb, 0xdb, 0xaf, 0x9e, 0xc5, 0x77, 0x4c, 0x2e, 0xfe, 0x58, 0xf0, 0x87, 0x9e, 0x7e, 0xee,
+	0xd9, 0xc9, 0x5e, 0xbe, 0x7a, 0x84, 0x5f, 0xa0, 0x7d, 0xd0, 0x40, 0x47, 0x44, 0x71, 0x98, 0x68,
+	0xfb, 0x9d, 0x4c, 0xe6, 0x43, 0x69, 0xfb, 0x2e, 0xd8, 0x63, 0x9f, 0xe6, 0xd0, 0x17, 0x8f, 0x9c,
+	0xae, 0xb7, 0xd7, 0x77, 0x37, 0x7a, 0x3f, 0xd0, 0xde, 0x2d, 0xff, 0x62, 0x66, 0xf3, 0x92, 0x92,
+	0xf9, 0x3b, 0xd8, 0x4a, 0x5a, 0x7e, 0xff, 0x81, 0xe1, 0x53, 0x74, 0xef, 0xff, 0xe6, 0x6b, 0xbe,
+	0xf9, 0xd3, 0x3b, 0x9b, 0xd7, 0x4c, 0x8f, 0x15, 0xd8, 0xeb, 0x64, 0x67, 0x5c, 0x8b, 0xe9, 0x9d,
+	0xa1, 0xdd, 0x55, 0x06, 0x0e, 0x51, 0x8b, 0x32, 0x66, 0xb9, 0x73, 0x55, 0x72, 0xb9, 0xc5, 0x4f,
+	0xd0, 0x4e, 0x3d, 0xb9, 0xbc, 0xee, 0xed, 0x9a, 0xe3, 0xbb, 0xb3, 0xdf, 0xd3, 0x28, 0xb8, 0x99,
+	0x46, 0xc1, 0xdf, 0x69, 0x14, 0xfc, 0x9c, 0x45, 0x8d, 0x9b, 0x59, 0xd4, 0xf8, 0x33, 0x8b, 0x1a,
+	0x5f, 0xdf, 0x64, 0x12, 0xc4, 0xe5, 0x45, 0x9c, 0xea, 0xfc, 0xd0, 0x58, 0xcd, 0x2e, 0x53, 0x70,
+	0xa9, 0x5c, 0x79, 0xd5, 0x57, 0xb5, 0x35, 0x5c, 0x1b, 0xee, 0x2e, 0x36, 0xfd, 0x83, 0x3e, 0xfa,
+	0x17, 0x00, 0x00, 0xff, 0xff, 0x5c, 0x89, 0xc6, 0xbb, 0x05, 0x03, 0x00, 0x00,
 }
 
 func (m *PoCValidationSnapshot) Marshal() (dAtA []byte, err error) {
@@ -216,6 +288,25 @@ func (m *PoCValidationSnapshot) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.TotalNetworkWeight != 0 {
+		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(m.TotalNetworkWeight))
+		i--
+		dAtA[i] = 0x40
+	}
+	if len(m.ModelVotingPowers) > 0 {
+		for iNdEx := len(m.ModelVotingPowers) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.ModelVotingPowers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x3a
+		}
+	}
 	if m.ExchangeEndTimestamp != 0 {
 		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(m.ExchangeEndTimestamp))
 		i--
@@ -225,20 +316,6 @@ func (m *PoCValidationSnapshot) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(m.GenerationStartTimestamp))
 		i--
 		dAtA[i] = 0x28
-	}
-	if len(m.ValidatorWeights) > 0 {
-		for iNdEx := len(m.ValidatorWeights) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.ValidatorWeights[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x22
-		}
 	}
 	if len(m.AppHash) > 0 {
 		i -= len(m.AppHash)
@@ -260,7 +337,7 @@ func (m *PoCValidationSnapshot) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *ValidatorWeight) Marshal() (dAtA []byte, err error) {
+func (m *ModelVotingPowers) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -270,18 +347,62 @@ func (m *ValidatorWeight) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *ValidatorWeight) MarshalTo(dAtA []byte) (int, error) {
+func (m *ModelVotingPowers) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *ValidatorWeight) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *ModelVotingPowers) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.Weight != 0 {
-		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(m.Weight))
+	if len(m.VotingPowers) > 0 {
+		for iNdEx := len(m.VotingPowers) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.VotingPowers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.ModelId) > 0 {
+		i -= len(m.ModelId)
+		copy(dAtA[i:], m.ModelId)
+		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(len(m.ModelId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *VotingPowerEntry) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *VotingPowerEntry) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *VotingPowerEntry) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.VotingPower != 0 {
+		i = encodeVarintPocValidationSnapshot(dAtA, i, uint64(m.VotingPower))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -322,22 +443,44 @@ func (m *PoCValidationSnapshot) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovPocValidationSnapshot(uint64(l))
 	}
-	if len(m.ValidatorWeights) > 0 {
-		for _, e := range m.ValidatorWeights {
-			l = e.Size()
-			n += 1 + l + sovPocValidationSnapshot(uint64(l))
-		}
-	}
 	if m.GenerationStartTimestamp != 0 {
 		n += 1 + sovPocValidationSnapshot(uint64(m.GenerationStartTimestamp))
 	}
 	if m.ExchangeEndTimestamp != 0 {
 		n += 1 + sovPocValidationSnapshot(uint64(m.ExchangeEndTimestamp))
 	}
+	if len(m.ModelVotingPowers) > 0 {
+		for _, e := range m.ModelVotingPowers {
+			l = e.Size()
+			n += 1 + l + sovPocValidationSnapshot(uint64(l))
+		}
+	}
+	if m.TotalNetworkWeight != 0 {
+		n += 1 + sovPocValidationSnapshot(uint64(m.TotalNetworkWeight))
+	}
 	return n
 }
 
-func (m *ValidatorWeight) Size() (n int) {
+func (m *ModelVotingPowers) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ModelId)
+	if l > 0 {
+		n += 1 + l + sovPocValidationSnapshot(uint64(l))
+	}
+	if len(m.VotingPowers) > 0 {
+		for _, e := range m.VotingPowers {
+			l = e.Size()
+			n += 1 + l + sovPocValidationSnapshot(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *VotingPowerEntry) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -347,8 +490,8 @@ func (m *ValidatorWeight) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovPocValidationSnapshot(uint64(l))
 	}
-	if m.Weight != 0 {
-		n += 1 + sovPocValidationSnapshot(uint64(m.Weight))
+	if m.VotingPower != 0 {
+		n += 1 + sovPocValidationSnapshot(uint64(m.VotingPower))
 	}
 	return n
 }
@@ -458,40 +601,6 @@ func (m *PoCValidationSnapshot) Unmarshal(dAtA []byte) error {
 			}
 			m.AppHash = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorWeights", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocValidationSnapshot
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthPocValidationSnapshot
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocValidationSnapshot
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ValidatorWeights = append(m.ValidatorWeights, &ValidatorWeight{})
-			if err := m.ValidatorWeights[len(m.ValidatorWeights)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
 		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field GenerationStartTimestamp", wireType)
@@ -530,6 +639,59 @@ func (m *PoCValidationSnapshot) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ModelVotingPowers", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocValidationSnapshot
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ModelVotingPowers = append(m.ModelVotingPowers, &ModelVotingPowers{})
+			if err := m.ModelVotingPowers[len(m.ModelVotingPowers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 8:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TotalNetworkWeight", wireType)
+			}
+			m.TotalNetworkWeight = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocValidationSnapshot
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.TotalNetworkWeight |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipPocValidationSnapshot(dAtA[iNdEx:])
@@ -551,7 +713,7 @@ func (m *PoCValidationSnapshot) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ValidatorWeight) Unmarshal(dAtA []byte) error {
+func (m *ModelVotingPowers) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -574,10 +736,126 @@ func (m *ValidatorWeight) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: ValidatorWeight: wiretype end group for non-group")
+			return fmt.Errorf("proto: ModelVotingPowers: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ValidatorWeight: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: ModelVotingPowers: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocValidationSnapshot
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ModelId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field VotingPowers", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocValidationSnapshot
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.VotingPowers = append(m.VotingPowers, &VotingPowerEntry{})
+			if err := m.VotingPowers[len(m.VotingPowers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPocValidationSnapshot(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPocValidationSnapshot
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *VotingPowerEntry) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPocValidationSnapshot
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: VotingPowerEntry: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: VotingPowerEntry: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -614,9 +892,9 @@ func (m *ValidatorWeight) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field VotingPower", wireType)
 			}
-			m.Weight = 0
+			m.VotingPower = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPocValidationSnapshot
@@ -626,7 +904,7 @@ func (m *ValidatorWeight) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Weight |= int64(b&0x7F) << shift
+				m.VotingPower |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
