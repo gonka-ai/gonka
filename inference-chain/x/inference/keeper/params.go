@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -14,49 +13,21 @@ const defaultGenesisGuardianNetworkMaturityMinHeight int64 = 0
 const defaultDeveloperAccessUntilBlockHeight int64 = 0
 const defaultNewParticipantRegistrationStartHeight int64 = 0
 
-type paramsKey struct{}
-
-func (k Keeper) getParamsFromStore(ctx context.Context) (params types.Params, err error) {
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	bz := store.Get(types.ParamsKey)
-	if bz == nil {
-		return params, nil
-	}
-	if err := k.cdc.Unmarshal(bz, &params); err != nil {
-		return types.Params{}, err
-	}
-	return params, nil
-}
-
-// GetParams get all parameters as types.Params
+// GetParams reads parameters through the optimistic item cache.
 func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) {
-	if cached, ok := ctx.Value(paramsKey{}).(*types.Params); ok && cached != nil {
-		return *cached, nil
+	val, found := k.paramsStore.Get(ctx)
+	if !found {
+		return types.Params{}, nil
 	}
-	return k.getParamsFromStore(ctx)
+	return val, nil
 }
 
-// InjectParamsIntoContext returns a new context with the params cached.
-func (k Keeper) InjectParamsIntoContext(ctx sdk.Context) (sdk.Context, error) {
-	params, err := k.getParamsFromStore(ctx)
-	if err != nil {
-		return ctx, err
-	}
-	return ctx.WithValue(paramsKey{}, &params), nil
-}
-
-// SetParams set the params
+// SetParams writes parameters through the optimistic item cache and handles side-effects.
 func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
-	oldParams, _ := k.getParamsFromStore(ctx)
+	oldParams, _ := k.GetParams(ctx)
 
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	bz, err := k.cdc.Marshal(&params)
-	if err != nil {
-		return err
-	}
-	store.Set(types.ParamsKey, bz)
+	k.paramsStore.Set(ctx, params)
 
-	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
 	if params.PocParams != nil && params.PocParams.PocV2Enabled {
 		wasV2Disabled := oldParams.PocParams == nil || !oldParams.PocParams.PocV2Enabled
 		if wasV2Disabled {
@@ -69,6 +40,11 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 	}
 
 	return nil
+}
+
+// ParamsStore returns the underlying optimistic item for Params.
+func (k Keeper) ParamsStore() *OptimisticItem[types.Params] {
+	return k.paramsStore
 }
 
 func (k Keeper) GetV1Params(ctx context.Context) (params types.ParamsV1, err error) {

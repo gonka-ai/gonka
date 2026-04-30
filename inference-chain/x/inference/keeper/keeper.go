@@ -12,6 +12,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// epochGroupCacheKey keys the hot cache by (epochIndex, modelId).
+type epochGroupCacheKey struct {
+	Epoch   uint64
+	ModelId string
+}
+
 type (
 	Keeper struct {
 		cdc                   codec.BinaryCodec
@@ -57,6 +63,9 @@ type (
 		InferenceValidationDetailsMap collections.Map[collections.Pair[uint64, string], types.InferenceValidationDetails]
 		UnitOfComputePriceProposals   collections.Map[string, types.UnitOfComputePriceProposal]
 		EpochGroupDataMap             collections.Map[collections.Pair[uint64, string], types.EpochGroupData]
+		epochGroupStore               *OptimisticCollMap[epochGroupCacheKey, collections.Pair[uint64, string], types.EpochGroupData]
+		paramsStore                   *OptimisticItem[types.Params]
+		storeGroup                    OptimisticStoreGroup
 		// Epoch collections
 		Epochs              collections.Map[uint64, types.Epoch]
 		EffectiveEpochIndex collections.Item[uint64]
@@ -147,6 +156,8 @@ func NewKeeper(
 	}
 
 	sb := collections.NewSchemaBuilder(storeService)
+
+	cacheConfig := OptimisticStoreConfig{BlockCacheEnabled: true, TxDraftEnabled: true}
 
 	k := Keeper{
 		cdc:                   cdc,
@@ -284,12 +295,23 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.InferenceTimeout](cdc),
 		),
-		EpochGroupDataMap: collections.NewMap(
+		epochGroupStore: NewOptimisticCollMap[epochGroupCacheKey, collections.Pair[uint64, string], types.EpochGroupData](
 			sb,
 			types.EpochGroupDataPrefix,
 			"epoch_group_data",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
 			codec.CollValue[types.EpochGroupData](cdc),
+			cacheConfig,
+			func(key epochGroupCacheKey) collections.Pair[uint64, string] {
+				return collections.Join(key.Epoch, key.ModelId)
+			},
+		),
+		paramsStore: NewOptimisticProtoItem[types.Params](
+			storeService,
+			cdc,
+			types.ParamsKey,
+			"params",
+			cacheConfig,
 		),
 		// Epoch collections wiring
 		Epochs: collections.NewMap(
@@ -591,14 +613,28 @@ func NewKeeper(
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
 	}
-	// Build the collections schema
+
+	// Keep legacy direct map access while routing writes/reads through optimistic layer.
+	k.EpochGroupDataMap = k.epochGroupStore.Map
+
+	// Register all optimistic stores with the group
+	k.storeGroup.Register(k.epochGroupStore.OptimisticStore)
+	k.storeGroup.Register(k.paramsStore.Store())
+
+	// Build the collections schema (must happen after all NewMap/NewItem calls)
 	schema, err := sb.Build()
 	if err != nil {
 		//nolint:forbidigo // init code
 		panic(err)
 	}
 	k.Schema = schema
+
 	return k
+}
+
+// StoreGroup returns the group of all optimistic stores for batch lifecycle operations.
+func (k Keeper) StoreGroup() *OptimisticStoreGroup {
+	return &k.storeGroup
 }
 
 // GetAuthority returns the module's authority.

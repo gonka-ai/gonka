@@ -177,6 +177,9 @@ func (AppModule) ConsensusVersion() uint64 { return 14 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	// Refresh optimistic block-level caches at block start.
+	am.keeper.StoreGroup().InvalidateAll()
+
 	// Precompute SPRT values for the block
 	err := am.keeper.PrecomputeSPRTValues(ctx)
 	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
@@ -345,6 +348,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
+
+	// Persist optimistic block caches after end-block processing.
+	defer am.keeper.StoreGroup().FlushAll(ctx)
 
 	// Handle confirmation PoC trigger decisions and phase transitions
 	err := am.handleConfirmationPoC(ctx, blockHeight)

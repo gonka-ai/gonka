@@ -21,10 +21,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, err
 	}
 
-	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
-	if err != nil {
-		k.LogWarn("StartInference: failed to inject params", types.Inferences, "error", err)
-	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 

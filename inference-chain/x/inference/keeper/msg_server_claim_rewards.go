@@ -23,10 +23,7 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
 		return nil, err
 	}
-	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
-	if err != nil {
-		return nil, err
-	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	settleAmount, response := k.validateRequest(ctx, msg)
 	if response != nil {

@@ -18,11 +18,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	// Inject cache once at the entry point
-	ctx, err := k.Keeper.InjectParamsIntoContext(sdk.UnwrapSDKContext(goCtx))
-	if err != nil {
-		k.LogWarn("FinishInference: failed to inject params", types.Inferences, "error", err)
-	}
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 	if msg.Creator != msg.ExecutedBy {

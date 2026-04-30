@@ -25,6 +25,49 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
+// OptimisticStoreDraftDecorator attaches tx-scoped drafts for all optimistic stores and registers them for OCC.
+// PostHandler must call commit on success; block caches are flushed in EndBlock.
+type OptimisticStoreDraftDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// AnteHandle attaches drafts for all optimistic stores to the context and registers them for OCC.
+func (d OptimisticStoreDraftDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if d.InferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+	g := d.InferenceKeeper.StoreGroup()
+	newCtx := ctx.WithContext(g.WithDraftAll(ctx.Context()))
+	g.RegisterTxAll(newCtx)
+	return next(newCtx, tx, simulate)
+}
+
+// OptimisticStoreCommitPostDecorator commits or releases all optimistic store drafts.
+type OptimisticStoreCommitPostDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+// PostHandle commits all optimistic store drafts on success, releases on failure.
+func (d OptimisticStoreCommitPostDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
+	newCtx, err := next(ctx, tx, simulate, success)
+	if err != nil {
+		return newCtx, err
+	}
+	if d.InferenceKeeper == nil {
+		return newCtx, nil
+	}
+	if ctx.IsCheckTx() || simulate {
+		return newCtx, nil
+	}
+	g := d.InferenceKeeper.StoreGroup()
+	if success {
+		g.CommitDraftAll(newCtx)
+	} else {
+		g.ReleaseDraftAll(newCtx)
+	}
+	return newCtx, nil
+}
+
 // HandlerOptions extend the SDK's AnteHandler options by requiring the IBC
 // channel keeper.
 type HandlerOptions struct {
@@ -193,7 +236,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	}
 
 	anteDecorators := []sdk.AnteDecorator{
-		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		ante.NewSetUpContextDecorator(),                                                  // outermost AnteDecorator. SetUpContext must be called first
+		OptimisticStoreDraftDecorator{InferenceKeeper: options.InferenceKeeper},            // tx-scoped drafts for all optimistic stores; committed in PostHandler, flushed in EndBlock
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
@@ -264,4 +308,6 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 
 	// Set the AnteHandler for the app
 	app.SetAnteHandler(anteHandler)
+	// Merge tx-scoped EpochGroupData draft into block cache on tx success (block cache flushed to store in EndBlock)
+	app.SetPostHandler(sdk.ChainPostDecorators(OptimisticStoreCommitPostDecorator{InferenceKeeper: &app.InferenceKeeper}))
 }

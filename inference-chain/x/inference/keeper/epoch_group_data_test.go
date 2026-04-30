@@ -52,8 +52,7 @@ func TestEpochGroupDataGet(t *testing.T) {
 			"",
 		)
 		require.True(t, found)
-		// This will be nil if MemberSeedSignature is empty!!
-		require.Nil(t, result.MemberSeedSignatures)
+		require.Empty(t, result.MemberSeedSignatures)
 		require.Equal(t,
 			nullify.Fill(&item),
 			nullify.Fill(&result),
