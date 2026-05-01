@@ -73,11 +73,6 @@ type ApiConfig struct {
 	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
 }
 
-const (
-	DefaultNodeManagerGrpcPort       = 9400
-	DefaultNodeManagerLockTTLSeconds = 1200
-)
-
 type ChainNodeConfig struct {
 	Url              string `koanf:"url" json:"url"`
 	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`

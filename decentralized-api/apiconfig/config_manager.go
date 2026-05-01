@@ -139,14 +139,7 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
-	cfg := cm.currentConfig.Api
-	if cfg.NodeManagerGrpcPort == 0 {
-		cfg.NodeManagerGrpcPort = DefaultNodeManagerGrpcPort
-	}
-	if cfg.NodeManagerLockTTLSeconds <= 0 {
-		cfg.NodeManagerLockTTLSeconds = DefaultNodeManagerLockTTLSeconds
-	}
-	return cfg
+	return cm.currentConfig.Api
 }
 
 func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
