@@ -84,7 +84,7 @@ services:
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
-      - NODE_MANAGER_ADDR=api:9400
+      - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
       - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
