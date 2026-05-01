@@ -27,7 +27,7 @@ type Config struct {
 	BandwidthParams          BandwidthParamsCache     `koanf:"bandwidth_params" json:"bandwidth_params"`
 	PoCParams                PoCParamsCache           `koanf:"poc_params" json:"poc_params"`
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
-	DevshardVersionsCache      DevshardVersionsCache      `koanf:"-" json:"-"` // not persisted, synced from chain
+	DevshardVersionsCache    DevshardVersionsCache    `koanf:"-" json:"-"` // not persisted, synced from chain
 }
 
 type NatsServerConfig struct {
@@ -71,6 +71,21 @@ type ApiConfig struct {
 	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
 	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
 	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+}
+
+const (
+	DefaultNodeManagerGrpcPort       = 9400
+	DefaultNodeManagerLockTTLSeconds = 1200
+)
+
+func (c ApiConfig) WithDefaults() ApiConfig {
+	if c.NodeManagerGrpcPort == 0 {
+		c.NodeManagerGrpcPort = DefaultNodeManagerGrpcPort
+	}
+	if c.NodeManagerLockTTLSeconds <= 0 {
+		c.NodeManagerLockTTLSeconds = DefaultNodeManagerLockTTLSeconds
+	}
+	return c
 }
 
 type ChainNodeConfig struct {

@@ -29,6 +29,48 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 }
 
+func TestApiConfigNodeManagerDefaults(t *testing.T) {
+	unsetEnv(t, "DAPI_API__NODE_MANAGER_GRPC_PORT")
+	unsetEnv(t, "DAPI_API__NODE_MANAGER_LOCK_TTL_SECONDS")
+
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testYaml)),
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+
+	apiConfig := testManager.GetApiConfig()
+	require.Equal(t, apiconfig.DefaultNodeManagerGrpcPort, apiConfig.NodeManagerGrpcPort)
+	require.Equal(t, apiconfig.DefaultNodeManagerLockTTLSeconds, apiConfig.NodeManagerLockTTLSeconds)
+}
+
+func TestApiConfigNodeManagerPortOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		want     int
+	}{
+		{name: "zero defaults", envValue: "0", want: apiconfig.DefaultNodeManagerGrpcPort},
+		{name: "negative disables", envValue: "-1", want: -1},
+		{name: "positive uses configured port", envValue: "9500", want: 9500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DAPI_API__NODE_MANAGER_GRPC_PORT", tt.envValue)
+			unsetEnv(t, "DAPI_API__NODE_MANAGER_LOCK_TTL_SECONDS")
+
+			testManager := &apiconfig.ConfigManager{
+				KoanProvider: rawbytes.Provider([]byte(testYaml)),
+			}
+			err := testManager.Load()
+			require.NoError(t, err)
+
+			require.Equal(t, tt.want, testManager.GetApiConfig().NodeManagerGrpcPort)
+		})
+	}
+}
+
 func TestNewPoCParamsCache(t *testing.T) {
 	cache := apiconfig.NewPoCParamsCache([]*types.PoCModelConfig{
 		nil,
@@ -291,6 +333,19 @@ func writeTemp(t *testing.T, dir, name, content string) string {
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
 	return path
+}
+
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	value, ok := os.LookupEnv(key)
+	require.NoError(t, os.Unsetenv(key))
+	t.Cleanup(func() {
+		if ok {
+			require.NoError(t, os.Setenv(key, value))
+			return
+		}
+		require.NoError(t, os.Unsetenv(key))
+	})
 }
 
 func loadManager(t *testing.T) error {

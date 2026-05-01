@@ -264,8 +264,8 @@ func main() {
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
-	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
-	if nmGrpcPort != 0 {
+	// Negative ports explicitly disable the NodeManager gRPC server. Zero is defaulted by config.
+	if nmGrpcPort >= 0 {
 		nmGrpcServer := grpc.NewServer()
 		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
 		reflection.Register(nmGrpcServer)
