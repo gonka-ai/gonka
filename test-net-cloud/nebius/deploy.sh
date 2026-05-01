@@ -28,14 +28,14 @@ HF_HOME="${HF_HOME:-/srv/dai/cache/}"
 
 GENESIS_SSH_PORT="${GENESIS_SSH_PORT:-18220}"
 JOIN1_SSH_PORT="${JOIN1_SSH_PORT:-18225}"
-JOIN2_SSH_PORT="${JOIN2_SSH_PORT:-18226}"
+JOIN2_SSH_PORT="${JOIN2_SSH_PORT:-18219}"
 
 GENESIS_API_PORT="${GENESIS_API_PORT:-19240}"
 GENESIS_P2P_PORT="${GENESIS_P2P_PORT:-19239}"
 JOIN1_API_PORT="${JOIN1_API_PORT:-19250}"
 JOIN1_P2P_PORT="${JOIN1_P2P_PORT:-19249}"
-JOIN2_API_PORT="${JOIN2_API_PORT:-19252}"
-JOIN2_P2P_PORT="${JOIN2_P2P_PORT:-19251}"
+JOIN2_API_PORT="${JOIN2_API_PORT:-19238}"
+JOIN2_P2P_PORT="${JOIN2_P2P_PORT:-19237}"
 GENESIS_WAIT_SECONDS="${GENESIS_WAIT_SECONDS:-300}"
 GENESIS_WAIT_INTERVAL="${GENESIS_WAIT_INTERVAL:-5}"
 GENESIS_INTERNAL_API_PORT="${GENESIS_INTERNAL_API_PORT:-8000}"
@@ -48,6 +48,23 @@ SSH_COMMON=(-i "$SSH_KEY_PATH" -o StrictHostKeyChecking=accept-new -o BatchMode=
 GENESIS_HOST="${SSH_USER}@${PUBLIC_DOMAIN}"
 JOIN1_HOST="${SSH_USER}@${PUBLIC_DOMAIN}"
 JOIN2_HOST="${SSH_USER}@${PUBLIC_DOMAIN}"
+
+# node-config.json may contain a node2 entry (mock mlnode, for multi-model testing).
+# By default we strip it so the api doesn't log DNS errors for inference-node2.
+# Set ENABLE_NODE2=1 to deploy the full config as-is.
+NODE_CONFIG_SRC="$(cd "$(dirname "$0")" && pwd)/../../deploy/join/node-config.json"
+if [ "${ENABLE_NODE2:-0}" != "1" ]; then
+  _NODE_CONFIG_TMP=$(mktemp /tmp/node-config-XXXXXX.json)
+  trap 'rm -f "$_NODE_CONFIG_TMP"' EXIT
+  python3 -c "
+import json, sys
+cfg = json.load(open('$NODE_CONFIG_SRC'))
+filtered = [n for n in cfg if n.get('id') != 'node2']
+json.dump(filtered, open('$_NODE_CONFIG_TMP', 'w'), indent=2)
+"
+  echo "==> node2 stripped from node-config.json (set ENABLE_NODE2=1 to include)"
+  NODE_CONFIG_SRC="$_NODE_CONFIG_TMP"
+fi
 
 echo "==> Uploading scripts to all nodes"
 SSH_KEY_PATH="$SSH_KEY_PATH" ./prepare.sh
@@ -67,6 +84,10 @@ run_remote "$GENESIS_HOST" "$GENESIS_SSH_PORT" \
    SEED_API_URL='http://${PUBLIC_DOMAIN}:${GENESIS_API_PORT}' SEED_NODE_P2P_URL='tcp://${PUBLIC_DOMAIN}:${GENESIS_P2P_PORT}' \
    SEED_NODE_RPC_URL='http://${GENESIS_INTERNAL_IP}:26657' RPC_SERVER_URL_1='http://${GENESIS_INTERNAL_IP}:26657' RPC_SERVER_URL_2='http://${GENESIS_INTERNAL_IP}:26657' && \
    python3 launch.py --mode genesis --branch '$REPO_BRANCH' --chainid '$CHAIN_ID'"
+
+echo "==> Patching node-config.json on genesis (override git checkout)"
+scp "${SSH_COMMON[@]}" -P "$GENESIS_SSH_PORT" "$NODE_CONFIG_SRC" "$GENESIS_HOST":/srv/dai/gonka/deploy/join/node-config.json
+run_remote "$GENESIS_HOST" "$GENESIS_SSH_PORT" "docker restart api 2>/dev/null || true; docker restart join-mlnode-308-1 2>/dev/null || true"
 
 echo "==> Waiting for genesis readiness on :$GENESIS_API_PORT"
 max_attempts=$((GENESIS_WAIT_SECONDS / GENESIS_WAIT_INTERVAL))
@@ -110,6 +131,10 @@ run_remote "$JOIN1_HOST" "$JOIN1_SSH_PORT" \
    CHAIN_ID='$CHAIN_ID' REPO_BRANCH='$REPO_BRANCH' TESTNET_BASE_DIR='$DEPLOY_DIR' HF_HOME='$HF_HOME' && \
    bash ./join-1.sh"
 
+echo "==> Patching node-config.json on join-1 (override git checkout)"
+scp "${SSH_COMMON[@]}" -P "$JOIN1_SSH_PORT" "$NODE_CONFIG_SRC" "$JOIN1_HOST":/srv/dai/gonka/deploy/join/node-config.json
+run_remote "$JOIN1_HOST" "$JOIN1_SSH_PORT" "docker restart api 2>/dev/null || true; docker restart join-mlnode-308-1 2>/dev/null || true"
+
 if [ "${SKIP_JOIN2:-0}" = "1" ]; then
   echo "==> Skipping join-2 (SKIP_JOIN2=1)"
 else
@@ -124,9 +149,31 @@ else
      SEED_API_URL='http://${PUBLIC_DOMAIN}:${GENESIS_API_PORT}' \
      SEED_NODE_P2P_URL='tcp://${PUBLIC_DOMAIN}:${GENESIS_P2P_PORT}' \
      CHAIN_ID='$CHAIN_ID' REPO_BRANCH='$REPO_BRANCH' TESTNET_BASE_DIR='$DEPLOY_DIR' HF_HOME='$HF_HOME' && \
-     bash ./join-2.sh" \
-  || echo "  [warn] join-2 deploy failed (node may be unreachable), skipping"
+     bash ./join-2.sh"
+
+  echo "==> Patching node-config.json on join-2 (override git checkout)"
+  scp "${SSH_COMMON[@]}" -P "$JOIN2_SSH_PORT" "$NODE_CONFIG_SRC" "$JOIN2_HOST":/srv/dai/gonka/deploy/join/node-config.json
+  run_remote "$JOIN2_HOST" "$JOIN2_SSH_PORT" "docker restart api 2>/dev/null || true; docker restart join-mlnode-308-1 2>/dev/null || true"
 fi
+
+echo "==> Verifying fee grants for all join nodes"
+INFERENCED_BIN="${DEPLOY_DIR}/inferenced"
+RPC_URL="http://${PUBLIC_DOMAIN}:${JOIN2_API_PORT}/chain-rpc/"
+for label_addr in "join-1:${PRE_FUND_ADDRESSES%%,*}" "join-2:${PRE_FUND_ADDRESSES##*,}"; do
+  label="${label_addr%%:*}"
+  addr="${label_addr##*:}"
+  if [ -z "$addr" ]; then continue; fi
+  count=$(run_remote "$GENESIS_HOST" "$GENESIS_SSH_PORT" \
+    "${INFERENCED_BIN} query feegrant grants-by-granter '${addr}' --node '${RPC_URL}' -o json 2>/dev/null | \
+     python3 -c \"import json,sys; d=json.load(sys.stdin); print(len(d.get('allowances',[])))\"" 2>/dev/null || echo "0")
+  if [ "${count:-0}" -eq 0 ]; then
+    echo "  [ERROR] No fee grant found for ${label} (${addr})" >&2
+    echo "  grant-ml-ops-permissions was not applied — DAPI transactions will fail silently." >&2
+    echo "  Run manually: inferenced tx inference grant-ml-ops-permissions gonka-account-key <warm-key> --from gonka-account-key ..." >&2
+    exit 1
+  fi
+  echo "  ${label} (${addr}): fee grant OK (${count} allowance(s))"
+done
 
 echo "==> Running health checks"
 SSH_KEY_PATH="$SSH_KEY_PATH" ./healthcheck.sh

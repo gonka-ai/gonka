@@ -2,8 +2,8 @@
   "app_state": {
     "bls": {
       "params": {
-        "i_total_slots": 100,
-        "t_slots_degree_offset": 50,
+        "i_total_slots": 4,
+        "t_slots_degree_offset": 1,
         "dealing_phase_duration_blocks": "5",
         "verification_phase_duration_blocks": "3",
         "signing_deadline_blocks": "10",
@@ -135,75 +135,6 @@
                 }
               },
               "penalty_start_epoch": "0"
-            },
-            {
-              "model_id": "Qwen/Qwen3-4B-Instruct-2507",
-              "seq_len": 256,
-              "weight_scale_factor": {
-                "value": "25",
-                "exponent": -1
-              },
-              "stat_test": {
-                "dist_threshold": {
-                  "value": "4",
-                  "exponent": -1
-                },
-                "p_mismatch": {
-                  "value": "1",
-                  "exponent": -1
-                },
-                "p_value_threshold": {
-                  "value": "5",
-                  "exponent": -2
-                }
-              },
-              "penalty_start_epoch": "0"
-            },
-            {
-              "model_id": "Qwen/QwQ-32B",
-              "seq_len": 256,
-              "weight_scale_factor": {
-                "value": "25",
-                "exponent": -1
-              },
-              "stat_test": {
-                "dist_threshold": {
-                  "value": "4",
-                  "exponent": -1
-                },
-                "p_mismatch": {
-                  "value": "1",
-                  "exponent": -1
-                },
-                "p_value_threshold": {
-                  "value": "5",
-                  "exponent": -2
-                }
-              },
-              "penalty_start_epoch": "3"
-            },
-            {
-              "model_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
-              "seq_len": 256,
-              "weight_scale_factor": {
-                "value": "25",
-                "exponent": -1
-              },
-              "stat_test": {
-                "dist_threshold": {
-                  "value": "4",
-                  "exponent": -1
-                },
-                "p_mismatch": {
-                  "value": "1",
-                  "exponent": -1
-                },
-                "p_value_threshold": {
-                  "value": "5",
-                  "exponent": -2
-                }
-              },
-              "penalty_start_epoch": "3"
             }
           ]
         },
@@ -226,16 +157,7 @@
             "value": "1",
             "exponent": -1
           },
-          "model_id": "Qwen/Qwen3-4B-Instruct-2507",
-          "seq_len": 256,
-          "poc_v2_enabled": true,
-          "confirmation_poc_v2_enabled": true,
-          "stat_test": {
-            "dist_threshold": { "value": "4", "exponent": -1 },
-            "p_mismatch": { "value": "1", "exponent": -1 },
-            "p_value_threshold": { "value": "5", "exponent": -2 }
-          },
-          "v_min": "3"
+          "v_min": "1"
         },
         "confirmation_poc_params": {
           "expected_confirmations_per_epoch": "1"

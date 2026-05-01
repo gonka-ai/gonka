@@ -649,38 +649,25 @@ def pull_images():
         else:
             print(f"Warning: image pull failed after {max_retries} attempts (continuing with cached images): {result.stderr}")
 
-    # Pull mlnode directly by image name — large image (~29GB) that regularly exceeds the
-    # 5 min general pull timeout. Pulling by explicit tag avoids picking up whatever tag
-    # the branch's docker-compose.mlnode.yml happens to specify (e.g. 3.0.13-alpha3).
-    MLNODE_IMAGE = "ghcr.io/product-science/mlnode:3.0.12-post4"
-    print(f"Pulling {MLNODE_IMAGE} directly (up to 30 min)...")
-    try:
-        result = subprocess.run(
-            ["docker", "pull", MLNODE_IMAGE],
-            capture_output=True,
-            text=True,
-            timeout=1800,
-        )
-        if result.returncode == 0:
-            print(f"mlnode image {MLNODE_IMAGE} pulled successfully!")
-        else:
-            print(f"Warning: mlnode pull failed (continuing with cached image): {result.stderr[:200]}")
-    except subprocess.TimeoutExpired:
-        print("Warning: mlnode pull timed out after 30 min (continuing with cached image)")
-
-    # Patch docker-compose.mlnode.yml to use the correct image regardless of branch.
-    mlnode_compose = GONKA_REPO_DIR / "deploy/join/docker-compose.mlnode.yml"
-    if mlnode_compose.exists():
-        import re as _re
-        content = mlnode_compose.read_text()
-        patched = _re.sub(
-            r'image:\s*ghcr\.io/product-science/mlnode:[^\s]+',
-            f'image: {MLNODE_IMAGE}',
-            content
-        )
-        if patched != content:
-            mlnode_compose.write_text(patched)
-            print(f"Patched docker-compose.mlnode.yml to use {MLNODE_IMAGE}")
+    mlnode_image = os.environ.get("MLNODE_IMAGE", "ghcr.io/product-science/mlnode:3.0.12-post4")
+    cached = subprocess.run(["docker", "image", "inspect", mlnode_image], capture_output=True).returncode == 0
+    if cached:
+        print(f"mlnode image {mlnode_image} already cached, skipping pull")
+    else:
+        print(f"Pulling {mlnode_image} (up to 30 min, first-time download)...")
+        try:
+            result = subprocess.run(
+                ["docker", "pull", mlnode_image],
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+            if result.returncode == 0:
+                print(f"mlnode image {mlnode_image} pulled successfully!")
+            else:
+                print(f"Warning: mlnode pull failed (continuing): {result.stderr[:200]}")
+        except subprocess.TimeoutExpired:
+            print("Warning: mlnode pull timed out after 30 min (continuing with cached image)")
 
 
 def create_docker_compose_override(init_only=True, node_id=None):
@@ -1708,17 +1695,18 @@ def inject_approved_devshard_versions_into_overrides(overrides_path: Path):
     """Patch the genesis-overrides file with the devshardd approved_versions entry.
 
     Called just before apply_genesis_overrides() so the approved_versions are baked
-    into genesis from block 0.  The binary URL points to file-server:80/devshardd,
-    the nginx container that serves ./devshards/bin/ within the docker network.
-    The sha256 is computed from the actual binary built during this deploy.
+    into genesis from block 0.  The binary URL points to the GitHub release zip so
+    versiond can download, verify, and unzip it without a local file-server.
+    The sha256 is the hash of the zip file published in the GitHub release.
     """
-    devshardd_path = DEPLOY_DIR / "devshards/bin/devshardd"
-    if not devshardd_path.exists():
-        print("devshardd binary not found, skipping approved_versions injection")
-        return
-
-    with open(devshardd_path, "rb") as f:
-        sha256 = hashlib.sha256(f.read()).hexdigest()
+    zip_url = os.environ.get(
+        "DEVSHARDD_ZIP_URL",
+        "https://github.com/product-science/race-releases/releases/download/release%2Fv0.2.12-alpha1/devshardd.zip",
+    )
+    zip_sha256 = os.environ.get(
+        "DEVSHARDD_ZIP_SHA256",
+        "98aac3f7a73ccfd0b1084e4b1190a54a7d57e1861738ce9984bbf02e31011cf9",
+    )
 
     if not overrides_path.exists():
         print(f"Overrides file not found at {overrides_path}, skipping approved_versions injection")
@@ -1733,8 +1721,8 @@ def inject_approved_devshard_versions_into_overrides(overrides_path: Path):
             if "devshard_escrow_params" in obj:
                 obj["devshard_escrow_params"]["approved_versions"] = [{
                     "name": "v0.2.12",
-                    "binary": "http://file-server:80/devshardd",
-                    "sha256": sha256,
+                    "binary": zip_url,
+                    "sha256": zip_sha256,
                 }]
                 return True
             for v in obj.values():
@@ -1745,7 +1733,7 @@ def inject_approved_devshard_versions_into_overrides(overrides_path: Path):
     if _set_approved(overrides):
         with open(overrides_path, "w") as f:
             json.dump(overrides, f, indent=2)
-        print(f"Injected approved_versions into {overrides_path} (sha256={sha256[:16]}...)")
+        print(f"Injected approved_versions into {overrides_path} (sha256={zip_sha256[:16]}...)")
     else:
         print("Warning: devshard_escrow_params not found in overrides, approved_versions not injected")
 
@@ -2178,6 +2166,22 @@ def main():
     
     # Set up fresh environment
     clone_repo(args.branch)
+
+    # Override mlnode image in docker-compose.mlnode.yml with the value from .env
+    # so that whatever image tag the branch specifies is always replaced before any
+    # docker operations run. Must happen right after clone so no timeout can skip it.
+    mlnode_image = os.environ.get("MLNODE_IMAGE", "ghcr.io/product-science/mlnode:3.0.12-post4")
+    mlnode_compose = GONKA_REPO_DIR / "deploy/join/docker-compose.mlnode.yml"
+    if mlnode_compose.exists():
+        import re as _re
+        content = mlnode_compose.read_text()
+        patched = _re.sub(r'image:\s*ghcr\.io/product-science/mlnode:[^\s]+', f'image: {mlnode_image}', content)
+        if patched != content:
+            mlnode_compose.write_text(patched)
+            print(f"Patched docker-compose.mlnode.yml to use {mlnode_image}")
+        else:
+            print(f"docker-compose.mlnode.yml already uses {mlnode_image}")
+
     clean_genesis_validators()
     create_state_dirs()
     install_inferenced()

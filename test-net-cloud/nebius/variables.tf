@@ -63,7 +63,7 @@ variable "join_1_ssh_port" {
 
 variable "join_2_ssh_port" {
   type    = number
-  default = 18226
+  default = 18219
 }
 
 variable "genesis_p2p_port" {
@@ -88,12 +88,12 @@ variable "join_1_api_port" {
 
 variable "join_2_p2p_port" {
   type    = number
-  default = 19251
+  default = 19237
 }
 
 variable "join_2_api_port" {
   type    = number
-  default = 19252
+  default = 19238
 }
 
 variable "genesis_internal_api_port" {

@@ -15,14 +15,14 @@ join_2_internal_ip   = "172.18.114.105"
 
 genesis_ssh_port     = 18220
 join_1_ssh_port      = 18225
-join_2_ssh_port      = 18226
+join_2_ssh_port      = 18219
 
 genesis_p2p_port     = 19239
 genesis_api_port     = 19240
 join_1_p2p_port      = 19249
 join_1_api_port      = 19250
-join_2_p2p_port      = 19251
-join_2_api_port      = 19252
+join_2_p2p_port      = 19237
+join_2_api_port      = 19238
 genesis_internal_api_port = 8000
 join_1_internal_api_port  = 8000
 join_2_internal_api_port  = 8000
