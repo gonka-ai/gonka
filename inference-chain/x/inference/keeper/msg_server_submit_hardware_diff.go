@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/slices"
 )
@@ -72,16 +71,14 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		return strings.Compare(a.LocalId, b.LocalId)
 	})
 
-	// Early no-op: skip the write when the resulting node set is identical
-	// to what's already stored. Without this guard, a chatty DAPI sending
-	// the same diff every block would consume block space and (when fees
-	// re-enable) the host's gas-bypass budget for zero state change.
-	// Both lists are sorted by LocalId — `updatedNodes` was just sorted
-	// above, and `existingNodes` was sorted at its last write — so a
-	// length + pairwise proto.Equal compare is sufficient.
+	// Skip the write when the resulting node set is operationally identical
+	// to what's already stored. Catches the chatty-DAPI case where the same
+	// diff fires every block. NOT a security control — a malicious sender
+	// can defeat this by flipping any compared field. The point is to stop
+	// honest no-op spam, not to rate-limit.
 	if HardwareNodesUnchanged(updatedNodes.HardwareNodes, existingNodes.HardwareNodes) {
-		k.LogDebug("SubmitHardwareDiff no-op: posted state matches stored state, skipping write",
-			types.Nodes, "participant", msg.Creator, "nodeCount", len(updatedNodes.HardwareNodes))
+		k.LogDebug("SubmitHardwareDiff no-op: skipping write", types.Nodes,
+			"participant", msg.Creator, "nodeCount", len(updatedNodes.HardwareNodes))
 		return &types.MsgSubmitHardwareDiffResponse{}, nil
 	}
 
@@ -95,15 +92,51 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 }
 
 // HardwareNodesUnchanged reports whether two sorted hardware-node lists are
-// element-wise identical. Used as a cheap idempotency check on
-// MsgSubmitHardwareDiff so DAPI's per-block diff submissions don't trigger
-// state writes when nothing actually changed. Exported for testing.
+// equivalent in their *operational* fields: local_id, status, models,
+// hardware, host, port. The Version field is excluded because it's
+// explicitly informational (see hardware_node.proto) and a flapping value
+// shouldn't trigger spurious writes.
+//
+// This is a best-effort idempotency check, not a security boundary. A
+// caller that wants to bypass it can flip any operational field.
+// Exported for testing.
 func HardwareNodesUnchanged(after, before []*types.HardwareNode) bool {
 	if len(after) != len(before) {
 		return false
 	}
 	for i := range after {
-		if !proto.Equal(after[i], before[i]) {
+		if !hardwareNodeOperationalEqual(after[i], before[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// hardwareNodeOperationalEqual compares the load-bearing fields of two
+// HardwareNode protos. Add to this list if hardware_node.proto adds new
+// state-affecting fields.
+func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.LocalId != b.LocalId ||
+		a.Status != b.Status ||
+		a.Host != b.Host ||
+		a.Port != b.Port {
+		return false
+	}
+	if !slices.Equal(a.Models, b.Models) {
+		return false
+	}
+	if len(a.Hardware) != len(b.Hardware) {
+		return false
+	}
+	for i := range a.Hardware {
+		if a.Hardware[i].Type != b.Hardware[i].Type ||
+			a.Hardware[i].Count != b.Hardware[i].Count {
 			return false
 		}
 	}

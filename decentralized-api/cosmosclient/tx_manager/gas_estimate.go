@@ -11,13 +11,8 @@ import (
 )
 
 // applyGasAndFee writes gasWanted (capped at BatchGasLimit) onto the tx
-// builder and computes the matching fee amount from minGasPriceNgonka.
-// Extracted from getSignedBytes so it's directly unit-testable without
-// requiring keyring + signing setup.
-//
-// Pass minGasPriceNgonka=0 (current v0.2.12 mainnet config) to set zero
-// fees regardless of gasWanted; the network-duty bypass also produces
-// zero-fee txs but at a different layer.
+// builder and computes the matching fee from minGasPriceNgonka. Extracted
+// for unit testing without keyring/signing setup.
 func applyGasAndFee(tx client.TxBuilder, gasWanted uint64, minGasPriceNgonka int64) {
 	if gasWanted == 0 || gasWanted > BatchGasLimit {
 		gasWanted = BatchGasLimit
@@ -25,94 +20,66 @@ func applyGasAndFee(tx client.TxBuilder, gasWanted uint64, minGasPriceNgonka int
 	tx.SetGasLimit(gasWanted)
 	if minGasPriceNgonka > 0 {
 		feeAmount := math.NewIntFromUint64(gasWanted).MulRaw(minGasPriceNgonka)
-		tx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin("ngonka", feeAmount)))
+		tx.SetFeeAmount(sdk.NewCoins(sdk.NewCoin(inferencetypes.BaseCoin, feeAmount)))
 	} else {
 		tx.SetFeeAmount(sdk.Coins{})
 	}
 }
 
-// Per-message-type gas estimates for sizing the batch's gasWanted before
-// broadcast. Cosmos charges fees on gasWanted, not gasUsed, so over-sizing
-// inflates routine costs while under-sizing causes OOG failures.
+// Per-message gas estimates. Cosmos charges fees on gasWanted (not gasUsed),
+// so over-sizing inflates routine costs and under-sizing causes OOG.
 //
-// Numbers are derived from a 24-hour mainnet sample (~385K txs, see
-// /tmp/gonka-gas-analysis/report.md): p99 of observed gasUsed × ~1.5
-// headroom (Option B). The headroom expects ~1% of txs to OOG and trigger
-// a retry at higher gas; estimateBatchGas applies a multiplier per attempt
-// to escape the OOG loop.
+// Numbers are p99 of observed gasUsed × ~1.5 from a 24h mainnet sample
+// (see /tmp/gonka-gas-analysis/report.md). The headroom expects ~1% of txs
+// to OOG; estimateBatchGas doubles per attempt to escape the retry loop.
 //
-// The two known linear-scaling messages mirror their on-chain ConsumeGas
-// formula instead of using a flat number, so the estimate tracks payload
-// size correctly:
-//   - MsgPoCV2StoreCommit: base + sum(entry.Count) * per_count
-//   - MsgMLNodeWeightDistribution: base + total_node_entries * per_node
-//
-// Re-tune from a fresh mainnet sample after any of:
-//   - new message type added to the protocol
-//   - significant change to a message handler's state operations
-//   - re-enabling MinGasPriceNgonka after a period of disabled fees (the
-//     observed numbers in this table assume PoCV2 base/count gas is being
-//     metered; if FeeParams changes the formula constants, refresh)
+// Two messages have linear-scaling formulas mirroring their on-chain
+// ConsumeGas: MsgPoCV2StoreCommit (per-Count) and MsgMLNodeWeightDistribution
+// (per-entry). Re-tune from a fresh sample after a handler change, a new
+// msg type, or a FeeParams.{base_validation_gas,gas_per_poc_count} change.
 const (
-	// txOverheadGas covers signature verification, fee deduction, the
-	// other ante-handler decorators that run regardless of payload, AND
-	// the cost of unwrapping the authz MsgExec wrapper that the warm key
-	// uses to sign on behalf of the cold account. Mainnet hosts almost
-	// always run in authz mode (warm key signs, cold pays), so anyone
-	// retuning this number should keep the wrap cost in mind — direct
-	// signing (no MsgExec) would consume slightly less.
+	// Tx-level fixed cost: ante decorators + authz MsgExec unwrap. Mainnet
+	// hosts almost always run in authz mode, so this absorbs the wrap cost.
 	txOverheadGas = uint64(50_000)
 
-	// gasRetryMultiplier is applied per retry attempt to escape the OOG
-	// loop when the static estimate underestimates real gas. Doubling
-	// reaches BatchGasLimit (1B) within 6 retries from any starting point
-	// in the table, after which BatchGasLimit caps further growth.
+	// Doubled per retry attempt so OOG-on-underestimate eventually fits.
 	gasRetryMultiplier = 2.0
 
-	// Per-message gas estimates. See file header for derivation.
-	// Inference lifecycle (bypass-exempt, but sized for completeness).
+	// Inference lifecycle (bypass-exempt).
 	gasStartInference  = uint64(250_000)
 	gasFinishInference = uint64(250_000)
 	gasValidation      = uint64(1_500_000) // outliers up to 2.1M observed
 
-	// PoC duty messages (MsgValidation handled above).
-	gasSubmitPocBatch          = uint64(500_000)
-	gasSubmitPocValidationsV2  = uint64(250_000)
-	gasInvalidateInference     = uint64(500_000)
-	gasRevalidateInference     = uint64(500_000)
+	// PoC duty messages.
+	gasSubmitPocBatch         = uint64(500_000)
+	gasSubmitPocValidationsV2 = uint64(250_000)
+	gasInvalidateInference    = uint64(500_000)
+	gasRevalidateInference    = uint64(500_000)
 
-	// PoCV2StoreCommit linear-scaling formula (mirrors on-chain
-	// chargePoCV2StoreCommitGas in msg_server_poc_v2_commit.go).
-	//
-	// IMPORTANT: these mirror governance-tunable params:
-	//   - gasPoCV2Base  ≈ FeeParams.base_validation_gas (default 500K) + sdk overhead
-	//   - gasPoCV2PerCount ≈ FeeParams.gas_per_poc_count (default 100)
-	// If governance bumps either FeeParams field, this estimator silently
-	// underestimates and PoCV2 batches start OOG-retrying. The OOG retry
-	// path will eventually succeed via the per-attempt doubling, so this
-	// degrades gracefully — but it costs extra block time. Re-tune these
-	// constants in the same governance window that changes FeeParams, or
-	// (better, future work) read FeeParams at DAPI startup and use those
-	// values dynamically with a fixed headroom multiplier.
-	gasPoCV2Base    = uint64(600_000) // base + sdk overhead + 50% headroom
-	gasPoCV2PerCount = uint64(150)    // 100 on-chain + 50% headroom
+	// PoCV2StoreCommit linear formula. WARN: gasPoCV2Base mirrors
+	// FeeParams.base_validation_gas (default 500K), gasPoCV2PerCount
+	// mirrors FeeParams.gas_per_poc_count (default 100). If governance
+	// bumps either, retune both — OOG retry will limp along but at the
+	// cost of wasted block time. Future work: read FeeParams at startup.
+	gasPoCV2Base     = uint64(600_000) // 500K base + 50K sdk + 50% headroom
+	gasPoCV2PerCount = uint64(150)     // 100 on-chain + 50%
 
-	// MLNodeWeightDistribution linear in entries.
+	// MLNodeWeightDistribution: linear in total node entries.
 	gasMLNodeBase    = uint64(100_000)
 	gasMLNodePerNode = uint64(50_000)
 
-	// Routine host duties (now bypass-exempt — see ante_fee.go isExemptMessageType).
-	gasSubmitHardwareDiff = uint64(500_000) // observed max 435K, room to grow
-	gasClaimRewards       = uint64(700_000) // scales with epoch inferences
+	// Routine host duties (bypass-exempt).
+	gasSubmitHardwareDiff = uint64(500_000) // observed max 435K
+	gasClaimRewards       = uint64(700_000) // scales w/ epoch inferences
 
 	// Other host operations.
-	gasSubmitSeed                 = uint64(80_000)
-	gasSubmitNewParticipant       = uint64(150_000)
+	gasSubmitSeed                   = uint64(80_000)
+	gasSubmitNewParticipant         = uint64(150_000)
 	gasSubmitNewUnfundedParticipant = uint64(150_000)
-	gasBridgeExchange             = uint64(500_000)
+	gasBridgeExchange               = uint64(500_000)
 
-	// BLS DKG (bypass-exempt). High variance — sized at observed max + 30%
-	// to absorb network-size growth without OOG-retry storms during DKG.
+	// BLS DKG (bypass-exempt). Sized at observed max + 30% to absorb
+	// network-size growth without OOG-retry storms during DKG.
 	gasSubmitDealerPart                  = uint64(140_000_000)
 	gasSubmitVerificationVector          = uint64(140_000_000)
 	gasSubmitGroupKeyValidationSignature = uint64(160_000_000) // max 116M, p99 33M
@@ -120,34 +87,28 @@ const (
 	gasRequestThresholdSignature         = uint64(2_000_000)
 	gasSubmitPartialSignature            = uint64(5_000_000)
 
-	// Other Cosmos-SDK / cosmwasm message defaults.
+	// Cosmos-SDK / cosmwasm.
 	gasBankSend          = uint64(150_000)
 	gasGovVote           = uint64(80_000)
 	gasDepositCollateral = uint64(100_000)
 	gasWasmExecute       = uint64(300_000)
 
-	// Catch-all for unrecognized message types. Conservative enough to cover
-	// most well-behaved messages; under-estimated cases trigger OOG retry.
+	// Catch-all for unrecognized types. OOG retry covers the under-estimated case.
 	gasDefaultEstimate = uint64(500_000)
 )
 
-// estimateMsgGas returns the gas estimate for a single message. The estimate
-// is intended to be the first-attempt gasWanted; OOG retries use a
-// multiplier (see estimateBatchGas).
+// estimateMsgGas returns the gas estimate for a single message.
 func estimateMsgGas(msg sdk.Msg) uint64 {
 	v, _ := lookupMsgGas(msg)
 	return v
 }
 
-// lookupMsgGas is the internal worker behind estimateMsgGas. It returns
-// (estimate, true) if the message type has an explicit case in the switch,
-// or (gasDefaultEstimate, false) if it falls through to the default. The
-// boolean lets tests assert that every message type a host might broadcast
-// is explicitly handled — the value alone can't tell us, since several
-// legitimate estimates happen to coincide with the default.
+// lookupMsgGas returns (estimate, true) for an explicit case in the switch
+// or (gasDefaultEstimate, false) otherwise. Tests use the bool to assert
+// every msg in InferenceOperationKeyPerms has an explicit case — the value
+// alone can't tell us, since several legit estimates equal the default.
 func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 	switch m := msg.(type) {
-	// Inference lifecycle.
 	case *inferencetypes.MsgStartInference:
 		return gasStartInference, true
 	case *inferencetypes.MsgFinishInference:
@@ -158,36 +119,26 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		return gasInvalidateInference, true
 	case *inferencetypes.MsgRevalidateInference:
 		return gasRevalidateInference, true
-
-	// PoC duty.
 	case *inferencetypes.MsgSubmitPocBatch:
 		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
 		return gasSubmitPocValidationsV2, true
-
-	// PoCV2StoreCommit: linear in summed Count across entries.
 	case *inferencetypes.MsgPoCV2StoreCommit:
 		var totalCount uint64
 		for _, e := range m.Entries {
 			totalCount += uint64(e.Count)
 		}
 		return gasPoCV2Base + totalCount*gasPoCV2PerCount, true
-
-	// MLNodeWeightDistribution: linear in total node entries across models.
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		var totalNodes uint64
 		for _, e := range m.Entries {
 			totalNodes += uint64(len(e.Weights))
 		}
 		return gasMLNodeBase + totalNodes*gasMLNodePerNode, true
-
-	// Routine host duties (bypass-exempt).
 	case *inferencetypes.MsgSubmitHardwareDiff:
 		return gasSubmitHardwareDiff, true
 	case *inferencetypes.MsgClaimRewards:
 		return gasClaimRewards, true
-
-	// Other host operations.
 	case *inferencetypes.MsgSubmitSeed:
 		return gasSubmitSeed, true
 	case *inferencetypes.MsgSubmitNewParticipant:
@@ -196,8 +147,6 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		return gasSubmitNewUnfundedParticipant, true
 	case *inferencetypes.MsgBridgeExchange:
 		return gasBridgeExchange, true
-
-	// BLS DKG.
 	case *blstypes.MsgSubmitDealerPart:
 		return gasSubmitDealerPart, true
 	case *blstypes.MsgSubmitVerificationVector:
@@ -210,22 +159,15 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		return gasRequestThresholdSignature, true
 	case *blstypes.MsgSubmitPartialSignature:
 		return gasSubmitPartialSignature, true
-
-	// Collateral.
 	case *collateraltypes.MsgDepositCollateral:
 		return gasDepositCollateral, true
-
 	default:
 		return gasDefaultEstimate, false
 	}
 }
 
-// estimateBatchGas returns the gasWanted for a batch of messages. The first
-// attempt (attempt=0) sums per-message estimates plus tx-level overhead.
-// Each subsequent attempt multiplies by gasRetryMultiplier to escape OOG
-// loops when the static estimate underestimates real gas. The result is
-// capped at BatchGasLimit so we never request more gas than the chain's
-// network-duty bypass cap can accommodate.
+// estimateBatchGas sums per-msg estimates + tx overhead, then doubles per
+// retry attempt (capped at BatchGasLimit) so OOG retries escape the loop.
 func estimateBatchGas(msgs []sdk.Msg, attempt int) uint64 {
 	gas := txOverheadGas
 	for _, m := range msgs {

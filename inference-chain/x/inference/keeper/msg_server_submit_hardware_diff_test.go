@@ -219,14 +219,14 @@ func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 }
 
 // TestHardwareNodesUnchanged is a focused unit test for the helper that
-// gates the SubmitHardwareDiff no-op skip. The handler bypasses the state
-// write when a posted diff resolves to a node set identical to what's
-// already stored — important because MsgSubmitHardwareDiff is fee-exempt
-// in v0.2.12+ and DAPI is known to send the same diff every block when
-// nothing has changed.
+// gates the SubmitHardwareDiff no-op skip. Compares operational fields
+// only — see hardwareNodeOperationalEqual — so flapping informational
+// fields like Version don't trigger spurious writes.
 func TestHardwareNodesUnchanged(t *testing.T) {
 	n1 := &types.HardwareNode{LocalId: "n1", Status: types.HardwareNodeStatus_INFERENCE}
-	n2 := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_POC}
+	n2 := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_POC,
+		Models: []string{"model1"}, Host: "h", Port: "8080",
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 2}}}
 
 	// Both empty: equal.
 	require.True(t, keeper.HardwareNodesUnchanged(nil, nil))
@@ -240,10 +240,37 @@ func TestHardwareNodesUnchanged(t *testing.T) {
 	require.False(t, keeper.HardwareNodesUnchanged(
 		[]*types.HardwareNode{n1}, []*types.HardwareNode{n1, n2}))
 
-	// Same LocalId, different field. Should detect mismatch via proto.Equal.
-	n2Modified := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_INFERENCE}
+	// Operational field differs: detected.
+	n2DiffStatus := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_INFERENCE,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware}
 	require.False(t, keeper.HardwareNodesUnchanged(
-		[]*types.HardwareNode{n1, n2Modified}, []*types.HardwareNode{n1, n2}))
+		[]*types.HardwareNode{n1, n2DiffStatus}, []*types.HardwareNode{n1, n2}))
+
+	// Models reordered: detected (slices.Equal is positional).
+	n2DiffModels := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: []string{"model2"}, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffModels}, []*types.HardwareNode{n1, n2}))
+
+	// Hardware count differs: detected.
+	n2DiffHW := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port,
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 4}}}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffHW}, []*types.HardwareNode{n1, n2}))
+
+	// Version differs but everything else identical: NOT detected (the
+	// version field is informational only — flipping it shouldn't defeat
+	// the no-op check).
+	n2VerA := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
+		Version: "v1"}
+	n2VerB := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
+		Version: "v2"}
+	require.True(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2VerA}, []*types.HardwareNode{n1, n2VerB}),
+		"flapping the informational Version field should NOT count as a change")
 }
 
 // TestMsgServer_SubmitHardwareDiff_IdempotentOnNoChange exercises the

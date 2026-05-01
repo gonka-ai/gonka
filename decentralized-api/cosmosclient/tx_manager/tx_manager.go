@@ -571,7 +571,6 @@ func (m *manager) sendTxs() error {
 
 			if !tx.Sent {
 				logging.Debug("start broadcast batch async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
-				// Pass attempt so OOG retries bump gasWanted (gas_estimate.go).
 				resp, timeout, broadcastErr = m.broadcastMessagesAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs)
 			}
 		} else {
@@ -798,24 +797,20 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 	return m.broadcastMessagesAtAttempt(id, 0, msgs)
 }
 
-// broadcastMessagesAtAttempt is the internal entry point for batch broadcast
-// that knows about retry attempt. attempt=0 is the first try at the
-// per-msg-type estimate; subsequent attempts bump gasWanted to escape OOG
-// loops. See estimateBatchGas in gas_estimate.go.
+// broadcastMessagesAtAttempt is the single broadcast path used by all
+// callers (single-msg, batch, first attempt, retry). attempt=0 sizes
+// gasWanted from the per-msg-type estimate; subsequent attempts bump
+// gasWanted to escape OOG loops. See estimateBatchGas in gas_estimate.go.
 func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
-	if len(msgs) == 1 {
-		return m.broadcastMessageAtAttempt(id, attempt, msgs[0])
-	}
-
 	factory, err := m.getFactory(id)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 
-	var finalMsgs []sdk.Msg
+	finalMsgs := msgs
 	if !m.apiAccount.IsSignerTheMainAccount() {
 		granteeAddress, err := m.apiAccount.SignerAddress()
 		if err != nil {
@@ -823,17 +818,14 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		}
 		execMsg := authztypes.NewMsgExec(granteeAddress, msgs)
 		finalMsgs = []sdk.Msg{&execMsg}
-		logging.Debug("Using authz MsgExec for batch", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
-	} else {
-		finalMsgs = msgs
+		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
 	}
 
 	unsignedTx, err := factory.BuildUnsignedTx(finalMsgs...)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	// Size gasWanted from the inner messages, not the authz wrapper, so the
-	// estimate reflects what each handler will actually consume.
+	// gasWanted is sized from the inner messages, not the authz wrapper.
 	gasWanted := estimateBatchGas(msgs, attempt)
 	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted)
 	if err != nil {
@@ -845,10 +837,19 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		return nil, time.Time{}, err
 	}
 	if resp.Code != 0 {
-		logging.Error("Batch broadcast failed", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "msgCount", len(msgs))
+		logging.Error("Broadcast failed", types.Messages, "code", resp.Code, "rawLog", resp.RawLog,
+			"tx_id", id, "msgCount", len(msgs), "attempt", attempt, "gasWanted", gasWanted)
 		logFeeRelatedHint(resp.RawLog)
 	} else {
-		logging.Debug("Batch broadcast successful", types.Messages, "tx_id", id, "msgCount", len(msgs))
+		// Surface OOG-retry recoveries so we can spot when the static gas
+		// table needs re-tuning. attempt > 0 means a previous broadcast
+		// hit an OOG (or other retryable error) and we doubled gas.
+		if attempt > 0 {
+			logging.Warn("Broadcast succeeded after retry; static gas estimate may be too low",
+				types.Messages, "tx_id", id, "msgCount", len(msgs), "attempt", attempt, "gasWanted", gasWanted)
+		} else {
+			logging.Debug("Broadcast successful", types.Messages, "tx_id", id, "msgCount", len(msgs))
+		}
 	}
 	return resp, timestamp, nil
 }
@@ -890,50 +891,14 @@ func containsAny(s string, substrs ...string) bool {
 }
 
 func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	return m.broadcastMessageAtAttempt(id, 0, rawTx)
+	return m.broadcastMessagesAtAttempt(id, 0, []sdk.Msg{rawTx})
 }
 
-// broadcastMessageAtAttempt is the internal entry point for single-message
-// broadcast that knows about retry attempt. See broadcastMessagesAtAttempt.
+// broadcastMessageAtAttempt is the retry-aware single-message entry point.
+// Thin wrapper around broadcastMessagesAtAttempt with a one-element slice;
+// kept for symmetry with how the retry loop dispatches.
 func (m *manager) broadcastMessageAtAttempt(id string, attempt int, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	factory, err := m.getFactory(id)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-
-	var finalMsg sdk.Msg = rawTx
-	originalMsgType := sdk.MsgTypeURL(rawTx)
-	if !m.apiAccount.IsSignerTheMainAccount() {
-		granteeAddress, err := m.apiAccount.SignerAddress()
-		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("failed to get signer address: %w", err)
-		}
-
-		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{rawTx})
-		finalMsg = &execMsg
-		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", originalMsgType)
-	}
-
-	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	gasWanted := estimateBatchGas([]sdk.Msg{rawTx}, attempt)
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	if resp.Code != 0 {
-		logging.Error("Broadcast failed immediately", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "originalMsgType", originalMsgType)
-	} else {
-		logging.Debug("Broadcast successful", types.Messages, "tx_id", id, "originalMsgType", originalMsgType, "resp", resp)
-	}
-	return resp, timestamp, nil
+	return m.broadcastMessagesAtAttempt(id, attempt, []sdk.Msg{rawTx})
 }
 
 func (m *manager) unpackTx(bz []byte) (sdk.Msg, error) {
