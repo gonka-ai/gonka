@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"errors"
 	"time"
@@ -78,7 +79,7 @@ func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 func (b *Broker) evictExpiredLocks() {
 	ttlSeconds := b.configManager.GetApiConfig().NodeManagerLockTTLSeconds
 	if ttlSeconds <= 0 {
-		ttlSeconds = 1200 // 20 minutes defensive fallback
+		ttlSeconds = apiconfig.DefaultNodeManagerLockTTLSeconds
 	}
 	ttl := time.Duration(ttlSeconds) * time.Second
 
