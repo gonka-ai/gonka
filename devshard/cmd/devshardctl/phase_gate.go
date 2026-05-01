@@ -38,11 +38,15 @@ type ChainPhaseSnapshot struct {
 	BlockReason          string    `json:"block_reason,omitempty"`
 	LastUpdatedAt        time.Time `json:"last_updated_at,omitempty"`
 	LastError            string    `json:"last_error,omitempty"`
+
+	pocStartBlockHeight          int64
+	confirmationPoCTriggerHeight int64
 }
 
 type ChainPhaseGate struct {
 	endpoint                      string
 	participantsEndpoint          string
+	preservedSnapshotEndpoint     string
 	client                        *http.Client
 	pollInterval                  time.Duration
 	defaultMaxSpeculativeAttempts int
@@ -79,7 +83,8 @@ type chainLatestEpoch struct {
 }
 
 type chainConfirmationPoCEventPayload struct {
-	Phase confirmationPoCPhaseValue `json:"phase"`
+	Phase         confirmationPoCPhaseValue `json:"phase"`
+	TriggerHeight jsonInt64                 `json:"trigger_height"`
 }
 
 type chainCurrentParticipantsResponse struct {
@@ -103,9 +108,50 @@ type chainModelMLNodes struct {
 }
 
 type chainMLNodeInfo struct {
+	NodeID             string     `json:"node_id"`
 	TimeslotAllocation []bool     `json:"timeslot_allocation"`
 	PoCWeight          jsonUint64 `json:"poc_weight,omitempty"`
 }
+
+type chainPreservedNodesSnapshotResponse struct {
+	Snapshot *chainPreservedNodesSnapshot `json:"snapshot,omitempty"`
+	Found    bool                         `json:"found"`
+}
+
+type chainPreservedNodesSnapshot struct {
+	EpisodeAnchorHeight jsonInt64                  `json:"episode_anchor_height"`
+	ModelPreservedNodes []chainModelPreservedNodes `json:"model_preserved_nodes"`
+}
+
+type chainModelPreservedNodes struct {
+	ModelID      string                           `json:"model_id"`
+	Participants []chainParticipantPreservedNodes `json:"participants"`
+}
+
+type chainParticipantPreservedNodes struct {
+	ParticipantID string   `json:"participant_id"`
+	NodeIDs       []string `json:"node_ids"`
+}
+
+type preservedSnapshotState struct {
+	byModel map[string]map[string]map[string]struct{}
+}
+
+type preservedSnapshotStatus int
+
+const (
+	preservedSnapshotUnavailable preservedSnapshotStatus = iota
+	preservedSnapshotCurrent
+	preservedSnapshotMissingCurrent
+)
+
+type preservationMode int
+
+const (
+	preservationModeLegacy preservationMode = iota
+	preservationModeSnapshot
+	preservationModeAll
+)
 
 type jsonInt64 int64
 
@@ -195,6 +241,19 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}
+}
+
+func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
+	if g == nil {
+		return
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.preservedSnapshotEndpoint = strings.TrimRight(baseURL, "/") + "/productscience/inference/inference/preserved_nodes_snapshot"
 }
 
 func (g *ChainPhaseGate) Start() {
@@ -311,7 +370,11 @@ func (g *ChainPhaseGate) refresh() {
 	// Combine the fetches so we never double-poll the chain.
 	needPreservedFetch := active && relaxedPoCModeEnabled() && !wasActive
 	if needPreservedFetch || capacityState != nil {
-		state, perr := g.fetchParticipantsState(active)
+		state, perr := g.fetchParticipantsState(
+			active,
+			preservedSnapshotAnchor(snapshot),
+			allowAllParticipantsUntilSnapshot(snapshot),
+		)
 		if perr != nil {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
@@ -392,14 +455,14 @@ type participantsState struct {
 }
 
 func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
-	state, err := g.fetchParticipantsState(false)
+	state, err := g.fetchParticipantsState(false, 0, false)
 	if err != nil {
 		return nil, nil, err
 	}
 	return state.preserved, state.excluded, nil
 }
 
-func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsState, error) {
+func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
 	resp, err := g.client.Get(g.participantsEndpoint)
 	if err != nil {
 		return nil, err
@@ -414,6 +477,20 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsSt
 	var payload chainCurrentParticipantsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
+	}
+
+	var preservedSnapshot *preservedSnapshotState
+	preservation := preservationModeLegacy
+	if pocActive {
+		snapshot, status, err := g.fetchPreservedSnapshotState(expectedSnapshotAnchor)
+		if err != nil {
+			log.Printf("chain phase gate: preserved snapshot poll failed error=%v", err)
+		} else if status == preservedSnapshotCurrent {
+			preservedSnapshot = snapshot
+			preservation = preservationModeSnapshot
+		} else if status == preservedSnapshotMissingCurrent && allowAllWhenSnapshotMissing {
+			preservation = preservationModeAll
+		}
 	}
 
 	state := &participantsState{
@@ -432,8 +509,8 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsSt
 			// receive PoC weight, or be matched against group slots.
 			continue
 		}
-		state.weights[key] = participantWeight(participant, pocActive)
-		for model, weight := range participantWeightsByModel(participant, pocActive) {
+		state.weights[key] = participantWeight(participant, pocActive, preservedSnapshot, preservation)
+		for model, weight := range participantWeightsByModel(participant, pocActive, preservedSnapshot, preservation) {
 			modelWeights := state.weightsByModel[model]
 			if modelWeights == nil {
 				modelWeights = map[string]float64{}
@@ -441,7 +518,7 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsSt
 			}
 			modelWeights[key] = weight
 		}
-		if !participantHasPreservedNode(participant) {
+		if !participantHasPreservedNode(participant, preservedSnapshot, preservation) {
 			if _, ok := seenExcluded[key]; ok {
 				continue
 			}
@@ -456,6 +533,89 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool) (*participantsSt
 		state.preserved = append(state.preserved, key)
 	}
 	return state, nil
+}
+
+func (g *ChainPhaseGate) preservedSnapshotURL() string {
+	if g == nil {
+		return ""
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.preservedSnapshotEndpoint
+}
+
+func (g *ChainPhaseGate) fetchPreservedSnapshotState(expectedAnchor int64) (*preservedSnapshotState, preservedSnapshotStatus, error) {
+	endpoint := g.preservedSnapshotURL()
+	if endpoint == "" {
+		return nil, preservedSnapshotUnavailable, nil
+	}
+	resp, err := g.client.Get(endpoint)
+	if err != nil {
+		return nil, preservedSnapshotUnavailable, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNotImplemented {
+		io.Copy(io.Discard, resp.Body)
+		return nil, preservedSnapshotUnavailable, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return nil, preservedSnapshotUnavailable, fmt.Errorf("preserved snapshot status %d", resp.StatusCode)
+	}
+
+	var payload chainPreservedNodesSnapshotResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, preservedSnapshotUnavailable, err
+	}
+	if !payload.Found || payload.Snapshot == nil {
+		return nil, preservedSnapshotMissingCurrent, nil
+	}
+	if expectedAnchor > 0 && int64(payload.Snapshot.EpisodeAnchorHeight) != expectedAnchor {
+		log.Printf(
+			"chain phase gate: preserved snapshot anchor mismatch expected=%d actual=%d",
+			expectedAnchor,
+			payload.Snapshot.EpisodeAnchorHeight,
+		)
+		return nil, preservedSnapshotMissingCurrent, nil
+	}
+	return newPreservedSnapshotState(payload.Snapshot), preservedSnapshotCurrent, nil
+}
+
+func newPreservedSnapshotState(snapshot *chainPreservedNodesSnapshot) *preservedSnapshotState {
+	state := &preservedSnapshotState{byModel: map[string]map[string]map[string]struct{}{}}
+	if snapshot == nil {
+		return state
+	}
+	for _, modelNodes := range snapshot.ModelPreservedNodes {
+		model := strings.TrimSpace(modelNodes.ModelID)
+		if model == "" {
+			continue
+		}
+		byParticipant := state.byModel[model]
+		if byParticipant == nil {
+			byParticipant = map[string]map[string]struct{}{}
+			state.byModel[model] = byParticipant
+		}
+		for _, participant := range modelNodes.Participants {
+			participantID := strings.TrimSpace(participant.ParticipantID)
+			if participantID == "" {
+				continue
+			}
+			nodeSet := byParticipant[participantID]
+			if nodeSet == nil {
+				nodeSet = map[string]struct{}{}
+				byParticipant[participantID] = nodeSet
+			}
+			for _, nodeID := range participant.NodeIDs {
+				nodeID = strings.TrimSpace(nodeID)
+				if nodeID != "" {
+					nodeSet[nodeID] = struct{}{}
+				}
+			}
+		}
+	}
+	return state
 }
 
 func (g *ChainPhaseGate) storeSnapshot(snapshot ChainPhaseSnapshot) {
@@ -656,14 +816,16 @@ func deriveChainPhaseSnapshot(resp *chainEpochInfoResponse) ChainPhaseSnapshot {
 	}
 
 	snapshot := ChainPhaseSnapshot{
-		BlockHeight:   int64(resp.BlockHeight),
-		EpochIndex:    uint64(resp.LatestEpoch.Index),
-		EpochPhase:    deriveEpochPhase(resp),
-		LastUpdatedAt: time.Now().UTC(),
+		BlockHeight:         int64(resp.BlockHeight),
+		EpochIndex:          uint64(resp.LatestEpoch.Index),
+		EpochPhase:          deriveEpochPhase(resp),
+		LastUpdatedAt:       time.Now().UTC(),
+		pocStartBlockHeight: int64(resp.LatestEpoch.PocStartBlockHeight),
 	}
 
 	if resp.ActiveConfirmationPoC != nil {
 		snapshot.ConfirmationPoCPhase = string(resp.ActiveConfirmationPoC.Phase)
+		snapshot.confirmationPoCTriggerHeight = int64(resp.ActiveConfirmationPoC.TriggerHeight)
 	}
 	rawBlocked, reason := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
 	snapshot.BlockReason = reason
@@ -690,10 +852,34 @@ func rawPoCBlockingState(epochPhase, confirmationPhase string) (bool, string) {
 	return false, ""
 }
 
-func participantHasPreservedNode(participant chainActiveParticipant) bool {
-	for _, modelNodes := range participant.MLNodes {
+func preservedSnapshotAnchor(snapshot ChainPhaseSnapshot) int64 {
+	switch snapshot.BlockReason {
+	case "confirmation_poc":
+		// Confirmation PoC snapshots are sampled when the event leaves
+		// grace period, using the event trigger height as the stable
+		// episode anchor. During grace period the matching snapshot is
+		// intentionally not available yet.
+		return snapshot.confirmationPoCTriggerHeight
+	case "poc":
+		return snapshot.pocStartBlockHeight
+	default:
+		return 0
+	}
+}
+
+func allowAllParticipantsUntilSnapshot(snapshot ChainPhaseSnapshot) bool {
+	return snapshot.BlockReason == "confirmation_poc" &&
+		snapshot.ConfirmationPoCPhase == confirmationPoCGracePeriod
+}
+
+func participantHasPreservedNode(participant chainActiveParticipant, snapshot *preservedSnapshotState, preservation preservationMode) bool {
+	if preservation == preservationModeAll {
+		return true
+	}
+	for i, modelNodes := range participant.MLNodes {
+		model := participantModelAt(participant, i)
 		for _, node := range modelNodes.MLNodes {
-			if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+			if nodePreserved(participant.Index, model, node, snapshot, preservation) {
 				return true
 			}
 		}
@@ -711,29 +897,32 @@ func participantHasPreservedNode(participant chainActiveParticipant) bool {
 // not invent capacity from ML-node counts or default weights; the chain
 // API is the source of truth. CapacityState's own missing-key fallback
 // only applies to hosts the gate has not observed at all.
-func participantWeight(participant chainActiveParticipant, pocActive bool) float64 {
+func participantWeight(participant chainActiveParticipant, pocActive bool, snapshot *preservedSnapshotState, preservation preservationMode) float64 {
+	if pocActive && preservation == preservationModeAll {
+		return float64(participant.Weight)
+	}
 	if pocActive {
-		return preservedNodePoCWeight(participant)
+		return preservedNodePoCWeight(participant, snapshot, preservation)
 	}
 	return float64(participant.Weight)
 }
 
-func preservedNodePoCWeight(participant chainActiveParticipant) float64 {
+func preservedNodePoCWeight(participant chainActiveParticipant, snapshot *preservedSnapshotState, preservation preservationMode) float64 {
 	var weight uint64
-	for _, modelNodes := range participant.MLNodes {
-		weight += modelPreservedNodePoCWeight(modelNodes)
+	for i, modelNodes := range participant.MLNodes {
+		weight += modelPreservedNodePoCWeight(participant.Index, participantModelAt(participant, i), modelNodes, snapshot, preservation)
 	}
 	return float64(weight)
 }
 
-func participantWeightsByModel(participant chainActiveParticipant, pocActive bool) map[string]float64 {
+func participantWeightsByModel(participant chainActiveParticipant, pocActive bool, snapshot *preservedSnapshotState, preservation preservationMode) map[string]float64 {
 	weights := make(map[string]float64, len(participant.Models))
 	for i, rawModel := range participant.Models {
 		model := strings.TrimSpace(rawModel)
 		if model == "" {
 			continue
 		}
-		if !pocActive {
+		if !pocActive || preservation == preservationModeAll {
 			weights[model] = float64(participant.Weight)
 			continue
 		}
@@ -741,19 +930,58 @@ func participantWeightsByModel(participant chainActiveParticipant, pocActive boo
 			weights[model] = 0
 			continue
 		}
-		weights[model] = float64(modelPreservedNodePoCWeight(participant.MLNodes[i]))
+		weights[model] = float64(modelPreservedNodePoCWeight(participant.Index, model, participant.MLNodes[i], snapshot, preservation))
 	}
 	return weights
 }
 
-func modelPreservedNodePoCWeight(modelNodes chainModelMLNodes) uint64 {
+func participantModelAt(participant chainActiveParticipant, index int) string {
+	if index < 0 || index >= len(participant.Models) {
+		return ""
+	}
+	return strings.TrimSpace(participant.Models[index])
+}
+
+func modelPreservedNodePoCWeight(participantID, model string, modelNodes chainModelMLNodes, snapshot *preservedSnapshotState, preservation preservationMode) uint64 {
 	var weight uint64
 	for _, node := range modelNodes.MLNodes {
-		if len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1] {
+		if nodePreserved(participantID, model, node, snapshot, preservation) {
 			weight += uint64(node.PoCWeight)
 		}
 	}
 	return weight
+}
+
+func nodePreserved(participantID, model string, node chainMLNodeInfo, snapshot *preservedSnapshotState, preservation preservationMode) bool {
+	if preservation == preservationModeAll {
+		return true
+	}
+	if preservation == preservationModeSnapshot && snapshot != nil {
+		return snapshot.Has(model, participantID, node.NodeID)
+	}
+	return len(node.TimeslotAllocation) > 1 && node.TimeslotAllocation[1]
+}
+
+func (s *preservedSnapshotState) Has(model, participantID, nodeID string) bool {
+	if s == nil {
+		return false
+	}
+	model = strings.TrimSpace(model)
+	participantID = strings.TrimSpace(participantID)
+	nodeID = strings.TrimSpace(nodeID)
+	if model == "" || participantID == "" || nodeID == "" {
+		return false
+	}
+	byParticipant := s.byModel[model]
+	if byParticipant == nil {
+		return false
+	}
+	nodes := byParticipant[participantID]
+	if nodes == nil {
+		return false
+	}
+	_, ok := nodes[nodeID]
+	return ok
 }
 
 func (g *ChainPhaseGate) PoCActive() bool {

@@ -10,7 +10,7 @@ import (
 
 // SettlementPayload contains the data needed for on-chain settlement.
 // Mainnet recomputes the state root from the payload. Explicit v0.2.11
-// sessions use HostStats + RestHash + phase byte; v0.2.12+ sessions use
+// sessions use HostStats + RestHash + phase byte; v1+ sessions use
 // HostStats + Fees + RestHash + VersionHash + phase byte.
 // The state root itself is not included in the payload.
 type SettlementPayload struct {
@@ -135,7 +135,7 @@ func VerifySettlement(
 }
 
 // ComputeSettlementStateRoot computes the settlement root for either explicit
-// v0.2.11 sessions or the normal v0.2.12+ version-bound settlement preimage.
+// v0.2.11 sessions or the normal v1+ version-bound settlement preimage.
 func ComputeSettlementStateRoot(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version string) []byte {
 	if IsSettlementVersionV0211(version) {
 		return ComputeSettlementStateRootV0211(hostStatsHash, restHash, phase)

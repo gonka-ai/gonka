@@ -29,7 +29,7 @@ func NewEscrowChecker(chainREST func() string) *EscrowChecker {
 // calls deactivate. If another check for the same escrow is already in flight,
 // this call returns immediately (the in-flight check will handle deactivation).
 func (ec *EscrowChecker) TriggerCheck(escrowID string, deactivate func()) {
-	ec.TriggerCheckForProtocol(escrowID, types.ProtocolV0212, deactivate)
+	ec.TriggerCheckForProtocol(escrowID, types.ProtocolV1, deactivate)
 }
 
 // TriggerCheckForProtocol is protocol-aware so legacy v0.2.11 escrows are

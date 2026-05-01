@@ -112,7 +112,7 @@ func ShouldValidateV0211(seed int64, inferenceID uint64, validatorSlotCount, exe
 }
 
 // ShouldValidateForProtocol dispatches validation by explicit protocol version.
-// v0.2.12 is the normal/default path; v0.2.11 must be requested explicitly.
+// v1 is the normal/default path; v0.2.11 must be requested explicitly.
 func ShouldValidateForProtocol(version types.ProtocolVersion, seed int64, inferenceID uint64, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints uint32) bool {
 	if version == types.ProtocolV0211 {
 		return ShouldValidateV0211(seed, inferenceID, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints)

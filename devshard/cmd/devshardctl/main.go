@@ -316,13 +316,23 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 }
 
 func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
-	activeCfgs := make([]RuntimeConfig, 0, len(gatewayState.Devshards))
-	for _, devshard := range gatewayState.Devshards {
-		if devshard.Active {
-			activeCfgs = append(activeCfgs, devshard.RuntimeConfig)
-		}
+	// Load ALL devshards (active and inactive) so that inactive ones
+	// remain accessible for finalization, debug, and settlement retrieval.
+	// Inactive runtimes are loaded with active=false and excluded from
+	// the inference routing pool.
+	type cfgEntry struct {
+		cfg    RuntimeConfig
+		active bool
 	}
-	activeCfgs, err := finalizeRuntimeConfigs(activeCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
+	allEntries := make([]cfgEntry, 0, len(gatewayState.Devshards))
+	for _, devshard := range gatewayState.Devshards {
+		allEntries = append(allEntries, cfgEntry{cfg: devshard.RuntimeConfig, active: devshard.Active})
+	}
+	allCfgs := make([]RuntimeConfig, len(allEntries))
+	for i, e := range allEntries {
+		allCfgs[i] = e.cfg
+	}
+	allCfgs, err := finalizeRuntimeConfigs(allCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
 	if err != nil {
 		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
@@ -333,23 +343,34 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 		err error
 	}
 	t0 := time.Now()
-	ch := make(chan buildResult, len(activeCfgs))
-	for i, cfg := range activeCfgs {
+	ch := make(chan buildResult, len(allCfgs))
+	for i, cfg := range allCfgs {
 		go func(idx int, cfg RuntimeConfig) {
 			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)
 	}
 
-	runtimes := make([]*devshardRuntime, len(activeCfgs))
+	runtimes := make([]*devshardRuntime, len(allCfgs))
 	var skipped []int
 	var firstFatal error
-	for range activeCfgs {
+	for range allCfgs {
 		res := <-ch
-		cfg := activeCfgs[res.idx]
+		cfg := allCfgs[res.idx]
 		if res.err != nil {
-			if errors.Is(res.err, bridge.ErrEscrowNotFound) {
-				log.Printf("devshard %s escrow missing on chain, marking inactive and skipping runtime: %v", cfg.ID, res.err)
+			if !allEntries[res.idx].active {
+				log.Printf("inactive devshard %s could not be loaded, skipping runtime: %v", cfg.ID, res.err)
+				skipped = append(skipped, res.idx)
+				continue
+			}
+			if errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+				reason := "runtime could not be loaded"
+				if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+					reason = "escrow missing on chain"
+				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
+					reason = "private key missing"
+				}
+				log.Printf("devshard %s %s, marking inactive and skipping runtime: %v", cfg.ID, reason, res.err)
 				if gatewayStore != nil {
 					if deactivateErr := gatewayStore.SetDevshardActive(cfg.ID, false); deactivateErr != nil {
 						if firstFatal == nil {
@@ -376,14 +397,34 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 		}
 		return nil, firstFatal
 	}
-	// Compact out nil entries from skipped escrows.
+
+	// Mark inactive runtimes so they're excluded from inference routing
+	// but still accessible for finalization and debug endpoints.
+	var activeCount, inactiveCount int
+	for i, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		if !allEntries[i].active {
+			rt.active.Store(false)
+			rt.activeConfigured = true
+			inactiveCount++
+		} else {
+			rt.active.Store(true)
+			rt.activeConfigured = true
+			activeCount++
+		}
+	}
+
+	// Compact out nil entries from skipped escrows (chain-missing).
 	out := runtimes[:0]
 	for _, rt := range runtimes {
 		if rt != nil {
 			out = append(out, rt)
 		}
 	}
-	log.Printf("build_runtimes_parallel count=%d skipped=%d total_elapsed_ms=%d", len(out), len(skipped), time.Since(t0).Milliseconds())
+	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d total_elapsed_ms=%d",
+		len(out), activeCount, inactiveCount, len(skipped), time.Since(t0).Milliseconds())
 	return out, nil
 }
 

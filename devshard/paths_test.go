@@ -25,11 +25,26 @@ func TestResolveHostRoutePrefix(t *testing.T) {
 	if got := ResolveHostRoutePrefix(types.ProtocolV0211, ""); got != LegacySubnetRoutePrefix {
 		t.Fatalf("ResolveHostRoutePrefix(v0.2.11) = %q, want %q", got, LegacySubnetRoutePrefix)
 	}
-	if got := ResolveHostRoutePrefix(types.ProtocolV0212, ""); got != VersionedRoutePrefix("v0.2.12") {
-		t.Fatalf("ResolveHostRoutePrefix(v0.2.12) = %q, want %q", got, VersionedRoutePrefix("v0.2.12"))
+	if got := ResolveHostRoutePrefix(types.ProtocolV1, ""); got != LegacyRoutePrefix {
+		t.Fatalf("ResolveHostRoutePrefix(v1) = %q, want %q", got, LegacyRoutePrefix)
 	}
 	if got := ResolveHostRoutePrefix(types.ProtocolV0211, LegacyRoutePrefix); got != LegacyRoutePrefix {
 		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
+	}
+}
+
+func TestProtocolSessionVersion(t *testing.T) {
+	if got := ProtocolSessionVersion(types.ProtocolV0211); got != types.LegacySessionVersion {
+		t.Fatalf("ProtocolSessionVersion(v0.2.11) = %q, want %q", got, types.LegacySessionVersion)
+	}
+	if got := ProtocolSessionVersion(types.ProtocolV1); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(v1) = %q, want %q", got, "v1")
+	}
+	if got := ProtocolSessionVersion("v1"); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(route-style v1) = %q, want %q", got, "v1")
+	}
+	if got := ProtocolSessionVersion(""); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(\"\") = %q, want %q", got, "v1")
 	}
 }
 

@@ -32,9 +32,23 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 
 func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
 	if protocol == "" {
-		protocol = types.ProtocolV0212
+		protocol = types.ProtocolV1
 	}
-	return "v" + string(protocol)
+	version := string(protocol)
+	if strings.HasPrefix(version, "v") {
+		return version
+	}
+	return "v" + version
+}
+
+func ProtocolSessionVersion(protocol types.ProtocolVersion) string {
+	if protocol == "" {
+		protocol = types.ProtocolV1
+	}
+	if protocol == types.ProtocolV0211 {
+		return types.LegacySessionVersion
+	}
+	return ProtocolRouteVersion(protocol)
 }
 
 func ResolveHostRoutePrefix(protocol types.ProtocolVersion, routePrefix string) string {
@@ -43,6 +57,9 @@ func ResolveHostRoutePrefix(protocol types.ProtocolVersion, routePrefix string) 
 	}
 	if protocol == types.ProtocolV0211 {
 		return LegacySubnetRoutePrefix
+	}
+	if protocol == types.ProtocolV1 {
+		return LegacyRoutePrefix
 	}
 	return VersionedRoutePrefix(ProtocolRouteVersion(protocol))
 }

@@ -1,5 +1,11 @@
 # devshardctl
 
+## Build
+
+```
+go build -o devshardctl ./cmd/devshardctl/
+```
+
 Local HTTP proxy that exposes an OpenAI-compatible API for devshard inference.
 Users point any OpenAI client at `localhost:8080` and make chat completion requests; the proxy handles all devshard protocol complexity internally.
 
@@ -38,6 +44,28 @@ export DEVSHARD_ESCROW_ID="42"
 export DEVSHARD_CHAIN_REST="http://localhost:1317"
 
 devshardctl
+```
+
+## Finalize Escrow
+
+```
+curl -X 'POST' http://localhost:8080/v1/finalize > ./settle.json
+```
+
+## Settle Escrow
+
+```
+./inferenced tx inference \
+  settle-devshard-escrow \
+  settle.json \
+  --from dev1 \
+  --keyring-backend file \
+  --home ~/testnet-2 \
+  --chain-id gonka-testnet-2 \
+  --node http://localhost:26657 \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --fees 500000ngonka -y
 ```
 
 ## Endpoints

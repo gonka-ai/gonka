@@ -62,6 +62,58 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 	require.True(t, reloaded.Devshards[1].Active)
 }
 
+func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyEnv: "DEVSHARD_12_PRIVATE_KEY", Model: "Qwen/Test"}, Active: true},
+		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	savedBuilder := gatewayRuntimeBuilder
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+		switch cfg.ID {
+		case "12":
+			return nil, fmt.Errorf("runtime %s: %w", cfg.ID, errRuntimePrivateKeyMissing)
+		case "24":
+			return &devshardRuntime{id: cfg.ID, model: defaultModel}, nil
+		default:
+			return nil, fmt.Errorf("unexpected runtime id %s", cfg.ID)
+		}
+	}
+	t.Cleanup(func() {
+		gatewayRuntimeBuilder = savedBuilder
+	})
+
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	require.Equal(t, "24", runtimes[0].id)
+	require.False(t, state.Devshards[0].Active)
+	require.True(t, state.Devshards[1].Active)
+
+	reloaded, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, reloaded.Devshards[0].Active)
+	require.True(t, reloaded.Devshards[1].Active)
+}
+
 func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

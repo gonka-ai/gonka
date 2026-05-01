@@ -122,7 +122,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.12-post1
+    image: ghcr.io/product-science/proxy:0.2.12-alpha9
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -143,6 +143,7 @@ services:
       - ENABLE_CONN_LIMITS=${ENABLE_CONN_LIMITS:-false}
       - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+      - DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
       - DISABLE_DEVSHARD_GATEWAY_PROXY=${DISABLE_DEVSHARD_GATEWAY_PROXY:-false}
       - DISABLE_DEVSHARD_CHAT_ALIAS=${DISABLE_DEVSHARD_CHAT_ALIAS:-true}
       - DISABLE_DEVSHARD_DIRECT_PROXY=${DISABLE_DEVSHARD_DIRECT_PROXY:-true}

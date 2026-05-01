@@ -171,7 +171,7 @@ func TestShouldValidateForProtocol_DefaultsToCurrentRules(t *testing.T) {
 	)
 	require.Equal(t,
 		ShouldValidate(42, 7, 1, 1, 3, 5000),
-		ShouldValidateForProtocol(types.ProtocolV0212, 42, 7, 1, 1, 3, 5000),
+		ShouldValidateForProtocol(types.ProtocolV1, 42, 7, 1, 1, 3, 5000),
 	)
 	require.Equal(t,
 		ShouldValidateV0211(42, 7, 1, 1, 3, 5000),

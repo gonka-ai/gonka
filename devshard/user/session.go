@@ -137,6 +137,14 @@ type HostClient interface {
 	Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error)
 }
 
+// SignatureFetcher is optionally implemented by HostClient implementations that
+// can retrieve stored signatures without sending diffs. Used by Finalize Phase B
+// to avoid redundant diff processing when the host already signed via gossip.
+type SignatureFetcher interface {
+	GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error)
+}
+
+
 type InProcessClient struct {
 	Host *host.Host
 }
@@ -233,6 +241,21 @@ type Session struct {
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
 	snapshotInFlight atomic.Bool
+
+	// finalizeInFlight guards against concurrent Finalize calls. A second
+	// call while the first is still running returns immediately with an error
+	// instead of spawning duplicate catch-up goroutines to the same hosts.
+	finalizeInFlight atomic.Bool
+
+	// Retry settings for signature collection (handles transient host failures during finalize).
+	signatureCollectMaxRetries  int
+	signatureCollectBaseDelay   time.Duration
+	signatureCollectHostTimeout time.Duration
+
+	// finalizeClients mirrors s.clients with admission control stripped.
+	// Built lazily on first CollectSignatures call so finalize catch-up
+	// can reach quarantined hosts.
+	finalizeClients []HostClient
 }
 
 // SessionOption configures optional Session behavior.
@@ -242,6 +265,15 @@ type SessionOption func(*Session)
 // When set, diffs and signatures are persisted on each state transition.
 func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
+}
+
+// WithCollectRetry overrides signature collection retry parameters.
+func WithCollectRetry(maxRetries int, baseDelay, hostTimeout time.Duration) SessionOption {
+	return func(sess *Session) {
+		sess.signatureCollectMaxRetries = maxRetries
+		sess.signatureCollectBaseDelay = baseDelay
+		sess.signatureCollectHostTimeout = hostTimeout
+	}
 }
 
 // WithVerifierQueue overrides the per-verifier RPC limiter. The default is
@@ -277,19 +309,22 @@ func NewSession(
 		addrToSlots[s.ValidatorAddress] = append(addrToSlots[s.ValidatorAddress], s.SlotID)
 	}
 	sess := &Session{
-		sm:              sm,
-		signer:          signer,
-		verifier:        verifier,
-		escrowID:        escrowID,
-		group:           group,
-		addrToSlots:     addrToSlots,
-		participantKeys: make([]string, len(group)),
-		clients:         clients,
-		hostSyncNonce:   make(map[int]uint64),
-		pendingTxKeys:   make(map[string]struct{}),
-		signatures:      make(map[uint64]map[uint32][]byte),
-		nonceStates:     make(map[uint64]*nonceOutcome),
-		verifierQueue:   SharedVerifierQueue,
+		sm:                 sm,
+		signer:             signer,
+		verifier:           verifier,
+		escrowID:           escrowID,
+		group:              group,
+		addrToSlots:        addrToSlots,
+		participantKeys:    make([]string, len(group)),
+		clients:            clients,
+		hostSyncNonce:      make(map[int]uint64),
+		pendingTxKeys:      make(map[string]struct{}),
+		signatures:         make(map[uint64]map[uint32][]byte),
+		nonceStates:        make(map[uint64]*nonceOutcome),
+		verifierQueue:      SharedVerifierQueue,
+		signatureCollectMaxRetries:  3,
+		signatureCollectBaseDelay:   2 * time.Second,
+		signatureCollectHostTimeout: 30 * time.Second,
 	}
 	for i, slot := range group {
 		sess.participantKeys[i] = slot.ValidatorAddress
@@ -777,32 +812,138 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
+	logging.Info("sendDiffRound sending", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", diff.Nonce, "host", hostIdx, "catchup_count", len(catchUp))
+
 	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
 	if err != nil {
+		logging.Warn("sendDiffRound host dead", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", diff.Nonce, "host", hostIdx, "error", err)
 		return nil // dead host, not fatal
 	}
 
+	logging.Info("sendDiffRound response", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", diff.Nonce, "host", hostIdx,
+		"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, diff.Nonce)
+	if err := s.processResponse(hostIdx, resp, diff.Nonce); err != nil {
+		return err
+	}
+	s.logSignatureProgress(resp.Nonce)
+	return nil
 }
 
-// sendCatchUp sends existing diffs to a host without composing new ones.
-// Returns non-nil only on processResponse errors; dead hosts are silently skipped.
+// catchUpChunkSize is the maximum number of diffs sent in a single catch-up
+// request. Large sessions can accumulate hundreds of diffs; sending them all
+// at once risks timeouts and oversized request bodies. Chunking lets the host
+// replay state incrementally and the proxy bail out early if any chunk fails.
+const catchUpChunkSize = 200
+
+// catchUpChunkTimeout is the per-chunk timeout for sendCatchUp. Each chunk
+// of 200 diffs gets its own deadline so large catch-ups (thousands of diffs)
+// don't hit a single overall timeout.
+const catchUpChunkTimeout = 60 * time.Second
+
+// sendCatchUp sends existing diffs to a host using the session's default clients.
 func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
+	return s.sendCatchUpWith(ctx, hostIdx, s.clients[hostIdx])
+}
+
+// sendCatchUpWith sends existing diffs to a host using the provided client.
+// Diffs are sent in chunks of catchUpChunkSize with a per-chunk timeout.
+// If any chunk fails (host dead or processResponse error), we stop --
+// there's no point sending later chunks if the host couldn't apply earlier ones.
+// Returns non-nil only on processResponse errors; dead hosts are silently skipped.
+func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostClient) error {
 	s.mu.Lock()
 	nonce := s.nonce
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: nonce}, nil, nil)
-	if err != nil {
-		return nil // dead host
+	if len(catchUp) == 0 {
+		return nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, nonce)
+	totalChunks := (len(catchUp) + catchUpChunkSize - 1) / catchUpChunkSize
+	logging.Info("sendCatchUp starting", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", nonce, "host", hostIdx,
+		"total_diffs", len(catchUp), "chunks", totalChunks)
+
+	chunkIdx := 0
+	for chunkIdx < len(catchUp) {
+		if err := ctx.Err(); err != nil {
+			logging.Warn("sendCatchUp context cancelled", "subsystem", "finalize", "escrow", s.escrowID,
+				"nonce", nonce, "host", hostIdx,
+				"chunk", chunkIdx/catchUpChunkSize+1, "error", err)
+			return nil
+		}
+
+		end := chunkIdx + catchUpChunkSize
+		if end > len(catchUp) {
+			end = len(catchUp)
+		}
+		chunk := catchUp[chunkIdx:end]
+		chunkNonce := chunk[len(chunk)-1].Nonce
+		chunkNum := chunkIdx/catchUpChunkSize + 1
+
+		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", nonce, "host", hostIdx,
+			"chunk", chunkNum, "of", totalChunks,
+			"diffs_in_chunk", len(chunk),
+			"chunk_first_nonce", chunk[0].Nonce,
+			"chunk_last_nonce", chunkNonce)
+
+		chunkCtx, cancel := context.WithTimeout(ctx, catchUpChunkTimeout)
+		resp, err := client.Send(chunkCtx, host.HostRequest{Diffs: chunk, Nonce: chunkNonce}, nil, nil)
+		cancel()
+		if err != nil {
+			logging.Warn("sendCatchUp host dead", "subsystem", "finalize", "escrow", s.escrowID,
+				"nonce", nonce, "host", hostIdx,
+				"chunk", chunkNum, "error", err)
+			return nil // dead host
+		}
+
+		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", nonce, "host", hostIdx,
+			"chunk", chunkNum,
+			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
+
+		s.mu.Lock()
+		if err := s.processResponse(hostIdx, resp, chunkNonce); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.logSignatureProgress(resp.Nonce)
+		s.mu.Unlock()
+
+		// Skip forward: if the host is already ahead of what we're about
+		// to send (e.g. it caught up via gossip), jump to the chunk that
+		// contains resp.Nonce+1 to avoid sending diffs the host already has.
+		nextChunkIdx := chunkIdx + catchUpChunkSize
+		if resp.Nonce > chunkNonce {
+			skipTo := 0
+			for i, d := range catchUp {
+				if d.Nonce > resp.Nonce {
+					skipTo = i
+					break
+				}
+			}
+			if skipTo > nextChunkIdx {
+				skippedChunks := (skipTo - nextChunkIdx) / catchUpChunkSize
+				logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
+					"nonce", nonce, "host", hostIdx,
+					"resp_nonce", resp.Nonce,
+					"skipping_from_idx", nextChunkIdx, "to_idx", skipTo,
+					"skipped_chunks", skippedChunks)
+				nextChunkIdx = skipTo
+			}
+		}
+		chunkIdx = nextChunkIdx
+	}
+
+	return nil
 }
 
 // Finalize completes the round in three phases.
@@ -820,13 +961,46 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 // diffs created. Sends catch-up diffs so every host reaches the final
 // nonce and signs the same state.
 func (s *Session) Finalize(ctx context.Context) error {
+	if !s.finalizeInFlight.CompareAndSwap(false, true) {
+		return fmt.Errorf("finalize already in progress")
+	}
+	defer s.finalizeInFlight.Store(false)
+
+	// Guard: if already settled, try to collect missing signatures instead
+	// of running the full finalize protocol again.
+	phase := s.sm.Phase()
+	threshold := s.sm.QuorumThreshold()
+	if phase == types.PhaseSettlement {
+		if s.hasQuorum(s.nonce, threshold) {
+			logging.Info("finalize: already settled with quorum", "subsystem", "finalize", "escrow", s.escrowID,
+				"nonce", s.nonce)
+			return nil
+		}
+		logging.Info("finalize: settled but missing quorum, collecting signatures",
+			"subsystem", "finalize", "escrow", s.escrowID, "nonce", s.nonce)
+		weight, _, _ := s.CollectSignatures(ctx, s.nonce)
+		if weight < threshold {
+			return fmt.Errorf("insufficient signatures: %d/%d weight", weight, threshold)
+		}
+		return nil
+	}
+	if phase == types.PhaseFinalizing {
+		return fmt.Errorf("finalize already in progress (phase=finalizing, nonce=%d)", s.nonce)
+	}
+
 	n := len(s.group)
+
+	logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,
+		"group_size", n, "current_nonce", s.nonce,
+		"total_slots", s.sm.TotalSlots(), "threshold", threshold)
 
 	finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
 	}}
 
 	// Phase A: N diffs collecting remaining txs. First carries MsgFinalizeRound.
+	logging.Info("finalize phase A: collecting reveals", "subsystem", "finalize", "escrow", s.escrowID,
+		"rounds", n)
 	for i := 0; i < n; i++ {
 		var extra []*types.DevshardTx
 		if i == 0 {
@@ -838,36 +1012,27 @@ func (s *Session) Finalize(ctx context.Context) error {
 	}
 
 	// Phase A+1: drain the last host's reveal.
+	logging.Info("finalize phase A+1: draining last reveal", "subsystem", "finalize", "escrow", s.escrowID)
 	if err := s.sendDiffRound(ctx, nil); err != nil {
 		return err
 	}
 
-	// Phase B: propagate complete state, collect signatures.
-	for hostIdx := 0; hostIdx < n; hostIdx++ {
-		if err := s.sendCatchUp(ctx, hostIdx); err != nil {
-			return err
-		}
-	}
-
-	// Check signature quorum: need 2/3+1 slot-weighted signatures.
-	var sigWeight uint32
+	// Phase B: collect signatures with retries.
 	finalNonce := s.nonce
-	if sigs, ok := s.signatures[finalNonce]; ok {
-		counted := make(map[string]bool)
-		for slotID := range sigs {
-			addr := s.sm.SlotAddress(slotID)
-			if counted[addr] {
-				continue
-			}
-			counted[addr] = true
-			sigWeight += s.sm.AddressSlotCount(addr)
-		}
-	}
-	threshold := 2*s.sm.TotalSlots()/3 + 1
-	if sigWeight < threshold {
-		return fmt.Errorf("insufficient signatures: %d/%d weight", sigWeight, threshold)
+	weight, _, _ := s.CollectSignatures(ctx, finalNonce)
+
+	logging.Info("finalize quorum check", "subsystem", "finalize", "escrow", s.escrowID,
+		"final_nonce", finalNonce, "sig_weight", weight,
+		"threshold", threshold, "total_slots", s.sm.TotalSlots())
+
+	if weight < threshold {
+		logging.Error("finalize failed: insufficient signatures", "subsystem", "finalize", "escrow", s.escrowID,
+			"final_nonce", finalNonce, "sig_weight", weight, "threshold", threshold)
+		return fmt.Errorf("insufficient signatures: %d/%d weight", weight, threshold)
 	}
 
+	logging.Info("finalize complete", "subsystem", "finalize", "escrow", s.escrowID,
+		"final_nonce", finalNonce, "sig_weight", weight)
 	return nil
 }
 
@@ -953,6 +1118,340 @@ func (s *Session) PendingTxs() []*types.DevshardTx {
 }
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
+
+// sigWeight computes the slot-weighted signature count for a set of slot signatures,
+// deduplicating by validator address. Caller must hold s.mu.
+func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
+	counted := make(map[string]bool, len(s.addrToSlots))
+	var weight uint32
+	for slotID := range sigs {
+		addr := s.sm.SlotAddress(slotID)
+		if counted[addr] {
+			continue
+		}
+		counted[addr] = true
+		weight += s.sm.AddressSlotCount(addr)
+	}
+	return weight
+}
+
+// hasQuorum returns true if signatures at the given nonce meet the threshold.
+// Thread-safe.
+func (s *Session) hasQuorum(nonce uint64, threshold uint32) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sigs, ok := s.signatures[nonce]
+	if !ok {
+		return false
+	}
+	return s.sigWeight(sigs) >= threshold
+}
+
+// getFinalizeClients returns a client list with admission control stripped.
+// Built lazily and cached on s.finalizeClients. Each client that implements
+// a ClearAdmission method gets a shallow copy with admission disabled;
+// others are used as-is.
+func (s *Session) getFinalizeClients() []HostClient {
+	if s.finalizeClients != nil {
+		return s.finalizeClients
+	}
+	type admissionBypasser interface {
+		WithoutAdmission() any
+	}
+	s.finalizeClients = make([]HostClient, len(s.clients))
+	for i, c := range s.clients {
+		if b, ok := c.(admissionBypasser); ok {
+			if hc, ok := b.WithoutAdmission().(HostClient); ok {
+				s.finalizeClients[i] = hc
+				continue
+			}
+		}
+		s.finalizeClients[i] = c
+	}
+	return s.finalizeClients
+}
+
+// fetchSignature tries to retrieve an already-stored signature from the host
+// via the SignatureFetcher interface (GET /signatures?nonce=N). This avoids
+// sending diffs when the host already signed the state via gossip.
+// Returns true if a signature was successfully fetched and stored.
+func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64, client HostClient) bool {
+	fetcher, ok := client.(SignatureFetcher)
+	if !ok {
+		return false
+	}
+
+	sigs, err := fetcher.GetSignatures(ctx, nonce)
+	if err != nil {
+		logging.Info("fetchSignature GET failed", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", nonce, "host", hostIdx, "error", err)
+		return false
+	}
+	if len(sigs) == 0 {
+		return false
+	}
+
+	expectedAddr := s.group[hostIdx].ValidatorAddress
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for slotID := range sigs {
+		addr := s.sm.SlotAddress(slotID)
+		if addr != expectedAddr {
+			continue
+		}
+		if _, ok := s.signatures[nonce]; !ok {
+			s.signatures[nonce] = make(map[uint32][]byte)
+		}
+		for _, slot := range s.addrToSlots[expectedAddr] {
+			s.signatures[nonce][slot] = sigs[slotID]
+		}
+		logging.Info("fetched existing signature", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", nonce, "host", hostIdx, "address", expectedAddr)
+		s.logSignatureProgress(nonce)
+		return true
+	}
+	return false
+}
+
+// CollectSignatures actively polls all hosts to collect signatures for the
+// given nonce. For each host: tries the cheap GET /signatures first, then
+// falls back to sending catch-up diffs. Retries failed hosts with backoff.
+// Uses per-host timeouts independent of the parent context.
+// Returns the signature status at that nonce after collection. Thread-safe.
+func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, threshold, total uint32) {
+	total = s.sm.TotalSlots()
+	threshold = s.sm.QuorumThreshold()
+	n := len(s.group)
+
+	logging.Info("collecting signatures", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", nonce, "hosts", n, "threshold", threshold)
+
+	finClients := s.getFinalizeClients()
+
+	type hostEntry struct {
+		idx  int
+		addr string
+	}
+	seen := make(map[string]bool)
+	var hosts []hostEntry
+	for i := 0; i < n; i++ {
+		addr := s.group[i].ValidatorAddress
+		if seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		hosts = append(hosts, hostEntry{i, addr})
+	}
+
+	// Fan out catch-up to all missing hosts in parallel. Each goroutine
+	// tries GET /signatures first, then falls back to chunked sendCatchUp.
+	// A shared context is cancelled as soon as quorum is reached so
+	// in-progress catch-ups stop between chunks.
+	collectCtx, collectCancel := context.WithCancel(ctx)
+	defer collectCancel()
+
+	// Filter to hosts that don't already have a signature at the final nonce.
+	var missing []hostEntry
+	s.mu.Lock()
+	for _, h := range hosts {
+		hasSig := false
+		if sigs, ok := s.signatures[nonce]; ok {
+			for _, slot := range s.addrToSlots[h.addr] {
+				if _, ok := sigs[slot]; ok {
+					hasSig = true
+					break
+				}
+			}
+		}
+		if !hasSig {
+			missing = append(missing, h)
+		}
+	}
+	s.mu.Unlock()
+
+	logging.Info("collecting signatures: fan-out", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", nonce, "missing_hosts", len(missing), "total_hosts", len(hosts))
+
+	var wg sync.WaitGroup
+	for _, h := range missing {
+		wg.Add(1)
+		go func(h hostEntry) {
+			defer wg.Done()
+
+			for attempt := 0; attempt <= s.signatureCollectMaxRetries; attempt++ {
+				if s.hasQuorum(nonce, threshold) {
+					return
+				}
+				if collectCtx.Err() != nil {
+					return
+				}
+
+				if attempt > 0 {
+					delay := s.signatureCollectBaseDelay * time.Duration(1<<(attempt-1))
+					if delay > 30*time.Second {
+						delay = 30 * time.Second
+					}
+					logging.Info("collect signature retry", "subsystem", "finalize", "escrow", s.escrowID,
+						"nonce", nonce, "host", h.idx, "attempt", attempt, "delay", delay.String())
+					select {
+					case <-collectCtx.Done():
+						return
+					case <-time.After(delay):
+					}
+				}
+
+				// Already got it on a previous retry?
+				s.mu.Lock()
+				hasSig := false
+				if sigs, ok := s.signatures[nonce]; ok {
+					for _, slot := range s.addrToSlots[h.addr] {
+						if _, ok := sigs[slot]; ok {
+							hasSig = true
+							break
+						}
+					}
+				}
+				s.mu.Unlock()
+				if hasSig {
+					return
+				}
+
+				fetchCtx, fetchCancel := context.WithTimeout(collectCtx, s.signatureCollectHostTimeout)
+				if s.fetchSignature(fetchCtx, h.idx, nonce, finClients[h.idx]) {
+					fetchCancel()
+					if s.hasQuorum(nonce, threshold) {
+						collectCancel()
+					}
+					return
+				}
+				fetchCancel()
+
+				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
+				logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
+					"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+				}
+
+				if s.hasQuorum(nonce, threshold) {
+					collectCancel()
+					return
+				}
+			}
+		}(h)
+	}
+	wg.Wait()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sigs, ok := s.signatures[nonce]; ok {
+		weight = s.sigWeight(sigs)
+	}
+
+	// Log which hosts are still missing signatures.
+	if weight < threshold {
+		var missing []string
+		for _, h := range hosts {
+			hasSig := false
+			if sigs, ok := s.signatures[nonce]; ok {
+				for _, slot := range s.addrToSlots[h.addr] {
+					if _, ok := sigs[slot]; ok {
+						hasSig = true
+						break
+					}
+				}
+			}
+			if !hasSig {
+				missing = append(missing, fmt.Sprintf("%d(%s)", h.idx, shortAddress(h.addr)))
+			}
+		}
+		logging.Warn("collect signatures: missing hosts after all attempts", "subsystem", "finalize", "escrow", s.escrowID,
+			"nonce", nonce, "weight", weight, "threshold", threshold,
+			"missing_count", len(missing), "missing", strings.Join(missing, ","))
+	}
+
+	return weight, threshold, total
+}
+
+// SignatureStatusEntry describes signature accumulation for a single nonce.
+type SignatureStatusEntry struct {
+	Nonce     uint64 `json:"nonce"`
+	SigWeight uint32 `json:"sig_weight"`
+	Total     uint32 `json:"total_slots"`
+	HasQuorum bool   `json:"has_quorum"`
+}
+
+// SignatureStatus returns per-nonce effective signature weight and the highest
+// nonce that has reached 2/3+1 quorum. Thread-safe.
+func (s *Session) SignatureStatus() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.signatureStatusLocked()
+}
+
+// signatureStatusLocked computes signature status using the monotonic property:
+// a validator that signed nonce M implicitly accepted all nonces <= M.
+// For each nonce N, effective weight = sum of slots for all validators whose
+// highest signed nonce >= N.
+// Caller must hold s.mu.
+func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
+	total := s.sm.TotalSlots()
+	threshold := s.sm.QuorumThreshold()
+
+	addrMaxNonce := make(map[string]uint64)
+	for nonce, slotSigs := range s.signatures {
+		for slotID := range slotSigs {
+			addr := s.sm.SlotAddress(slotID)
+			if nonce > addrMaxNonce[addr] {
+				addrMaxNonce[addr] = nonce
+			}
+		}
+	}
+
+	nonces := make([]uint64, 0, len(s.signatures))
+	for n := range s.signatures {
+		nonces = append(nonces, n)
+	}
+	sort.Slice(nonces, func(i, j int) bool { return nonces[i] < nonces[j] })
+
+	nonceWeight := make(map[uint64]uint32, len(addrMaxNonce))
+	for addr, maxN := range addrMaxNonce {
+		nonceWeight[maxN] += s.sm.AddressSlotCount(addr)
+	}
+
+	entries = make([]SignatureStatusEntry, len(nonces))
+	var cumWeight uint32
+	for i := len(nonces) - 1; i >= 0; i-- {
+		n := nonces[i]
+		cumWeight += nonceWeight[n]
+		entries[i] = SignatureStatusEntry{
+			Nonce:     n,
+			SigWeight: cumWeight,
+			Total:     total,
+			HasQuorum: cumWeight >= threshold,
+		}
+		if cumWeight >= threshold && (!hasAny || n > highestQuorum) {
+			highestQuorum = n
+			hasAny = true
+		}
+	}
+
+	return entries, highestQuorum, hasAny
+}
+
+// logSignatureProgress logs signature weight at the given nonce.
+// Caller must hold s.mu.
+func (s *Session) logSignatureProgress(nonce uint64) {
+	slotSigs, ok := s.signatures[nonce]
+	if !ok {
+		return
+	}
+	weight := s.sigWeight(slotSigs)
+	threshold := s.sm.QuorumThreshold()
+
+	logging.Info("signature progress", "subsystem", "finalize", "escrow", s.escrowID,
+		"nonce", nonce, "weight", weight,
+		"threshold", threshold, "total", s.sm.TotalSlots())
+}
 
 // AddPendingTimeoutTx adds a MsgTimeoutInference to the pending tx queue.
 func (s *Session) AddPendingTimeoutTx(inferenceID uint64, reason types.TimeoutReason, votes []*types.TimeoutVote) {

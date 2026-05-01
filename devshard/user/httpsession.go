@@ -22,7 +22,7 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
 	RequestAdmission transport.RequestAdmissionController
-	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV0212
+	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV1
 }
 
 // NewHTTPSession creates a user Session wired with HTTP clients to real dapi hosts.
@@ -35,14 +35,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 	pv := cfg.ProtocolVersion
 	if pv == "" {
-		pv = types.ProtocolV0212
+		pv = types.ProtocolV1
 	}
 	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, cfg.RoutePrefix)
 	verifier := signing.NewSecp256k1Verifier()
-	version, err := devshardpkg.VersionForRoutePrefix(routePrefix)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolve route version: %w", err)
-	}
+	version := devshardpkg.ProtocolSessionVersion(pv)
 
 	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
 	if err != nil {

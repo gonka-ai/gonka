@@ -15,9 +15,90 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
+	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
 	"devshard/transport"
 	"devshard/types"
 )
+
+func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *state.StateMachine {
+	t.Helper()
+
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-gateway-test", testutil.DefaultConfig(len(hosts)), group, 1_000_000, userKey.Address(), verifier)
+	require.NoError(t, err)
+
+	if phase == types.PhaseActive {
+		return sm
+	}
+
+	diff := testutil.SignDiff(t, userKey, "escrow-gateway-test", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
+	})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	if phase == types.PhaseSettlement {
+		for nonce := uint64(2); nonce <= uint64(len(hosts)+1); nonce++ {
+			diff = testutil.SignDiff(t, userKey, "escrow-gateway-test", nonce, []*types.DevshardTx{})
+			_, err = sm.ApplyDiff(diff)
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, phase, sm.Phase())
+	return sm
+}
+
+func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64) *devshardRuntime {
+	t.Helper()
+
+	sm := gatewayTestStateMachineInPhase(t, types.PhaseActive)
+	st := sm.ExportState()
+	st.Balance = balance
+	st.LatestNonce = nonce
+	sm.RestoreState(st)
+
+	return &devshardRuntime{
+		id:    id,
+		model: "m",
+		proxy: &Proxy{sm: sm},
+	}
+}
+
+func TestGatewayCheckBalancesDeactivatesLowBalance(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	g.checkBalances()
+
+	require.False(t, rt.active.Load())
+}
+
+func TestGatewayCheckBalancesDeactivatesHighNonce(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	g.checkBalances()
+
+	require.False(t, rt.active.Load())
+}
+
+func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	g.checkBalances()
+
+	require.True(t, rt.active.Load())
+}
 
 func TestParseDevshardPath(t *testing.T) {
 	id, inner, ok := parseDevshardPath("/devshard/12/v1/debug/perf")
@@ -110,7 +191,7 @@ func TestNewRESTBridgeForProtocolUsesDevshardEscrowEndpointByDefault(t *testing.
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := newRESTBridgeForProtocol(srv.URL, types.ProtocolV0212).GetEscrow("83")
+	_, err := newRESTBridgeForProtocol(srv.URL, types.ProtocolV1).GetEscrow("83")
 	require.NoError(t, err)
 	require.Equal(t, "/productscience/inference/inference/devshard_escrow/83", gotPath)
 }
@@ -165,6 +246,85 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 
 	require.Equal(t, http.StatusConflict, chatRec.Code)
 	require.False(t, forwarded)
+}
+
+func TestAdminAddDevshardWiresSharedPhaseGate(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+
+	previousBuilder := gatewayRuntimeBuilder
+	t.Cleanup(func() {
+		gatewayRuntimeBuilder = previousBuilder
+	})
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+		require.Equal(t, "12", cfg.ID)
+		require.Equal(t, "http://node:1317", chainREST)
+		require.Equal(t, "Qwen/Test", defaultModel)
+		rt := &devshardRuntime{
+			id:                    cfg.ID,
+			model:                 cfg.Model,
+			proxy:                 &Proxy{},
+			participantSlotCounts: map[string]int{"host-a": 1},
+		}
+		rt.active.Store(true)
+		return rt, nil
+	}
+
+	existing := &devshardRuntime{id: "6", model: "Qwen/Test"}
+	existing.active.Store(true)
+	g := NewGateway([]*devshardRuntime{existing}, NewGatewayLimiter(2, 200), "Qwen/Test")
+	g.store = store
+	g.baseStorageDir = t.TempDir()
+	g.phaseGate = &ChainPhaseGate{}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{
+		EpochPhase:           epochPhasePoCValidate,
+		ConfirmationPoCPhase: confirmationPoCValidation,
+		RequestsBlocked:      true,
+		BlockReason:          "confirmation_poc",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards",
+		strings.NewReader(`{"id":"12","private_key_env":"DEVSHARD_12_PRIVATE_KEY","model":"Qwen/Test"}`))
+	rec := httptest.NewRecorder()
+	g.handleAdminAddDevshard(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	added := g.runtimes["12"]
+	require.NotNil(t, added)
+	require.Same(t, g.phaseGate, added.proxy.phaseGate)
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	statusRec := httptest.NewRecorder()
+	g.handlePooledStatus(statusRec, statusReq)
+	require.Equal(t, http.StatusOK, statusRec.Code)
+
+	var body struct {
+		Devshards []runtimeStatus `json:"devshards"`
+	}
+	require.NoError(t, json.Unmarshal(statusRec.Body.Bytes(), &body))
+	var addedStatus *runtimeStatus
+	for i := range body.Devshards {
+		if body.Devshards[i].ID == "12" {
+			addedStatus = &body.Devshards[i]
+			break
+		}
+	}
+	require.NotNil(t, addedStatus)
+	require.Equal(t, epochPhasePoCValidate, addedStatus.ChainPhase)
+	require.Equal(t, confirmationPoCValidation, addedStatus.ConfirmationPoCPhase)
+	require.True(t, addedStatus.RequestsBlocked)
+	require.Equal(t, "confirmation_poc", addedStatus.BlockReason)
 }
 
 func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
@@ -351,6 +511,60 @@ func TestGatewayChooseRuntimeSkipsInactiveDevshard(t *testing.T) {
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "6", chosen.id)
+}
+
+func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
+	finalizing := &devshardRuntime{id: "6", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseFinalizing)}}
+	settlement := &devshardRuntime{id: "9", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
+	active := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseActive)}}
+	g := NewGateway([]*devshardRuntime{finalizing, settlement, active}, NewGatewayLimiter(0, 0), "m")
+
+	chosen, err := g.reserveRuntimeForModel("m", 5)
+	require.NoError(t, err)
+	require.Equal(t, "12", chosen.id)
+}
+
+func TestGatewayChooseRuntimeFailsWhenOnlyNonActivePhaseDevshardsRemain(t *testing.T) {
+	finalizing := &devshardRuntime{id: "6", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseFinalizing)}}
+	settlement := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
+	g := NewGateway([]*devshardRuntime{finalizing, settlement}, NewGatewayLimiter(0, 0), "m")
+
+	_, err := g.reserveRuntimeForModel("m", 5)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
+}
+
+func TestGatewayExplicitChatRouteRejectsNonActivePhaseDevshard(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		phase types.SessionPhase
+	}{
+		{name: "finalizing", phase: types.PhaseFinalizing},
+		{name: "settlement", phase: types.PhaseSettlement},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var forwarded bool
+			rt := &devshardRuntime{
+				id:    "12",
+				model: "Qwen/Test",
+				proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, tc.phase)},
+				handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					forwarded = true
+					w.WriteHeader(http.StatusNoContent)
+				}),
+			}
+			g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+
+			req := httptest.NewRequest(http.MethodPost, "/devshard/12/v1/chat/completions",
+				strings.NewReader(`{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`))
+			rec := httptest.NewRecorder()
+			g.handleDevshard(rec, req)
+
+			require.Equal(t, http.StatusConflict, rec.Code)
+			require.Contains(t, rec.Body.String(), "unavailable for new inferences")
+			require.False(t, forwarded)
+		})
+	}
 }
 
 func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {

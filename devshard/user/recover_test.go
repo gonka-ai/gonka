@@ -541,12 +541,13 @@ func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.ProtocolV0211, pv)
 
-	pv, ok = recoveredProtocolVersion(string(types.ProtocolV0212))
+	pv, ok = recoveredProtocolVersion(string(types.ProtocolV1))
 	require.True(t, ok)
-	require.Equal(t, types.ProtocolV0212, pv)
+	require.Equal(t, types.ProtocolV1, pv)
 
-	_, ok = recoveredProtocolVersion(types.LegacySessionVersion)
-	require.False(t, ok, "route version v1 should not opt into v0.2.11 protocol semantics")
+	pv, ok = recoveredProtocolVersion(types.LegacySessionVersion)
+	require.True(t, ok)
+	require.Equal(t, types.ProtocolV1, pv)
 
 	_, ok = recoveredProtocolVersion("")
 	require.False(t, ok)

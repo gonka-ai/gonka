@@ -1018,3 +1018,170 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, root, 32)
 }
+
+// setupDeadHostSession creates a session where only aliveCount hosts work.
+// Slots [0, aliveCount) are real InProcessClients; the rest are ErrorClients.
+func setupDeadHostSession(t *testing.T, numHosts, aliveCount int, balance uint64, grace uint64) *Session {
+	t.Helper()
+	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hostSigners {
+		hostSigners[i] = testutil.MustGenerateKey(t)
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]HostClient, numHosts)
+	for i := range clients {
+		if i < aliveCount {
+			sm, err := state.NewStateMachine("escrow-1", config, group, balance, userKey.Address(), verifier)
+			require.NoError(t, err)
+			h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(grace))
+			require.NoError(t, err)
+			clients[i] = &InProcessClient{Host: h}
+		} else {
+			clients[i] = &ErrorClient{Err: fmt.Errorf("host %d dead", i)}
+		}
+	}
+
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userKey.Address(), verifier)
+	require.NoError(t, err)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier,
+		WithCollectRetry(0, 0, 5*time.Second))
+	require.NoError(t, err)
+	return session
+}
+
+func TestFinalize_DoubleCall_AfterSuccess(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	for i := 0; i < 3; i++ {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+
+	err := session.Finalize(ctx)
+	require.NoError(t, err)
+
+	nonce1 := session.Nonce()
+	diffs1 := len(session.Diffs())
+	st1 := session.StateMachine().SnapshotState()
+	require.Equal(t, types.PhaseSettlement, st1.Phase)
+
+	err = session.Finalize(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, nonce1, session.Nonce(), "nonce must not advance on second call")
+	require.Equal(t, diffs1, len(session.Diffs()), "no new diffs on second call")
+	require.Equal(t, types.PhaseSettlement, session.StateMachine().SnapshotState().Phase)
+
+	sigs := session.Signatures()
+	latestSigs := sigs[nonce1]
+	payload, err := state.BuildSettlement("escrow-1", st1, latestSigs, nonce1)
+	require.NoError(t, err)
+	verifier := signing.NewSecp256k1Verifier()
+	root, err := state.VerifySettlement(*payload, session.StateMachine().SnapshotState().Group, verifier, nil)
+	require.NoError(t, err)
+	require.Len(t, root, 32)
+}
+
+func TestFinalize_DoubleCall_InsufficientQuorum(t *testing.T) {
+	// 5 hosts, only slot 0 alive. Threshold = 2*5/3+1 = 4. Only 1 signature possible.
+	session := setupDeadHostSession(t, 5, 1, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+
+	for i := 0; i < 5; i++ {
+		session.SendInference(ctx, params) //nolint:errcheck
+	}
+
+	err := session.Finalize(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient signatures")
+
+	nonce1 := session.Nonce()
+	diffs1 := len(session.Diffs())
+
+	require.Equal(t, types.PhaseSettlement, session.StateMachine().SnapshotState().Phase)
+
+	err = session.Finalize(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient signatures")
+
+	require.Equal(t, nonce1, session.Nonce(), "nonce must not advance on second call")
+	require.Equal(t, diffs1, len(session.Diffs()), "no new diffs on second call")
+}
+
+func TestFinalize_SignatureStatus(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	for i := 0; i < 3; i++ {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+
+	err := session.Finalize(ctx)
+	require.NoError(t, err)
+
+	entries, highestQuorum, hasAny := session.SignatureStatus()
+	require.True(t, hasAny)
+	require.Equal(t, session.Nonce(), highestQuorum)
+
+	finalNonce := session.Nonce()
+	var finalEntry *SignatureStatusEntry
+	for i := range entries {
+		if entries[i].Nonce == finalNonce {
+			finalEntry = &entries[i]
+			break
+		}
+	}
+	require.NotNil(t, finalEntry, "must have entry for final nonce")
+	require.True(t, finalEntry.HasQuorum)
+	require.Equal(t, uint32(3), finalEntry.SigWeight)
+	require.Equal(t, uint32(3), finalEntry.Total)
+}
+
+func TestFinalize_SignatureStatus_InsufficientQuorum(t *testing.T) {
+	// 5 hosts, only slot 0 alive. Threshold = 4.
+	session := setupDeadHostSession(t, 5, 1, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+
+	for i := 0; i < 5; i++ {
+		session.SendInference(ctx, params) //nolint:errcheck
+	}
+
+	err := session.Finalize(ctx)
+	require.Error(t, err)
+
+	entries, _, _ := session.SignatureStatus()
+	finalNonce := session.Nonce()
+
+	var finalEntry *SignatureStatusEntry
+	for i := range entries {
+		if entries[i].Nonce == finalNonce {
+			finalEntry = &entries[i]
+			break
+		}
+	}
+
+	if finalEntry != nil {
+		require.False(t, finalEntry.HasQuorum)
+		require.Less(t, finalEntry.SigWeight, uint32(4))
+	}
+}

@@ -170,6 +170,21 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	}
 }
 
+// WithoutAdmission returns a shallow copy of the client with admission control
+// disabled. Used by finalize/signature collection paths that must reach
+// quarantined hosts to complete settlement. Returns any so callers across
+// package boundaries can duck-type without importing the HostClient interface.
+func (c *HTTPClient) WithoutAdmission() any {
+	cp := *c
+	cp.config.Admission = nil
+	return &cp
+}
+
+// ClearAdmission disables admission control on this client in-place.
+func (c *HTTPClient) ClearAdmission() {
+	c.config.Admission = nil
+}
+
 func (c *HTTPClient) signatureHeader() string {
 	if c.config.ProtocolVersion == types.ProtocolV0211 {
 		return LegacySubnetHeaderSignature
@@ -604,7 +619,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.observeTransportFailure(path, err)
-		return nil, fmt.Errorf("http post %s: %w", path, err)
+		return nil, fmt.Errorf("POST %s: %w", url, err)
 	}
 	c.observeResult(path, resp.StatusCode)
 
