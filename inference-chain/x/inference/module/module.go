@@ -1244,9 +1244,26 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
 
 	// Set all current ActiveParticipants as ParticipantStatus_ACTIVE
-	if err := am.keeper.ReactivateActiveParticipants(ctx, newEpochIndex); err != nil {
-		am.LogError("Unable to reactivate active participants", types.EpochGroup, "epochIndex", newEpochIndex, "error", err.Error())
+	activeParticipants, found := am.keeper.GetActiveParticipants(ctx, newEpochIndex)
+	if !found {
+		am.LogError("Unable to get active participants", types.EpochGroup, "epochIndex", newEpochIndex)
 		return
+	}
+	ids := make([]string, len(activeParticipants.Participants))
+	for i, participant := range activeParticipants.Participants {
+		ids[i] = participant.Index
+	}
+	participants := am.keeper.GetParticipants(ctx, ids)
+
+	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
+	for _, participant := range participants {
+		participant.Status = types.ParticipantStatus_ACTIVE
+		participant.ConsecutiveInvalidInferences = 0
+		err := am.keeper.SetParticipant(ctx, participant)
+		if err != nil {
+			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())
+			continue
+		}
 	}
 
 	// At this point, clear all active invalidations in case of any hanging invalidations

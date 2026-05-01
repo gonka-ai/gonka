@@ -80,25 +80,3 @@ func (k Keeper) SetActiveParticipantsCache(ctx context.Context, participants typ
 	}
 	return nil
 }
-
-func (k Keeper) ReactivateActiveParticipants(ctx context.Context, epochIndex uint64) error {
-	activeParticipants, found := k.GetActiveParticipants(ctx, epochIndex)
-	if !found {
-		return types.ErrActiveParticipantNotFound
-	}
-
-	ids := make([]string, len(activeParticipants.Participants))
-	for i, participant := range activeParticipants.Participants {
-		ids[i] = participant.Index
-	}
-
-	for _, participant := range k.GetParticipants(ctx, ids) {
-		participant.Status = types.ParticipantStatus_ACTIVE
-		participant.ConsecutiveInvalidInferences = 0
-		if err := k.SetParticipant(ctx, participant); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}

@@ -128,48 +128,6 @@ func TestSetActiveParticipants(t *testing.T) {
 	require.Equal(t, 3, len(retrieved.Participants))
 }
 
-func TestReactivateActiveParticipantsClearsInvalidationStreak(t *testing.T) {
-	keeper, ctx := keepertest.InferenceKeeper(t)
-	require.NoError(t, keeper.SetParams(ctx, types.DefaultParams()))
-
-	_, _, restoredAddr := testdata.KeyTestPubAddr()
-	_, _, otherAddr := testdata.KeyTestPubAddr()
-	restoredParticipant := types.Participant{
-		Index:                        restoredAddr.String(),
-		Address:                      restoredAddr.String(),
-		Status:                       types.ParticipantStatus_INVALID,
-		ConsecutiveInvalidInferences: 7,
-		CurrentEpochStats:            &types.CurrentEpochStats{},
-	}
-	otherParticipant := types.Participant{
-		Index:                        otherAddr.String(),
-		Address:                      otherAddr.String(),
-		Status:                       types.ParticipantStatus_INVALID,
-		ConsecutiveInvalidInferences: 9,
-		CurrentEpochStats:            &types.CurrentEpochStats{},
-	}
-	require.NoError(t, keeper.SetParticipant(ctx, restoredParticipant))
-	require.NoError(t, keeper.SetParticipant(ctx, otherParticipant))
-	require.NoError(t, keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId: 2,
-		Participants: []*types.ActiveParticipant{
-			{Index: restoredAddr.String(), Weight: 100},
-		},
-	}))
-
-	require.NoError(t, keeper.ReactivateActiveParticipants(ctx, 2))
-
-	restored, found := keeper.GetParticipant(ctx, restoredAddr.String())
-	require.True(t, found)
-	require.Equal(t, types.ParticipantStatus_ACTIVE, restored.Status)
-	require.Equal(t, int64(0), restored.ConsecutiveInvalidInferences)
-
-	other, found := keeper.GetParticipant(ctx, otherAddr.String())
-	require.True(t, found)
-	require.Equal(t, types.ParticipantStatus_INVALID, other.Status)
-	require.Equal(t, int64(9), other.ConsecutiveInvalidInferences)
-}
-
 func ParticipantToActive(p *types.Participant) *types.ActiveParticipant {
 	return &types.ActiveParticipant{
 		Index:        p.Index,
