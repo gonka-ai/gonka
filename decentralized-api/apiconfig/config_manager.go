@@ -139,7 +139,14 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
-	return cm.currentConfig.Api.WithDefaults()
+	cfg := cm.currentConfig.Api
+	if cfg.NodeManagerGrpcPort == 0 {
+		cfg.NodeManagerGrpcPort = DefaultNodeManagerGrpcPort
+	}
+	if cfg.NodeManagerLockTTLSeconds <= 0 {
+		cfg.NodeManagerLockTTLSeconds = DefaultNodeManagerLockTTLSeconds
+	}
+	return cfg
 }
 
 func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
@@ -525,7 +532,6 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err != nil {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
-	config.Api = config.Api.WithDefaults()
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
 		config.ChainNode.SignerKeyName = keyName
 		log.Printf("Loaded KEY_NAME: %+v", keyName)

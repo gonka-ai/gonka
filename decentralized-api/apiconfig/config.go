@@ -78,16 +78,6 @@ const (
 	DefaultNodeManagerLockTTLSeconds = 1200
 )
 
-func (c ApiConfig) WithDefaults() ApiConfig {
-	if c.NodeManagerGrpcPort == 0 {
-		c.NodeManagerGrpcPort = DefaultNodeManagerGrpcPort
-	}
-	if c.NodeManagerLockTTLSeconds <= 0 {
-		c.NodeManagerLockTTLSeconds = DefaultNodeManagerLockTTLSeconds
-	}
-	return c
-}
-
 type ChainNodeConfig struct {
 	Url              string `koanf:"url" json:"url"`
 	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`
