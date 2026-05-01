@@ -1,26 +1,203 @@
-// Grafana Alloy pipeline config for the devshard testenv.
+// ═══════════════════════════════════════════════════════════════════════════
+// Grafana Alloy — devshard testenv observability pipeline
 //
-// Phase 13; see devshard/docs/testenv.md §Phase 13.
+// Source: `subnet/testenv/observability/alloy/config.alloy` on branch
+// `subnet-testenv` (tuned; keep in sync when rebasing that stack).
+// Devshard additions: `prometheus.scrape "devshardd"` for devshardd-testenv /metrics.
 //
-// This file is the single-source Alloy config applied to the alloy
-// container. It will be populated during Phase 13 with:
+// Performance metrics
+//   cAdvisor      → container CPU / memory / network / disk I/O
+//   Node Exporter → host CPU / memory / filesystem / network
+//   devshardd     → devshardd_gossip_*, devshardd_diff_nonce, … (EXPORT_METRICS=1)
+//   → VictoriaMetrics (remote_write)
 //
-//   * prometheus.scrape  — scrape devshardd-testenv-*:9100/metrics,
-//                          cAdvisor, Node Exporter
-//   * prometheus.remote_write — push to VictoriaMetrics
-//   * loki.source.docker — collect container stdout
-//   * loki.write          — push to Loki
+// Logs
+//   Docker engine → all container stdout/stderr → Loki
 //
-// Intentionally empty until Phase 13 lands; commented-out skeleton is
-// preserved to make review diffs small.
+// Phase 3 (upcoming): traces
+//   devshard hosts  → OTLP traces  → Tempo
+//
+// Data-flow diagram:
+//
+//   cAdvisor:8080  ──scrape──┐
+//   node-exporter:9100 ─────┼──→ prometheus.remote_write → victoria-metrics:8428
+//   devshardd:9600/metrics ┘
+//   docker.sock ──discover──┴──→ loki.source.docker → loki.write → loki:3100
+// ═══════════════════════════════════════════════════════════════════════════
 
-// prometheus.scrape "devshardd" {
-//     targets    = [ ... ]
-//     forward_to = [ prometheus.remote_write.vm.receiver ]
-// }
+// ── cAdvisor — per-container resource metrics ─────────────────────────────
+// cAdvisor v0.47+ no longer emits a "name" label by default.
+// We use --whitelisted_container_labels to expose Docker Compose labels,
+// then relabel them to a short "service" label for clean queries.
+// (See compose-fragment: cadvisor command and devshard cAdvisor version.)
+prometheus.scrape "cadvisor" {
+  targets = [
+    {"__address__" = "cadvisor:8080"},
+  ]
+  forward_to      = [prometheus.relabel.cadvisor.receiver]
+  scrape_interval = "2s"
+  scrape_timeout  = "1500ms"
+  job_name        = "cadvisor"
+}
+
+// Promote Docker Compose service name → "service" label, drop raw label.
+prometheus.relabel "cadvisor" {
+  forward_to = [prometheus.remote_write.victoriametrics.receiver]
+
+  rule {
+    source_labels = ["container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  rule {
+    regex  = "container_label_.*"
+    action = "labeldrop"
+  }
+}
+
+// ── Node Exporter — host / VM hardware and OS metrics ─────────────────────
+// NOTE: on macOS with Docker Desktop the proc/sys mounts reflect the Linux VM
+// that Docker Desktop runs, not the macOS host — still useful for testenv load.
+prometheus.scrape "node_exporter" {
+  targets = [
+    {"__address__" = "node-exporter:9100"},
+  ]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "2s"
+  scrape_timeout  = "1500ms"
+  job_name        = "node-exporter"
+}
+
+// ── devshardd-testenv — app Prometheus metrics (testenv/obsmetrics) ─────
+// Pinned to default gencompose service names. Add lines if you add hosts.
+prometheus.scrape "devshardd" {
+  targets = [
+    {"__address__" = "devshardd-testenv-0:9600"},
+    {"__address__" = "devshardd-testenv-1:9600"},
+    {"__address__" = "devshardd-testenv-2:9600"},
+    {"__address__" = "devshardd-testenv-3:9600"},
+  ]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "15s"
+  metrics_path     = "/metrics"
+  job_name         = "devshardd"
+}
+
+// ── Alloy self-metrics (useful for pipeline debugging) ────────────────────
+prometheus.scrape "alloy_self" {
+  targets    = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "15s"
+  job_name        = "alloy"
+}
+
+prometheus.exporter.self "alloy" {}
+
+// ── Remote write → VictoriaMetrics ────────────────────────────────────────
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "http://victoria-metrics:8428/api/v1/write"
+
+    queue_config {
+      capacity             = 10000
+      max_samples_per_send = 1000
+      batch_send_deadline  = "5s"
+    }
+  }
+}
+
+// ── Docker log collection → Loki ────────────────────────────────
 //
-// prometheus.remote_write "vm" {
-//     endpoint {
-//         url = "http://victoria-metrics:8428/api/v1/write"
-//     }
-// }
+// discovery.docker discovers all running containers and exposes their Docker
+// labels as __meta_docker_container_label_* targets.
+//
+// discovery.relabel promotes the compose labels to permanent stream labels
+// before loki.source.docker opens the log streams.
+//
+// loki.source.docker tails stdout/stderr of every target container and
+// forwards entries to loki.write.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Container name (strip leading "/")
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  // loki.source.docker uses the "service" target label as the source for the
+  // OTel service_name stream label. We set it here with -N stripped so that
+  // e.g. devshardd-testenv-0…3 can roll up; mirror of subnet "participant" strip.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)-\\d+$|(.+)"
+    replacement   = "$1$2"
+    target_label  = "service"
+  }
+  // Docker Compose project name → "project"
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  // Keep the image name for quick filtering
+  rule {
+    source_labels = ["__meta_docker_container_image_name"]
+    target_label  = "image"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.relabel.promote_service_name.receiver]
+  refresh_interval = "5s"
+}
+
+// loki.source.docker sets service_name from the container name, ignoring the
+// "service" target label we set in discovery.relabel.
+// Overwrite service_name from our stripped "service" value, then drop "service".
+loki.relabel "promote_service_name" {
+  forward_to = [loki.process.filter.receiver]
+
+  // 1. Copy our pre-stripped "service" value over service_name
+  rule {
+    source_labels = ["service"]
+    target_label  = "service_name"
+  }
+  // 2. Drop the now-redundant "service" label
+  rule {
+    action = "labeldrop"
+    regex  = "service"
+  }
+  // 3. Drop detected_level — it false-positives on JSON keys like "error":""
+  //    Use log content parsing (json stage) for reliable level detection instead.
+  rule {
+    action = "labeldrop"
+    regex  = "detected_level"
+  }
+}
+
+// Filter out noise before writing to Loki.
+loki.process "filter" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Drop healthcheck access log lines — Docker Compose polls /health every 10s
+  // on every container, producing ~60 noise lines/min with no diagnostic value.
+  stage.drop {
+    expression = "\"uri\":\"/health\""
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

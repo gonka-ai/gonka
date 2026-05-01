@@ -1,13 +1,37 @@
-# Phase 2: build image for the mock-chain gRPC service.
+# syntax=docker/dockerfile:1.7
 #
-# Replaced with a real multi-stage build once cmd/mockchain compiles.
-# For now this just prevents `docker compose build` from aborting in
-# phase-0 smoke tests.
-FROM golang:1.24-alpine AS build
-WORKDIR /src
-COPY . /src
-RUN go build -o /out/mockchain ./devshard/testenv/cmd/mockchain
+# Phase 11: multi-stage build for the mock-chain gRPC service.
+#
+# Build context (set by gencompose) is the devshard module root
+# (one level above testenv/), so all Go paths are relative to
+# `devshard/`. Staying module-rooted keeps images portable and lets
+# `go build` fail fast when the caller scopes the context too tightly.
 
-FROM alpine:3.20
+FROM golang:1.24-alpine AS build
+
+WORKDIR /src
+
+# Dependency layer first so edits under testenv/ don't bust the module
+# cache. BuildKit cache mounts survive across builds.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+        -trimpath -ldflags="-s -w" \
+        -o /out/mockchain \
+        ./testenv/cmd/mockchain
+
+FROM gcr.io/distroless/static-debian12:latest
 COPY --from=build /out/mockchain /usr/local/bin/mockchain
+
+# mock-chain reads the shared config.yaml from this path; the service
+# definition in docker-compose.yml sets CONFIG_PATH=/app/config.yaml
+# and mounts it read-only.
+ENV CONFIG_PATH=/app/config.yaml
+
 ENTRYPOINT ["/usr/local/bin/mockchain"]

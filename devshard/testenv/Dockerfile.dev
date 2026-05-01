@@ -1,17 +1,29 @@
-# Phase 12: shared development toolchain image (air + dlv + Go).
+# Phase 12: shared development toolchain image (Go + air + dlv).
 #
-# All testenv services run this image in dev mode. The repository is
-# bind-mounted at /workspace; the per-service air config selects which
-# binary to watch/rebuild/run. See devshard/docs/testenv.md §Phase 12.
+# Every testenv service switches to this image via docker-compose.dev.yml;
+# the repository is bind-mounted at /workspace at runtime and the
+# per-service .air.<svc>.toml (also mounted) selects which binary to
+# watch and rebuild. No compiled binary is baked in.
+#
+# Build context for this image is the repo root (not devshard/) because
+# the module's go.mod lives at devshard/go.mod. See docker-compose.dev.yml
+# where `context: ../..` is pinned explicitly.
 FROM golang:1.24-alpine
 
+# bash + make are cheap and make ad-hoc debugging inside the container
+# less surprising. git is required by Go for vcs-stamped builds; curl
+# is useful for probing SSE endpoints from inside the network.
 RUN apk add --no-cache git ca-certificates tzdata bash make curl \
  && go install github.com/air-verse/air@latest \
  && go install github.com/go-delve/delve/cmd/dlv@latest
 
+# WORKDIR matches the module root; every .air.<svc>.toml pins
+# `root = "/workspace/devshard"` so this just lines up defaults.
 WORKDIR /workspace/devshard/testenv
 
-# Pre-warm the module cache; the actual source is bind-mounted at runtime.
+# Pre-warm the module cache so the first `air` rebuild inside the
+# container doesn't also pay the `go mod download` cost. Source is
+# bind-mounted at runtime and overrides this snapshot.
 COPY devshard/go.mod devshard/go.sum /workspace/devshard/
 RUN cd /workspace/devshard && go mod download
 

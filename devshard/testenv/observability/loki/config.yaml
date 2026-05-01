@@ -1,13 +1,48 @@
-# Loki config for the devshard testenv.
-# Phase 13; see devshard/docs/testenv.md §Phase 13.
+# Optional: mount over /etc/loki/local-config.yaml to tweak the single-process
+# defaults shipped in grafana/loki. The default compose-fragment does not
+# mount this (it uses the image’s local-config); copy paths must stay
+# under /tmp/loki to match the `obs-loki` volume. Disable phone-home:
 #
-# Intentionally minimal; will be filled in with ingester + schema once
-# Phase 13 lands.
-
+#   analytics: { reporting_enabled: false }
+#
+# Reference: grafana/loki v2.9.3 cmd/loki/loki-local-config.yaml
 auth_enabled: false
 
 server:
   http_listen_port: 3100
   grpc_listen_port: 9096
 
-# TODO(phase-13): schema_config, storage_config, limits_config.
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /tmp/loki
+  storage:
+    filesystem:
+      chunks_directory: /tmp/loki/chunks
+      rules_directory: /tmp/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+ruler:
+  alertmanager_url: http://localhost:9093
+
+analytics:
+  reporting_enabled: false

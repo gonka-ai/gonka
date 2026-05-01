@@ -1,0 +1,139 @@
+# Appended to docker-compose.yml by gencompose (see devshard/docs/testenv.md §13.1).
+# First line must be `services:` — gencompose strips it and merges into the main file.
+#
+# cAdvisor/Alloy/node-exporter/VM/Alloy layout aligned with
+# `subnet/testenv/observability/compose-fragment.yaml` (branch `subnet-testenv`) so
+# the tuned River config in `alloy/config.alloy` matches runtime (labels, sockets).
+# Loki/Grafana image pins remain on the devshard side (Loki 2.x file config).
+services:
+  # ── VictoriaMetrics (time-series) — subnet-testenv image + flags ───────
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.138.0
+    command:
+      - --storageDataPath=/storage
+      - --retentionPeriod=7d
+      - --httpListenAddr=:8428
+      - --search.maxUniqueTimeseries=1000000
+    volumes:
+      - obs-victoria:/storage
+    ports:
+      - "127.0.0.1:8428:8428"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.100
+    restart: unless-stopped
+
+  # ── Grafana Alloy (subnet-tuned; needs grafana/alloy v1.15+ for this River) ─
+  alloy:
+    image: grafana/alloy:v1.15.0
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - obs-alloy:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:12345:12345"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.101
+    depends_on:
+      - victoria-metrics
+      - cadvisor
+      - node-exporter
+      - loki
+    restart: unless-stopped
+
+  # ── cAdvisor (subnet: label whitelist for Alloy prometheus.relabel) ──
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.102
+    restart: unless-stopped
+
+  # ── node-exporter (subnet mounts + collector tuning) ─────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.10.2
+    pid: host
+    command:
+      - --path.procfs=/host/proc
+      - --path.rootfs=/rootfs
+      - --path.sysfs=/host/sys
+      - --web.listen-address=:9100
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    # Host 19100 avoids colliding with height-sync’s published 9100 (I1 / block oracle).
+    ports:
+      - "127.0.0.1:19100:9100"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.103
+    restart: unless-stopped
+
+  # ── Loki (logs) — devshard: Loki 2.9 + checked-in local config ───────
+  loki:
+    image: grafana/loki:2.9.3
+    user: "0:0"
+    command:
+      - -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - obs-loki:/tmp/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.104
+    restart: unless-stopped
+
+  # ── Grafana (dashboards) ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    user: "0:0"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - obs-grafana:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.105
+    depends_on:
+      - victoria-metrics
+      - loki
+    restart: unless-stopped
+
+# Reserved for a future trace backend (§13.2): 172.30.0.106 — Tempo
+
+volumes:
+  obs-victoria: {}
+  obs-loki: {}
+  obs-grafana: {}
+  obs-alloy: {}

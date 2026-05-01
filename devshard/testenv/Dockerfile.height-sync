@@ -1,9 +1,31 @@
-# Phase 3: build image for the height-sync (heightsyncd) binary.
-FROM golang:1.24-alpine AS build
-WORKDIR /src
-COPY . /src
-RUN go build -o /out/heightsyncd ./devshard/testenv/cmd/heightsyncd
+# syntax=docker/dockerfile:1.7
+#
+# Phase 11: multi-stage build for the height-sync (heightsyncd) binary.
+#
+# Build context (set by gencompose) is the devshard module root
+# (one level above testenv/). The runtime image is distroless/static
+# so the container surface is just the binary and CA roots.
 
-FROM alpine:3.20
+FROM golang:1.24-alpine AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+        -trimpath -ldflags="-s -w" \
+        -o /out/heightsyncd \
+        ./testenv/cmd/heightsyncd
+
+FROM gcr.io/distroless/static-debian12:latest
 COPY --from=build /out/heightsyncd /usr/local/bin/heightsyncd
+
+ENV CONFIG_PATH=/app/config.yaml
+
 ENTRYPOINT ["/usr/local/bin/heightsyncd"]

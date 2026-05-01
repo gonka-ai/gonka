@@ -1,0 +1,51 @@
+# Phase 15 — testenv.md §8.8: run devshard CI from the devshard/ module.
+name: devshard
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'devshard/**'
+      - 'decentralized-api/**'
+  pull_request:
+    paths:
+      - 'devshard/**'
+      - 'decentralized-api/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: devshard-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2'
+          cache-dependency-path: |
+            devshard/go.sum
+            decentralized-api/go.sum
+
+      - name: Dependency invariants
+        working-directory: devshard
+        run: make ci-dep-check
+
+      - name: Unit tests
+        working-directory: devshard
+        run: make ci-unit
+
+      - name: Integration
+        working-directory: devshard
+        run: make ci-integration
+
+      - name: Scenarios (§8.3)
+        working-directory: devshard
+        run: make ci-scenarios

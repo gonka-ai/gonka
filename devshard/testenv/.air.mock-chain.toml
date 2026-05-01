@@ -1,18 +1,31 @@
 # air live-reload config for the mock-chain service.
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
+#
+# root is the devshard Go module; air watches every .go change under it
+# and rebuilds straight into /tmp/air/mock-chain/ so the OS keeps the
+# previous binary loaded until the rebuild succeeds.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/mock-chain"
 
 [build]
-  cmd = "go build -o /tmp/air/mock-chain/mockchain ./devshard/testenv/cmd/mockchain"
+  cmd = "go build -o /tmp/air/mock-chain/mockchain ./testenv/cmd/mockchain"
   bin = "/tmp/air/mock-chain/mockchain"
-  include_ext = ["go", "yaml", "proto"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

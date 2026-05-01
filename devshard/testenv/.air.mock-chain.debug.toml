@@ -1,21 +1,32 @@
-# air config for the mock-chain service under dlv.
+# air + dlv config for the mock-chain service. Debug port: 2345.
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
 #
-# Rebuilds the binary on file change, then relaunches dlv exec bound to
-# port 2345 so the IDE can re-attach.
+# Rebuilds with `-gcflags='all=-N -l'` (disable inlining + optimisation)
+# so dlv can set line-accurate breakpoints, then exec dlv in headless
+# --accept-multiclient mode so the IDE can reconnect after every air
+# rebuild without the operator juggling processes.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/mock-chain"
 
 [build]
-  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/mock-chain/mockchain ./devshard/testenv/cmd/mockchain"
+  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/mock-chain/mockchain ./testenv/cmd/mockchain"
   bin = "dlv exec /tmp/air/mock-chain/mockchain --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue --"
-  include_ext = ["go", "yaml", "proto"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

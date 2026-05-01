@@ -1,18 +1,32 @@
-# air live-reload config for devshardctl.
+# air live-reload config for devshardctl (no debugger by default).
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
+#
+# devshardctl is a short-lived CLI in most flows; live-reload is still
+# useful when iterating on the operator proxy while the stack stays up.
+# Flip to `.air.devshardctl.debug.toml` only if we need step-through —
+# not shipped to keep the overlay lean.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/devshardctl"
 
 [build]
-  cmd = "go build -o /tmp/air/devshardctl/devshardctl ./devshard/cmd/devshardctl"
+  cmd = "go build -o /tmp/air/devshardctl/devshardctl ./cmd/devshardctl"
   bin = "/tmp/air/devshardctl/devshardctl"
-  include_ext = ["go", "yaml"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

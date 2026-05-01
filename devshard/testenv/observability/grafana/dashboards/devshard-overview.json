@@ -2,7 +2,29 @@
   "annotations": { "list": [] },
   "description": "Devshard testenv overview dashboard. Phase 13 scaffold; panels will be populated as metrics land.",
   "editable": true,
-  "panels": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "type": "row",
+      "title": "Chain"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 1 },
+      "id": 101,
+      "type": "row",
+      "title": "Gossip"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 2 },
+      "id": 102,
+      "type": "row",
+      "title": "Resource"
+    }
+  ],
   "refresh": "10s",
   "schemaVersion": 38,
   "tags": ["devshard", "testenv"],

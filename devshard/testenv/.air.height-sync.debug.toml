@@ -1,18 +1,27 @@
 # air + dlv config for the height-sync service. Debug port: 2346.
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/height-sync"
 
 [build]
-  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/height-sync/heightsyncd ./devshard/testenv/cmd/heightsyncd"
+  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/height-sync/heightsyncd ./testenv/cmd/heightsyncd"
   bin = "dlv exec /tmp/air/height-sync/heightsyncd --listen=:2346 --headless=true --api-version=2 --accept-multiclient --continue --"
-  include_ext = ["go", "yaml"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

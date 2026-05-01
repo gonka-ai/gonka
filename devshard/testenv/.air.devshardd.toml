@@ -1,21 +1,33 @@
-# air live-reload config for devshardd-testenv hosts.
+# air live-reload config for devshardd-testenv hosts (no dlv).
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
 #
-# One container per host re-uses this file; the per-host tmp dir is
-# parameterised via the AIR_TMP env var set by docker-compose.dev.yml.
+# Every devshardd-testenv replica shares this file in dev mode; only
+# devshardd-testenv-0 swaps to the .debug variant by default. Per-host
+# writable state (SQLite, air tmp) lives under /tmp and /data mounts
+# provisioned by docker-compose.dev.yml, so concurrent rebuilds never
+# collide.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/devshardd"
 
 [build]
-  cmd = "go build -o /tmp/air/devshardd/devshardd-testenv ./devshard/testenv/cmd/devshardd-testenv"
+  cmd = "go build -o /tmp/air/devshardd/devshardd-testenv ./testenv/cmd/devshardd-testenv"
   bin = "/tmp/air/devshardd/devshardd-testenv"
-  include_ext = ["go", "yaml", "proto"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

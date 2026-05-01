@@ -1,10 +1,41 @@
-# Phase 8: build image for the per-host devshardd-testenv binary.
-FROM golang:1.24-alpine AS build
-WORKDIR /src
-COPY . /src
-RUN go build -o /out/devshardd-testenv ./devshard/testenv/cmd/devshardd-testenv
+# syntax=docker/dockerfile:1.7
+#
+# Phase 11: multi-stage build for the per-host devshardd-testenv binary.
+#
+# Build context (set by gencompose) is the devshard module root.
+# devshardd uses modernc.org/sqlite (pure Go), so we can stay on
+# CGO_ENABLED=0 and ship the binary on distroless/static.
+#
+# /data is created in the build stage and copied across so the SQLite
+# directory exists with the right ownership even before the bind mount
+# is attached.
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+FROM golang:1.24-alpine AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+        -trimpath -ldflags="-s -w" \
+        -o /out/devshardd-testenv \
+        ./testenv/cmd/devshardd-testenv
+
+# Pre-create the SQLite data directory so the binary doesn't need to
+# mkdir at startup (distroless/static has no shell to run an init
+# script in the entrypoint).
+RUN mkdir -p /out/data
+
+FROM gcr.io/distroless/static-debian12:latest
 COPY --from=build /out/devshardd-testenv /usr/local/bin/devshardd-testenv
+COPY --from=build /out/data /data
+
+ENV DATA_DIR=/data
+
 ENTRYPOINT ["/usr/local/bin/devshardd-testenv"]

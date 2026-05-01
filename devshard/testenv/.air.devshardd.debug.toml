@@ -1,22 +1,33 @@
 # air + dlv config for devshardd-testenv hosts.
 # Phase 12; see devshard/docs/testenv.md §Phase 12.
 #
-# Debug port is per-host: 2347 for host 0, 2348 for host 1, 2349 for
-# host 2, 2350 for host 3. The actual port is selected via the DLV_PORT
-# environment variable set by docker-compose.dev.yml.
+# The dlv listener port is passed in via the DLV_PORT env var set by
+# docker-compose.dev.yml (2347 for host-0 by default, 2348+ when
+# operators opt more hosts into debug mode). Running dlv through
+# `sh -c` keeps the ${DLV_PORT:-2347} fallback sane when air strips
+# the environment down during the rebuild.
 
-root = "/workspace"
+root = "/workspace/devshard"
 tmp_dir = "/tmp/air/devshardd"
 
 [build]
-  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/devshardd/devshardd-testenv ./devshard/testenv/cmd/devshardd-testenv"
+  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/devshardd/devshardd-testenv ./testenv/cmd/devshardd-testenv"
   bin = "sh -c 'dlv exec /tmp/air/devshardd/devshardd-testenv --listen=:${DLV_PORT:-2347} --headless=true --api-version=2 --accept-multiclient --continue --'"
-  include_ext = ["go", "yaml", "proto"]
-  exclude_dir = ["observability", "testenv/docs", "docs"]
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [
+    ".git",
+    "docs",
+    "testenv/docs",
+    "testenv/observability",
+    "testenv/db",
+  ]
   delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
 
 [log]
   main_only = false
+  time = true
 
 [misc]
   clean_on_exit = true

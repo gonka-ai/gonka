@@ -1,10 +1,22 @@
 // Package observer produces authenticated block headers from a chain
 // source (Tendermint RPC in production, a mock fabricator in testenv).
 //
-// It is split from the root blockoracle package so that callers that only
+// It is split from the root blockoracle package so callers that only
 // need the BlockOracle interface and the Header types do not pull in
 // Tendermint client dependencies.
 package observer
 
-// TODO(phase-1): define the Observer interface and NewTendermint
-// constructor. See devshard/docs/testenv.md §3.5.
+import (
+	"context"
+
+	"devshard/blockoracle"
+)
+
+// Observer is a producer-side BlockOracle that runs a background loop to
+// discover new headers. Run blocks until ctx is cancelled or the underlying
+// source errs fatally; callers typically run it in a goroutine and
+// terminate by cancelling the context.
+type Observer interface {
+	blockoracle.BlockOracle
+	Run(ctx context.Context) error
+}

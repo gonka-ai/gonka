@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/blockoracle"
 	"devshard/gossip"
 	"devshard/logging"
 	"devshard/signing"
@@ -20,6 +22,12 @@ import (
 	"devshard/storage"
 	"devshard/types"
 )
+
+// ErrNoBlockOracle is returned by Host.LatestHeight when the host was
+// constructed without a BlockOracle dependency. cPoC call-sites
+// (see devshard/docs/proposals/CPOC_PROTOCOL.md) must surface this as a
+// configuration error rather than silently stamping a zero height.
+var ErrNoBlockOracle = errors.New("host: no BlockOracle configured")
 
 // InferencePayload carries the actual request data for the current inference.
 // The host verifies these against the signed MsgStartInference in the diff.
@@ -92,6 +100,11 @@ type Host struct {
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
+
+	// oracle is the mainnet height source. Optional in the current seam:
+	// cPoC stamping (H(V)) is the designated caller; existing flows do
+	// not depend on it. Wire via WithBlockOracle.
+	oracle blockoracle.BlockOracle
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -215,6 +228,22 @@ func WithGossip(g *gossip.Gossip) HostOption {
 // WithValidator sets the validation engine for validating other hosts' inferences.
 func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
+}
+
+// WithBlockOracle injects a mainnet BlockOracle into the host. The oracle
+// is the sole source of mainnet height (H(V)) used by cPoC stamping
+// (see devshard/docs/proposals/CPOC_PROTOCOL.md) and by any future path
+// that needs to prove headers from the main chain. Passing nil is a
+// no-op; LatestHeight returns ErrNoBlockOracle when the oracle is
+// unwired so callers cannot silently stamp height=0.
+//
+// Production wiring (real decentralized-api) passes
+// `blockoracle/client.NewInProcess(obs)` backed by the dapi-local
+// observer. The testenv wiring (devshardd-testenv via mockdapi) passes
+// a `blockoracle/client` instance in host-trust mode (Verifier nil)
+// that subscribes to the testenv height-sync container over HTTP+SSE.
+func WithBlockOracle(o blockoracle.BlockOracle) HostOption {
+	return func(h *Host) { h.oracle = o }
 }
 
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
@@ -1080,6 +1109,40 @@ func (h *Host) LatestNonce() uint64 {
 	defer h.mu.Unlock()
 	return h.sm.LatestNonce()
 }
+
+// LatestHeight returns the highest mainnet block height currently known
+// to the injected BlockOracle. It is the single seam through which cPoC
+// (and any other future main-chain-aware path) reads H(V); existing
+// call-sites stamp no heights today, so this method has no callers in
+// tree yet — it is wired now so cPoC PRs land without touching
+// transport, host lifecycle, or session wiring.
+//
+// Returns ErrNoBlockOracle if the host was constructed without
+// WithBlockOracle. Propagates the oracle's own error (timeout, upstream
+// down) unchanged so callers can distinguish "unwired" from "transient
+// upstream failure".
+//
+// Does not acquire h.mu: the oracle is set once at construction via
+// HostOption and never mutated after NewHost returns.
+func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
+	if h.oracle == nil {
+		return 0, ErrNoBlockOracle
+	}
+	hdr, err := h.oracle.Latest(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if hdr == nil {
+		return 0, fmt.Errorf("host: block oracle returned nil header")
+	}
+	return hdr.Height, nil
+}
+
+// BlockOracle returns the injected BlockOracle or nil if unwired.
+// Exposed for callers that need more than just the latest height
+// (e.g. At(h), Prove(...) for dispute evidence). Most call-sites
+// should prefer LatestHeight for the common stamping case.
+func (h *Host) BlockOracle() blockoracle.BlockOracle { return h.oracle }
 
 // LastFinalized returns the highest nonce marked as finalized (>2/3 sigs).
 func (h *Host) LastFinalized() (uint64, error) {
