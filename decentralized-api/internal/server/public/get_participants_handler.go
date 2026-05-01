@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	comettypes "github.com/cometbft/cometbft/types"
 
@@ -22,9 +24,61 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// One block is ~6s; caching for that window bounds ExcludedParticipants
+// staleness to a single block while absorbing bursts of concurrent requests.
+const participantsCacheTTL = 6 * time.Second
+
+type participantsCacheEntry struct {
+	value     *ActiveParticipantWithProof
+	expiresAt time.Time
+}
+
+type participantsCache struct {
+	mu      sync.RWMutex
+	entries map[string]participantsCacheEntry
+	ttl     time.Duration
+	sf      singleflight.Group
+}
+
+func newParticipantsCache() *participantsCache {
+	return &participantsCache{
+		entries: make(map[string]participantsCacheEntry),
+		ttl:     participantsCacheTTL,
+	}
+}
+
+func (c *participantsCache) get(key string) (*ActiveParticipantWithProof, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	e, ok := c.entries[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return nil, false
+	}
+	return e.value, true
+}
+
+func (c *participantsCache) set(key string, v *ActiveParticipantWithProof) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	for entryKey, entry := range c.entries {
+		if now.After(entry.expiresAt) {
+			delete(c.entries, entryKey)
+		}
+	}
+
+	c.entries[key] = participantsCacheEntry{
+		value:     v,
+		expiresAt: now.Add(c.ttl),
+	}
+}
 
 func grpcErrorToHTTP(err error) error {
 	if err == nil {
@@ -100,17 +154,47 @@ func (s *Server) getAccountByAddress(c echo.Context) error {
 }
 
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
+	key := c.Param("epoch")
+	if key == "" {
+		return ErrInvalidEpochId
+	}
+
+	if cached, ok := s.participantsCache.get(key); ok {
+		return c.JSON(http.StatusOK, cached)
+	}
+
 	epoch, err := s.resolveEpochFromContext(c)
 	if err != nil {
 		logging.Error("Failed to resolve epoch from context", types.Server, "error", err)
 		return err
 	}
 
-	resp, err := s.getParticipants(c.Request().Context(), epoch)
+	if key != "current" {
+		key = strconv.FormatUint(epoch, 10)
+	}
+
+	if cached, ok := s.participantsCache.get(key); ok {
+		return c.JSON(http.StatusOK, cached)
+	}
+
+	// singleflight collapses concurrent misses into one chain-node query. We
+	// detach from the caller's ctx so a cancelled first-request does not abort
+	// work whose result is shared with other waiters.
+	v, err, _ := s.participantsCache.sf.Do(key, func() (interface{}, error) {
+		if cached, ok := s.participantsCache.get(key); ok {
+			return cached, nil
+		}
+		resp, err := s.getParticipants(context.Background(), epoch)
+		if err != nil {
+			return nil, err
+		}
+		s.participantsCache.set(key, resp)
+		return resp, nil
+	})
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, resp)
+	return c.JSON(http.StatusOK, v.(*ActiveParticipantWithProof))
 }
 
 // resolveEpochFromContext extracts the epoch from the context parameters.
