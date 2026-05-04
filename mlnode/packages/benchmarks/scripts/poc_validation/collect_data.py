@@ -3,7 +3,7 @@
 PoC artifact data collection script for mlnode benchmarks.
 
 This is adapted from vllm/scripts/collect_data.py with mlnode-specific output:
-- Saves artifacts under benchmarks/data/poc_calidation/{EXP_NAME}_{timestamp}
+- Saves artifacts under benchmarks/data/poc_validation/experiments/{EXP_NAME}_{timestamp}
 - Stores a run config JSON that includes a vLLM runtime probe (models/health/version)
 - Stores the input config only inside run_config.json (no separate config.json file)
 - Adds timing and nonces_per_min metrics to each saved artifact file
@@ -37,7 +37,7 @@ import requests
 DEFAULT_EXP_NAME = "poc_validation"
 
 BENCHMARKS_DIR = Path(__file__).resolve().parents[2]
-DATA_ROOT = BENCHMARKS_DIR / "data" / "poc_calidation"
+DATA_ROOT = BENCHMARKS_DIR / "data" / "poc_validation" / "experiments"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("config.json")
 
 # Global shutdown event for Ctrl-C handling
