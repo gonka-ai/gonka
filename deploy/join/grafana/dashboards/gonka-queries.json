@@ -1023,6 +1023,104 @@
       ],
       "title": "Top methods by call count (last 1h)",
       "type": "bargauge"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 90
+      },
+      "id": 200,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(rate(gonka_query_total{status=\"ResourceExhausted\", transport=\"abci\"}[5m])) * 60",
+          "instant": true,
+          "legendFormat": "abci OOG/min",
+          "refId": "A"
+        }
+      ],
+      "title": "Internal (dapi) queries killed by gas cap (per min)",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 30,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 90
+      },
+      "id": 201,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (method, transport) (rate(gonka_query_total{status=\"ResourceExhausted\"}[5m])) * 60",
+          "legendFormat": "{{transport}} {{method}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Methods hitting gas cap (per-min rate, by transport)",
+      "type": "timeseries"
     }
   ],
   "refresh": "15s",
@@ -1033,5 +1131,5 @@
   },
   "title": "Gonka Queries",
   "uid": "gonka-queries",
-  "version": 4
+  "version": 6
 }
