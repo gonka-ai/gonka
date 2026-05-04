@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "gonka-node"
+    static_configs:
+      - targets: ["node:26660"]
+
+  - job_name: "gonka-node-sdk"
+    metrics_path: /metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+      - targets: ["node:1317"]
+
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
