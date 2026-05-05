@@ -232,11 +232,21 @@ func (k msgServer) checkGovernancePermission(ctx context.Context, signer sdk.Acc
 	return nil
 }
 
-func (k msgServer) checkContractPermission(ctx context.Context, signer sdk.AccAddress) error {
-	if k.wasmKeeper == nil {
-		return types.ErrNotSupported
+func (k msgServer) checkContractPermission(ctx context.Context, signer sdk.AccAddress) (err error) {
+	// Safety net: catch any nil-dereference panics from an uninitialised Wasm keeper.
+	// This must be installed before any Wasm keeper access so the recover covers
+	// both the getter resolution and the actual GetContractInfo call.
+	defer func() {
+		if recover() != nil {
+			err = types.ErrNotSupported
+		}
+	}()
+	lookup := k.contractInfoLookup
+	if lookup == nil {
+		wasmKeeper := k.GetWasmKeeper()
+		lookup = wasmKeeper.GetContractInfo
 	}
-	contractInfo := k.wasmKeeper.GetContractInfo(ctx, signer)
+	contractInfo := lookup(ctx, signer)
 	if contractInfo == nil {
 		return types.ErrNotAContractAddress
 	}
