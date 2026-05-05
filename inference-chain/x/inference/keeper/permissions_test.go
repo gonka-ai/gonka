@@ -236,3 +236,62 @@ func TestPermission_Contract(t *testing.T) {
 	})
 	require.ErrorIs(t, err, types.ErrNotSupported)
 }
+
+// TestPermission_Contract_ViaGetWasmKeeper exercises the exact production code path
+// that caused the bridge token unwrap panic. Unlike TestPermission_Contract which
+// uses the contractInfoLookup shortcut, these tests go through:
+//
+//	checkContractPermission → k.GetWasmKeeper() → wasmKeeper.GetContractInfo
+//
+// This is the path triggered when a CW20 contract dispatches
+// MsgRequestBridgeWithdrawal as a submessage.
+func TestPermission_Contract_ViaGetWasmKeeper(t *testing.T) {
+	msg := &testMsgSingleSigner{signer: testutil.Validator}
+
+	t.Run("zero-value keeper from getter does not panic", func(t *testing.T) {
+		// This reproduces the exact production crash: GetWasmKeeper() returns
+		// wasmkeeper.Keeper{} (zero value), and GetContractInfo panics on nil
+		// internal stores. The defer-recover must catch this.
+		k, _, ctx, _ := setupPermissionsHarness(t)
+		// The default test keeper already wires a getter returning wasmkeeper.Keeper{},
+		// which is exactly the production failure case.
+		ms := keeper.NewMsgServerWithWasmKeeperGetter(k, nil)
+		var err error
+		require.NotPanics(t, func() {
+			err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+		})
+		require.ErrorIs(t, err, types.ErrNotSupported)
+	})
+
+	t.Run("nil getter function does not panic", func(t *testing.T) {
+		// Simulate the case where SetWasmKeeperGetter was never called and the
+		// internal getter is nil. This can happen if depinject didn't provide a
+		// wasm keeper getter (optional dependency).
+		k, _, ctx, _ := setupPermissionsHarness(t)
+		k.SetWasmKeeperGetter(nil)
+		ms := keeper.NewMsgServerWithWasmKeeperGetter(k, nil)
+		var err error
+		require.NotPanics(t, func() {
+			err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+		})
+		require.ErrorIs(t, err, types.ErrNotSupported)
+	})
+
+	t.Run("working keeper rejects non-contract signer", func(t *testing.T) {
+		k, _, ctx, _ := setupPermissionsHarness(t)
+		// Wire a wasm keeper lookup that returns nil (address is not a contract)
+		ms := keeper.NewMsgServerWithWasmKeeper(k, testWasmKeeper{})
+		// Now test through the contractInfoLookup path — this is already covered,
+		// but we also want to verify via the getter path behaves equivalently:
+		// create a new msgServer with a getter that returns a keeper-like thing.
+		// Since we can't easily create a real wasmkeeper.Keeper in unit tests,
+		// we verify this through the contractInfoLookup path above and the zero-value
+		// path here — the production integration test covers the full path.
+		var err error
+		require.NotPanics(t, func() {
+			err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+		})
+		require.ErrorIs(t, err, types.ErrNotAContractAddress)
+	})
+}
+
