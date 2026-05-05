@@ -10,8 +10,6 @@ import com.productscience.data.*
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -840,12 +838,8 @@ data class LocalInferencePair(
             val cleanName = name.trimStart('/')
             val containerName = "$cleanName-devshardctl-$escrowId"
             val proxyUrl = "http://$containerName:$port"
-            val devshardctlHostPath = Path.of(getRepoRoot(), "build", "devshardctl")
-                .toAbsolutePath()
-                .normalize()
-            check(Files.isRegularFile(devshardctlHostPath)) {
-                "Missing devshardctl binary at $devshardctlHostPath. Build it before running this test."
-            }
+            val devshardProxyImage = config.devshardProxyImageName
+                ?: error("devshardProxyImageName must be set to run devshard proxy")
 
             DockerClientBuilder.getInstance().build().use { dockerClient ->
                 // Remove any leftover container from a previous run.
@@ -857,7 +851,7 @@ data class LocalInferencePair(
                     }
 
                 val devshardctlContainerPath = "/usr/local/bin/devshardctl"
-                val createResp = dockerClient.createContainerCmd(config.apiImageName)
+                val createResp = dockerClient.createContainerCmd(devshardProxyImage)
                     .withName(containerName)
                     .withCmd(devshardctlContainerPath)
                     .withEnv(
@@ -871,13 +865,6 @@ data class LocalInferencePair(
                     .withHostConfig(
                         HostConfig()
                             .withNetworkMode("chain-public")
-                            .withBinds(
-                                Bind(
-                                    devshardctlHostPath.toString(),
-                                    Volume(devshardctlContainerPath),
-                                    AccessMode.ro,
-                                )
-                            )
                     )
                     .exec()
                 dockerClient.startContainerCmd(createResp.id).exec()
@@ -1021,6 +1008,7 @@ data class ApplicationConfig(
     val nodeImageName: String,
     val genesisNodeImage: String,
     val apiImageName: String,
+    val devshardProxyImageName: String? = null,
     val mockImageName: String,
     val denom: String,
     val stateDirName: String,

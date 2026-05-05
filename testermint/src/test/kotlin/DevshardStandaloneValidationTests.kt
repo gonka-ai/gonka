@@ -419,6 +419,7 @@ class DevshardStandaloneValidationTests : TestermintTest() {
         env: Map<String, String>,
     ): ApplicationConfig = inferenceConfig.copy(
         genesisSpec = genesisSpec,
+        devshardProxyImageName = "devshardd:latest",
         additionalDockerFilesByKeyName = versiondComposeFilesByPairName,
         additionalEnvVars = env,
     )
