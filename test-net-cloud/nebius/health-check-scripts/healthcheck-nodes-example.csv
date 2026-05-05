@@ -1,0 +1,6 @@
+label,role,ssh_host,ssh_port,api_host,api_port,ssh_user,compose_dir,node_container,mlnode_container,enabled
+genesis,genesis,xj7-5.s.filfox.io,18220,xj7-5.s.filfox.io,19240,decentai,/srv/dai/gonka/deploy/join,node,join-mlnode-308-1,true
+join-1,join,xj7-5.s.filfox.io,18225,xj7-5.s.filfox.io,19250,decentai,/srv/dai/gonka/deploy/join,node,join-mlnode-308-1,true
+join-2,join,xj7-5.s.filfox.io,18226,xj7-5.s.filfox.io,19252,decentai,/srv/dai/gonka/deploy/join,node,join-mlnode-308-1,true
+join-3,join,xj7-5.s.filfox.io,18227,xj7-5.s.filfox.io,19254,decentai,/srv/dai/gonka/deploy/join,node,join-mlnode-308-1,true
+join-4,join,xj7-5.s.filfox.io,18229,xj7-5.s.filfox.io,19258,decentai,/srv/dai/gonka/deploy/join,node,join-mlnode-308-1,true
