@@ -20,6 +20,7 @@ on:
       - 'testermint/**'
       - 'versioned/**'
       - 'devshard/**'
+      - 'common/**'
 
   issue_comment:
     types: [created]
