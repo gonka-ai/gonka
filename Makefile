@@ -116,7 +116,9 @@ devshardctl-build:
 devshardd-build:
 	@echo "Building devshardd..."
 	@mkdir -p build
-	@DOCKER_BUILDKIT=1 docker build --no-cache --target builder \
+	@DOCKER_BUILDKIT=1 docker build --platform linux/amd64 --target builder \
+		--build-arg GOOS=linux \
+		--build-arg GOARCH=amd64 \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		-f decentralized-api/Dockerfile . \
