@@ -2,23 +2,22 @@ package queryapi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/hex"
-	"fmt"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
-	cmtcrypto "github.com/cometbft/cometbft/crypto"
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/golang/protobuf/proto"
 	"github.com/labstack/echo/v4"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-
 	"common/chain"
 	"common/logging"
 	"common/queryapi/gen"
+	"common/utils"
 )
 
 // See: decentralized-api/internal/server/public/get_epoch.go:28
@@ -94,23 +93,27 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
 	}
 
-	// Query ActiveParticipants from the chain store with merkle proof.
-	result, err := h.chain.CometServiceClient().ABCIQuery(ctx, &cmtservice.ABCIQueryRequest{
-		Path:  "store/inference/key",
-		Data:  inferencetypes.ActiveParticipantsFullKey(epoch),
-		Prove: true,
+	// First query without proof to read CreatedAtBlockHeight from the value.
+	// A second query anchors the proof at that specific height so it verifies
+	// against the block+1 header rather than the latest state root.
+	valueResult, err := h.chain.CometServiceClient().ABCIQuery(ctx, &cmtservice.ABCIQueryRequest{
+		Path: "store/inference/key",
+		Data: inferencetypes.ActiveParticipantsFullKey(epoch),
 	})
 	if err != nil {
 		logging.Error("Failed to query active participants", inferencetypes.Participants, "error", err)
 		return nil, err
 	}
-	if result.Code != 0 {
-		logging.Error("ABCI query failed", inferencetypes.Participants, "code", result.Code, "log", result.Log)
+	if valueResult.Code != 0 {
+		logging.Error("ABCI query failed", inferencetypes.Participants, "code", valueResult.Code, "log", valueResult.Log)
+		return nil, echo.NewHTTPError(http.StatusNotFound, "active participants not found for epoch")
+	}
+	if len(valueResult.Value) == 0 {
 		return nil, echo.NewHTTPError(http.StatusNotFound, "active participants not found for epoch")
 	}
 
 	var activeParticipants inferencetypes.ActiveParticipants
-	if err := proto.Unmarshal(result.Value, &activeParticipants); err != nil {
+	if err := proto.Unmarshal(valueResult.Value, &activeParticipants); err != nil {
 		logging.Error("Failed to unmarshal active participants", inferencetypes.Participants, "error", err)
 		return nil, err
 	}
@@ -118,23 +121,49 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		"epoch", epoch,
 		"count", len(activeParticipants.Participants))
 
-	// Block at creation height and block+1 (which commits the app hash for block N).
-	// blockResp, err := h.chain.CometServiceClient().GetBlockByHeight(ctx, &cmtservice.GetBlockByHeightRequest{
-	// 	Height: activeParticipants.CreatedAtBlockHeight,
-	// })
-	// if err != nil {
-	// 	logging.Error("Failed to get block", inferencetypes.Participants, "error", err)
-	// 	return nil, err
-	// }
-	// _ = blockResp // available for proof verification if needed
+	// Re-query at CreatedAtBlockHeight with proof so the proof is anchored to the
+	// correct historical state root. Block+1 commits the app hash for that height.
+	result, err := h.chain.CometServiceClient().ABCIQuery(ctx, &cmtservice.ABCIQueryRequest{
+		Path:   "store/inference/key",
+		Data:   inferencetypes.ActiveParticipantsFullKey(epoch),
+		Height: activeParticipants.CreatedAtBlockHeight,
+		Prove:  true,
+	})
+	if err != nil {
+		logging.Error("Failed to query active participants with proof", inferencetypes.Participants, "error", err)
+		return nil, err
+	}
+	if result.Code != 0 {
+		logging.Error("ABCI proof query failed", inferencetypes.Participants, "code", result.Code, "log", result.Log)
+		return nil, echo.NewHTTPError(http.StatusNotFound, "active participants not found for epoch")
+	}
 
 	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
 	blockP1Resp, err := h.chain.CometServiceClient().GetBlockByHeight(ctx, &cmtservice.GetBlockByHeightRequest{
 		Height: heightP1,
 	})
 	if err != nil {
-		// Non-fatal: the block+1 may not exist yet; proceed without it.
+		// Non-fatal: block+1 may not exist yet for the current epoch.
 		logging.Error("Failed to get block+1", inferencetypes.Participants, "error", err)
+	}
+
+	// Non-fatal server-side proof verification: confirms the returned value is
+	// anchored to the committed app hash at CreatedAtBlockHeight+1.
+	if result.ProofOps != nil && blockP1Resp != nil {
+		if bz, err := json.Marshal(result.ProofOps); err == nil {
+			var cryptoProofOps cryptotypes.ProofOps
+			if err := json.Unmarshal(bz, &cryptoProofOps); err == nil {
+				dataKey := inferencetypes.ActiveParticipantsFullKey(epoch)
+				verKey := "/inference/" + url.PathEscape(string(dataKey))
+				appHash := blockP1Resp.SdkBlock.Header.AppHash
+				if err := utils.VerifyUsingProofRt(&cryptoProofOps, appHash, verKey, result.Value); err != nil {
+					logging.Error("VerifyUsingProofRt failed", inferencetypes.Participants, "error", err)
+				}
+				if err := utils.VerifyUsingMerkleProof(&cryptoProofOps, appHash, "inference", string(dataKey), result.Value); err != nil {
+					logging.Error("VerifyUsingMerkleProof failed", inferencetypes.Participants, "error", err)
+				}
+			}
+		}
 	}
 
 	// Validators at the creation height.
@@ -146,7 +175,7 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		return nil, err
 	}
 
-	// Derive bech32 consensus addresses from participant validator keys.
+	// Derive participant addresses from validator keys.
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
 		addr, err := validatorKeyToAddress(participant.ValidatorKey)
@@ -204,19 +233,6 @@ func (h *Handlers) getExcludedParticipants(ctx context.Context, epoch uint64) []
 	return result
 }
 
-// validatorKeyToAddress derives a bech32 consensus address from a hex- or
-// base64-encoded validator public key stored in ActiveParticipant.ValidatorKey.
 func validatorKeyToAddress(validatorKey string) (string, error) {
-	keyBz, err := hex.DecodeString(validatorKey)
-	if err != nil {
-		// Fall back to base64 (standard or raw).
-		keyBz, err = base64.StdEncoding.DecodeString(validatorKey)
-		if err != nil {
-			keyBz, err = base64.RawStdEncoding.DecodeString(validatorKey)
-			if err != nil {
-				return "", fmt.Errorf("cannot decode validator key %q: %w", validatorKey, err)
-			}
-		}
-	}
-	return sdk.ConsAddress(cmtcrypto.AddressHash(keyBz)).String(), nil
+	return utils.ValidatorKeyToHexAddress(validatorKey)
 }

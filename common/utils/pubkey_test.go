@@ -55,3 +55,21 @@ func TestPubKeyHexToAddress_Invalid(t *testing.T) {
 	_, err := utils.PubKeyHexToAddress("not-hex!!!")
 	require.Error(t, err)
 }
+
+// TestValidatorKeyToHexAddress_MatchesPubKeyToAddress3 verifies that
+// ValidatorKeyToHexAddress produces output identical to the removed
+// decentralized-api pubKeyToAddress3 function:
+//
+//	base64.StdEncoding.DecodeString → tmhash.SumTruncated → strings.ToUpper(hex.EncodeToString)
+func TestValidatorKeyToHexAddress_MatchesPubKeyToAddress3(t *testing.T) {
+	const expected = "CF90516F2CD1EA1AA8132A6B1BC451C726EEE898"
+
+	got, err := utils.ValidatorKeyToHexAddress(testPubKeyBase64)
+	require.NoError(t, err)
+	assert.Equal(t, expected, got)
+}
+
+func TestValidatorKeyToHexAddress_InvalidBase64(t *testing.T) {
+	_, err := utils.ValidatorKeyToHexAddress("not-base64!!!")
+	require.Error(t, err)
+}

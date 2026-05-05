@@ -5,16 +5,13 @@ import (
 	"common/utils"
 	"context"
 	cosmos_client "decentralized-api/cosmosclient"
-	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	comettypes "github.com/cometbft/cometbft/types"
 
-	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -200,7 +197,7 @@ func (s *Server) getParticipants(ctx context.Context, epoch uint64) (*ActivePart
 
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
-		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+		addresses[i], err = utils.ValidatorKeyToHexAddress(participant.ValidatorKey)
 		if err != nil {
 			logging.Error("Failed to convert public key to address", types.Participants, "error", err)
 		}
@@ -340,13 +337,3 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	return result, err
 }
 
-func pubKeyToAddress3(pubKey string) (string, error) {
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
-	if err != nil {
-		return "", err
-	}
-
-	valAddr := tmhash.SumTruncated(pubKeyBytes)
-	valAddrHex := strings.ToUpper(hex.EncodeToString(valAddr))
-	return valAddrHex, nil
-}
