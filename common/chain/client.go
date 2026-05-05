@@ -42,21 +42,21 @@ type Client struct {
 
 // New dials the chain gRPC endpoint eagerly and returns a Client.
 // cfg is assumed valid — config.Load guarantees this.
-func New(GRPCUrl string) (*Client, error) {
+func New(grpcURL string) (*Client, error) {
 	conn, err := grpc.NewClient(
-		GRPCUrl,
+		grpcURL,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("chain: dial %s: %w", GRPCUrl, err)
+		return nil, fmt.Errorf("chain: dial %s: %w", grpcURL, err)
 	}
 	return &Client{conn: conn}, nil
 }
 
 // NewFromConn creates a Client from an existing connection.
 // Intended for tests that use in-process gRPC servers.
-func NewFromConn(conn grpc.ClientConnInterface) (*Client, error) {
-	return &Client{conn: conn}, nil
+func NewFromConn(conn grpc.ClientConnInterface) *Client {
+	return &Client{conn: conn}
 }
 
 // Conn returns the underlying gRPC connection.

@@ -29,7 +29,6 @@ func TestNew_ConnIsReturned(t *testing.T) {
 func TestNewFromConn(t *testing.T) {
 	c1, err := chain.New("localhost:9090")
 	require.NoError(t, err)
-	c2, err := chain.NewFromConn(c1.Conn())
-	require.NoError(t, err)
+	c2 := chain.NewFromConn(c1.Conn())
 	assert.NotNil(t, c2)
 }

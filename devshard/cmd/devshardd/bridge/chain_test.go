@@ -20,8 +20,7 @@ func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	client, err := chain.NewFromConn(conn)
-	require.NoError(t, err)
+	client := chain.NewFromConn(conn)
 
 	return bridge.NewChainBridge(client, submitter)
 }

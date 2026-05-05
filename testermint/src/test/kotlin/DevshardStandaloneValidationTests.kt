@@ -224,7 +224,7 @@ class DevshardStandaloneValidationTests : TestermintTest() {
             logSection("Step 3: send inferences and wait for one submitted lease from the completed responses")
             val completedInferenceIds = (0 until 20L).map { i ->
                 val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "retry loop test $i")
-                parseDevshardInferenceId(response) ?: (i + 1)
+                parseDevshardInferenceId(response) ?: error("Failed to parse inference ID from response $i: $response")
             }
             val targetInferenceIds = waitForLatestEpochSubmittedValidationLeaseIdsForInferences(
                 escrowId = escrowId,
@@ -304,13 +304,13 @@ class DevshardStandaloneValidationTests : TestermintTest() {
         inferenceIds: List<Long>,
         expectedCount: Int,
     ): List<Long> {
-        var submittedLeaseIds = emptyList<Long>()
-        waitUntil("submitted validation lease for escrow $escrowId in $inferenceIds", timeoutSeconds = 60) {
-            submittedLeaseIds = queryLatestEpochSubmittedValidationLeaseIds(escrowId, inferenceIds)
-                .take(expectedCount)
-            submittedLeaseIds.size == expectedCount
+        val deadline = System.currentTimeMillis() + 60_000L
+        while (System.currentTimeMillis() < deadline) {
+            val ids = queryLatestEpochSubmittedValidationLeaseIds(escrowId, inferenceIds).take(expectedCount)
+            if (ids.size == expectedCount) return ids
+            Thread.sleep(2000)
         }
-        return submittedLeaseIds
+        error("Timed out waiting for submitted validation lease for escrow $escrowId in $inferenceIds (60s)")
     }
 
     private fun assertValidationLeaseState(escrowId: Long) {
@@ -353,8 +353,8 @@ class DevshardStandaloneValidationTests : TestermintTest() {
             .isZero()
     }
 
-    private fun queryValidationLeaseCount(escrowId: Long, predicate: String? = null): Long {
-        val where = listOfNotNull("escrow_id = '$escrowId'", predicate).joinToString(" AND ")
+    private fun queryValidationLeaseCount(escrowId: Long, whereClause: String? = null): Long {
+        val where = listOfNotNull("escrow_id = '$escrowId'", whereClause).joinToString(" AND ")
         return queryPostgresLong("SELECT COUNT(*) FROM validation_leases WHERE $where")
     }
 
@@ -444,7 +444,7 @@ internal fun requirePostgresSuccess(output: List<String>, sql: String) {
     val hasError = fullOutput
         .lineSequence()
         .map { it.trimStart() }
-        .any { it.startsWith("ERROR:") || it.startsWith("psql:") && it.contains("error:", ignoreCase = true) }
+        .any { it.startsWith("ERROR:") || (it.startsWith("psql:") && it.contains("error:", ignoreCase = true)) }
     check(!hasError) {
         "Postgres command failed for SQL:\n$sql\nOutput:\n$fullOutput"
     }
