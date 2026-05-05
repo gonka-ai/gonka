@@ -21,8 +21,8 @@ func CheckPermission(ms types.MsgServer, ctx context.Context, msg HasSigners, pe
 // NewMsgServerWithWasmKeeper creates a MsgServer with a custom WasmKeeper for testing
 func NewMsgServerWithWasmKeeper(k Keeper, wk types.WasmKeeper) types.MsgServer {
 	return &msgServer{
-		Keeper:     k,
-		wasmKeeper: wk,
+		Keeper:             k,
+		contractInfoLookup: wk.GetContractInfo,
 	}
 }
 

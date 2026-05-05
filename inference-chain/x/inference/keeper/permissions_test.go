@@ -1,10 +1,12 @@
 package keeper_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
 	"cosmossdk.io/collections"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -20,6 +22,18 @@ type testMsgSingleSigner struct{ signer string }
 func (m *testMsgSingleSigner) GetSignersStrings() []string { return []string{m.signer} }
 
 func (m *testMsgSingleSigner) ValidateBasic() error { return nil }
+
+type testWasmKeeper struct {
+	contractInfo *wasmtypes.ContractInfo
+	panicOnCheck bool
+}
+
+func (w testWasmKeeper) GetContractInfo(_ context.Context, _ sdk.AccAddress) *wasmtypes.ContractInfo {
+	if w.panicOnCheck {
+		panic("wasm keeper unavailable")
+	}
+	return w.contractInfo
+}
 
 // Utility to get msgServer and context for tests that need to call CheckPermission directly.
 func setupPermissionsHarness(t *testing.T) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
@@ -200,6 +214,25 @@ func TestPermission_InvalidSignerAddress(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPermission_Contract_Placeholder(t *testing.T) {
-	t.Skip("ContractPermission requires a Wasm keeper; integrate wasm test keeper if/when available")
+func TestPermission_Contract(t *testing.T) {
+	k, ms, ctx, _ := setupPermissionsHarness(t)
+
+	msg := &testMsgSingleSigner{signer: testutil.Validator}
+
+	err := keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+	require.ErrorIs(t, err, types.ErrNotSupported)
+
+	ms = keeper.NewMsgServerWithWasmKeeper(k, testWasmKeeper{})
+	err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+	require.ErrorIs(t, err, types.ErrNotAContractAddress)
+
+	ms = keeper.NewMsgServerWithWasmKeeper(k, testWasmKeeper{contractInfo: &wasmtypes.ContractInfo{CodeID: 1}})
+	err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+	require.NoError(t, err)
+
+	ms = keeper.NewMsgServerWithWasmKeeper(k, testWasmKeeper{panicOnCheck: true})
+	require.NotPanics(t, func() {
+		err = keeper.CheckPermission(ms, ctx, msg, keeper.ContractPermission)
+	})
+	require.ErrorIs(t, err, types.ErrNotSupported)
 }
