@@ -1,7 +1,8 @@
 # Use these scripts to run health check on your node
 
+[Health Check script](https://github.com/gonka-ai/gonka/blob/testnet/main/test-net-cloud/nebius/health-check-scripts/healthcheck.sh)
 
-
+[Node examples](https://github.com/gonka-ai/gonka/blob/testnet/main/test-net-cloud/nebius/health-check-scripts/healthcheck-nodes-example.csv)
 
 .env example (please copy in edit mode, because of the markup and because .env files are not attachable):
 
@@ -16,7 +17,7 @@ HF_HOME=/srv/dai/cache/
 KEYRING_PASSWORD=12345678
 GENESIS_KEY_NAME=gonka-account-key
 SSH_USER=decentai
-SSH_KEY_PATH=~/.ssh/id_ed25519_engenious
+SSH_KEY_PATH=~/.ssh/id_ed25519
 
 # Genesis
 GENESIS_SSH_PORT=18220
