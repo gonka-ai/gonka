@@ -256,7 +256,10 @@ data class DockerGroup(
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
         }
-        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down"))
+        // -v removes the per-pair postgres-data volume so a rebooted cluster
+        // starts on a clean database. Bind-mounted dapi state is cleaned up
+        // separately by the launch scripts.
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down", "-v"))
         dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
     }
 

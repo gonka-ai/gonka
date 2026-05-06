@@ -97,18 +97,17 @@ class DevshardPostgresStorageTests : TestermintTest() {
         }
 
         logSection("Verifying SQLite path was NOT used")
-        // /root/.dapi/data/devshard/ is where the SQLite per-epoch files
-        // would land if the factory chose the SQLite backend. With PG
-        // configured the directory should not contain any epoch_*.db files.
-        // The `2>/dev/null || true` swallows the not-found case (PG-only
-        // deployments may never create the dir at all).
+        // SQLite session data lives in epoch_<N>.db files. _meta.db is the
+        // routing index sidecar that NewSQLite always creates even when the
+        // hybrid backend routes everything to Postgres, so we look only for
+        // epoch_*.db files here.
         val out = genesis.api.executor.exec(
-            listOf("sh", "-c", "ls /root/.dapi/data/devshard/ 2>/dev/null || true"),
+            listOf("sh", "-c", "ls /root/.dapi/data/devshard/epoch_*.db 2>/dev/null || true"),
             null,
         ).joinToString("\n").trim()
         assertThat(out)
-            .describedAs("dapi data dir devshard/ contents (must contain no epoch_*.db)")
-            .doesNotContain(".db")
+            .describedAs("dapi data dir devshard/ must contain no epoch_*.db")
+            .isEmpty()
     }
 
     // TODO: a third test that drives the same flow through the standalone
