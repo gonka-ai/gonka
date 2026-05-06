@@ -163,6 +163,7 @@ func TestPermission_CurrentActiveParticipant(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrParticipantNotFound)
 }
 
+<<<<<<< HEAD
 func TestPermission_TrainingAllowLists(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
 
@@ -190,6 +191,8 @@ func TestPermission_TrainingAllowLists(t *testing.T) {
 	require.NoError(t, err)
 }
 
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 func TestPermission_NoPermissionAlwaysPasses(t *testing.T) {
 	_, ms, ctx, _ := setupPermissionsHarness(t)
 	msg := &types.MsgInvalidateInference{Creator: testutil.Requester, InferenceId: "id"}

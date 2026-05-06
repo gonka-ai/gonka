@@ -3,8 +3,7 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
+	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -81,24 +80,19 @@ func (k Keeper) AllUnbondingCollaterals(c context.Context, req *types.QueryAllUn
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	var allUnbondings []types.UnbondingCollateral
-	ctx := sdk.UnwrapSDKContext(c)
-
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	unbondingStore := prefix.NewStore(store, types.UnbondingKey)
-
-	pageRes, err := query.Paginate(unbondingStore, req.Pagination, func(key []byte, value []byte) error {
-		var unbonding types.UnbondingCollateral
-		if err := k.cdc.Unmarshal(value, &unbonding); err != nil {
-			return err
-		}
-		allUnbondings = append(allUnbondings, unbonding)
-		return nil
-	})
+		// Unbonding entries live in collections.IndexedMap UnbondingIM (prefix UnbondingCollPrefix), not legacy UnbondingKey.
+	unbondings, pageRes, err := query.CollectionPaginate(
+		c,
+		&k.UnbondingIM,
+		req.Pagination,
+		func(_ collections.Pair[uint64, sdk.AccAddress], value types.UnbondingCollateral) (types.UnbondingCollateral, error) {
+			return value, nil
+		},
+	)
 
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &types.QueryAllUnbondingCollateralsResponse{Unbondings: allUnbondings, Pagination: pageRes}, nil
+	return &types.QueryAllUnbondingCollateralsResponse{Unbondings: unbondings, Pagination: pageRes}, nil
 }

@@ -6,25 +6,45 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
 import java.io.File
+import java.net.SocketException
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertNotNull
 
 class UpgradeTests : TestermintTest() {
+    private fun initUpgradeCluster(config: ApplicationConfig = inferenceConfig): Pair<LocalCluster, LocalInferencePair> {
+        var lastFailure: Throwable? = null
+        repeat(3) { attempt ->
+            try {
+                return initCluster(config = config, reboot = true)
+            } catch (t: Throwable) {
+                val shouldRetry =
+                    t.message?.contains("Could not find node container for keyName=genesis") == true ||
+                        generateSequence(t) { it.cause }.any { it is SocketException }
+                if (!shouldRetry || attempt == 2) {
+                    throw t
+                }
+                lastFailure = t
+                Logger.warn("Upgrade cluster bootstrap failed on attempt ${attempt + 1}, retrying: ${t.message}", "")
+                Thread.sleep(Duration.ofSeconds(10))
+            }
+        }
+        throw lastFailure ?: IllegalStateException("Upgrade cluster bootstrap failed")
+    }
+
     @Test
     @Tag("unstable")
     fun `upgrade from github`() {
         val releaseTag = "v0.1.4-25"
 
-        val (cluster, genesis) = initCluster(
+        val (cluster, genesis) = initUpgradeCluster(
             config = inferenceConfig.copy(
                 genesisSpec = createSpec(
                     epochLength = 100,
                     epochShift = 80
                 )
-            ),
-            reboot = true
+            )
         )
         genesis.markNeedsReboot()
         val pairs = cluster.joinPairs
@@ -59,7 +79,17 @@ class UpgradeTests : TestermintTest() {
         Thread.sleep(Duration.ofMinutes(5))
         logSection("Verifying upgrade")
         genesis.node.waitForNextBlock(1)
-        // Some other action?
+        genesis.waitForBlock(40) {
+            cluster.allPairs.all { pair ->
+                runCatching {
+                    pair.api.getParticipants()
+                    pair.api.getNodes()
+                    pair.node.getColdAddress()
+                    true
+                }.getOrDefault(false)
+            }
+        }
+
         cluster.allPairs.forEach {
             it.api.getParticipants()
             it.api.getNodes()
@@ -69,14 +99,13 @@ class UpgradeTests : TestermintTest() {
     }
     @Test
     fun `submit upgrade`() {
-        val (cluster, genesis) = initCluster(
+        val (cluster, genesis) = initUpgradeCluster(
             config = inferenceConfig.copy(
                 genesisSpec = createSpec(
                     epochLength = 100,
                     epochShift = 80
                 )
-            ),
-            reboot = true
+            )
         )
         genesis.markNeedsReboot()
         val pairs = cluster.joinPairs
@@ -127,7 +156,7 @@ class UpgradeTests : TestermintTest() {
     @Test
     @Timeout(value = 15, unit = TimeUnit.MINUTES)
     fun testVersionedEndpointSwitching() {
-        val (cluster, genesis) = initCluster(reboot = true)
+        val (cluster, genesis) = initUpgradeCluster()
 
         logSection("Waiting for initial system to be ready")
         var currentHeight = genesis.getCurrentBlockHeight()

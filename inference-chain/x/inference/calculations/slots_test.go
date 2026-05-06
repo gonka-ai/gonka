@@ -18,10 +18,20 @@ func TestGetSlots_Determinism(t *testing.T) {
 	nSlots := 64
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots1 := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
-	slots2 := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots1 := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
+	slots2 := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 	require.Equal(t, slots1, slots2, "same inputs should produce same outputs")
+}
+
+func TestComputeSampledSlotCount(t *testing.T) {
+	require.Equal(t, 0, ComputeSampledSlotCount(0, 100, 128))
+	require.Equal(t, 0, ComputeSampledSlotCount(40, 0, 128))
+	require.Equal(t, 0, ComputeSampledSlotCount(40, 100, 0))
+	require.Equal(t, 51, ComputeSampledSlotCount(40, 100, 128))
+	require.Equal(t, 85, ComputeSampledSlotCount(67, 100, 128))
+	require.Equal(t, 128, ComputeSampledSlotCount(100, 100, 128))
+	require.Equal(t, 128, ComputeSampledSlotCount(140, 100, 128))
 }
 
 func TestGetSlots_WeightDistribution(t *testing.T) {
@@ -35,7 +45,7 @@ func TestGetSlots_WeightDistribution(t *testing.T) {
 	nSlots := 1000
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 	counts := make(map[string]int)
 	for _, slot := range slots {
@@ -63,7 +73,7 @@ func TestGetSlots_EmptyWeights(t *testing.T) {
 func TestGetSlots_ZeroSlots(t *testing.T) {
 	weights := map[string]int64{"node1": 100}
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted("hash", "participant", sortedEntries, totalWeight, 0)
+	slots := GetSlotsFromSorted("hash", "participant", "", sortedEntries, totalWeight, 0)
 	require.Nil(t, slots)
 }
 
@@ -87,7 +97,7 @@ func TestGetSlot_SingleSlot(t *testing.T) {
 	participant := "gonka100"
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slot := GetSlotFromSorted(appHash, participant, sortedEntries, totalWeight, 0)
+	slot := GetSlotFromSorted(appHash, participant, "", sortedEntries, totalWeight, 0)
 	require.NotEmpty(t, slot)
 	require.Contains(t, []string{"node1", "node2", "node3"}, slot)
 }
@@ -103,10 +113,10 @@ func TestGetSlot_MatchesGetSlots(t *testing.T) {
 	nSlots := 10
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 	for i := 0; i < nSlots; i++ {
-		singleSlot := GetSlotFromSorted(appHash, participant, sortedEntries, totalWeight, i)
+		singleSlot := GetSlotFromSorted(appHash, participant, "", sortedEntries, totalWeight, i)
 		require.Equal(t, slots[i], singleSlot, "GetSlotFromSorted should match GetSlotsFromSorted at index %d", i)
 	}
 }
@@ -121,8 +131,8 @@ func TestGetSlots_DifferentParticipants(t *testing.T) {
 	nSlots := 64
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots1 := GetSlotsFromSorted(appHash, "participant1", sortedEntries, totalWeight, nSlots)
-	slots2 := GetSlotsFromSorted(appHash, "participant2", sortedEntries, totalWeight, nSlots)
+	slots1 := GetSlotsFromSorted(appHash, "participant1", "", sortedEntries, totalWeight, nSlots)
+	slots2 := GetSlotsFromSorted(appHash, "participant2", "", sortedEntries, totalWeight, nSlots)
 
 	require.NotEqual(t, slots1, slots2, "different participants should have different slots")
 }
@@ -136,7 +146,7 @@ func TestGetSlots_SingleValidator(t *testing.T) {
 	nSlots := 10
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 	for _, slot := range slots {
 		require.Equal(t, "only_node", slot)
@@ -154,7 +164,7 @@ func TestGetSlots_NegativeWeightsSkipped(t *testing.T) {
 	nSlots := 100
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 	require.NotNil(t, slots)
 	require.Len(t, slots, nSlots)
 
@@ -177,7 +187,7 @@ func TestGetSlots_MixedWeights(t *testing.T) {
 	nSlots := 100
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 	require.NotNil(t, slots)
 
 	counts := make(map[string]int)
@@ -213,7 +223,7 @@ func TestGetSlots_MoreSlotsThanValidators(t *testing.T) {
 	nSlots := 1000 // Many more slots than validators
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 	require.Len(t, slots, nSlots)
 
 	// Algorithm is deterministic - assert exact counts
@@ -235,7 +245,7 @@ func TestGetSlots_LargeWeightDisparity(t *testing.T) {
 	nSlots := 1000
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 	// Algorithm is deterministic - assert exact counts
 	counts := make(map[string]int)
@@ -256,8 +266,8 @@ func TestGetSlots_DifferentAppHash(t *testing.T) {
 	nSlots := 64
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots1 := GetSlotsFromSorted("appHash1", participant, sortedEntries, totalWeight, nSlots)
-	slots2 := GetSlotsFromSorted("appHash2", participant, sortedEntries, totalWeight, nSlots)
+	slots1 := GetSlotsFromSorted("appHash1", participant, "", sortedEntries, totalWeight, nSlots)
+	slots2 := GetSlotsFromSorted("appHash2", participant, "", sortedEntries, totalWeight, nSlots)
 
 	require.NotEqual(t, slots1, slots2, "different appHash should produce different slots")
 }
@@ -272,7 +282,7 @@ func TestGetSlot_NegativeWeightsSkipped(t *testing.T) {
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
 	// Run multiple slot indices to verify negative weight is never selected
 	for i := 0; i < 100; i++ {
-		slot := GetSlotFromSorted("hash", "participant", sortedEntries, totalWeight, i)
+		slot := GetSlotFromSorted("hash", "participant", "", sortedEntries, totalWeight, i)
 		require.NotEqual(t, "node2", slot, "negative weight validator should not be returned")
 	}
 }
@@ -285,7 +295,7 @@ func TestGetSlot_AllNegativeOrZeroWeights(t *testing.T) {
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
 	require.Nil(t, sortedEntries)
 	require.Equal(t, int64(0), totalWeight)
-	slot := GetSlotFromSorted("hash", "participant", nil, 0, 0)
+	slot := GetSlotFromSorted("hash", "participant", "", nil, 0, 0)
 	require.Empty(t, slot)
 }
 
@@ -300,7 +310,7 @@ func TestGetSlots_LargeNSlots(t *testing.T) {
 	nSlots := 10000
 
 	sortedEntries, totalWeight := PrepareSortedEntries(weights)
-	slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+	slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 	require.Len(t, slots, nSlots)
 
 	// Verify distribution is still proportional
@@ -332,7 +342,7 @@ func TestGetSlots_OrderIndependentOfMapIteration(t *testing.T) {
 			"zulu":   250,
 		}
 		sortedEntries, totalWeight := PrepareSortedEntries(weights)
-		slots := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+		slots := GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 
 		if firstResult == nil {
 			firstResult = slots
@@ -342,6 +352,22 @@ func TestGetSlots_OrderIndependentOfMapIteration(t *testing.T) {
 	}
 }
 
+func TestGetSlots_DifferentModels(t *testing.T) {
+	weights := map[string]int64{
+		"node1": 100,
+		"node2": 200,
+		"node3": 300,
+	}
+	appHash := "hash"
+	participant := "participant"
+	nSlots := 64
+
+	sortedEntries, totalWeight := PrepareSortedEntries(weights)
+	slotsA := GetSlotsFromSorted(appHash, participant, "model-a", sortedEntries, totalWeight, nSlots)
+	slotsB := GetSlotsFromSorted(appHash, participant, "model-b", sortedEntries, totalWeight, nSlots)
+
+	require.NotEqual(t, slotsA, slotsB, "different models should produce different slot assignments")
+}
 
 func BenchmarkGetSlots_Current(b *testing.B) {
 	weights := make(map[string]int64, 100)
@@ -357,7 +383,7 @@ func BenchmarkGetSlots_Current(b *testing.B) {
 		for j := 0; j < nParticipants; j++ {
 			participant := fmt.Sprintf("participant%d", j)
 			sortedEntries, totalWeight := PrepareSortedEntries(weights)
-			_ = GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+			_ = GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 		}
 	}
 }
@@ -377,7 +403,7 @@ func BenchmarkGetSlots_Optimized(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < nParticipants; j++ {
 			participant := fmt.Sprintf("participant%d", j)
-			_ = GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, nSlots)
+			_ = GetSlotsFromSorted(appHash, participant, "", sortedEntries, totalWeight, nSlots)
 		}
 	}
 }

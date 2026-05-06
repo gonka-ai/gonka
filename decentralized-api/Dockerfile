@@ -5,10 +5,10 @@
 ################################################################################
 FROM golang:1.24.2-alpine3.20 AS builder
 
-ARG BUILD_FLAGS
 ARG GOOS
 ARG GOARCH
 ARG BLST_PORTABLE=0
+ARG DEVSHARD_VERSION=dev
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
@@ -39,7 +39,7 @@ RUN if [ "$GOARCH" = "arm64" ]; then \
     fi
 
 COPY inference-chain/ /app/inference-chain
-COPY subnet/ /app/subnet
+COPY devshard/ /app/devshard
 
 WORKDIR /app/decentralized-api
 COPY decentralized-api/go.mod decentralized-api/go.sum ./
@@ -70,11 +70,22 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     -o ./build/inferenced ./cmd/inferenced/main.go \
     && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.inference/cosmovisor/current' ./build/inferenced
 
-# Build subnetctl
+# Build devshardctl
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache3,target=/go/pkg/mod \
-    cd /app/subnet && \
-    CGO_ENABLED=0 go build -o ./build/subnetctl ./cmd/subnetctl/
+    cd /app/devshard && \
+    CGO_ENABLED=0 go build -ldflags "-X main.Version=${DEVSHARD_VERSION}" -o ./build/devshardctl ./cmd/devshardctl/
+
+# Build devshardd (standalone host binary for versiond).
+# Must use CGO_ENABLED=1 + muslc tags (same as dapi) because blst requires CGO.
+# The binary is NOT included in the final api image — it ships via versiond.
+RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
+    --mount=type=cache,id=go-mod-cache3,target=/go/pkg/mod \
+    if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
+    CGO_ENABLED=1 CC=gcc \
+    go build -mod=readonly -tags muslc \
+    -ldflags "$LDFLAGS -X main.Version=${DEVSHARD_VERSION}" \
+    -o ./build/devshardd ./cmd/devshardd
 
 RUN mkdir /build_output
 ################################################################################
@@ -111,7 +122,7 @@ ENV DAEMON_DOWNLOAD_RETRIES=-1
 # Copy over binaries from the build-env
 COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
-COPY --from=builder /app/subnet/build/subnetctl /usr/bin/subnetctl
+COPY --from=builder /app/devshard/build/devshardctl /usr/bin/devshardctl
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor

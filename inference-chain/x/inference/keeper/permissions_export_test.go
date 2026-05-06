@@ -3,6 +3,10 @@ package keeper
 import (
 	"context"
 
+<<<<<<< HEAD
+=======
+	sdk "github.com/cosmos/cosmos-sdk/types"
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -24,3 +28,11 @@ func NewMsgServerWithWasmKeeper(k Keeper, wk types.WasmKeeper) types.MsgServer {
 		wasmKeeper: wk,
 	}
 }
+<<<<<<< HEAD
+=======
+
+// SetMintTokensFnForTesting injects mint callback for keeper tests only.
+func (k *Keeper) SetMintTokensFnForTesting(mintTokensFn func(ctx sdk.Context, contractAddr, recipient, amount string) error) {
+	k.mintTokensFn = mintTokensFn
+}
+>>>>>>> origin/testnet/latest-in-v0.2.12

@@ -26,6 +26,16 @@ message Params {
 
   // Duration in blocks for threshold signing deadline (e.g., 10 blocks for PoC)
   int64 signing_deadline_blocks = 5;
+
+  // Duration in blocks for the disputing phase (e.g., 3 blocks for PoC)
+  int64 dispute_phase_duration_blocks = 6;
+
+  // Blocks to wait before allowing COMPLETED fallback (0 = disabled).
+  int64 completed_fallback_blocks = 7;
+
+  // Maximum number of automatic threshold-signing attempts before terminal failure.
+  // Attempt #1 is the initial request, so value 3 means initial try + up to 2 retries.
+  uint32 max_signing_attempts = 8;
 }
 
 // PartialSignature represents a partial signature from a single participant in threshold signing

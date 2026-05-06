@@ -1,0 +1,156 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "seq_len": 1024,
+  "k_dim": 12,
+  "block_hash": "TEST_BLOCK",
+  "block_height": 100,
+  "public_key": "test_pub_keys",
+  "node_id": 0,
+  "node_count": 1,
+  "dist_threshold": 0.2,
+  "additional_args": [
+    "--max-num-seqs",
+    "64",
+    "--gpu-memory-utilization",
+    "0.85",
+    "--max-model-len",
+    "2048"
+  ],
+  "source": "honest reference recorded on RTX 5060 Ti, vLLM 3.0.13, dtype=auto, max-num-seqs=64",
+  "generated_at": "2026-04-29T01:21:20.389394",
+  "encoding": {
+    "dtype": "f16",
+    "k_dim": 12,
+    "endian": "le"
+  },
+  "artifacts": [
+    {
+      "nonce": 0,
+      "vector_b64": "SjJjtP+36itbMOG0OLN6tJQ1xjbPNC0n"
+    },
+    {
+      "nonce": 1,
+      "vector_b64": "7DY0uOoy7LQIq6EpCbR8N4WubjPELQ4y"
+    },
+    {
+      "nonce": 2,
+      "vector_b64": "YLXkNDS0CZIiuGk1PSaarjgwYzVppi03"
+    },
+    {
+      "nonce": 3,
+      "vector_b64": "ni4KrFq1/jOquSmypzQHsEQ2Raw6L+Eo"
+    },
+    {
+      "nonce": 4,
+      "vector_b64": "lLO6tIy4ei4otZ+1/zAfNs2x5SirtMOs"
+    },
+    {
+      "nonce": 5,
+      "vector_b64": "Xy/hsaA42LCQKsYzyLglNvksQBU/J9gw"
+    },
+    {
+      "nonce": 6,
+      "vector_b64": "qy2etJav+qyNNPm4jrfuMd4fvLUXrjEx"
+    },
+    {
+      "nonce": 7,
+      "vector_b64": "5bLgKgw3ZrK5M5Ysqywbrfw0sbc0rHO4"
+    },
+    {
+      "nonce": 8,
+      "vector_b64": "hrYDNUW4HrFfNqaiAyU8tA+25rDjL4qv"
+    },
+    {
+      "nonce": 9,
+      "vector_b64": "fTJ9tK8v/DZHOM00TyhptMgzXazZtRCx"
+    },
+    {
+      "nonce": 10,
+      "vector_b64": "obibqEq1/7JKrpcuprQPtag2gDR/rM+y"
+    },
+    {
+      "nonce": 11,
+      "vector_b64": "dyf/MT0sDzrMLYQ13zDWtt4i8bDcraWw"
+    },
+    {
+      "nonce": 12,
+      "vector_b64": "ZivnqhIqyrM4uSS4oqhjKrc1yqnINAYw"
+    },
+    {
+      "nonce": 13,
+      "vector_b64": "Y7Mitxs1yi9NM9QzD63Bt0eyA7VwsV81"
+    },
+    {
+      "nonce": 14,
+      "vector_b64": "DzDdNTwrZa4sryYwfbgEtuezRzQWr0O3"
+    },
+    {
+      "nonce": 15,
+      "vector_b64": "jiHEtd2okzFarkMuGbGrOS00TDeBLnus"
+    },
+    {
+      "nonce": 16,
+      "vector_b64": "+a7RuN0zqC73q761I7hlNBgw26+ur9Wx"
+    },
+    {
+      "nonce": 17,
+      "vector_b64": "Uy+hM8AvdLeprzmwRrSSLWa0QrgPtcC1"
+    },
+    {
+      "nonce": 18,
+      "vector_b64": "4rejMMyxKSq2MpM1k5gnruY0wzgOrF+0"
+    },
+    {
+      "nonce": 19,
+      "vector_b64": "xrCKtfM2Cp6bsWc3lLU0Ns018C/1K8Ep"
+    },
+    {
+      "nonce": 20,
+      "vector_b64": "47S4rbgwpzYLuAwxCTQVOJGxhDOBq6qu"
+    },
+    {
+      "nonce": 21,
+      "vector_b64": "5K+kLNqlnq+mMau2djc6MpM4RzXSJy60"
+    },
+    {
+      "nonce": 22,
+      "vector_b64": "Zjg6sgIxgSpZLG22A7cMKgozey1Kqmq3"
+    },
+    {
+      "nonce": 23,
+      "vector_b64": "u7DTMrWyzDc3MoGypzNGLY+3VDaZNQgt"
+    },
+    {
+      "nonce": 24,
+      "vector_b64": "C7lrJO20bTXDLDMttLDms5w3BrQTKhct"
+    },
+    {
+      "nonce": 25,
+      "vector_b64": "qbUxMrsv1LWXM9CwMDR+Od6ybq9cLsMp"
+    },
+    {
+      "nonce": 26,
+      "vector_b64": "KKrIKyY0GbDTNxa3xaq9MpgwJjgztcyx"
+    },
+    {
+      "nonce": 27,
+      "vector_b64": "Xisosp8ifDOFNYoy8bOvLgm0dbU3NDM5"
+    },
+    {
+      "nonce": 28,
+      "vector_b64": "izSuOMM2XyupMmexYrb2o4sidJ80NnEv"
+    },
+    {
+      "nonce": 29,
+      "vector_b64": "ajbdr0U1DrcdMJuur7TXNvI1PbB6JzY0"
+    },
+    {
+      "nonce": 30,
+      "vector_b64": "xLABtKcwjLhxIms0C7SiI860oDVuN3an"
+    },
+    {
+      "nonce": 31,
+      "vector_b64": "V6d2sgwz/rQGt5CwFSwEsyCutTcNt1s1"
+    }
+  ]
+}

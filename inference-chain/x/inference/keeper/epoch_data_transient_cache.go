@@ -9,8 +9,14 @@ import (
 )
 
 type epochDataTransientParticipantCache struct {
+<<<<<<< HEAD
 	Weight     int64
 	Reputation int32
+=======
+	Weight      int64
+	Reputation  int32
+	VotingPower int64
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 type epochDataTransientModelMetaCacheEntry struct {
@@ -95,8 +101,14 @@ func (k Keeper) GetCachedEpochDataModelWeight(
 		return epochDataTransientParticipantCache{}, false, err
 	}
 	entry := epochDataTransientParticipantCache{
+<<<<<<< HEAD
 		Weight:     cachedWeight.Weight,
 		Reputation: cachedWeight.Reputation,
+=======
+		Weight:      cachedWeight.Weight,
+		Reputation:  cachedWeight.Reputation,
+		VotingPower: cachedWeight.VotingPower,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return entry, true, nil
 }
@@ -157,8 +169,14 @@ func setModelTransientCacheEntries(
 			continue
 		}
 		validationEntry := types.ValidationWeight{
+<<<<<<< HEAD
 			Weight:     weight.Weight,
 			Reputation: weight.Reputation,
+=======
+			Weight:      weight.Weight,
+			Reputation:  weight.Reputation,
+			VotingPower: weight.VotingPower,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		}
 		validationBz, err := cdc.Marshal(&validationEntry)
 		if err != nil {

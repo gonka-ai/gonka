@@ -19,24 +19,45 @@ import (
 func GrantMLOpsPermissionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "grant-ml-ops-permissions <account-key-name> <ml-operational-address>",
-		Short: "Grant ML operations permissions from account key to ML operational key",
-		Long: `Grant all ML operations permissions from account key to ML operational key.
+		Short: "Grant ML operations permissions and a fee allowance from account key to ML operational key",
+		Long: `Grant all ML operations permissions AND a fee allowance from account key to ML operational key.
 
-This allows the ML operational key to perform automated ML operations on behalf of the account key.
-The account key retains full control and can revoke these permissions at any time.
+This single transaction does TWO things:
+
+  1. Grants authz permissions for all ML ops message types — the warm key can
+     submit start/finish inference, validations, PoC commits, BLS DKG messages,
+     reward claims, etc. on behalf of the cold account.
+
+  2. Grants a feegrant fee allowance from cold to warm — when the warm key
+     signs a transaction, it sets the cold account as the fee_granter so fees
+     are deducted from the cold account's balance. The warm key never needs
+     to hold tokens.
+
+The default fee allowance is 10 GNK, which covers many months of routine DAPI
+operation. When depleted, simply re-run this command to refresh both the authz
+grants and the fee allowance.
+
+The account key retains full control and can revoke either the permissions or
+the fee allowance at any time.
 
 Arguments:
   account-key-name         Name of the account key in keyring (cold wallet)
-  ml-operational-address   Bech32 address of the ML operational key (hot wallet)
+  ml-operational-address   Bech32 address of the ML operational key (warm wallet)
 
 Example:
   inferenced tx inference grant-ml-ops-permissions \
     gonka-account-key \
     gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm \
     --from gonka-account-key \
+    --gas auto --gas-adjustment 1.5 \
+    --gas-prices 10ngonka \
     --node http://node2.gonka.ai:8000/chain-rpc/
 
-Note: Chain ID will be auto-detected from the chain if not specified with --chain-id`,
+Note: Chain ID will be auto-detected from the chain if not specified with --chain-id.
+      Use --gas-prices 10ngonka (or higher) to set transaction fees.
+      This tx bundles ~20 authz grants plus a feegrant allowance, so it is
+      larger than typical — passing --gas auto --gas-adjustment 1.5 is the
+      easiest way to size it correctly.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
@@ -86,8 +107,15 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 
 type settlementFileJSON struct {
 	EscrowID   string                    `json:"escrow_id"`
+<<<<<<< HEAD
 	StateRoot  string                    `json:"state_root"`
 	Nonce      uint64                    `json:"nonce"`
+=======
+	Version    string                    `json:"version"`
+	StateRoot  string                    `json:"state_root"`
+	Nonce      uint64                    `json:"nonce"`
+	Fees       uint64                    `json:"fees"`
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	RestHash   string                    `json:"rest_hash"`
 	HostStats  []settlementHostStatsJSON `json:"host_stats"`
 	Signatures []slotSignatureJSON       `json:"signatures"`
@@ -107,10 +135,17 @@ type slotSignatureJSON struct {
 	Signature string `json:"signature"`
 }
 
+<<<<<<< HEAD
 func SettleSubnetEscrowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settle-subnet-escrow <settlement-file.json>",
 		Short: "Settle a subnet escrow using a settlement JSON file produced by subnetctl",
+=======
+func SettleDevshardEscrowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "settle-devshard-escrow <settlement-file.json>",
+		Short: "Settle a devshard escrow using a settlement JSON file produced by devshardctl",
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
@@ -127,6 +162,12 @@ func SettleSubnetEscrowCmd() *cobra.Command {
 			if err := json.Unmarshal(data, &sf); err != nil {
 				return fmt.Errorf("parse settlement JSON: %w", err)
 			}
+<<<<<<< HEAD
+=======
+			if sf.Version == "" {
+				return fmt.Errorf("settlement JSON missing version")
+			}
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
 			escrowID, err := strconv.ParseUint(sf.EscrowID, 10, 64)
 			if err != nil {
@@ -143,9 +184,15 @@ func SettleSubnetEscrowCmd() *cobra.Command {
 				return fmt.Errorf("decode rest_hash: %w", err)
 			}
 
+<<<<<<< HEAD
 			hostStats := make([]*types.SubnetSettlementHostStats, len(sf.HostStats))
 			for i, hs := range sf.HostStats {
 				hostStats[i] = &types.SubnetSettlementHostStats{
+=======
+			hostStats := make([]*types.DevshardSettlementHostStats, len(sf.HostStats))
+			for i, hs := range sf.HostStats {
+				hostStats[i] = &types.DevshardSettlementHostStats{
+>>>>>>> origin/testnet/latest-in-v0.2.12
 					SlotId:               hs.SlotID,
 					Missed:               hs.Missed,
 					Invalid:              hs.Invalid,
@@ -155,23 +202,41 @@ func SettleSubnetEscrowCmd() *cobra.Command {
 				}
 			}
 
+<<<<<<< HEAD
 			sigs := make([]*types.SubnetSlotSignature, len(sf.Signatures))
+=======
+			sigs := make([]*types.DevshardSlotSignature, len(sf.Signatures))
+>>>>>>> origin/testnet/latest-in-v0.2.12
 			for i, s := range sf.Signatures {
 				sigBytes, err := base64.StdEncoding.DecodeString(s.Signature)
 				if err != nil {
 					return fmt.Errorf("decode signature for slot %d: %w", s.SlotID, err)
 				}
+<<<<<<< HEAD
 				sigs[i] = &types.SubnetSlotSignature{
+=======
+				sigs[i] = &types.DevshardSlotSignature{
+>>>>>>> origin/testnet/latest-in-v0.2.12
 					SlotId:    s.SlotID,
 					Signature: sigBytes,
 				}
 			}
 
+<<<<<<< HEAD
 			msg := &types.MsgSettleSubnetEscrow{
 				Settler:    clientCtx.GetFromAddress().String(),
 				EscrowId:   escrowID,
 				StateRoot:  stateRoot,
 				Nonce:      sf.Nonce,
+=======
+			msg := &types.MsgSettleDevshardEscrow{
+				Settler:    clientCtx.GetFromAddress().String(),
+				EscrowId:   escrowID,
+				Version:    sf.Version,
+				StateRoot:  stateRoot,
+				Nonce:      sf.Nonce,
+				Fees:       sf.Fees,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 				RestHash:   restHash,
 				HostStats:  hostStats,
 				Signatures: sigs,

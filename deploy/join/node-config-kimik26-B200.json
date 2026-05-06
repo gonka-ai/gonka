@@ -1,0 +1,26 @@
+[
+  {
+    "id": "node1",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "moonshotai/Kimi-K2.6": {
+        "args": [
+          "--tensor-parallel-size", "4",
+          "--enable-expert-parallel",
+          "--trust-remote-code",
+          "--mm-encoder-tp-mode", "data",
+          "--tool-call-parser", "kimi_k2",
+          "--reasoning-parser", "kimi_k2",
+          "--attention-backend", "FLASHINFER_MLA",
+          "--disable-custom-all-reduce",
+          "--gpu-memory-utilization", "0.95",
+          "--max-num-seqs", "128",
+          "--max-model-len", "240000"
+        ]
+      }
+    }
+  }
+]

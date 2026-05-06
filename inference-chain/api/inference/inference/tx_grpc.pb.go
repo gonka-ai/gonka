@@ -29,7 +29,6 @@ const (
 	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
-	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
 	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
 	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
 	Msg_MLNodeWeightDistribution_FullMethodName         = "/inference.inference.Msg/MLNodeWeightDistribution"
@@ -37,17 +36,12 @@ const (
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
 	Msg_DeleteGovernanceModel_FullMethodName            = "/inference.inference.Msg/DeleteGovernanceModel"
+<<<<<<< HEAD
 	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
 	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
-	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
-	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
-	Msg_SubmitTrainingKvRecord_FullMethodName           = "/inference.inference.Msg/SubmitTrainingKvRecord"
-	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
-	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
-	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
-	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
-	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
 	Msg_RegisterBridgeAddresses_FullMethodName          = "/inference.inference.Msg/RegisterBridgeAddresses"
 	Msg_RegisterLiquidityPool_FullMethodName            = "/inference.inference.Msg/RegisterLiquidityPool"
@@ -55,17 +49,24 @@ const (
 	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
 	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
 	Msg_RequestBridgeMint_FullMethodName                = "/inference.inference.Msg/RequestBridgeMint"
+	Msg_CancelBridgeOperation_FullMethodName            = "/inference.inference.Msg/CancelBridgeOperation"
+	Msg_GovernanceCancelBridgeOperation_FullMethodName  = "/inference.inference.Msg/GovernanceCancelBridgeOperation"
 	Msg_RegisterWrappedTokenContract_FullMethodName     = "/inference.inference.Msg/RegisterWrappedTokenContract"
 	Msg_MigrateAllWrappedTokens_FullMethodName          = "/inference.inference.Msg/MigrateAllWrappedTokens"
-	Msg_AddUserToTrainingAllowList_FullMethodName       = "/inference.inference.Msg/AddUserToTrainingAllowList"
-	Msg_RemoveUserFromTrainingAllowList_FullMethodName  = "/inference.inference.Msg/RemoveUserFromTrainingAllowList"
-	Msg_SetTrainingAllowList_FullMethodName             = "/inference.inference.Msg/SetTrainingAllowList"
 	Msg_AddParticipantsToAllowList_FullMethodName       = "/inference.inference.Msg/AddParticipantsToAllowList"
 	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
 	Msg_ApproveIbcTokenForTrading_FullMethodName        = "/inference.inference.Msg/ApproveIbcTokenForTrading"
 	Msg_RegisterIbcTokenMetadata_FullMethodName         = "/inference.inference.Msg/RegisterIbcTokenMetadata"
+<<<<<<< HEAD
 	Msg_CreateSubnetEscrow_FullMethodName               = "/inference.inference.Msg/CreateSubnetEscrow"
 	Msg_SettleSubnetEscrow_FullMethodName               = "/inference.inference.Msg/SettleSubnetEscrow"
+=======
+	Msg_CreateDevshardEscrow_FullMethodName             = "/inference.inference.Msg/CreateDevshardEscrow"
+	Msg_SettleDevshardEscrow_FullMethodName             = "/inference.inference.Msg/SettleDevshardEscrow"
+	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
+	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
+	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
+>>>>>>> origin/testnet/latest-in-v0.2.12
 )
 
 // MsgClient is the client API for Msg service.
@@ -84,7 +85,6 @@ type MsgClient interface {
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
-	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error)
 	// PoC v2 off-chain commit messages
@@ -94,17 +94,12 @@ type MsgClient interface {
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 	DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error)
+<<<<<<< HEAD
 	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwareDiff, opts ...grpc.CallOption) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error)
-	ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error)
-	AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error)
-	SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error)
-	JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error)
-	TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error)
-	SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error)
-	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
-	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
 	RegisterBridgeAddresses(ctx context.Context, in *MsgRegisterBridgeAddresses, opts ...grpc.CallOption) (*MsgRegisterBridgeAddressesResponse, error)
 	RegisterLiquidityPool(ctx context.Context, in *MsgRegisterLiquidityPool, opts ...grpc.CallOption) (*MsgRegisterLiquidityPoolResponse, error)
@@ -112,17 +107,24 @@ type MsgClient interface {
 	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeMint, opts ...grpc.CallOption) (*MsgRequestBridgeMintResponse, error)
+	CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error)
+	GovernanceCancelBridgeOperation(ctx context.Context, in *MsgGovernanceCancelBridgeOperation, opts ...grpc.CallOption) (*MsgGovernanceCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error)
 	MigrateAllWrappedTokens(ctx context.Context, in *MsgMigrateAllWrappedTokens, opts ...grpc.CallOption) (*MsgMigrateAllWrappedTokensResponse, error)
-	AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error)
-	RemoveUserFromTrainingAllowList(ctx context.Context, in *MsgRemoveUserFromTrainingAllowList, opts ...grpc.CallOption) (*MsgRemoveUserFromTrainingAllowListResponse, error)
-	SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(ctx context.Context, in *MsgAddParticipantsToAllowList, opts ...grpc.CallOption) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	ApproveIbcTokenForTrading(ctx context.Context, in *MsgApproveIbcTokenForTrading, opts ...grpc.CallOption) (*MsgApproveIbcTokenForTradingResponse, error)
 	RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegisterIbcTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterIbcTokenMetadataResponse, error)
+<<<<<<< HEAD
 	CreateSubnetEscrow(ctx context.Context, in *MsgCreateSubnetEscrow, opts ...grpc.CallOption) (*MsgCreateSubnetEscrowResponse, error)
 	SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetEscrow, opts ...grpc.CallOption) (*MsgSettleSubnetEscrowResponse, error)
+=======
+	CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error)
+	SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error)
+	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
+	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
+	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 type msgClient struct {
@@ -223,15 +225,6 @@ func (c *msgClient) SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, o
 	return out, nil
 }
 
-func (c *msgClient) SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error) {
-	out := new(MsgSubmitPocValidationResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitPocValidation_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *msgClient) SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error) {
 	out := new(MsgSubmitPocValidationsV2Response)
 	err := c.cc.Invoke(ctx, Msg_SubmitPocValidationsV2_FullMethodName, in, out, opts...)
@@ -289,6 +282,7 @@ func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opt
 func (c *msgClient) DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error) {
 	out := new(MsgDeleteGovernanceModelResponse)
 	err := c.cc.Invoke(ctx, Msg_DeleteGovernanceModel_FullMethodName, in, out, opts...)
+<<<<<<< HEAD
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +292,8 @@ func (c *msgClient) DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGove
 func (c *msgClient) CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error) {
 	out := new(MsgCreateTrainingTaskResponse)
 	err := c.cc.Invoke(ctx, Msg_CreateTrainingTask_FullMethodName, in, out, opts...)
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
@@ -316,78 +312,6 @@ func (c *msgClient) SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwar
 func (c *msgClient) CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error) {
 	out := new(MsgCreatePartialUpgradeResponse)
 	err := c.cc.Invoke(ctx, Msg_CreatePartialUpgrade_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
-	out := new(MsgClaimTrainingTaskForAssignmentResponse)
-	err := c.cc.Invoke(ctx, Msg_ClaimTrainingTaskForAssignment_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error) {
-	out := new(MsgAssignTrainingTaskResponse)
-	err := c.cc.Invoke(ctx, Msg_AssignTrainingTask_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error) {
-	out := new(MsgSubmitTrainingKvRecordResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitTrainingKvRecord_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error) {
-	out := new(MsgJoinTrainingResponse)
-	err := c.cc.Invoke(ctx, Msg_JoinTraining_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error) {
-	out := new(MsgTrainingHeartbeatResponse)
-	err := c.cc.Invoke(ctx, Msg_TrainingHeartbeat_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error) {
-	out := new(MsgSetBarrierResponse)
-	err := c.cc.Invoke(ctx, Msg_SetBarrier_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error) {
-	out := new(MsgJoinTrainingStatusResponse)
-	err := c.cc.Invoke(ctx, Msg_JoinTrainingStatus_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error) {
-	out := new(MsgCreateDummyTrainingTaskResponse)
-	err := c.cc.Invoke(ctx, Msg_CreateDummyTrainingTask_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -457,6 +381,24 @@ func (c *msgClient) RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeM
 	return out, nil
 }
 
+func (c *msgClient) CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error) {
+	out := new(MsgCancelBridgeOperationResponse)
+	err := c.cc.Invoke(ctx, Msg_CancelBridgeOperation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) GovernanceCancelBridgeOperation(ctx context.Context, in *MsgGovernanceCancelBridgeOperation, opts ...grpc.CallOption) (*MsgGovernanceCancelBridgeOperationResponse, error) {
+	out := new(MsgGovernanceCancelBridgeOperationResponse)
+	err := c.cc.Invoke(ctx, Msg_GovernanceCancelBridgeOperation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error) {
 	out := new(MsgRegisterWrappedTokenContractResponse)
 	err := c.cc.Invoke(ctx, Msg_RegisterWrappedTokenContract_FullMethodName, in, out, opts...)
@@ -469,33 +411,6 @@ func (c *msgClient) RegisterWrappedTokenContract(ctx context.Context, in *MsgReg
 func (c *msgClient) MigrateAllWrappedTokens(ctx context.Context, in *MsgMigrateAllWrappedTokens, opts ...grpc.CallOption) (*MsgMigrateAllWrappedTokensResponse, error) {
 	out := new(MsgMigrateAllWrappedTokensResponse)
 	err := c.cc.Invoke(ctx, Msg_MigrateAllWrappedTokens_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) AddUserToTrainingAllowList(ctx context.Context, in *MsgAddUserToTrainingAllowList, opts ...grpc.CallOption) (*MsgAddUserToTrainingAllowListResponse, error) {
-	out := new(MsgAddUserToTrainingAllowListResponse)
-	err := c.cc.Invoke(ctx, Msg_AddUserToTrainingAllowList_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) RemoveUserFromTrainingAllowList(ctx context.Context, in *MsgRemoveUserFromTrainingAllowList, opts ...grpc.CallOption) (*MsgRemoveUserFromTrainingAllowListResponse, error) {
-	out := new(MsgRemoveUserFromTrainingAllowListResponse)
-	err := c.cc.Invoke(ctx, Msg_RemoveUserFromTrainingAllowList_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) SetTrainingAllowList(ctx context.Context, in *MsgSetTrainingAllowList, opts ...grpc.CallOption) (*MsgSetTrainingAllowListResponse, error) {
-	out := new(MsgSetTrainingAllowListResponse)
-	err := c.cc.Invoke(ctx, Msg_SetTrainingAllowList_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -538,18 +453,57 @@ func (c *msgClient) RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegiste
 	return out, nil
 }
 
+<<<<<<< HEAD
 func (c *msgClient) CreateSubnetEscrow(ctx context.Context, in *MsgCreateSubnetEscrow, opts ...grpc.CallOption) (*MsgCreateSubnetEscrowResponse, error) {
 	out := new(MsgCreateSubnetEscrowResponse)
 	err := c.cc.Invoke(ctx, Msg_CreateSubnetEscrow_FullMethodName, in, out, opts...)
+=======
+func (c *msgClient) CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error) {
+	out := new(MsgCreateDevshardEscrowResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateDevshardEscrow_FullMethodName, in, out, opts...)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
+<<<<<<< HEAD
 func (c *msgClient) SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetEscrow, opts ...grpc.CallOption) (*MsgSettleSubnetEscrowResponse, error) {
 	out := new(MsgSettleSubnetEscrowResponse)
 	err := c.cc.Invoke(ctx, Msg_SettleSubnetEscrow_FullMethodName, in, out, opts...)
+=======
+func (c *msgClient) SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error) {
+	out := new(MsgSettleDevshardEscrowResponse)
+	err := c.cc.Invoke(ctx, Msg_SettleDevshardEscrow_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error) {
+	out := new(MsgSetPoCDelegationResponse)
+	err := c.cc.Invoke(ctx, Msg_SetPoCDelegation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error) {
+	out := new(MsgRefusePoCDelegationResponse)
+	err := c.cc.Invoke(ctx, Msg_RefusePoCDelegation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error) {
+	out := new(MsgDeclarePoCIntentResponse)
+	err := c.cc.Invoke(ctx, Msg_DeclarePoCIntent_FullMethodName, in, out, opts...)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +526,6 @@ type MsgServer interface {
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
-	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error)
 	// PoC v2 off-chain commit messages
@@ -582,17 +535,12 @@ type MsgServer interface {
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 	DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error)
+<<<<<<< HEAD
 	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error)
-	ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error)
-	AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error)
-	SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error)
-	JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error)
-	TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error)
-	SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error)
-	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
-	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
 	RegisterBridgeAddresses(context.Context, *MsgRegisterBridgeAddresses) (*MsgRegisterBridgeAddressesResponse, error)
 	RegisterLiquidityPool(context.Context, *MsgRegisterLiquidityPool) (*MsgRegisterLiquidityPoolResponse, error)
@@ -600,17 +548,24 @@ type MsgServer interface {
 	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error)
+	CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error)
+	GovernanceCancelBridgeOperation(context.Context, *MsgGovernanceCancelBridgeOperation) (*MsgGovernanceCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error)
 	MigrateAllWrappedTokens(context.Context, *MsgMigrateAllWrappedTokens) (*MsgMigrateAllWrappedTokensResponse, error)
-	AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error)
-	RemoveUserFromTrainingAllowList(context.Context, *MsgRemoveUserFromTrainingAllowList) (*MsgRemoveUserFromTrainingAllowListResponse, error)
-	SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error)
 	AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error)
 	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	ApproveIbcTokenForTrading(context.Context, *MsgApproveIbcTokenForTrading) (*MsgApproveIbcTokenForTradingResponse, error)
 	RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error)
+<<<<<<< HEAD
 	CreateSubnetEscrow(context.Context, *MsgCreateSubnetEscrow) (*MsgCreateSubnetEscrowResponse, error)
 	SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error)
+=======
+	CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error)
+	SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error)
+	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
+	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
+	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -648,9 +603,6 @@ func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*
 func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocBatch not implemented")
 }
-func (UnimplementedMsgServer) SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidation not implemented")
-}
 func (UnimplementedMsgServer) SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidationsV2 not implemented")
 }
@@ -671,39 +623,18 @@ func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) 
 }
 func (UnimplementedMsgServer) DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteGovernanceModel not implemented")
+<<<<<<< HEAD
 }
 func (UnimplementedMsgServer) CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainingTask not implemented")
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 func (UnimplementedMsgServer) SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitHardwareDiff not implemented")
 }
 func (UnimplementedMsgServer) CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreatePartialUpgrade not implemented")
-}
-func (UnimplementedMsgServer) ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ClaimTrainingTaskForAssignment not implemented")
-}
-func (UnimplementedMsgServer) AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AssignTrainingTask not implemented")
-}
-func (UnimplementedMsgServer) SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitTrainingKvRecord not implemented")
-}
-func (UnimplementedMsgServer) JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
-}
-func (UnimplementedMsgServer) TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TrainingHeartbeat not implemented")
-}
-func (UnimplementedMsgServer) SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
-}
-func (UnimplementedMsgServer) JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JoinTrainingStatus not implemented")
-}
-func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateDummyTrainingTask not implemented")
 }
 func (UnimplementedMsgServer) BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeExchange not implemented")
@@ -726,20 +657,17 @@ func (UnimplementedMsgServer) RequestBridgeWithdrawal(context.Context, *MsgReque
 func (UnimplementedMsgServer) RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeMint not implemented")
 }
+func (UnimplementedMsgServer) CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelBridgeOperation not implemented")
+}
+func (UnimplementedMsgServer) GovernanceCancelBridgeOperation(context.Context, *MsgGovernanceCancelBridgeOperation) (*MsgGovernanceCancelBridgeOperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GovernanceCancelBridgeOperation not implemented")
+}
 func (UnimplementedMsgServer) RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterWrappedTokenContract not implemented")
 }
 func (UnimplementedMsgServer) MigrateAllWrappedTokens(context.Context, *MsgMigrateAllWrappedTokens) (*MsgMigrateAllWrappedTokensResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MigrateAllWrappedTokens not implemented")
-}
-func (UnimplementedMsgServer) AddUserToTrainingAllowList(context.Context, *MsgAddUserToTrainingAllowList) (*MsgAddUserToTrainingAllowListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AddUserToTrainingAllowList not implemented")
-}
-func (UnimplementedMsgServer) RemoveUserFromTrainingAllowList(context.Context, *MsgRemoveUserFromTrainingAllowList) (*MsgRemoveUserFromTrainingAllowListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RemoveUserFromTrainingAllowList not implemented")
-}
-func (UnimplementedMsgServer) SetTrainingAllowList(context.Context, *MsgSetTrainingAllowList) (*MsgSetTrainingAllowListResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingAllowList not implemented")
 }
 func (UnimplementedMsgServer) AddParticipantsToAllowList(context.Context, *MsgAddParticipantsToAllowList) (*MsgAddParticipantsToAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddParticipantsToAllowList not implemented")
@@ -753,11 +681,28 @@ func (UnimplementedMsgServer) ApproveIbcTokenForTrading(context.Context, *MsgApp
 func (UnimplementedMsgServer) RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterIbcTokenMetadata not implemented")
 }
+<<<<<<< HEAD
 func (UnimplementedMsgServer) CreateSubnetEscrow(context.Context, *MsgCreateSubnetEscrow) (*MsgCreateSubnetEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateSubnetEscrow not implemented")
 }
 func (UnimplementedMsgServer) SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleSubnetEscrow not implemented")
+=======
+func (UnimplementedMsgServer) CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateDevshardEscrow not implemented")
+}
+func (UnimplementedMsgServer) SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleDevshardEscrow not implemented")
+}
+func (UnimplementedMsgServer) SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetPoCDelegation not implemented")
+}
+func (UnimplementedMsgServer) RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefusePoCDelegation not implemented")
+}
+func (UnimplementedMsgServer) DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeclarePoCIntent not implemented")
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -952,24 +897,6 @@ func _Msg_SubmitPocBatch_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_SubmitPocValidation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitPocValidation)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SubmitPocValidation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SubmitPocValidation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitPocValidation(ctx, req.(*MsgSubmitPocValidation))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Msg_SubmitPocValidationsV2_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSubmitPocValidationsV2)
 	if err := dec(in); err != nil {
@@ -1080,6 +1007,7 @@ func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(i
 
 func _Msg_DeleteGovernanceModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgDeleteGovernanceModel)
+<<<<<<< HEAD
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1098,18 +1026,20 @@ func _Msg_DeleteGovernanceModel_Handler(srv interface{}, ctx context.Context, de
 
 func _Msg_CreateTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgCreateTrainingTask)
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MsgServer).CreateTrainingTask(ctx, in)
+		return srv.(MsgServer).DeleteGovernanceModel(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Msg_CreateTrainingTask_FullMethodName,
+		FullMethod: Msg_DeleteGovernanceModel_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).CreateTrainingTask(ctx, req.(*MsgCreateTrainingTask))
+		return srv.(MsgServer).DeleteGovernanceModel(ctx, req.(*MsgDeleteGovernanceModel))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1146,150 +1076,6 @@ func _Msg_CreatePartialUpgrade_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).CreatePartialUpgrade(ctx, req.(*MsgCreatePartialUpgrade))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_ClaimTrainingTaskForAssignment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgClaimTrainingTaskForAssignment)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_ClaimTrainingTaskForAssignment_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, req.(*MsgClaimTrainingTaskForAssignment))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_AssignTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgAssignTrainingTask)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).AssignTrainingTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_AssignTrainingTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).AssignTrainingTask(ctx, req.(*MsgAssignTrainingTask))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_SubmitTrainingKvRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitTrainingKvRecord)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SubmitTrainingKvRecord(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SubmitTrainingKvRecord_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitTrainingKvRecord(ctx, req.(*MsgSubmitTrainingKvRecord))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_JoinTraining_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgJoinTraining)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).JoinTraining(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_JoinTraining_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).JoinTraining(ctx, req.(*MsgJoinTraining))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_TrainingHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgTrainingHeartbeat)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).TrainingHeartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_TrainingHeartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).TrainingHeartbeat(ctx, req.(*MsgTrainingHeartbeat))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_SetBarrier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSetBarrier)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SetBarrier(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SetBarrier_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SetBarrier(ctx, req.(*MsgSetBarrier))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_JoinTrainingStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgJoinTrainingStatus)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).JoinTrainingStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_JoinTrainingStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).JoinTrainingStatus(ctx, req.(*MsgJoinTrainingStatus))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_CreateDummyTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgCreateDummyTrainingTask)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).CreateDummyTrainingTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_CreateDummyTrainingTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).CreateDummyTrainingTask(ctx, req.(*MsgCreateDummyTrainingTask))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1420,6 +1206,42 @@ func _Msg_RequestBridgeMint_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CancelBridgeOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCancelBridgeOperation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CancelBridgeOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CancelBridgeOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CancelBridgeOperation(ctx, req.(*MsgCancelBridgeOperation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_GovernanceCancelBridgeOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgGovernanceCancelBridgeOperation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).GovernanceCancelBridgeOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_GovernanceCancelBridgeOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).GovernanceCancelBridgeOperation(ctx, req.(*MsgGovernanceCancelBridgeOperation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_RegisterWrappedTokenContract_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgRegisterWrappedTokenContract)
 	if err := dec(in); err != nil {
@@ -1452,60 +1274,6 @@ func _Msg_MigrateAllWrappedTokens_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).MigrateAllWrappedTokens(ctx, req.(*MsgMigrateAllWrappedTokens))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_AddUserToTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgAddUserToTrainingAllowList)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).AddUserToTrainingAllowList(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_AddUserToTrainingAllowList_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).AddUserToTrainingAllowList(ctx, req.(*MsgAddUserToTrainingAllowList))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_RemoveUserFromTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgRemoveUserFromTrainingAllowList)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).RemoveUserFromTrainingAllowList(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_RemoveUserFromTrainingAllowList_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).RemoveUserFromTrainingAllowList(ctx, req.(*MsgRemoveUserFromTrainingAllowList))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_SetTrainingAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSetTrainingAllowList)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SetTrainingAllowList(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SetTrainingAllowList_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SetTrainingAllowList(ctx, req.(*MsgSetTrainingAllowList))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1582,12 +1350,18 @@ func _Msg_RegisterIbcTokenMetadata_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+<<<<<<< HEAD
 func _Msg_CreateSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgCreateSubnetEscrow)
+=======
+func _Msg_CreateDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateDevshardEscrow)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
+<<<<<<< HEAD
 		return srv.(MsgServer).CreateSubnetEscrow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -1596,16 +1370,32 @@ func _Msg_CreateSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).CreateSubnetEscrow(ctx, req.(*MsgCreateSubnetEscrow))
+=======
+		return srv.(MsgServer).CreateDevshardEscrow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateDevshardEscrow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateDevshardEscrow(ctx, req.(*MsgCreateDevshardEscrow))
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
+<<<<<<< HEAD
 func _Msg_SettleSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSettleSubnetEscrow)
+=======
+func _Msg_SettleDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSettleDevshardEscrow)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
+<<<<<<< HEAD
 		return srv.(MsgServer).SettleSubnetEscrow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -1614,6 +1404,70 @@ func _Msg_SettleSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SettleSubnetEscrow(ctx, req.(*MsgSettleSubnetEscrow))
+=======
+		return srv.(MsgServer).SettleDevshardEscrow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SettleDevshardEscrow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SettleDevshardEscrow(ctx, req.(*MsgSettleDevshardEscrow))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetPoCDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetPoCDelegation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetPoCDelegation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetPoCDelegation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetPoCDelegation(ctx, req.(*MsgSetPoCDelegation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RefusePoCDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRefusePoCDelegation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RefusePoCDelegation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RefusePoCDelegation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RefusePoCDelegation(ctx, req.(*MsgRefusePoCDelegation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_DeclarePoCIntent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgDeclarePoCIntent)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).DeclarePoCIntent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_DeclarePoCIntent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).DeclarePoCIntent(ctx, req.(*MsgDeclarePoCIntent))
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1666,10 +1520,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_SubmitPocBatch_Handler,
 		},
 		{
-			MethodName: "SubmitPocValidation",
-			Handler:    _Msg_SubmitPocValidation_Handler,
-		},
-		{
 			MethodName: "SubmitPocValidationsV2",
 			Handler:    _Msg_SubmitPocValidationsV2_Handler,
 		},
@@ -1696,10 +1546,13 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteGovernanceModel",
 			Handler:    _Msg_DeleteGovernanceModel_Handler,
+<<<<<<< HEAD
 		},
 		{
 			MethodName: "CreateTrainingTask",
 			Handler:    _Msg_CreateTrainingTask_Handler,
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		},
 		{
 			MethodName: "SubmitHardwareDiff",
@@ -1708,38 +1561,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreatePartialUpgrade",
 			Handler:    _Msg_CreatePartialUpgrade_Handler,
-		},
-		{
-			MethodName: "ClaimTrainingTaskForAssignment",
-			Handler:    _Msg_ClaimTrainingTaskForAssignment_Handler,
-		},
-		{
-			MethodName: "AssignTrainingTask",
-			Handler:    _Msg_AssignTrainingTask_Handler,
-		},
-		{
-			MethodName: "SubmitTrainingKvRecord",
-			Handler:    _Msg_SubmitTrainingKvRecord_Handler,
-		},
-		{
-			MethodName: "JoinTraining",
-			Handler:    _Msg_JoinTraining_Handler,
-		},
-		{
-			MethodName: "TrainingHeartbeat",
-			Handler:    _Msg_TrainingHeartbeat_Handler,
-		},
-		{
-			MethodName: "SetBarrier",
-			Handler:    _Msg_SetBarrier_Handler,
-		},
-		{
-			MethodName: "JoinTrainingStatus",
-			Handler:    _Msg_JoinTrainingStatus_Handler,
-		},
-		{
-			MethodName: "CreateDummyTrainingTask",
-			Handler:    _Msg_CreateDummyTrainingTask_Handler,
 		},
 		{
 			MethodName: "BridgeExchange",
@@ -1770,24 +1591,20 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_RequestBridgeMint_Handler,
 		},
 		{
+			MethodName: "CancelBridgeOperation",
+			Handler:    _Msg_CancelBridgeOperation_Handler,
+		},
+		{
+			MethodName: "GovernanceCancelBridgeOperation",
+			Handler:    _Msg_GovernanceCancelBridgeOperation_Handler,
+		},
+		{
 			MethodName: "RegisterWrappedTokenContract",
 			Handler:    _Msg_RegisterWrappedTokenContract_Handler,
 		},
 		{
 			MethodName: "MigrateAllWrappedTokens",
 			Handler:    _Msg_MigrateAllWrappedTokens_Handler,
-		},
-		{
-			MethodName: "AddUserToTrainingAllowList",
-			Handler:    _Msg_AddUserToTrainingAllowList_Handler,
-		},
-		{
-			MethodName: "RemoveUserFromTrainingAllowList",
-			Handler:    _Msg_RemoveUserFromTrainingAllowList_Handler,
-		},
-		{
-			MethodName: "SetTrainingAllowList",
-			Handler:    _Msg_SetTrainingAllowList_Handler,
 		},
 		{
 			MethodName: "AddParticipantsToAllowList",
@@ -1806,12 +1623,33 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_RegisterIbcTokenMetadata_Handler,
 		},
 		{
+<<<<<<< HEAD
 			MethodName: "CreateSubnetEscrow",
 			Handler:    _Msg_CreateSubnetEscrow_Handler,
 		},
 		{
 			MethodName: "SettleSubnetEscrow",
 			Handler:    _Msg_SettleSubnetEscrow_Handler,
+=======
+			MethodName: "CreateDevshardEscrow",
+			Handler:    _Msg_CreateDevshardEscrow_Handler,
+		},
+		{
+			MethodName: "SettleDevshardEscrow",
+			Handler:    _Msg_SettleDevshardEscrow_Handler,
+		},
+		{
+			MethodName: "SetPoCDelegation",
+			Handler:    _Msg_SetPoCDelegation_Handler,
+		},
+		{
+			MethodName: "RefusePoCDelegation",
+			Handler:    _Msg_RefusePoCDelegation_Handler,
+		},
+		{
+			MethodName: "DeclarePoCIntent",
+			Handler:    _Msg_DeclarePoCIntent_Handler,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

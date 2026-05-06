@@ -32,7 +32,11 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	// Create epoch BLS data with participants
 	epochBLSData := types.EpochBLSData{
 		EpochId:                   epochID,
+<<<<<<< HEAD
 		ITotalSlots:               100,
+=======
+		ITotalSlots:               3,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		TSlotsDegree:              1,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
 		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100, // Future deadline
@@ -42,21 +46,21 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 				Secp256K1PublicKey: []byte("pubkey1"),
 				PercentageWeight:   math.LegacyNewDec(33),
 				SlotStartIndex:     0,
-				SlotEndIndex:       32,
+				SlotEndIndex:       0,
 			},
 			{
 				Address:            participant1Addr,
 				Secp256K1PublicKey: []byte("pubkey2"),
 				PercentageWeight:   math.LegacyNewDec(33),
-				SlotStartIndex:     33,
-				SlotEndIndex:       65,
+				SlotStartIndex:     1,
+				SlotEndIndex:       1,
 			},
 			{
 				Address:            participant2Addr,
 				Secp256K1PublicKey: []byte("pubkey3"),
 				PercentageWeight:   math.LegacyNewDec(34),
-				SlotStartIndex:     66,
-				SlotEndIndex:       99,
+				SlotStartIndex:     2,
+				SlotEndIndex:       2,
 			},
 		},
 		DealerParts: []*types.DealerPartStorage{
@@ -284,7 +288,93 @@ func TestSubmitDealerPart_WrongSharesLength(t *testing.T) {
 	assert.Contains(t, err.Error(), "expected encrypted shares for 2 participants, got 1")
 }
 
+<<<<<<< HEAD
 func TestSubmitDealerPart_WrongCommitmentsLength(t *testing.T) {
+=======
+func TestSubmitDealerPart_InvalidEncryptedSharesShape(t *testing.T) {
+>>>>>>> origin/testnet/latest-in-v0.2.12
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(1)
+	dealerAddr := "dealer1"
+
+	epochBLSData := types.EpochBLSData{
+		EpochId:                   epochID,
+<<<<<<< HEAD
+		ITotalSlots:               100,
+		TSlotsDegree:              2, // Expect exactly 3 commitments
+=======
+		ITotalSlots:               2,
+		TSlotsDegree:              1,
+>>>>>>> origin/testnet/latest-in-v0.2.12
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		Participants: []types.BLSParticipantInfo{
+			{
+				Address:            dealerAddr,
+				Secp256K1PublicKey: []byte("pubkey1"),
+				PercentageWeight:   math.LegacyNewDec(50),
+				SlotStartIndex:     0,
+<<<<<<< HEAD
+				SlotEndIndex:       49,
+=======
+				SlotEndIndex:       0,
+>>>>>>> origin/testnet/latest-in-v0.2.12
+			},
+			{
+				Address:            "participant2",
+				Secp256K1PublicKey: []byte("pubkey2"),
+				PercentageWeight:   math.LegacyNewDec(50),
+<<<<<<< HEAD
+				SlotStartIndex:     50,
+				SlotEndIndex:       99,
+=======
+				SlotStartIndex:     1,
+				SlotEndIndex:       1,
+>>>>>>> origin/testnet/latest-in-v0.2.12
+			},
+		},
+		DealerParts: []*types.DealerPartStorage{
+			{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+			{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+		},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	msg := &types.MsgSubmitDealerPart{
+		Creator: dealerAddr,
+		EpochId: epochID,
+		Commitments: [][]byte{
+			[]byte("commitment1"),
+<<<<<<< HEAD
+			[]byte("commitment2"), // Too few; expected 3
+		},
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{[]byte("share1")}},
+=======
+			[]byte("commitment2"),
+		},
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{[]byte("share1"), []byte("extra-share")}}, // expected 1, got 2
+>>>>>>> origin/testnet/latest-in-v0.2.12
+			{EncryptedShares: [][]byte{[]byte("share2")}},
+		},
+	}
+
+	_, err := ms.SubmitDealerPart(goCtx, msg)
+	require.Error(t, err)
+<<<<<<< HEAD
+	assert.Contains(t, err.Error(), "expected 3 commitments")
+}
+
+func TestSubmitDealerPart_EventEmission(t *testing.T) {
+=======
+	assert.Contains(t, err.Error(), "invalid encrypted shares for participant index 0")
+}
+
+func TestSubmitDealerPart_WrongCommitmentsLength(t *testing.T) {
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -294,6 +384,8 @@ func TestSubmitDealerPart_WrongCommitmentsLength(t *testing.T) {
 	epochBLSData := types.EpochBLSData{
 		EpochId:                   epochID,
 		ITotalSlots:               100,
+<<<<<<< HEAD
+=======
 		TSlotsDegree:              2, // Expect exactly 3 commitments
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
 		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
@@ -347,7 +439,8 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 
 	epochBLSData := types.EpochBLSData{
 		EpochId:                   epochID,
-		ITotalSlots:               100,
+		ITotalSlots:               1,
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		TSlotsDegree:              1,
 		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
 		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
@@ -357,7 +450,7 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 				Secp256K1PublicKey: []byte("pubkey1"),
 				PercentageWeight:   math.LegacyNewDec(100),
 				SlotStartIndex:     0,
-				SlotEndIndex:       99,
+				SlotEndIndex:       0,
 			},
 		},
 		DealerParts: []*types.DealerPartStorage{

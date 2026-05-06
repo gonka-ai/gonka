@@ -19,7 +19,11 @@ class PromptHashingTests {
         println("KOTLIN_UNIT_PROMPT_HASH=$hash")
 
         // NOTE: keep this hash in sync with decentralized-api/internal/server/public/post_chat_handler_test.go
+<<<<<<< HEAD
         val expectedHash = "4d6342776b9f73058ff9999eb953d795cd5158293d182f87f19ba5fef7706f36"
+=======
+        val expectedHash = "c48e1cf4b71fc2a6620d28c61a4bab660a5c4ead680c27528a41ef2550645de4"
+>>>>>>> origin/testnet/latest-in-v0.2.12
         assertThat(hash).isEqualTo(expectedHash)
     }
 
@@ -36,6 +40,10 @@ class PromptHashingTests {
         assertThat(modifiedMap["max_completion_tokens"]).isEqualTo(5000.0)
         assertThat(modifiedMap["skip_special_tokens"]).isEqualTo(false)
         assertThat(modifiedMap["seed"]).isEqualTo(7.0)
+<<<<<<< HEAD
+=======
+        assertThat(modifiedMap["logprobs_mode"]).isEqualTo("processed_logprobs")
+>>>>>>> origin/testnet/latest-in-v0.2.12
         @Suppress("UNCHECKED_CAST")
         val streamOptions = modifiedMap["stream_options"] as Map<String, Any?>
         assertThat(streamOptions["include_usage"]).isEqualTo(true)

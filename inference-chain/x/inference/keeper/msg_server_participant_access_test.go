@@ -52,6 +52,7 @@ func TestParticipantAccess_SubmitPocBatch_Deprecated(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, types.ErrDeprecated)
 }
+<<<<<<< HEAD
 
 // TestParticipantAccess_SubmitPocValidation_Deprecated verifies V1 PoC validation submission is deprecated when V2 is enabled
 func TestParticipantAccess_SubmitPocValidation_Deprecated(t *testing.T) {
@@ -80,3 +81,5 @@ func TestParticipantAccess_SubmitPocValidation_Deprecated(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, types.ErrDeprecated)
 }
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12

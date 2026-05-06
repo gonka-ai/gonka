@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -29,48 +30,68 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 	blockTime := sdkCtx.BlockTime()
 
 	authzKeeper := k.AuthzKeeper
-	authReq := &authztypes.QueryGranterGrantsRequest{
-		Granter: req.GranterAddress,
-	}
-	grants, err := authzKeeper.GranterGrants(ctx, authReq)
-	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to get grants")
-	}
-
 	grantees := []*types.Grantee{}
-	for _, grant := range grants.Grants {
-		if grant.Expiration != nil && grant.Expiration.Before(blockTime) {
-			continue
+	nextKey := []byte(nil)
+	for {
+		authReq := &authztypes.QueryGranterGrantsRequest{
+			Granter: req.GranterAddress,
+			Pagination: &query.PageRequest{
+				Key: nextKey,
+			},
+		}
+		grants, err := authzKeeper.GranterGrants(ctx, authReq)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "failed to get grants")
 		}
 
-		authorization := grant.Authorization.GetCachedValue()
+		for _, grant := range grants.Grants {
+			if grant.Expiration != nil && grant.Expiration.Before(blockTime) {
+				continue
+			}
 
+<<<<<<< HEAD
 		if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
 			if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(req.MessageTypeUrl, "/") {
 				granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
 				if err != nil {
 					k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)
 					continue
-				}
+=======
+			authorization := grant.Authorization.GetCachedValue()
 
-				account := k.AccountKeeper.GetAccount(sdkCtx, granteeAddr)
-				if account == nil {
-					k.LogError("account not found", types.Participants, "address", grant.Grantee)
-					continue
-				}
+			if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
+				if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(req.MessageTypeUrl, "/") {
+					granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
+					if err != nil {
+						k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)
+						continue
+					}
 
-				pubKey := account.GetPubKey()
-				pubKeyStr := ""
-				if pubKey != nil {
-					pubKeyStr = base64.StdEncoding.EncodeToString(pubKey.Bytes())
-				}
+					account := k.AccountKeeper.GetAccount(sdkCtx, granteeAddr)
+					if account == nil {
+						k.LogError("account not found", types.Participants, "address", grant.Grantee)
+						continue
+					}
 
-				grantees = append(grantees, &types.Grantee{
-					Address: grant.Grantee,
-					PubKey:  pubKeyStr,
-				})
+					pubKey := account.GetPubKey()
+					pubKeyStr := ""
+					if pubKey != nil {
+						pubKeyStr = base64.StdEncoding.EncodeToString(pubKey.Bytes())
+					}
+
+					grantees = append(grantees, &types.Grantee{
+						Address: grant.Grantee,
+						PubKey:  pubKeyStr,
+					})
+>>>>>>> origin/testnet/latest-in-v0.2.12
+				}
 			}
 		}
+
+		if grants.Pagination == nil || len(grants.Pagination.NextKey) == 0 {
+			break
+		}
+		nextKey = grants.Pagination.NextKey
 	}
 
 	k.LogInfo("GranteesByMessageType query called", types.Participants,

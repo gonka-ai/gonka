@@ -58,17 +58,15 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy), msg), nil
 	}
 
-	requestor, found := k.GetParticipant(ctx, msg.RequestedBy)
-	if !found {
-		k.LogError("FinishInference: requestor not found", types.Inferences, "requested_by", msg.RequestedBy)
-		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy), msg), nil
-	}
-
 	transferAgent, found := k.GetParticipant(ctx, msg.TransferredBy)
 	if !found {
 		k.LogError("FinishInference: transfer agent not found", types.Inferences, "transferred_by", msg.TransferredBy)
 		return failedFinish(ctx, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy), msg), nil
 	}
+<<<<<<< HEAD
+=======
+	devAddress := msg.RequestedBy
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 
@@ -104,7 +102,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		}
 		k.LogDebug("FinishInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
 	} else {
+<<<<<<< HEAD
 		err := k.verifyFinishKeys(ctx, msg, &transferAgent, &requestor)
+=======
+		err := k.verifyFinishKeys(ctx, msg, transferAgent.Address, devAddress)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		if err != nil {
 			k.LogError("FinishInference: verifyFinishKeys failed", types.Inferences, "error", err)
 			return failedFinish(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -139,11 +141,26 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return failedFinish(ctx, err, msg), nil
 	}
 
+<<<<<<< HEAD
 	finalInference, err := k.processInferencePayments(ctx, inference, payments, true, &executor)
+=======
+	// FinishInference returns nil error to the SDK regardless of internal failures.
+	// This is intentional: returning an error would revert the entire transaction,
+	// but the caller has already paid gas and expects an ErrorMessage response.
+	// CacheContext ensures that if ANY mutation below fails, ALL mutations roll back,
+	// preventing partial state (e.g., escrow moved but inference not updated,
+	// or participant stats incremented but inference not marked completed).
+	cacheCtx, writeFn := ctx.CacheContext()
+
+	finalInference, err := k.processInferencePayments(cacheCtx, inference, payments, true, &executor)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
-		return failedFinish(ctx, err, msg), nil
+		k.LogError("FinishInference: payment processing failed", types.Inferences,
+			"inferenceId", msg.InferenceId, "error", err)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrIllegalState, "payment processing failed"), msg), nil
 	}
 	if finalInference.IsCompleted() {
+<<<<<<< HEAD
 		k.handleInferenceCompleted(ctx, finalInference, &executor)
 	}
 	if shouldPersistParticipant(finalInference, payments, &executor) {
@@ -155,6 +172,24 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if err != nil {
 		return failedFinish(ctx, err, msg), nil
 	}
+=======
+		k.handleInferenceCompleted(cacheCtx, finalInference, &executor)
+	}
+	if shouldPersistParticipant(finalInference, payments, &executor) {
+		if err := k.SetParticipant(cacheCtx, executor); err != nil {
+			return failedFinish(ctx, err, msg), nil
+		}
+	}
+	err = k.SetInference(cacheCtx, *finalInference)
+	if err != nil {
+		k.LogError("FinishInference: SetInference failed", types.Inferences,
+			"inferenceId", msg.InferenceId, "error", err)
+		return failedFinish(ctx, sdkerrors.Wrap(types.ErrIllegalState, "failed to persist inference"), msg), nil
+	}
+
+	// All mutations succeeded -- commit to parent store.
+	writeFn()
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
 	return &types.MsgFinishInferenceResponse{InferenceIndex: msg.InferenceId}, nil
 }
@@ -169,7 +204,11 @@ func failedFinish(ctx sdk.Context, err error, msg *types.MsgFinishInference) *ty
 	}
 }
 
+<<<<<<< HEAD
 func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant) error {
+=======
+func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInference, taAddress string, devAddress string) error {
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	// Hash-based signature verification (post-upgrade flow)
 	// Dev signs: original_prompt_hash + timestamp + ta_address
 	// TA signs: prompt_hash + timestamp + ta_address + executor_address
@@ -183,14 +222,18 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 
 	// Verify dev signature (original_prompt_hash)
 	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-		DevSignature: msg.InferenceId, Dev: requestor,
+		DevSignature: msg.InferenceId, Dev: devAddress,
 	}, k); err != nil {
 		k.LogError("FinishInference: dev signature failed", types.Inferences, "error", err)
 		return err
 	}
 
 	// Verify TA signature (prompt_hash)
+<<<<<<< HEAD
 	if err := k.verifyTASignature(ctx, msg, taComponents, transferAgent); err != nil {
+=======
+	if err := k.verifyTASignature(ctx, msg, taComponents, taAddress); err != nil {
+>>>>>>> origin/testnet/latest-in-v0.2.12
 		return err
 	}
 
@@ -199,9 +242,9 @@ func (k msgServer) verifyFinishKeys(ctx sdk.Context, msg *types.MsgFinishInferen
 
 // verifyTASignature verifies TA signature using prompt_hash.
 // Includes upgrade-epoch fallback for inferences started before hash-based signing.
-func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInference, taComponents calculations.SignatureComponents, transferAgent *types.Participant) error {
+func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInference, taComponents calculations.SignatureComponents, taAddress string) error {
 	err := calculations.VerifyKeys(ctx, taComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
+		TransferSignature: msg.TransferSignature, TransferAgent: taAddress,
 	}, k)
 	if err == nil {
 		return nil
@@ -216,7 +259,7 @@ func (k msgServer) verifyTASignature(ctx sdk.Context, msg *types.MsgFinishInfere
 		ExecutorAddress: msg.ExecutedBy,
 	}
 	if fallbackErr := calculations.VerifyKeys(ctx, directComponents, calculations.SignatureData{
-		TransferSignature: msg.TransferSignature, TransferAgent: transferAgent,
+		TransferSignature: msg.TransferSignature, TransferAgent: taAddress,
 	}, k); fallbackErr != nil {
 		k.LogError("FinishInference: TA signature failed", types.Inferences, "promptHashErr", err, "fallbackErr", fallbackErr)
 		return err

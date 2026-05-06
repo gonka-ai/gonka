@@ -29,12 +29,15 @@ var permissionCheckers = map[Permission]permissionChecker{
 	PreviousActiveParticipantPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkActiveParticipantPermission(ctx, signer, 1)
 	},
+<<<<<<< HEAD
 	TrainingExecPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkTrainingExecPermission(ctx, signer)
 	},
 	TrainingStartPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkTrainingStartPermission(ctx, signer)
 	},
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	CurrentActiveParticipantPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkCurrentActiveParticipantPermission(ctx, signer)
 	},
@@ -59,10 +62,13 @@ var permissionCheckers = map[Permission]permissionChecker{
 const (
 	// GovernancePermission allows only the module authority signer.
 	GovernancePermission Permission = "governance"
+<<<<<<< HEAD
 	// TrainingExecPermission allows users in the training-exec allow list.
 	TrainingExecPermission Permission = "training_execution"
 	// TrainingStartPermission allows users in the training-start allow list.
 	TrainingStartPermission Permission = "training_start"
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	// ParticipantPermission allows registered participants.
 	ParticipantPermission Permission = "participant"
 	// ActiveParticipantPermission allows participants active in the current epoch.
@@ -87,9 +93,12 @@ const (
 // this entire list as a source of truth for message permissions.
 var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgUpdateParams)(nil)):                    {GovernancePermission},
+<<<<<<< HEAD
 	reflect.TypeOf((*types.MsgSetTrainingAllowList)(nil)):            {GovernancePermission},
 	reflect.TypeOf((*types.MsgAddUserToTrainingAllowList)(nil)):      {GovernancePermission},
 	reflect.TypeOf((*types.MsgRemoveUserFromTrainingAllowList)(nil)): {GovernancePermission},
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	reflect.TypeOf((*types.MsgAddParticipantsToAllowList)(nil)):      {GovernancePermission},
 	reflect.TypeOf((*types.MsgRemoveParticipantsFromAllowList)(nil)): {GovernancePermission},
 	reflect.TypeOf((*types.MsgApproveBridgeTokenForTrading)(nil)):    {GovernancePermission},
@@ -104,8 +113,15 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgRegisterIbcTokenMetadata)(nil)):        {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterWrappedTokenContract)(nil)):    {GovernancePermission},
 
+<<<<<<< HEAD
 	reflect.TypeOf((*types.MsgBridgeExchange)(nil)):    {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgRequestBridgeMint)(nil)): {AccountPermission},
+=======
+	reflect.TypeOf((*types.MsgBridgeExchange)(nil)):                  {ActiveParticipantPermission, PreviousActiveParticipantPermission},
+	reflect.TypeOf((*types.MsgRequestBridgeMint)(nil)):               {AccountPermission},
+	reflect.TypeOf((*types.MsgCancelBridgeOperation)(nil)):           {AccountPermission},
+	reflect.TypeOf((*types.MsgGovernanceCancelBridgeOperation)(nil)): {GovernancePermission},
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
 	reflect.TypeOf((*types.MsgRequestBridgeWithdrawal)(nil)): {ContractPermission},
 
@@ -119,13 +135,17 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgClaimRewards)(nil)):                     {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitHardwareDiff)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitPocBatch)(nil)):                   {ParticipantPermission},
+<<<<<<< HEAD
 	reflect.TypeOf((*types.MsgSubmitPocValidation)(nil)):              {ParticipantPermission},
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	reflect.TypeOf((*types.MsgSubmitPocValidationsV2)(nil)):           {NoPermission},
 	reflect.TypeOf((*types.MsgPoCV2StoreCommit)(nil)):                 {NoPermission},
 	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {NoPermission},
 	reflect.TypeOf((*types.MsgSubmitSeed)(nil)):                       {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitUnitOfComputePriceProposal)(nil)): {ActiveParticipantPermission},
 
+<<<<<<< HEAD
 	reflect.TypeOf((*types.MsgSubmitTrainingKvRecord)(nil)):         {TrainingExecPermission},
 	reflect.TypeOf((*types.MsgJoinTraining)(nil)):                   {TrainingExecPermission},
 	reflect.TypeOf((*types.MsgJoinTrainingStatus)(nil)):             {TrainingExecPermission},
@@ -136,13 +156,24 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgCreateDummyTrainingTask)(nil)):        {TrainingStartPermission},
 	reflect.TypeOf((*types.MsgCreateTrainingTask)(nil)):             {TrainingStartPermission},
 
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	reflect.TypeOf((*types.MsgStartInference)(nil)): {ActiveParticipantPermission},
 	// Finish could happen after a new epoch has started
 	reflect.TypeOf((*types.MsgFinishInference)(nil)): {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgValidation)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 
+<<<<<<< HEAD
 	reflect.TypeOf((*types.MsgCreateSubnetEscrow)(nil)): {EscrowAllowListPermission},
 	reflect.TypeOf((*types.MsgSettleSubnetEscrow)(nil)): {EscrowAllowListPermission},
+=======
+	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)): {EscrowAllowListPermission},
+	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)): {EscrowAllowListPermission},
+
+	reflect.TypeOf((*types.MsgSetPoCDelegation)(nil)):    {ParticipantPermission},
+	reflect.TypeOf((*types.MsgRefusePoCDelegation)(nil)): {ParticipantPermission},
+	reflect.TypeOf((*types.MsgDeclarePoCIntent)(nil)):    {ParticipantPermission},
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 type HasSigners interface {
@@ -243,6 +274,7 @@ func (k msgServer) checkCurrentActiveParticipantPermission(ctx context.Context, 
 	return nil
 }
 
+<<<<<<< HEAD
 func (k msgServer) checkTrainingExecPermission(ctx context.Context, signer sdk.AccAddress) error {
 	allowed, err := k.TrainingExecAllowListSet.Has(ctx, signer)
 	if err != nil {
@@ -265,6 +297,8 @@ func (k msgServer) checkTrainingStartPermission(ctx context.Context, signer sdk.
 	return nil
 }
 
+=======
+>>>>>>> origin/testnet/latest-in-v0.2.12
 func (k msgServer) checkGovernancePermission(ctx context.Context, signer sdk.AccAddress) error {
 	if k.GetAuthority() != signer.String() {
 		return types.ErrInvalidSigner

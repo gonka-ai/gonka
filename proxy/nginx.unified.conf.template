@@ -9,21 +9,63 @@ http {
     ${LIMIT_REQ_ZONE_CHAIN_RPC}
     ${LIMIT_REQ_ZONE_CHAIN_API}
     ${LIMIT_REQ_ZONE_CHAIN_GRPC}
-    
-    # Custom Log Format with Timing
-    log_format detailed '$remote_addr - $remote_user [$time_local] '
+
+    # Concurrency Zones
+    ${LIMIT_CONN_ZONE_GLOBAL}
+    ${LIMIT_CONN_ZONE_GONKA_API}
+    ${LIMIT_CONN_ZONE_EXEMPT}
+    ${LIMIT_CONN_ZONE_CHAIN_RPC}
+    ${LIMIT_CONN_ZONE_CHAIN_API}
+    ${LIMIT_CONN_ZONE_CHAIN_GRPC}
+
+    # Whitelist Mapping
+    include /etc/nginx/conf.d/whitelist_ips.conf;
+
+    # Blacklist Mapping (Fail2Ban)
+    include /etc/nginx/conf.d/blacklist_ips.conf;
+
+    # Map Status Code to Symbol
+    map $status $log_status_symbol {
+        ~^[23]  "[+]";
+        503     "[X]";
+        default "[-]";
+    }
+
+    # Map ISO8601 time to RFC3339 (Z) format if UTC
+    map $time_iso8601 $time_rfc3339 {
+        "~^(?<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\+00:00$" "${datetime}Z";
+        default $time_iso8601;
+    }
+
+    # Custom Log Format with Timing and Whitelist Indicator
+    # Using tabs (\t) for better visual alignment
+    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$limit_zone_name]\t$log_status_symbol\t'
                         '"$request" $status $body_bytes_sent '
                         '"$http_referer" "$http_user_agent" '
                         'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time"';
-    
+
+    # JSON Log Format (Machine Readable for Sidecar)
+    # escape=json ensures characters like quotes are properly escaped, preventing parser injection
+    log_format json_combined escape=json
+        '{'
+        '"time_local":"$time_rfc3339",'
+        '"remote_addr":"$remote_addr",'
+        '"request":"$request",'
+        '"status": $status,'
+        '"body_bytes_sent":$body_bytes_sent,'
+        '"request_time":$request_time,'
+        '"http_user_agent":"$http_user_agent"'
+        '}';
+
     access_log /dev/stdout detailed;
-    
+    access_log /var/log/nginx/access_json.log json_combined;
+
     # Map for dynamic WebSocket support
     map $http_upgrade $connection_upgrade {
         default upgrade;
         ''      "keep-alive";
     }
-    
+
     ${RESOLVER_DIRECTIVE}
     upstream api_backend {
         zone api_backend 64k;
@@ -48,14 +90,21 @@ http {
     # Dashboard upstream - only included if DASHBOARD_PORT is set
     ${DASHBOARD_UPSTREAM}
 
+    # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
+    # Routes /devshard/<version>/* to versiond which forwards to the matching
+    # devshard binary. /v1/devshard/* still goes to the api backend (legacy
+    # in-process HostManager).
+    ${VERSIOND_UPSTREAM}
+
     # Enable gzip compression
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
     # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     server {
         ${LISTEN_HTTP}
@@ -63,8 +112,22 @@ http {
         server_name ${SERVER_NAME};
         ${SSL_CONFIG}
 
+        # Real IP Configuration
+        ${REAL_IP_CONFIG}
+
+        # Default Zone Label
+        set $$limit_zone_name "GLOBAL";
+
+        # Global Ban Check
+        if ($$is_banned) {
+            return 444; # Drop connection
+        }
+
         # Global Rate Limiting
         ${LIMIT_REQ_RULE_GLOBAL}
+
+        # Global Concurrency Limiting
+        ${LIMIT_CONN_RULE_GLOBAL}
 
         # Increase client body size for large requests
         client_max_body_size 10M;
@@ -82,12 +145,17 @@ http {
         # Exempt Routes (High Performance)
         ${EXEMPT_ROUTES_CONFIG}
 
+        # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
+        ${DEVSHARD_VERSIOND_LOCATION}
+
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
 
         # Generic API routes
         location /api/ {
+            set $limit_zone_name "GNKAPI";
             ${LIMIT_REQ_RULE_GONKA_API}
+            ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
             proxy_pass http://api_backend/;
             proxy_set_header Host $$host;
@@ -107,7 +175,9 @@ http {
 
         # Chain RPC endpoint
         location /chain-rpc/ {
+            set $limit_zone_name "CHAINRPC";
             ${LIMIT_REQ_RULE_CHAIN_RPC}
+            ${LIMIT_CONN_RULE_CHAIN_RPC}
             ${CHAIN_RPC_STATUS}
             proxy_pass http://chain_rpc_backend/;
             proxy_set_header Host $$host;
@@ -126,7 +196,9 @@ http {
 
         # Chain API endpoint (REST API)
         location /chain-api/ {
+            set $limit_zone_name "CHAINAPI";
             ${LIMIT_REQ_RULE_CHAIN_API}
+            ${LIMIT_CONN_RULE_CHAIN_API}
             ${CHAIN_API_STATUS}
             proxy_pass http://chain_api_backend/;
             proxy_set_header Host $$host;
@@ -145,7 +217,9 @@ http {
 
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
+            set $limit_zone_name "CHAINGRPC";
             ${LIMIT_REQ_RULE_CHAIN_GRPC}
+            ${LIMIT_CONN_RULE_CHAIN_GRPC}
             ${CHAIN_GRPC_STATUS}
             grpc_pass grpc://chain_grpc_backend;
             grpc_set_header Host $$host;
@@ -165,7 +239,7 @@ http {
 
         # Default error pages
         error_page 404 /404.html;
-        
+
         location = /404.html {
             internal;
             return 404 "Not Found\n";

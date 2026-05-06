@@ -28,7 +28,7 @@ fun runMcpServer(transport: StdioServerTransport, server: Server) {
             done.complete()
         }
         done.join()
-        println("Server closed")
+        System.err.println("Server closed")
     }
 }
 

@@ -81,6 +81,16 @@ class NodeAdminStateTests : TestermintTest() {
 
         logSection("Waiting for next inference window after re-enable")
         genesis.waitForNextInferenceWindow()
+<<<<<<< HEAD
+=======
+        genesis.waitForBlock(10) { pair ->
+            pair.api.getNodes()
+                .first { it.node.id == nodeId }
+                .let { node ->
+                    node.state.adminState?.enabled == true && node.state.currentStatus == "INFERENCE"
+                }
+        }
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
         val nodesAfterReenableEpoch = genesis.api.getNodes()
         val reenabledNode = nodesAfterReenableEpoch.first { it.node.id == nodeId }

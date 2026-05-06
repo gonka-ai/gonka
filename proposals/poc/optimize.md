@@ -26,34 +26,45 @@ This is not scalable. With 100 participants, 10,000 validations occur per epoch.
 
 ## Solution
 
-Reduce complexity to O(N × N_SLOTS) by assigning each participant a fixed set of N_SLOTS validators through weighted random sampling. Only these assigned validators validate the participant, and only their votes count for consensus.
+Reduce complexity to O(N × N_SLOTS) by assigning each participant a fixed set of validation slots through weighted random sampling. For a model-local validator set, only the model-local share of slots is sampled; the remaining slots behave as implicit abstentions against the full network-wide threshold.
+
+Note: the synthetic-abstention rule in this section was added to support the multi-model delegation design. The original single-model slot approach sampled all `N_SLOTS` from one validator population. In the multi-model case, each model group may hold only a fraction of total network voting power, so the unsampled remainder must count as abstention to preserve the full-network acceptance threshold.
 
 ### Core Mechanism
 
-1. Each participant gets `N_SLOTS` validation slots. For each slot, a validator is sampled based on `CurrentValidatorWeights`. The same validator can appear in multiple slots.
-2. Sampling uses `app_hash` (captured at validation phase start) as randomness source, so both DAPI and chain produce identical assignments:
+1. Each participant gets `N_SLOTS` total validation slots.
+2. For model `group_i`, let:
+   - `T = totalNetworkWeight`
+   - `G_i = sum(votingPower(group_i, *))`
+   - `N_group = floor(G_i / T * N_SLOTS)`
+3. Sample only `N_group` slots from the model-local voting-power distribution. The remaining `N_SLOTS - N_group` slots are implicit abstentions.
+4. Sampling uses `app_hash` (captured at validation phase start) as randomness source, so both DAPI and chain produce identical assignments:
    ```
    sortedEntries, totalWeight := PrepareSortedEntries(weights)
-   assignedValidators := GetSlotsFromSorted(appHash, P.address, sortedEntries, totalWeight, N_SLOTS)
+   assignedValidators := GetSlotsFromSorted(appHash, P.address, sortedEntries, totalWeight, N_group)
    ```
-3. Participant passes if >66.7% of assigned slots vote valid (strictly greater than `N_SLOTS * 2 / 3`).
+5. Participant passes if >66.7% of the full `N_SLOTS` vote valid (strictly greater than `N_SLOTS * 2 / 3`).
 
 ### Weight Synchronization
 
-`CurrentValidatorWeights` must be identical in DAPI and chain at validation time. This is achieved via on-chain `PoCValidationSnapshot` captured at validation phase start (see Appendix: Implementation Details).
+The validation voting-power inputs must be identical in DAPI and chain at validation time. This is achieved via on-chain `PoCValidationSnapshot` captured at validation phase start (see Appendix: Implementation Details).
 
 ### Decision Logic
 
-When slots are enabled, each slot counts as 1 vote. The same validator can appear in multiple slots — this is how weight is encoded (higher-weight validators get more slots proportionally). `TotalWeight = len(assignedValidators)`, not the number of unique validators. When `ValidationSlots == 0`, falls back to O(N^2) weight-based counting.
+When slots are enabled, each sampled slot counts as 1 vote. The same validator can appear in multiple sampled slots — this is how model-local weight is encoded. The sampled subset has size `N_group`; the unsampled `N_SLOTS - N_group` slots are implicit abstentions. The threshold is still checked against the full `N_SLOTS`. When `ValidationSlots == 0`, validation uses weight-based counting. When slot mode fails to reach 2/3, runtime fallback is guardian protection. O(N^2) fallback is not implemented.
 
 ```go
 func (wc *WeightCalculator) pocValidated(vals []types.PoCValidationV2, participantAddress string) bool {
     assignedValidators := wc.getAssignedValidators(participantAddress)
     outcome := wc.calculateAssignedOutcome(vals, assignedValidators)
 
-    // 66.7% threshold: need >2/3 of assigned slots to vote valid
-    // TotalWeight = len(assignedValidators) when slots enabled
-    twoThirdsWeight := outcome.TotalWeight * 2 / 3
+    // Sample only the model-local share of slots.
+    sampledSlots := ComputeSampledSlotCount(modelWeight, totalNetworkWeight, N_SLOTS)
+    assignedValidators := GetSlotsFromSorted(appHash, participant, sortedEntries, totalWeight, sampledSlots)
+
+    // 66.7% threshold: need >2/3 of the full slot count.
+    // Unsampled slots are implicit abstentions.
+    twoThirdsWeight := N_SLOTS * 2 / 3
 
     if outcome.ValidWeight > twoThirdsWeight {
         return true  // >66.7% voted valid
@@ -73,11 +84,11 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidationV2, participa
 
 **Previous model (O(N^2))**: Required >50% of **ALL validator weight** to vote "valid". An attacker needed >50% of total network weight to corrupt any participant's validation.
 
-**Current model (sampled)**: Requires >66.7% of **assigned validators' slots** to vote "valid". This threshold is implemented as `validWeight > totalSlots * 2 / 3` (strictly greater than 2/3). Sampling means each participant has a small independent probability of getting an unfavorable slot assignment, but this probability is dramatically low for attackers <45% (see tables below).
+**Current model (sampled)**: Requires >66.7% of the full slot budget to vote "valid", while only the model-local share of slots is sampled and the remainder are implicit abstentions. Sampling means each participant has a small independent probability of getting an unfavorable slot assignment inside the sampled share, but the missing network weight still counts against approval.
 
 ### Binomial Attack Model
 
-With sampling, an attacker controlling fraction `f` of total weight could be over-represented in a specific participant's assigned validators by chance. This follows a binomial distribution.
+With sampling, an attacker controlling fraction `f` of the model-local sampled weight could be over-represented in a specific participant's assigned validators by chance. This follows a binomial distribution inside the sampled share.
 
 **Computation Method**:
 
@@ -88,12 +99,12 @@ P(X = k) = C(n, k) * p^k * (1-p)^(n-k)
 ```
 
 where:
-- `n = N_SLOTS` (number of validation slots)
+- `n = N_group` (number of sampled validation slots for the model)
 - `k =` number of malicious slots
 - `p = f` (attacker weight fraction, probability each slot selects attacker validator)
 - `C(n, k) = n! / (k! * (n-k)!)` is the binomial coefficient
 
-Attack succeeds when `k > n * 2 / 3`, so:
+Attack succeeds only if the attacker controls enough sampled slots to overcome the full-slot threshold after implicit abstentions. In practice this means the model-local group must already represent enough network weight; otherwise no sampled majority can reach the full 2/3 threshold.
 
 ```
 P(attack) = sum_{k=floor(n*2/3)+1}^{n} P(X = k)
@@ -191,7 +202,7 @@ Security depends on what constrains K (attempts per epoch):
 
 ### Abstention Attack
 
-Suppose attacker's validators don't vote. Since `TotalWeight` includes all assigned slots, abstentions count against the participant. Honest validators must reach >66.7% threshold alone — with N=128, that means >85 out of 128 slots.
+Suppose attacker's validators don't vote. Since the threshold is checked against the full slot budget and unsampled slots are also abstentions, abstention counts against the participant. Honest validators must still reach >66.7% of the full slot budget.
 
 P(honest cannot reach 2/3), N=128:
 
@@ -220,17 +231,17 @@ From the analysis above:
 1. **N_SLOTS = 128** for production. Balances security (f=49% needs ~40,770 attempts) with performance (98.72% reduction vs O(N^2)).
 2. **2/3 consensus threshold** (>66.7% of slots). Reduces attack probability by orders of magnitude vs 50%.
 3. **Collateral proportional to claimed weight** is a hard requirement. Without it, sampling alone does not prevent fake participant attacks.
-4. **Guardian protection** as fallback when 2/3 threshold is not met (covers abstention attacks at f > 1/3). Slot expansion + O(N^2) fallback must be implemented before disabling guardians.
+4. **Guardian protection** as runtime fallback when 2/3 threshold is not met. Slot expansion + O(N^2) fallback remain future work and are not implemented.
 
 ## Parameters and Configuration
 
 | Parameter | Location | Default | Notes |
 |-----------|----------|---------|-------|
 | `ValidationSlots` | `PocParams` in params.proto | 0 (disabled) | Must be set to 128 via governance to enable sampling |
-| Consensus threshold | hardcoded | >66.7% weight | Falls back to guardian if threshold not met |
+| Consensus threshold | hardcoded | >66.7% of full slot budget | Falls back to guardian if threshold not met |
 | Hash source | `PoCValidationSnapshot.AppHash` | - | Captured at validation phase start |
 
-**Configuration**: Set `PocParams.ValidationSlots` via governance. Value of 0 disables sampling (O(N^2) fallback).
+**Configuration**: Set `PocParams.ValidationSlots` via governance. Value of 0 disables sampling and uses weight-based counting.
 
 ### Determinism
 
@@ -242,7 +253,7 @@ DAPI and chain produce identical slot assignments because both use the same shar
 
 Not implemented. `GetSlotFromSorted()` exists in `calculations/slots.go` for this purpose.
 
-Idea: when initial N_SLOTS doesn't reach 2/3 consensus, expand one slot at a time using the same deterministic sampling (see `validate_host()` in `optimize.py` for prototype). Currently, no-consensus triggers guardian protection or rejection.
+Idea: when the initial sampled slots don't reach 2/3 consensus, expand one slot at a time using the same deterministic sampling (see `validate_host()` in `optimize.py` for prototype). Currently, no-consensus triggers guardian protection or rejection.
 
 ## Appendix: Implementation Details
 

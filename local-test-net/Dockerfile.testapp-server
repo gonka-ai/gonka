@@ -1,0 +1,19 @@
+FROM golang:1.24.2-alpine3.20 AS builder
+RUN apk add --no-cache zip
+
+WORKDIR /build
+COPY versioned/go.mod versioned/go.sum ./
+RUN go mod download
+COPY versioned/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -o testapp ./e2e/testapp
+
+RUN mkdir -p /srv/files && \
+    zip -j /srv/files/testapp.zip testapp && \
+    sha256sum /srv/files/testapp.zip | cut -d' ' -f1 > /srv/files/testapp.zip.sha256
+
+FROM python:3.12-alpine
+COPY --from=builder /srv/files /srv/files
+
+WORKDIR /srv/files
+EXPOSE 8080
+CMD ["python3", "-m", "http.server", "8080"]

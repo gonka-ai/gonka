@@ -35,7 +35,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 BENCHMARKS_DIR = Path(__file__).resolve().parents[2]
+<<<<<<< HEAD
 DATA_ROOT = BENCHMARKS_DIR / "data" / "poc_calidation"
+=======
+DATA_ROOT = BENCHMARKS_DIR / "data" / "experiments"
+>>>>>>> origin/testnet/latest-in-v0.2.12
 DEFAULT_PLOTS_DIR = BENCHMARKS_DIR / "data" / "plots"
 
 
@@ -46,7 +50,13 @@ def load_run(run_dir: Path) -> Dict[str, Dict]:
     """
     results: Dict[str, Dict] = {}
     for fpath in sorted(run_dir.glob("*.json")):
+<<<<<<< HEAD
         if fpath.name in ("run_config.json", "config.json"):
+=======
+        if fpath.name in ("run_config.json", "config.json", "poc_config.json",
+                          "inference_config.json", "validation_config.json",
+                          "server.json"):
+>>>>>>> origin/testnet/latest-in-v0.2.12
             continue
         try:
             data = json.loads(fpath.read_text(encoding="utf-8"))
@@ -110,10 +120,16 @@ def plot_histogram(
     run_a_name: str,
     run_b_name: str,
     out_path: Path,
+<<<<<<< HEAD
+=======
+    fraud_distances: Optional[np.ndarray] = None,
+    fraud_label: str = "Fraud pairs (INT4 vs FP8)",
+>>>>>>> origin/testnet/latest-in-v0.2.12
 ) -> None:
     threshold = float(np.percentile(distances, percentile))
 
     fig, ax = plt.subplots(figsize=(10, 6))
+<<<<<<< HEAD
     ax.hist(distances, bins=60, color="#5cb85c", edgecolor="#4a9a4a", alpha=0.9,
             label=f"Honest pairs (same-marker)")
     ax.axvline(threshold, color="red", linestyle="--", linewidth=2,
@@ -121,26 +137,73 @@ def plot_histogram(
     ax.set_xlabel("L2 Distance", fontsize=13)
     ax.set_ylabel("Count", fontsize=13)
     ax.set_title("Honest distribution + threshold", fontsize=14)
+=======
+    ax.hist(distances, bins=60, color="#5cb85c", edgecolor="#4a9a4a", alpha=0.85,
+            label=f"Honest pairs ({len(distances)})")
+    if fraud_distances is not None and len(fraud_distances) > 0:
+        ax.hist(fraud_distances, bins=60, color="#d9534f", edgecolor="#c9302c", alpha=0.65,
+                label=f"{fraud_label} ({len(fraud_distances)})")
+    ax.axvline(threshold, color="red", linestyle="--", linewidth=2,
+               label=f"Honest p{int(percentile)}: {threshold:.4f}")
+    ax.set_xlabel("L2 Distance", fontsize=13)
+    ax.set_ylabel("Count", fontsize=13)
+    title = "Honest vs Fraud distribution" if fraud_distances is not None else "Honest distribution + threshold"
+    ax.set_title(title, fontsize=14)
+>>>>>>> origin/testnet/latest-in-v0.2.12
     ax.legend(fontsize=12)
     ax.tick_params(labelsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
+<<<<<<< HEAD
     print(f"  [{server_name}] {len(distances)} pairs | "
           f"mean={distances.mean():.4f}  median={np.median(distances):.4f}  "
           f"p{int(percentile)}={threshold:.4f}  max={distances.max():.4f}")
     print(f"  -> {out_path}")
 
 
+=======
+    print(f"  [{server_name}] Honest: {len(distances)} pairs | "
+          f"mean={distances.mean():.4f}  median={np.median(distances):.4f}  "
+          f"p{int(percentile)}={threshold:.4f}  max={distances.max():.4f}")
+    if fraud_distances is not None and len(fraud_distances) > 0:
+        print(f"  [{server_name}] Fraud:  {len(fraud_distances)} pairs | "
+              f"mean={fraud_distances.mean():.4f}  median={np.median(fraud_distances):.4f}  "
+              f"max={fraud_distances.max():.4f}")
+    print(f"  -> {out_path}")
+
+
+def _cross_compare_first(
+    data_a: Dict[str, Dict],
+    data_b: Dict[str, Dict],
+) -> Tuple[str, np.ndarray, np.ndarray, List[int]]:
+    """When no common server names, cross-compare the first server from each."""
+    sa = list(data_a.keys())[0]
+    sb = list(data_b.keys())[0]
+    vecs_a, vecs_b, nonces = match_vectors(data_a[sa], data_b[sb])
+    return f"{sa}_vs_{sb}", vecs_a, vecs_b, nonces
+
+
+>>>>>>> origin/testnet/latest-in-v0.2.12
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot L2 distance histograms between two PoC validation runs"
     )
     parser.add_argument("--run-a", type=str, default=None,
+<<<<<<< HEAD
                         help="Path to first run directory")
     parser.add_argument("--run-b", type=str, default=None,
                         help="Path to second run directory")
+=======
+                        help="Path to first run directory (honest side A)")
+    parser.add_argument("--run-b", type=str, default=None,
+                        help="Path to second run directory (honest side B)")
+    parser.add_argument("--fraud-a", type=str, default=None,
+                        help="Path to fraud run directory (side A). Compared against --run-b.")
+    parser.add_argument("--fraud-b", type=str, default=None,
+                        help="Path to fraud run directory (side B). Compared against --run-a.")
+>>>>>>> origin/testnet/latest-in-v0.2.12
     parser.add_argument("--percentile", type=float, default=98,
                         help="Threshold percentile for the dashed line (default: 98)")
     parser.add_argument("--out", type=str, default=None,
@@ -161,21 +224,55 @@ def main() -> None:
             sys.exit(1)
         run_a, run_b = recent[1], recent[0]
 
+<<<<<<< HEAD
+=======
+    fraud_run: Optional[Path] = None
+    fraud_against: str = ""
+    if args.fraud_a and args.fraud_b:
+        parser.error("Specify --fraud-a OR --fraud-b, not both")
+    if args.fraud_a:
+        fraud_run = resolve_run_path(args.fraud_a)
+        fraud_against = "b"
+    elif args.fraud_b:
+        fraud_run = resolve_run_path(args.fraud_b)
+        fraud_against = "a"
+
+>>>>>>> origin/testnet/latest-in-v0.2.12
     for label, d in [("run-a", run_a), ("run-b", run_b)]:
         if not d.is_dir():
             print(f"Error: {label} directory not found: {d}")
             sys.exit(1)
+<<<<<<< HEAD
 
     plots_dir = Path(args.out) if args.out else DEFAULT_PLOTS_DIR
+=======
+    if fraud_run and not fraud_run.is_dir():
+        print(f"Error: fraud directory not found: {fraud_run}")
+        sys.exit(1)
+
+    if args.out:
+        plots_dir = Path(args.out)
+    else:
+        plots_dir = run_b / "plots"
+>>>>>>> origin/testnet/latest-in-v0.2.12
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Run A: {run_a.name}")
     print(f"Run B: {run_b.name}")
+<<<<<<< HEAD
+=======
+    if fraud_run:
+        print(f"Fraud: {fraud_run.name} (compared against run-{'b' if fraud_against == 'b' else 'a'})")
+>>>>>>> origin/testnet/latest-in-v0.2.12
     print(f"Percentile: p{int(args.percentile)}")
     print(f"Output: {plots_dir}\n")
 
     data_a = load_run(run_a)
     data_b = load_run(run_b)
+<<<<<<< HEAD
+=======
+    data_fraud = load_run(fraud_run) if fraud_run else {}
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
     if not data_a:
         print(f"Error: no valid artifact files in run A ({run_a})")
@@ -192,6 +289,10 @@ def main() -> None:
             sys.exit(1)
         common_servers = [args.server]
 
+<<<<<<< HEAD
+=======
+    # Compute honest distances
+>>>>>>> origin/testnet/latest-in-v0.2.12
     if common_servers:
         print(f"Comparing servers: {common_servers}\n")
         for server in common_servers:
@@ -200,15 +301,26 @@ def main() -> None:
                 print(f"  [{server}] no common nonces, skipping")
                 continue
 
+<<<<<<< HEAD
             dists = compute_l2(vecs_a, vecs_b)
             fname = f"l2_hist_{server}_{run_a.name}_vs_{run_b.name}.png"
             plot_histogram(dists, args.percentile, server,
                            run_a.name, run_b.name, plots_dir / fname)
+=======
+            honest_dists = compute_l2(vecs_a, vecs_b)
+            fraud_dists = _compute_fraud_dists(data_fraud, data_a, data_b, fraud_against)
+
+            fname = f"l2_hist_{server}_{run_a.name}_vs_{run_b.name}.png"
+            plot_histogram(honest_dists, args.percentile, server,
+                           run_a.name, run_b.name, plots_dir / fname,
+                           fraud_distances=fraud_dists)
+>>>>>>> origin/testnet/latest-in-v0.2.12
     else:
         servers_a = list(data_a.keys())
         servers_b = list(data_b.keys())
         print(f"No common server names (A={servers_a}, B={servers_b}), "
               f"cross-comparing first server from each run.\n")
+<<<<<<< HEAD
         sa, sb = servers_a[0], servers_b[0]
         vecs_a, vecs_b, nonces = match_vectors(data_a[sa], data_b[sb])
         if len(nonces) == 0:
@@ -220,9 +332,45 @@ def main() -> None:
         fname = f"l2_hist_{label}_{run_a.name}_vs_{run_b.name}.png"
         plot_histogram(dists, args.percentile, label,
                        run_a.name, run_b.name, plots_dir / fname)
+=======
+        label, vecs_a, vecs_b, nonces = _cross_compare_first(data_a, data_b)
+        if len(nonces) == 0:
+            print(f"  [{label}] no common nonces")
+            sys.exit(1)
+
+        honest_dists = compute_l2(vecs_a, vecs_b)
+        fraud_dists = _compute_fraud_dists(data_fraud, data_a, data_b, fraud_against)
+
+        fname = f"l2_hist_{label}_{run_a.name}_vs_{run_b.name}.png"
+        plot_histogram(honest_dists, args.percentile, label,
+                       run_a.name, run_b.name, plots_dir / fname,
+                       fraud_distances=fraud_dists)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
     print("\nDone.")
 
 
+<<<<<<< HEAD
+=======
+def _compute_fraud_dists(
+    data_fraud: Dict[str, Dict],
+    data_a: Dict[str, Dict],
+    data_b: Dict[str, Dict],
+    fraud_against: str,
+) -> Optional[np.ndarray]:
+    """Compute fraud L2 distances by cross-comparing fraud run against the honest counterpart."""
+    if not data_fraud:
+        return None
+    compare_to = data_b if fraud_against == "b" else data_a
+    fraud_server = list(data_fraud.keys())[0]
+    compare_server = list(compare_to.keys())[0]
+    vf, vc, nonces = match_vectors(data_fraud[fraud_server], compare_to[compare_server])
+    if len(nonces) == 0:
+        print(f"  [fraud] no common nonces between fraud ({fraud_server}) and honest ({compare_server})")
+        return None
+    return compute_l2(vf, vc)
+
+
+>>>>>>> origin/testnet/latest-in-v0.2.12
 if __name__ == "__main__":
     main()

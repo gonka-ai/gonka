@@ -126,7 +126,14 @@ class CollateralTests : TestermintTest() {
     @Test
     fun `a participant is slashed for downtime with unbonding slashed`() {
         // Configure genesis with fast expiration for downtime testing
+<<<<<<< HEAD
         val fastExpirationSpec = spec {
+=======
+        val fastExpirationSpec = createSpec(
+            epochLength = 40,
+            epochShift = 10,
+        ).merge(spec {
+>>>>>>> origin/testnet/latest-in-v0.2.12
                 this[AppState::inference] = spec<InferenceState> {
                     this[InferenceState::params] = spec<InferenceParams> {
                         this[InferenceParams::validationParams] = spec<ValidationParams> {
@@ -134,7 +141,11 @@ class CollateralTests : TestermintTest() {
                         }
                     }
                 }
+<<<<<<< HEAD
             }
+=======
+            })
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
         val fastExpirationConfig = inferenceConfig.copy(
             genesisSpec = inferenceConfig.genesisSpec?.merge(fastExpirationSpec) ?: fastExpirationSpec
@@ -184,6 +195,7 @@ class CollateralTests : TestermintTest() {
         logSection("Getting bad inferences")
         genesis.mock!!.setInferenceResponse("This is invalid json!!!")
 
+<<<<<<< HEAD
         logSection("Running inferences until genesis is INACTIVE and downtime slash applies")
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         var genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
@@ -209,13 +221,58 @@ class CollateralTests : TestermintTest() {
                 pair.node.getInferenceTimeouts()
                     .inferenceTimeout
                     .any { it.inferenceId !in timeoutIdsBeforeBatch }
+=======
+        logSection("Running inferences until downtime slashing is observed")
+        val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+        var genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
+        val maxBadInferenceBatches = 4
+        var downtimeSlashCount = 0
+        for (batch in 0 until maxBadInferenceBatches) {
+            // Expiry during PoC uses preserve-node eligibility and skips downtime penalties.
+            // Wait until we're safely in the inference window so expiries are counted as missed work.
+            genesis.waitForNextInferenceWindow(windowSizeInBlocks = expirationBlocks.toInt() + 10)
+
+            logHighlight("Submitting bad inference batch ${batch + 1}")
+            val timeoutIdsBeforeBatch = genesis.node.getInferenceTimeouts()
+                .inferenceTimeout
+                .map { it.inferenceId }
+                .toSet()
+            repeat(3) { attempt ->
+                repeat(6) {
+                    runCatching { genesis.makeInferenceRequest(inferenceRequest) }
+                }
+
+                genesis.node.waitForNextBlock(1)
+                val sawNewTimeout = runCatching {
+                    genesis.waitForBlock(maxBlocks = expirationBlocks.toInt() + 15) { pair ->
+                        pair.node.getInferenceTimeouts()
+                            .inferenceTimeout
+                            .any { it.inferenceId !in timeoutIdsBeforeBatch }
+                    }
+                    true
+                }.getOrDefault(false)
+                if (sawNewTimeout) return@repeat
+                logSection("Batch ${batch + 1} burst ${attempt + 1} did not create a timeout yet; retrying")
+>>>>>>> origin/testnet/latest-in-v0.2.12
             }
             val newTimeouts = genesis.node.getInferenceTimeouts()
                 .inferenceTimeout
                 .filterNot { it.inferenceId in timeoutIdsBeforeBatch }
+<<<<<<< HEAD
             assertThat(newTimeouts)
                 .describedAs("Batch ${batch + 1} should create at least one inference timeout")
                 .isNotEmpty()
+=======
+            if (newTimeouts.isEmpty()) {
+                genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
+                logSection(
+                    "Batch ${batch + 1} created no new timeouts; " +
+                        "status=$genesisStatus, continuing to next batch"
+                )
+                genesis.node.waitForNextBlock(2)
+                continue
+            }
+>>>>>>> origin/testnet/latest-in-v0.2.12
             val expirationBlock = newTimeouts.maxOf { it.expirationHeight.toLong() } + 1
             logSection(
                 "Batch ${batch + 1} created ${newTimeouts.size} new timeout(s); " +
@@ -227,12 +284,25 @@ class CollateralTests : TestermintTest() {
             ) { it.syncInfo.latestBlockHeight >= expirationBlock }
             genesis.node.waitForNextBlock(3)
 
+<<<<<<< HEAD
             val timeoutsAfter = genesis.node.getInferenceTimeouts()
             genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
             logSection("After batch ${batch + 1}: status=$genesisStatus, total timeouts=${timeoutsAfter.inferenceTimeout?.count() ?: 0}")
         }
 
         assertThat(genesisStatus).isEqualTo("INACTIVE")
+=======
+            downtimeSlashCount++
+            val timeoutsAfter = genesis.node.getInferenceTimeouts()
+            genesisStatus = genesis.node.getRawParticipants().getParticipant(genesis)?.status
+            logSection("After batch ${batch + 1}: status=$genesisStatus, total timeouts=${timeoutsAfter.inferenceTimeout?.count() ?: 0}")
+            break
+        }
+
+        assertThat(downtimeSlashCount)
+            .describedAs("Expected at least one downtime slash batch before verifying collateral changes")
+            .isGreaterThan(0)
+>>>>>>> origin/testnet/latest-in-v0.2.12
 
         logSection("Verifying collateral has been slashed proportionally")
         val inferenceParams = genesis.node.getInferenceParams().params
@@ -241,7 +311,11 @@ class CollateralTests : TestermintTest() {
             activeAmount = activeAmount,
             unbondingAmount = withdrawAmount,
             slashFraction = slashFraction.toDouble(),
+<<<<<<< HEAD
             maxSlashCount = maxBadInferenceBatches,
+=======
+            maxSlashCount = downtimeSlashCount,
+>>>>>>> origin/testnet/latest-in-v0.2.12
         )
 
         genesis.waitForBlock(maxBlocks = 10) { pair ->

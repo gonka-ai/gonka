@@ -14,6 +14,10 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/app/upgrades/v0_2_10"
 	"github.com/productscience/inference/app/upgrades/v0_2_11"
+<<<<<<< HEAD
+=======
+	"github.com/productscience/inference/app/upgrades/v0_2_12"
+>>>>>>> origin/testnet/latest-in-v0.2.12
 	v0_2_2 "github.com/productscience/inference/app/upgrades/v0_2_2"
 	v0_2_3 "github.com/productscience/inference/app/upgrades/v0_2_3"
 	"github.com/productscience/inference/app/upgrades/v0_2_4"
@@ -62,7 +66,12 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_8.UpgradeName, v0_2_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.BlsKeeper, app.DistrKeeper, app.AuthzKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_9.UpgradeName, v0_2_9.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_10.UpgradeName, v0_2_10.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
+<<<<<<< HEAD
 	app.UpgradeKeeper.SetUpgradeHandler(v0_2_11.UpgradeName, v0_2_11.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper))
+=======
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_11.UpgradeName, v0_2_11.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper, app.BlsKeeper))
+	app.UpgradeKeeper.SetUpgradeHandler(v0_2_12.UpgradeName, v0_2_12.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper, app.BlsKeeper, app.AuthzKeeper, app.FeeGrantKeeper))
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 func (app *App) registerMigrations() {
@@ -119,4 +128,9 @@ func (app *App) registerMigrations() {
 	})
 
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 12, func(ctx sdk.Context) error { return nil })
+<<<<<<< HEAD
+=======
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 13, func(ctx sdk.Context) error { return nil })
+>>>>>>> origin/testnet/latest-in-v0.2.12
 }

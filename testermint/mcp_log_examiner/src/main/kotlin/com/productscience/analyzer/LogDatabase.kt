@@ -4,8 +4,6 @@ import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.javatime.time
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.addLogger
-import org.jetbrains.exposed.sql.StdOutSqlLogger
 import java.io.File
 
 /**
@@ -45,7 +43,6 @@ class LogDatabase {
 
         // Initialize database schema
         transaction(db) {
-            addLogger(StdOutSqlLogger)
             SchemaUtils.drop(LogEntries)
             SchemaUtils.create(LogEntries)
         }
@@ -54,13 +51,13 @@ class LogDatabase {
         Runtime.getRuntime().addShutdownHook(Thread {
             try {
                 tempDirectory.deleteRecursively()
-                println("Cleaned up temp directory: ${tempDirectory.absolutePath}")
+                System.err.println("Cleaned up temp directory: ${tempDirectory.absolutePath}")
             } catch (e: Exception) {
                 System.err.println("Failed to clean up temp directory: ${e.message}")
             }
         })
         
-        println("Database initialized at: ${dbFile.absolutePath}")
+        System.err.println("Database initialized at: ${dbFile.absolutePath}")
     }
 
     /**

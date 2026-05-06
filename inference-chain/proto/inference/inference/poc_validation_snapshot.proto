@@ -3,18 +3,31 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-// PoCValidationSnapshot captures validator weights at validation phase start
+// PoCValidationSnapshot captures per-model voting powers at validation phase start
 // for deterministic sampling synchronization between chain and DAPI.
+// Voting powers are delegation-resolved: each DIRECT member's weight includes
+// delegated consensus weight from non-members of that model group.
 message PoCValidationSnapshot {
   int64 poc_stage_start_height = 1;
   int64 snapshot_height = 2;
   string app_hash = 3;
-  repeated ValidatorWeight validator_weights = 4;
+  reserved 4; // was: repeated ValidatorWeight validator_weights
   int64 generation_start_timestamp = 5;
   int64 exchange_end_timestamp = 6;
+  repeated ModelVotingPowers model_voting_powers = 7;
+  int64 total_network_weight = 8;
 }
 
-message ValidatorWeight {
+// ModelVotingPowers holds delegation-resolved voting powers for one model group.
+// Only DIRECT members (participants who submitted PoC for this model) get entries.
+// Each member's voting power = own N-1 consensus weight + delegated consensus weight.
+message ModelVotingPowers {
+  string model_id = 1;
+  repeated VotingPowerEntry voting_powers = 2;
+}
+
+// VotingPowerEntry is a single participant's voting power for a model group.
+message VotingPowerEntry {
   string address = 1;
-  int64 weight = 2;
+  int64 voting_power = 2;
 }

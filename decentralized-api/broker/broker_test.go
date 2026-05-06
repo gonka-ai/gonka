@@ -6,7 +6,6 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -17,12 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
-
-func TestMain(m *testing.M) {
-	// Disable model enforcement for all tests
-	os.Setenv("ENFORCED_MODEL_ID", "disabled")
-	os.Exit(m.Run())
-}
 
 type MockBrokerChainBridge struct {
 	mock.Mock
@@ -67,6 +60,14 @@ func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mod
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
+}
+
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
@@ -80,8 +81,7 @@ func NewTestBroker() *Broker {
 		Address: "cosmos1dummyaddress",
 		PubKey:  "dummyPubKey",
 	}
-	phaseTracker := chainphase.NewChainPhaseTracker()
-	phaseTracker.UpdatePocV2Enabled(true)
+	phaseTracker := &chainphase.ChainPhaseTracker{}
 	phaseTracker.Update(
 		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
 		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
@@ -133,6 +133,537 @@ func NewTestBroker() *Broker {
 
 	mockConfigManager := &apiconfig.ConfigManager{}
 	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
+}
+
+func newTestBrokerWithChainBridge(mockChainBridge *MockBrokerChainBridge) *Broker {
+	return newTestBrokerWithParticipantAddress(mockChainBridge, "cosmos1dummyaddress")
+}
+
+func newTestBrokerWithParticipantAddress(mockChainBridge *MockBrokerChainBridge, address string) *Broker {
+	participantInfo := participant.CosmosInfo{
+		Address: address,
+		PubKey:  "dummyPubKey",
+	}
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{})
+}
+
+func TestEnrichWithPocParams_CachesAllModels(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	mockChainBridge.On("GetParams").Return(&types.QueryParamsResponse{
+		Params: types.Params{
+			PocParams: &types.PocParams{
+				Models: []*types.PoCModelConfig{
+					{ModelId: "model-a", SeqLen: 128},
+					{ModelId: "model-b", SeqLen: 256},
+				},
+			},
+		},
+	}, nil)
+
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+	params := &pocParams{}
+	broker.loadPoCModels(params)
+
+	require.Len(t, params.models, 2)
+	assert.Equal(t, int64(128), params.models["model-a"].SeqLen)
+	assert.Equal(t, int64(256), params.models["model-b"].SeqLen)
+	assert.Len(t, broker.configManager.GetPoCParams().Models, 2)
+}
+
+func TestResolvePoCModelForNode_PrefersEpochMLNodes(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		EpochModels: map[string]types.Model{
+			"model-a": {Id: "model-a"},
+			"model-b": {Id: "model-b"},
+		},
+		EpochMLNodes: map[string]types.MLNodeInfo{
+			"model-b": {NodeId: "node-1"},
+		},
+	}
+	params := &pocParams{
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-a": {ModelId: "model-a", SeqLen: 128},
+			"model-b": {ModelId: "model-b", SeqLen: 256},
+		},
+	}
+
+	model, ok := broker.resolvePoCModelForNode(nodeState, map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	}, params)
+	require.True(t, ok)
+	assert.Equal(t, "model-b", model.ModelId)
+	assert.Equal(t, int64(256), model.SeqLen)
+}
+
+func TestResolvePoCModelForNode_FallsBackToConfiguredModel(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		EpochModels:  map[string]types.Model{},
+		EpochMLNodes: map[string]types.MLNodeInfo{},
+	}
+	params := &pocParams{
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-a": {ModelId: "model-a", SeqLen: 128},
+		},
+	}
+
+	model, ok := broker.resolvePoCModelForNode(nodeState, map[string]ModelArgs{
+		"model-a": {},
+	}, params)
+	require.True(t, ok)
+	assert.Equal(t, "model-a", model.ModelId)
+}
+
+func TestResolvePoCModelForNode_FallsBackToFirstConfiguredModelPresentInParams(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		EpochModels:  map[string]types.Model{},
+		EpochMLNodes: map[string]types.MLNodeInfo{},
+	}
+	params := &pocParams{
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-b": {ModelId: "model-b", SeqLen: 256},
+		},
+	}
+
+	model, ok := broker.resolvePoCModelForNode(nodeState, map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	}, params)
+	require.True(t, ok)
+	assert.Equal(t, "model-b", model.ModelId)
+	assert.Equal(t, int64(256), model.SeqLen)
+}
+
+func TestResolvePoCModelForNode_SkipsWithoutResolvableModel(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		EpochModels:  map[string]types.Model{},
+		EpochMLNodes: map[string]types.MLNodeInfo{},
+	}
+	params := &pocParams{
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-a": {ModelId: "model-a", SeqLen: 128},
+			"model-b": {ModelId: "model-b", SeqLen: 256},
+		},
+	}
+
+	_, ok := broker.resolvePoCModelForNode(nodeState, map[string]ModelArgs{}, params)
+	assert.False(t, ok)
+}
+
+func TestResolveNodeModelID_FallsBackToFirstNodeModel(t *testing.T) {
+	modelID, ok := ResolveNodeModelID(nil, map[string]ModelArgs{
+		"z-model": {},
+		"a-model": {},
+		"m-model": {},
+	})
+	require.True(t, ok)
+	assert.Equal(t, "a-model", modelID)
+}
+
+func TestResolveNodeModelID_PrefersEpochMLNode(t *testing.T) {
+	modelID, ok := ResolveNodeModelID(
+		map[string]types.MLNodeInfo{"model-b": {NodeId: "node-1"}},
+		map[string]ModelArgs{"model-a": {}, "model-b": {}},
+	)
+	require.True(t, ok)
+	assert.Equal(t, "model-b", modelID)
+}
+
+func TestResolveNodeModelID_RejectsMultipleEpochEntries(t *testing.T) {
+	modelID, ok := ResolveNodeModelID(
+		map[string]types.MLNodeInfo{"model-a": {}, "model-b": {}},
+		map[string]ModelArgs{"model-c": {}, "model-d": {}},
+	)
+	require.False(t, ok)
+	assert.Equal(t, "", modelID)
+}
+
+func TestResolveSupportedNodeModelID_FiltersConfiguredFallbackAgainstPoCParams(t *testing.T) {
+	broker := NewTestBroker()
+	require.NoError(t, broker.configManager.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-b", SeqLen: 256},
+		},
+	}))
+
+	modelID, ok := broker.resolveSupportedNodeModelID(nil, map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	})
+	require.True(t, ok)
+	assert.Equal(t, "model-b", modelID)
+}
+
+func TestResolveSupportedNodeModelID_NoRegressionWhenAllModelsSupported(t *testing.T) {
+	broker := NewTestBroker()
+	require.NoError(t, broker.configManager.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-a", SeqLen: 128},
+			{ModelId: "model-b", SeqLen: 256},
+		},
+	}))
+
+	modelID, ok := broker.resolveSupportedNodeModelID(nil, map[string]ModelArgs{
+		"model-b": {},
+		"model-a": {},
+	})
+	require.True(t, ok)
+	assert.Equal(t, "model-a", modelID)
+}
+
+func TestGetCommandForState_UsesConfiguredFallbackForGeneration(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		IntendedStatus:    types.HardwareNodeStatus_POC,
+		PocIntendedStatus: PocStatusGenerating,
+		EpochModels:       map[string]types.Model{},
+		EpochMLNodes:      map[string]types.MLNodeInfo{},
+	}
+
+	cmd := broker.getCommandForState("node-1", nodeState, map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	}, &pocParams{
+		startPoCBlockHeight: 100,
+		startPoCBlockHash:   "hash",
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-a": {ModelId: "model-a", SeqLen: 128},
+			"model-b": {ModelId: "model-b", SeqLen: 256},
+		},
+	}, nil, 2, nil)
+
+	generateCmd, ok := cmd.(StartPoCNodeCommandV2)
+	require.True(t, ok)
+	assert.Equal(t, "model-a", generateCmd.Model)
+	assert.Equal(t, int64(128), generateCmd.SeqLen)
+}
+
+func TestGetCommandForState_UsesNodeAssignedModel(t *testing.T) {
+	broker := NewTestBroker()
+	nodeState := &NodeState{
+		IntendedStatus:    types.HardwareNodeStatus_POC,
+		PocIntendedStatus: PocStatusGenerating,
+		EpochModels: map[string]types.Model{
+			"model-a": {Id: "model-a"},
+			"model-b": {Id: "model-b"},
+		},
+		EpochMLNodes: map[string]types.MLNodeInfo{
+			"model-b": {NodeId: "node-1"},
+		},
+	}
+
+	cmd := broker.getCommandForState("node-1", nodeState, map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	}, &pocParams{
+		startPoCBlockHeight: 100,
+		startPoCBlockHash:   "hash",
+		models: map[string]apiconfig.PoCModelConfigCache{
+			"model-a": {ModelId: "model-a", SeqLen: 128},
+			"model-b": {ModelId: "model-b", SeqLen: 256},
+		},
+	}, nil, 2, nil)
+
+	generateCmd, ok := cmd.(StartPoCNodeCommandV2)
+	require.True(t, ok)
+	assert.Equal(t, "model-b", generateCmd.Model)
+	assert.Equal(t, int64(256), generateCmd.SeqLen)
+}
+
+func TestUpdateNodeWithEpochData_RetriesAfterEmptyParentGroup(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+	participantAddress := broker.participantInfo.GetAddress()
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			EpochIndex:     100,
+			SubGroupModels: nil,
+		},
+	}, nil).Once()
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			EpochIndex:     100,
+			SubGroupModels: []string{"model-a"},
+			TotalWeight:    10,
+		},
+	}, nil).Once()
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model-a").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			EpochIndex:     100,
+			ModelSnapshot:  &types.Model{Id: "model-a"},
+			TotalWeight:    10,
+			SubGroupModels: nil,
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: participantAddress,
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+					},
+				},
+			},
+		},
+	}, nil).Once()
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{
+			Id:     "node-1",
+			Models: map[string]ModelArgs{"model-a": {}},
+		},
+		State: NodeState{
+			EpochModels:  map[string]types.Model{},
+			EpochMLNodes: map[string]types.MLNodeInfo{},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := broker.phaseTracker.GetCurrentEpochState()
+	require.NotNil(t, epochState)
+
+	require.NoError(t, broker.UpdateNodeWithEpochData(epochState))
+	assert.Zero(t, broker.lastEpochIndex)
+	assert.Empty(t, broker.nodes["node-1"].State.EpochMLNodes)
+
+	require.NoError(t, broker.UpdateNodeWithEpochData(epochState))
+	assert.Equal(t, uint64(100), broker.lastEpochIndex)
+	assert.Contains(t, broker.nodes["node-1"].State.EpochMLNodes, "model-a")
+	mockChainBridge.AssertExpectations(t)
+}
+
+func TestEnsurePreservedMembershipCached_AppliesSnapshot(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{},
+			AdminState:      AdminState{Enabled: true},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
+		Found: true,
+		Snapshot: &types.PreservedNodesSnapshot{
+			ModelPreservedNodes: []*types.ModelPreservedNodes{
+				{
+					ModelId: "model-a",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: "cosmos1dummyaddress", NodeIds: []string{"node-1"}},
+					},
+				},
+			},
+		},
+	}, nil)
+
+	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
+}
+
+func TestEnsurePreservedMembershipCached_ClearsWhenNotFound(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{"model-a": true},
+			AdminState:      AdminState{Enabled: true},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{Found: false}, nil)
+
+	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.Empty(t, broker.nodes["node-1"].State.PreservedModels)
+}
+
+func TestEnsurePreservedMembershipCached_SkipsAdminDisabledNodes(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{},
+			AdminState:      AdminState{Enabled: false, Epoch: 99},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
+		Found: true,
+		Snapshot: &types.PreservedNodesSnapshot{
+			ModelPreservedNodes: []*types.ModelPreservedNodes{
+				{
+					ModelId: "model-a",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: "cosmos1dummyaddress", NodeIds: []string{"node-1"}},
+					},
+				},
+			},
+		},
+	}, nil)
+
+	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.False(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
+}
+
+func TestEnsurePreservedMembershipCached_IgnoresOtherParticipantSnapshot(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{},
+			AdminState:      AdminState{Enabled: true},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
+		Found: true,
+		Snapshot: &types.PreservedNodesSnapshot{
+			ModelPreservedNodes: []*types.ModelPreservedNodes{
+				{
+					ModelId: "model-a",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: "cosmos1otherparticipant", NodeIds: []string{"node-1"}},
+					},
+				},
+			},
+		},
+	}, nil)
+
+	require.NoError(t, broker.EnsurePreservedMembershipCached(epochState))
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.Empty(t, broker.nodes["node-1"].State.PreservedModels)
+}
+
+func TestEnsurePreservedMembershipCached_KeepsCacheWhenParticipantAddressUnavailable(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithParticipantAddress(mockChainBridge, "")
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:     map[string]types.Model{},
+			EpochMLNodes:    map[string]types.MLNodeInfo{},
+			PreservedModels: map[string]bool{"model-a": true},
+			AdminState:      AdminState{Enabled: true},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := &chainphase.EpochState{
+		LatestEpoch: types.NewEpochContext(
+			types.Epoch{Index: 100, PocStartBlockHeight: 100},
+			types.EpochParams{},
+		),
+		CurrentBlock: chainphase.BlockInfo{Height: 150, Hash: "hash-150"},
+		CurrentPhase: types.InferencePhase,
+		IsSynced:     true,
+	}
+
+	mockChainBridge.On("GetPreservedNodesSnapshot").Return(&types.QueryPreservedNodesSnapshotResponse{
+		Found: true,
+		Snapshot: &types.PreservedNodesSnapshot{
+			ModelPreservedNodes: []*types.ModelPreservedNodes{
+				{
+					ModelId: "model-a",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: "cosmos1dummyaddress", NodeIds: []string{"node-1"}},
+					},
+				},
+			},
+		},
+	}, nil)
+
+	err := broker.EnsurePreservedMembershipCached(epochState)
+	require.ErrorContains(t, err, "participant address unavailable")
+
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
 }
 
 func TestSingleNode(t *testing.T) {
@@ -1573,4 +2104,72 @@ func TestUpdateNodeHostCollisionWithPortChange(t *testing.T) {
 	require.Equal(t, foundNode1.Node.Host, foundNode2.Node.Host, "Both nodes should have the same host")
 	require.NotEqual(t, foundNode1.Node.InferencePort, foundNode2.Node.InferencePort, "Inference ports should be different")
 	require.NotEqual(t, foundNode1.Node.PoCPort, foundNode2.Node.PoCPort, "PoC ports should be different")
+}
+
+func TestAreHardwareNodesEqual_Version(t *testing.T) {
+	a := &types.HardwareNode{Host: "host", Port: "9090", Models: []string{"m1"}}
+	b := &types.HardwareNode{Host: "host", Port: "9090", Models: []string{"m1"}}
+
+	assert.True(t, areHardwareNodesEqual(a, b), "nodes with empty version should be equal")
+
+	a.Version = "v1.0.0"
+	b.Version = "v1.0.0"
+	assert.True(t, areHardwareNodesEqual(a, b), "nodes with same version should be equal")
+
+	b.Version = "v1.0.1"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
+}
+
+func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.MlNodeVersion = "v2.3.4"
+
+	hw := convertInferenceNodeToHardwareNode(node, node.Node.Models)
+
+	assert.Equal(t, "v2.3.4", hw.Version)
+}
+
+func TestCalculateNodesDiff_FiltersUnsupportedConfiguredModelsFromHardwareDiff(t *testing.T) {
+	broker := NewTestBroker()
+	require.NoError(t, broker.configManager.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-a", SeqLen: 128},
+		},
+	}))
+
+	node := createTestNode("node-1")
+	node.Node.Models = map[string]ModelArgs{
+		"model-a": {},
+		"model-b": {},
+	}
+
+	diff := broker.calculateNodesDiff(map[string]*types.HardwareNode{}, map[string]*NodeWithState{
+		"node-1": node,
+	})
+
+	require.Len(t, diff.NewOrModified, 1)
+	assert.Equal(t, []string{"model-a"}, diff.NewOrModified[0].Models)
+}
+
+func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
+	node := createTestNode("node-1")
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:        "node-1",
+			PrevStatus:    types.HardwareNodeStatus_UNKNOWN,
+			NewStatus:     types.HardwareNodeStatus_INFERENCE,
+			MlNodeVersion: "v3.0.0",
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
 }

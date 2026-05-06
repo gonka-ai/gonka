@@ -6,10 +6,11 @@ export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
+export PROXY_PORT=$PUBLIC_SERVER_PORT
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
 docker run --rm -v "$(pwd):/workdir" -w /workdir alpine:3.19 rm -rf prod-local 2>/dev/null || true
-export PUBLIC_URL="http://${KEY_NAME}-api:9000"
+export PUBLIC_URL="http://${KEY_NAME}-proxy"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
@@ -51,7 +52,8 @@ export NATS_SERVER_PORT=9014
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
-export PUBLIC_URL="http://${KEY_NAME}-api:9010"
+export PROXY_PORT=$PUBLIC_SERVER_PORT
+export PUBLIC_URL="http://${KEY_NAME}-proxy"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 ./launch_add_network_node.sh
@@ -67,7 +69,8 @@ export NATS_SERVER_PORT=9024
 export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202
-export PUBLIC_URL="http://${KEY_NAME}-api:9020"
+export PROXY_PORT=$PUBLIC_SERVER_PORT
+export PUBLIC_URL="http://${KEY_NAME}-proxy"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
 ./launch_add_network_node.sh
