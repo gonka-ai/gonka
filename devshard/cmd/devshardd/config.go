@@ -252,6 +252,9 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 	if err != nil {
 		return 0, fmt.Errorf("invalid duration %q: %w", v, err)
 	}
+	if d <= 0 {
+		return 0, fmt.Errorf("duration %q must be > 0", v)
+	}
 	return d, nil
 }
 

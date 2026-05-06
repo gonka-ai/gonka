@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -219,7 +220,16 @@ func buildHostManager(
 	retryLoop := session.NewRetryLoop(leaseStore, validator, manager, phase, instanceAddr)
 	retryLoop.WithInterval(cfg.ValidationRetryInterval)
 	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
-	go retryLoop.Run(ctx)
+	retryLoopCtx, cancelRetryLoop := context.WithCancel(ctx)
+	retryLoopDone := make(chan struct{})
+	closers.Add(func() {
+		cancelRetryLoop()
+		<-retryLoopDone
+	})
+	go func() {
+		defer close(retryLoopDone)
+		retryLoop.Run(retryLoopCtx)
+	}()
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
@@ -230,24 +240,27 @@ func buildHostManager(
 		lastCleanEpoch.Store(currentEpoch)
 
 		if currentEpoch >= 2 {
-			go func() {
-				if err := leaseStore.DeleteBeforeEpoch(context.Background(), currentEpoch); err != nil {
-					slog.Warn("validation lease cleanup failed", "error", err)
-				}
-			}()
+			if err := leaseStore.DeleteBeforeEpoch(bctx, currentEpoch); err != nil {
+				logCleanupError("validation lease cleanup failed", err)
+			}
 		}
 
 		if currentEpoch >= 4 {
 			expiredPayloadEpoch := currentEpoch - 3
-			go func() {
-				if err := payloadStore.DropEpoch(context.Background(), expiredPayloadEpoch); err != nil {
-					slog.Warn("payload epoch cleanup failed", "error", err)
-				}
-			}()
+			if err := payloadStore.DropEpoch(bctx, expiredPayloadEpoch); err != nil {
+				logCleanupError("payload epoch cleanup failed", err)
+			}
 		}
 	})
 
 	return manager, nil
+}
+
+func logCleanupError(msg string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	slog.Warn(msg, "error", err)
 }
 
 func (a *devshardApp) Run(ctx context.Context) error {
