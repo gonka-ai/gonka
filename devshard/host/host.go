@@ -57,6 +57,11 @@ type AcceptanceChecker interface {
 	Check(st types.EscrowState, applied []*types.DevshardTx) error
 }
 
+const (
+	defaultValidationWorkers   = 20
+	defaultValidationQueueSize = 20_000
+)
+
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
 	mu        sync.Mutex
@@ -80,9 +85,10 @@ type Host struct {
 
 	sortedSlots        []uint32            // deterministic slot order for this host
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with in-flight validation
-	completedResponses map[uint64][]byte   // inference ID -> cached ML response body
-	ownSeed            int64               // deterministic seed derived from signer + escrowID
+	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
+	validationQueue    chan validateJob
+	completedResponses map[uint64][]byte // inference ID -> cached ML response body
+	ownSeed            int64             // deterministic seed derived from signer + escrowID
 }
 
 func NewHost(
@@ -163,6 +169,10 @@ func NewHost(
 	}
 	for _, opt := range opts {
 		opt(h)
+	}
+	if h.validator != nil {
+		h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+		h.startValidationWorkers(defaultValidationWorkers)
 	}
 	return h, nil
 }
@@ -310,9 +320,9 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Validate other hosts' inferences outside mutex.
+	// (g) Queue validation work outside mutex.
 	for _, vj := range validationJobs {
-		go h.validateAsync(context.Background(), vj)
+		h.enqueueValidation(vj)
 	}
 
 	return &HostResponse{
@@ -639,11 +649,15 @@ type validateJob struct {
 // collectValidationJobs finds finished inferences that this host should validate.
 // Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
-	if h.validator == nil {
+	if h.validator == nil || h.validationQueue == nil {
 		return nil
 	}
 
 	st := h.sm.SnapshotState()
+	available := cap(h.validationQueue) - len(h.validationQueue)
+	if available <= 0 {
+		return nil
+	}
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
@@ -698,9 +712,41 @@ func (h *Host) collectValidationJobs() []validateJob {
 			executorAddress: executorAddr,
 			epochID:         h.epochID,
 		})
+		available--
+		if available == 0 {
+			break
+		}
 	}
 
 	return jobs
+}
+
+func (h *Host) startValidationWorkers(count int) {
+	for i := 0; i < count; i++ {
+		go func() {
+			for job := range h.validationQueue {
+				h.validateAsync(context.Background(), job)
+			}
+		}()
+	}
+}
+
+func (h *Host) enqueueValidation(job validateJob) {
+	if h.validationQueue == nil {
+		h.mu.Lock()
+		delete(h.validating, job.inferenceID)
+		h.mu.Unlock()
+		return
+	}
+
+	select {
+	case h.validationQueue <- job:
+	default:
+		h.mu.Lock()
+		delete(h.validating, job.inferenceID)
+		h.mu.Unlock()
+		logging.Debug("validation queue full; retry later", "subsystem", "host", "inference_id", job.inferenceID)
+	}
 }
 
 // hasMempoolValidationOrVote returns true if a MsgValidation or
@@ -758,6 +804,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	var tx *types.DevshardTx
 	switch rec.Status {
 	case types.StatusFinished:
+		// TODO: if this MsgValidation lands after another host has already
+		// challenged the inference, the state machine records participation
+		// without vote weight. Counting that requires a coordinated upgrade.
 		msg := &types.MsgValidation{
 			InferenceId:   job.inferenceID,
 			ValidatorSlot: job.validatorSlot,
