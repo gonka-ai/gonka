@@ -116,6 +116,10 @@ func TestSQLite_MarkFinalized_LastFinalized(t *testing.T) {
 	runMarkFinalized_LastFinalized(t, newTestSQLite(t))
 }
 
+func TestSQLite_SaveLoadSnapshot(t *testing.T) {
+	runSaveLoadSnapshot(t, newTestSQLite(t))
+}
+
 func TestSQLite_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestSQLite(t))
 }

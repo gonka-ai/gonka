@@ -285,6 +285,22 @@ func (h *HybridStorage) LastFinalized(escrowID string) (uint64, error) {
 	return store.LastFinalized(escrowID)
 }
 
+func (h *HybridStorage) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	store, _, err := h.backendForSession(escrowID)
+	if err != nil {
+		return err
+	}
+	return store.SaveSnapshot(escrowID, nonce, data)
+}
+
+func (h *HybridStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	store, _, err := h.backendForSession(escrowID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return store.LoadSnapshot(escrowID)
+}
+
 func (h *HybridStorage) PruneEpoch(epochID uint64) error {
 	sqliteErr := h.sqlite.PruneEpoch(epochID)
 	var pgErr error

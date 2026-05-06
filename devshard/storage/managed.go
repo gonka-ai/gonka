@@ -225,6 +225,14 @@ func (m *ManagedStorage) LastFinalized(escrowID string) (uint64, error) {
 	return m.inner.LastFinalized(escrowID)
 }
 
+func (m *ManagedStorage) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	return m.inner.SaveSnapshot(escrowID, nonce, data)
+}
+
+func (m *ManagedStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	return m.inner.LoadSnapshot(escrowID)
+}
+
 // PruneEpoch is exposed so callers can trigger an explicit drop. The managed
 // background pass uses this method too.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {

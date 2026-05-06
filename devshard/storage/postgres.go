@@ -40,6 +40,7 @@ const (
 	pgSessionsParent   = "devshard_sessions"
 	pgDiffsParent      = "devshard_diffs"
 	pgSignaturesParent = "devshard_signatures"
+	pgSnapshotsParent  = "devshard_snapshots"
 	pgSessionIndex     = "devshard_session_index"
 )
 
@@ -51,6 +52,9 @@ func pgDiffsPartition(epochID uint64) string {
 }
 func pgSignaturesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSignaturesParent, epochID)
+}
+func pgSnapshotsPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgSnapshotsParent, epochID)
 }
 
 const pgCreateParents = `
@@ -95,6 +99,15 @@ CREATE TABLE IF NOT EXISTS devshard_signatures (
     slot_id   BIGINT NOT NULL,
     sig       BYTEA  NOT NULL,
     PRIMARY KEY (epoch_id, escrow_id, nonce, slot_id)
+) PARTITION BY RANGE (epoch_id);
+
+CREATE TABLE IF NOT EXISTS devshard_snapshots (
+    epoch_id   BIGINT NOT NULL,
+    escrow_id  TEXT   NOT NULL,
+    nonce      BIGINT NOT NULL,
+    state_data BYTEA  NOT NULL,
+    created_at BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, escrow_id)
 ) PARTITION BY RANGE (epoch_id);
 `
 
@@ -235,6 +248,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return err
 	}
 	if err := create(pgSignaturesParent, pgSignaturesPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgSnapshotsParent, pgSnapshotsPartition(epochID)); err != nil {
 		return err
 	}
 
@@ -645,7 +661,50 @@ func (s *Postgres) LastFinalized(escrowID string) (uint64, error) {
 	return nonce, nil
 }
 
-// PruneEpoch drops all three per-epoch partitions for epochID and forgets every
+func (s *Postgres) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(context.Background(),
+		fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM (%d) TO (%d)`,
+			pgSnapshotsPartition(epochID), pgSnapshotsParent, epochID, epochID+1,
+		),
+	); err != nil {
+		return fmt.Errorf("create snapshot partition: %w", err)
+	}
+	_, err = s.pool.Exec(context.Background(),
+		`INSERT INTO devshard_snapshots (epoch_id, escrow_id, nonce, state_data, created_at)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (epoch_id, escrow_id) DO UPDATE
+		 SET nonce = EXCLUDED.nonce, state_data = EXCLUDED.state_data, created_at = EXCLUDED.created_at`,
+		epochID, escrowID, nonce, data, time.Now().Unix(),
+	)
+	return err
+}
+
+func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return 0, nil, err
+	}
+	row := s.pool.QueryRow(context.Background(),
+		`SELECT nonce, state_data FROM devshard_snapshots WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	)
+	var nonce uint64
+	var data []byte
+	if err := row.Scan(&nonce, &data); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil, ErrSnapshotNotFound
+		}
+		return 0, nil, err
+	}
+	return nonce, data, nil
+}
+
+// PruneEpoch drops all per-epoch partitions for epochID and forgets every
 // escrow index entry that pointed at it. Other epochs are not touched.
 // No-op if the partitions do not exist.
 func (s *Postgres) PruneEpoch(epochID uint64) error {
@@ -653,6 +712,7 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 	for _, partition := range []string{
 		pgDiffsPartition(epochID),
 		pgSignaturesPartition(epochID),
+		pgSnapshotsPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))
@@ -685,7 +745,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
 	`)
 	if err != nil {
 		return fmt.Errorf("list devshard partitions: %w", err)
@@ -732,7 +792,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 }
 
 func pgPartitionEpoch(name string) (uint64, bool) {
-	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent} {
+	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent} {
 		prefix := parent + "_epoch_"
 		if strings.HasPrefix(name, prefix) {
 			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)

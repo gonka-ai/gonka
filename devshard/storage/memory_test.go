@@ -30,6 +30,10 @@ func TestMemory_MarkFinalized_LastFinalized(t *testing.T) {
 	runMarkFinalized_LastFinalized(t, NewMemory())
 }
 
+func TestMemory_SaveLoadSnapshot(t *testing.T) {
+	runSaveLoadSnapshot(t, NewMemory())
+}
+
 func TestMemory_AddSignature(t *testing.T) {
 	runAddSignature(t, NewMemory())
 }

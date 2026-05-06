@@ -20,6 +20,9 @@ var ErrSessionEpochConflict = errors.New("session epoch conflict")
 // escrow to prevent wrong-version state machines from attaching to live state.
 var ErrSessionVersionConflict = errors.New("session version conflict")
 
+// ErrSnapshotNotFound is returned when no snapshot exists for a session.
+var ErrSnapshotNotFound = errors.New("snapshot not found")
+
 // ErrEpochPruned is returned when a managed store is asked to create a session
 // in an epoch that has already passed the local retention horizon.
 var ErrEpochPruned = errors.New("epoch already pruned")
@@ -43,6 +46,8 @@ type Storage interface {
 	GetSessionMeta(escrowID string) (*SessionMeta, error)
 	MarkFinalized(escrowID string, nonce uint64) error
 	LastFinalized(escrowID string) (uint64, error)
+	SaveSnapshot(escrowID string, nonce uint64, data []byte) error
+	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
 	PruneEpoch(epochID uint64) error
 	Close() error
 }

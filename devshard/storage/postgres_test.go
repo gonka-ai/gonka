@@ -86,6 +86,9 @@ func TestPostgres_GetSignatures(t *testing.T) {
 func TestPostgres_MarkFinalized_LastFinalized(t *testing.T) {
 	runMarkFinalized_LastFinalized(t, newTestPostgres(t))
 }
+func TestPostgres_SaveLoadSnapshot(t *testing.T) {
+	runSaveLoadSnapshot(t, newTestPostgres(t))
+}
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }
@@ -126,22 +129,24 @@ func TestPostgres_PartitionTablesPhysicallyDropped(t *testing.T) {
 	}
 	require.Equal(t, 1, countSessionIndexRows(t, pg.pool, 101))
 
-	// All nine partition tables should exist.
+	// All per-epoch partition tables should exist.
 	require.Equal(t, []string{
 		"devshard_diffs_epoch_100", "devshard_diffs_epoch_101", "devshard_diffs_epoch_102",
 		"devshard_sessions_epoch_100", "devshard_sessions_epoch_101", "devshard_sessions_epoch_102",
 		"devshard_signatures_epoch_100", "devshard_signatures_epoch_101", "devshard_signatures_epoch_102",
+		"devshard_snapshots_epoch_100", "devshard_snapshots_epoch_101", "devshard_snapshots_epoch_102",
 	}, listDevshardPartitions(t, pg.pool))
 
 	// Drop the middle epoch.
 	require.NoError(t, pg.PruneEpoch(101))
 	require.Equal(t, 0, countSessionIndexRows(t, pg.pool, 101))
 
-	// Only epoch 101's three partitions are gone; the others survive.
+	// Only epoch 101's partitions are gone; the others survive.
 	require.Equal(t, []string{
 		"devshard_diffs_epoch_100", "devshard_diffs_epoch_102",
 		"devshard_sessions_epoch_100", "devshard_sessions_epoch_102",
 		"devshard_signatures_epoch_100", "devshard_signatures_epoch_102",
+		"devshard_snapshots_epoch_100", "devshard_snapshots_epoch_102",
 	}, listDevshardPartitions(t, pg.pool))
 
 	// And the surviving epochs still have their data accessible.
@@ -171,6 +176,7 @@ func TestPostgres_PruneBefore_DropsOnlyExistingOldPartitions(t *testing.T) {
 		"devshard_diffs_epoch_105",
 		"devshard_sessions_epoch_105",
 		"devshard_signatures_epoch_105",
+		"devshard_snapshots_epoch_105",
 	}, listDevshardPartitions(t, pg.pool))
 	require.Equal(t, 0, countSessionIndexRows(t, pg.pool, 100))
 	require.Equal(t, 0, countSessionIndexRows(t, pg.pool, 101))
@@ -479,7 +485,7 @@ func listDevshardPartitions(t *testing.T, pool *pgxpool.Pool) []string {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
 		ORDER BY c.relname
 	`)
 	require.NoError(t, err)

@@ -2,6 +2,7 @@ package devshard
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"decentralized-api/payloadstorage"
 
 	"devshard/bridge"
+	"devshard/host"
 	devshardserver "devshard/server"
 	"devshard/signing"
 	"devshard/state"
@@ -82,6 +84,18 @@ type currentEpochStore struct {
 }
 
 func (s currentEpochStore) CurrentEpochID() uint64 { return s.epoch }
+
+type rangeRecordingStore struct {
+	storage.Storage
+	from uint64
+	to   uint64
+}
+
+func (s *rangeRecordingStore) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
+	s.from = fromNonce
+	s.to = toNonce
+	return s.Storage.GetDiffs(escrowID, fromNonce, toNonce)
+}
 
 func mustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
 	t.Helper()
@@ -157,10 +171,10 @@ func populateStore(t *testing.T, store storage.Storage, numDiffs int) ([]types.S
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
-		InitialBalance: 100000,
+		InitialBalance: 100000000,
 	}))
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000000, user.Address(), verifier)
 	require.NoError(t, err)
 
 	for i := uint64(1); i <= uint64(numDiffs); i++ {
@@ -211,6 +225,54 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
+}
+
+func TestRecoverSessions_UsesSnapshotBeforeReplay(t *testing.T) {
+	store := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, store, 750)
+	verifier := signing.NewSecp256k1Verifier()
+	config := defaultConfig(3)
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000000, user.Address(), verifier)
+	require.NoError(t, err)
+	records, err := store.GetDiffs("escrow-1", 1, host.SnapshotInterval)
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	require.NoError(t, saveHostSnapshot(store, sm, "escrow-1", host.SnapshotInterval))
+	_, snapshotData, err := store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	var snapshotEnvelope host.StateSnapshot
+	require.NoError(t, json.Unmarshal(snapshotData, &snapshotEnvelope))
+	require.NotNil(t, snapshotEnvelope.State)
+	require.Nil(t, snapshotEnvelope.HostSyncNonce)
+
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-1",
+			Amount:         100000000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+
+	recording := &rangeRecordingStore{Storage: store}
+	mgr := NewHostManager(recording, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+	require.Equal(t, uint64(host.SnapshotInterval+1), recording.from)
+	require.Equal(t, uint64(750), recording.to)
+
+	mgr.mu.RLock()
+	srv := mgr.sessions["escrow-1"]
+	mgr.mu.RUnlock()
+	require.NotNil(t, srv)
+	require.Equal(t, uint64(750), srv.Host().SnapshotState().LatestNonce)
 }
 
 func TestRecoverSessions_Nonce0(t *testing.T) {

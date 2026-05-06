@@ -415,31 +415,52 @@ func (sm *StateMachine) Phase() types.SessionPhase {
 func (sm *StateMachine) SnapshotState() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	s := *sm.state
+	return *cloneEscrowState(sm.state)
+}
+
+// ExportState returns a deep-copied pointer form used by recovery snapshots.
+func (sm *StateMachine) ExportState() *types.EscrowState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return cloneEscrowState(sm.state)
+}
+
+// RestoreState replaces the current escrow state with a deep copy from storage.
+func (sm *StateMachine) RestoreState(state *types.EscrowState) {
+	if state == nil {
+		return
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.state = cloneEscrowState(state)
+}
+
+func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
+	s := *src
 
 	// Deep copy Group.
-	s.Group = make([]types.SlotAssignment, len(sm.state.Group))
-	copy(s.Group, sm.state.Group)
+	s.Group = make([]types.SlotAssignment, len(src.Group))
+	copy(s.Group, src.Group)
 
 	// Deep copy HostStats.
-	s.HostStats = make(map[uint32]*types.HostStats, len(sm.state.HostStats))
-	for k, v := range sm.state.HostStats {
+	s.HostStats = make(map[uint32]*types.HostStats, len(src.HostStats))
+	for k, v := range src.HostStats {
 		cp := *v
 		s.HostStats[k] = &cp
 	}
 
 	// Deep copy RevealedSeeds.
-	s.RevealedSeeds = make(map[uint32]int64, len(sm.state.RevealedSeeds))
-	maps.Copy(s.RevealedSeeds, sm.state.RevealedSeeds)
+	s.RevealedSeeds = make(map[uint32]int64, len(src.RevealedSeeds))
+	maps.Copy(s.RevealedSeeds, src.RevealedSeeds)
 
 	// Deep copy WarmKeys.
-	s.WarmKeys = make(map[uint32]string, len(sm.state.WarmKeys))
-	maps.Copy(s.WarmKeys, sm.state.WarmKeys)
+	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
+	maps.Copy(s.WarmKeys, src.WarmKeys)
 
 	// Deep copy Inferences.
-	s.Inferences = copyInferences(sm.state.Inferences)
+	s.Inferences = copyInferences(src.Inferences)
 
-	return s
+	return &s
 }
 
 // mutableSnapshot holds the mutable fields of EscrowState for rollback.

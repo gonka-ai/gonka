@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -74,6 +75,8 @@ type Host struct {
 	store     storage.Storage // optional, nil = no persistence
 	gsp       *gossip.Gossip  // optional, nil = no gossip pruning
 
+	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
+
 	// Lookup maps built from group at construction time.
 	slotToAddr  map[uint32]string   // slotID -> validator address
 	addrToSlots map[string][]uint32 // address -> all slotIDs owned
@@ -84,6 +87,9 @@ type Host struct {
 	completedResponses map[uint64][]byte   // inference ID -> cached ML response body
 	ownSeed            int64               // deterministic seed derived from signer + escrowID
 }
+
+// SnapshotInterval controls how often hosts persist full state snapshots.
+const SnapshotInterval = 500
 
 func NewHost(
 	sm *state.StateMachine,
@@ -362,8 +368,41 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
 			return fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err)
 		}
+		h.maybeSaveSnapshotLocked(diff.Nonce)
 	}
 	return nil
+}
+
+// maybeSaveSnapshotLocked copies the current state every SnapshotInterval diffs.
+// JSON marshaling and storage I/O happen asynchronously outside h.mu.
+// Caller must hold h.mu.
+func (h *Host) maybeSaveSnapshotLocked(nonce uint64) {
+	if h.store == nil || nonce == 0 || nonce%SnapshotInterval != 0 {
+		return
+	}
+	if !h.snapshotInFlight.CompareAndSwap(false, true) {
+		return
+	}
+
+	store := h.store
+	escrowID := h.escrowID
+	state := h.sm.ExportState()
+
+	go func() {
+		defer h.snapshotInFlight.Store(false)
+		writeSnapshot(store, escrowID, nonce, state)
+	}()
+}
+
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState) {
+	data, err := MarshalStateSnapshot(state)
+	if err != nil {
+		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
+		return
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
+		logging.Warn("failed to persist host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
+	}
 }
 
 // ApplyCatchUpDiffs applies diffs the host hasn't seen yet.

@@ -104,6 +104,12 @@ func (s *legacyOnlyStorage) MarkFinalized(escrowID string, nonce uint64) error {
 func (s *legacyOnlyStorage) LastFinalized(escrowID string) (uint64, error) {
 	return s.inner.LastFinalized(escrowID)
 }
+func (s *legacyOnlyStorage) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	return s.inner.SaveSnapshot(escrowID, nonce, data)
+}
+func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	return s.inner.LoadSnapshot(escrowID)
+}
 func (s *legacyOnlyStorage) PruneEpoch(epochID uint64) error {
 	s.pruneEpochCalls++
 	if epochID == s.failEpoch && !s.failed {
