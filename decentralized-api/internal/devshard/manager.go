@@ -297,9 +297,6 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, error) {
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
-		if errors.Is(err, storage.ErrSessionNotFound) {
-			return nil, fmt.Errorf("get session meta: %w", err)
-		}
 		return nil, fmt.Errorf("get session meta: %w", err)
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {

@@ -256,7 +256,6 @@ func main() {
 			defer devshardStore.Close()
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.LegacySessionVersion, devshardBridge, payloadStore, recorder)
-			hostManager.SetInitializing()
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
