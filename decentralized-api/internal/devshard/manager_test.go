@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -95,6 +97,27 @@ func (s *rangeRecordingStore) GetDiffs(escrowID string, fromNonce, toNonce uint6
 	s.from = fromNonce
 	s.to = toNonce
 	return s.Storage.GetDiffs(escrowID, fromNonce, toNonce)
+}
+
+type blockingMetaStore struct {
+	storage.Storage
+	release     <-chan struct{}
+	bothStarted chan<- struct{}
+	once        sync.Once
+	mu          sync.Mutex
+	started     int
+}
+
+func (s *blockingMetaStore) GetSessionMeta(escrowID string) (*storage.SessionMeta, error) {
+	s.mu.Lock()
+	s.started++
+	if s.started == 2 {
+		s.once.Do(func() { close(s.bothStarted) })
+	}
+	s.mu.Unlock()
+
+	<-s.release
+	return s.Storage.GetSessionMeta(escrowID)
 }
 
 func mustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
@@ -225,6 +248,56 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
+}
+
+func TestRecoverSessions_LoadsEscrowsInParallel(t *testing.T) {
+	base := newManagerTestStore(t)
+	hostSigner := mustGenerateKey(t)
+	hosts := []*signing.Secp256k1Signer{
+		hostSigner,
+		mustGenerateKey(t),
+		mustGenerateKey(t),
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	for _, escrowID := range []string{"escrow-a", "escrow-b"} {
+		require.NoError(t, base.CreateSession(storage.CreateSessionParams{
+			EscrowID:       escrowID,
+			CreatorAddr:    user.Address(),
+			Config:         defaultConfig(3),
+			Group:          group,
+			InitialBalance: 100000,
+		}))
+	}
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	bothStarted := make(chan struct{})
+	store := &blockingMetaStore{
+		Storage:     base,
+		release:     release,
+		bothStarted: bothStarted,
+	}
+	br := &mockBridge{}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.RecoverSessions()
+	}()
+
+	select {
+	case <-bothStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected at least two sessions to enter recovery concurrently")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, <-errCh)
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	require.Len(t, mgr.sessions, 2)
 }
 
 func TestRecoverSessions_UsesSnapshotBeforeReplay(t *testing.T) {

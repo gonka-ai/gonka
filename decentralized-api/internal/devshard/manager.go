@@ -56,6 +56,8 @@ type HostManager struct {
 	recorder     PayloadAuthClient
 }
 
+const recoverSessionsConcurrency = 8
+
 func NewHostManager(
 	store storage.Storage,
 	signer *signing.Secp256k1Signer,
@@ -239,13 +241,34 @@ func (m *HostManager) RecoverSessions() error {
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
-
-	for _, sess := range active {
-		if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID, "error", err)
-		}
+	if len(active) == 0 {
+		return nil
 	}
+
+	workers := recoverSessionsConcurrency
+	if len(active) < workers {
+		workers = len(active)
+	}
+
+	jobs := make(chan storage.ActiveSession)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sess := range jobs {
+				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					logging.Error("skipping corrupt session", inferenceTypes.System,
+						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID, "error", err)
+				}
+			}
+		}()
+	}
+	for _, sess := range active {
+		jobs <- sess
+	}
+	close(jobs)
+	wg.Wait()
 
 	return nil
 }
