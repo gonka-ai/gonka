@@ -164,9 +164,11 @@ class DevshardPostgresStorageTests : TestermintTest() {
         val targetEpoch = firstEpoch + 4
         logSection("Advancing chain past epoch $targetEpoch so prune horizon clears $firstEpoch")
         var tick = 0
+        var lastTickEpoch = firstEpoch
         while (genesis.getEpochData().latestEpoch.index < targetEpoch) {
             val tickUser = genesis.createFundedDevshardUser("devshard-pg-prune-tick-${tick++}")
             val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, tickUser.keyName, modelId = devshardEscrowModel)
+            lastTickEpoch = genesis.node.queryDevshardEscrow(newEscrowId).escrow!!.epochIndex.toLong()
             val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = tickUser.keyName)
             try {
                 genesis.waitForDevshardProxyWarmup()
@@ -196,12 +198,12 @@ class DevshardPostgresStorageTests : TestermintTest() {
             .describedAs("ManagedStorage must drop epoch $firstEpoch partitions within retention horizon")
             .isTrue()
 
-        // Recent partitions must still be intact -- prune touches only the
-        // target epoch.
+        // Assert against the partition we actually wrote into in the last
+        // tick. latestEpoch would be wrong: the loop exits via waitForNextEpoch
+        // after the last write, so the chain's current epoch has no partition.
         PostgresClient.connect().use { pg ->
-            val recentEpoch = genesis.getEpochData().latestEpoch.index
-            assertThat(pg.tableExists("devshard_sessions_epoch_$recentEpoch"))
-                .describedAs("recent epoch $recentEpoch sessions partition must survive prune of $firstEpoch")
+            assertThat(pg.tableExists("devshard_sessions_epoch_$lastTickEpoch"))
+                .describedAs("last-tick epoch $lastTickEpoch sessions partition must survive prune of $firstEpoch")
                 .isTrue()
         }
     }

@@ -650,9 +650,10 @@ func weightByParticipant(
 	scales []*types.ConfirmationWeightScale,
 ) map[string]int64 {
 	weights := make(map[string]int64, len(participants))
+	coefficients := types.ConfirmationWeightCoefficients(scales)
 	for _, p := range participants {
 		if p != nil {
-			weights[p.Index] = types.ConfirmationWeightOfParticipant(p, scales)
+			weights[p.Index] = types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
 		}
 	}
 	return weights
@@ -664,6 +665,7 @@ func preservedWeightByParticipant(
 	scales []*types.ConfirmationWeightScale,
 ) map[string]int64 {
 	preserved := make(map[string]int64, len(participants))
+	coefficients := types.ConfirmationWeightCoefficients(scales)
 	for _, p := range participants {
 		if p == nil {
 			continue
@@ -687,7 +689,7 @@ func preservedWeightByParticipant(
 				}
 			}
 		}
-		preserved[p.Index] = types.ConfirmationWeightOfModelNodes(modelNodes, scales)
+		preserved[p.Index] = types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 	}
 	return preserved
 }

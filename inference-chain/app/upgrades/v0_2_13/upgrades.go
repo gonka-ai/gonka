@@ -19,6 +19,9 @@ import (
 const (
 	MaxEscrowsPerEpoch uint32 = 500_000
 	MaxNonce           uint32 = 1_000_000
+	// Block window after the upgrade in which confirmation PoC is skipped.
+	// Same value as v0.2.10; covers the rest of the upgrade epoch on mainnet.
+	GraceUpgradeProtectionWindow int64 = 3000
 )
 
 func CreateUpgradeHandler(
@@ -41,6 +44,9 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 		if err := grantRespondDealerComplaintsAuthz(ctx, authzKeeper, k); err != nil {
+			return nil, err
+		}
+		if err := disableConfirmationPocForUpgradeEpoch(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -110,6 +116,7 @@ func backfillConfirmationWeightScales(ctx context.Context, k keeper.Keeper) erro
 	}
 
 	root.ConfirmationWeightScales = confirmationWeightScalesFromModels(confirmableModels, params.PocParams)
+	coefficients := types.ConfirmationWeightCoefficients(root.ConfirmationWeightScales)
 	activeByAddress := make(map[string]*types.ActiveParticipant, len(activeParticipants.Participants))
 	for _, p := range activeParticipants.Participants {
 		if p != nil {
@@ -124,7 +131,7 @@ func backfillConfirmationWeightScales(ctx context.Context, k keeper.Keeper) erro
 		if p == nil {
 			continue
 		}
-		expected := types.ConfirmationWeightOfParticipant(p, root.ConfirmationWeightScales)
+		expected := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
 		if vw.ConfirmationWeight > expected {
 			vw.ConfirmationWeight = expected
 		}
@@ -196,6 +203,24 @@ func grantRespondDealerComplaintsAuthz(ctx context.Context, authzKeeper authzkee
 	}
 	k.LogInfo("MsgRespondDealerComplaints grant migration complete", types.Upgrades,
 		"created", created, "skipped", skipped)
+	return nil
+}
+
+// disableConfirmationPocForUpgradeEpoch skips confirmation PoC triggers for
+// the rest of the upgrade epoch via the v0.2.10 grace-epoch primitive.
+func disableConfirmationPocForUpgradeEpoch(ctx context.Context, k keeper.Keeper) error {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogWarn("confirmation PoC grace-epoch skipped: no effective epoch", types.Upgrades)
+		return nil
+	}
+	binomTestP0 := &types.Decimal{Value: 5, Exponent: -1}
+	if err := k.AddPunishmentGraceEpoch(ctx, epochIndex, binomTestP0, GraceUpgradeProtectionWindow); err != nil {
+		return err
+	}
+	k.LogInfo("disabled confirmation PoC for upgrade epoch", types.Upgrades,
+		"epoch", epochIndex,
+		"upgrade_protection_window", GraceUpgradeProtectionWindow)
 	return nil
 }
 

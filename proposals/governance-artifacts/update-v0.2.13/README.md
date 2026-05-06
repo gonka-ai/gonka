@@ -1,47 +1,82 @@
 # Upgrade Proposal: v0.2.13
 
-This document outlines the proposed changes for on-chain software upgrade v0.2.13.
-The `Changes` section details the major modifications, and the `Upgrade Plan` section describes the process for applying these changes.
+This proposal covers the v0.2.13 microrelease.
+
+The release fixes confirmation PoC reward accounting, devshard escrow params,
+complaint-response authz grants, upstream response parsing, participant
+reactivation, node-manager gRPC defaults, and devshard storage growth.
+
+The upgrade also disables confirmation PoC for the rest of the upgrade epoch
+so the new snapshot logic starts cleanly from the next epoch.
 
 ## Upgrade Plan
 
-This PR updates the code for the `api` and `node` services. The PR modifies the container versions in `deploy/join/docker-compose.yml`.
+The node binary is upgraded through an on-chain software upgrade proposal.
 
-The binary versions will be updated via an on-chain upgrade proposal. For more information on the upgrade process, refer to [`/docs/upgrades.md`](https://github.com/gonka-ai/gonka/blob/upgrade-v0.2.13/docs/upgrades.md).
+The PR also updates `api` and `node` container versions in
+`deploy/join/docker-compose.yml` for hosts joining after the on-chain upgrade.
 
-Existing hosts are **not** required to upgrade their `api` and `node` containers. The updated container versions are intended for new hosts who join after the on-chain upgrade is complete.
+Existing hosts are not required to manually update their `api` or `node`
+containers as part of the chain upgrade.
 
 ## Proposed Process
 
 1. Active hosts review this proposal on GitHub.
 2. If the on-chain proposal is approved, this PR will be merged immediately after the upgrade is executed on-chain.
 
-## Testing
-
-The on-chain upgrade from version `v0.2.12` to `v0.2.13` has been successfully deployed and verified on the testnet. No regression in core functionality or performance has been observed during testing. More testing will be executed leading up to the upgrade.
-
-Reviewers are encouraged to request access to testnet environments to validate both node behavior and the on-chain upgrade process, or to replay the upgrade on private testnets.
-
 ## Migration
 
 The on-chain migration logic is defined in [`upgrades.go`](https://github.com/gonka-ai/gonka/blob/upgrade-v0.2.13/inference-chain/app/upgrades/v0_2_13/upgrades.go).
 
 Migrations:
+
 - Sets `DevshardEscrowParams.MaxEscrowsPerEpoch` to `500_000`.
-- Sets `DevshardEscrowParams.MaxNonce` to `1_000_000` (previously a hardcoded `20_000` constant in the settlement path).
-- Backfills `MsgRespondDealerComplaints` authz grants on every existing cold-to-warm ML ops pair. v0.2.12 added this message to the granted permission list but did not migrate existing grants, so DAPIs on hosts that joined before v0.2.12 could not respond to dealer complaints.
+- Sets `DevshardEscrowParams.MaxNonce` to `1_000_000`. The previous settlement
+  path used a hardcoded `20_000` nonce limit.
+- Backfills `EpochGroupData.ConfirmationWeightScales` for the current epoch and
+  clamps existing confirmation weights down to the new expected value.
+- Backfills `MsgRespondDealerComplaints` authz grants on existing cold-to-warm
+  ML ops pairs. v0.2.12 added this message to the permission list but did not
+  migrate existing grants, so DAPIs that joined before v0.2.12 could not respond
+  to dealer complaints.
+- Disables confirmation PoC triggers for the rest of the upgrade epoch via a
+  grace-epoch `UpgradeProtectionWindow` of 3000 blocks. The new snapshot logic
+  starts from the next epoch.
 
 ## Changes
 
-### [PR #TBD](https://github.com/gonka-ai/gonka/pull/TBD) Title
-- Short description of the change.
+### inference-chain
 
-### Other changes
-- [PR #TBD](https://github.com/gonka-ai/gonka/pull/TBD) Title.
+- Confirmation PoC used different model sets for measured weight, preserved
+  weight, and reward rescaling. During new-model bootstrap, this could reduce
+  confirmation weight for honest miners serving both an eligible model and a
+  not-yet-eligible model. v0.2.13 stores one epoch snapshot of confirmable
+  models and weight-scale factors, then uses it for confirmation and reward
+  calculations.
+- `ConsecutiveInvalidInferences` was not reset when a participant became ACTIVE
+  again. A host could return from invalid state and be invalidated again after
+  one new failure. v0.2.13 resets the counter on reactivation and upcoming
+  promotion.
+- Devshard settlement now reads the nonce limit from
+  `DevshardEscrowParams.MaxNonce` instead of a hardcoded constant.
 
-## Proposed Bounties
+### decentralized-api
 
-Bounty ID | Sum GNK | Bounty Explanation | GitHub ID
--- | -- | -- | --
-v0.2.13 | TBD | release management | TBD
-v0.2.12 | TBD | upgrade review | TBD
+- Some OpenAI-compatible upstreams return numeric `stop_reason` values.
+  `Choice.StopReason` now accepts any JSON type, so those responses no longer
+  fail unmarshalling.
+- `NodeManagerGrpcPort` did not start by default when unset. It now defaults to
+  `9400`, and join compose uses the same default so devshard can reach the API
+  without manual config.
+- The internal devshard service inside dapi uses the same devshard storage
+  changes listed below, including pruning and Postgres support.
+
+### devshard
+
+- Devshard storage could grow forever because old escrow data stayed in one
+  SQLite store. Storage is now epoch-scoped and prunes old epochs in the
+  background, keeping the latest 3 epochs.
+- Devshard can use Postgres as the primary store for larger deployments, with
+  SQLite kept as a local fallback.
+- Postgres data is partitioned by `epoch_id` for sessions, diffs, and
+  signatures, so pruning can drop old epoch data cleanly.

@@ -1,8 +1,23 @@
 package types
 
-import mathsdk "cosmossdk.io/math"
+import (
+	"slices"
+
+	mathsdk "cosmossdk.io/math"
+)
+
+func ConfirmationWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
+	return confirmationCoefficients(scales)
+}
 
 func ConfirmationWeightOfParticipant(p *ActiveParticipant, scales []*ConfirmationWeightScale) int64 {
+	return ConfirmationWeightOfParticipantWithCoefficients(p, confirmationCoefficients(scales))
+}
+
+func ConfirmationWeightOfParticipantWithCoefficients(
+	p *ActiveParticipant,
+	coefficients map[string]mathsdk.LegacyDec,
+) int64 {
 	if p == nil {
 		return 0
 	}
@@ -13,19 +28,32 @@ func ConfirmationWeightOfParticipant(p *ActiveParticipant, scales []*Confirmatio
 		}
 		modelNodes[modelID] = append(modelNodes[modelID], p.MlNodes[i].MlNodes...)
 	}
-	return ConfirmationWeightOfModelNodes(modelNodes, scales)
+	return ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 }
 
 func ConfirmationWeightOfModelNodes(modelNodes map[string][]*MLNodeInfo, scales []*ConfirmationWeightScale) int64 {
-	coefficients := confirmationCoefficients(scales)
+	return ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, confirmationCoefficients(scales))
+}
+
+func ConfirmationWeightOfModelNodesWithCoefficients(
+	modelNodes map[string][]*MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
+) int64 {
 	total := int64(0)
-	for modelID, nodes := range modelNodes {
+
+	modelIDs := make([]string, 0, len(modelNodes))
+	for modelID := range modelNodes {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+
+	for _, modelID := range modelIDs {
 		coeff, ok := coefficients[modelID]
 		if !ok {
 			continue
 		}
 		rawModel := int64(0)
-		for _, node := range nodes {
+		for _, node := range modelNodes[modelID] {
 			if node != nil {
 				rawModel += node.PocWeight
 			}

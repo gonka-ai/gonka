@@ -1125,6 +1125,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	}
 	validationParams := params.ValidationParams
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
+	coefficients := types.ConfirmationWeightCoefficients(scales)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -1139,7 +1140,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		}
 
 		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
-		initialConfirmationWeight := types.ConfirmationWeightOfParticipant(p, scales)
+		initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
 		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {

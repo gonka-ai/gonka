@@ -55,6 +55,34 @@ func TestConfirmationWeightOfParticipantMatchesModelNodes(t *testing.T) {
 	require.Equal(t, int64(29), types.ConfirmationWeightOfParticipant(participant, scales))
 }
 
+func TestConfirmationWeightWithCoefficientsMatchesConvenienceFunctions(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{
+		{ModelId: "model-a", WeightScaleFactor: &types.Decimal{Value: 2, Exponent: 0}},
+		{ModelId: "model-b", WeightScaleFactor: &types.Decimal{Value: 3, Exponent: 0}},
+	}
+	participant := &types.ActiveParticipant{
+		Models: []string{"model-b", "model-a"},
+		MlNodes: []*types.ModelMLNodes{
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 4}}},
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 5}}},
+		},
+	}
+	modelNodes := map[string][]*types.MLNodeInfo{
+		"model-a": participant.MlNodes[1].MlNodes,
+		"model-b": participant.MlNodes[0].MlNodes,
+	}
+
+	coefficients := types.ConfirmationWeightCoefficients(scales)
+	require.Equal(t,
+		types.ConfirmationWeightOfModelNodes(modelNodes, scales),
+		types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients),
+	)
+	require.Equal(t,
+		types.ConfirmationWeightOfParticipant(participant, scales),
+		types.ConfirmationWeightOfParticipantWithCoefficients(participant, coefficients),
+	)
+}
+
 func TestConfirmationWeightEmptyInputs(t *testing.T) {
 	require.Zero(t, types.ConfirmationWeightOfParticipant(nil, nil))
 	require.Zero(t, types.ConfirmationWeightOfModelNodes(nil, nil))
