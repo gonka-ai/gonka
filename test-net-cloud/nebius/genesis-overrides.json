@@ -71,59 +71,170 @@
       },
       "params": {
         "epoch_params": {
-        "confirmation_poc_safety_window": "5",
-        "epoch_length": "360",
-        "epoch_multiplier": "1",
-        "epoch_shift": "300",
-        "poc_stage_duration": "30",
-        "poc_exchange_duration": "2",
-        "poc_validation_delay": "2",
-        "poc_validation_duration": "40",
-        "set_new_validators_delay": "10",
-        "inference_validation_cutoff": "20",
-        "default_unit_of_compute_price": "100",
+          "confirmation_poc_safety_window": "5",
+          "epoch_length": "360",
+          "epoch_multiplier": "1",
+          "epoch_shift": "300",
+          "poc_stage_duration": "30",
+          "poc_exchange_duration": "2",
+          "poc_validation_delay": "2",
+          "poc_validation_duration": "20",
+          "set_new_validators_delay": "30",
+          "inference_validation_cutoff": "20",
+          "default_unit_of_compute_price": "100",
+          "inference_pruning_epoch_threshold": "2",
           "inference_pruning_max": "0",
-          "poc_pruning_max": "0"
+          "poc_pruning_max": "0",
+          "poc_slot_allocation": { "value": "5", "exponent": -1 }
         },
         "validation_params": {
-          "binom_test_p0": {
-            "value": "4",
-            "exponent": -1
-          }
+          "false_positive_rate": { "value": "5", "exponent": -2 },
+          "min_ramp_up_measurements": 10,
+          "pass_value": { "value": "99", "exponent": -2 },
+          "min_validation_average": { "value": "1", "exponent": -2 },
+          "max_validation_average": { "value": "1", "exponent": 0 },
+          "expiration_blocks": "20",
+          "epochs_to_max": "30",
+          "full_validation_traffic_cutoff": "10000",
+          "min_validation_halfway": { "value": "5", "exponent": -2 },
+          "min_validation_traffic_cutoff": "100",
+          "miss_percentage_cutoff": { "value": "1", "exponent": -2 },
+          "miss_requests_penalty": { "value": "1", "exponent": 0 },
+          "timestamp_expiration": "60",
+          "timestamp_advance": "30",
+          "bad_participant_invalidation_rate": { "value": "2", "exponent": -1 },
+          "invalidation_h_threshold": { "value": "4", "exponent": 0 },
+          "downtime_good_percentage": { "value": "1", "exponent": -1 },
+          "downtime_bad_percentage": { "value": "2", "exponent": -1 },
+          "downtime_h_threshold": { "value": "4", "exponent": 0 },
+          "quick_failure_threshold": { "value": "1", "exponent": -6 },
+          "binom_test_p0": { "value": "4", "exponent": -1 },
+          "logprobs_mode": "processed_logprobs"
         },
         "poc_params": {
           "default_difficulty": 5,
-          "validation_sample_size": 20,
-          "weight_scale_factor": {
-            "value": "25",
-            "exponent": -1
-          },
-          "model_id": "Qwen/Qwen3-4B-Instruct-2507",
-          "seq_len": 256,
+          "validation_sample_size": 200,
+          "poc_data_pruning_epoch_threshold": "1",
           "poc_v2_enabled": true,
           "confirmation_poc_v2_enabled": true,
-          "stat_test": {
-            "dist_threshold": { "value": "4", "exponent": -1 },
-            "p_mismatch": { "value": "1", "exponent": -1 },
-            "p_value_threshold": { "value": "5", "exponent": -2 }
-          },
-          "poc_normalization_enabled": true
+          "poc_normalization_enabled": true,
+          "models": [
+            {
+              "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+              "seq_len": "256",
+              "stat_test": {
+                "dist_threshold": { "value": "4", "exponent": -1 },
+                "p_mismatch": { "value": "1", "exponent": -1 },
+                "p_value_threshold": { "value": "5", "exponent": -2 }
+              },
+              "weight_scale_factor": { "value": "25", "exponent": -1 }
+            },
+            {
+              "model_id": "moonshotai/Kimi-K2.6",
+              "seq_len": "1024",
+              "stat_test": {
+                "dist_threshold": { "value": "4", "exponent": -1 },
+                "p_mismatch": { "value": "1", "exponent": -1 },
+                "p_value_threshold": { "value": "5", "exponent": -2 }
+              },
+              "weight_scale_factor": {
+                "value": "87815587266739846",
+                "exponent": -16
+              },
+              "penalty_start_epoch": "46"
+            },
+            {
+              "model_id": "Qwen/Qwen2.5-7B-Instruct",
+              "seq_len": "256",
+              "stat_test": {
+                "dist_threshold": { "value": "4", "exponent": -1 },
+                "p_mismatch": { "value": "1", "exponent": -1 },
+                "p_value_threshold": { "value": "5", "exponent": -2 }
+              },
+              "weight_scale_factor": { "value": "4475", "exponent": -3 },
+              "penalty_start_epoch": "46"
+            }
+          ]
         },
-        "confirmation_poc_params": {
-          "expected_confirmations_per_epoch": "1"
+        "tokenomics_params": {
+          "subsidy_reduction_interval": { "value": "5", "exponent": -2 },
+          "subsidy_reduction_amount": { "value": "2", "exponent": -1 },
+          "current_subsidy_percentage": { "value": "9", "exponent": -1 }
+        },
+        "collateral_params": {
+          "slash_fraction_invalid": { "value": "2", "exponent": -1 },
+          "slash_fraction_downtime": { "value": "1", "exponent": -1 },
+          "downtime_missed_percentage_threshold": { "value": "5", "exponent": -2 },
+          "grace_period_end_epoch": "180",
+          "base_weight_ratio": { "value": "2", "exponent": -1 },
+          "collateral_per_weight_unit": { "value": "1", "exponent": 0 }
+        },
+        "bitcoin_reward_params": {
+          "use_bitcoin_rewards": true,
+          "initial_epoch_reward": "285000000000000",
+          "decay_rate": { "value": "-475", "exponent": -6 },
+          "genesis_epoch": "1",
+          "utilization_bonus_factor": { "value": "5", "exponent": -1 },
+          "full_coverage_bonus_factor": { "value": "12", "exponent": -1 },
+          "partial_coverage_bonus_factor": { "value": "1", "exponent": -1 }
+        },
+        "dynamic_pricing_params": {
+          "stability_zone_lower_bound": { "value": "4", "exponent": -1 },
+          "stability_zone_upper_bound": { "value": "6", "exponent": -1 },
+          "price_elasticity": { "value": "5", "exponent": -2 },
+          "utilization_window_duration": "60",
+          "min_per_token_price": "1",
+          "base_per_token_price": "100",
+          "grace_period_end_epoch": "90",
+          "grace_period_per_token_price": "0"
         },
         "bandwidth_limits_params": {
           "estimated_limits_per_block_kb": "10752",
-          "kb_per_input_token": {
-            "value": "23",
-            "exponent": "-4"
-          },
-          "kb_per_output_token": {
-            "value": "64",
-            "exponent": "-2"
-          },
+          "kb_per_input_token": { "value": "23", "exponent": -4 },
+          "kb_per_output_token": { "value": "64", "exponent": -2 },
+          "invalidations_limit": "500",
+          "invalidations_sample_period": "120",
+          "invalidations_limit_curve": "250",
+          "minimum_concurrent_invalidations": 1,
           "max_inferences_per_block": "1000"
         },
+        "confirmation_poc_params": {
+          "expected_confirmations_per_epoch": "1",
+          "upgrade_protection_window": "500"
+        },
+        "genesis_guardian_params": {
+          "network_maturity_threshold": "2000000"
+        },
+        "delegation_params": {
+          "deploy_window": "5",
+          "initial_model_id": "Qwen/Qwen3-4B-Instruct-2507",
+          "v_min": "3",
+          "refusal_penalty": { "value": "1", "exponent": -1 },
+          "no_participation_penalty": { "value": "15", "exponent": -2 },
+          "delegation_share": { "value": "5", "exponent": -2 },
+          "w_threshold": { "value": "3", "exponent": -1 },
+          "cap_factor": { "value": "75", "exponent": -2 },
+          "max_model_voting_power_percentage": { "value": "3", "exponent": -1 }
+        },
+        "fee_params": {
+          "base_validation_gas": "500000",
+          "gas_per_poc_count": "100"
+        },
+        "devshard_escrow_params": {
+          "min_amount": "5000000000",
+          "max_amount": "10000000000",
+          "max_escrows_per_epoch": 100,
+          "group_size": 16,
+          "token_price": "1",
+          "approved_versions": [
+            {
+              "name": "v1",
+              "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.12/devshardd.zip",
+              "sha256": "15f722444e6545bc787f1ef6d1011557d25a8b05cb9f6aaf1a514349d36d4715"
+            }
+          ]
+        },
+        "developer_access_params": {},
         "participant_access_params": {
           "new_participant_registration_start_height": "0",
           "blocked_participant_addresses": [],
