@@ -28,9 +28,14 @@ boundaries** so the existing PoC and validation pipelines remain
 well-defined under reassignment.
 
 Layer 2 makes `PoCModelConfig.weight_scale_factor` **adaptive within a
-governance-set band**, scaling with realized inference demand and modulated
-by a **learning-period uncertainty mechanism** for newly approved models.
-Auto-deprecation removes models that sustain near-zero demand.
+governance-set band**, scaling with realized inference demand. The
+band is intentionally wider during the **learning period** of newly
+approved models (reusing the existing
+[multi-model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
+`penalty_start_epoch` boundary as the LEARNING/ACTIVE divide, no new
+state introduced). Auto-deprecation removes models that sustain
+near-zero demand, with a governance veto window before terminal
+retirement.
 
 **Per-host quality routing** — biasing which host serves a given inference
 request based on that host's historical performance on that model
@@ -84,32 +89,62 @@ both in operator-declared capability sets and a hardware fit factor.
 
 ### 1. Architecture
 
-Two cooperating layers, plus a model-lifecycle state machine, all built on
-explicit operator-declared capability sets.
+Two cooperating layers, plus end-of-life additions to the existing model
+lifecycle, all built on explicit operator-declared capability sets.
 
 - **Capability:** each MLNode declares the set of models it can and will
-  serve, persisted on-chain.
+  serve, plus its canonical GPU class, persisted on-chain.
 - **Layer 1 (Scheduler):** chain-side computation that publishes an
   *opinion* — a target distribution of lazy compute per `(GPU class,
   model)` pair each epoch — weighted by demand and by a hardware fit
   factor. Each DAPI selects its MLNode assignments from the intersection
   of operator capability and the chain's opinion.
 - **Layer 2 (Coefficient):** chain-side computation that produces an
-  effective per-model `weight_scale_factor` from a governance-set base, an
-  observed demand factor, a novelty factor, and a status factor, clamped
-  to a governance-set band.
-- **Lifecycle:** each model carries a `status` of `LEARNING`, `ACTIVE`,
-  `DEPRECATED`, or `RETIRED`. Status transitions are driven by observed
-  demand and time, with a governance veto window before terminal
-  transitions take effect.
+  effective per-model `weight_scale_factor` from a governance-set base,
+  an observed demand factor, and a status factor, clamped to a
+  governance-set band.
+- **Lifecycle:** the existing
+  [multi-model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
+  design already encodes the bootstrap → active transition via
+  `penalty_start_epoch` per model. This GIP **reuses** that boundary as
+  the LEARNING/ACTIVE divide and **adds** the ACTIVE → DEPRECATED →
+  RETIRED end-of-life transitions.
 
 The scheduler is **advisory**. It expresses an opinion over each
 operator's declared capabilities; it does not direct hosts to run models
 they have not declared themselves capable of running.
 
 Both layers run at epoch settlement. Outputs are persisted on-chain as
-part of `EpochGroupData` or analogous per-epoch state and become inputs to
-the next epoch.
+part of `EpochGroupData` or analogous per-epoch state and become inputs
+to the next epoch.
+
+### 1.1. Relationship to existing multi-model PoC
+
+This GIP layers on top of, and does not replace, the participation,
+delegation, and PoC mechanisms specified in
+[multi-model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md).
+Specifically:
+
+- **Participation modes** (DIRECT, DELEGATE, REFUSE, INTENT, NONE) are
+  unchanged. `MLNodeCapability` is orthogonal: it declares which models
+  an MLNode *can serve* and the GPU class of its hardware. Whether a
+  host actually participates in PoC for a given model on a given epoch
+  is still resolved through the existing participation system.
+- **`penalty_start_epoch`** per model is reused directly as the
+  LEARNING/ACTIVE boundary (see §4.3). No new "learning period" field
+  is introduced.
+- **Bootstrap pre-eligibility** (`BootstrapDelegationSnapshot`,
+  `deploy_window`, INTENT) continues to operate as specified for new
+  models. The scheduler's allocation cap during the LEARNING period is
+  complementary: it bounds how much of the *lazy* compute pool can be
+  pulled toward an unproven model, while existing bootstrap mechanics
+  govern the explicit declaration of intent and hardware deployment.
+- **The founding-model weight-cap exemption** (`initial_model_id` =
+  Qwen3-235B-FP8) is preserved by this GIP. The exemption applies to
+  the legacy weight-cap; this GIP's coefficient bands and scheduler
+  allocation cap apply to all models including the founding model, but
+  with backfill values that produce no behavioral change at the
+  upgrade boundary (see §6).
 
 ### 2. New on-chain state
 
@@ -144,21 +179,24 @@ message PoCModelConfig {
 
   Decimal min_band                  = 10;  // floor for effective coefficient
   Decimal max_band                  = 11;  // ceiling for effective coefficient
-  ModelStatus status                = 12;  // LEARNING | ACTIVE | DEPRECATED | RETIRED
-  uint64 approved_at_epoch          = 13;  // set when added; immutable
-  uint64 status_changed_at_epoch    = 14;  // updated on each status transition
-  Decimal scheduler_allocation_cap  = 15;  // 1.0 for ACTIVE, < 1.0 for LEARNING
-  string target_gpu_class           = 16;  // GpuClass.id this model was designed for
-  repeated string compatible_gpu_classes = 17; // GpuClass.ids that can physically serve
-  uint32 min_gpu_count              = 18;  // minimum GPU count of target class
+  Decimal min_band_learning         = 12;  // wider floor before penalty_start_epoch
+  Decimal max_band_learning         = 13;  // wider ceiling before penalty_start_epoch
+  ModelStatus status                = 14;  // ACTIVE | DEPRECATED | RETIRED
+  uint64 status_changed_at_epoch    = 15;  // updated on each status transition
+  Decimal scheduler_allocation_cap  = 16;  // < 1.0 before penalty_start_epoch
+  string target_gpu_class           = 17;  // GpuClass.id this model was designed for
+  repeated string compatible_gpu_classes = 18; // GpuClass.ids that can physically serve
+  uint32 min_gpu_count              = 19;  // minimum GPU count of target class
 }
 
+// LEARNING is not a status; it is derived from
+// (current_epoch < penalty_start_epoch) using the existing field
+// from PoCModelConfig defined in multi-model PoC. See §4.3.
 enum ModelStatus {
   MODEL_STATUS_UNSPECIFIED = 0;
-  MODEL_STATUS_LEARNING    = 1;
-  MODEL_STATUS_ACTIVE      = 2;
-  MODEL_STATUS_DEPRECATED  = 3;
-  MODEL_STATUS_RETIRED     = 4;
+  MODEL_STATUS_ACTIVE      = 1;
+  MODEL_STATUS_DEPRECATED  = 2;
+  MODEL_STATUS_RETIRED     = 3;
 }
 ```
 
@@ -369,8 +407,12 @@ weight by ~60%).
 
 #### 3.4. Target distribution
 
-For each `gpu_class c`, let `M(c) = { models m : status(m) ∈ {LEARNING,
-ACTIVE} ∧ fit_factor(c, m) > 0 }`. For each `m ∈ M(c)`:
+For each `gpu_class c`, let `M(c) = { models m : status(m) == ACTIVE ∧
+fit_factor(c, m) > 0 }`. (Note: LEARNING is derived from
+`current_epoch < penalty_start_epoch` and applies orthogonally to
+`status`, which defaults to ACTIVE; learning models therefore appear in
+`M(c)` with reduced exposure via `scheduler_allocation_cap`.) For each
+`m ∈ M(c)`:
 
 ```
 weight(c, m) = paid_value_trailing(m, D) × fit_factor(c, m)
@@ -385,10 +427,12 @@ model), distribute uniformly weighted by fit factor:
 lazy_share(c, m) = weight(c, m) / Σ weight(c, m')
 ```
 
-For `LEARNING` models, `scheduler_allocation_cap(m) < 1.0` (default
-`0.1`) limits the scheduler's exposure to unproven models even if their
-early demand is high. `DEPRECATED` and `RETIRED` models MUST receive
-`lazy_share = 0`.
+For models in the LEARNING period (`current_epoch <
+penalty_start_epoch`), `scheduler_allocation_cap(m) < 1.0` (default
+`0.1`) limits the scheduler's exposure to unproven models even if
+their early demand is high. After graduation
+(`current_epoch >= penalty_start_epoch`), the cap MUST be `1.0`.
+`DEPRECATED` and `RETIRED` models MUST receive `lazy_share = 0`.
 
 #### 3.5. Hysteresis
 
@@ -532,56 +576,84 @@ demand_factor(m, E) = clamp(share(m, E) / s_ref, 0.5, 2.0)
 
 Bounds (`0.5` and `2.0`) are governance-tunable parameters.
 
-#### 4.3. `novelty_factor` and the learning period
+#### 4.3. The learning period (LEARNING) and uncertainty bands
 
-A model with `status == LEARNING` has an effective coefficient that
-floats freely within `[min_band, max_band]` where `min_band` and
-`max_band` are intentionally set wider for learning models than for
-active ones. The `novelty_factor` is `1.0` (it does not multiply); the
-*width of the band* is what encodes uncertainty.
+The LEARNING phase is **derived from the existing
+`penalty_start_epoch`** defined in
+[multi-model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md):
+a model with `current_epoch < penalty_start_epoch` is in LEARNING; once
+`current_epoch >= penalty_start_epoch` it is governed by its `status`
+field (ACTIVE by default).
 
-The learning period lasts `K` epochs (default `K = 30`) from
-`approved_at_epoch`. At graduation:
-- `status` transitions to `ACTIVE`.
-- `min_band` and `max_band` MUST be reset to the standard active range
-  (e.g. via the same params governance sets per model).
-- `scheduler_allocation_cap` MUST be set to `1.0`.
+Reusing this boundary keeps a single source of truth for "this model
+has graduated from bootstrap." The same epoch at which participation
+penalties begin applying is the epoch at which the wide uncertainty
+band tightens and the scheduler allocation cap lifts.
 
-The graduation transition is automatic at `approved_at_epoch + K` and
-requires no governance action.
+While LEARNING:
+- The effective coefficient is clamped to `[min_band_learning,
+  max_band_learning]` rather than the standard `[min_band, max_band]`.
+  Learning bands are intentionally wider (e.g. `[0.5 × base, 2.0 ×
+  base]`) to encode pricing uncertainty.
+- `scheduler_allocation_cap` applies (default `0.1`). The scheduler
+  may not allocate more than this fraction of capable lazy compute to
+  a learning model, regardless of its demand factor.
+- `novelty_factor` is `1.0` (it does not multiply); the *width of the
+  band* is what encodes uncertainty.
+
+At `current_epoch == penalty_start_epoch`:
+- The standard `[min_band, max_band]` takes over.
+- `scheduler_allocation_cap` MUST be set to `1.0` (typically by the
+  same governance proposal that sets `penalty_start_epoch`, or by
+  automated transition logic at the boundary).
+
+No new graduation logic or epoch counter is introduced; everything
+keys off `penalty_start_epoch`, which governance already sets per
+model.
 
 #### 4.4. `status_factor`
 
 | status | status_factor |
 |---|---|
-| `LEARNING` | 1.0 |
 | `ACTIVE` | 1.0 |
 | `DEPRECATED` | linear decay from 1.0 to 0.0 over deprecation window `W_d` (default `10` epochs) |
 | `RETIRED` | 0.0 |
+
+(LEARNING is not a `status` value; learning models default to `ACTIVE`
+status and the LEARNING-vs-ACTIVE distinction is handled via
+`current_epoch < penalty_start_epoch` and the wider band per §4.3.)
 
 ### 5. Lifecycle
 
 #### 5.1. State machine
 
+The bootstrap → active transition is governed by the existing
+`penalty_start_epoch` field and is not modified by this GIP. This GIP
+adds the ACTIVE → DEPRECATED → RETIRED end-of-life states.
+
 ```
-        approved
-   ────────────────► LEARNING
-                       │
-                       │ at approved_at_epoch + K
-                       ▼
-                     ACTIVE ◄────────────────┐
-                       │                     │ governance veto
-                       │ trailing demand     │ during W_v
-                       │ < threshold for     │
-                       │ W_q epochs          │
-                       ▼                     │
-                  DEPRECATED ────► (recovery)─┘
-                       │
-                       │ status_changed_at_epoch + W_d + W_v
-                       │ elapsed without veto
-                       ▼
-                    RETIRED
+   (bootstrap, governed by multi-model PoC and penalty_start_epoch)
+                                │
+                                │ current_epoch >= penalty_start_epoch
+                                ▼
+                              ACTIVE ◄────────────────┐
+                                │                     │ governance veto
+                                │ trailing demand     │ during W_v
+                                │ < threshold for     │
+                                │ W_q epochs          │
+                                ▼                     │
+                           DEPRECATED ────► (recovery)─┘
+                                │
+                                │ status_changed_at_epoch + W_d + W_v
+                                │ elapsed without veto
+                                ▼
+                             RETIRED
 ```
+
+LEARNING is not a `status` enum value; it is the derived condition
+`current_epoch < penalty_start_epoch` and applies regardless of the
+`status` field's value (which is `ACTIVE` by default at model
+registration).
 
 #### 5.2. Deprecation trigger
 
@@ -620,14 +692,29 @@ declarations before retirement actually takes effect.
 
 #### 5.5. Governance overrides
 
-Governance MAY at any time:
-- Force a status transition between any two states (subject to standard
-  governance procedure).
-- Override `min_band` / `max_band` per model.
-- Adjust the global tuning parameters (`D`, `K`, `W_q`, `W_d`, `W_v`,
-  `s_ref`, `α`, `fit_decay`, deprecation/recovery thresholds,
-  `demand_factor` bounds).
-- Add, remove, or reorder entries in the GPU class registry (§2.6).
+Per [voting.md](https://github.com/gonka-ai/gonka/blob/main/docs/voting.md),
+Gonka has two governance levels: slow **Governance Voting** (x/gov,
+days-long, intended for protocol-significant changes) and fast
+**Operational Voting** (x/group, minutes-long, used for inference and
+PoC validation operational decisions).
+
+This GIP recommends:
+
+- **Governance Voting (x/gov)** for: structural changes — adding,
+  removing, or reordering entries in the GPU class registry (§2.6);
+  changes to a model's `target_gpu_class`, `compatible_gpu_classes`,
+  `min_gpu_count`, or `penalty_start_epoch`; forcing status transitions
+  between ACTIVE / DEPRECATED / RETIRED; veto of an automatic
+  retirement.
+- **Operational Voting (x/group)** for: routine tuning of global
+  parameters (`D`, `W_q`, `W_d`, `W_v`, `s_ref`, `α`, `fit_decay`,
+  `min_dwell`, deprecation/recovery thresholds, `demand_factor` bounds,
+  per-model band widths). These have bounded effects, are reversible,
+  and benefit from the faster cadence.
+
+This split is a recommendation; final partition between voting modes
+SHOULD be confirmed by the chain's governance maintainers at upgrade
+time.
 
 ### 6. Genesis and migration
 
@@ -642,12 +729,23 @@ At the upgrade introducing this GIP:
     for new model registrations going forward.
 
 2. Every existing `PoCModelConfig` MUST be backfilled with:
-   - `status = ACTIVE` (existing models skip the learning period).
-   - `approved_at_epoch = current_epoch`.
+   - `status = ACTIVE`. Existing models already have
+     `penalty_start_epoch` set by prior governance; this GIP does not
+     reset it. The founding model
+     (`Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, current
+     `initial_model_id`) retains its existing weight-cap exemption from
+     multi-model PoC and is not affected by this GIP's lifecycle
+     additions.
    - `status_changed_at_epoch = current_epoch`.
-   - `scheduler_allocation_cap = 1.0`.
-   - `min_band = base × 0.5`, `max_band = base × 2.0` (subject to
-     governance refinement post-upgrade).
+   - `scheduler_allocation_cap = 1.0` for any model with
+     `current_epoch >= penalty_start_epoch` (already past learning);
+     `< 1.0` only for models still bootstrapping at upgrade time.
+   - `min_band = base × 0.5`, `max_band = base × 2.0`.
+     `min_band_learning = base × 0.5`, `max_band_learning = base × 2.0`
+     initially (i.e. learning bands match active bands at upgrade so
+     existing bootstrapping models see no behavioral change). Governance
+     SHOULD widen `*_learning` bands in a follow-up parameter change as
+     experience accumulates.
    - `target_gpu_class`, `compatible_gpu_classes`, and `min_gpu_count`
      set per the table in §2.2 for the three currently-known models.
      Models added between this GIP being drafted and shipped MUST be
@@ -899,10 +997,10 @@ inter-change interval.
 
 ### Bounded damage from learning-period models
 
-A newly approved model with `status == LEARNING` is bounded on three
-axes:
-- Coefficient bounded by `min_band` and `max_band` (wider than active
-  but finite).
+A newly approved model in the learning period
+(`current_epoch < penalty_start_epoch`) is bounded on three axes:
+- Coefficient bounded by `min_band_learning` and `max_band_learning`
+  (wider than the post-graduation band but still finite).
 - Compute exposure bounded by `scheduler_allocation_cap` (default `0.1`
   of capable lazy compute).
 - Voluntary capability declaration: no operator is forced to declare
@@ -971,15 +1069,30 @@ retirement. Requires paired validation-grace GIP for full functionality.
    future GIP MAY introduce a small capability-declaration bounty if
    adoption stalls.
 
-4. **Default parameter values** (`D`, `K`, `α`, `s_ref`,
-   `scheduler_allocation_cap`, `fit_decay`, deprecation/recovery
-   thresholds, band widths) given in this spec are starting points.
-   Final values SHOULD be set after testnet observation and MAY be
-   revised post-deployment by governance.
+4. **Default parameter values** (`D`, `α`, `s_ref`,
+   `scheduler_allocation_cap`, `fit_decay`, `min_dwell`,
+   deprecation/recovery thresholds, band widths) given in this spec
+   are starting points. Final values SHOULD be set after testnet
+   observation and MAY be revised post-deployment via the appropriate
+   governance level (see §5.5).
 
 5. **Per-host quality routing** is acknowledged as a third layer above
    the two specified here and is deferred to a follow-on GIP. Off-chain
    prototyping in the DAPI is encouraged in the interim.
+
+6. **GIP numbering and publication venue.** Gonka does not yet have a
+   formalized GIP numbering scheme or a single canonical proposal
+   discussion venue documented in
+   [voting.md](https://github.com/gonka-ai/gonka/blob/main/docs/voting.md)
+   or
+   [prepare-upgrade-proposal.md](https://github.com/gonka-ai/gonka/blob/main/docs/prepare-upgrade-proposal.md).
+   This proposal uses the placeholder `GIP-XX` and lives in
+   [`proposals/multi-model-scheduling/`](https://github.com/gonka-ai/gonka/tree/main/proposals/multi-model-scheduling)
+   matching the existing convention for design docs. When implementation
+   ships, the upgrade artifact should also live in
+   `proposals/governance-artifacts/update-vX.Y.Z/` per current
+   convention. Establishing a GIP numbering scheme is left to a separate
+   process proposal.
 
 ## References
 
@@ -989,3 +1102,8 @@ retirement. Requires paired validation-grace GIP for full functionality.
 - [`Inference.model` field](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/inference.proto#L37)
 - [`EpochPerformanceSummary`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/epoch_performance_summary.proto)
 - [`enforced_model.go`](https://github.com/gonka-ai/gonka/blob/main/decentralized-api/broker/enforced_model.go)
+- [Gonka governance / voting](https://github.com/gonka-ai/gonka/blob/main/docs/voting.md)
+- [Upgrade proposal preparation](https://github.com/gonka-ai/gonka/blob/main/docs/prepare-upgrade-proposal.md)
+- [Gonka PoC overview](https://github.com/gonka-ai/gonka/blob/main/docs/gonka_poc.md)
+- [Gonka tokenomics](https://github.com/gonka-ai/gonka/blob/main/docs/tokenomics.md)
+- [Multi-model PoC `penalty_start_epoch` and participation modes](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
