@@ -156,19 +156,22 @@ class DevshardPostgresStorageTests : TestermintTest() {
             assertThat(pg.tableExists("devshard_signatures_epoch_$firstEpoch")).isTrue()
         }
 
-        // Advance the chain past firstEpoch + N (retain=3) so the
-        // ManagedStorage pruner ticks past it. Add one more epoch as buffer.
+        // Advance the chain past firstEpoch + N (retain=3) so the pruner
+        // ticks past it. Drive a fresh escrow + settlement on each iteration
+        // so the cluster sees realistic activity. Each tick uses a NEW user
+        // because assertDevshardSettlement asserts balance == fundAmount -
+        // payout-of-this-settlement, which only holds for a single-shot user.
         val targetEpoch = firstEpoch + 4
         logSection("Advancing chain past epoch $targetEpoch so prune horizon clears $firstEpoch")
+        var tick = 0
         while (genesis.getEpochData().latestEpoch.index < targetEpoch) {
-            // Drive a fresh escrow each loop so the cluster sees activity and
-            // ManagedStorage's max_observed_epoch keeps advancing.
-            val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
-            val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = user.keyName)
+            val tickUser = genesis.createFundedDevshardUser("devshard-pg-prune-tick-${tick++}")
+            val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, tickUser.keyName, modelId = devshardEscrowModel)
+            val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = tickUser.keyName)
             try {
                 genesis.waitForDevshardProxyWarmup()
                 genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "tick")
-                genesis.assertDevshardSettlement(handle, newEscrowId, user, escrowAmount, requireCompletedValidations = false)
+                genesis.assertDevshardSettlement(handle, newEscrowId, tickUser, escrowAmount, requireCompletedValidations = false)
             } finally {
                 genesis.stopDevshardProxy(newEscrowId)
             }
