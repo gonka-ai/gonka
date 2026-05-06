@@ -210,7 +210,6 @@ func buildHostManager(
 		payloadStore,
 		chainRuntime.identity,
 	)
-	chainBridge.OnEscrowCreatedHandler(manager.HandleEscrowCreated)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	if err := manager.RecoverSessions(); err != nil {

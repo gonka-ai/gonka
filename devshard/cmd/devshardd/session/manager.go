@@ -89,19 +89,6 @@ func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) 
 	return m.getOrCreate(escrowID)
 }
 
-// HandleEscrowCreated creates the local session as soon as the chain emits the
-// escrow event. Escrows for other hosts are ignored after the group check.
-func (m *HostManager) HandleEscrowCreated(escrow bridge.EscrowInfo) error {
-	escrowID := strconv.FormatUint(escrow.EscrowID, 10)
-	if _, err := m.SessionServer(escrowID); err != nil {
-		if errors.Is(err, types.ErrHostNotInGroup) {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 // HandleSettlementFinalized marks the session inactive and drops the live
 // transport server so RecoverSessions will not resurrect settled escrows.
 func (m *HostManager) HandleSettlementFinalized(escrowID uint64) error {
