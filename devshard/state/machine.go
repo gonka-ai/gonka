@@ -721,6 +721,13 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	}
 
 	// Mutation: set bitmap, count vote weight.
+	// TODO: only the validator's emitting slot is set here, while
+	// applyValidationVote sets every slot owned by the voter address.
+	// Consumers (collectValidationJobs, addressHasValidated,
+	// recomputeCompliance) all use "any slot of this address" semantics so
+	// the asymmetry is benign, but the unified bitmap would be more
+	// consistent. Changing it shifts state-machine output, so it requires a
+	// coordinated upgrade.
 	rec.ValidatedBy.Set(msg.ValidatorSlot)
 
 	// Count vote weight for Finished state (tallies accumulate before any challenge).
