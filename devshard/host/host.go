@@ -341,6 +341,7 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	if diff.Nonce <= currentNonce {
 		return nil
 	}
+	phaseBefore := h.sm.Phase()
 	var warmBefore map[uint32]string
 	if h.store != nil {
 		warmBefore = h.sm.WarmKeys()
@@ -368,19 +369,22 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
 			return fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err)
 		}
-		h.maybeSaveSnapshotLocked(diff.Nonce)
+		phaseAfter := h.sm.Phase()
+		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
+		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
+		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
 	}
 	return nil
 }
 
-// maybeSaveSnapshotLocked copies the current state every SnapshotInterval diffs.
+// maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
 // JSON marshaling and storage I/O happen asynchronously outside h.mu.
 // Caller must hold h.mu.
-func (h *Host) maybeSaveSnapshotLocked(nonce uint64) {
-	if h.store == nil || nonce == 0 || nonce%SnapshotInterval != 0 {
+func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow bool) {
+	if h.store == nil || nonce == 0 || !shouldSnapshot {
 		return
 	}
-	if !h.snapshotInFlight.CompareAndSwap(false, true) {
+	if !settledNow && !h.snapshotInFlight.CompareAndSwap(false, true) {
 		return
 	}
 
@@ -389,7 +393,9 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64) {
 	state := h.sm.ExportState()
 
 	go func() {
-		defer h.snapshotInFlight.Store(false)
+		if !settledNow {
+			defer h.snapshotInFlight.Store(false)
+		}
 		writeSnapshot(store, escrowID, nonce, state)
 	}()
 }

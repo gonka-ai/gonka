@@ -246,6 +246,9 @@ func (m *Memory) SaveSnapshot(escrowID string, nonce uint64, data []byte) error 
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
+	if s.snapshot != nil && nonce < s.snapshot.nonce {
+		return nil
+	}
 	cp := append([]byte(nil), data...)
 	s.snapshot = &snapshotData{nonce: nonce, data: cp}
 	return nil

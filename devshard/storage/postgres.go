@@ -678,7 +678,8 @@ func (s *Postgres) SaveSnapshot(escrowID string, nonce uint64, data []byte) erro
 		`INSERT INTO devshard_snapshots (epoch_id, escrow_id, nonce, state_data, created_at)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (epoch_id, escrow_id) DO UPDATE
-		 SET nonce = EXCLUDED.nonce, state_data = EXCLUDED.state_data, created_at = EXCLUDED.created_at`,
+		 SET nonce = EXCLUDED.nonce, state_data = EXCLUDED.state_data, created_at = EXCLUDED.created_at
+		 WHERE devshard_snapshots.nonce <= EXCLUDED.nonce`,
 		epochID, escrowID, nonce, data, time.Now().Unix(),
 	)
 	return err

@@ -882,7 +882,8 @@ func (s *SQLite) SaveSnapshot(escrowID string, nonce uint64, data []byte) error 
 	_, err = p.writeDB.Exec(
 		`INSERT INTO snapshots (escrow_id, nonce, state_data, created_at)
 		 VALUES (?, ?, ?, strftime('%s','now'))
-		 ON CONFLICT(escrow_id) DO UPDATE SET nonce = excluded.nonce, state_data = excluded.state_data, created_at = excluded.created_at`,
+		 ON CONFLICT(escrow_id) DO UPDATE SET nonce = excluded.nonce, state_data = excluded.state_data, created_at = excluded.created_at
+		 WHERE snapshots.nonce <= excluded.nonce`,
 		escrowID, nonce, data,
 	)
 	return err

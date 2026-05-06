@@ -1169,3 +1169,39 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, warmSig, sigs[1])
 }
+
+func TestHost_SavesSnapshotOnSettlement(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Config:         config,
+		Group:          group,
+		InitialBalance: 10000,
+	}))
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+	h, err := NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, WithStorage(store))
+	require.NoError(t, err)
+
+	finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}}
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{finalizeTx})
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, nil)
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1, diff2}})
+	require.NoError(t, err)
+	require.Equal(t, types.PhaseSettlement, h.SnapshotState().Phase)
+
+	require.Eventually(t, func() bool {
+		nonce, data, err := store.LoadSnapshot("escrow-1")
+		if err != nil || nonce != 2 {
+			return false
+		}
+		state, err := UnmarshalStateSnapshot(data)
+		return err == nil && state.Phase == types.PhaseSettlement && state.LatestNonce == 2
+	}, time.Second, 10*time.Millisecond)
+}

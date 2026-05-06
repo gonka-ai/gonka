@@ -230,6 +230,12 @@ func runSaveLoadSnapshot(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1000), nonce)
 	require.Equal(t, []byte("state-1000"), data)
+
+	require.NoError(t, store.SaveSnapshot("escrow-1", 750, []byte("state-750")))
+	nonce, data, err = store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(1000), nonce)
+	require.Equal(t, []byte("state-1000"), data, "older async snapshots must not overwrite newer snapshots")
 }
 
 func runAddSignature(t *testing.T, store Storage) {
