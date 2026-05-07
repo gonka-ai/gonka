@@ -16,12 +16,6 @@ func TestBuildPayloadRequestURL_DevshardPath(t *testing.T) {
 	assert.Contains(t, url, "inference_id=456")
 }
 
-func TestBuildPayloadRequestURL_VersionedDevshardPath(t *testing.T) {
-	url, err := BuildPayloadRequestURL("https://executor.example.com", "escrow-123", "456")
-	require.NoError(t, err)
-	assert.Contains(t, url, "escrow-123")
-	assert.Contains(t, url, "inference_id=456")
-}
 
 func TestBuildPayloadRequestURL_PublicPath(t *testing.T) {
 	// Test with public endpoint path

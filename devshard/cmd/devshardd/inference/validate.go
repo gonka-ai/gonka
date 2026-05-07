@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"net/http"
-	"strconv"
 	"time"
 
 	commonvalidation "common/validation"
@@ -19,40 +17,6 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 )
-
-func validateInference(
-	ctx context.Context,
-	req devshardpkg.ValidateRequest,
-	br bridge.MainnetBridge,
-	recorder PayloadAuthClient,
-	payloadEpoch uint64,
-	requestPath string,
-	execute mlRequestExecutor,
-) (*devshardpkg.ValidateResult, error) {
-	inferenceID := strconv.FormatUint(req.InferenceID, 10)
-
-	promptPayload, responsePayload, err := fetchPayloadsFromExecutor(
-		ctx, br, recorder, req, inferenceID, payloadEpoch, requestPath,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
-	}
-
-	result, err := commonvalidation.ExecuteValidation(
-		ctx,
-		inferenceID,
-		promptPayload,
-		responsePayload,
-		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return execute(ctx, req.Model, body)
-		},
-		req.InputTokens, req.OutputTokens,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &devshardpkg.ValidateResult{Valid: result.IsSuccessful()}, nil
-}
 
 func signPayloadRequest(
 	recorder PayloadAuthClient,
@@ -161,12 +125,12 @@ func fetchPayloadsFromExecutor(
 
 	promptHash := sha256.Sum256(payloadResp.PromptPayload)
 	if !bytes.Equal(promptHash[:], req.PromptHash) {
-		return nil, nil, fmt.Errorf("prompt hash mismatch: expected %x, got %x", req.PromptHash, promptHash[:])
+		return nil, nil, fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:])
 	}
 
 	responseHash := sha256.Sum256(payloadResp.ResponsePayload)
 	if !bytes.Equal(responseHash[:], req.ResponseHash) {
-		return nil, nil, fmt.Errorf("response hash mismatch: expected %x, got %x", req.ResponseHash, responseHash[:])
+		return nil, nil, fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:])
 	}
 
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil

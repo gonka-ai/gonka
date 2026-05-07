@@ -37,19 +37,20 @@ import (
 
 // HostManager manages per-escrow devshard sessions with lazy creation.
 type HostManager struct {
-	mu       sync.RWMutex
-	sessions map[string]*transport.Server
-	sf       singleflight.Group
+	sessionsMutex sync.RWMutex
+	sessions      map[string]*transport.Server
+	sf            singleflight.Group
 
-	store        storage.Storage
-	signer       *signing.Secp256k1Signer
-	verifier     signing.Verifier
-	engine       devshardpkg.InferenceEngine
-	validator    devshardpkg.ValidationEngine
-	boundVersion string
-	bridge       bridge.MainnetBridge
-	payloadStore PayloadStore
-	recorder     PayloadAuthClient
+	store              storage.Storage
+	signer             *signing.Secp256k1Signer
+	verifier           signing.Verifier
+	engine             devshardpkg.InferenceEngine
+	validator          devshardpkg.ValidationEngine
+	validationRecorder devshardpkg.ValidationCompletionRecorder
+	boundVersion       string
+	bridge             bridge.MainnetBridge
+	payloadStore       PayloadStore
+	recorder           PayloadAuthClient
 }
 
 func NewHostManager(
@@ -57,22 +58,24 @@ func NewHostManager(
 	signer *signing.Secp256k1Signer,
 	engine devshardpkg.InferenceEngine,
 	validator devshardpkg.ValidationEngine,
+	validationRecorder devshardpkg.ValidationCompletionRecorder,
 	boundVersion string,
 	br bridge.MainnetBridge,
 	ps PayloadStore,
 	recorder PayloadAuthClient,
 ) *HostManager {
 	return &HostManager{
-		sessions:     make(map[string]*transport.Server),
-		store:        store,
-		signer:       signer,
-		verifier:     signing.NewSecp256k1Verifier(),
-		engine:       engine,
-		validator:    validator,
-		boundVersion: types.NormalizeSessionVersion(boundVersion),
-		bridge:       br,
-		payloadStore: ps,
-		recorder:     recorder,
+		sessions:           make(map[string]*transport.Server),
+		store:              store,
+		signer:             signer,
+		verifier:           signing.NewSecp256k1Verifier(),
+		engine:             engine,
+		validator:          validator,
+		validationRecorder: validationRecorder,
+		boundVersion:       types.NormalizeSessionVersion(boundVersion),
+		bridge:             br,
+		payloadStore:       ps,
+		recorder:           recorder,
 	}
 }
 
@@ -86,28 +89,15 @@ func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) 
 	return m.getOrCreate(escrowID)
 }
 
-// HandleEscrowCreated creates the local session as soon as the chain emits the
-// escrow event. Escrows for other hosts are ignored after the group check.
-func (m *HostManager) HandleEscrowCreated(escrow bridge.EscrowInfo) error {
-	escrowID := strconv.FormatUint(escrow.EscrowID, 10)
-	if _, err := m.SessionServer(escrowID); err != nil {
-		if errors.Is(err, types.ErrHostNotInGroup) {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
 // HandleSettlementFinalized marks the session inactive and drops the live
 // transport server so RecoverSessions will not resurrect settled escrows.
 func (m *HostManager) HandleSettlementFinalized(escrowID uint64) error {
 	id := strconv.FormatUint(escrowID, 10)
 
-	m.mu.Lock()
+	m.sessionsMutex.Lock()
 	_, hadSession := m.sessions[id]
 	delete(m.sessions, id)
-	m.mu.Unlock()
+	m.sessionsMutex.Unlock()
 
 	if err := m.store.MarkSettled(id); err != nil {
 		if errors.Is(err, storage.ErrSessionNotFound) && !hadSession {
@@ -119,29 +109,29 @@ func (m *HostManager) HandleSettlementFinalized(escrowID uint64) error {
 }
 
 func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
-	m.mu.RLock()
+	m.sessionsMutex.RLock()
 	srv, ok := m.sessions[escrowID]
-	m.mu.RUnlock()
+	m.sessionsMutex.RUnlock()
 	if ok {
 		return srv, nil
 	}
 
 	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
-		m.mu.RLock()
+		m.sessionsMutex.RLock()
 		if srv, ok := m.sessions[escrowID]; ok {
-			m.mu.RUnlock()
+			m.sessionsMutex.RUnlock()
 			return srv, nil
 		}
-		m.mu.RUnlock()
+		m.sessionsMutex.RUnlock()
 
 		srv, err := m.create(escrowID)
 		if err != nil {
 			return nil, err
 		}
 
-		m.mu.Lock()
+		m.sessionsMutex.Lock()
 		m.sessions[escrowID] = srv
-		m.mu.Unlock()
+		m.sessionsMutex.Unlock()
 
 		return srv, nil
 	})
@@ -182,6 +172,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
 		host.WithValidator(m.validator),
+		host.WithValidationCompletionRecorder(m.validationRecorder),
 		host.WithStorage(m.store),
 	)
 	if err != nil {
@@ -219,8 +210,8 @@ func (m *HostManager) RecoverSessions() error {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.sessionsMutex.Lock()
+	defer m.sessionsMutex.Unlock()
 
 	for _, escrowID := range escrowIDs {
 		if err := m.recoverSession(escrowID); err != nil {
@@ -277,6 +268,7 @@ func (m *HostManager) recoverSession(escrowID string) error {
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
 		host.WithValidator(m.validator),
+		host.WithValidationCompletionRecorder(m.validationRecorder),
 		host.WithStorage(m.store),
 	)
 	if err != nil {
@@ -524,4 +516,50 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 	}
 
 	return calculations.Sign(accountSigner, components, calculations.Developer)
+}
+
+// ActiveEscrowIDs returns the escrow IDs of all currently loaded sessions.
+// The returned slice is a snapshot; the set may change after this call.
+func (m *HostManager) ActiveEscrowIDs() []string {
+	m.sessionsMutex.RLock()
+	defer m.sessionsMutex.RUnlock()
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// TryLoadFromStorage recovers a session from the local SQLite store if it
+// exists and is not already in memory. Returns nil if the session is not in
+// this instance's store (i.e. it belongs to another instance).
+func (m *HostManager) TryLoadFromStorage(escrowID string) error {
+	m.sessionsMutex.RLock()
+	_, loaded := m.sessions[escrowID]
+	m.sessionsMutex.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	m.sessionsMutex.Lock()
+	defer m.sessionsMutex.Unlock()
+	if _, loaded = m.sessions[escrowID]; loaded {
+		return nil
+	}
+	if err := m.recoverSession(escrowID); err != nil {
+		if errors.Is(err, storage.ErrSessionNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// existingServer returns the transport server for an already-loaded session.
+// Returns (nil, false) if the session is not currently in memory.
+func (m *HostManager) existingServer(escrowID string) (*transport.Server, bool) {
+	m.sessionsMutex.RLock()
+	defer m.sessionsMutex.RUnlock()
+	srv, ok := m.sessions[escrowID]
+	return srv, ok
 }

@@ -826,6 +826,9 @@ data class LocalInferencePair(
 
     data class DevshardProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
 
+    private fun devshardContainerName(escrowId: Long): String =
+        "${name.trimStart('/')}-devshardctl-$escrowId"
+
     fun startDevshardProxy(
         escrowId: Long,
         keyName: String? = null,
@@ -835,9 +838,10 @@ data class LocalInferencePair(
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
             val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
-            val cleanName = name.trimStart('/')
-            val containerName = "$cleanName-devshardctl-$escrowId"
+            val containerName = devshardContainerName(escrowId)
             val proxyUrl = "http://$containerName:$port"
+            val devshardProxyImage = config.devshardProxyImageName
+                ?: error("devshardProxyImageName must be set to run devshard proxy")
 
             DockerClientBuilder.getInstance().build().use { dockerClient ->
                 // Remove any leftover container from a previous run.
@@ -848,18 +852,22 @@ data class LocalInferencePair(
                         runCatching { dockerClient.removeContainerCmd(c.id).exec() }
                     }
 
-                val createResp = dockerClient.createContainerCmd("devshardd:latest")
+                val devshardctlContainerPath = "/usr/local/bin/devshardctl"
+                val createResp = dockerClient.createContainerCmd(devshardProxyImage)
                     .withName(containerName)
-                    .withCmd("/usr/local/bin/devshardctl")
+                    .withCmd(devshardctlContainerPath)
                     .withEnv(
                         "DEVSHARD_PRIVATE_KEY=$privateKey",
                         "DEVSHARD_ESCROW_ID=$escrowId",
-                        "DEVSHARD_CHAIN_REST=http://$cleanName-node:1317",
+                        "DEVSHARD_CHAIN_REST=http://${name.trimStart('/')}-node:1317",
                         "DEVSHARD_PORT=$port",
                         "DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db",
                         "DEVSHARD_ROUTE_PREFIX=$effectiveRoutePrefix",
                     )
-                    .withHostConfig(HostConfig().withNetworkMode("chain-public"))
+                    .withHostConfig(
+                        HostConfig()
+                            .withNetworkMode("chain-public")
+                    )
                     .exec()
                 dockerClient.startContainerCmd(createResp.id).exec()
             }
@@ -893,8 +901,7 @@ data class LocalInferencePair(
         }
 
     fun stopDevshardProxy(escrowId: Long) {
-        val cleanName = name.trimStart('/')
-        val containerName = "$cleanName-devshardctl-$escrowId"
+        val containerName = devshardContainerName(escrowId)
         runCatching {
             DockerClientBuilder.getInstance().build().use { dockerClient ->
                 dockerClient.listContainersCmd().withShowAll(true).exec()
@@ -1002,6 +1009,7 @@ data class ApplicationConfig(
     val nodeImageName: String,
     val genesisNodeImage: String,
     val apiImageName: String,
+    val devshardProxyImageName: String? = null,
     val mockImageName: String,
     val denom: String,
     val stateDirName: String,
