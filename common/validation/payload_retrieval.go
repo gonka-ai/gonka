@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -24,6 +25,19 @@ var ErrHashMismatch = errors.New("hash mismatch: executor served wrong payload w
 // ErrEpochStale indicates inference epoch is too old (currentEpoch >= inferenceEpoch + 2).
 // Validation is no longer useful - abort without invalidation.
 var ErrEpochStale = errors.New("inference epoch too old, validation no longer useful")
+
+const defaultPayloadRetrievalTimeout = 30 * time.Second
+
+var defaultPayloadRetrievalClient = newPayloadRetrievalClient(defaultPayloadRetrievalTimeout)
+
+func newPayloadRetrievalClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
 
 // PayloadResponse matches the executor endpoint response.
 // Used by both chain validation and devshard validation paths.
@@ -39,7 +53,6 @@ type PayloadResponse struct {
 // Caller is responsible for URL construction, request signing, and response verification.
 func FetchPayloadsHTTP(
 	ctx context.Context,
-	client *http.Client,
 	requestUrl string,
 	validatorAddress string,
 	timestamp int64,
@@ -56,7 +69,7 @@ func FetchPayloadsHTTP(
 	req.Header.Set(utils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
 	req.Header.Set(utils.AuthorizationHeader, signature)
 
-	resp, err := client.Do(req)
+	resp, err := defaultPayloadRetrievalClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

@@ -314,19 +314,23 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // ExecuteValidation builds and executes a validation request from stored payloads,
 // then compares logits. execute receives the constructed JSON body and should POST
 // it to the validator's ML node; the response is compared against the original.
+// claimedInputTokens and claimedOutputTokens are what the executor reported; if
+// the validator's re-execution uses fewer tokens, validation fails to catch inflation.
+// Pass 0 for both to skip the token count check.
 func ExecuteValidation(
 	ctx context.Context,
 	inferenceID string,
 	promptPayload []byte,
 	responsePayload []byte,
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(promptPayload, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
 
-	originalResponse, err := unmarshalResponsePayload(responsePayload)
+	originalResponse, err := UnmarshalResponsePayload(responsePayload)
 	if err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal responsePayload.", err}, nil
 	}
@@ -396,6 +400,16 @@ func ExecuteValidation(
 		return nil, err
 	}
 
+	if validationUsage, err := responseValidation.GetUsage(); err == nil {
+		if claimedInputTokens > validationUsage.PromptTokens || claimedOutputTokens > validationUsage.CompletionTokens {
+			logging.Warn("validation failed: inflated token counts", types.Validation,
+				"inferenceId", inferenceID,
+				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
+				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
+		}
+	}
+
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
@@ -407,7 +421,7 @@ func ExecuteValidation(
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func unmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
+func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
 	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
 	if err != nil {
 		logging.Error("Failed to unmarshal responsePayload", types.Validation, "error", err)

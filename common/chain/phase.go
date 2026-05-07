@@ -15,8 +15,11 @@ func (p *Phase) EpochID() uint64 { return p.epochID.Load() }
 // BlockHeight returns the latest observed block height.
 func (p *Phase) BlockHeight() int64 { return p.blockHeight.Load() }
 
-// SetEpoch updates the tracked epoch.
-func (p *Phase) SetEpoch(id uint64) { p.epochID.Store(id) }
+// Update sets epoch and block height. Called on every new block.
+func (p *Phase) Update(epochID uint64, blockHeight int64) {
+	p.epochID.Store(epochID)
+	p.blockHeight.Store(blockHeight)
+}
 
-// SetBlockHeight updates the tracked block height.
+// SetBlockHeight updates only the block height, used when the epoch query fails.
 func (p *Phase) SetBlockHeight(h int64) { p.blockHeight.Store(h) }

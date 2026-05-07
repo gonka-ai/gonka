@@ -19,15 +19,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-type TxManagerConfig struct {
-	SignerKeyName  string `yaml:"signer_key_name"`
-	KeyringBackend string `yaml:"keyring_backend"` // "test" or "file"
-	KeyringDir     string `yaml:"keyring_dir"`
-	NatsURL        string `yaml:"nats_url"`
-	ChainID        string `yaml:"chain_id"`
-	// KeyringPassword is read from KEYRING_PASSWORD env var, not config file.
-}
-
 // Manager signs and broadcasts MsgSettleDevshardEscrow.
 // No batching, no retry — caller handles retry if needed.
 type Manager struct {
@@ -42,7 +33,11 @@ type Manager struct {
 
 // New creates a Manager. kr must already contain the key named by cfg.SignerKeyName.
 // address is the bech32 address corresponding to that key.
-func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address, signerKeyName string) (*Manager, error) {
+func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address, signerKeyName, chainID string) (*Manager, error) {
+	if chainID == "" {
+		return nil, fmt.Errorf("chain id is required")
+	}
+
 	registry := codectypes.NewInterfaceRegistry()
 	cryptocodec.RegisterInterfaces(registry)
 	authtypes.RegisterInterfaces(registry)
@@ -58,21 +53,33 @@ func New(conn grpc.ClientConnInterface, kr keyring.Keyring, address, signerKeyNa
 		registry: registry,
 		signer:   signerKeyName,
 		address:  address,
+		chainID:  chainID,
 	}, nil
 }
 
-// SettleEscrow signs and broadcasts MsgSettleDevshardEscrow synchronously.
-func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot []byte, nonce uint64) error {
+// SubmitDisputeState signs and broadcasts MsgSettleDevshardEscrow with the
+// host's computed state root and collected slot signatures.
+func (m *Manager) SubmitDisputeState(escrowID uint64, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error {
+	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(sigs))
+	for slotID, sig := range sigs {
+		signatures = append(signatures, &inferencetypes.DevshardSlotSignature{
+			SlotId:    slotID,
+			Signature: sig,
+		})
+	}
+
+	ctx := context.Background()
 	accNum, seq, err := m.accountInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("tx: get account info: %w", err)
 	}
 
 	msg := &inferencetypes.MsgSettleDevshardEscrow{
-		Settler:   m.address,
-		EscrowId:  escrowID,
-		StateRoot: stateRoot,
-		Nonce:     nonce,
+		Settler:    m.address,
+		EscrowId:   escrowID,
+		StateRoot:  stateRoot,
+		Nonce:      nonce,
+		Signatures: signatures,
 	}
 
 	factory := clienttx.Factory{}.
@@ -87,15 +94,15 @@ func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot [
 
 	txBuilder, err := factory.BuildUnsignedTx(msg)
 	if err != nil {
-		return fmt.Errorf("tx: build MsgSettleDevshardEscrow: %w", err)
+		return fmt.Errorf("tx: build MsgSettleDevshardEscrow (dispute): %w", err)
 	}
 	if err := clienttx.Sign(ctx, factory, m.signer, txBuilder, true); err != nil {
-		return fmt.Errorf("tx: sign MsgSettleDevshardEscrow: %w", err)
+		return fmt.Errorf("tx: sign MsgSettleDevshardEscrow (dispute): %w", err)
 	}
 
 	raw, err := m.txConfig.TxEncoder()(txBuilder.GetTx())
 	if err != nil {
-		return fmt.Errorf("tx: encode MsgSettleDevshardEscrow: %w", err)
+		return fmt.Errorf("tx: encode MsgSettleDevshardEscrow (dispute): %w", err)
 	}
 
 	svc := txtypes.NewServiceClient(m.client)
@@ -104,10 +111,10 @@ func (m *Manager) SettleEscrow(ctx context.Context, escrowID uint64, stateRoot [
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
 	})
 	if err != nil {
-		return fmt.Errorf("tx: broadcast MsgSettleDevshardEscrow: %w", err)
+		return fmt.Errorf("tx: broadcast MsgSettleDevshardEscrow (dispute): %w", err)
 	}
 	if resp.TxResponse.Code != 0 {
-		return fmt.Errorf("tx: MsgSettleDevshardEscrow failed code=%d log=%s", resp.TxResponse.Code, resp.TxResponse.RawLog)
+		return fmt.Errorf("tx: MsgSettleDevshardEscrow (dispute) failed code=%d log=%s", resp.TxResponse.Code, resp.TxResponse.RawLog)
 	}
 	return nil
 }

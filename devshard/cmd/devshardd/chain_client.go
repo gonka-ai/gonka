@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
@@ -56,6 +58,22 @@ func (c *chainIdentity) GetSignerAddress() string {
 
 func (c *chainIdentity) GetKeyring() *keyring.Keyring {
 	return c.keyring
+}
+
+func resolveChainID(ctx context.Context, chainClient *chain.Client, configured string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+
+	resp, err := chainClient.CometServiceClient().GetNodeInfo(ctx, &cmtservice.GetNodeInfoRequest{})
+	if err != nil {
+		return "", fmt.Errorf("query node info: %w", err)
+	}
+	if resp == nil || resp.DefaultNodeInfo == nil || resp.DefaultNodeInfo.Network == "" {
+		return "", fmt.Errorf("empty chain id from node info")
+	}
+
+	return resp.DefaultNodeInfo.Network, nil
 }
 
 var _ session.PayloadAuthClient = (*chainIdentity)(nil)

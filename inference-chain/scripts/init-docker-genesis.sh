@@ -80,6 +80,8 @@ fi
 
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
+sed -Ei 's/^address = ".*:9090"$/address = "0.0.0.0:9090"/g' \
+  $STATE_DIR/config/app.toml
 # no seeds for genesis node
 sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml

@@ -16,7 +16,7 @@ import (
 	"common/storage/payloads"
 )
 
-func setupStore(t *testing.T) *payloads.Store {
+func setupStore(t *testing.T) (*payloads.Store, *pgxpool.Pool) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping storage tests in -short mode (requires Docker)")
@@ -48,12 +48,12 @@ func setupStore(t *testing.T) *payloads.Store {
 
 	store, err := payloads.New(ctx, pool)
 	require.NoError(t, err)
-	return store
+	return store, pool
 }
 
 // TestStore_StoreAndRetrieve stores a payload and retrieves it, asserting prompt and response match.
 func TestStore_StoreAndRetrieve(t *testing.T) {
-	store := setupStore(t)
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	prompt := []byte(`{"messages":[{"role":"user","content":"hello"}]}`)
@@ -69,7 +69,7 @@ func TestStore_StoreAndRetrieve(t *testing.T) {
 
 // TestStore_Retrieve_NotFound retrieves a non-existent key and asserts ErrNotFound.
 func TestStore_Retrieve_NotFound(t *testing.T) {
-	store := setupStore(t)
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	_, _, err := store.Retrieve(ctx, "nonexistent", 1, 10)
@@ -79,7 +79,7 @@ func TestStore_Retrieve_NotFound(t *testing.T) {
 // TestStore_Store_Idempotent stores with same key twice with different data,
 // then retrieves and asserts the first data is kept (ON CONFLICT DO NOTHING).
 func TestStore_Store_Idempotent(t *testing.T) {
-	store := setupStore(t)
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	first := []byte(`{"first": true}`)
@@ -97,7 +97,7 @@ func TestStore_Store_Idempotent(t *testing.T) {
 // TestStore_Store_MultipleEscrows stores (escrow-1, inf-001, epoch 10) and (escrow-2, inf-001, epoch 10)
 // with different prompt data and retrieves each, asserting they return their respective data independently.
 func TestStore_Store_MultipleEscrows(t *testing.T) {
-	store := setupStore(t)
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	prompt1 := []byte(`{"escrow": 1}`)
@@ -118,7 +118,7 @@ func TestStore_Store_MultipleEscrows(t *testing.T) {
 // TestStore_Store_MultipleEpochs stores (escrow-1, inf-001) for epochs 10, 11, 12,
 // retrieves each, and asserts the stored data is returned correctly.
 func TestStore_Store_MultipleEpochs(t *testing.T) {
-	store := setupStore(t)
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	for _, epoch := range []uint64{10, 11, 12} {
@@ -134,34 +134,85 @@ func TestStore_Store_MultipleEpochs(t *testing.T) {
 	}
 }
 
-// TestStore_PruneEpoch stores epochs 9, 10, and 11, calls PruneEpoch(11),
-// asserts epochs 9 and 10 (< 11) return ErrNotFound, epoch 11 still exists.
-func TestStore_PruneEpoch(t *testing.T) {
-	store := setupStore(t)
+// TestStore_DropEpoch stores epochs 9, 10, and 11, drops epoch 10,
+// asserts only epoch 10 is removed.
+func TestStore_DropEpoch(t *testing.T) {
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
 	require.NoError(t, store.Store(ctx, "escrow-1", 1, 9, []byte(`{}`), []byte(`{}`)))
 	require.NoError(t, store.Store(ctx, "escrow-1", 2, 10, []byte(`{}`), []byte(`{}`)))
 	require.NoError(t, store.Store(ctx, "escrow-1", 3, 11, []byte(`{}`), []byte(`{}`)))
 
-	// PruneEpoch(11) removes epoch_id < 11 (i.e., epochs 9 and 10), keeps 11.
-	require.NoError(t, store.PruneEpoch(ctx, 11))
+	require.NoError(t, store.DropEpoch(ctx, 10))
 
 	_, _, err := store.Retrieve(ctx, "escrow-1", 1, 9)
-	assert.ErrorIs(t, err, payloads.ErrNotFound, "epoch 9 should be pruned")
+	assert.NoError(t, err, "epoch 9 should be retained")
 
 	_, _, err = store.Retrieve(ctx, "escrow-1", 2, 10)
-	assert.ErrorIs(t, err, payloads.ErrNotFound, "epoch 10 should be pruned")
+	assert.ErrorIs(t, err, payloads.ErrNotFound, "epoch 10 should be dropped")
 
 	_, _, err = store.Retrieve(ctx, "escrow-1", 3, 11)
 	assert.NoError(t, err, "epoch 11 should be retained")
 }
 
-// TestStore_PruneEpoch_NonExistent calls PruneEpoch on a non-existent epoch,
+// TestStore_DropEpoch_NonExistent calls DropEpoch on a non-existent epoch,
 // asserts no error.
-func TestStore_PruneEpoch_NonExistent(t *testing.T) {
-	store := setupStore(t)
+func TestStore_DropEpoch_NonExistent(t *testing.T) {
+	store, _ := setupStore(t)
 	ctx := context.Background()
 
-	assert.NoError(t, store.PruneEpoch(ctx, 999))
+	assert.NoError(t, store.DropEpoch(ctx, 999))
+}
+
+func TestStore_DropEpoch_DropsOnlyTargetPartition(t *testing.T) {
+	store, pool := setupStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.Store(ctx, "escrow-1", 1, 9, []byte(`{"epoch":9}`), []byte(`{}`)))
+	require.NoError(t, store.Store(ctx, "escrow-1", 2, 10, []byte(`{"epoch":10}`), []byte(`{}`)))
+	require.NoError(t, store.Store(ctx, "escrow-1", 3, 11, []byte(`{"epoch":11}`), []byte(`{}`)))
+
+	requirePartitionExists(t, pool, "payload_storage_epoch_9", true)
+	requirePartitionExists(t, pool, "payload_storage_epoch_10", true)
+	requirePartitionExists(t, pool, "payload_storage_epoch_11", true)
+
+	require.NoError(t, store.DropEpoch(ctx, 10))
+
+	requirePartitionExists(t, pool, "payload_storage_epoch_9", true)
+	requirePartitionExists(t, pool, "payload_storage_epoch_10", false)
+	requirePartitionExists(t, pool, "payload_storage_epoch_11", true)
+
+	gotPrompt, _, err := store.Retrieve(ctx, "escrow-1", 1, 9)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(`{"epoch":9}`), gotPrompt)
+	_, _, err = store.Retrieve(ctx, "escrow-1", 2, 10)
+	assert.ErrorIs(t, err, payloads.ErrNotFound)
+	gotPrompt, _, err = store.Retrieve(ctx, "escrow-1", 3, 11)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(`{"epoch":11}`), gotPrompt)
+}
+
+func TestStore_Store_AfterDropEpoch_CanRecreateTargetPartition(t *testing.T) {
+	store, pool := setupStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.Store(ctx, "escrow-1", 1, 10, []byte(`{"epoch":10}`), []byte(`{}`)))
+	require.NoError(t, store.DropEpoch(ctx, 10))
+	requirePartitionExists(t, pool, "payload_storage_epoch_10", false)
+
+	require.NoError(t, store.Store(ctx, "escrow-1", 2, 10, []byte(`{"late":true}`), []byte(`{}`)))
+	requirePartitionExists(t, pool, "payload_storage_epoch_10", true)
+
+	gotPrompt, _, err := store.Retrieve(ctx, "escrow-1", 2, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(`{"late":true}`), gotPrompt)
+}
+
+func requirePartitionExists(t *testing.T, pool *pgxpool.Pool, partitionName string, want bool) {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(), `SELECT to_regclass($1) IS NOT NULL`, partitionName).Scan(&exists)
+	require.NoError(t, err)
+	require.Equal(t, want, exists, "partition %s existence", partitionName)
 }

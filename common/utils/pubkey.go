@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
+	cmtcrypto "github.com/cometbft/cometbft/crypto"
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -87,4 +89,16 @@ func PubKeyToAddress(pubKeyStr string) (string, error) {
 
 func PubKeyToString(pubKey cryptotypes.PubKey) string {
 	return base64.StdEncoding.EncodeToString(pubKey.Bytes())
+}
+
+// ValidatorKeyToHexAddress derives a hex-uppercase CometBFT validator address
+// from a base64-encoded validator public key.
+// Matches the address format returned by the decentralized-api (pubKeyToAddress3).
+// TODO: switch to bech32 (sdk.ConsAddress(cmtcrypto.AddressHash(keyBz)).String()) once clients are updated.
+func ValidatorKeyToHexAddress(validatorKey string) (string, error) {
+	keyBz, err := base64.StdEncoding.DecodeString(validatorKey)
+	if err != nil {
+		return "", fmt.Errorf("cannot decode validator key %q: %w", validatorKey, err)
+	}
+	return strings.ToUpper(hex.EncodeToString(cmtcrypto.AddressHash(keyBz))), nil
 }

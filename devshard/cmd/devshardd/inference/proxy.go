@@ -18,6 +18,8 @@ import (
 const (
 	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
 	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
+
+	mlNodeHTTPTimeout = 5 * time.Minute
 )
 
 // NewNoRedirectClient returns an HTTP client that does not follow redirects.

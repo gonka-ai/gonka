@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"common/chain/events"
+	"devshard/cmd/devshardd/events"
 )
 
 func TestListener_StartWithUnreachableNode(t *testing.T) {
@@ -25,4 +25,19 @@ func TestListener_StartWithUnreachableNode(t *testing.T) {
 	_ = l.Start(ctx)
 
 	assert.Empty(t, created)
+}
+
+func TestListener_OnNewBlock_NotCalledWhenUnreachable(t *testing.T) {
+	l := events.NewListener("http://localhost:26657")
+
+	var blocks []events.NewBlockEvent
+	l.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
+		blocks = append(blocks, e)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_ = l.Start(ctx)
+
+	assert.Empty(t, blocks)
 }

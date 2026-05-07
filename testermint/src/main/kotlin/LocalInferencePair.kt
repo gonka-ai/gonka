@@ -826,6 +826,9 @@ data class LocalInferencePair(
 
     data class DevshardProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
 
+    private fun devshardContainerName(escrowId: Long): String =
+        "${name.trimStart('/')}-devshardctl-$escrowId"
+
     fun startDevshardProxy(
         escrowId: Long,
         keyName: String? = null,
@@ -834,29 +837,47 @@ data class LocalInferencePair(
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
-            val stderrFile = "/tmp/devshardctl-proxy-${escrowId}.log"
-            // Tests pin the route prefix explicitly so they are not coupled to
-            // devshardctl's release-default routing choice.
             val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
-            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
-            val startCommand = listOf(
-                "sh", "-c",
-                "DEVSHARD_PRIVATE_KEY='$privateKey'" +
-                    " DEVSHARD_ESCROW_ID=$escrowId" +
-                    " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
-                    " DEVSHARD_PORT=$port" +
-                    " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
-                    routePrefixEnv +
-                    " nohup devshardctl >$stderrFile 2>&1 &" +
-                    " echo \$!"
-            )
-            api.executor.exec(startCommand, null)
-            // Wait for proxy to be ready.
-            val proxyUrl = "http://localhost:$port"
+            val containerName = devshardContainerName(escrowId)
+            val proxyUrl = "http://$containerName:$port"
+            val devshardProxyImage = config.devshardProxyImageName
+                ?: error("devshardProxyImageName must be set to run devshard proxy")
+
+            DockerClientBuilder.getInstance().build().use { dockerClient ->
+                // Remove any leftover container from a previous run.
+                dockerClient.listContainersCmd().withShowAll(true).exec()
+                    .find { c -> c.names.any { it == "/$containerName" } }
+                    ?.let { c ->
+                        runCatching { dockerClient.stopContainerCmd(c.id).exec() }
+                        runCatching { dockerClient.removeContainerCmd(c.id).exec() }
+                    }
+
+                val devshardctlContainerPath = "/usr/local/bin/devshardctl"
+                val createResp = dockerClient.createContainerCmd(devshardProxyImage)
+                    .withName(containerName)
+                    .withCmd(devshardctlContainerPath)
+                    .withEnv(
+                        "DEVSHARD_PRIVATE_KEY=$privateKey",
+                        "DEVSHARD_ESCROW_ID=$escrowId",
+                        "DEVSHARD_CHAIN_REST=http://${name.trimStart('/')}-node:1317",
+                        "DEVSHARD_PORT=$port",
+                        "DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db",
+                        "DEVSHARD_ROUTE_PREFIX=$effectiveRoutePrefix",
+                    )
+                    .withHostConfig(
+                        HostConfig()
+                            .withNetworkMode("chain-public")
+                    )
+                    .exec()
+                dockerClient.startContainerCmd(createResp.id).exec()
+            }
+
             var ready = false
             for (i in 0 until 30) {
                 try {
-                    val output = api.executor.exec(listOf("sh", "-c", "curl -sf $proxyUrl/v1/status >/dev/null 2>&1 && echo OK"), null)
+                    val output = api.executor.exec(
+                        listOf("sh", "-c", "curl -sf $proxyUrl/v1/status >/dev/null 2>&1 && echo OK"), null
+                    )
                     if (output.any { it.trim() == "OK" }) {
                         ready = true
                         break
@@ -865,18 +886,32 @@ data class LocalInferencePair(
                 Thread.sleep(500)
             }
             if (!ready) {
-                val logs = try {
-                    api.executor.exec(listOf("cat", stderrFile), null).joinToString("")
-                } catch (_: Exception) { "no logs" }
+                val logs = runCatching {
+                    val output = ExecCaptureOutput()
+                    DockerClientBuilder.getInstance().build().use { dockerClient ->
+                        dockerClient.logContainerCmd(containerName)
+                            .withStdOut(true).withStdErr(true).withTail(50)
+                            .exec(output).awaitCompletion(5, TimeUnit.SECONDS)
+                    }
+                    output.output.joinToString("")
+                }.getOrElse { "no logs" }
                 error("devshardctl did not start within 15s. Logs:\n$logs")
             }
             DevshardProxyHandle(escrowId, port, proxyUrl)
         }
 
     fun stopDevshardProxy(escrowId: Long) {
-        try {
-            api.executor.exec(listOf("sh", "-c", "pkill -f 'DEVSHARD_ESCROW_ID=$escrowId.*devshardctl' || true"), null)
-        } catch (_: Exception) { /* ignore */ }
+        val containerName = devshardContainerName(escrowId)
+        runCatching {
+            DockerClientBuilder.getInstance().build().use { dockerClient ->
+                dockerClient.listContainersCmd().withShowAll(true).exec()
+                    .find { c -> c.names.any { it == "/$containerName" } }
+                    ?.let { c ->
+                        runCatching { dockerClient.stopContainerCmd(c.id).exec() }
+                        runCatching { dockerClient.removeContainerCmd(c.id).exec() }
+                    }
+            }
+        }
     }
 
     fun getDevshardInferenceState(proxyUrl: String, inferenceId: Long): String {
@@ -889,7 +924,7 @@ data class LocalInferencePair(
 
     fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
         val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
-        val maxTimeSeconds = if (stream) 55 else 30
+        val maxTimeSeconds = if (stream) 90 else 30
         val result = api.executor.exec(listOf(
             "sh", "-c",
             "curl --silent --show-error --fail --connect-timeout 5 --max-time $maxTimeSeconds " +
@@ -974,6 +1009,7 @@ data class ApplicationConfig(
     val nodeImageName: String,
     val genesisNodeImage: String,
     val apiImageName: String,
+    val devshardProxyImageName: String? = null,
     val mockImageName: String,
     val denom: String,
     val stateDirName: String,

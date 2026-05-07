@@ -6,7 +6,7 @@ generate-api:
 	go generate ./queryapi/...
 
 generate-proto:
-	go generate ./mlnode/...
+	go generate ./nodemanager/...
 
 build:
 	go build ./...
@@ -15,4 +15,4 @@ test:
 	go test ./... -v
 
 check-gen: generate
-	git diff --exit-code queryapi/gen/ mlnode/gen/
+	git diff --exit-code queryapi/gen/ nodemanager/gen/
