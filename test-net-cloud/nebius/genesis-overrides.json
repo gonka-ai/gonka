@@ -71,15 +71,15 @@
       },
       "params": {
         "epoch_params": {
-          "confirmation_poc_safety_window": "5",
+          "confirmation_poc_safety_window": "10",
           "epoch_length": "360",
           "epoch_multiplier": "1",
           "epoch_shift": "300",
           "poc_stage_duration": "30",
           "poc_exchange_duration": "2",
           "poc_validation_delay": "2",
-          "poc_validation_duration": "20",
-          "set_new_validators_delay": "30",
+          "poc_validation_duration": "40",
+          "set_new_validators_delay": "10",
           "inference_validation_cutoff": "20",
           "default_unit_of_compute_price": "100",
           "inference_pruning_epoch_threshold": "2",
@@ -113,7 +113,7 @@
         },
         "poc_params": {
           "default_difficulty": 5,
-          "validation_sample_size": 200,
+          "validation_sample_size": 20,
           "poc_data_pruning_epoch_threshold": "1",
           "poc_v2_enabled": true,
           "confirmation_poc_v2_enabled": true,
@@ -266,6 +266,27 @@
           "validation_threshold": {
             "value": "95814",
             "exponent": -5
+          }
+        },
+        {
+          "proposed_by": "genesis",
+          "id": "moonshotai/Kimi-K2.6",
+          "units_of_compute_per_token": "10000",
+          "hf_repo": "moonshotai/Kimi-K2.6",
+          "hf_commit": "5a49d036ab7472b7d5912ded487150ec1358c11d",
+          "model_args": [
+            "--max-model-len",
+            "240000",
+            "--tool-call-parser",
+            "kimi_k2",
+            "--reasoning-parser",
+            "kimi_k2"
+          ],
+          "v_ram": "720",
+          "throughput_per_nonce": "1500",
+          "validation_threshold": {
+            "value": "920",
+            "exponent": -3
           }
         },
         {
