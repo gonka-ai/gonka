@@ -414,7 +414,18 @@ func ExecuteValidation(
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
 	if len(originalLogits) == 0 || len(validationLogits) == 0 {
-		logging.Error("No logits found in original or validation response", types.Validation, "id", inferenceID)
+		logging.Error("No logits found in original or validation response",
+			types.Validation,
+			"id", inferenceID,
+			"originalLogitsLen", len(originalLogits),
+			"validationLogitsLen", len(validationLogits),
+			"originalLogits", originalLogits,
+			"validationLogits", validationLogits,
+			"validatorStatus", resp.StatusCode,
+			"validationRequest", string(requestBody),
+			"originalResponsePayload", string(responsePayload),
+			"validationResponsePayload", string(respBodyBytes),
+		)
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
