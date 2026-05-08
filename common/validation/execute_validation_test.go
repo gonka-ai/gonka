@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -201,8 +202,8 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 	assert.Equal(t, true, requestMap["logprobs"])
 	assert.Equal(t, float64(5), requestMap["top_logprobs"])
 	assert.Equal(t, "processed_logprobs", requestMap["logprobs_mode"])
-	assert.Equal(t, float64(20), requestMap["max_tokens"])
-	assert.Equal(t, float64(20), requestMap["max_completion_tokens"])
+	assert.Equal(t, float64(calculations.DefaultMaxTokens), requestMap["max_tokens"])
+	assert.Equal(t, float64(calculations.DefaultMaxTokens), requestMap["max_completion_tokens"])
 	assert.Equal(t, float64(0), requestMap["seed"])
 }
 
