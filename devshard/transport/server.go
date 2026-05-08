@@ -276,10 +276,27 @@ func (s *Server) HandleInference(c echo.Context) error {
 		logging.Error("HandleInference", "error", "decode request: "+err.Error())
 		return echo.NewHTTPError(http.StatusBadRequest, "decode request: "+err.Error())
 	}
+	model := ""
+	if req.Payload != nil {
+		model = req.Payload.Model
+	}
+	logging.Info("devshard route received inference request",
+		"subsystem", "server",
+		"escrow_id", s.host.EscrowID(),
+		"inference_id", req.Nonce,
+		"model", model,
+		"diff_count", len(req.Diffs),
+		"has_payload", req.Payload != nil,
+		"stream_hint", ir.Stream)
 
 	resp, err := s.host.HandleRequest(c.Request().Context(), req)
 	if err != nil {
-		logging.Error("HandleInference", "error", "handle request: "+err.Error())
+		logging.Error("HandleInference",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"inference_id", req.Nonce,
+			"model", model,
+			"error", "handle request: "+err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
@@ -305,6 +322,8 @@ func (s *Server) HandleInference(c echo.Context) error {
 		logging.Info("devshard receipt sent before deferred execution",
 			"subsystem", "server",
 			"escrow_id", s.host.EscrowID(),
+			"inference_id", req.Nonce,
+			"model", model,
 			"nonce", resp.Nonce,
 			"confirmed_at", resp.ConfirmedAt,
 			"has_execution_job", resp.ExecutionJob != nil,
@@ -315,6 +334,13 @@ func (s *Server) HandleInference(c echo.Context) error {
 	// If reconnecting to a completed inference, replay cached response.
 	// Otherwise run deferred execution with live streaming.
 	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
+		logging.Info("devshard route replaying cached completed response",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"inference_id", req.Nonce,
+			"model", model,
+			"nonce", resp.Nonce,
+			"cached_response_bytes", len(resp.CachedResponseBody))
 		replaySSEBody(w, resp.CachedResponseBody)
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
@@ -344,6 +370,14 @@ func (s *Server) HandleInference(c echo.Context) error {
 				"model", resp.ExecutionJob.Model,
 				"nonce", resp.Nonce)
 		}
+	} else if resp.Receipt != nil {
+		logging.Warn("devshard route sent receipt without execution job or cached response",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"inference_id", req.Nonce,
+			"model", model,
+			"nonce", resp.Nonce,
+			"confirmed_at", resp.ConfirmedAt)
 	}
 
 	// Final event: devshard_meta with updated mempool.
@@ -359,6 +393,14 @@ func (s *Server) HandleInference(c echo.Context) error {
 	}
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	writeSSEEvent(w, metaWrapper)
+	logging.Info("devshard route sent meta event",
+		"subsystem", "server",
+		"escrow_id", s.host.EscrowID(),
+		"inference_id", req.Nonce,
+		"model", model,
+		"nonce", resp.Nonce,
+		"mempool_txs", len(mempoolTxs),
+		"has_finish", hasFinishInference(mempoolTxs, req.Nonce))
 
 	// Fire gossip in background.
 	if s.gossip != nil && resp.StateSig != nil {

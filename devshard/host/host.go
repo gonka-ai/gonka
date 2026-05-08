@@ -470,18 +470,48 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 			}}},
 			ProposedAt: h.sm.LatestNonce(),
 		})
+		logging.Info("devshard host signed executor receipt",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", start.InferenceId,
+			"model", start.Model,
+			"executor_slot", executorSlot,
+			"confirmed_at", confirmedAt,
+			"latest_nonce", h.sm.LatestNonce())
 
 		// Dedup: return receipt (proves executor alive) but skip execution.
 		if _, dup := h.executing[start.InferenceId]; dup {
+			logging.Warn("devshard host returning receipt while execution is already in flight",
+				"subsystem", "host",
+				"escrow_id", h.escrowID,
+				"inference_id", start.InferenceId,
+				"model", start.Model,
+				"executor_slot", executorSlot,
+				"confirmed_at", confirmedAt)
 			return sig, confirmedAt, nil, nil, nil
 		}
 
 		// Already completed: execution finished, response cached.
 		if cached, ok := h.completedResponses[start.InferenceId]; ok {
+			logging.Info("devshard host returning cached response with receipt",
+				"subsystem", "host",
+				"escrow_id", h.escrowID,
+				"inference_id", start.InferenceId,
+				"model", start.Model,
+				"executor_slot", executorSlot,
+				"confirmed_at", confirmedAt,
+				"cached_response_bytes", len(cached))
 			return sig, confirmedAt, nil, cached, nil
 		}
 
 		h.executing[start.InferenceId] = struct{}{}
+		logging.Info("devshard host prepared deferred execution job",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", start.InferenceId,
+			"model", start.Model,
+			"executor_slot", executorSlot,
+			"latest_nonce", h.sm.LatestNonce())
 
 		job := &devshard.ExecuteRequest{
 			InferenceID: start.InferenceId,

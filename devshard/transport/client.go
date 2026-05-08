@@ -17,6 +17,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/host"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -202,6 +203,15 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 				result.Nonce = receipt.Nonce
 				result.Receipt = receipt.Receipt
 				result.ConfirmedAt = receipt.ConfirmedAt
+				logging.Info("devshard client received receipt event",
+					"subsystem", "transport",
+					"base_url", c.baseURL,
+					"escrow_id", c.escrowID,
+					"inference_id", nonce,
+					"event_nonce", receipt.Nonce,
+					"confirmed_at", receipt.ConfirmedAt,
+					"has_receipt", len(receipt.Receipt) > 0,
+					"has_state_sig", len(receipt.StateSig) > 0)
 			}
 			continue
 		}
@@ -212,6 +222,21 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 				txs, txErr := DevshardTxsFromBytes(meta.Mempool)
 				if txErr == nil {
 					result.Mempool = txs
+					logging.Info("devshard client received meta event",
+						"subsystem", "transport",
+						"base_url", c.baseURL,
+						"escrow_id", c.escrowID,
+						"inference_id", nonce,
+						"mempool_txs", len(txs),
+						"has_finish", hasFinishInference(txs, nonce))
+				} else {
+					logging.Error("devshard client failed to decode meta mempool",
+						"subsystem", "transport",
+						"base_url", c.baseURL,
+						"escrow_id", c.escrowID,
+						"inference_id", nonce,
+						"mempool_items", len(meta.Mempool),
+						"error", txErr)
 				}
 			}
 			continue
@@ -226,6 +251,15 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 		return &result, fmt.Errorf("read SSE stream: %w", err)
 	}
 	return &result, nil
+}
+
+func hasFinishInference(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
 }
 
 // GossipNonce sends a nonce notification to a peer.
