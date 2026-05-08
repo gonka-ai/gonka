@@ -12,6 +12,7 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"devshard"
+	"devshard/observability"
 	"net/http"
 	"time"
 
@@ -171,6 +172,7 @@ func (s *Server) DevshardGroup() *echo.Group {
 }
 
 func (s *Server) Start(addr string) {
+	s.e.Server.ConnState = observability.ConnState("public")
 	go s.e.Start(addr)
 }
 

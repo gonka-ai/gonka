@@ -48,6 +48,7 @@ import (
 
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
+	"devshard/observability"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 )
@@ -64,7 +65,9 @@ func main() {
 
 	prefix := os.Getenv("DEVSHARD_LOG_PREFIX")
 	runtimeVersion, err := resolveRuntimeVersion(prefix, Version)
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	observability.SetRuntime("devshardd", runtimeVersion, "standalone_devshardd")
+	observability.SetBuildInfo("devshardd", Version, "")
 	slog.Info("devshardd starting",
 		"build_version", Version,
 		"selected_version", prefix,
@@ -169,7 +172,9 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Server.ConnState = observability.ConnState("devshardd")
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/metrics", echo.WrapHandler(observability.Handler()))
 	// Mount HostManager routes at the root. Versiond strips the /<version>/
 	// prefix before forwarding, so devshardd sees /sessions/:id/* directly.
 	manager.Register(e.Group(""))

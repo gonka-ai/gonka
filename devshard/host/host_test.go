@@ -765,6 +765,24 @@ func (e *countingEngine) Execute(ctx context.Context, req devshard.ExecuteReques
 	return e.inner.Execute(ctx, req)
 }
 
+type failOnSignSigner struct {
+	inner  *signing.Secp256k1Signer
+	failOn int
+	calls  int
+}
+
+func (s *failOnSignSigner) Sign(message []byte) ([]byte, error) {
+	s.calls++
+	if s.calls == s.failOn {
+		return nil, fmt.Errorf("forced sign failure")
+	}
+	return s.inner.Sign(message)
+}
+
+func (s *failOnSignSigner) Address() string {
+	return s.inner.Address()
+}
+
 func TestHost_ExecutionPayloadEpoch(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -788,6 +806,44 @@ func TestHost_ExecutionPayloadEpoch(t *testing.T) {
 	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), engine.last.EpochID)
+}
+
+func TestHost_ResponseCacheRequiresFinishPublished(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	signer := &failOnSignSigner{inner: hosts[1], failOn: 4}
+	h, err := NewHost(sm, signer, stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob)
+
+	result, err := h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.Error(t, err)
+	require.NotNil(t, result)
+
+	h.mu.Lock()
+	_, cached := h.completedResponses[1]
+	h.mu.Unlock()
+	require.False(t, cached, "response must not be cached until MsgFinishInference is published")
+	require.Nil(t, findMempoolFinish(h.MempoolTxs()))
+
+	resp2, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp2.CachedResponseBody)
+	require.NotNil(t, resp2.ExecutionJob, "retry should execute again after finish publish failed")
 }
 
 func TestHost_SignReceipt_NoDuplicateExecution(t *testing.T) {

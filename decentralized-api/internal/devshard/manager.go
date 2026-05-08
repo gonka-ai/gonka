@@ -29,6 +29,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/host"
+	"devshard/observability"
 	devshardserver "devshard/server"
 	"devshard/signing"
 	"devshard/state"
@@ -103,6 +104,23 @@ type statsHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+}
+
+type payloadAuthError struct {
+	reason observability.Reason
+	err    error
+}
+
+func (e *payloadAuthError) Error() string {
+	return e.err.Error()
+}
+
+func (e *payloadAuthError) Unwrap() error {
+	return e.err
+}
+
+func newPayloadAuthError(reason observability.Reason, err error) error {
+	return &payloadAuthError{reason: reason, err: err}
 }
 
 func NewHostManager(
@@ -645,37 +663,83 @@ func statsHTTPError(err error) error {
 // for a group member), then returns signed payloads.
 func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) error {
 	escrowID := srv.Host().EscrowID()
+	ctx := c.Request().Context()
 	inferenceID := c.QueryParam("inference_id")
+	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
+
+	payloadEvent := func(level observability.Level, msg string, status, reason observability.Reason, err error, fields ...any) {
+		observability.IncPayloadRequest(status, reason)
+		base := []any{
+			"inference_id", inferenceID,
+			"validator_address", validatorAddress,
+		}
+		base = append(base, fields...)
+		observability.Log(ctx, level, msg, observability.StagePayloadRequest, observability.WhereManagerPayloads, escrowID, status, reason, err, base...)
+	}
+
 	if inferenceID == "" {
+		payloadEvent(observability.LevelWarn, "payload request missing inference_id", observability.ReasonError, observability.ReasonMissingInferenceID, nil)
 		return echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
 	}
 
 	epochID, err := m.authenticatePayloadRequest(c, srv.Host().Group())
 	if err != nil {
-		return err
+		reason := payloadAuthReason(err)
+		payloadEvent(observability.LevelWarn, "payload request auth failed", observability.ReasonError, reason, err)
+		return payloadHTTPError(err)
 	}
 
 	// Retrieve payloads with adjacent epoch fallback.
-	promptPayload, responsePayload, _, err := m.retrievePayloadsWithAdjacentEpochs(c.Request().Context(), escrowID, inferenceID, epochID)
+	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, inferenceID, epochID)
 	if err != nil {
 		if errors.Is(err, payloadstorage.ErrNotFound) {
+			payloadEvent(observability.LevelWarn, "payload not found", observability.ReasonError, observability.ReasonPayloadNotFound, nil, "requested_epoch", epochID)
 			return echo.NewHTTPError(http.StatusNotFound, "payload not found")
 		}
+		payloadEvent(observability.LevelWarn, "payload retrieval failed", observability.ReasonError, observability.ReasonPayloadRetrieveErr, err, "requested_epoch", epochID)
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	// Sign response using same scheme as public endpoint
 	executorSignature, err := m.signPayloadResponse(inferenceID, promptPayload, responsePayload)
 	if err != nil {
+		payloadEvent(observability.LevelWarn, "payload response signing failed", observability.ReasonError, observability.ReasonPayloadResponseSignErr, err,
+			"requested_epoch", epochID,
+			"served_epoch", servedEpoch)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
 	}
 
-	return c.JSON(http.StatusOK, validation.PayloadResponse{
+	if err := c.JSON(http.StatusOK, validation.PayloadResponse{
 		InferenceId:       inferenceID,
 		PromptPayload:     promptPayload,
 		ResponsePayload:   responsePayload,
 		ExecutorSignature: executorSignature,
-	})
+	}); err != nil {
+		payloadEvent(observability.LevelWarn, "payload response write failed", observability.ReasonError, observability.ReasonPayloadWriteErr, err,
+			"requested_epoch", epochID,
+			"served_epoch", servedEpoch)
+		return err
+	}
+	payloadEvent(observability.LevelInfo, "payload served", observability.ReasonOK, observability.ReasonOK, nil,
+		"requested_epoch", epochID,
+		"served_epoch", servedEpoch)
+	return nil
+}
+
+func payloadAuthReason(err error) observability.Reason {
+	var authErr *payloadAuthError
+	if errors.As(err, &authErr) {
+		return authErr.reason
+	}
+	return observability.ReasonPayloadAuthErr
+}
+
+func payloadHTTPError(err error) error {
+	var httpErr *echo.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr
+	}
+	return err
 }
 
 // authenticatePayloadRequest validates headers, timestamp, group membership,
@@ -688,26 +752,26 @@ func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.S
 	inferenceID := c.QueryParam("inference_id")
 
 	if validatorAddress == "" {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required")
+		return 0, newPayloadAuthError(observability.ReasonMissingValidatorHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required"))
 	}
 	if timestampStr == "" {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required")
+		return 0, newPayloadAuthError(observability.ReasonMissingTimestampHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required"))
 	}
 	if epochIDStr == "" {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required")
+		return 0, newPayloadAuthError(observability.ReasonMissingEpochHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required"))
 	}
 	if signature == "" {
-		return 0, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
+		return 0, newPayloadAuthError(observability.ReasonMissingSignatureHeader, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required"))
 	}
 
 	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format")
+		return 0, newPayloadAuthError(observability.ReasonInvalidTimestamp, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format"))
 	}
 
 	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
 	if err != nil {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format")
+		return 0, newPayloadAuthError(observability.ReasonInvalidEpoch, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format"))
 	}
 
 	// Validate timestamp within 60s window
@@ -716,21 +780,21 @@ func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.S
 	maxFuture := int64(10 * time.Second)
 	requestAge := now - timestamp
 	if requestAge > maxAge {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "request timestamp too old")
+		return 0, newPayloadAuthError(observability.ReasonTimestampTooOld, echo.NewHTTPError(http.StatusBadRequest, "request timestamp too old"))
 	}
 	if requestAge < -maxFuture {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "request timestamp in the future")
+		return 0, newPayloadAuthError(observability.ReasonTimestampInFuture, echo.NewHTTPError(http.StatusBadRequest, "request timestamp in the future"))
 	}
 
 	granterAddress, err := m.findGranterInGroup(validatorAddress, group)
 	if err != nil {
-		return 0, echo.NewHTTPError(http.StatusUnauthorized, "not a group member")
+		return 0, newPayloadAuthError(observability.ReasonNotGroupMember, echo.NewHTTPError(http.StatusUnauthorized, "not a group member"))
 	}
 
 	// Collect requester's pubkeys for signature verification
 	pubkeys, err := m.getValidatorPubKeys(c.Request().Context(), validatorAddress, granterAddress)
 	if err != nil {
-		return 0, echo.NewHTTPError(http.StatusUnauthorized, "failed to resolve validator pubkeys")
+		return 0, newPayloadAuthError(observability.ReasonPubkeyResolutionErr, echo.NewHTTPError(http.StatusUnauthorized, "failed to resolve validator pubkeys"))
 	}
 
 	// Verify signature
@@ -742,7 +806,7 @@ func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.S
 		ExecutorAddress: "",
 	}
 	if err := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, pubkeys, signature); err != nil {
-		return 0, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
+		return 0, newPayloadAuthError(observability.ReasonInvalidSignature, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature"))
 	}
 
 	return epochID, nil

@@ -30,6 +30,8 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant"
+	devshardlogging "devshard/logging"
+	"devshard/observability"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 	"encoding/json"
@@ -72,6 +74,9 @@ func main() {
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	devshardlogging.SetLogger(devshardLogAdapter{})
+	observability.SetRuntime("api", configManager.GetCurrentNodeVersion(), "dapi_inprocess")
+	observability.SetBuildInfo("api", configManager.GetCurrentNodeVersion(), "")
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
 	if err := natssrv.Start(); err != nil {
@@ -349,6 +354,24 @@ func returnStatus(configManager *apiconfig.ConfigManager) {
 	}
 	fmt.Println(string(jsonData))
 	os.Exit(0)
+}
+
+type devshardLogAdapter struct{}
+
+func (devshardLogAdapter) Info(msg string, kv ...any) {
+	slog.Info(msg, append([]any{"subsystem", "devshard"}, kv...)...)
+}
+
+func (devshardLogAdapter) Warn(msg string, kv ...any) {
+	slog.Warn(msg, append([]any{"subsystem", "devshard"}, kv...)...)
+}
+
+func (devshardLogAdapter) Error(msg string, kv ...any) {
+	slog.Error(msg, append([]any{"subsystem", "devshard"}, kv...)...)
+}
+
+func (devshardLogAdapter) Debug(msg string, kv ...any) {
+	slog.Debug(msg, append([]any{"subsystem", "devshard"}, kv...)...)
 }
 
 func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {

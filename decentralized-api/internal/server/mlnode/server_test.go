@@ -118,8 +118,8 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 		PoCSegment:       "/poc",
 		PoCPort:          8082,
 		Models:           models,
-		Id:            "node-1",
-		MaxConcurrent: 1,
+		Id:               "node-1",
+		MaxConcurrent:    1,
 	})
 	resp := <-loadResp
 	if resp.Error != nil {
@@ -188,15 +188,15 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
 
 	body, err := json.Marshal(map[string]any{
-		"block_hash":       "abc",
-		"block_height":     100,
-		"public_key":       "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
-		"node_id":          1,
-		"n_total":          5,
-		"n_mismatch":       0,
-		"mismatch_nonces":  []int{},
-		"p_value":          1.0,
-		"fraud_detected":   false,
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
 	})
 	assert.NoError(t, err)
 
@@ -207,4 +207,15 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	server.e.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockRecorder.AssertExpectations(t)
+}
+
+func TestDevshardServiceDiscoveryWithoutConfigManager(t *testing.T) {
+	server := NewServer(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/sd/devshardd", nil)
+	rec := httptest.NewRecorder()
+
+	server.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `[]`, rec.Body.String())
 }

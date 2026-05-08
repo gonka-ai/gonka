@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 
 	"devshard"
 	"devshard/bridge"
+	"devshard/observability"
 )
 
 // ValidationAdapter implements devshard.ValidationEngine by re-executing inference
@@ -64,23 +66,48 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 }
 
 func (v *ValidationAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
+	lastReason := observability.ReasonAcquireErr
 	resp, err := broker.DoWithLockedNodeHTTPRetry(v.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
 			url := node.InferenceUrlWithVersion(v.nodeVersion) + "/v1/chat/completions"
+			started := time.Now()
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
+				lastReason = observability.ReasonApplicationErr
+				observability.IncMLNodeAttempt(observability.PathValidate, lastReason, node.Id)
 				return nil, broker.NewApplicationActionError(reqErr)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			observability.AttachRequestID(httpReq)
 			httpResp, postErr := v.httpClient.Do(httpReq)
 			if postErr != nil {
+				lastReason = observability.ReasonTransportErr
+				if ctx.Err() != nil {
+					lastReason = observability.ReasonTimeout
+				}
+				observability.IncMLNodeAttempt(observability.PathValidate, lastReason, node.Id)
 				return nil, broker.NewTransportActionError(postErr)
+			}
+			observability.ObserveMLNodeCall(observability.PathValidate, node.Id, observability.ReasonTotalPhase, started)
+			switch {
+			case httpResp.StatusCode >= 500:
+				lastReason = observability.ReasonHTTP5xx
+				observability.IncMLNodeAttempt(observability.PathValidate, lastReason, node.Id)
+			case httpResp.StatusCode >= 400:
+				lastReason = observability.ReasonHTTP4xx
+				observability.IncMLNodeAttempt(observability.PathValidate, lastReason, node.Id)
+			default:
+				lastReason = observability.ReasonOK
+				observability.IncMLNodeAttempt(observability.PathValidate, observability.ReasonOK, node.Id)
 			}
 			return httpResp, nil
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("broker validate: %w", err)
+		if lastReason == observability.ReasonOK {
+			lastReason = observability.ReasonTransportErr
+		}
+		return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, fmt.Errorf("broker validate: %w", err))
 	}
 	return resp, nil
 }

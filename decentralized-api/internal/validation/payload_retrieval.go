@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"time"
 
+	"devshard/observability"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -64,6 +66,7 @@ func FetchPayloadsHTTP(
 	req.Header.Set(apiutils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
 	req.Header.Set(apiutils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
 	req.Header.Set(apiutils.AuthorizationHeader, signature)
+	observability.AttachRequestID(req)
 
 	resp, err := client.Do(req)
 	if err != nil {

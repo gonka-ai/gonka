@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync"
 
+	"devshard/observability"
+
 	"github.com/labstack/echo/v4"
 	"golang.org/x/time/rate"
 )
@@ -60,6 +62,12 @@ func rateLimitMiddleware(rl *rateLimiter) echo.MiddlewareFunc {
 				return next(c)
 			}
 			if !rl.allow(sender) {
+				ctx := c.Request().Context()
+				observability.IncRequest(observability.StageReceived, observability.ReasonRateLimited)
+				observability.Log(ctx, observability.LevelWarn, "rate limit exceeded", observability.StageReceived, observability.WhereTransportRateLimit, c.Param("id"), observability.ReasonRateLimited, observability.ReasonRateLimited, nil, "sender", sender)
+				if isChatCompletionRequest(c) {
+					observability.RecordNoReceiptInterrupted(ctx, c.Param("id"), observability.ReasonRateLimited, observability.WhereTransportRateLimit)
+				}
 				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
 			}
 			return next(c)

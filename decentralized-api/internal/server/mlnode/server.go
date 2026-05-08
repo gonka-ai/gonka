@@ -8,6 +8,8 @@ import (
 	"decentralized-api/poc/artifacts"
 	"net/http"
 
+	"devshard/observability"
+
 	"github.com/labstack/echo/v4"
 )
 
@@ -59,6 +61,8 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 
 	// Devshard version list from chain params
 	e.GET("/versions", s.getVersions)
+	e.GET("/sd/devshardd", s.getDevshardServiceDiscovery)
+	e.GET("/metrics", echo.WrapHandler(observability.Handler()))
 
 	return s
 }
@@ -70,6 +74,33 @@ func (s *Server) getVersions(c echo.Context) error {
 	return c.JSON(http.StatusOK, s.configManager.GetDevshardVersions())
 }
 
+type prometheusTargetGroup struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
+}
+
+func (s *Server) getDevshardServiceDiscovery(c echo.Context) error {
+	if s.configManager == nil {
+		return c.JSON(http.StatusOK, []prometheusTargetGroup{})
+	}
+	versions := s.configManager.GetDevshardVersions()
+	targets := make([]prometheusTargetGroup, 0, len(versions.Versions))
+	for _, version := range versions.Versions {
+		if version.Name == "" {
+			continue
+		}
+		targets = append(targets, prometheusTargetGroup{
+			Targets: []string{"versiond:8080"},
+			Labels: map[string]string{
+				"__metrics_path__": "/" + version.Name + "/metrics",
+				"version":          version.Name,
+			},
+		})
+	}
+	return c.JSON(http.StatusOK, targets)
+}
+
 func (s *Server) Start(addr string) {
+	s.e.Server.ConnState = observability.ConnState("ml")
 	go s.e.Start(addr)
 }

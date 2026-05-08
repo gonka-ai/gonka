@@ -24,6 +24,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/observability"
 	devshardserver "devshard/server"
 )
 
@@ -47,7 +48,7 @@ func ExecuteInferenceWithExecutor(
 
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
 	if err != nil {
-		return nil, fmt.Errorf("modify request body: %w", err)
+		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeModifyRequest, fmt.Errorf("modify request body: %w", err))
 	}
 
 	resp, err := execute(ctx, req.Model, modified.NewBody)
@@ -55,16 +56,24 @@ func ExecuteInferenceWithExecutor(
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return nil, observability.Classify(observability.ReasonHTTP5xx, observability.WhereEngineMLNodeCall, fmt.Errorf("mlnode status %d", resp.StatusCode))
+	}
+	if resp.StatusCode >= 400 {
+		return nil, observability.Classify(observability.ReasonHTTP4xx, observability.WhereEngineMLNodeCall, fmt.Errorf("mlnode status %d", resp.StatusCode))
+	}
 
 	processed, err := ProcessExecutionHTTPResponse(req, resp, inferenceID)
 	if err != nil {
 		return nil, err
 	}
+	observability.ObserveTokens(observability.PathExecute, "", observability.ReasonPromptTokens, processed.InputTokens)
+	observability.ObserveTokens(observability.PathExecute, "", observability.ReasonCompletionTokens, processed.OutputTokens)
 
 	// Store the canonicalized ORIGINAL prompt (not the modified one with seed).
 	promptPayload, err := devshardpkg.CanonicalizeJSON(req.Prompt)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize prompt: %w", err)
+		return nil, observability.Classify(observability.ReasonCanonicalizePromptErr, observability.WhereRuntimeStorePayloads, fmt.Errorf("canonicalize prompt: %w", err))
 	}
 
 	if err := payloadStore.Store(
@@ -74,7 +83,7 @@ func ExecuteInferenceWithExecutor(
 		promptPayload,
 		processed.ResponseBody,
 	); err != nil {
-		return nil, fmt.Errorf("store payloads: %w", err)
+		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeStorePayloads, fmt.Errorf("store payloads: %w", err))
 	}
 
 	return &devshardpkg.ExecuteResult{
@@ -111,7 +120,7 @@ func ValidateInferenceWithExecutor(
 		requestPath,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeFetchPayloads, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
 
 	validationBody, err := BuildValidationBody(promptPayload, responsePayload, req.InferenceID, chainParams)
@@ -147,9 +156,13 @@ func ProcessExecutionHTTPResponse(
 
 	var processErr error
 	if req.ResponseWriter != nil && isSSE {
-		processErr = public.ProxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := public.ProxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			processErr = observability.Classify(observability.ReasonResponseWriteErr, observability.WhereRuntimeWriteClientResponse, err)
+		}
 	} else {
-		processErr = completionapi.ProcessHTTPResponse(resp, processor)
+		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
+			processErr = observability.Classify(observability.ReasonResponseProcessErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("process response: %w", err))
+		}
 	}
 
 	processed, err := buildProcessedExecutionResponse(req, processor, isSSE)
@@ -173,16 +186,18 @@ func buildProcessedExecutionResponse(
 ) (*ProcessedExecutionResponse, error) {
 	completionResp, err := processor.GetResponse()
 	if err != nil {
-		return nil, fmt.Errorf("get completion response: %w", err)
+		return nil, observability.Classify(observability.ReasonResponseProcessErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("get completion response: %w", err))
 	}
 
 	bodyBytes, err := completionResp.GetBodyBytes()
 	if err != nil {
-		return nil, fmt.Errorf("get body bytes: %w", err)
+		return nil, observability.Classify(observability.ReasonResponseProcessErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("get body bytes: %w", err))
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes)
+		if _, err := fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes); err != nil {
+			return nil, observability.Classify(observability.ReasonResponseWriteErr, observability.WhereRuntimeWriteClientResponse, err)
+		}
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -191,7 +206,7 @@ func buildProcessedExecutionResponse(
 	hash := sha256.Sum256(bodyBytes)
 	usage, err := completionResp.GetUsage()
 	if err != nil {
-		return nil, fmt.Errorf("get usage: %w", err)
+		return nil, observability.Classify(observability.ReasonUsageParseErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("get usage: %w", err))
 	}
 
 	return &ProcessedExecutionResponse{
@@ -211,22 +226,22 @@ func BuildValidationBody(
 	seed := int32(inferenceID)
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, seed, chainParams.LogprobsMode())
 	if err != nil {
-		return nil, fmt.Errorf("modify request body for validation: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationBodyErr, observability.WhereRuntimeModifyRequest, fmt.Errorf("modify request body for validation: %w", err))
 	}
 
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(modified.NewBody, &requestMap); err != nil {
-		return nil, fmt.Errorf("unmarshal modified prompt: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationBodyErr, observability.WhereRuntimeModifyRequest, fmt.Errorf("unmarshal modified prompt: %w", err))
 	}
 
 	originalResponse, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
 	if err != nil {
-		return nil, fmt.Errorf("parse original response: %w", err)
+		return nil, observability.Classify(observability.ReasonOriginalResponseParseErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("parse original response: %w", err))
 	}
 
 	enforcedTokens, err := originalResponse.GetEnforcedTokens()
 	if err != nil {
-		return nil, fmt.Errorf("get enforced tokens: %w", err)
+		return nil, observability.Classify(observability.ReasonEnforcedTokensErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("get enforced tokens: %w", err))
 	}
 
 	requestMap["enforced_tokens"] = enforcedTokens
@@ -235,7 +250,7 @@ func BuildValidationBody(
 
 	validationBody, err := json.Marshal(requestMap)
 	if err != nil {
-		return nil, fmt.Errorf("marshal validation body: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationBodyErr, observability.WhereRuntimeModifyRequest, fmt.Errorf("marshal validation body: %w", err))
 	}
 	return validationBody, nil
 }
@@ -250,22 +265,29 @@ func EvaluateValidationResponse(
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+		observability.IncValidation(observability.StageValidationFinished, observability.ReasonRejectedPayload)
 		return &devshardpkg.ValidateResult{Valid: true}, nil
+	}
+	if resp.StatusCode >= 500 {
+		return nil, observability.Classify(observability.ReasonHTTP5xx, observability.WhereEngineMLNodeCall, fmt.Errorf("validation mlnode status %d", resp.StatusCode))
+	}
+	if resp.StatusCode >= 400 {
+		return nil, observability.Classify(observability.ReasonHTTP4xx, observability.WhereEngineMLNodeCall, fmt.Errorf("validation mlnode status %d", resp.StatusCode))
 	}
 
 	respBytes, err := ReadHTTPBody(resp)
 	if err != nil {
-		return nil, fmt.Errorf("read validation response: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationResponseErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("read validation response: %w", err))
 	}
 
 	validationResponse, err := completionapi.NewCompletionResponseFromBytes(respBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse validation response: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationResponseErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("parse validation response: %w", err))
 	}
 
 	originalResponse, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(originalResponsePayload)
 	if err != nil {
-		return nil, fmt.Errorf("parse original response: %w", err)
+		return nil, observability.Classify(observability.ReasonOriginalResponseParseErr, observability.WhereRuntimeProcessExecution, fmt.Errorf("parse original response: %w", err))
 	}
 
 	if validationUsage, err := validationResponse.GetUsage(); err == nil {
