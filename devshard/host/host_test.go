@@ -14,6 +14,7 @@ import (
 
 	"devshard"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -1040,6 +1041,60 @@ func (e *trackingValidationEngine) getCalls() []devshard.ValidateRequest {
 	return append([]devshard.ValidateRequest(nil), e.calls...)
 }
 
+type hostLogEntry struct {
+	msg    string
+	fields map[string]any
+}
+
+type hostCaptureLogger struct {
+	mu      sync.Mutex
+	entries []hostLogEntry
+}
+
+func (l *hostCaptureLogger) Info(msg string, keyvals ...any)  { l.add(msg, keyvals...) }
+func (l *hostCaptureLogger) Warn(msg string, keyvals ...any)  { l.add(msg, keyvals...) }
+func (l *hostCaptureLogger) Error(msg string, keyvals ...any) { l.add(msg, keyvals...) }
+func (l *hostCaptureLogger) Debug(msg string, keyvals ...any) { l.add(msg, keyvals...) }
+
+func (l *hostCaptureLogger) add(msg string, keyvals ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, hostLogEntry{msg: msg, fields: hostKeyvals(keyvals)})
+}
+
+func (l *hostCaptureLogger) has(msg string, want map[string]any) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, entry := range l.entries {
+		if entry.msg != msg {
+			continue
+		}
+		matches := true
+		for key, value := range want {
+			if entry.fields[key] != value {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+func hostKeyvals(kv []any) map[string]any {
+	fields := make(map[string]any, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		key, ok := kv[i].(string)
+		if !ok {
+			continue
+		}
+		fields[key] = kv[i+1]
+	}
+	return fields
+}
+
 type blockingValidationEngine struct {
 	started     chan struct{}
 	release     chan struct{}
@@ -1074,6 +1129,9 @@ func (e *blockingValidationEngine) Validate(ctx context.Context, _ devshard.Vali
 }
 
 func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
+	logger := &hostCaptureLogger{}
+	logging.SetLogger(logger)
+
 	// 2 hosts. Host 0 is the validator, host 1 is executor for inference 1.
 	// With 2 hosts and 100% ValidationRate, probability = 1/(2-1) = 1.0 (guaranteed).
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
@@ -1169,6 +1227,98 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 		}
 	}
 	require.True(t, foundValidation, "MsgValidation should be in response mempool")
+	require.Eventually(t, func() bool {
+		return logger.has("validation started", map[string]any{
+			"inference_id":    uint64(1),
+			"validation_flow": string(validationFlowShouldValidate),
+		}) && logger.has("validation tx published", map[string]any{
+			"inference_id":      uint64(1),
+			"validation_flow":   string(validationFlowShouldValidate),
+			"validation_tx":     "validation",
+			"validation_result": "valid",
+			"result_valid":      true,
+		})
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestHost_ValidationVoteLogsChallengedFlowAndInvalidVote(t *testing.T) {
+	logger := &hostCaptureLogger{}
+	logging.SetLogger(logger)
+
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    2,
+		ValidationRate:   0,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	valEngine := &trackingValidationEngine{valid: false}
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithValidator(valEngine))
+	require.NoError(t, err)
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	finishMsg := &types.MsgFinishInference{
+		InferenceId:  1,
+		ResponseHash: []byte{1},
+		InputTokens:  80,
+		OutputTokens: 40,
+		ExecutorSlot: 1,
+		EscrowId:     "escrow-1",
+	}
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+	challengeMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: 2,
+		Valid:         false,
+		EscrowId:      "escrow-1",
+	}
+	challengeMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], challengeMsg)
+	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}},
+		{Tx: &types.DevshardTx_Validation{Validation: challengeMsg}},
+	})
+
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1, diff2, diff3}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		for _, tx := range h.MempoolTxs() {
+			if vote := tx.GetValidationVote(); vote != nil && vote.InferenceId == 1 {
+				return !vote.VoteValid
+			}
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond, "invalid MsgValidationVote should be in mempool")
+
+	require.Eventually(t, func() bool {
+		return logger.has("validation started", map[string]any{
+			"inference_id":    uint64(1),
+			"validation_flow": string(validationFlowChallenged),
+		}) && logger.has("validation tx published", map[string]any{
+			"inference_id":      uint64(1),
+			"validation_flow":   string(validationFlowChallenged),
+			"validation_tx":     "validation_vote",
+			"validation_result": "invalid",
+			"result_valid":      false,
+		})
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {

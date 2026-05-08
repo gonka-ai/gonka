@@ -714,6 +714,7 @@ func (h *Host) maybeRevealSeed() {
 type validateJob struct {
 	inferenceID     uint64
 	validatorSlot   uint32
+	flow            validationFlow
 	model           string
 	promptHash      []byte
 	responseHash    []byte
@@ -723,6 +724,13 @@ type validateJob struct {
 	executorAddress string
 	epochID         uint64
 }
+
+type validationFlow string
+
+const (
+	validationFlowShouldValidate validationFlow = "should_validate"
+	validationFlowChallenged     validationFlow = "challenged"
+)
 
 // collectValidationJobs finds finished inferences that this host should validate.
 // Caller must hold h.mu.
@@ -766,6 +774,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 		executorAddr := h.slotToAddr[rec.ExecutorSlot]
 
 		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
+		flow := validationFlowChallenged
 		if rec.Status == types.StatusFinished {
 			mySlotCount := uint32(len(h.slotIDs))
 			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
@@ -773,6 +782,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
 				continue
 			}
+			flow = validationFlowShouldValidate
 		}
 
 		validatorSlot := h.sortedSlots[0]
@@ -781,6 +791,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
 			validatorSlot:   validatorSlot,
+			flow:            flow,
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
 			responseHash:    rec.ResponseHash,
@@ -860,7 +871,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", "", nil,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
-		"validator_slot", job.validatorSlot)
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow))
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
@@ -888,7 +900,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		observability.Log(ctx, observability.LevelError, "validate failed", observability.StageValidationFinished, where, h.escrowID, observability.ReasonError, reason, err,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
-			"validator_slot", job.validatorSlot)
+			"validator_slot", job.validatorSlot,
+			"validation_flow", string(job.flow))
 		return
 	}
 
@@ -899,12 +912,14 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		observability.Log(ctx, observability.LevelError, "validate: inference disappeared", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, observability.ReasonError, observability.ReasonInferenceDisappeared, nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
-			"validator_slot", job.validatorSlot)
+			"validator_slot", job.validatorSlot,
+			"validation_flow", string(job.flow))
 		return
 	}
 	observability.IncValidation(observability.StageValidationFinished, observability.ReasonOK)
 
 	var tx *types.DevshardTx
+	var validationTx string
 	switch rec.Status {
 	case types.StatusFinished:
 		// TODO: if this MsgValidation lands after another host has already
@@ -922,11 +937,15 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			observability.Log(ctx, observability.LevelError, "sign validation msg failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonError, observability.ReasonSignValidationErr, err,
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
-				"validator_slot", job.validatorSlot)
+				"validator_slot", job.validatorSlot,
+				"validation_flow", string(job.flow),
+				"validation_result", validationResultLabel(result.Valid),
+				"result_valid", result.Valid)
 			return
 		}
 		msg.ProposerSig = proposerSig
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: msg}}
+		validationTx = "validation"
 	case types.StatusChallenged:
 		msg := &types.MsgValidationVote{
 			InferenceId: job.inferenceID,
@@ -940,17 +959,24 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			observability.Log(ctx, observability.LevelError, "sign validation vote failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonError, observability.ReasonSignVoteErr, err,
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
-				"validator_slot", job.validatorSlot)
+				"validator_slot", job.validatorSlot,
+				"validation_flow", string(job.flow),
+				"validation_result", validationResultLabel(result.Valid),
+				"vote_valid", result.Valid)
 			return
 		}
 		msg.ProposerSig = proposerSig
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
+		validationTx = "validation_vote"
 	default:
 		observability.IncValidation(observability.StageVotePublished, observability.ReasonValidationStatusChanged)
 		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, observability.ReasonValidationStatusChanged, nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
-			"validator_slot", job.validatorSlot)
+			"validator_slot", job.validatorSlot,
+			"validation_flow", string(job.flow),
+			"validation_result", validationResultLabel(result.Valid),
+			"result_valid", result.Valid)
 		return
 	}
 
@@ -962,6 +988,21 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
 	observability.IncValidation(observability.StageVotePublished, observability.ReasonOK)
+	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, observability.ReasonOK, nil,
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow),
+		"validation_tx", validationTx,
+		"validation_result", validationResultLabel(result.Valid),
+		"result_valid", result.Valid)
+}
+
+func validationResultLabel(valid bool) string {
+	if valid {
+		return "valid"
+	}
+	return "invalid"
 }
 
 // AccumulateGossipSig verifies and stores a signature received via gossip.

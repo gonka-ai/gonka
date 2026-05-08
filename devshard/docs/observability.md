@@ -228,6 +228,14 @@ Payload serving reasons include:
 - `payload_response_sign_err`
 - `payload_write_err`
 
+Validation publish logs also include:
+
+- `validation_flow`: `should_validate` for sampled finished inferences, or
+  `challenged` for mandatory challenged-inference votes.
+- `validation_tx`: `validation` or `validation_vote`.
+- `validation_result`: `valid` or `invalid`.
+- `result_valid`: boolean form of the same result for structured queries.
+
 ## Metric set
 
 Devshard request lifecycle:
