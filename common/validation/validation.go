@@ -124,6 +124,14 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 	return false
 }
 
+func validationReplaySeed(inferenceID string) int32 {
+	parsed, err := strconv.ParseUint(inferenceID, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(parsed)
+}
+
 // CompareLogits compares original and validation logits and returns a ValidationResult.
 func CompareLogits(
 	originalLogits []completionapi.Logprob,
@@ -324,9 +332,18 @@ func ExecuteValidation(
 	responsePayload []byte,
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(promptPayload, &requestMap); err != nil {
+	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
+		promptPayload,
+		validationReplaySeed(inferenceID),
+		logprobsMode,
+	)
+	if err != nil {
+		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+	}
+	if err := json.Unmarshal(modifiedRequest.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
 
@@ -417,14 +434,8 @@ func ExecuteValidation(
 		logging.Error("No logits found in original or validation response",
 			types.Validation,
 			"id", inferenceID,
-			"originalLogitsLen", len(originalLogits),
-			"validationLogitsLen", len(validationLogits),
 			"originalLogits", originalLogits,
 			"validationLogits", validationLogits,
-			"validatorStatus", resp.StatusCode,
-			"validationRequest", string(requestBody),
-			"originalResponsePayload", string(responsePayload),
-			"validationResponsePayload", string(respBodyBytes),
 		)
 		return nil, errors.New("no logits found in original or validation response")
 	}

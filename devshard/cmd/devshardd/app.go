@@ -190,6 +190,7 @@ func buildHostManager(
 		eng,
 		phase,
 		normalizedVersion,
+		chainParams,
 	)
 	leaseValidator := inference.NewLeaseValidator(validator, phase, leaseStore, instanceAddr)
 

@@ -82,7 +82,7 @@ func TestExecuteValidation_InvalidPromptPayload(t *testing.T) {
 		[]byte("not-json"),
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(200, responsePayloadJSON("42", -0.5)),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -98,7 +98,7 @@ func TestExecuteValidation_ExecuteError(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		exec,
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -110,7 +110,7 @@ func TestExecuteValidation_400Response_TreatedAsPass(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusBadRequest, nil),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -123,7 +123,7 @@ func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusUnprocessableEntity, nil),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -136,7 +136,7 @@ func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("hello", -0.5), // non-numeric token
 		staticExecutor(200, responsePayloadJSON("42", -0.5)),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -150,7 +150,7 @@ func TestExecuteValidation_EmptySentinel_ExecutorServes200_ReturnsInvalid(t *tes
 		minimalPrompt,
 		responsePayloadJSON("<EMPTY>", -0.5),
 		staticExecutor(http.StatusOK, responsePayloadJSON("42", -0.5)),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -168,7 +168,7 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("<EMPTY>", -0.5),
 		exec,
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 
@@ -188,7 +188,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		exec,
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	assert.True(t, result.IsSuccessful())
@@ -198,6 +198,12 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 	assert.Contains(t, requestMap, "enforced_tokens")
 	assert.Equal(t, false, requestMap["stream"])
 	assert.NotContains(t, requestMap, "stream_options")
+	assert.Equal(t, true, requestMap["logprobs"])
+	assert.Equal(t, float64(5), requestMap["top_logprobs"])
+	assert.Equal(t, "processed_logprobs", requestMap["logprobs_mode"])
+	assert.Equal(t, float64(20), requestMap["max_tokens"])
+	assert.Equal(t, float64(20), requestMap["max_completion_tokens"])
+	assert.Equal(t, float64(0), requestMap["seed"])
 }
 
 func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T) {
@@ -207,7 +213,7 @@ func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T
 		minimalPrompt,
 		payload,
 		staticExecutor(http.StatusOK, payload), // identical response → similarity 1.0
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -226,7 +232,7 @@ func TestExecuteValidation_NoLogitsInValidatorResponse_ReturnsError(t *testing.T
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusOK, emptyLogitsResponse),
-		0, 0,
+		0, 0, "processed_logprobs",
 	)
 	require.Error(t, err)
 }
