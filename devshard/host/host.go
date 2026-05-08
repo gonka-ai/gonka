@@ -46,7 +46,7 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                 // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -520,7 +520,14 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 
 	result, err := h.engine.Execute(ctx, *job)
 	if err != nil {
-		logging.Error("execute failed", "subsystem", "host", "inference_id", inferenceID, "error", err)
+		logging.Error("devshard host execution failed before MsgFinishInference",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", inferenceID,
+			"model", job.Model,
+			"executor_slot", executorSlot,
+			"diff_nonce", diffNonce,
+			"error", err)
 		return nil, err
 	}
 
@@ -552,6 +559,15 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		}},
 		ProposedAt: diffNonce,
 	})
+	logging.Info("devshard host queued MsgFinishInference",
+		"subsystem", "host",
+		"escrow_id", h.escrowID,
+		"inference_id", inferenceID,
+		"model", job.Model,
+		"executor_slot", executorSlot,
+		"diff_nonce", diffNonce,
+		"input_tokens", result.InputTokens,
+		"output_tokens", result.OutputTokens)
 
 	return result, nil
 }

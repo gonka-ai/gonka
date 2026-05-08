@@ -458,11 +458,47 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 
 	if leastBusyNode != nil {
 		b.mu.Lock()
+		lockCountBefore := leastBusyNode.State.LockCount
 		leastBusyNode.State.LockCount++
+		lockCountAfter := leastBusyNode.State.LockCount
+		maxConcurrent := leastBusyNode.Node.MaxConcurrent
 		b.mu.Unlock()
+		logging.Info("Locked node for inference",
+			types.Nodes,
+			"node_id", leastBusyNode.Node.Id,
+			"model", command.Model,
+			"lock_count_before", lockCountBefore,
+			"lock_count_after", lockCountAfter,
+			"max_concurrent", maxConcurrent,
+			"skip_count", len(command.SkipNodeIDs))
 	}
-	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
+		b.mu.RLock()
+		nodeCount := len(b.nodes)
+		modelNodeCount := 0
+		busyModelNodeCount := 0
+		modelNodeLockPressure := make([]string, 0)
+		for _, node := range b.nodes {
+			if _, found := node.State.EpochModels[command.Model]; !found {
+				continue
+			}
+			modelNodeCount++
+			if node.State.LockCount >= node.Node.MaxConcurrent {
+				busyModelNodeCount++
+			}
+			modelNodeLockPressure = append(modelNodeLockPressure,
+				fmt.Sprintf("%s=%d/%d", node.Node.Id, node.State.LockCount, node.Node.MaxConcurrent))
+		}
+		b.mu.RUnlock()
+		sort.Strings(modelNodeLockPressure)
+		logging.Warn("No available node to lock for inference",
+			types.Nodes,
+			"model", command.Model,
+			"skip_count", len(command.SkipNodeIDs),
+			"node_count", nodeCount,
+			"model_node_count", modelNodeCount,
+			"busy_model_node_count", busyModelNodeCount,
+			"model_node_lock_pressure", modelNodeLockPressure)
 		command.Response <- nil
 	} else {
 		command.Response <- &leastBusyNode.Node
@@ -547,19 +583,45 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 func (b *Broker) releaseNode(command ReleaseNode) {
 	b.mu.Lock()
 	node, ok := b.nodes[command.NodeId]
+	var lockCountBefore, lockCountAfter, maxConcurrent int
 	if ok {
+		lockCountBefore = node.State.LockCount
 		node.State.LockCount--
+		lockCountAfter = node.State.LockCount
+		maxConcurrent = node.Node.MaxConcurrent
 	}
 	b.mu.Unlock()
 
 	if !ok {
+		logging.Warn("ReleaseNode requested for unknown node",
+			types.Nodes,
+			"node_id", command.NodeId,
+			"outcome_success", command.Outcome.IsSuccess(),
+			"outcome_message", command.Outcome.GetMessage())
 		command.Response <- false
 		return
 	}
 	if !command.Outcome.IsSuccess() {
 		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 	}
-	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
+	if lockCountAfter < 0 {
+		logging.Error("Node lock count went negative on release",
+			types.Nodes,
+			"node_id", command.NodeId,
+			"lock_count_before", lockCountBefore,
+			"lock_count_after", lockCountAfter,
+			"max_concurrent", maxConcurrent,
+			"outcome_success", command.Outcome.IsSuccess(),
+			"outcome_message", command.Outcome.GetMessage())
+	}
+	logging.Info("Released node for inference",
+		types.Nodes,
+		"node_id", command.NodeId,
+		"lock_count_before", lockCountBefore,
+		"lock_count_after", lockCountAfter,
+		"max_concurrent", maxConcurrent,
+		"outcome_success", command.Outcome.IsSuccess(),
+		"outcome_message", command.Outcome.GetMessage())
 	command.Response <- true
 }
 

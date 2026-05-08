@@ -8,7 +8,10 @@ import (
 
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
+
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"devshard"
 	devshardserver "devshard/server"
@@ -48,15 +51,28 @@ func (e *EngineAdapter) Execute(ctx context.Context, req devshard.ExecuteRequest
 		req,
 		e.payloadStore,
 		currentEpochID(e.phaseTracker),
-		e.executeMLRequest,
+		func(ctx context.Context, model string, body []byte) (*http.Response, error) {
+			return e.executeMLRequest(ctx, model, body, req.EscrowID, req.InferenceID)
+		},
 		e.chainParams,
 	)
 }
 
-func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
+func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body []byte, escrowID string, inferenceID uint64) (*http.Response, error) {
+	logging.Info("devshard execution acquiring ML node", inferencetypes.Inferences,
+		"escrow_id", escrowID,
+		"inference_id", inferenceID,
+		"model", model,
+		"max_attempts", 3)
 	resp, err := broker.DoWithLockedNodeHTTPRetry(e.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
 			url := node.InferenceUrlWithVersion(e.nodeVersion) + "/v1/chat/completions"
+			logging.Info("devshard execution posting to locked ML node", inferencetypes.Inferences,
+				"escrow_id", escrowID,
+				"inference_id", inferenceID,
+				"model", model,
+				"node_id", node.Id,
+				"url", url)
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
 				return nil, broker.NewApplicationActionError(reqErr)
@@ -70,7 +86,19 @@ func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body
 		},
 	)
 	if err != nil {
+		logging.Error("devshard execution failed to obtain successful ML node response", inferencetypes.Inferences,
+			"escrow_id", escrowID,
+			"inference_id", inferenceID,
+			"model", model,
+			"error", err)
 		return nil, fmt.Errorf("broker execute: %w", err)
+	}
+	if resp != nil {
+		logging.Info("devshard execution received ML node response headers", inferencetypes.Inferences,
+			"escrow_id", escrowID,
+			"inference_id", inferenceID,
+			"model", model,
+			"http_status", resp.StatusCode)
 	}
 	return resp, nil
 }

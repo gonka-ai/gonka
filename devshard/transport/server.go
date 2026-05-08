@@ -301,6 +301,15 @@ func (s *Server) HandleInference(c echo.Context) error {
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
 	writeSSEEvent(w, receiptWrapper)
+	if resp.Receipt != nil {
+		logging.Info("devshard receipt sent before deferred execution",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"nonce", resp.Nonce,
+			"confirmed_at", resp.ConfirmedAt,
+			"has_execution_job", resp.ExecutionJob != nil,
+			"has_cached_response", resp.CachedResponseBody != nil)
+	}
 
 	// Event 2+: inference result.
 	// If reconnecting to a completed inference, replay cached response.
@@ -309,15 +318,45 @@ func (s *Server) HandleInference(c echo.Context) error {
 		replaySSEBody(w, resp.CachedResponseBody)
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
+		logging.Info("starting devshard deferred execution after receipt",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"inference_id", resp.ExecutionJob.InferenceID,
+			"model", resp.ExecutionJob.Model,
+			"nonce", resp.Nonce,
+			"confirmed_at", resp.ConfirmedAt)
 		_, execErr := s.host.RunExecution(c.Request().Context(), resp.ExecutionJob)
 		if execErr != nil {
-			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			logging.Error("devshard deferred execution failed after receipt",
+				"subsystem", "server",
+				"escrow_id", s.host.EscrowID(),
+				"inference_id", resp.ExecutionJob.InferenceID,
+				"model", resp.ExecutionJob.Model,
+				"nonce", resp.Nonce,
+				"confirmed_at", resp.ConfirmedAt,
+				"receipt_was_sent", true,
+				"error", execErr)
+		} else {
+			logging.Info("devshard deferred execution completed after receipt",
+				"subsystem", "server",
+				"escrow_id", s.host.EscrowID(),
+				"inference_id", resp.ExecutionJob.InferenceID,
+				"model", resp.ExecutionJob.Model,
+				"nonce", resp.Nonce)
 		}
 	}
 
 	// Final event: devshard_meta with updated mempool.
 	mempoolTxs := s.host.MempoolTxs()
-	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
+	mempoolBytes, mempoolErr := DevshardTxsToBytes(mempoolTxs)
+	if mempoolErr != nil {
+		logging.Error("failed to serialize devshard mempool for meta event",
+			"subsystem", "server",
+			"escrow_id", s.host.EscrowID(),
+			"nonce", resp.Nonce,
+			"mempool_txs", len(mempoolTxs),
+			"error", mempoolErr)
+	}
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	writeSSEEvent(w, metaWrapper)
 

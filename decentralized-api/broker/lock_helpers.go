@@ -117,17 +117,22 @@ func DoWithLockedNodeHTTPRetry(
 			if lastErr != nil {
 				logging.Info("HTTP retry helper: no node available, returning last error", types.Inferences,
 					"attempt", attempts,
+					"model", model,
+					"skip_count", len(orderedSkip),
 					"error", lastErr)
 				return zero, lastErr
 			}
 			logging.Info("HTTP retry helper: no nodes available", types.Inferences,
-				"attempt", attempts)
+				"attempt", attempts,
+				"model", model,
+				"skip_count", len(orderedSkip))
 			return zero, ErrNoNodesAvailable
 		}
 
 		logging.Info("HTTP retry helper: acquired node lock", types.Inferences,
 			"attempt", attempts,
-			"node_id", node.Id)
+			"node_id", node.Id,
+			"model", model)
 
 		resp, aerr := doPost(node)
 
@@ -221,7 +226,16 @@ func DoWithLockedNodeHTTPRetry(
 			}
 			outcome = InferenceError{Message: msg}
 		}
-		_ = b.QueueMessage(ReleaseNode{NodeId: node.Id, Outcome: outcome, Response: make(chan bool, 2)})
+		if releaseErr := b.QueueMessage(ReleaseNode{NodeId: node.Id, Outcome: outcome, Response: make(chan bool, 2)}); releaseErr != nil {
+			logging.Error("HTTP retry helper: failed to queue ReleaseNode",
+				types.Inferences,
+				"attempt", attempts,
+				"node_id", node.Id,
+				"model", model,
+				"outcome_success", outcome.IsSuccess(),
+				"outcome_message", outcome.GetMessage(),
+				"error", releaseErr)
+		}
 
 		if retry {
 			if triggerRecheck {
@@ -265,10 +279,14 @@ func DoWithLockedNodeHTTPRetry(
 	if lastErr != nil {
 		logging.Info("HTTP retry helper: exhausted attempts, returning last error", types.Inferences,
 			"max_attempts", maxAttempts,
+			"model", model,
+			"skip_count", len(orderedSkip),
 			"error", lastErr)
 		return zero, lastErr
 	}
 	logging.Info("HTTP retry helper: exhausted attempts, no nodes available", types.Inferences,
-		"max_attempts", maxAttempts)
+		"max_attempts", maxAttempts,
+		"model", model,
+		"skip_count", len(orderedSkip))
 	return zero, ErrNoNodesAvailable
 }
