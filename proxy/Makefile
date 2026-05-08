@@ -1,6 +1,6 @@
 .PHONY: all build-docker release
 
-VERSION ?= $(shell git describe --always)
+VERSION ?= $(shell git describe --always | tr '/' '-')
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORMS ?= linux/amd64,linux/arm64

@@ -118,11 +118,8 @@ services:
     networks:
       - chain-public
 
-# When this file is layered on top of docker-compose-base.yml (testermint flow),
-# base owns the chain-public definition. For standalone use (e.g. layering
-# only versiond services on a base genesis stack already up), declare external
-# so compose doesn't try to create a new network.
+# Compose creates chain-public if absent, reuses it if it already exists (e.g.
+# when layered on top of a running base stack). No external: true needed.
 networks:
   chain-public:
-    external: true
     name: chain-public
