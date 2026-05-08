@@ -1,0 +1,81 @@
+# Multi-versiond + sticky router overlay for `deploy/join`.
+#
+# Adds devshard-postgres, a second versiond instance (versiond2), and the
+# versiond-router (nginx, sticky hash on escrowID) in front of both. The
+# router image is built locally from `versiond-router/`.
+#
+# Override and force the active devshardd binary via the
+# `./devshards-override/devshardd` mount; uncomment the v0.2.12 lines and
+# comment out v1 if pinning to a different upstream version tag.
+#
+# x-versiond anchor holds everything shared between versiond and versiond2;
+# only container_name and volumes differ (per-instance data directory).
+
+x-versiond: &versiond
+  image: ghcr.io/product-science/versiond:0.2.12
+  environment:
+    - VERSIOND_ORACLE_URL=http://api:9100/versions
+    - VERSIOND_BINARY_NAME=devshardd
+    #- VERSIOND_FORCE=v1
+    #- VERSIOND_OVERRIDE_v1=/opt/overrides/devshardd
+    - NODE_MANAGER_ADDR=api:9400
+    - NODE_HOST=node
+    - KEY_NAME=${KEY_NAME}
+    - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
+    - KEYRING_BACKEND=${KEYRING_BACKEND:-file}
+    - KEYRING_PASSWORD=${KEYRING_PASSWORD}
+    - KEYRING_DIR=/root/.inference
+    - PGHOST=devshard-postgres
+    - PGDATABASE=devshardd
+    - PGUSER=devshardd
+    - PGPASSWORD=devshardd
+  depends_on:
+    - api
+    - devshard-postgres
+  restart: always
+
+services:
+  devshard-postgres:
+    container_name: devshard-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: devshardd
+      POSTGRES_USER: devshardd
+      POSTGRES_PASSWORD: devshardd
+    restart: always
+
+  versiond:
+    <<: *versiond
+    container_name: versiond
+    volumes:
+      - .inference:/root/.inference:ro
+      - ./devshards/bin:/opt/versiond/bin
+      - ./devshards/data:/opt/versiond/data
+      #- ./devshards-override:/opt/overrides:ro
+
+  versiond2:
+    <<: *versiond
+    container_name: versiond2
+    volumes:
+      - .inference:/root/.inference:ro
+      - ./devshards/bin:/opt/versiond/bin
+      - ./devshards2/data:/opt/versiond/data
+      #- ./devshards-override:/opt/overrides:ro
+
+  versiond-router:
+    container_name: versiond-router
+    image: ghcr.io/product-science/versiond-router:0.2.12
+    environment:
+      - VERSIOND_HOSTS=versiond versiond2
+      - VERSIOND_PORT=8080
+    depends_on:
+      - versiond
+      - versiond2
+    restart: always
+
+  # Override proxy env so /devshard/* upstream resolves to the sticky router
+  # instead of the single canonical versiond. Uses the proxy image from base.
+  proxy:
+    environment:
+      - VERSIOND_SERVICE_NAME=versiond-router
+      - VERSIOND_PORT=8080
