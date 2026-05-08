@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto sim-smoke-test sim-full-test
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -310,3 +310,26 @@ mock-expected-keepers:
 
 proto:
 	ignite generate proto-go
+
+#################################################
+# SIMULATION SECTION (issue #982 Phase 1)
+#################################################
+# Targets are no-ops until TestFullAppSimulation lands in Phase 1 item 1.A (sim_test.go migration).
+
+SIM_PKG := ./app/
+
+sim-smoke-test:
+	@echo "--> Running smoke simulation: 50 blocks x 20 ops/block (~15 min)"
+	@go test -mod=readonly -tags sims $(SIM_PKG) \
+		-run TestFullAppSimulation \
+		-Enabled=true -Commit=true \
+		-NumBlocks=50 -BlockSize=20 -Seed=99 \
+		-v -timeout 30m
+
+sim-full-test:
+	@echo "--> Running full simulation: 500 blocks x 200 ops/block (~120 min)"
+	@go test -mod=readonly -tags sims $(SIM_PKG) \
+		-run TestFullAppSimulation \
+		-Enabled=true -Commit=true \
+		-NumBlocks=500 -BlockSize=200 -Seed=99 \
+		-v -timeout 180m

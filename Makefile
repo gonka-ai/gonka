@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker node-sim-smoke-test node-sim-full-test
 
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= dev
@@ -21,6 +21,13 @@ api-build-docker:
 
 node-build-docker:
 	@make -C inference-chain build-docker SET_LATEST=1 $(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
+
+# Simulation dispatchers (issue #982 Phase 1)
+node-sim-smoke-test:
+	@make -C inference-chain sim-smoke-test
+
+node-sim-full-test:
+	@make -C inference-chain sim-full-test
 
 mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
