@@ -11,6 +11,7 @@ type MainnetBridge interface {
 	// Queries: devshard -> mainnet
 	GetEscrow(escrowID string) (*EscrowInfo, error)
 	GetHostInfo(address string) (*HostInfo, error)
+	GetValidationThreshold(epochID uint64, modelID string) (*Decimal, error)
 	VerifyWarmKey(warmAddress, validatorAddress string) (bool, error)
 
 	// Actions: devshard -> mainnet
@@ -32,4 +33,9 @@ type EscrowInfo struct {
 type HostInfo struct {
 	Address string
 	URL     string
+}
+
+type Decimal struct {
+	Value    int64 `json:"value,string"`
+	Exponent int32 `json:"exponent"`
 }

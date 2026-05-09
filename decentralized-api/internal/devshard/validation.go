@@ -23,6 +23,7 @@ type ValidationAdapter struct {
 	bridge       bridge.MainnetBridge
 	recorder     PayloadAuthClient
 	chainParams  ChainParamsProvider
+	thresholds   *ValidationThresholdResolver
 }
 
 func NewValidationAdapter(
@@ -42,6 +43,7 @@ func NewValidationAdapter(
 		bridge:       br,
 		recorder:     recorder,
 		chainParams:  chainParams,
+		thresholds:   NewValidationThresholdResolver(br, ValidationThresholdCacheTTL),
 	}
 }
 
@@ -57,6 +59,7 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 		v.executeMLRequest,
 		"devshard",
 		v.chainParams,
+		v.thresholds,
 	)
 }
 

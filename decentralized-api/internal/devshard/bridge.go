@@ -68,6 +68,31 @@ func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	}, nil
 }
 
+func (b *ChainBridge) GetValidationThreshold(epochID uint64, modelID string) (*bridge.Decimal, error) {
+	ctx := context.Background()
+	qc := b.client.NewInferenceQueryClient()
+
+	resp, err := qc.EpochGroupData(ctx, &types.QueryGetEpochGroupDataRequest{
+		EpochIndex: epochID,
+		ModelId:    modelID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query model validation threshold: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("model snapshot not found for epoch %d model %s", epochID, modelID)
+	}
+	epochGroupData := resp.GetEpochGroupData()
+	if epochGroupData.ModelSnapshot == nil {
+		return nil, fmt.Errorf("model snapshot not found for epoch %d model %s", epochID, modelID)
+	}
+	threshold := epochGroupData.ModelSnapshot.ValidationThreshold
+	if threshold == nil {
+		return nil, fmt.Errorf("validation threshold missing for epoch %d model %s", epochID, modelID)
+	}
+	return &bridge.Decimal{Value: threshold.Value, Exponent: threshold.Exponent}, nil
+}
+
 const warmKeyMsgType = "/inference.inference.MsgStartInference"
 
 func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {

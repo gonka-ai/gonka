@@ -91,6 +91,7 @@ func ValidateInferenceWithExecutor(
 	execute MLRequestExecutor,
 	logPrefix string,
 	chainParams ChainParamsProvider,
+	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
@@ -119,7 +120,7 @@ func ValidateInferenceWithExecutor(
 	}
 	defer resp.Body.Close()
 
-	return EvaluateValidationResponse(resp, req, inferenceID, logPrefix, responsePayload)
+	return EvaluateValidationResponse(ctx, resp, req, inferenceID, logPrefix, responsePayload, thresholds)
 }
 
 type ProcessedExecutionResponse struct {
@@ -217,11 +218,13 @@ func BuildValidationBody(
 }
 
 func EvaluateValidationResponse(
+	ctx context.Context,
 	resp *http.Response,
 	req devshardpkg.ValidateRequest,
 	inferenceID string,
 	logPrefix string,
 	originalResponsePayload []byte,
+	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
 		return &devshardpkg.ValidateResult{Valid: true}, nil
@@ -261,7 +264,34 @@ func EvaluateValidationResponse(
 		validationResponse.ExtractLogits(),
 		base,
 	)
-	return &devshardpkg.ValidateResult{Valid: result.IsSuccessful()}, nil
+	valid, err := EvaluateValidationResult(ctx, result, req, thresholds)
+	if err != nil {
+		return nil, err
+	}
+	return &devshardpkg.ValidateResult{Valid: valid}, nil
+}
+
+func EvaluateValidationResult(
+	ctx context.Context,
+	result validationpkg.ValidationResult,
+	req devshardpkg.ValidateRequest,
+	thresholds *ValidationThresholdResolver,
+) (bool, error) {
+	switch r := result.(type) {
+	case *validationpkg.SimilarityValidationResult:
+		threshold, err := thresholds.Resolve(ctx, req.EscrowID, req.EpochID, req.Model)
+		if err != nil {
+			return false, err
+		}
+		passValue := chaintypes.Decimal{Value: threshold.Value, Exponent: threshold.Exponent}
+		return chaintypes.DecimalFromFloat(r.Value).ToDecimal().GreaterThan(passValue.ToDecimal()), nil
+	case *validationpkg.DifferentLengthValidationResult,
+		*validationpkg.DifferentTokensValidationResult,
+		*validationpkg.InvalidInferenceResult:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown validation result type %T", result)
+	}
 }
 
 func ReadHTTPBody(resp *http.Response) ([]byte, error) {

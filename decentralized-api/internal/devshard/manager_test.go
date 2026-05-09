@@ -43,6 +43,10 @@ func (b *mockBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	return &bridge.HostInfo{Address: address, URL: "http://localhost"}, nil
 }
 
+func (b *mockBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, bridge.ErrNotImplemented
+}
+
 func (b *mockBridge) VerifyWarmKey(string, string) (bool, error) { return false, nil }
 
 func (b *mockBridge) OnEscrowCreated(bridge.EscrowInfo) error { return bridge.ErrNotImplemented }

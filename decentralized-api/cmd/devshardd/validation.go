@@ -25,6 +25,7 @@ type devshardValidator struct {
 	recorder    internaldevshard.PayloadAuthClient
 	engine      *devshardEngine // reused for doWithLockedNode retry loop
 	chainParams internaldevshard.ChainParamsProvider
+	thresholds  *internaldevshard.ValidationThresholdResolver
 }
 
 func newDevshardValidator(
@@ -42,6 +43,7 @@ func newDevshardValidator(
 		recorder:    recorder,
 		engine:      engine,
 		chainParams: chainParams,
+		thresholds:  internaldevshard.NewValidationThresholdResolver(br, internaldevshard.ValidationThresholdCacheTTL),
 	}
 }
 
@@ -57,6 +59,7 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 		v.executeMLRequest,
 		"devshardd",
 		v.chainParams,
+		v.thresholds,
 	)
 }
 
