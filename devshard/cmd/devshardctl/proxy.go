@@ -242,7 +242,7 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
 
-	// Attempt 2 (final). Skipped when the client is gone -- mitigation 2.
+	// Attempt 2 (final). Skipped when the client is gone.
 	if !flag.Gone() {
 		if w != nil {
 			writeStreamReset(w)
