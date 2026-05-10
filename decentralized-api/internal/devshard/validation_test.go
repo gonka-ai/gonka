@@ -142,42 +142,50 @@ func TestEvaluateValidationResult_UsesModelThreshold(t *testing.T) {
 	tests := []struct {
 		name       string
 		similarity float64
-		want       bool
+		wantValid  bool
+		wantReason string
 	}{
-		{name: "above threshold passes", similarity: 0.91, want: true},
-		{name: "equal threshold fails", similarity: 0.90, want: false},
-		{name: "below threshold fails", similarity: 0.89, want: false},
+		{name: "above threshold passes", similarity: 0.91, wantValid: true, wantReason: "similarity_pass"},
+		{name: "equal threshold fails", similarity: 0.90, wantValid: false, wantReason: "similarity_below"},
+		{name: "below threshold fails", similarity: 0.89, wantValid: false, wantReason: "similarity_below"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := &validation.SimilarityValidationResult{Value: tt.similarity}
-			valid, err := EvaluateValidationResult(context.Background(), result, req, resolver)
+			out, err := EvaluateValidationResult(context.Background(), result, req, resolver)
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, valid)
+			assert.Equal(t, tt.wantValid, out.Valid)
+			assert.Equal(t, tt.wantReason, out.Reason)
+			assert.Contains(t, out.Details, "similarity")
+			assert.Contains(t, out.Details, "threshold")
 		})
 	}
 }
 
 func TestEvaluateValidationResult_KnownFailureTypesFailWithoutThreshold(t *testing.T) {
 	req := devshardpkg.ValidateRequest{}
-	results := []validation.ValidationResult{
-		&validation.DifferentLengthValidationResult{},
-		&validation.DifferentTokensValidationResult{},
-		&validation.InvalidInferenceResult{},
+	cases := []struct {
+		result     validation.ValidationResult
+		wantReason string
+	}{
+		{result: &validation.DifferentLengthValidationResult{}, wantReason: "different_length"},
+		{result: &validation.DifferentTokensValidationResult{}, wantReason: "different_tokens"},
+		{result: &validation.InvalidInferenceResult{Reason: "no enforced tokens"}, wantReason: "invalid_inference"},
 	}
 
-	for _, result := range results {
-		valid, err := EvaluateValidationResult(context.Background(), result, req, nil)
+	for _, tc := range cases {
+		out, err := EvaluateValidationResult(context.Background(), tc.result, req, nil)
 		require.NoError(t, err)
-		assert.False(t, valid)
+		assert.False(t, out.Valid)
+		assert.Equal(t, tc.wantReason, out.Reason)
 	}
 }
 
 func TestEvaluateValidationResult_UnknownTypeErrors(t *testing.T) {
-	valid, err := EvaluateValidationResult(context.Background(), unknownValidationResult{}, devshardpkg.ValidateRequest{}, nil)
+	out, err := EvaluateValidationResult(context.Background(), unknownValidationResult{}, devshardpkg.ValidateRequest{}, nil)
 	require.Error(t, err)
-	assert.False(t, valid)
+	assert.Nil(t, out)
 }
 
 func TestValidationThresholdResolverFailsClosed(t *testing.T) {

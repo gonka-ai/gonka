@@ -59,7 +59,6 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 		req.EpochID,
 		devshard.LegacySessionPayloadPath(req.EscrowID),
 		v.executeMLRequest,
-		"devshard",
 		v.chainParams,
 		v.thresholds,
 	)

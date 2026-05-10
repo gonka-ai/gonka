@@ -940,6 +940,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				"validator_slot", job.validatorSlot,
 				"validation_flow", string(job.flow),
 				"validation_result", validationResultLabel(result.Valid),
+				"validation_reason", result.Reason,
 				"result_valid", result.Valid)
 			return
 		}
@@ -962,6 +963,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				"validator_slot", job.validatorSlot,
 				"validation_flow", string(job.flow),
 				"validation_result", validationResultLabel(result.Valid),
+				"validation_reason", result.Reason,
 				"vote_valid", result.Valid)
 			return
 		}
@@ -976,6 +978,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			"validator_slot", job.validatorSlot,
 			"validation_flow", string(job.flow),
 			"validation_result", validationResultLabel(result.Valid),
+			"validation_reason", result.Reason,
 			"result_valid", result.Valid)
 		return
 	}
@@ -988,14 +991,18 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
 	observability.IncValidation(observability.StageVotePublished, observability.ReasonOK)
-	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, observability.ReasonOK, nil,
+	fields := []any{
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
 		"validation_flow", string(job.flow),
 		"validation_tx", validationTx,
 		"validation_result", validationResultLabel(result.Valid),
-		"result_valid", result.Valid)
+		"validation_reason", result.Reason,
+		"result_valid", result.Valid,
+	}
+	fields = append(fields, result.Details...)
+	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, observability.ReasonOK, nil, fields...)
 }
 
 func validationResultLabel(valid bool) string {

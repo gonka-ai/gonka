@@ -58,7 +58,6 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 		req.EpochID,
 		devshardpkg.VersionedSessionPayloadPath(Version, req.EscrowID),
 		v.executeMLRequest,
-		"devshardd",
 		v.chainParams,
 		v.thresholds,
 	)

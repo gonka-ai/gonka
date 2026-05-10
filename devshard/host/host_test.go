@@ -1023,16 +1023,18 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 
 // trackingValidationEngine records Validate calls for test assertions.
 type trackingValidationEngine struct {
-	mu    sync.Mutex
-	calls []devshard.ValidateRequest
-	valid bool
+	mu      sync.Mutex
+	calls   []devshard.ValidateRequest
+	valid   bool
+	reason  string
+	details []any
 }
 
 func (e *trackingValidationEngine) Validate(_ context.Context, req devshard.ValidateRequest) (*devshard.ValidateResult, error) {
 	e.mu.Lock()
 	e.calls = append(e.calls, req)
 	e.mu.Unlock()
-	return &devshard.ValidateResult{Valid: e.valid}, nil
+	return &devshard.ValidateResult{Valid: e.valid, Reason: e.reason, Details: e.details}, nil
 }
 
 func (e *trackingValidationEngine) getCalls() []devshard.ValidateRequest {
@@ -1263,7 +1265,11 @@ func TestHost_ValidationVoteLogsChallengedFlowAndInvalidVote(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
 	require.NoError(t, err)
 
-	valEngine := &trackingValidationEngine{valid: false}
+	valEngine := &trackingValidationEngine{
+		valid:   false,
+		reason:  "similarity_below",
+		details: []any{"similarity", 0.42, "threshold", 0.9},
+	}
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
 		WithGrace(10), WithValidator(valEngine))
 	require.NoError(t, err)
@@ -1316,7 +1322,10 @@ func TestHost_ValidationVoteLogsChallengedFlowAndInvalidVote(t *testing.T) {
 			"validation_flow":   string(validationFlowChallenged),
 			"validation_tx":     "validation_vote",
 			"validation_result": "invalid",
+			"validation_reason": "similarity_below",
 			"result_valid":      false,
+			"similarity":        0.42,
+			"threshold":         0.9,
 		})
 	}, 2*time.Second, 10*time.Millisecond)
 }

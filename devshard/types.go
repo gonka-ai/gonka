@@ -42,6 +42,13 @@ type ValidateRequest struct {
 }
 
 // ValidateResult contains the outcome of a validation.
+// Reason is a short tag for the outcome (e.g. "similarity_pass",
+// "similarity_below", "inflated_tokens", "different_length",
+// "different_tokens", "invalid_inference", "rejected_payload").
+// Details carries kv pairs with the values behind the decision and is
+// appended to the publish log so an invalid vote is never opaque.
 type ValidateResult struct {
-	Valid bool
+	Valid   bool
+	Reason  string
+	Details []any
 }

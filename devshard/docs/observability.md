@@ -235,6 +235,33 @@ Validation publish logs also include:
 - `validation_tx`: `validation` or `validation_vote`.
 - `validation_result`: `valid` or `invalid`.
 - `result_valid`: boolean form of the same result for structured queries.
+- `validation_reason`: short tag for why the vote was cast. Every emitted
+  validation carries one. See below.
+- Outcome-specific kv pairs: the values behind the decision (similarity,
+  threshold, token counts, mismatch index). Present only when relevant to the
+  reason.
+
+### Validation reasons
+
+A vote without a reason is opaque. Each terminal validation outcome maps to one
+`validation_reason` tag and a fixed set of detail fields appended to the
+`validation tx published` log line.
+
+| validation_reason | result | Detail fields |
+| --- | --- | --- |
+| `similarity_pass` | valid | `similarity`, `threshold` |
+| `similarity_below` | invalid | `similarity`, `threshold` |
+| `inflated_tokens` | invalid | `claimed_input`, `validation_input`, `claimed_output`, `validation_output` |
+| `different_length` | invalid | `original_logits_len`, `validation_logits_len` |
+| `different_tokens` | invalid | `first_mismatch_index`, `original_token`, `validation_token` |
+| `invalid_inference` | invalid | `detail`, `error` (when present) |
+| `rejected_payload` | valid | `mlnode_status` (400 or 422) |
+
+`rejected_payload` votes valid because the mlnode rejected the prompt as
+unservable. The other invalid reasons reflect concrete divergences from the
+executor's claim. Errors that prevent reaching a verdict (`payload_fetch_err`,
+`http_5xx`, `validation_response_err`, etc.) are emitted on the `validate
+failed` line, not the publish line — see the existing validation reasons above.
 
 ## Metric set
 

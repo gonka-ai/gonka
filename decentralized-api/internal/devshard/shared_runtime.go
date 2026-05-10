@@ -103,7 +103,6 @@ func ValidateInferenceWithExecutor(
 	payloadEpoch uint64,
 	requestPath string,
 	execute MLRequestExecutor,
-	logPrefix string,
 	chainParams ChainParamsProvider,
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
@@ -134,7 +133,7 @@ func ValidateInferenceWithExecutor(
 	}
 	defer resp.Body.Close()
 
-	return EvaluateValidationResponse(ctx, resp, req, inferenceID, logPrefix, responsePayload, thresholds)
+	return EvaluateValidationResponse(ctx, resp, req, inferenceID, responsePayload, thresholds)
 }
 
 type ProcessedExecutionResponse struct {
@@ -260,13 +259,16 @@ func EvaluateValidationResponse(
 	resp *http.Response,
 	req devshardpkg.ValidateRequest,
 	inferenceID string,
-	logPrefix string,
 	originalResponsePayload []byte,
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
 		observability.IncValidation(observability.StageValidationFinished, observability.ReasonRejectedPayload)
-		return &devshardpkg.ValidateResult{Valid: true}, nil
+		return &devshardpkg.ValidateResult{
+			Valid:   true,
+			Reason:  "rejected_payload",
+			Details: []any{"mlnode_status", resp.StatusCode},
+		}, nil
 	}
 	if resp.StatusCode >= 500 {
 		return nil, observability.Classify(observability.ReasonHTTP5xx, observability.WhereEngineMLNodeCall, fmt.Errorf("validation mlnode status %d", resp.StatusCode))
@@ -293,28 +295,32 @@ func EvaluateValidationResponse(
 	if validationUsage, err := validationResponse.GetUsage(); err == nil {
 		if tokenCountInflated(req.InputTokens, validationUsage.PromptTokens) ||
 			tokenCountInflated(req.OutputTokens, validationUsage.CompletionTokens) {
-			logging.Warn(logPrefix+" validation failed: inflated token counts",
-				chaintypes.Validation, "inferenceId", inferenceID,
-				"claimedInput", req.InputTokens, "validationInput", validationUsage.PromptTokens,
-				"claimedOutput", req.OutputTokens, "validationOutput", validationUsage.CompletionTokens)
-			return &devshardpkg.ValidateResult{Valid: false}, nil
+			return &devshardpkg.ValidateResult{
+				Valid:  false,
+				Reason: "inflated_tokens",
+				Details: []any{
+					"claimed_input", req.InputTokens,
+					"validation_input", validationUsage.PromptTokens,
+					"claimed_output", req.OutputTokens,
+					"validation_output", validationUsage.CompletionTokens,
+				},
+			}, nil
 		}
 	}
 
+	originalLogits := originalResponse.ExtractLogits()
+	validationLogits := validationResponse.ExtractLogits()
 	base := validationpkg.BaseValidationResult{
 		InferenceId:   inferenceID,
 		ResponseBytes: respBytes,
 	}
-	result := validationpkg.CompareLogits(
-		originalResponse.ExtractLogits(),
-		validationResponse.ExtractLogits(),
-		base,
-	)
-	valid, err := EvaluateValidationResult(ctx, result, req, thresholds)
+	result := validationpkg.CompareLogits(originalLogits, validationLogits, base)
+	out, err := EvaluateValidationResult(ctx, result, req, thresholds)
 	if err != nil {
 		return nil, err
 	}
-	return &devshardpkg.ValidateResult{Valid: valid}, nil
+	appendLogitMismatchDetails(out, result, originalLogits, validationLogits)
+	return out, nil
 }
 
 func tokenCountInflated(claimed, validation uint64) bool {
@@ -328,22 +334,69 @@ func EvaluateValidationResult(
 	result validationpkg.ValidationResult,
 	req devshardpkg.ValidateRequest,
 	thresholds *ValidationThresholdResolver,
-) (bool, error) {
+) (*devshardpkg.ValidateResult, error) {
 	switch r := result.(type) {
 	case *validationpkg.SimilarityValidationResult:
 		threshold, err := thresholds.Resolve(ctx, req.EscrowID, req.EpochID, req.Model)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		passValue := chaintypes.Decimal{Value: threshold.Value, Exponent: threshold.Exponent}
-		return chaintypes.DecimalFromFloat(r.Value).ToDecimal().GreaterThan(passValue.ToDecimal()), nil
-	case *validationpkg.DifferentLengthValidationResult,
-		*validationpkg.DifferentTokensValidationResult,
-		*validationpkg.InvalidInferenceResult:
-		return false, nil
+		valid := chaintypes.DecimalFromFloat(r.Value).ToDecimal().GreaterThan(passValue.ToDecimal())
+		reason := "similarity_pass"
+		if !valid {
+			reason = "similarity_below"
+		}
+		return &devshardpkg.ValidateResult{
+			Valid:   valid,
+			Reason:  reason,
+			Details: []any{"similarity", r.Value, "threshold", passValue.ToFloat()},
+		}, nil
+	case *validationpkg.DifferentLengthValidationResult:
+		return &devshardpkg.ValidateResult{Valid: false, Reason: "different_length"}, nil
+	case *validationpkg.DifferentTokensValidationResult:
+		return &devshardpkg.ValidateResult{Valid: false, Reason: "different_tokens"}, nil
+	case *validationpkg.InvalidInferenceResult:
+		details := []any{"detail", r.Reason}
+		if r.Error != nil {
+			details = append(details, "error", r.Error.Error())
+		}
+		return &devshardpkg.ValidateResult{Valid: false, Reason: "invalid_inference", Details: details}, nil
 	default:
-		return false, fmt.Errorf("unknown validation result type %T", result)
+		return nil, fmt.Errorf("unknown validation result type %T", result)
 	}
+}
+
+func appendLogitMismatchDetails(
+	out *devshardpkg.ValidateResult,
+	result validationpkg.ValidationResult,
+	original, validation []completionapi.Logprob,
+) {
+	switch result.(type) {
+	case *validationpkg.DifferentLengthValidationResult:
+		out.Details = append(out.Details,
+			"original_logits_len", len(original),
+			"validation_logits_len", len(validation))
+	case *validationpkg.DifferentTokensValidationResult:
+		idx, origTok, valTok := firstTokenMismatch(original, validation)
+		out.Details = append(out.Details,
+			"first_mismatch_index", idx,
+			"original_token", origTok,
+			"validation_token", valTok)
+	}
+}
+
+func firstTokenMismatch(original, validation []completionapi.Logprob) (int, string, string) {
+	n := len(original)
+	if len(validation) < n {
+		n = len(validation)
+	}
+	for i := 0; i < n; i++ {
+		if original[i].Token != validation[i].Token {
+			return i, original[i].Token, validation[i].Token
+		}
+	}
+	return -1, "", ""
 }
 
 func ReadHTTPBody(resp *http.Response) ([]byte, error) {
