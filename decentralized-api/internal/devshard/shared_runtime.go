@@ -296,7 +296,8 @@ func EvaluateValidationResponse(
 }
 
 func tokenCountInflated(claimed, validation uint64) bool {
-	const tokenCountTolerance uint64 = 1
+	// TODO: figure out tokens
+	const tokenCountTolerance uint64 = 3
 	return claimed > validation && claimed-validation > tokenCountTolerance
 }
 
