@@ -15,6 +15,7 @@ import (
 	"devshard"
 	"devshard/internal/testutil"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -1043,6 +1044,14 @@ func (e *trackingValidationEngine) getCalls() []devshard.ValidateRequest {
 	return append([]devshard.ValidateRequest(nil), e.calls...)
 }
 
+type failingValidationEngine struct {
+	err error
+}
+
+func (e failingValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	return nil, e.err
+}
+
 type hostLogEntry struct {
 	msg    string
 	fields map[string]any
@@ -1239,6 +1248,63 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 			"validation_tx":     "validation",
 			"validation_result": "valid",
 			"result_valid":      true,
+		})
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestHost_ValidationFailureLogKeepsInvestigationFields(t *testing.T) {
+	logger := &hostCaptureLogger{}
+	logging.SetLogger(logger)
+
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    1,
+		ValidationRate:   10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	validationErr := observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeFetchPayloads, fmt.Errorf("payload missing"))
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithValidator(failingValidationEngine{err: validationErr}))
+	require.NoError(t, err)
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	finishMsg := &types.MsgFinishInference{
+		InferenceId:  1,
+		ResponseHash: []byte{1},
+		InputTokens:  80,
+		OutputTokens: 40,
+		ExecutorSlot: 1,
+		EscrowId:     "escrow-1",
+	}
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}},
+	})
+
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1, diff2, diff3}})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return logger.has("validate failed", map[string]any{
+			"where":            string(observability.WhereRuntimeFetchPayloads),
+			"reason":           string(observability.ReasonPayloadFetchErr),
+			"inference_id":     uint64(1),
+			"executor_address": hosts[1].Address(),
+			"validator_slot":   uint32(0),
+			"validation_flow":  string(validationFlowShouldValidate),
 		})
 	}, 2*time.Second, 10*time.Millisecond)
 }

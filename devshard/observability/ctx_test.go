@@ -40,8 +40,32 @@ func TestRecordTerminalIncludesFailureWhere(t *testing.T) {
 	require.Equal(t, "http_5xx", fields["reason"])
 	require.Equal(t, "engine.mlnode_call", fields["failure_where"])
 	require.Equal(t, uint64(7), fields["inference_id"])
-	require.Equal(t, true, fields["receipt_observed"])
-	require.Equal(t, false, fields["finish_published"])
+	require.NotContains(t, fields, "receipt_observed")
+	require.NotContains(t, fields, "finish_published")
+}
+
+func TestLogOmitsStatusField(t *testing.T) {
+	logger := &captureLogger{}
+	logging.SetLogger(logger)
+
+	Log(context.Background(), LevelInfo, "failed", StageReceived, WhereTransportAuth, "escrow-1", ReasonMissingAuthHeaders, nil)
+
+	fields := keyvals(logger.kv)
+	require.Equal(t, "missing_auth_headers", fields["reason"])
+	require.NotContains(t, fields, "status")
+}
+
+func TestRecordFinishPublishedCanFlagPartialResponse(t *testing.T) {
+	logger := &captureLogger{}
+	logging.SetLogger(logger)
+
+	RecordFinishPublished(context.Background(), "escrow-1", 7, 3, ReasonPartialResponseInterrupted, WhereRuntimeProcessExecution)
+
+	fields := keyvals(logger.kv)
+	require.Equal(t, "devshard request terminal", logger.msg)
+	require.Equal(t, "finish_published", fields["terminal"])
+	require.Equal(t, "partial_response_after_interruption", fields["reason"])
+	require.Equal(t, "runtime.process_execution_response", fields["failure_where"])
 }
 
 func TestInterruptionClass(t *testing.T) {

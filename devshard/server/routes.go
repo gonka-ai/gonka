@@ -30,15 +30,15 @@ type PayloadHandler interface {
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadHandler PayloadHandler) {
 	g.Use(observability.RequestIDMiddleware)
 
-	g.POST("/sessions/:id/chat/completions", withSessionAuth(resolver,
+	g.POST("/sessions/:id/chat/completions", withSessionAuth(resolver, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
-	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver,
+	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
-	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver,
+	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
-	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver,
+	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipNonce }))
-	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver,
+	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipTxs }))
 
 	g.GET("/sessions/:id/diffs", withSession(resolver,
@@ -52,10 +52,10 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadH
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
 			srv, err := resolver.SessionServer(c.Param("id"))
 			if err != nil {
-				recordSessionResolution(c, err)
+				recordSessionResolution(c, err, false)
 				return sessionHTTPError(err)
 			}
-			observability.IncSessionResolution(routeLabel(c), observability.ReasonOK, observability.ReasonOK)
+			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
 		})
 	}
@@ -68,61 +68,62 @@ func withSession(
 	return func(c echo.Context) error {
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
-			recordSessionResolution(c, err)
+			recordSessionResolution(c, err, false)
 			return sessionHTTPError(err)
 		}
-		observability.IncSessionResolution(routeLabel(c), observability.ReasonOK, observability.ReasonOK)
+		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		return pick(srv)(c)
 	}
 }
 
 func withSessionAuth(
 	resolver SessionResolver,
+	recordChatTerminal bool,
 	pick func(*transport.Server) echo.HandlerFunc,
 ) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
-			recordSessionResolution(c, err)
+			recordSessionResolution(c, err, recordChatTerminal)
 			return sessionHTTPError(err)
 		}
-		observability.IncSessionResolution(routeLabel(c), observability.ReasonOK, observability.ReasonOK)
-		return srv.AuthMiddleware(pick(srv))(c)
+		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
+		return srv.AuthMiddlewareFor(pick(srv), recordChatTerminal)(c)
 	}
 }
 
-func recordSessionResolution(c echo.Context, err error) {
-	status, reason := sessionResolutionStatus(err)
+func recordSessionResolution(c echo.Context, err error, recordChatTerminal bool) {
+	metricStatus, reason := sessionResolutionStatus(err)
 	route := routeLabel(c)
 	escrowID := c.Param("id")
 	ctx := c.Request().Context()
-	observability.IncSessionResolution(route, status, reason)
-	observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed", observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, status, reason, err)
-	if strings.HasSuffix(c.Request().URL.Path, "/chat/completions") {
+	observability.IncSessionResolution(route, metricStatus, reason)
+	observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed", observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, reason, err)
+	if recordChatTerminal {
 		observability.RecordNoReceiptInterrupted(ctx, escrowID, reason, observability.WhereRoutesSessionResolve)
 	}
 }
 
-func sessionResolutionStatus(err error) (observability.Reason, observability.Reason) {
+func sessionResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
 	if errors.Is(err, ErrInitializing) {
-		return observability.ReasonInitializing, observability.ReasonInitializing
+		return observability.MetricStatusError, observability.ReasonInitializing
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
-		return observability.ReasonVersionConflict, observability.ReasonVersionConflict
+		return observability.MetricStatusError, observability.ReasonVersionConflict
 	}
 	if errors.Is(err, storage.ErrSessionEpochConflict) {
-		return observability.ReasonEpochConflict, observability.ReasonEpochConflict
+		return observability.MetricStatusError, observability.ReasonEpochConflict
 	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "build group"):
-		return observability.ReasonError, observability.ReasonBuildGroupErr
+		return observability.MetricStatusError, observability.ReasonBuildGroupErr
 	case strings.Contains(msg, "get escrow"):
-		return observability.ReasonError, observability.ReasonGetEscrowErr
+		return observability.MetricStatusError, observability.ReasonGetEscrowErr
 	case strings.Contains(msg, "storage"):
-		return observability.ReasonError, observability.ReasonStorageErr
+		return observability.MetricStatusError, observability.ReasonStorageErr
 	default:
-		return observability.ReasonError, observability.ReasonSessionResolveErr
+		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
 }
 

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -93,6 +94,25 @@ func (env *serverTestEnv) doGet(t *testing.T, path string) *httptest.ResponseRec
 	return rec
 }
 
+type failingWriteResponseWriter struct {
+	header http.Header
+	code   int
+}
+
+func (w *failingWriteResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *failingWriteResponseWriter) WriteHeader(code int) {
+	w.code = code
+}
+
+func (w *failingWriteResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func (w *failingWriteResponseWriter) Flush() {}
+
 func TestServer_Inference_ValidAuth(t *testing.T) {
 	env := setupServerEnv(t)
 
@@ -147,6 +167,48 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 	require.NotNil(t, receipt.StateSig)
 	require.NotNil(t, receipt.Receipt) // single host is always executor
 	require.NotEmpty(t, meta.Mempool)
+}
+
+func TestServer_ReceiptWriteFailureDoesNotLeaveExecutionStuck(t *testing.T) {
+	env := setupServerEnv(t)
+
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	ir := InferenceRequest{
+		Diffs: []DiffJSON{dj},
+		Nonce: 1,
+		Payload: &PayloadJSON{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	}
+	body, err := json.Marshal(ir)
+	require.NoError(t, err)
+
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v1/devshard/sessions/escrow-1/chat/completions", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	env.echo.ServeHTTP(&failingWriteResponseWriter{header: http.Header{}}, req)
+
+	rec := env.doPost(t, "/v1/devshard/sessions/escrow-1/chat/completions", body)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var foundFinish bool
+	for _, tx := range env.server.host.MempoolTxs() {
+		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == 1 {
+			foundFinish = true
+			break
+		}
+	}
+	require.True(t, foundFinish, "retry should execute and publish finish after receipt write failure")
 }
 
 func TestServer_Inference_NoAuth(t *testing.T) {

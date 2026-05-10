@@ -38,7 +38,7 @@ Then use logs to find the exact request:
 
 1. Search for `request_id`.
 2. Read the `devshard request terminal` line.
-3. Inspect `terminal`, `reason`, `failure_where`, and the lifecycle booleans.
+3. Inspect `terminal`, `reason`, and `failure_where`.
 4. Search the same `request_id` for WARN or ERROR to see the failure-site log
    with `where`, `reason`, and `error`.
 
@@ -58,7 +58,6 @@ Every devshard lifecycle log line carries:
 
 WARN and ERROR lines also carry:
 
-- `status`.
 - `reason`.
 - `error` when an error exists.
 - `sender` when known and relevant.
@@ -69,12 +68,6 @@ Terminal lines also carry:
 - `reason`.
 - `failure_where` when the terminal was caused by a concrete stop point.
 - `inference_id` and `nonce` when known.
-- `receipt_expected`.
-- `receipt_observed`.
-- `execution_expected`.
-- `execution_started`.
-- `finish_expected`.
-- `finish_published`.
 
 `where` is a stable symbolic code location, not a file:line reference. It must
 stay queryable across releases. The message text can change; `where` and
@@ -88,6 +81,9 @@ reason set is used for both paths.
 
 Keep log messages short. Human text is for readability; `where` and `reason` are
 the durable query fields.
+
+`mode` is `dapi_inprocess` for devshard served inside dapi and
+`standalone_devshardd` for the standalone devshard binary.
 
 ## Terminal outcomes
 
@@ -105,9 +101,15 @@ terminal log line.
 | `execution_no_finish` | Execution started but `MsgFinishInference` was not added to the mempool. | Alert. |
 | `client_cancelled_after_receipt` | Client disconnected after receipt and cancelled execution. | Alert until execution is detached from client context. |
 
+A `finish_published` terminal with `reason=partial_response_after_interruption`
+means the host published `MsgFinishInference` from a response reconstructed after
+the ML stream ended unexpectedly. Inspect `failure_where` and the matching WARN
+line before treating it as healthy.
+
 Alert rules should filter to `no_receipt_interrupted`,
 `receipt_no_execution_interrupted`, `execution_no_finish`, and
-`client_cancelled_after_receipt`.
+`client_cancelled_after_receipt`. Exclude `reason="initializing"` from
+`no_receipt_interrupted` alerts during startup and readiness transitions.
 
 ## Where values
 
@@ -142,93 +144,128 @@ Reasons should remain low-cardinality and useful to operators. Add a new reason
 only when it changes the action an operator takes or identifies a distinct stop
 point.
 
-Execution reasons include:
+Do not add request ids, escrow ids, model names, node URLs, or free-form errors
+to metric labels. Put those in logs.
 
-- `modify_request_err`
-- `acquire_err`
-- `transport_err`
-- `timeout`
-- `http_5xx`
-- `http_4xx`
-- `application_err`
-- `release_err`
-- `response_process_err`
-- `response_write_err`
-- `usage_parse_err`
-- `canonicalize_prompt_err`
-- `payload_store_err`
-- `client_cancelled_after_receipt`
-- `sign_finish_err`
+Request and receipt failures:
 
-Receipt and request reasons include:
+```text
+missing_auth_headers
+invalid_signature_hex
+invalid_timestamp
+body_read_err
+signature_verify_err
+sender_not_allowed
+rate_limited
+missing_sender
+owner_err
+parse_err
+decode_err
+handle_request_err
+apply_err
+persist_diff_err
+payload_verify_err
+receipt_marshal_err
+receipt_sign_err
+state_sign_err
+receipt_write_err
+cached_replay_err
+meta_write_err
+payload_absent
+target_diff_absent
+not_executor
+already_executing
+cached_response
+state_signature_withheld
+```
 
-- `missing_auth_headers`
-- `invalid_signature_hex`
-- `invalid_timestamp`
-- `body_read_err`
-- `signature_verify_err`
-- `sender_not_allowed`
-- `rate_limited`
-- `missing_sender`
-- `owner_err`
-- `parse_err`
-- `decode_err`
-- `apply_err`
-- `persist_diff_err`
-- `payload_verify_err`
-- `receipt_marshal_err`
-- `receipt_sign_err`
-- `state_sign_err`
-- `receipt_write_err`
-- `payload_absent`
-- `target_diff_absent`
-- `not_executor`
-- `already_executing`
-- `cached_response`
+ML-node call failures are shared by execution and validation:
 
-Validation reasons include:
+```text
+acquire_err
+transport_err
+timeout
+http_5xx
+http_4xx
+application_err
+release_err
+```
 
-- `payload_fetch_err`
-- `payload_not_found`
-- `payload_auth_err`
-- `validation_body_err`
-- `original_response_parse_err`
-- `enforced_tokens_err`
-- `acquire_err`
-- `transport_err`
-- `timeout`
-- `http_5xx`
-- `http_4xx`
-- `application_err`
-- `release_err`
-- `rejected_payload`
-- `validation_response_err`
-- `usage_parse_err`
-- `inference_disappeared`
-- `sign_validation_err`
-- `sign_vote_err`
-- `validation_status_changed`
+Execution processing failures:
 
-Payload serving reasons include:
+```text
+modify_request_err
+response_process_err
+response_write_err
+partial_response_after_interruption
+usage_parse_err
+canonicalize_prompt_err
+payload_store_err
+execute_err
+sign_finish_err
+client_cancelled_after_receipt
+```
 
-- `missing_inference_id`
-- `missing_validator_header`
-- `missing_timestamp_header`
-- `missing_epoch_header`
-- `missing_signature_header`
-- `invalid_timestamp`
-- `invalid_epoch`
-- `timestamp_too_old`
-- `timestamp_in_future`
-- `not_group_member`
-- `pubkey_resolution_err`
-- `invalid_signature`
-- `payload_not_found`
-- `payload_retrieve_err`
-- `payload_response_sign_err`
-- `payload_write_err`
+Session-resolution failures:
 
-Validation publish logs also include:
+```text
+initializing
+version_conflict
+epoch_conflict
+build_group_err
+get_escrow_err
+storage_err
+session_resolve_err
+```
+
+Validation failures before a verdict:
+
+```text
+payload_fetch_err
+payload_not_found
+payload_auth_err
+validation_body_err
+original_response_parse_err
+enforced_tokens_err
+validation_response_err
+inference_disappeared
+sign_validation_err
+sign_vote_err
+validation_status_changed
+queue_full
+```
+
+Payload-serving failures:
+
+```text
+missing_inference_id
+missing_validator_header
+missing_timestamp_header
+missing_epoch_header
+missing_signature_header
+invalid_timestamp
+invalid_epoch
+timestamp_too_old
+timestamp_in_future
+not_group_member
+pubkey_resolution_err
+invalid_signature
+payload_not_found
+payload_retrieve_err
+payload_response_sign_err
+payload_write_err
+```
+
+Metric labels named `status` use small state labels such as `ok`, `error`,
+`queued`, or `cached`. These labels are for aggregate counters only. Logs use
+`reason` for the durable failure code.
+
+`host.execute` is a fallback code location for unclassified execution errors. A
+specific runtime or engine `where` is preferred for any known failure.
+
+## Validation investigation
+
+Validation publish logs include:
 
 - `validation_flow`: `should_validate` for sampled finished inferences, or
   `challenged` for mandatory challenged-inference votes.
@@ -261,15 +298,13 @@ A vote without a reason is opaque. Each terminal validation outcome maps to one
 unservable. The other invalid reasons reflect concrete divergences from the
 executor's claim. Errors that prevent reaching a verdict (`payload_fetch_err`,
 `http_5xx`, `validation_response_err`, etc.) are emitted on the `validate
-failed` line, not the publish line — see the existing validation reasons above.
+failed` line, not the publish line. See the existing validation reasons above.
 
 ## Metric set
 
 Devshard request lifecycle:
 
 ```text
-devshard_request_total{stage,status}
-devshard_request_duration_seconds{stage,status}
 devshard_inflight{stage}
 devshard_request_terminal_total{terminal,reason}
 devshard_interruption_total{class,reason}
@@ -298,6 +333,9 @@ devshard_validation_queue_depth{escrow_id}
 devshard_mempool_size{escrow_id}
 devshard_build_info{binary,version,commit}
 ```
+
+`devshard_request_terminal_total` is the aggregate request lifecycle counter.
+Use `devshard_inflight` only for current pressure, not terminal outcomes.
 
 Labels stay low-cardinality. `request_id`, `inference_id`, `sender`,
 `escrow_id`, and `mlnode_url` are log-only for aggregate counters. The

@@ -326,7 +326,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		return nil, observability.Classify(observability.ReasonStateSignErr, observability.WhereHostSignState, err)
 	}
 	if stateSig == nil {
-		observability.Log(ctx, observability.LevelInfo, "state signature withheld", observability.StageReceipt, observability.WhereHostSignState, h.escrowID, "", observability.ReasonStateSignatureWithheld, nil,
+		observability.Log(ctx, observability.LevelInfo, "state signature withheld", observability.StageReceipt, observability.WhereHostSignState, h.escrowID, observability.ReasonStateSignatureWithheld, nil,
 			"inference_id", receiptOutcome.inferenceID,
 			"nonce", nonce)
 	}
@@ -573,7 +573,7 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 
 		h.executing[start.InferenceId] = struct{}{}
 		outcome.executionExpected = true
-		outcome.reason = observability.ReasonExecutionExpected
+		outcome.reason = observability.ReasonOK
 
 		job := &devshard.ExecuteRequest{
 			InferenceID: start.InferenceId,
@@ -596,6 +596,12 @@ func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
 	_, _ = h.RunExecution(ctx, job)
 }
 
+func (h *Host) ReleaseExecution(inferenceID uint64) {
+	h.mu.Lock()
+	delete(h.executing, inferenceID)
+	h.mu.Unlock()
+}
+
 // RunExecution executes an inference job and adds MsgFinishInference to the mempool.
 // This is the deferred execution path -- used when DeferExecution=true in HandleRequest.
 // The caller typically streams results to the client before calling this.
@@ -605,17 +611,13 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
 	diffNonce := h.LatestNonce()
 
-	defer func() {
-		h.mu.Lock()
-		delete(h.executing, inferenceID)
-		h.mu.Unlock()
-	}()
+	defer h.ReleaseExecution(inferenceID)
 
 	result, err := h.engine.Execute(ctx, *job)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		observability.IncReceiptOrphan(reason)
-		observability.Log(ctx, observability.LevelError, "execute failed", observability.StageFinished, where, h.escrowID, observability.ReasonError, reason, err, "inference_id", inferenceID)
+		observability.Log(ctx, observability.LevelError, "execute failed", observability.StageFinished, where, h.escrowID, reason, err, "inference_id", inferenceID)
 		return nil, err
 	}
 
@@ -631,7 +633,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	if err != nil {
 		wrapped := observability.Classify(observability.ReasonSignFinishErr, observability.WhereHostPublishFinish, err)
 		observability.IncReceiptOrphan(observability.ReasonSignFinishErr)
-		observability.Log(ctx, observability.LevelError, "sign finish msg failed", observability.StageFinished, observability.WhereHostPublishFinish, h.escrowID, observability.ReasonError, observability.ReasonSignFinishErr, err, "inference_id", inferenceID)
+		observability.Log(ctx, observability.LevelError, "sign finish msg failed", observability.StageFinished, observability.WhereHostPublishFinish, h.escrowID, observability.ReasonSignFinishErr, err, "inference_id", inferenceID)
 		return result, wrapped
 	}
 	finishMsg.ProposerSig = proposerSig
@@ -642,6 +644,16 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		}},
 		ProposedAt: diffNonce,
 	})
+	if result.PartialResponse {
+		reason := observability.Reason(result.PartialResponseReason)
+		if reason == "" {
+			reason = observability.ReasonPartialResponseInterrupted
+		}
+		partialWhere := result.PartialResponseWhere
+		observability.Log(ctx, observability.LevelWarn, "finish published from partial response", observability.StageFinished, observability.WhereHostPublishFinish, h.escrowID, reason, nil,
+			"inference_id", inferenceID,
+			"partial_where", partialWhere)
+	}
 	if len(result.ResponseBody) > 0 {
 		h.mu.Lock()
 		h.completedResponses[inferenceID] = result.ResponseBody
@@ -830,15 +842,15 @@ func (h *Host) enqueueValidation(job validateJob) {
 
 	select {
 	case h.validationQueue <- job:
-		observability.IncValidation(observability.StageValidationPicked, observability.ReasonQueued)
+		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
 		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
 	default:
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		observability.IncValidation(observability.StageValidationPicked, observability.ReasonQueueFull)
+		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
 		observability.IncValidationQueueDrop()
-		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
+		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
 	}
 }
 
@@ -867,8 +879,8 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	ctx = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
-	observability.IncValidation(observability.StageValidationStarted, observability.ReasonOK)
-	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", "", nil,
+	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
@@ -895,9 +907,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonValidateErr, observability.WhereHostValidate)
-		observability.IncValidation(observability.StageValidationFinished, observability.ReasonError)
+		observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusError)
 		observability.IncValidationOrphan(reason)
-		observability.Log(ctx, observability.LevelError, "validate failed", observability.StageValidationFinished, where, h.escrowID, observability.ReasonError, reason, err,
+		observability.Log(ctx, observability.LevelError, "validate failed", observability.StageValidationFinished, where, h.escrowID, reason, err,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
@@ -907,16 +919,16 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
 	if !ok {
-		observability.IncValidation(observability.StageValidationFinished, observability.ReasonError)
+		observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusError)
 		observability.IncValidationOrphan(observability.ReasonInferenceDisappeared)
-		observability.Log(ctx, observability.LevelError, "validate: inference disappeared", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, observability.ReasonError, observability.ReasonInferenceDisappeared, nil,
+		observability.Log(ctx, observability.LevelError, "validate: inference disappeared", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, observability.ReasonInferenceDisappeared, nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
 			"validation_flow", string(job.flow))
 		return
 	}
-	observability.IncValidation(observability.StageValidationFinished, observability.ReasonOK)
+	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
 
 	var tx *types.DevshardTx
 	var validationTx string
@@ -934,7 +946,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
 			observability.IncValidationOrphan(observability.ReasonSignValidationErr)
-			observability.Log(ctx, observability.LevelError, "sign validation msg failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonError, observability.ReasonSignValidationErr, err,
+			observability.Log(ctx, observability.LevelError, "sign validation msg failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonSignValidationErr, err,
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
 				"validator_slot", job.validatorSlot,
@@ -957,7 +969,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
 			observability.IncValidationOrphan(observability.ReasonSignVoteErr)
-			observability.Log(ctx, observability.LevelError, "sign validation vote failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonError, observability.ReasonSignVoteErr, err,
+			observability.Log(ctx, observability.LevelError, "sign validation vote failed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonSignVoteErr, err,
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
 				"validator_slot", job.validatorSlot,
@@ -971,8 +983,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
 		validationTx = "validation_vote"
 	default:
-		observability.IncValidation(observability.StageVotePublished, observability.ReasonValidationStatusChanged)
-		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, observability.ReasonValidationStatusChanged, nil,
+		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
+		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
@@ -990,7 +1002,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
-	observability.IncValidation(observability.StageVotePublished, observability.ReasonOK)
+	observability.IncValidation(observability.StageVotePublished, observability.MetricStatusOK)
 	fields := []any{
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
@@ -1002,7 +1014,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		"result_valid", result.Valid,
 	}
 	fields = append(fields, result.Details...)
-	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, observability.ReasonOK, nil, fields...)
+	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, nil, fields...)
 }
 
 func validationResultLabel(valid bool) string {

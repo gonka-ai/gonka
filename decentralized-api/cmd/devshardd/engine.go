@@ -142,7 +142,7 @@ func (e *devshardEngine) doWithLockedNode(
 			lastReason = observability.ReasonOK
 			observability.IncMLNodeAttempt(path, observability.ReasonOK, acq.NodeId)
 		}
-		observability.ObserveMLNodeCall(path, acq.NodeId, observability.ReasonTotalPhase, started)
+		observability.ObserveMLNodeCall(path, acq.NodeId, observability.MetricPhaseTotal, started)
 
 		// Release must fire regardless of outcome to release the lock.
 		if releaseErr := e.mlClient.Release(ctx, acq.LockId, outcome); releaseErr != nil {

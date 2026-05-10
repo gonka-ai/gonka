@@ -667,25 +667,25 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 	inferenceID := c.QueryParam("inference_id")
 	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
 
-	payloadEvent := func(level observability.Level, msg string, status, reason observability.Reason, err error, fields ...any) {
-		observability.IncPayloadRequest(status, reason)
+	payloadEvent := func(level observability.Level, msg string, metricStatus observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
+		observability.IncPayloadRequest(metricStatus, reason)
 		base := []any{
 			"inference_id", inferenceID,
 			"validator_address", validatorAddress,
 		}
 		base = append(base, fields...)
-		observability.Log(ctx, level, msg, observability.StagePayloadRequest, observability.WhereManagerPayloads, escrowID, status, reason, err, base...)
+		observability.Log(ctx, level, msg, observability.StagePayloadRequest, observability.WhereManagerPayloads, escrowID, reason, err, base...)
 	}
 
 	if inferenceID == "" {
-		payloadEvent(observability.LevelWarn, "payload request missing inference_id", observability.ReasonError, observability.ReasonMissingInferenceID, nil)
+		payloadEvent(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonMissingInferenceID, nil)
 		return echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
 	}
 
 	epochID, err := m.authenticatePayloadRequest(c, srv.Host().Group())
 	if err != nil {
 		reason := payloadAuthReason(err)
-		payloadEvent(observability.LevelWarn, "payload request auth failed", observability.ReasonError, reason, err)
+		payloadEvent(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, reason, err)
 		return payloadHTTPError(err)
 	}
 
@@ -693,17 +693,17 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, inferenceID, epochID)
 	if err != nil {
 		if errors.Is(err, payloadstorage.ErrNotFound) {
-			payloadEvent(observability.LevelWarn, "payload not found", observability.ReasonError, observability.ReasonPayloadNotFound, nil, "requested_epoch", epochID)
+			payloadEvent(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadNotFound, nil, "requested_epoch", epochID)
 			return echo.NewHTTPError(http.StatusNotFound, "payload not found")
 		}
-		payloadEvent(observability.LevelWarn, "payload retrieval failed", observability.ReasonError, observability.ReasonPayloadRetrieveErr, err, "requested_epoch", epochID)
+		payloadEvent(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, err, "requested_epoch", epochID)
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	// Sign response using same scheme as public endpoint
 	executorSignature, err := m.signPayloadResponse(inferenceID, promptPayload, responsePayload)
 	if err != nil {
-		payloadEvent(observability.LevelWarn, "payload response signing failed", observability.ReasonError, observability.ReasonPayloadResponseSignErr, err,
+		payloadEvent(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadResponseSignErr, err,
 			"requested_epoch", epochID,
 			"served_epoch", servedEpoch)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
@@ -715,12 +715,12 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 		ResponsePayload:   responsePayload,
 		ExecutorSignature: executorSignature,
 	}); err != nil {
-		payloadEvent(observability.LevelWarn, "payload response write failed", observability.ReasonError, observability.ReasonPayloadWriteErr, err,
+		payloadEvent(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadWriteErr, err,
 			"requested_epoch", epochID,
 			"served_epoch", servedEpoch)
 		return err
 	}
-	payloadEvent(observability.LevelInfo, "payload served", observability.ReasonOK, observability.ReasonOK, nil,
+	payloadEvent(observability.LevelInfo, "payload served", observability.MetricStatusOK, observability.ReasonOK, nil,
 		"requested_epoch", epochID,
 		"served_epoch", servedEpoch)
 	return nil

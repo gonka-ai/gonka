@@ -20,10 +20,13 @@ type ExecuteRequest struct {
 
 // ExecuteResult contains the outcome of an inference execution.
 type ExecuteResult struct {
-	ResponseHash []byte
-	InputTokens  uint64
-	OutputTokens uint64
-	ResponseBody []byte // raw ML response bytes (always populated when available)
+	ResponseHash          []byte
+	InputTokens           uint64
+	OutputTokens          uint64
+	ResponseBody          []byte // raw ML response bytes (always populated when available)
+	PartialResponse       bool
+	PartialResponseReason string
+	PartialResponseWhere  string
 }
 
 // ValidateRequest contains the data needed to validate an inference.

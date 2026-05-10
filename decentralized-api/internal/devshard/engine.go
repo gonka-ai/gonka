@@ -78,7 +78,7 @@ func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body
 				observability.IncMLNodeAttempt(observability.PathExecute, lastReason, node.Id)
 				return nil, broker.NewTransportActionError(postErr)
 			}
-			observability.ObserveMLNodeCall(observability.PathExecute, node.Id, observability.ReasonTotalPhase, started)
+			observability.ObserveMLNodeCall(observability.PathExecute, node.Id, observability.MetricPhaseTotal, started)
 			switch {
 			case httpResp.StatusCode >= 500:
 				lastReason = observability.ReasonHTTP5xx

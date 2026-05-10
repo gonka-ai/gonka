@@ -87,7 +87,7 @@ func (v *ValidationAdapter) executeMLRequest(ctx context.Context, model string, 
 				observability.IncMLNodeAttempt(observability.PathValidate, lastReason, node.Id)
 				return nil, broker.NewTransportActionError(postErr)
 			}
-			observability.ObserveMLNodeCall(observability.PathValidate, node.Id, observability.ReasonTotalPhase, started)
+			observability.ObserveMLNodeCall(observability.PathValidate, node.Id, observability.MetricPhaseTotal, started)
 			switch {
 			case httpResp.StatusCode >= 500:
 				lastReason = observability.ReasonHTTP5xx

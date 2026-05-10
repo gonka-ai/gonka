@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"devshard/logging"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -21,6 +22,16 @@ type failingResolver struct {
 func (r failingResolver) SessionServer(string) (*transport.Server, error) {
 	return nil, r.err
 }
+
+type captureLogger struct {
+	infos []string
+	warns []string
+}
+
+func (l *captureLogger) Info(msg string, _ ...any) { l.infos = append(l.infos, msg) }
+func (l *captureLogger) Warn(msg string, _ ...any) { l.warns = append(l.warns, msg) }
+func (l *captureLogger) Error(string, ...any)      {}
+func (l *captureLogger) Debug(string, ...any)      {}
 
 func TestSessionHTTPErrorConflicts(t *testing.T) {
 	for _, err := range []error{
@@ -59,4 +70,22 @@ func TestLazyRoutesBindRequestID(t *testing.T) {
 
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Equal(t, "req-lazy", rec.Header().Get(observability.RequestIDHeader))
+}
+
+func TestLazyRoutesRecordTerminalOnlyForChatResolutionFailures(t *testing.T) {
+	logger := &captureLogger{}
+	logging.SetLogger(logger)
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group("/v1/devshard"), failingResolver{err: ErrInitializing}, nil)
+
+	chatReq := httptest.NewRequest(http.MethodPost, "/v1/devshard/sessions/escrow-1/chat/completions", nil)
+	e.ServeHTTP(httptest.NewRecorder(), chatReq)
+
+	require.Contains(t, logger.infos, "devshard request terminal")
+
+	logger.infos = nil
+	statsReq := httptest.NewRequest(http.MethodGet, "/v1/devshard/sessions/escrow-1/diffs", nil)
+	e.ServeHTTP(httptest.NewRecorder(), statsReq)
+
+	require.NotContains(t, logger.infos, "devshard request terminal")
 }

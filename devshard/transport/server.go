@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -104,15 +103,11 @@ func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 // The caller typically mounts this under /v1/devshard.
 func (s *Server) Register(g *echo.Group) {
 	g.Use(observability.RequestIDMiddleware)
-	g.Use(s.AuthMiddleware)
-	if s.rateLimit != nil {
-		g.Use(rateLimitMiddleware(s.rateLimit))
-	}
-	g.POST("/sessions/:id/chat/completions", s.HandleInference)
-	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
-	g.POST("/sessions/:id/challenge-receipt", s.HandleChallengeReceipt)
-	g.POST("/sessions/:id/gossip/nonce", s.HandleGossipNonce)
-	g.POST("/sessions/:id/gossip/txs", s.HandleGossipTxs)
+	g.POST("/sessions/:id/chat/completions", s.withAuth(s.HandleInference, true))
+	g.POST("/sessions/:id/verify-timeout", s.withAuth(s.HandleVerifyTimeout, false))
+	g.POST("/sessions/:id/challenge-receipt", s.withAuth(s.HandleChallengeReceipt, false))
+	g.POST("/sessions/:id/gossip/nonce", s.withAuth(s.HandleGossipNonce, false))
+	g.POST("/sessions/:id/gossip/txs", s.withAuth(s.HandleGossipTxs, false))
 	// TODO: GET endpoints are intentionally unauthenticated for now.
 	// Before production, restrict these to group members or add read-only auth.
 	g.GET("/sessions/:id/diffs", s.HandleGetDiffs)
@@ -131,34 +126,25 @@ func writeJSON(c echo.Context, code int, v interface{}) error {
 	return c.Blob(code, echo.MIMEApplicationJSON, b)
 }
 
-func isChatCompletionRequest(c echo.Context) bool {
-	path := c.Path()
-	if path == "" {
-		path = c.Request().URL.Path
-	}
-	return strings.HasSuffix(path, "/chat/completions")
-}
-
-func recordNoReceiptTerminal(ctx context.Context, c echo.Context, escrowID string, reason observability.Reason, where observability.Where) {
-	if !isChatCompletionRequest(c) {
+func recordNoReceiptTerminal(ctx context.Context, escrowID string, reason observability.Reason, where observability.Where, recordChatTerminal bool) {
+	if !recordChatTerminal {
 		return
 	}
 	observability.RecordNoReceiptInterrupted(ctx, escrowID, reason, where)
 }
 
-func recordRequestIssue(ctx context.Context, msg string, stage observability.Stage, where observability.Where, escrowID string, status, reason observability.Reason, sender string, err error, fields ...any) {
-	observability.IncRequest(stage, status)
+func recordRequestIssue(ctx context.Context, msg string, stage observability.Stage, where observability.Where, escrowID string, reason observability.Reason, sender string, err error, fields ...any) {
 	eventFields := make([]any, 0, len(fields)+2)
 	if sender != "" {
 		eventFields = append(eventFields, "sender", sender)
 	}
 	eventFields = append(eventFields, fields...)
-	observability.Log(ctx, observability.LevelWarn, msg, stage, where, escrowID, status, reason, err, eventFields...)
+	observability.Log(ctx, observability.LevelWarn, msg, stage, where, escrowID, reason, err, eventFields...)
 }
 
-func denyRequest(ctx context.Context, c echo.Context, msg string, code int, stage observability.Stage, where observability.Where, escrowID string, status, reason observability.Reason, sender string, err error, fields ...any) error {
-	recordRequestIssue(ctx, msg, stage, where, escrowID, status, reason, sender, err, fields...)
-	recordNoReceiptTerminal(ctx, c, escrowID, reason, where)
+func denyRequest(ctx context.Context, c echo.Context, msg string, code int, stage observability.Stage, where observability.Where, escrowID string, reason observability.Reason, sender string, err error, recordChatTerminal bool, fields ...any) error {
+	recordRequestIssue(ctx, msg, stage, where, escrowID, reason, sender, err, fields...)
+	recordNoReceiptTerminal(ctx, escrowID, reason, where, recordChatTerminal)
 	return echo.NewHTTPError(code, msg)
 }
 
@@ -217,7 +203,18 @@ func (s *Server) isGroupMember(addr string) bool {
 // authMiddleware reads the body, verifies the signature, checks group membership,
 // and stores the sender address in the echo context.
 // GET requests skip auth intentionally for now.
+func (s *Server) withAuth(next echo.HandlerFunc, recordChatTerminal bool) echo.HandlerFunc {
+	if s.rateLimit != nil {
+		next = rateLimitMiddleware(s.rateLimit, recordChatTerminal)(next)
+	}
+	return s.AuthMiddlewareFor(next, recordChatTerminal)
+}
+
 func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return s.AuthMiddlewareFor(next, false)
+}
+
+func (s *Server) AuthMiddlewareFor(next echo.HandlerFunc, recordChatTerminal bool) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := c.Request().Context()
 		if c.Request().Method == http.MethodGet {
@@ -228,17 +225,17 @@ func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		sigHex := c.Request().Header.Get(HeaderSignature)
 		tsStr := c.Request().Header.Get(HeaderTimestamp)
 		if sigHex == "" || tsStr == "" {
-			return denyRequest(ctx, c, "missing auth headers", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonMissingAuthHeaders, "", nil)
+			return denyRequest(ctx, c, "missing auth headers", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonMissingAuthHeaders, "", nil, recordChatTerminal)
 		}
 
 		sig, err := hex.DecodeString(sigHex)
 		if err != nil {
-			return denyRequest(ctx, c, "invalid signature hex", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonInvalidSignatureHex, "", err)
+			return denyRequest(ctx, c, "invalid signature hex", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonInvalidSignatureHex, "", err, recordChatTerminal)
 		}
 
 		ts, err := strconv.ParseInt(tsStr, 10, 64)
 		if err != nil {
-			return denyRequest(ctx, c, "invalid timestamp", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonInvalidTimestamp, "", err)
+			return denyRequest(ctx, c, "invalid timestamp", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonInvalidTimestamp, "", err, recordChatTerminal)
 		}
 
 		// Cap body size before reading.
@@ -248,17 +245,17 @@ func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 
 		body, err := io.ReadAll(c.Request().Body)
 		if err != nil {
-			return denyRequest(ctx, c, "read body", http.StatusBadRequest, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonBodyReadErr, observability.ReasonBodyReadErr, "", err)
+			return denyRequest(ctx, c, "read body", http.StatusBadRequest, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonBodyReadErr, "", err, recordChatTerminal)
 		}
 
 		now := time.Now().Unix()
 		addr, err := VerifyRequest(s.verifier, s.host.EscrowID(), body, sig, ts, now)
 		if err != nil {
-			return denyRequest(ctx, c, "request signature verification failed", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonSignatureVerifyErr, "", err)
+			return denyRequest(ctx, c, "request signature verification failed", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonSignatureVerifyErr, "", err, recordChatTerminal)
 		}
 
 		if !s.isAllowedSender(addr) {
-			return denyRequest(ctx, c, "sender not in group", http.StatusForbidden, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonSenderNotAllowed, addr, nil)
+			return denyRequest(ctx, c, "sender not in group", http.StatusForbidden, observability.StageReceived, observability.WhereTransportAuth, s.host.EscrowID(), observability.ReasonSenderNotAllowed, addr, nil, recordChatTerminal)
 		}
 
 		// Store sender and re-inject body for handler.
@@ -286,41 +283,37 @@ func getBody(c echo.Context) ([]byte, error) {
 
 func (s *Server) HandleInference(c echo.Context) error {
 	ctx := c.Request().Context()
-	started := time.Now()
 	doneInflight := observability.IncInflight(observability.StageRequest)
 	defer doneInflight()
 
 	sender, err := getSender(c)
 	if err != nil {
-		return denyRequest(ctx, c, "missing sender", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonAuthErr, observability.ReasonMissingSender, "", err)
+		return denyRequest(ctx, c, "missing sender", http.StatusUnauthorized, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonMissingSender, "", err, true)
 	}
 	if !s.isOwner(sender) {
-		return denyRequest(ctx, c, "restricted to escrow owner", http.StatusForbidden, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonOwnerErr, observability.ReasonOwnerErr, sender, nil)
+		return denyRequest(ctx, c, "restricted to escrow owner", http.StatusForbidden, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonOwnerErr, sender, nil, true)
 	}
 
 	body, err := getBody(c)
 	if err != nil {
-		return denyRequest(ctx, c, "missing body", http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonBodyReadErr, observability.ReasonBodyReadErr, sender, err)
+		return denyRequest(ctx, c, "missing body", http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonBodyReadErr, sender, err, true)
 	}
 
 	var ir InferenceRequest
 	if err := json.Unmarshal(body, &ir); err != nil {
-		return denyRequest(ctx, c, "invalid json: "+err.Error(), http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonParseErr, observability.ReasonParseErr, sender, err)
+		return denyRequest(ctx, c, "invalid json: "+err.Error(), http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonParseErr, sender, err, true)
 	}
 
 	req, err := HostRequestFromJSON(ir)
 	if err != nil {
-		return denyRequest(ctx, c, "decode request: "+err.Error(), http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonDecodeErr, observability.ReasonDecodeErr, sender, err)
+		return denyRequest(ctx, c, "decode request: "+err.Error(), http.StatusBadRequest, observability.StageReceived, observability.WhereTransportHandleInference, s.host.EscrowID(), observability.ReasonDecodeErr, sender, err, true)
 	}
-	observability.IncRequest(observability.StageReceived, observability.ReasonOK)
 
 	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
-		return denyRequest(ctx, c, err.Error(), http.StatusInternalServerError, observability.StageReceipt, where, s.host.EscrowID(), reason, reason, sender, err)
+		return denyRequest(ctx, c, err.Error(), http.StatusInternalServerError, observability.StageReceipt, where, s.host.EscrowID(), reason, sender, err, true)
 	}
-	observability.ObserveRequest(observability.StageReceived, observability.ReasonOK, started)
-	observability.IncRequest(observability.StageReceipt, observability.ReasonOK)
 
 	// Always SSE response.
 	w := c.Response()
@@ -340,42 +333,48 @@ func (s *Server) HandleInference(c echo.Context) error {
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
 	if err := writeSSEEvent(w, receiptWrapper); err != nil {
-		recordRequestIssue(ctx, "write receipt SSE failed", observability.StageReceiptWritten, observability.WhereTransportWriteReceiptSSE, s.host.EscrowID(), observability.ReasonReceiptWriteErr, observability.ReasonReceiptWriteErr, sender, err,
+		recordRequestIssue(ctx, "write receipt SSE failed", observability.StageReceiptWritten, observability.WhereTransportWriteReceiptSSE, s.host.EscrowID(), observability.ReasonReceiptWriteErr, sender, err,
 			"inference_id", resp.InferenceID,
 			"nonce", resp.Nonce)
-		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE, resp.ReceiptExpected, resp.ExecutionExpected)
+		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
+		if resp.ExecutionJob != nil {
+			s.host.ReleaseExecution(resp.InferenceID)
+		}
 		return nil
 	}
-	observability.IncRequest(observability.StageReceiptWritten, observability.ReasonOK)
 
 	// Event 2+: inference result.
 	// If reconnecting to a completed inference, replay cached response.
 	// Otherwise run deferred execution with live streaming.
+	finishReason := observability.ReasonOK
+	var finishFailureWhere observability.Where
 	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
 		if err := replaySSEBody(w, resp.CachedResponseBody); err != nil {
-			recordRequestIssue(ctx, "cached response replay failed", observability.StageResponseStreamed, observability.WhereRuntimeWriteClientResponse, s.host.EscrowID(), observability.ReasonCachedReplayErr, observability.ReasonCachedReplayErr, sender, err,
+			recordRequestIssue(ctx, "cached response replay failed", observability.StageResponseStreamed, observability.WhereRuntimeWriteClientResponse, s.host.EscrowID(), observability.ReasonCachedReplayErr, sender, err,
 				"inference_id", resp.InferenceID,
 				"nonce", resp.Nonce)
 			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
 			return nil
 		}
-		observability.IncRequest(observability.StageResponseStreamed, observability.ReasonCached)
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
-		_, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
+		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
 			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
 			if errors.Is(ctx.Err(), context.Canceled) {
-				observability.IncRequest(observability.StageFinished, observability.ReasonClientCancelledAfterReceipt)
 				observability.RecordClientCancelledAfterReceipt(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, where)
 				return nil
 			}
-			observability.IncRequest(observability.StageFinished, reason)
 			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, where)
 			return nil
 		}
-		observability.IncRequest(observability.StageResponseStreamed, observability.ReasonOK)
-		observability.IncRequest(observability.StageFinished, observability.ReasonOK)
+		if execResult != nil && execResult.PartialResponse {
+			finishReason = observability.Reason(execResult.PartialResponseReason)
+			if finishReason == "" {
+				finishReason = observability.ReasonPartialResponseInterrupted
+			}
+			finishFailureWhere = observability.Where(execResult.PartialResponseWhere)
+		}
 	}
 
 	// Final event: devshard_meta with updated mempool.
@@ -383,7 +382,7 @@ func (s *Server) HandleInference(c echo.Context) error {
 	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	if err := writeSSEEvent(w, metaWrapper); err != nil {
-		observability.Log(ctx, observability.LevelWarn, "write meta SSE failed", observability.StageFinished, observability.WhereRuntimeWriteClientResponse, s.host.EscrowID(), observability.ReasonMetaWriteErr, observability.ReasonMetaWriteErr, err,
+		observability.Log(ctx, observability.LevelWarn, "write meta SSE failed", observability.StageFinished, observability.WhereRuntimeWriteClientResponse, s.host.EscrowID(), observability.ReasonMetaWriteErr, err,
 			"sender", sender,
 			"inference_id", resp.InferenceID,
 			"nonce", resp.Nonce)
@@ -399,7 +398,7 @@ func (s *Server) HandleInference(c echo.Context) error {
 
 	switch {
 	case resp.ExecutionExpected && resp.ExecutionJob != nil:
-		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce)
+		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, finishReason, finishFailureWhere)
 	case resp.Receipt != nil:
 		observability.RecordReceiptNoExecutionExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
 	default:

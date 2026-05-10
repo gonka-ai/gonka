@@ -67,8 +67,8 @@ func ExecuteInferenceWithExecutor(
 	if err != nil {
 		return nil, err
 	}
-	observability.ObserveTokens(observability.PathExecute, "", observability.ReasonPromptTokens, processed.InputTokens)
-	observability.ObserveTokens(observability.PathExecute, "", observability.ReasonCompletionTokens, processed.OutputTokens)
+	observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindPrompt, processed.InputTokens)
+	observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindCompletion, processed.OutputTokens)
 
 	// Store the canonicalized ORIGINAL prompt (not the modified one with seed).
 	promptPayload, err := devshardpkg.CanonicalizeJSON(req.Prompt)
@@ -87,10 +87,13 @@ func ExecuteInferenceWithExecutor(
 	}
 
 	return &devshardpkg.ExecuteResult{
-		ResponseHash: processed.ResponseHash,
-		InputTokens:  processed.InputTokens,
-		OutputTokens: processed.OutputTokens,
-		ResponseBody: processed.ResponseBody,
+		ResponseHash:          processed.ResponseHash,
+		InputTokens:           processed.InputTokens,
+		OutputTokens:          processed.OutputTokens,
+		ResponseBody:          processed.ResponseBody,
+		PartialResponse:       processed.PartialResponse,
+		PartialResponseReason: processed.PartialResponseReason,
+		PartialResponseWhere:  processed.PartialResponseWhere,
 	}, nil
 }
 
@@ -137,10 +140,13 @@ func ValidateInferenceWithExecutor(
 }
 
 type ProcessedExecutionResponse struct {
-	ResponseHash []byte
-	InputTokens  uint64
-	OutputTokens uint64
-	ResponseBody []byte
+	ResponseHash          []byte
+	InputTokens           uint64
+	OutputTokens          uint64
+	ResponseBody          []byte
+	PartialResponse       bool
+	PartialResponseReason string
+	PartialResponseWhere  string
 }
 
 func ProcessExecutionHTTPResponse(
@@ -172,6 +178,10 @@ func ProcessExecutionHTTPResponse(
 		return nil, err
 	}
 	if processErr != nil {
+		_, where := observability.ErrorReason(processErr, observability.ReasonResponseProcessErr, observability.WhereRuntimeProcessExecution)
+		processed.PartialResponse = true
+		processed.PartialResponseReason = string(observability.ReasonPartialResponseInterrupted)
+		processed.PartialResponseWhere = string(where)
 		logging.Warn("Using partial devshard inference response after interrupted stream",
 			chaintypes.Inferences, "inferenceId", inferenceID, "error", processErr)
 	}
@@ -263,7 +273,7 @@ func EvaluateValidationResponse(
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		observability.IncValidation(observability.StageValidationFinished, observability.ReasonRejectedPayload)
+		observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
 		return &devshardpkg.ValidateResult{
 			Valid:   true,
 			Reason:  "rejected_payload",
@@ -324,7 +334,6 @@ func EvaluateValidationResponse(
 }
 
 func tokenCountInflated(claimed, validation uint64) bool {
-	// TODO: figure out tokens
 	const tokenCountTolerance uint64 = 3
 	return claimed > validation && claimed-validation > tokenCountTolerance
 }

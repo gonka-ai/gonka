@@ -210,13 +210,13 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(rate(devshard_request_total{stage=\"received\",status=\"ok\"}[5m]))",
+          "expr": "sum(rate(devshard_request_terminal_total[5m]))",
           "instant": true,
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Accepted Requests / sec",
+      "title": "Terminal Requests / sec",
       "type": "stat"
     },
     {
@@ -414,14 +414,14 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(devshard_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(devshard_mlnode_call_seconds_bucket[5m])))",
           "instant": false,
-          "legendFormat": "p95 {{stage}}",
+          "legendFormat": "p95 {{path}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Request Stage Latency p95",
+      "title": "ML Node Call Latency p95",
       "type": "timeseries"
     },
     {

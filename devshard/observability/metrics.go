@@ -14,8 +14,6 @@ var (
 	registryOnce sync.Once
 	registry     *prometheus.Registry
 
-	requestTotal           *prometheus.CounterVec
-	requestDuration        *prometheus.HistogramVec
 	inflight               *prometheus.GaugeVec
 	requestTerminalTotal   *prometheus.CounterVec
 	interruptionTotal      *prometheus.CounterVec
@@ -53,15 +51,6 @@ func Handler() http.Handler {
 func initRegistry() {
 	registry = prometheus.NewRegistry()
 
-	requestTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "devshard_request_total",
-		Help: "Devshard inference lifecycle events.",
-	}, []string{"stage", "status"})
-	requestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "devshard_request_duration_seconds",
-		Help:    "Devshard inference lifecycle stage duration.",
-		Buckets: durationBuckets,
-	}, []string{"stage", "status"})
 	inflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_inflight",
 		Help: "In-flight devshard operations by stage.",
@@ -139,8 +128,6 @@ func initRegistry() {
 	registry.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		requestTotal,
-		requestDuration,
 		inflight,
 		requestTerminalTotal,
 		interruptionTotal,
@@ -161,16 +148,6 @@ func initRegistry() {
 	)
 }
 
-func IncRequest(stage Stage, status Reason) {
-	ensureMetrics()
-	requestTotal.WithLabelValues(string(stage), string(status)).Inc()
-}
-
-func ObserveRequest(stage Stage, status Reason, started time.Time) {
-	ensureMetrics()
-	requestDuration.WithLabelValues(string(stage), string(status)).Observe(time.Since(started).Seconds())
-}
-
 func IncInflight(stage Stage) func() {
 	ensureMetrics()
 	inflight.WithLabelValues(string(stage)).Inc()
@@ -187,9 +164,9 @@ func IncInterruption(class, reason Reason) {
 	interruptionTotal.WithLabelValues(string(class), string(reason)).Inc()
 }
 
-func IncSessionResolution(route string, status, reason Reason) {
+func IncSessionResolution(route string, metricStatus MetricStatus, reason Reason) {
 	ensureMetrics()
-	sessionResolutionTotal.WithLabelValues(route, string(status), string(reason)).Inc()
+	sessionResolutionTotal.WithLabelValues(route, string(metricStatus), string(reason)).Inc()
 }
 
 func IncReceiptOrphan(reason Reason) {
@@ -197,9 +174,9 @@ func IncReceiptOrphan(reason Reason) {
 	receiptOrphanTotal.WithLabelValues(string(reason)).Inc()
 }
 
-func IncValidation(stage Stage, status Reason) {
+func IncValidation(stage Stage, metricStatus MetricStatus) {
 	ensureMetrics()
-	validationTotal.WithLabelValues(string(stage), string(status)).Inc()
+	validationTotal.WithLabelValues(string(stage), string(metricStatus)).Inc()
 }
 
 func IncValidationOrphan(reason Reason) {
@@ -212,9 +189,9 @@ func IncValidationQueueDrop() {
 	validationQueueDrops.Inc()
 }
 
-func IncPayloadRequest(status, reason Reason) {
+func IncPayloadRequest(metricStatus MetricStatus, reason Reason) {
 	ensureMetrics()
-	payloadRequestTotal.WithLabelValues(string(status), string(reason)).Inc()
+	payloadRequestTotal.WithLabelValues(string(metricStatus), string(reason)).Inc()
 }
 
 func IncMLNodeAttempt(path Path, outcome Reason, nodeID string) {
@@ -222,12 +199,12 @@ func IncMLNodeAttempt(path Path, outcome Reason, nodeID string) {
 	mlnodeAttemptsTotal.WithLabelValues(string(path), string(outcome), nodeID).Inc()
 }
 
-func ObserveMLNodeCall(path Path, nodeID string, phase Reason, started time.Time) {
+func ObserveMLNodeCall(path Path, nodeID string, phase MetricPhase, started time.Time) {
 	ensureMetrics()
 	mlnodeCallSeconds.WithLabelValues(string(path), nodeID, string(phase)).Observe(time.Since(started).Seconds())
 }
 
-func ObserveTokens(path Path, nodeID string, kind Reason, tokens uint64) {
+func ObserveTokens(path Path, nodeID string, kind TokenKind, tokens uint64) {
 	ensureMetrics()
 	mlnodeTokens.WithLabelValues(string(path), nodeID, string(kind)).Observe(float64(tokens))
 }

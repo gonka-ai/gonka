@@ -54,7 +54,7 @@ func (rl *rateLimiter) allow(sender string) bool {
 }
 
 // Must run after auth middleware so contextKeySender is set.
-func rateLimitMiddleware(rl *rateLimiter) echo.MiddlewareFunc {
+func rateLimitMiddleware(rl *rateLimiter, recordChatTerminal bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sender, _ := c.Get(contextKeySender).(string)
@@ -63,9 +63,8 @@ func rateLimitMiddleware(rl *rateLimiter) echo.MiddlewareFunc {
 			}
 			if !rl.allow(sender) {
 				ctx := c.Request().Context()
-				observability.IncRequest(observability.StageReceived, observability.ReasonRateLimited)
-				observability.Log(ctx, observability.LevelWarn, "rate limit exceeded", observability.StageReceived, observability.WhereTransportRateLimit, c.Param("id"), observability.ReasonRateLimited, observability.ReasonRateLimited, nil, "sender", sender)
-				if isChatCompletionRequest(c) {
+				observability.Log(ctx, observability.LevelWarn, "rate limit exceeded", observability.StageReceived, observability.WhereTransportRateLimit, c.Param("id"), observability.ReasonRateLimited, nil, "sender", sender)
+				if recordChatTerminal {
 					observability.RecordNoReceiptInterrupted(ctx, c.Param("id"), observability.ReasonRateLimited, observability.WhereTransportRateLimit)
 				}
 				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
