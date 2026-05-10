@@ -15,7 +15,7 @@
 //     without an out-of-band channel.
 //   - Writes `-out` (default `docker-compose.yml`) with one
 //     `mock-chain`, one `height-sync`, N `devshardd-testenv-<i>`, and a
-//     `devshardctl` service (opt-in via `profiles: [tools]`).
+//     `devshardctl` service (operator proxy; same `docker compose up` as hosts).
 //   - Appends `-obs-fragment` (default `observability/compose-fragment.yaml`)
 //     when present so the observability overlay stays a regeneration-
 //     friendly sibling rather than a parallel tree.
@@ -69,8 +69,8 @@ func main() {
 	log.Printf("wrote %s and updated %s", *outPath, *cfgPath)
 	log.Printf("chain: %s  escrow: %s  hosts: %d  slots: %d  validators: %d",
 		cfg.Chain.ID, cfg.Escrow.ID, len(cfg.Hosts), cfg.Escrow.Slots, len(cfg.HeightSync.Validators))
-	log.Printf("devshardctl: http://localhost:%d (profile: tools)", cfg.User.Port)
-	log.Printf("start: docker compose up -d   (add --profile tools to enable devshardctl)")
+	log.Printf("devshardctl: http://localhost:%d", cfg.User.Port)
+	log.Printf("start: docker compose up -d")
 }
 
 // loadOrDefault loads cfg from path or returns a defaulted config if
@@ -355,9 +355,8 @@ services:
       - height-sync
     restart: unless-stopped
 {{ end }}
-  # ── devshardctl (operator CLI proxy; opt-in via --profile tools) ───────────
+  # ── devshardctl (operator CLI proxy; always part of default compose up) ─────
   devshardctl:
-    profiles: ["tools"]
     build:
       context: ..
       dockerfile: testenv/Dockerfile.devshardctl
@@ -366,17 +365,24 @@ services:
       TESTENV_PRIVATE_KEY: "{{ .User.PrivateKeyHex }}"
       ESCROW_ID: "{{ .Escrow.ID }}"
       MOCK_CHAIN_URL: "mock-chain:{{ .MockChain.Port }}"
-      DEVSHARDD_URL: "{{ (index .Hosts 0).URL }}"
+      # devshardctl uses grpc GetHostInfo → each host url from config.yaml (mock-chain).
+      # Hosts mount transport under /v1/devshard (see devshardd-testenv); default Version=dev would use /devshard/dev.
+      DEVSHARD_ROUTE_PREFIX: "/v1/devshard"
       CONFIG_PATH: "/app/config.yaml"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     ports:
-      - "{{ .User.Port }}:{{ .User.Port }}"
+      # Host publishes config user.port; container listens on devshardctl default (:8080).
+      - "{{ .User.Port }}:8080"
     networks:
       testenv:
         ipv4_address: 172.30.0.9
     depends_on:
       - mock-chain
+      - height-sync
+{{- range $i, $h := .Hosts }}
+      - {{ $h.ID }}
+{{- end }}
     restart: unless-stopped
 `
 

@@ -38,6 +38,10 @@ build: ## Compile every testenv binary locally (sanity check, not used in contai
 test: ## Run the devshard + testenv unit tests.
 	go test ./...
 
+.PHONY: e2e
+e2e: ## Phase A container scenarios (Docker + observability); skip with TESTENV_SKIP_DOCKER_STACK=1. Test logs include copy-paste `docker compose logs` lines for devshardctl / devshardd hosts.
+	cd .. && go test -tags=testenvci -v -timeout=20m ./testenv/scenarios/container/...
+
 # ------------------------------------------------------------- compose ----
 
 .PHONY: gen-compose
@@ -61,8 +65,8 @@ logs: ## Phase 11: follow logs from every service.
 	docker compose $(COMPOSE_BASE) logs -f
 
 .PHONY: ctl
-ctl: ## Phase 11: run the devshardctl CLI container (tools profile).
-	docker compose $(COMPOSE_BASE) --profile tools run --rm devshardctl
+ctl: ## Phase 11: run a one-off devshardctl CLI in the stack (ephemeral `run --rm`).
+	docker compose $(COMPOSE_BASE) run --rm devshardctl
 
 # ---------------------------------------------------------- dev overlay ---
 
@@ -73,6 +77,13 @@ dev-build: ## Phase 12: (re)build the shared dev-toolchain image.
 .PHONY: dev-up
 dev-up: ## Phase 12: start stack with live-reload + dlv overlay.
 	docker compose $(DEV_OVERLAY) up -d
+
+.PHONY: hot-up
+hot-up: dev-up ## Alias: start stack with hot reload (live-reload + dlv).
+
+.PHONY: hot-recreate
+hot-recreate: ## Recreate hot-reload stack containers (pick up .air/config changes).
+	docker compose $(DEV_OVERLAY) up -d --force-recreate
 
 .PHONY: dev-down
 dev-down: ## Phase 12: stop dev overlay (keeps caches).

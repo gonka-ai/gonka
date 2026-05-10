@@ -22,7 +22,7 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 // where:
 //
 //	host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
-//	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
+//	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash || height_sync_hash) -- 32 bytes
 //	fees_be         = uint64 fees in big-endian            -- 8 bytes
 //	version_hash    = sha256(bound session version)        -- 32 bytes
 //	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
@@ -41,18 +41,36 @@ func ComputeStateRoot(
 	phase types.SessionPhase,
 	warmKeys map[uint32]string,
 	fees uint64,
+	heightSync types.HeightSyncEscrowCommit,
 	version ...string,
 ) ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(hostStats)
 	if err != nil {
 		return nil, err
 	}
-	restHash, err := computeRestHash(balance, inferences, warmKeys)
+	restHash, err := computeRestHash(balance, inferences, warmKeys, hashHeightSyncEscrow(heightSync))
 	if err != nil {
 		return nil, err
 	}
 
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version...), nil
+}
+
+func hashHeightSyncEscrow(h types.HeightSyncEscrowCommit) []byte {
+	buf := make([]byte, 8*6+4)
+	binary.BigEndian.PutUint64(buf[0:], h.ForcedStart)
+	binary.BigEndian.PutUint64(buf[8:], h.ForcedEnd)
+	binary.BigEndian.PutUint64(buf[16:], h.CadenceSwallowUntil)
+	binary.BigEndian.PutUint64(buf[24:], h.SwallowFe)
+	binary.BigEndian.PutUint64(buf[32:], h.TurnK)
+	binary.BigEndian.PutUint64(buf[40:], h.TurnSlots)
+	reason := []byte(h.Reason)
+	binary.BigEndian.PutUint32(buf[48:], uint32(len(reason)))
+	hsh := sha256.New()
+	hsh.Write(buf)
+	hsh.Write(reason)
+	sum := hsh.Sum(nil)
+	return sum[:]
 }
 
 // ComputeHostStatsHash computes sha256(proto(sorted host stats)).
@@ -61,10 +79,10 @@ func ComputeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	return computeHostStatsHash(hostStats)
 }
 
-// ComputeRestHash computes sha256(balance_be || inferences_hash || warm_keys_hash).
+// ComputeRestHash computes sha256(balance_be || inferences_hash || warm_keys_hash || height_sync_hash).
 // Exported for settlement verification on mainnet.
-func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
-	return computeRestHash(balance, inferences, warmKeys)
+func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string, heightSync types.HeightSyncEscrowCommit) ([]byte, error) {
+	return computeRestHash(balance, inferences, warmKeys, hashHeightSyncEscrow(heightSync))
 }
 
 // ComputeStateRootFromRestHash computes the canonical state root when host
@@ -156,7 +174,7 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	return hash[:], nil
 }
 
-func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
+func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string, heightSyncHash []byte) ([]byte, error) {
 	infHash, err := computeInferencesHash(inferences)
 	if err != nil {
 		return nil, err
@@ -170,6 +188,7 @@ func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 	h.Write(balBytes)
 	h.Write(infHash)
 	h.Write(warmKeysHash)
+	h.Write(heightSyncHash)
 	return h.Sum(nil), nil
 }
 

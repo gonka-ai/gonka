@@ -33,6 +33,8 @@ package obsmetrics
 import (
 	"net/http"
 
+	"devshard/heightsync"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -103,6 +105,10 @@ func New() (*Metrics, error) {
 			},
 			[]string{"path", "verdict"},
 		),
+	}
+
+	if err := heightsync.RegisterAnchorMetrics(reg); err != nil {
+		return nil, err
 	}
 
 	for _, c := range []prometheus.Collector{

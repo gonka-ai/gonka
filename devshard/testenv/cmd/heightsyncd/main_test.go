@@ -215,7 +215,13 @@ func TestBuildStandaloneConfig_ShippedConfigYAML(t *testing.T) {
 // check — hosts trust the oracle and skip verification, but the set
 // must still be auditable from the same config.
 func TestHeightSync_SignsWithConfiguredValidators(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Run the standalone service on a dedicated context. Sharing the same
+	// context as blockoracle/client.NewHTTP tied shutdown races to HTTP
+	// client timeouts and occasionally deadlocked svc.Run's drain phase
+	// under load (see standalone.Service.Run).
+	runCtx, runCancel := context.WithCancel(context.Background())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// 5 validators with non-uniform power to also lock in the
@@ -260,13 +266,13 @@ height_sync:
 	require.NoError(t, err)
 
 	runErr := make(chan error, 1)
-	go func() { runErr <- svc.Run(ctx) }()
+	go func() { runErr <- svc.Run(runCtx) }()
 	defer func() {
-		cancel()
+		runCancel()
 		select {
 		case err := <-runErr:
 			require.NoError(t, err)
-		case <-time.After(5 * time.Second):
+		case <-time.After(15 * time.Second):
 			t.Fatal("standalone Run did not return")
 		}
 	}()

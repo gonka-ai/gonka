@@ -40,6 +40,9 @@ type MockConfig struct {
 	ChainID       string
 	Validators    []MockValidator
 	BlockInterval time.Duration
+	// BlockIntervalDelta adds symmetric jitter around BlockInterval.
+	// Example: 1s ± 250ms => [750ms, 1250ms]. ≤0 disables jitter.
+	BlockIntervalDelta time.Duration
 	Seed          int64
 	Start         time.Time
 	InitialHeight int64 // default 1
@@ -110,6 +113,9 @@ func NewMock(cfg MockConfig) (*Mock, error) {
 	if cfg.BlockInterval <= 0 {
 		cfg.BlockInterval = time.Second
 	}
+	if cfg.BlockIntervalDelta < 0 {
+		cfg.BlockIntervalDelta = 0
+	}
 	if cfg.InitialHeight <= 0 {
 		cfg.InitialHeight = 1
 	}
@@ -143,17 +149,25 @@ func (m *Mock) Run(ctx context.Context) error {
 	if _, err := m.AdvanceOne(); err != nil {
 		return err
 	}
-	t := time.NewTicker(m.cfg.BlockInterval)
-	defer t.Stop()
+	nextHeight := m.cfg.InitialHeight + 1
 	for {
+		wait := m.intervalForHeight(nextHeight)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			m.close()
 			return ctx.Err()
-		case <-t.C:
+		case <-timer.C:
 			if _, err := m.AdvanceOne(); err != nil {
 				return err
 			}
+			nextHeight++
 		}
 	}
 }
@@ -174,7 +188,7 @@ func (m *Mock) advanceLocked() (*blockoracle.Header, error) {
 		t = m.cfg.Start
 	} else {
 		height = m.latest.Height + 1
-		t = m.latest.Time.Add(m.cfg.BlockInterval)
+		t = m.latest.Time.Add(m.intervalForHeight(height))
 	}
 
 	h := &blockoracle.Header{
@@ -201,6 +215,33 @@ func (m *Mock) advanceLocked() (*blockoracle.Header, error) {
 	m.history[height] = h
 	m.fanoutLocked(h)
 	return h, nil
+}
+
+func (m *Mock) intervalForHeight(height int64) time.Duration {
+	base := m.cfg.BlockInterval
+	delta := m.cfg.BlockIntervalDelta
+	if delta <= 0 {
+		return base
+	}
+
+	deltaNs := delta.Nanoseconds()
+	if deltaNs <= 0 {
+		return base
+	}
+
+	// Deterministic jitter from (seed, height) so runs are reproducible.
+	var seedBuf [16]byte
+	binary.BigEndian.PutUint64(seedBuf[:8], uint64(m.cfg.Seed)^0x9e3779b97f4a7c15)
+	binary.BigEndian.PutUint64(seedBuf[8:], uint64(height))
+	state := sha256.Sum256(append([]byte("mock-interval-jitter:"), seedBuf[:]...))
+
+	span := uint64(2*deltaNs + 1) // [-delta, +delta]
+	j := int64(binary.BigEndian.Uint64(state[:8])%span) - deltaNs
+	d := base + time.Duration(j)
+	if d <= 0 {
+		return time.Millisecond
+	}
+	return d
 }
 
 // signCommit returns a deterministic subset of the pinned validators'

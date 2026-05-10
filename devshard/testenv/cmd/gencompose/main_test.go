@@ -268,11 +268,12 @@ func TestWriteCompose_EndToEnd(t *testing.T) {
 		"devshardd-testenv-0:",
 		"devshardd-testenv-3:",
 		"devshardctl:",
-		`profiles: ["tools"]`,
+		`- "8081:8080"`, // host user.port → container devshardctl default listen
 		`MOCK_CHAIN_URL: "mock-chain:9090"`,
 		`HEIGHT_SYNC_URL: "http://height-sync:9100"`,
 		`CHAIN_ID: "gonka-testenv-1"`,
 		`ESCROW_ID: "1"`,
+		`DEVSHARD_ROUTE_PREFIX: "/v1/devshard"`,
 		"ipv4_address: 172.30.0.2",  // mock-chain
 		"ipv4_address: 172.30.0.3",  // height-sync
 		"ipv4_address: 172.30.0.9",  // devshardctl

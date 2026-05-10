@@ -141,13 +141,12 @@ click *Reconnect* to re-attach on the same port.
 
 ### 4.1 Start the operator proxy
 
-The base compose file gates `devshardctl` behind `profiles: ["tools"]`
-so it doesn't come up by default. For the inference test we bring it
-up explicitly so port `8081` is published:
+The base compose file includes `devshardctl`; `docker compose up -d` brings it
+up with the rest of the stack and publishes port `8081`. If it is not running:
 
 ```bash
-docker compose --profile tools up -d devshardctl
-docker compose --profile tools logs -f devshardctl &   # optional
+docker compose up -d devshardctl
+docker compose logs -f devshardctl &   # optional
 ```
 
 Wait for a `devshardctl listening on :8081 …` line.
@@ -245,8 +244,9 @@ done
 You should see each host log at least one `MsgConfirmStart` for a
 different nonce. If all 8 requests land on one host, either slot
 assignment is broken (check `docker-compose.yml` `SLOT_INDEX` vars)
-or the operator proxy is pinning every call to the same host (check
-`DEVSHARDD_URL` / `--host` on `devshardctl`).
+or mock-chain participant URLs all point at one host (check
+`hosts[].url` in `config.yaml` and `docker compose exec mock-chain`
+logs).
 
 ### 4.4 Finalize (optional)
 
@@ -267,8 +267,8 @@ gRPC bridge; no mainnet calls happen.
 ## 5. Tear down
 
 ```bash
-docker compose --profile tools down           # stop devshardctl
-make dev-down                                 # stop the rest (keeps caches)
+docker compose down                           # stop full stack (including devshardctl)
+make dev-down                                 # stop the dev overlay (keeps caches)
 # or
 make dev-clean                                # full wipe including volumes
 ```
@@ -279,8 +279,8 @@ make dev-clean                                # full wipe including volumes
 |------------------------------------------------|---------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `air: building... failed: package not found`   | `.air.<svc>.toml` out of sync with cmd layout     | `go test ./testenv/ -run TestAirConfigs_ReferenceRealPackages` pinpoints the bad entry                           |
 | dlv port refuses connection                    | `SYS_PTRACE` or `seccomp:unconfined` missing      | `docker inspect` the service; `go test ./testenv/ -run TestDockerComposeDev_DlvPortsMatchAirConfigs` re-asserts  |
-| `curl: (7) Failed to connect to 127.0.0.1:8081`| devshardctl started via `make ctl` (`run --rm`)   | `docker compose --profile tools up -d devshardctl` instead — `run` does not publish ports                        |
-| Every inference lands on host-0                | `DEVSHARDD_URL` env set in devshardctl container  | `docker compose exec devshardctl env` — look for `DEVSHARDD_URL`; unset it or pass `--host=""` to devshardctl      |
+| `curl: (7) Failed to connect to 127.0.0.1:8081`| devshardctl started via `make ctl` (`run --rm`)   | `docker compose up -d devshardctl` instead — `run` does not publish ports                                        |
+| Every inference lands on host-0                | All `hosts[].url` in config.yaml identical or wrong | Fix `config.yaml` / rerun `go run ./cmd/gencompose`; each host needs its own service URL (e.g. `http://devshardd-testenv-1:8080`) |
 | Response content is identical across requests  | One request reached host, other N-1 failed retry  | Check `POST /v1/debug/pending` and host logs for `MsgTimeoutInference` spam                                      |
 | `make dev-up` hangs building                   | Module cache empty + proxy unreachable            | Retry once; if persistent, `make dev-clean && make dev-up` to rebuild from scratch                               |
 

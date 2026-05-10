@@ -24,6 +24,7 @@ import (
 
 	"devshard/blockoracle"
 	"devshard/blockoracle/verifier"
+	"devshard/logging"
 )
 
 // HTTPConfig pins the HTTP consumer to a specific producer and validator set.
@@ -341,10 +342,22 @@ func (c *Client) ingestFrame(payload string) error {
 	if err := json.Unmarshal([]byte(payload), &h); err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}
+	logging.Debug("blockoracle: stream frame received",
+		"subsystem", "blockoracle-client",
+		"height", h.Height,
+		"chain_id", h.ChainID,
+		"signatures", len(h.Commit.Signatures),
+	)
 	c.mu.RLock()
 	lastVerified := c.lastVerified
 	c.mu.RUnlock()
 	if err := c.verify(&h, lastVerified); err != nil {
+		logging.Warn("blockoracle: stream frame rejected",
+			"subsystem", "blockoracle-client",
+			"height", h.Height,
+			"last_verified", lastVerified,
+			"error", err,
+		)
 		return err
 	}
 	c.store(&h)
@@ -372,6 +385,14 @@ func (c *Client) store(h *blockoracle.Header) {
 	}
 	c.mu.Unlock()
 	atomic.StoreInt64(&c.lastRecvUnix, time.Now().UnixNano())
+	logging.Debug("blockoracle: header cached",
+		"subsystem", "blockoracle-client",
+		"height", h.Height,
+		"block_hash_len", len(h.BlockHash),
+		"app_hash_len", len(h.AppHash),
+		"validators_hash_len", len(h.ValidatorsHash),
+		"signatures", len(h.Commit.Signatures),
+	)
 	c.fanout(h)
 }
 

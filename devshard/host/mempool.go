@@ -1,10 +1,61 @@
 package host
 
 import (
+	"cmp"
+	"slices"
 	"sync"
 
 	"devshard/types"
 )
+
+// mempoolGlobalInference sorts session-wide txs after all per-inference txs.
+const mempoolGlobalInference = ^uint64(0)
+
+// mempoolInferencePhase returns (inference_id, phase) for deterministic mempool ordering.
+// Lower phase runs first for the same inference (ConfirmStart before FinishInference).
+func mempoolInferencePhase(tx *types.DevshardTx) (uint64, uint8) {
+	if si := tx.GetStartInference(); si != nil {
+		return si.InferenceId, 0
+	}
+	if cs := tx.GetConfirmStart(); cs != nil {
+		return cs.InferenceId, 1
+	}
+	if fi := tx.GetFinishInference(); fi != nil {
+		return fi.InferenceId, 2
+	}
+	if ti := tx.GetTimeoutInference(); ti != nil {
+		return ti.InferenceId, 3
+	}
+	if v := tx.GetValidation(); v != nil {
+		return v.InferenceId, 4
+	}
+	if vv := tx.GetValidationVote(); vv != nil {
+		return vv.InferenceId, 5
+	}
+	if tx.GetRevealSeed() != nil {
+		return mempoolGlobalInference, 10
+	}
+	if tx.GetFinalizeRound() != nil {
+		return mempoolGlobalInference, 11
+	}
+	if ft := tx.GetForceHeightSyncTurn(); ft != nil {
+		// Stable tie-break for rare mempool presence.
+		return mempoolGlobalInference, 12
+	}
+	return mempoolGlobalInference, 255
+}
+
+func mempoolTxLess(a, b *types.DevshardTx) int {
+	ai, ap := mempoolInferencePhase(a)
+	bi, bp := mempoolInferencePhase(b)
+	if c := cmp.Compare(ai, bi); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(ap, bp); c != 0 {
+		return c
+	}
+	return cmp.Compare(types.TxHash(a), types.TxHash(b))
+}
 
 // MempoolEntry tracks a host-proposed tx awaiting inclusion.
 type MempoolEntry struct {
@@ -61,6 +112,7 @@ func (m *Mempool) Txs() []*types.DevshardTx {
 	for _, e := range m.entries {
 		txs = append(txs, e.Tx)
 	}
+	slices.SortFunc(txs, mempoolTxLess)
 	return txs
 }
 

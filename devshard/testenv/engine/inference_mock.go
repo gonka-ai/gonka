@@ -168,6 +168,12 @@ func (e *MockInferenceEngine) Execute(ctx context.Context, req devshard.ExecuteR
 			flusher.Flush()
 			fmt.Fprintf(req.ResponseWriter, "data: [DONE]\n\n")
 			flusher.Flush()
+			logging.Info("testenv inference: SSE wrote ML data line and [DONE] terminator",
+				"subsystem", "engine",
+				"inference_id", req.InferenceID,
+				"response_writer_type", fmt.Sprintf("%T", req.ResponseWriter),
+				"body_len", len(body),
+			)
 		}
 	}
 

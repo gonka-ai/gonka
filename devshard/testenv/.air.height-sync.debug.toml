@@ -6,7 +6,7 @@ tmp_dir = "/tmp/air/height-sync"
 
 [build]
   cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/height-sync/heightsyncd ./testenv/cmd/heightsyncd"
-  bin = "dlv exec /tmp/air/height-sync/heightsyncd --listen=:2346 --headless=true --api-version=2 --accept-multiclient --continue --"
+  full_bin = "dlv exec /tmp/air/height-sync/heightsyncd --listen=:2346 --headless=true --api-version=2 --accept-multiclient --continue --"
   include_ext = ["go", "yaml", "toml"]
   exclude_dir = [
     ".git",

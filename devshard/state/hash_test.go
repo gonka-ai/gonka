@@ -20,9 +20,9 @@ func TestComputeStateRoot_Deterministic(t *testing.T) {
 		2: {Status: types.StatusFinished, ExecutorSlot: 1, ActualCost: 200},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }
@@ -35,9 +35,9 @@ func TestComputeStateRoot_DifferentState(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil, 99)
+	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.NotEqual(t, root1, root2)
 }
@@ -54,13 +54,13 @@ func TestStateRoot_MerkleStructure(t *testing.T) {
 	fees := uint64(123)
 	version := "dev"
 
-	root, err := ComputeStateRoot(balance, hostStats, inferences, types.PhaseActive, nil, fees, version)
+	root, err := ComputeStateRoot(balance, hostStats, inferences, types.PhaseActive, nil, fees, types.HeightSyncEscrowCommit{}, version)
 	require.NoError(t, err)
 
 	// Manually recompute and verify structure.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHash(balance, inferences, nil)
+	restHash, err := ComputeRestHash(balance, inferences, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, fees)
@@ -92,9 +92,9 @@ func TestStateRoot_SortedKeys(t *testing.T) {
 
 	inferences := map[uint64]*types.InferenceRecord{}
 
-	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil, 0)
+	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil, 0)
+	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }
@@ -107,9 +107,9 @@ func TestComputeStateRoot_DifferentVersion(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, "v1")
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{}, "v1")
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, "dev")
+	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.HeightSyncEscrowCommit{}, "dev")
 	require.NoError(t, err)
 	require.NotEqual(t, root1, root2)
 }

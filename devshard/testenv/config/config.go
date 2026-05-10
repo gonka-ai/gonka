@@ -78,6 +78,18 @@ type HeightSyncCfg struct {
 	// BlockInterval overrides chain.block_time for the producer only.
 	// Leave empty to inherit chain.block_time.
 	BlockInterval string `yaml:"block_interval"`
+	// BlockIntervalDelta adds symmetric jitter around the mean block interval.
+	// Example: block_interval=1s, block_interval_delta=250ms => sampled interval
+	// in [750ms, 1250ms]. Leave empty or invalid to disable jitter.
+	BlockIntervalDelta string `yaml:"block_interval_delta"`
+	// AnchorPeriodNonces is K in envelope nonces between sync turns (see
+	// HEIGHT_SYNC_HEADERS_PROPOSAL). Zero or unset defaults to 10 after
+	// ApplyDefaults.
+	AnchorPeriodNonces int `yaml:"anchor_period_nonces"`
+	// SyncTurnSlots is the width of each sync-turn window in envelope
+	// nonces. Zero or unset defaults to devshard.group_size after
+	// ApplyDefaults. Must satisfy AnchorPeriodNonces >= SyncTurnSlots.
+	SyncTurnSlots int `yaml:"sync_turn_slots"`
 }
 
 // HeightSyncValidatorCfg is one pinned mock-mainnet validator.
@@ -147,12 +159,13 @@ type NetworkCfg struct {
 // Defaults exported for tests and gencompose.
 const (
 	DefaultChainID        = "gonka-testenv-1"
-	DefaultBlockTime      = "1s"
+	DefaultBlockTime      = "6s"
 	DefaultMockChainPort  = 9090
 	DefaultMockChainHost  = "mock-chain"
 	DefaultHeightSyncPort       = 9100
 	DefaultHeightSyncHost       = "height-sync"
 	DefaultHeightSyncValidators = 10
+	DefaultHeightSyncBlockIntervalDelta = "3s"
 	DefaultValidatorPower       = int64(1)
 	DefaultEscrowID       = "1"
 	DefaultEscrowVersion  = "v1"
@@ -164,6 +177,9 @@ const (
 	DefaultNetworkCIDR    = "172.30.0.0/24"
 	DefaultNetworkBaseIP  = "172.30.0"
 	DefaultEngineMode     = "deterministic"
+	// DefaultAnchorPeriodNonces is K for height-sync Anchor cadence (envelope nonces).
+	// Kept aligned with in-process E2E (K=8, slots=4) and CONTAINER_E2E_PLAN.md §5.1.
+	DefaultAnchorPeriodNonces = 8
 )
 
 // DefaultAppHash is sha256("devshard-testenv"); used when escrow.app_hash
@@ -222,6 +238,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Escrow.Slots > 128 {
 		return fmt.Errorf("escrow.slots (%d) exceeds 128", c.Escrow.Slots)
+	}
+	if c.HeightSync.AnchorPeriodNonces < 0 {
+		return errors.New("height_sync.anchor_period_nonces must be >= 0")
+	}
+	if c.HeightSync.SyncTurnSlots < 0 {
+		return errors.New("height_sync.sync_turn_slots must be >= 0")
+	}
+	if c.HeightSync.SyncTurnSlots > 0 && c.HeightSync.AnchorPeriodNonces > 0 &&
+		c.HeightSync.AnchorPeriodNonces < c.HeightSync.SyncTurnSlots {
+		return fmt.Errorf("height_sync.anchor_period_nonces (%d) must be >= sync_turn_slots (%d)",
+			c.HeightSync.AnchorPeriodNonces, c.HeightSync.SyncTurnSlots)
 	}
 	return nil
 }
@@ -304,6 +331,21 @@ func (c *Config) applyDefaults() {
 	if c.HeightSync.InitialHeight == 0 {
 		c.HeightSync.InitialHeight = 1
 	}
+	if c.HeightSync.BlockIntervalDelta == "" {
+		c.HeightSync.BlockIntervalDelta = DefaultHeightSyncBlockIntervalDelta
+	}
+	if c.Devshard.GroupSize == 0 {
+		c.Devshard.GroupSize = len(c.Hosts)
+	}
+	if c.HeightSync.SyncTurnSlots == 0 {
+		c.HeightSync.SyncTurnSlots = c.Devshard.GroupSize
+	}
+	if c.HeightSync.SyncTurnSlots < 1 {
+		c.HeightSync.SyncTurnSlots = 1
+	}
+	if c.HeightSync.AnchorPeriodNonces == 0 {
+		c.HeightSync.AnchorPeriodNonces = DefaultAnchorPeriodNonces
+	}
 	for i := range c.HeightSync.Validators {
 		if c.HeightSync.Validators[i].Power == 0 {
 			c.HeightSync.Validators[i].Power = DefaultValidatorPower
@@ -326,9 +368,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Escrow.Slots == 0 {
 		c.Escrow.Slots = DefaultSlots
-	}
-	if c.Devshard.GroupSize == 0 {
-		c.Devshard.GroupSize = len(c.Hosts)
 	}
 	for i := range c.Hosts {
 		if c.Hosts[i].Port == 0 {
@@ -366,6 +405,19 @@ func (c *Config) HeightSyncBlockInterval() time.Duration {
 		}
 	}
 	return fallback
+}
+
+// HeightSyncBlockIntervalDelta returns the parsed symmetric jitter around the
+// mean block interval for height-sync. Invalid or empty values disable jitter.
+func (c *Config) HeightSyncBlockIntervalDelta() time.Duration {
+	if c.HeightSync.BlockIntervalDelta == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(c.HeightSync.BlockIntervalDelta)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // HeightSyncValidator is the resolved form of a HeightSyncValidatorCfg:

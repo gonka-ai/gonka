@@ -1,6 +1,8 @@
 //go:build testenvci
 
-package citest
+// Package harness holds shared testenv CI helpers (VictoriaMetrics, height-sync
+// verifier checks) used by citest and container scenario packages.
+package harness
 
 import (
 	"encoding/json"
@@ -19,15 +21,14 @@ import (
 	"devshard/testenv/config"
 )
 
-// --- §8.2 I2 — height convergence (VictoriaMetrics gauges from Alloy scrapes) ---
-
-func i2HeightsConverge(c *http.Client, t *testing.T) {
+// I2HeightsConverge runs §8.2 I2 — height convergence (VictoriaMetrics gauges from Alloy scrapes).
+func I2HeightsConverge(c *http.Client, t *testing.T) {
 	t.Helper()
 	q := url.QueryEscape("devshardd_height_at_latest_nonce")
 	vmURL := "http://127.0.0.1:8428/api/v1/query?query=" + q
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
-		vals, err := prometheusInstantVectorValues(c, vmURL)
+		vals, err := PrometheusInstantVectorValues(c, vmURL)
 		if err != nil {
 			t.Logf("I2 wait: %v", err)
 			time.Sleep(2 * time.Second)
@@ -38,7 +39,7 @@ func i2HeightsConverge(c *http.Client, t *testing.T) {
 			time.Sleep(3 * time.Second)
 			continue
 		}
-		hi, lo := maxMin(vals)
+		hi, lo := MaxMin(vals)
 		if hi-lo > 1 {
 			t.Fatalf("I2: max(H_i)−min(H_i) = %d−%d = %d, want ≤ 1 (steady state)", hi, lo, hi-lo)
 		}
@@ -48,7 +49,8 @@ func i2HeightsConverge(c *http.Client, t *testing.T) {
 	t.Fatal("I2: deadline: could not get 4 devshardd_height_at_latest_nonce series in time")
 }
 
-func prometheusInstantVectorValues(c *http.Client, vmURL string) ([]float64, error) {
+// PrometheusInstantVectorValues parses a Prometheus / VictoriaMetrics instant vector query result.
+func PrometheusInstantVectorValues(c *http.Client, vmURL string) ([]float64, error) {
 	resp, err := c.Get(vmURL)
 	if err != nil {
 		return nil, err
@@ -98,7 +100,8 @@ func prometheusInstantVectorValues(c *http.Client, vmURL string) ([]float64, err
 	return vals, nil
 }
 
-func maxMin(vals []float64) (hi, lo int64) {
+// MaxMin returns max and min of a non-empty float slice (rounded to int64).
+func MaxMin(vals []float64) (hi, lo int64) {
 	if len(vals) == 0 {
 		return 0, 0
 	}
@@ -115,9 +118,8 @@ func maxMin(vals []float64) (hi, lo int64) {
 	return int64(math.Round(h)), int64(math.Round(l))
 }
 
-// --- §8.2 I9 — stream from height-sync vs pinned verifier (subset of spec) ---
-
-func i9MultiValidatorStreamVsAuditor(cfgPath, heightSyncBase string, c *http.Client, t *testing.T) {
+// MultiValidatorStreamVsAuditor runs §8.2 I9 — stream from height-sync vs pinned verifier.
+func MultiValidatorStreamVsAuditor(cfgPath, heightSyncBase string, c *http.Client, t *testing.T) {
 	t.Helper()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -146,7 +148,7 @@ func i9MultiValidatorStreamVsAuditor(cfgPath, heightSyncBase string, c *http.Cli
 		if time.Now().After(deadline) {
 			t.Fatalf("I9: want %d verified headers, got %d; partial 8–9-sig block seen=%v", wantDistinct, verified, partialSigsSeen)
 		}
-		h, err := fetchBlockLatestHeader(c, heightSyncBase+"/block/latest")
+		h, err := FetchBlockLatestHeader(c, heightSyncBase+"/block/latest")
 		if err != nil {
 			t.Logf("I9: fetch: %v", err)
 			time.Sleep(200 * time.Millisecond)
@@ -175,7 +177,8 @@ func i9MultiValidatorStreamVsAuditor(cfgPath, heightSyncBase string, c *http.Cli
 	}
 }
 
-func fetchBlockLatestHeader(c *http.Client, u string) (*blockoracle.Header, error) {
+// FetchBlockLatestHeader GETs /block/latest JSON into blockoracle.Header.
+func FetchBlockLatestHeader(c *http.Client, u string) (*blockoracle.Header, error) {
 	resp, err := c.Get(u)
 	if err != nil {
 		return nil, err
@@ -189,7 +192,7 @@ func fetchBlockLatestHeader(c *http.Client, u string) (*blockoracle.Header, erro
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
 	}
 	if strings.HasPrefix(string(body), "<!") {
-		return nil, fmt.Errorf("non-json body: %q", firstRunes(string(body), 64))
+		return nil, fmt.Errorf("non-json body: %q", FirstRunes(string(body), 64))
 	}
 	var h blockoracle.Header
 	if err := json.Unmarshal(body, &h); err != nil {
@@ -198,7 +201,8 @@ func fetchBlockLatestHeader(c *http.Client, u string) (*blockoracle.Header, erro
 	return &h, nil
 }
 
-func firstRunes(s string, n int) string {
+// FirstRunes truncates s to at most n runes for error messages.
+func FirstRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) > n {
 		return string(r[:n]) + "…"

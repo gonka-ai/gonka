@@ -132,7 +132,7 @@ one-click *Reconnect* prompt.
 
 - `SYS_PTRACE` and `seccomp:unconfined` work on Docker Desktop's
   Linux VM with no host-side config.
-- On M-series Macs `FROM golang:1.24-alpine` resolves to `linux/arm64`
+- On M-series Macs `FROM golang:1.25-alpine` resolves to `linux/arm64`
   so compiling and running happen under the same arch inside the VM.
   `Dockerfile.dev` intentionally omits `--platform`; Docker Desktop
   picks the correct variant.

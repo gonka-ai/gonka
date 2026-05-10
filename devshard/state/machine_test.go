@@ -2257,11 +2257,11 @@ func TestPhase_StateRootDiffersPerPhase(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
 
-	rootActive, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 0)
+	rootActive, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
-	rootFinalizing, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseFinalizing, nil, 0)
+	rootFinalizing, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseFinalizing, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
-	rootSettlement, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseSettlement, nil, 0)
+	rootSettlement, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseSettlement, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
 	require.NotEqual(t, rootActive, rootFinalizing, "Active and Finalizing roots must differ")
@@ -2852,13 +2852,13 @@ func TestWarmKey_StateRootChangesWithWarmKeys(t *testing.T) {
 	}
 	inferences := make(map[uint64]*types.InferenceRecord)
 
-	rootNil, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, nil, 0)
+	rootNil, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, nil, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
-	rootEmpty, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{}, 0)
+	rootEmpty, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{}, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
-	rootWithWarm, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{1: "0xwarmaddr"}, 0)
+	rootWithWarm, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{1: "0xwarmaddr"}, 0, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
 	// nil and empty should produce the same root (both hash sha256(nil)).

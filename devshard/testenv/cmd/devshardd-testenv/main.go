@@ -40,6 +40,7 @@ import (
 
 	"devshard/bridge"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -263,8 +264,31 @@ func run(cfg envConfig) error {
 		g.Stop()
 	}()
 
+	// K / slots: docker-compose sets HEIGHT_SYNC_* from testenv config.yaml
+	// (gencompose). Precedence: env → defaults (K=10, slots=len(group)).
+	anchorK := uint64(10)
+	if v := os.Getenv("HEIGHT_SYNC_ANCHOR_PERIOD_NONCES"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n > 0 {
+			anchorK = n
+		}
+	}
+	slots := uint64(len(group))
+	if slots == 0 {
+		slots = 1
+	}
+	if v := os.Getenv("HEIGHT_SYNC_SYNC_TURN_SLOTS"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n > 0 {
+			slots = n
+		}
+	}
+	anchorSched, err := heightsync.NewAnchorScheduler(anchorK, slots, md.Oracle)
+	if err != nil {
+		return fmt.Errorf("height sync anchor scheduler: %w", err)
+	}
+
 	srv, err := transport.NewServer(h, store, verifier, escrow.CreatorAddress,
 		transport.WithBridge(br),
+		transport.WithHeightSync(anchorSched, md.Oracle),
 	)
 	if err != nil {
 		return fmt.Errorf("create transport server: %w", err)

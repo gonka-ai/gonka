@@ -118,8 +118,8 @@ func TestDockerfiles_StaticContract(t *testing.T) {
 			body := readDockerfile(t, spec.name)
 
 			// Phase 11 requires multi-stage with a Go build stage.
-			if !strings.Contains(body, "FROM golang:1.24-alpine AS build") {
-				t.Errorf("%s: expected `FROM golang:1.24-alpine AS build`", spec.name)
+			if !strings.Contains(body, "FROM golang:1.25-alpine AS build") {
+				t.Errorf("%s: expected `FROM golang:1.25-alpine AS build`", spec.name)
 			}
 
 			// Runtime stage is distroless/static — explicit so a stray
@@ -182,7 +182,7 @@ func TestDockerfiles_DevOverlayUntouched(t *testing.T) {
 	// kill live-reload, so we pin the contract here too.
 	body := readDockerfile(t, "Dockerfile.dev")
 	for _, want := range []string{
-		"FROM golang:1.24-alpine",
+		"FROM golang:1.25-alpine",
 		"go install github.com/air-verse/air",
 		"go install github.com/go-delve/delve/cmd/dlv",
 		`ENTRYPOINT ["air"]`,

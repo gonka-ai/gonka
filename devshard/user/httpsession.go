@@ -21,6 +21,10 @@ type HTTPSessionConfig struct {
 	StoragePath    string                          // optional: path to SQLite DB for session persistence
 	StreamCallback func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix    string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
+	// Used by testenv devshardctl to attach HeightSync + oracle without importing
+	// mockdapi into this package.
+	ExtraClientConfig *transport.ClientConfig
 }
 
 // NewHTTPSession creates a user Session wired with HTTP clients to real dapi hosts.
@@ -59,6 +63,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	clients := make([]HostClient, len(group))
 	clientCache := make(map[string]*transport.HTTPClient)
+	var sharedPeerTips *transport.HeightSyncPeerTips
+	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+		sharedPeerTips = transport.NewHeightSyncPeerTips()
+	}
 	for i, slot := range group {
 		if c, ok := clientCache[slot.ValidatorAddress]; ok {
 			clients[i] = c
@@ -68,15 +76,27 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		if err != nil {
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
+		cc := transport.DefaultClientConfig()
+		if cfg.StreamCallback != nil {
+			cc.StreamCallback = cfg.StreamCallback
+		}
+		if cfg.RoutePrefix != "" {
+			cc.RoutePrefix = cfg.RoutePrefix
+		}
+		if cfg.ExtraClientConfig != nil {
+			if cfg.ExtraClientConfig.HeightSync != nil {
+				cc.HeightSync = cfg.ExtraClientConfig.HeightSync
+				cc.HeightSyncPeerTips = sharedPeerTips
+			}
+			if cfg.ExtraClientConfig.HeightSyncLogOracle != nil {
+				cc.HeightSyncLogOracle = cfg.ExtraClientConfig.HeightSyncLogOracle
+			}
+			if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
+				cc.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
+			}
+		}
 		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || cfg.RoutePrefix != "" {
-			cc := transport.DefaultClientConfig()
-			if cfg.StreamCallback != nil {
-				cc.StreamCallback = cfg.StreamCallback
-			}
-			if cfg.RoutePrefix != "" {
-				cc.RoutePrefix = cfg.RoutePrefix
-			}
+		if cfg.StreamCallback != nil || cfg.RoutePrefix != "" || cfg.ExtraClientConfig != nil {
 			clientCfgs = append(clientCfgs, cc)
 		}
 		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
@@ -102,6 +122,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 				sqlStore.Close()
 				return nil, nil, fmt.Errorf("recover session: %w", recErr)
 			}
+			if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+				hs := cfg.ExtraClientConfig.HeightSync
+				session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
+			}
 			return session, recSM, nil
 		}
 		if !errors.Is(metaErr, storage.ErrSessionNotFound) {
@@ -122,6 +146,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("create storage session: %w", createErr)
 		}
+	}
+
+	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+		hs := cfg.ExtraClientConfig.HeightSync
+		opts = append(opts, WithHeightSyncCadence(hs.K(), hs.SlotsNum()))
 	}
 
 	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, opts...)

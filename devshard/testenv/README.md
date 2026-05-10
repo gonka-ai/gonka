@@ -7,8 +7,14 @@ operator-facing summary plus a runbook.
 
 - Live-reload / remote-debug workflow: [`DEVELOPMENT-MODE.md`](DEVELOPMENT-MODE.md) (Phase 12).
 - Metrics / logs / dashboards: [`OBSERVABILITY.md`](OBSERVABILITY.md) (Phase 13).
+- Block oracle (`height-sync`), compose wiring, and host vs devshardctl:
+  [`../docs/testenv-blockoracle-integration.md`](../docs/testenv-blockoracle-integration.md).
 - Makefile and operator docs: this file + Phase 14 in
   [`../docs/testenv.md`](../docs/testenv.md).
+- Container-level scenarios (real `docker compose` stack) — current
+  in-process suite: [`scenarios/SCENARIOS.md`](scenarios/SCENARIOS.md);
+  re-implementation plan against the live stack:
+  [`scenarios/CONTAINER_E2E_PLAN.md`](scenarios/CONTAINER_E2E_PLAN.md).
 
 ## 1. What this stack simulates
 
@@ -31,10 +37,10 @@ driven end-to-end without a live Cosmos chain. Three pieces matter:
   in-process `mockdapi` library, and inference / validation engines
   are deterministic mocks (`engine.MockInferenceEngine`,
   `engine.MockValidationEngine`). Owned by `cmd/devshardd-testenv`.
-- **`devshardctl`** — the same operator CLI production users run,
-  started behind `profiles: ["tools"]` so it is opt-in. Routes its
-  calls either through auto-discovery or a pinned
-  `DEVSHARDD_URL`.
+- **`devshardctl`** — the same operator CLI production users run;
+  included in the default compose stack. Uses the gRPC bridge’s
+  `GetHostInfo` URLs from `config.yaml` (one HTTP base URL per
+  validator), matching production participant registration.
 
 ## 2. Architecture at a glance
 
@@ -47,7 +53,7 @@ driven end-to-end without a live Cosmos chain. Three pieces matter:
         │                  │                     │
         ▼                  ▼                     ▼
   ┌───────────┐      ┌───────────┐         ┌───────────┐
-  │ mock-chain│      │ height-   │         │devshardctl│  (profile: tools)
+  │ mock-chain│      │ height-   │         │devshardctl│
   │  (gRPC)   │      │  sync     │         │  (CLI)    │
   └────┬──────┘      │ (HTTP+SSE)│         └────┬──────┘
        │             └────┬──────┘              │
@@ -113,7 +119,6 @@ Stamped by `gencompose` from the YAML; read by each binary at startup.
 | `devshardctl`        | `TESTENV_PRIVATE_KEY` | developer hex signer                                   |
 |                      | `ESCROW_ID`           | escrow the developer drives                            |
 |                      | `MOCK_CHAIN_URL`      | swaps in the testenv gRPC bridge                       |
-|                      | `DEVSHARDD_URL`       | pin every host lookup to this URL (opt.)              |
 |                      | `CONFIG_PATH`         | pins the mock-mainnet validator set                    |
 
 `devshardd-testenv` is deliberately the only service that does **not**
@@ -210,8 +215,10 @@ surface is:
 | `build` / `test` | `go build` / `go test` of packages under this directory (`devshard/testenv/...` only for `test`). |
 | `integration-test` | From `devshard/`: `go test -race -timeout=15m ./...` (entire module; expect **several minutes**). Not docker I1–I10 (Phase 15 / `ci-integration`). |
 | `up` / `down` / `clean` / `logs` | `docker compose` for the **base** `docker-compose.yml` only. |
-| `ctl` | `devshardctl` via `--profile tools run --rm`. |
+| `ctl` | One-off `devshardctl` via `docker compose … run --rm` (ephemeral). |
 | `dev-build` / `dev-up` / `dev-down` / `dev-clean` / `dev-logs` | Stack with `docker-compose.dev.yml` (live-reload + `dlv` — see `DEVELOPMENT-MODE.md`). |
+| `hot-up` | Alias for `dev-up` (start hot-reload stack). |
+| `hot-recreate` | `docker compose … up -d --force-recreate` on the hot overlay (pick up `.air` / container config changes). |
 | `dev-logs-<k>` | Tail `devshardd-testenv-<k>` only; `<k>` must be in `0 .. DEVSHARDD_HOSTS-1`. |
 | `dev-restart-<svc>` | `docker compose … restart <svc>` on the dev overlay. |
 | `obs-up` | Same as `up` (observability services are merged into the base file). |
@@ -241,8 +248,7 @@ private keys and addresses, assigns slots round-robin, and rewrites
 
 After the first run, `config.yaml` holds real hex keys and
 `docker-compose.yml` references one `mock-chain`, one `height-sync`,
-N `devshardd-testenv-<i>`, and a `devshardctl` service (opt-in via
-`--profile tools`). Both files are safe to commit. Regeneration is
+N `devshardd-testenv-<i>`, and a `devshardctl` service. Both files are safe to commit. Regeneration is
 idempotent.
 
 If `observability/compose-fragment.yaml` exists it is appended
@@ -268,26 +274,25 @@ height_sync=http://height-sync:9100`.
 
 ### 4.3 Drive it with `devshardctl`
 
-The Makefile exposes `make ctl` → `docker compose --profile tools run --rm
-devshardctl` (no args). For **subcommands** (e.g. `chat-completion`), call
-`docker compose` explicitly or pass args after the service name as usual.
+The Makefile exposes `make ctl` → `docker compose … run --rm devshardctl`
+(no args). For **subcommands** (e.g. `chat-completion`), call `docker compose`
+explicitly or pass args after the service name as usual.
 
 ```bash
-# One-shot call through the containerized CLI (profile tools):
-docker compose -f docker-compose.yml --profile tools run --rm devshardctl \
+# One-shot call through the containerized CLI:
+docker compose -f docker-compose.yml run --rm devshardctl \
   chat-completion --prompt "hello"
 
 # Or run the CLI from the devshard module root (repo layout: cmd/ is not under testenv/):
 ( cd .. && go run ./cmd/devshardctl \
   --mock-chain mock-chain:9090 \
   --escrow-id 1 \
-  --private-key "$(docker compose -f testenv/docker-compose.yml --profile tools exec -T devshardctl printenv TESTENV_PRIVATE_KEY)" \
+  --private-key "$(docker compose -f testenv/docker-compose.yml exec -T devshardctl printenv TESTENV_PRIVATE_KEY)" \
   chat-completion --prompt "hello" )
 ```
 
-`DEVSHARDD_URL` in the compose file pins the CLI to
-`devshardd-testenv-0` by default; override on the command line to
-target a different host.
+Inference HTTP traffic uses each participant URL from `hosts[].url`
+(mock-chain `GetParticipant`), same as production.
 
 ### 4.4 Rebuild after code changes (base stack)
 
@@ -296,7 +301,9 @@ docker compose -f docker-compose.yml build
 docker compose -f docker-compose.yml up -d    # or: make up
 ```
 
-For hot-reload, use the dev overlay — `make dev-up` (after `make dev-build`).
+For hot-reload, use the dev overlay — `make hot-up` (after `make dev-build`).
+If you changed `.air.*.toml`, ports, or other container-level config, run
+`make hot-recreate`.
 See [`DEVELOPMENT-MODE.md`](DEVELOPMENT-MODE.md); target list in §4.0.
 
 ### 4.5 Tear down
@@ -359,8 +366,10 @@ docker compose -f docker-compose.yml exec devshardd-testenv-0 sh
 Phase 12 and 13 are **not** separate compose files you start by hand for
 day-to-day work — they are documented alongside Phase 14:
 
-- **Live-reload + `dlv`:** `make dev-build` once, then `make dev-up`,
-  `make dev-logs`, `make dev-logs-0`, … — full runbook in
+- **Live-reload + `dlv`:** `make dev-build` once, then `make hot-up`
+  (alias of `dev-up`), `make hot-recreate` when you need forced
+  container recreation, plus `make dev-logs`, `make dev-logs-0`, … —
+  full runbook in
   [`DEVELOPMENT-MODE.md`](DEVELOPMENT-MODE.md).
 - **Metrics / logs / Grafana / VMUI:** services are merged into the same
   `docker-compose.yml` (when `observability/compose-fragment.yaml` exists).
@@ -403,10 +412,10 @@ day-to-day work — they are documented alongside Phase 14:
 - **`mock-chain` unreachable** — verify the service came up healthy
   (`docker compose ps`). The bridge retries on transient errors but
   surfaces startup failures verbatim.
-- **CLI requests time out** — `devshardctl` pins a single host via
-  `DEVSHARDD_URL`. If that host is down, either pass
-  `--host http://<other-host>:8080` or drop the pin to fall back to
-  auto-discovery.
+- **CLI requests time out** — check the executor container for that
+  nonce (`docker compose logs devshardd-testenv-<n>`) and that
+  `hosts[].url` in `config.yaml` matches the service on the Docker
+  network.
 - **Stale block oracle warning in logs** — expected when blocks do not
   arrive for `StaleAfter` (default 10 s). Verdicts are deferred, not
   failed, until the oracle catches up; see `docs/testenv.md` §5 for

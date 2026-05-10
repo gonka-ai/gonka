@@ -1,12 +1,15 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -14,8 +17,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"devshard/blockoracle"
 	"devshard/bridge"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -36,6 +41,23 @@ type Server struct {
 	rateLimit   *rateLimiter         // nil = no limiting
 	maxBodySize int64                // max request body bytes, 0 = no limit
 	bridge      bridge.MainnetBridge // optional, for warm key verification
+
+	heightSync          *heightsync.AnchorScheduler // optional outbound anchor cadence
+	heightSyncAudit     *heightsync.AuditRing       // optional inbound anchor trail
+	heightSyncLogOracle blockoracle.BlockOracle     // optional Latest() for debug logs (delta)
+	respNonceMu         sync.Mutex
+	responseNonce       map[string]uint64 // session id (URL :id) -> monotonic host response counter
+	firstRespMu         sync.Mutex
+	firstInferenceResp  map[string]bool // session id -> first SSE receipt for this session was already sent
+
+	pendingUntrustedMu        sync.Mutex
+	pendingUntrustedBySession map[string]*pendingUntrustedTip // session id -> ahead-of-oracle peer claim pending oracle reconciliation
+}
+
+type pendingUntrustedTip struct {
+	MainnetHeight int64
+	BlockHash     []byte
+	PeerID        string
 }
 
 // ServerOption configures the Server.
@@ -70,6 +92,25 @@ func WithBridge(b bridge.MainnetBridge) ServerOption {
 	return func(s *Server) { s.bridge = b }
 }
 
+// WithHeightSync wires an anchor scheduler for outbound inference responses and
+// enables inbound height-sync audit logging when sched is non-nil. logOracle is
+// optional: when set, debug logs include local oracle height and Δ vs peer.
+func WithHeightSync(sched *heightsync.AnchorScheduler, logOracle blockoracle.BlockOracle) ServerOption {
+	return func(s *Server) {
+		s.heightSync = sched
+		s.heightSyncLogOracle = logOracle
+		if sched != nil {
+			s.heightSyncAudit = heightsync.NewAuditRing(0)
+			s.pendingUntrustedBySession = make(map[string]*pendingUntrustedTip)
+		}
+	}
+}
+
+// HeightSyncAuditRing returns the inbound audit ring when height sync is enabled, or nil.
+func (s *Server) HeightSyncAuditRing() *heightsync.AuditRing {
+	return s.heightSyncAudit
+}
+
 // NewServer creates an HTTP server wrapping the given host.
 // userAddr is the session user's address -- allowed alongside group members.
 func NewServer(
@@ -80,10 +121,12 @@ func NewServer(
 	opts ...ServerOption,
 ) (*Server, error) {
 	s := &Server{
-		host:     h,
-		store:    store,
-		verifier: verifier,
-		userAddr: userAddr,
+		host:               h,
+		store:              store,
+		verifier:           verifier,
+		userAddr:           userAddr,
+		responseNonce:      make(map[string]uint64),
+		firstInferenceResp: make(map[string]bool),
 	}
 	for _, o := range opts {
 		o(s)
@@ -248,6 +291,260 @@ func getBody(c echo.Context) ([]byte, error) {
 	return v, nil
 }
 
+func (s *Server) nextResponseNonce(sessionID string) uint64 {
+	s.respNonceMu.Lock()
+	defer s.respNonceMu.Unlock()
+	s.responseNonce[sessionID]++
+	return s.responseNonce[sessionID]
+}
+
+func (s *Server) latestOracleHeader(ctx context.Context) *blockoracle.Header {
+	if s.heightSyncLogOracle == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	hdr, err := s.heightSyncLogOracle.Latest(ctx)
+	if err != nil || hdr == nil {
+		return nil
+	}
+	return hdr
+}
+
+func (s *Server) reconcilePendingUntrusted(sessionID string, oracleHdr *blockoracle.Header) {
+	if s.pendingUntrustedBySession == nil || oracleHdr == nil {
+		return
+	}
+	s.pendingUntrustedMu.Lock()
+	defer s.pendingUntrustedMu.Unlock()
+	p := s.pendingUntrustedBySession[sessionID]
+	if p == nil {
+		return
+	}
+	if oracleHdr.Height < p.MainnetHeight {
+		return
+	}
+	if oracleHdr.Height > p.MainnetHeight {
+		delete(s.pendingUntrustedBySession, sessionID)
+		return
+	}
+	if !bytes.Equal(oracleHdr.BlockHash, p.BlockHash) {
+		logging.Warn("heightsync: untrusted peer tip disagrees with oracle at reconciled height",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldSessionID, sessionID,
+			heightsync.LogFieldHeight, p.MainnetHeight,
+			heightsync.LogFieldPeerID, p.PeerID,
+			"oracle_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(oracleHdr.BlockHash)),
+			"untrusted_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(p.BlockHash)),
+		)
+	}
+	delete(s.pendingUntrustedBySession, sessionID)
+}
+
+func (s *Server) notePendingUntrustedInbound(sessionID, peerID string, hs *heightsync.HeightSyncSection, oracleHdr *blockoracle.Header) {
+	if s.pendingUntrustedBySession == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	localH := int64(0)
+	if oracleHdr != nil {
+		localH = oracleHdr.Height
+	}
+	if hs.MainnetHeight <= localH {
+		return
+	}
+	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
+	if err != nil {
+		return
+	}
+	s.pendingUntrustedMu.Lock()
+	defer s.pendingUntrustedMu.Unlock()
+	s.pendingUntrustedBySession[sessionID] = &pendingUntrustedTip{
+		MainnetHeight: hs.MainnetHeight,
+		BlockHash:     append([]byte(nil), raw...),
+		PeerID:        peerID,
+	}
+}
+
+func (s *Server) logInboundHeightSync(peerID, sessionID string, nonce uint64, hs *heightsync.HeightSyncSection, oracleHdr *blockoracle.Header, trust heightsync.AttestationTrust) {
+	mode := "omit"
+	var peerH int64
+	peerPrefix := ""
+	if hs != nil && heightsync.IsAnchorSection(hs) {
+		mode = "anchor"
+		peerH = hs.MainnetHeight
+		peerPrefix = heightSyncHashPrefix(hs.MainnetBlockHashHex)
+	}
+	var localH int64
+	if oracleHdr != nil {
+		localH = oracleHdr.Height
+	}
+	delta := peerH - localH
+	kvs := []any{
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldDirection, "request",
+		heightsync.LogFieldMode, mode,
+		heightsync.LogFieldNonce, nonce,
+		heightsync.LogFieldHostID, s.host.Signer().Address(),
+		heightsync.LogFieldPeerID, peerID,
+		heightsync.LogFieldSessionID, sessionID,
+		heightsync.LogFieldPeerHeight, peerH,
+		heightsync.LogFieldPeerBlockHashPrefix, peerPrefix,
+		heightsync.LogFieldLocalAligned, localH,
+		heightsync.LogFieldDelta, delta,
+	}
+	if trust != "" {
+		kvs = append(kvs, heightsync.LogFieldTrustLevel, string(trust))
+	}
+	logging.Debug("heightsync: peer attestation received", kvs...)
+}
+
+func heightSyncHashPrefix(hexStr string) string {
+	h := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(hexStr), "0x"), "0X")
+	if len(h) >= 8 {
+		return strings.ToLower(h[:8])
+	}
+	return strings.ToLower(h)
+}
+
+func (s *Server) recordInboundAnchorIfAnchor(peerID string, hs *heightsync.HeightSyncSection, source string, trust heightsync.AttestationTrust) {
+	if s.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
+	if err != nil {
+		logging.Debug("heightsync: skip audit record", heightsync.LogFieldSubsystem, "heightsync", "error", err.Error())
+		return
+	}
+	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
+		PeerID:           peerID,
+		Direction:        "request",
+		MainnetHeight:    hs.MainnetHeight,
+		MainnetBlockHash: raw,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+		SourceMessage:    source,
+		Trust:            trust,
+	})
+	heightsync.IncInboundAnchor("request", string(trust), s.host.EscrowID())
+}
+
+func (s *Server) logOutboundHeightSync(sec *heightsync.HeightSyncSection, nonce uint64) {
+	if sec == nil {
+		logging.Debug("heightsync: emit",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldDirection, "response",
+			heightsync.LogFieldMode, "omit",
+			heightsync.LogFieldNonce, nonce,
+		)
+		return
+	}
+	prefix := heightSyncHashPrefix(sec.MainnetBlockHashHex)
+	var localH int64
+	if s.heightSyncLogOracle != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hdr, err := s.heightSyncLogOracle.Latest(ctx)
+		cancel()
+		if err == nil && hdr != nil {
+			localH = hdr.Height
+		}
+	}
+	delta := sec.MainnetHeight - localH
+	logging.Debug("heightsync: emit",
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldDirection, "response",
+		heightsync.LogFieldMode, "anchor",
+		heightsync.LogFieldNonce, nonce,
+		heightsync.LogFieldHeight, sec.MainnetHeight,
+		heightsync.LogFieldBlockHashPrefix, prefix,
+		heightsync.LogFieldLocalAligned, localH,
+		heightsync.LogFieldDelta, delta,
+		heightsync.LogFieldTrustLevel, string(heightsync.TrustOracle),
+	)
+}
+
+// recordForceRequestAnchorMissingIfApplicable emits a structured warn log and
+// appends a sentinel audit-ring entry when an inbound request whose nonce falls
+// inside an active forced sync turn arrives without a valid Anchor section.
+//
+// Per HEIGHT_SYNC_HEADERS_PROPOSAL "Forced sync turn" and
+// height-sync-anchor-poc.md §5.5, the diff that opened the turn is the only
+// authoritative trigger; hosts learn the window from their own escrow state
+// after applying the diff, NOT from a per-request HTTP signal. A user that
+// strips height_sync from its in-window requests is therefore self-inflicting
+// a violation of its own signed diff. The request still processes normally —
+// this path produces dispute evidence, not a rejection.
+func (s *Server) recordForceRequestAnchorMissingIfApplicable(peerID string, nonce uint64, hs *heightsync.HeightSyncSection, source string) {
+	if s.heightSync == nil {
+		return
+	}
+	if heightsync.IsAnchorSection(hs) {
+		return
+	}
+	schedK := s.heightSync.K()
+	schedSlots := s.heightSync.SlotsNum()
+	escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
+	if escrowH == nil || escrowH.ForcedEnd == 0 {
+		return
+	}
+	if nonce < escrowH.ForcedStart || nonce > escrowH.ForcedEnd {
+		return
+	}
+	logging.Warn("heightsync: force_request_anchor_missing",
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldDirection, "request",
+		heightsync.LogFieldNonce, nonce,
+		heightsync.LogFieldPeerID, peerID,
+		heightsync.LogFieldForcedStart, escrowH.ForcedStart,
+		heightsync.LogFieldForcedEnd, escrowH.ForcedEnd,
+		heightsync.LogFieldSource, source,
+	)
+	if s.heightSyncAudit == nil {
+		return
+	}
+	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
+		PeerID:           peerID,
+		Direction:        "request",
+		MainnetHeight:    0,
+		MainnetBlockHash: nil,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+		SourceMessage:    source,
+		Trust:            heightsync.TrustForceRequestAnchorMissing,
+	})
+}
+
+func (s *Server) recordOutboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string) {
+	if s.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
+	if err != nil {
+		logging.Debug("heightsync: skip outbound audit record", heightsync.LogFieldSubsystem, "heightsync", "error", err.Error())
+		return
+	}
+	localID := s.host.Signer().Address()
+	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
+		PeerID:           localID,
+		Direction:        "response",
+		MainnetHeight:    hs.MainnetHeight,
+		MainnetBlockHash: raw,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+		SourceMessage:    source,
+		Trust:            heightsync.TrustOracle,
+	})
+	dir := hs.Direction
+	if dir == "" {
+		dir = "response"
+	}
+	heightsync.IncOutboundAnchor(dir, s.host.EscrowID(), localID)
+}
+
+func decodeMainnetBlockHashHex(s string) ([]byte, error) {
+	h := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "0x"), "0X")
+	if len(h)%2 == 1 {
+		h = "0" + h
+	}
+	return hex.DecodeString(h)
+}
+
 func (s *Server) HandleInference(c echo.Context) error {
 	sender, err := getSender(c)
 	if err != nil {
@@ -265,23 +562,37 @@ func (s *Server) HandleInference(c echo.Context) error {
 		return err
 	}
 
-	var ir InferenceRequest
-	if err := json.Unmarshal(body, &ir); err != nil {
-		logging.Error("HandleInference", "error", "invalid json: "+err.Error())
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid json: "+err.Error())
+	unwrapped, err := UnwrapInferenceRequestBody(body)
+	if err != nil {
+		logging.Error("HandleInference", "error", "decode body: "+err.Error())
+		return echo.NewHTTPError(http.StatusBadRequest, "decode body: "+err.Error())
 	}
 
-	req, err := HostRequestFromJSON(ir)
+	req, err := HostRequestFromJSON(unwrapped.Request)
 	if err != nil {
 		logging.Error("HandleInference", "error", "decode request: "+err.Error())
 		return echo.NewHTTPError(http.StatusBadRequest, "decode request: "+err.Error())
 	}
+
+	sessionID := c.Param("id")
+	oracleHdr := s.latestOracleHeader(c.Request().Context())
+	if s.pendingUntrustedBySession != nil {
+		s.reconcilePendingUntrusted(sessionID, oracleHdr)
+	}
+	inboundTrust := heightsync.InboundTrust(unwrapped.HeightSync, oracleHdr)
+	s.logInboundHeightSync(sender, sessionID, req.Nonce, unwrapped.HeightSync, oracleHdr, inboundTrust)
+	s.recordInboundAnchorIfAnchor(sender, unwrapped.HeightSync, c.Request().Method+" "+c.Path(), inboundTrust)
+	s.notePendingUntrustedInbound(sessionID, sender, unwrapped.HeightSync, oracleHdr)
 
 	resp, err := s.host.HandleRequest(c.Request().Context(), req)
 	if err != nil {
 		logging.Error("HandleInference", "error", "handle request: "+err.Error())
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+
+	// Run AFTER HandleRequest so any MsgForceHeightSyncTurn carried in the
+	// catch-up diff has already been applied and is visible via escrow hints.
+	s.recordForceRequestAnchorMissingIfApplicable(sender, req.Nonce, unwrapped.HeightSync, c.Request().Method+" "+c.Path())
 
 	// Always SSE response.
 	w := c.Response()
@@ -300,6 +611,40 @@ func (s *Server) HandleInference(c echo.Context) error {
 		ConfirmedAt: resp.ConfirmedAt,
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	if s.heightSync != nil {
+		var sessionStart bool
+		s.firstRespMu.Lock()
+		if !s.firstInferenceResp[sessionID] {
+			sessionStart = true
+			s.firstInferenceResp[sessionID] = true
+		}
+		s.firstRespMu.Unlock()
+
+		schedK := s.heightSync.K()
+		schedSlots := s.heightSync.SlotsNum()
+		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
+		h := heightsync.DecideHints{
+			Nonce:        req.Nonce,
+			SessionStart: sessionStart,
+			ForceAnchor:  req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:       escrowH,
+		}
+		sec, dErr := s.heightSync.Decide(c.Request().Context(), h)
+		if dErr != nil {
+			logging.Debug("heightsync: outbound anchor error",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldNonce, req.Nonce,
+				"error", dErr.Error())
+			s.logOutboundHeightSync(nil, req.Nonce)
+		} else if sec != nil {
+			sec.Direction = "response"
+			receiptWrapper["height_sync"] = sec
+			s.logOutboundHeightSync(sec, req.Nonce)
+			s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+		} else {
+			s.logOutboundHeightSync(nil, req.Nonce)
+		}
+	}
 	writeSSEEvent(w, receiptWrapper)
 
 	// Event 2+: inference result.

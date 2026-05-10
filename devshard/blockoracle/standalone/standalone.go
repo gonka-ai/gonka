@@ -53,6 +53,9 @@ type Config struct {
 	// BlockInterval controls the mock observer's cadence; ≤0 falls back
 	// to 1s (observer default).
 	BlockInterval time.Duration
+	// BlockIntervalDelta adds symmetric jitter around BlockInterval.
+	// Example: 1s ± 250ms => [750ms, 1250ms]. ≤0 disables jitter.
+	BlockIntervalDelta time.Duration
 	// InitialHeight of the first fabricated block; ≤0 falls back to 1.
 	InitialHeight int64
 	// Seed makes the hash derivation deterministic; same seed ⇒ same
@@ -128,6 +131,7 @@ func New(cfg Config) (*Service, error) {
 		ChainID:       cfg.ChainID,
 		Validators:    obsValidators,
 		BlockInterval: cfg.BlockInterval,
+		BlockIntervalDelta: cfg.BlockIntervalDelta,
 		Seed:          cfg.Seed,
 		Start:         cfg.Start,
 		InitialHeight: cfg.InitialHeight,
@@ -188,16 +192,36 @@ func (s *Service) Run(ctx context.Context) error {
 	}()
 
 	// Wait for whichever goroutine exits first (typically ctx → obsErr).
+	// Important: each of obsErr/httpErr is sent exactly once from its
+	// goroutine. If we receive one arm of this select, we must not receive
+	// that channel again in the drain phase below — otherwise Run blocks
+	// forever (classic deadlock seen when obsErr delivers context.Canceled
+	// before ctx.Done is chosen, or http delivers nil after ErrServerClosed).
+	var gotObs bool
+	var gotHTTP bool
+	var obsFirst error
+
 	select {
 	case <-ctx.Done():
 	case err := <-obsErr:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			// Best-effort: stop the HTTP listener before returning.
+		gotObs = true
+		obsFirst = err
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.shutdownHTTP()
+			if !gotHTTP {
+				<-httpErr
+				gotHTTP = true
+			}
 			return fmt.Errorf("standalone: observer: %w", err)
 		}
 	case err := <-httpErr:
+		gotHTTP = true
 		if err != nil {
+			s.shutdownHTTP()
+			if !gotObs {
+				<-obsErr
+				gotObs = true
+			}
 			return fmt.Errorf("standalone: http: %w", err)
 		}
 	}
@@ -205,9 +229,24 @@ func (s *Service) Run(ctx context.Context) error {
 	// Graceful HTTP shutdown.
 	s.shutdownHTTP()
 
-	// Drain any pending goroutine errors so they do not leak.
-	<-obsErr
-	<-httpErr
+	if !gotObs {
+		obsFirst = <-obsErr
+		gotObs = true
+	}
+	if !gotHTTP {
+		httpE := <-httpErr
+		gotHTTP = true
+		if httpE != nil {
+			if obsFirst != nil && !errors.Is(obsFirst, context.Canceled) && !errors.Is(obsFirst, context.DeadlineExceeded) {
+				return fmt.Errorf("standalone: observer: %w", obsFirst)
+			}
+			return fmt.Errorf("standalone: http: %w", httpE)
+		}
+	}
+
+	if obsFirst != nil && !errors.Is(obsFirst, context.Canceled) && !errors.Is(obsFirst, context.DeadlineExceeded) {
+		return fmt.Errorf("standalone: observer: %w", obsFirst)
+	}
 	return nil
 }
 

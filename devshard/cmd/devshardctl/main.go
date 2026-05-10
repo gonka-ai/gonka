@@ -11,11 +11,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/state"
 	testenvbridge "devshard/testenv/bridge"
+	"devshard/testenv/mockdapi"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -60,9 +64,8 @@ type resolvedConfig struct {
 	Port          string
 	StoragePath   string
 	ChainRESTURL  string // empty when MockChainURL is set
-	MockChainURL  string // non-empty selects testenv gRPC bridge
-	PinnedHostURL string // non-empty pins every GetHostInfo to this URL
-	RoutePrefix   string
+	MockChainURL string // non-empty selects testenv gRPC bridge
+	RoutePrefix  string
 }
 
 // resolveConfig merges CLI flags, env vars, and defaults into a single
@@ -72,7 +75,7 @@ type resolvedConfig struct {
 // startup rather than in the first request.
 //
 // Testenv-specific knobs (TESTENV_PRIVATE_KEY, MOCK_CHAIN_URL,
-// DEVSHARDD_URL, ESCROW_ID) fall back *after* the prod-equivalent
+// ESCROW_ID) fall back *after* the prod-equivalent
 // knobs (DEVSHARD_PRIVATE_KEY, DEVSHARD_CHAIN_REST, DEVSHARD_ESCROW_ID)
 // so a developer exporting both sees the prod values take precedence.
 // That ordering matches the existing DEVSHARD_* contract and keeps
@@ -118,12 +121,6 @@ func resolveConfig(fs *flagSet, getenv func(string) string) (resolvedConfig, err
 		}
 	}
 
-	// ── pinned host ─────────────────────────────────────────────────────
-	cfg.PinnedHostURL = firstNonEmpty(
-		fs.Host,
-		getenv("DEVSHARDD_URL"),
-	)
-
 	// ── model / port / storage ──────────────────────────────────────────
 	cfg.Model = fs.Model
 	if v := getenv("DEVSHARD_MODEL"); v != "" && fs.Model == defaultModel {
@@ -158,7 +155,6 @@ type flagSet struct {
 	PrivateKey   string
 	StoragePath  string
 	MockChainURL string
-	Host         string
 }
 
 const (
@@ -177,7 +173,6 @@ func parseFlags(args []string) (*flagSet, error) {
 	fs.StringVar(&out.PrivateKey, "private-key", "", "private key hex (alternative to DEVSHARD_PRIVATE_KEY / TESTENV_PRIVATE_KEY env)")
 	fs.StringVar(&out.StoragePath, "storage-path", "", "SQLite path for crash recovery")
 	fs.StringVar(&out.MockChainURL, "mock-chain", "", "testenv mock-chain gRPC URL (e.g. mock-chain:9090). When set, overrides --chain-rest and uses the testenv gRPC bridge. Alias of MOCK_CHAIN_URL env.")
-	fs.StringVar(&out.Host, "host", "", "pin every host address to this URL (e.g. http://devshard-1:9500). Alias of DEVSHARDD_URL env. Use with testenv to drive a specific devshardd container.")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -206,20 +201,74 @@ func main() {
 		log.Fatalf("build bridge: %v", err)
 	}
 
+	var md *mockdapi.MockDapi
+	var extraCC *transport.ClientConfig
+	if cfg.MockChainURL != "" {
+		hsURL := os.Getenv("HEIGHT_SYNC_URL")
+		chainID := os.Getenv("CHAIN_ID")
+		if hsURL != "" && chainID != "" {
+			md, err = mockdapi.New(context.Background(), mockdapi.Config{
+				HeightSyncURL: hsURL,
+				ChainID:       chainID,
+			})
+			if err != nil {
+				log.Fatalf("height-sync oracle: %v", err)
+			}
+			group, errG := bridge.BuildGroup(cfg.EscrowID, br)
+			if errG != nil {
+				md.Close()
+				log.Fatalf("build group for anchor scheduler: %v", errG)
+			}
+			anchorK := uint64(10)
+			if v := os.Getenv("HEIGHT_SYNC_ANCHOR_PERIOD_NONCES"); v != "" {
+				if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
+					anchorK = n
+				}
+			}
+			slots := uint64(len(group))
+			if slots == 0 {
+				slots = 1
+			}
+			if v := os.Getenv("HEIGHT_SYNC_SYNC_TURN_SLOTS"); v != "" {
+				if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
+					slots = n
+				}
+			}
+			sched, errS := heightsync.NewAnchorScheduler(anchorK, slots, md.Oracle)
+			if errS != nil {
+				md.Close()
+				log.Fatalf("anchor scheduler: %v", errS)
+			}
+			cc := transport.DefaultClientConfig()
+			cc.HeightSync = sched
+			cc.HeightSyncLogOracle = md.Oracle
+			extraCC = &cc
+		}
+	}
+
 	sessionCfg := user.HTTPSessionConfig{
-		PrivateKeyHex:  cfg.KeyHex,
-		EscrowID:       cfg.EscrowID,
-		Bridge:         br,
-		StoragePath:    cfg.StoragePath,
-		StreamCallback: registry.callback,
-		RoutePrefix:    cfg.RoutePrefix,
+		PrivateKeyHex:     cfg.KeyHex,
+		EscrowID:          cfg.EscrowID,
+		Bridge:            br,
+		StoragePath:       cfg.StoragePath,
+		StreamCallback:    registry.callback,
+		RoutePrefix:       cfg.RoutePrefix,
+		ExtraClientConfig: extraCC,
 	}
 
 	session, sm, err := user.NewHTTPSession(sessionCfg)
 	if err != nil {
+		if md != nil {
+			md.Close()
+		}
 		log.Fatalf("create session: %v", err)
 	}
-	defer session.Close()
+	defer func() {
+		_ = session.Close()
+		if md != nil {
+			md.Close()
+		}
+	}()
 
 	proxy := &Proxy{
 		session:  session,
@@ -238,20 +287,17 @@ func main() {
 	mux.HandleFunc("/v1/inference", proxy.handleInference)
 
 	addr := ":" + cfg.Port
-	log.Printf("devshardctl listening on %s (escrow=%s model=%s bridge=%s host_pin=%s)",
-		addr, cfg.EscrowID, cfg.Model, describeBridge(cfg), describeHostPin(cfg))
+	log.Printf("devshardctl listening on %s (escrow=%s model=%s bridge=%s)",
+		addr, cfg.EscrowID, cfg.Model, describeBridge(cfg))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
 
 // buildBridge picks between the production REST bridge and the testenv
-// gRPC bridge based on which URL is set, then wraps the result with a
-// pinned-host decorator when --host / DEVSHARDD_URL is set. Extracted
-// so unit tests can exercise the branch decisions without touching
-// network code.
+// gRPC bridge based on which URL is set. Extracted so unit tests can
+// exercise the branch decisions without touching network code.
 func buildBridge(cfg resolvedConfig) (bridge.MainnetBridge, error) {
-	var br bridge.MainnetBridge
 	switch {
 	case cfg.MockChainURL != "":
 		// Use a background context because devshardctl is a long-running
@@ -260,32 +306,19 @@ func buildBridge(cfg resolvedConfig) (bridge.MainnetBridge, error) {
 		if err != nil {
 			return nil, fmt.Errorf("dial testenv mock-chain %s: %w", cfg.MockChainURL, err)
 		}
-		br = gb
+		return gb, nil
 	default:
-		br = bridge.NewRESTBridge(cfg.ChainRESTURL)
+		return bridge.NewRESTBridge(cfg.ChainRESTURL), nil
 	}
-
-	if cfg.PinnedHostURL != "" {
-		br = newPinnedHostBridge(br, cfg.PinnedHostURL)
-	}
-	return br, nil
 }
 
 // describeBridge returns a short human-readable tag for the bridge
 // active in cfg, suitable for the startup log line.
 func describeBridge(cfg resolvedConfig) string {
 	if cfg.MockChainURL != "" {
-		return fmt.Sprintf("mock-chain:%s", cfg.MockChainURL)
+		return cfg.MockChainURL
 	}
 	return fmt.Sprintf("rest:%s", cfg.ChainRESTURL)
-}
-
-// describeHostPin returns "<pinned url>" or "auto" for the log line.
-func describeHostPin(cfg resolvedConfig) string {
-	if cfg.PinnedHostURL == "" {
-		return "auto"
-	}
-	return cfg.PinnedHostURL
 }
 
 // firstNonEmpty returns the first non-empty string from the args.

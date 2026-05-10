@@ -8,7 +8,7 @@
 # Build context for this image is the repo root (not devshard/) because
 # the module's go.mod lives at devshard/go.mod. See docker-compose.dev.yml
 # where `context: ../..` is pinned explicitly.
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
 # bash + make are cheap and make ad-hoc debugging inside the container
 # less surprising. git is required by Go for vcs-stamped builds; curl

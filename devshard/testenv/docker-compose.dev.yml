@@ -7,6 +7,9 @@
 #       -f docker-compose.dev.yml \
 #       up -d
 #
+# Note: run `make gen-compose` first to generate/update
+# `docker-compose.yml` and `config.yaml`.
+#
 # Or via the Makefile: `make dev-up`.
 #
 # What this overlay does per service:
@@ -49,7 +52,8 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.mock-chain.debug.toml"]
-    working_dir: /workspace/devshard/testenv
+    # Must match `root` in .air.*.toml (/workspace/devshard): build cmds use ./testenv/cmd/...
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod
@@ -68,7 +72,7 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.height-sync.debug.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod
@@ -87,7 +91,7 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.devshardd.debug.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     environment:
       DLV_PORT: "2347"
     volumes:
@@ -108,7 +112,7 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.devshardd.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod
@@ -121,7 +125,7 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.devshardd.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod
@@ -134,20 +138,20 @@ services:
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.devshardd.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod
       - gobuildcache:/root/.cache/go-build
 
-  # ── devshardctl (live-reload, opt-in tools profile) ───────────────────────
+  # ── devshardctl (live-reload overlay) ─────────────────────────────────────
   devshardctl:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.dev
     image: devshard-dev:latest
     command: ["-c", "/workspace/devshard/testenv/.air.devshardctl.toml"]
-    working_dir: /workspace/devshard/testenv
+    working_dir: /workspace/devshard
     volumes:
       - ../..:/workspace
       - gomodcache:/go/pkg/mod

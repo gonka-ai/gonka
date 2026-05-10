@@ -72,9 +72,10 @@ type Proxy struct {
 }
 
 type chatRequest struct {
-	Model     string `json:"model"`
-	Stream    bool   `json:"stream"`
-	MaxTokens uint64 `json:"max_tokens"`
+	Model                 string `json:"model"`
+	Stream                bool   `json:"stream"`
+	MaxTokens             uint64 `json:"max_tokens"`
+	ForceHeightSyncAnchor bool   `json:"force_height_sync_anchor,omitempty"`
 }
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -105,11 +106,12 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := user.InferenceParams{
-		Model:       model,
-		Prompt:      body,
-		InputLength: uint64(len(body)),
-		MaxTokens:   maxTokens,
-		StartedAt:   time.Now().Unix(),
+		Model:                 model,
+		Prompt:                body,
+		InputLength:           uint64(len(body)),
+		MaxTokens:             maxTokens,
+		StartedAt:             time.Now().Unix(),
+		ForceHeightSyncAnchor: req.ForceHeightSyncAnchor,
 	}
 
 	if req.Stream {
@@ -192,12 +194,19 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 // Returns finished=true when MsgFinishInference is in the host's mempool.
 // confirmedAt is the executor's receipt timestamp (0 if no receipt received).
 func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64) (finished bool, confirmedAt int64, err error) {
+	hostIdx := prepared.HostIdx()
 	resp, sendErr := p.session.SendOnly(ctx, prepared)
 	if sendErr != nil && resp == nil {
+		log.Printf("devshardctl inference nonce=%d host_idx=%d: SendOnly failed before response body (retry/timeout path): %v", nonce, hostIdx, sendErr)
 		return false, 0, nil
 	}
+	if sendErr != nil {
+		log.Printf("devshardctl inference nonce=%d host_idx=%d: SendOnly error after SSE read mempool_txs=%d: %v", nonce, hostIdx, len(resp.Mempool), sendErr)
+	}
 
-	if err := p.session.ProcessResponse(prepared.HostIdx(), resp, nonce); err != nil {
+	if err := p.session.ProcessResponse(hostIdx, resp, nonce); err != nil {
+		log.Printf("devshardctl inference nonce=%d host_idx=%d: ProcessResponse failed after host stream (state_sig=%v receipt=%v): %v",
+			nonce, hostIdx, resp.StateSig != nil, resp.Receipt != nil, err)
 		return false, 0, fmt.Errorf("process response: %w", err)
 	}
 
@@ -303,15 +312,18 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	err := p.runInference(r.Context(), params, dw)
 	if err != nil {
 		if !dw.started {
+			log.Printf("devshardctl /v1/chat/completions stream: failed before first SSE byte: %v", err)
 			// No streaming data sent yet -- return proper HTTP error.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `{"error":{"message":%q}}`, err.Error())
 			return
 		}
-		// Already streaming -- send error as SSE data.
-		log.Printf("inference error (mid-stream): %v", err)
+		// Already streaming -- send error as SSE data, then terminate like OpenAI streams.
+		log.Printf("devshardctl /v1/chat/completions stream: inference error after SSE started: %v", err)
 		fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
+		dw.Flush()
+		fmt.Fprint(dw, "data: [DONE]\n\n")
 		dw.Flush()
 		return
 	}

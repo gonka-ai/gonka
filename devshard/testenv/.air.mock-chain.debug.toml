@@ -11,7 +11,7 @@ tmp_dir = "/tmp/air/mock-chain"
 
 [build]
   cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/mock-chain/mockchain ./testenv/cmd/mockchain"
-  bin = "dlv exec /tmp/air/mock-chain/mockchain --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue --"
+  full_bin = "dlv exec /tmp/air/mock-chain/mockchain --listen=:2345 --headless=true --api-version=2 --accept-multiclient --continue --"
   include_ext = ["go", "yaml", "toml", "proto"]
   exclude_dir = [
     ".git",

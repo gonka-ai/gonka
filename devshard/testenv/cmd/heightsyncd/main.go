@@ -100,6 +100,7 @@ func buildStandaloneConfig(cfg *config.Config) (standalone.Config, error) {
 		ChainID:       cfg.Chain.ID,
 		Validators:    validators,
 		BlockInterval: cfg.HeightSyncBlockInterval(),
+		BlockIntervalDelta: cfg.HeightSyncBlockIntervalDelta(),
 		InitialHeight: cfg.HeightSync.InitialHeight,
 		Seed:          cfg.HeightSync.Seed,
 		Addr:          fmt.Sprintf(":%d", cfg.HeightSync.Port),

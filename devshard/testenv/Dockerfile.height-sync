@@ -6,7 +6,7 @@
 # (one level above testenv/). The runtime image is distroless/static
 # so the container surface is just the binary and CA roots.
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 

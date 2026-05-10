@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -49,6 +50,9 @@ type InferenceParams struct {
 	InputLength uint64
 	MaxTokens   uint64
 	StartedAt   int64
+	// ForceHeightSyncAnchor emits Anchor on this message even when cadence would Omit
+	// (policy hook, e.g. cPoC skip/carry). Ignored when the HTTP client has no scheduler.
+	ForceHeightSyncAnchor bool
 }
 
 // Session manages the user side of the devshard protocol.
@@ -64,10 +68,13 @@ type Session struct {
 	nonce         uint64
 	diffs         []types.Diff                 // append-only log
 	hostSyncNonce map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs    []*types.DevshardTx            // from host mempools, for next diff
+	pendingTxs    []*types.DevshardTx          // from host mempools, for next diff
 	pendingTxKeys map[string]struct{}          // dedup set keyed by tx_type:id
 	signatures    map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	store         storage.Storage              // optional persistent storage
+
+	heightSyncK     uint64 // scheduler K for MsgForceHeightSyncTurn (0 = disabled)
+	heightSyncSlots uint64 // scheduler slots (0 = use len(group))
 }
 
 // SessionOption configures optional Session behavior.
@@ -77,6 +84,23 @@ type SessionOption func(*Session)
 // When set, diffs and signatures are persisted on each state transition.
 func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
+}
+
+// WithHeightSyncCadence records K and slots for composing MsgForceHeightSyncTurn when
+// InferenceParams.ForceHeightSyncAnchor is set. Must match host/client AnchorScheduler config.
+func WithHeightSyncCadence(k, slots uint64) SessionOption {
+	return func(sess *Session) {
+		sess.heightSyncK = k
+		sess.heightSyncSlots = slots
+	}
+}
+
+// SetHeightSyncCadence sets K/slots for MsgForceHeightSyncTurn composition (e.g. after RecoverSession).
+func (s *Session) SetHeightSyncCadence(k, slots uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.heightSyncK = k
+	s.heightSyncSlots = slots
 }
 
 // NewSession creates a user session. clients must match group length.
@@ -122,6 +146,8 @@ func NewSession(
 // The state machine requires ConfirmStart before FinishInference before Validation.
 func txPriority(tx *types.DevshardTx) int {
 	switch tx.GetTx().(type) {
+	case *types.DevshardTx_ForceHeightSyncTurn:
+		return -1
 	case *types.DevshardTx_ConfirmStart:
 		return 0
 	case *types.DevshardTx_FinishInference:
@@ -319,7 +345,24 @@ func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, 
 		},
 	}}
 
-	diff, hostIdx, err := s.composeDiffLocked([]*types.DevshardTx{startTx})
+	txsForDiff := []*types.DevshardTx{startTx}
+	if params.ForceHeightSyncAnchor && s.heightSyncK != 0 {
+		slots := uint64(len(s.group))
+		if !s.sm.HeightSyncForcedTurnActive(nonce) {
+			forceTx := &types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
+				ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
+					TriggerNonce: nonce,
+					EndNonce:     nonce + slots - 1,
+					AnchorK:      s.heightSyncK,
+					SlotsNum:     slots,
+					Reason:       "manual",
+				},
+			}}
+			txsForDiff = []*types.DevshardTx{forceTx, startTx}
+		}
+	}
+
+	diff, hostIdx, err := s.composeDiffLocked(txsForDiff)
 	if err != nil {
 		return nil, err
 	}
@@ -343,9 +386,13 @@ func (p *PreparedInference) HostIdx() int { return p.hostIdx }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference) (*host.HostResponse, error) {
+	escrowHints := s.heightSyncEscrowHints()
+	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	return s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs: p.catchUp,
-		Nonce: p.diff.Nonce,
+		Diffs:                 p.catchUp,
+		Nonce:                 p.diff.Nonce,
+		ForceHeightSyncAnchor: legacyForce,
+		HeightSyncEscrow:      escrowHints,
 		Payload: &host.InferencePayload{
 			Prompt:      p.params.Prompt,
 			Model:       p.params.Model,
@@ -354,6 +401,19 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference) (*host.Hos
 			StartedAt:   p.params.StartedAt,
 		},
 	})
+}
+
+func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, slots := s.heightSyncK, s.heightSyncSlots
+	if slots == 0 {
+		slots = uint64(len(s.group))
+	}
+	if k == 0 {
+		return nil
+	}
+	return s.sm.HeightSyncEscrowHints(k, slots)
 }
 
 // SendInference composes diff, sends to correct host, processes response.
@@ -386,7 +446,11 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce})
+	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{
+		Diffs:            catchUp,
+		Nonce:            diff.Nonce,
+		HeightSyncEscrow: s.heightSyncEscrowHints(),
+	})
 	if err != nil {
 		return nil // dead host, not fatal
 	}
@@ -404,7 +468,11 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: nonce})
+	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{
+		Diffs:            catchUp,
+		Nonce:            nonce,
+		HeightSyncEscrow: s.heightSyncEscrowHints(),
+	})
 	if err != nil {
 		return nil // dead host
 	}
@@ -588,7 +656,11 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce})
+	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{
+		Diffs:            catchUp,
+		Nonce:            diff.Nonce,
+		HeightSyncEscrow: s.heightSyncEscrowHints(),
+	})
 	if err != nil {
 		return fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
 	}

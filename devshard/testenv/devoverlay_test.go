@@ -130,6 +130,7 @@ var (
 	reTmp         = regexp.MustCompile(`(?m)^tmp_dir\s*=\s*"([^"]+)"`)
 	reCmd         = regexp.MustCompile(`(?m)^\s*cmd\s*=\s*"([^"]+)"`)
 	reBin         = regexp.MustCompile(`(?m)^\s*bin\s*=\s*"([^"]+)"`)
+	reFullBin     = regexp.MustCompile(`(?m)^\s*full_bin\s*=\s*"([^"]*)"`)
 	reIncludeExt  = regexp.MustCompile(`(?m)^\s*include_ext\s*=\s*\[([^\]]+)\]`)
 	reExcludeDir  = regexp.MustCompile(`(?ms)^\s*exclude_dir\s*=\s*\[([^\]]+)\]`)
 	reDelay       = regexp.MustCompile(`(?m)^\s*delay\s*=\s*(\d+)`)
@@ -151,6 +152,13 @@ func parseAirConfig(t *testing.T, body string) airCfg {
 	}
 	if m := reBin.FindStringSubmatch(body); m != nil {
 		c.buildBin = m[1]
+	}
+	// Debug air configs use full_bin (dlv exec …) and omit bin; the static
+	// contract still applies to that launch command line.
+	if c.buildBin == "" {
+		if m := reFullBin.FindStringSubmatch(body); m != nil {
+			c.buildBin = m[1]
+		}
 	}
 	if m := reIncludeExt.FindStringSubmatch(body); m != nil {
 		for _, tok := range strings.Split(m[1], ",") {
@@ -361,8 +369,10 @@ func TestDockerComposeDev_SharedBuild(t *testing.T) {
 			if svc.Image != "devshard-dev:latest" {
 				t.Errorf("image = %q, want devshard-dev:latest", svc.Image)
 			}
-			if svc.WorkingDir != "/workspace/devshard/testenv" {
-				t.Errorf("working_dir = %q, want /workspace/devshard/testenv", svc.WorkingDir)
+			// Must match `root` in every .air.*.toml (/workspace/devshard).
+			// If cwd were .../testenv, `go build ./testenv/cmd/...` would look for .../testenv/testenv/cmd.
+			if svc.WorkingDir != "/workspace/devshard" {
+				t.Errorf("working_dir = %q, want /workspace/devshard", svc.WorkingDir)
 			}
 			if len(svc.Command) != 2 || svc.Command[0] != "-c" {
 				t.Errorf("command = %v, want [\"-c\", \"<air-config>\"]", svc.Command)

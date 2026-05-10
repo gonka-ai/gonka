@@ -31,7 +31,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 		},
 	}
 
-	restHash, err := state.ComputeRestHash(9850, inferences, nil)
+	restHash, err := state.ComputeRestHash(9850, inferences, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{
@@ -91,7 +91,7 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 		},
 	}
 
-	restHash, err := state.ComputeRestHash(9850, inferences, nil)
+	restHash, err := state.ComputeRestHash(9850, inferences, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{

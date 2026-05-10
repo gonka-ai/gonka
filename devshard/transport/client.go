@@ -16,7 +16,10 @@ import (
 	json "github.com/goccy/go-json"
 
 	devshardpkg "devshard"
+	"devshard/blockoracle"
+	"devshard/heightsync"
 	"devshard/host"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -48,6 +51,58 @@ type ClientConfig struct {
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix      string                          // path prefix for all session routes; default /v1/devshard
+
+	// HeightSync enables outbound Anchor sections on inference POST bodies (protobuf envelope).
+	// Nil = legacy JSON body only (backwards compatible).
+	HeightSync *heightsync.AnchorScheduler
+	// HeightSyncLogOracle optional Latest() for debug logs (local height vs peer).
+	HeightSyncLogOracle blockoracle.BlockOracle
+	// HeightSyncPeerTips shares observed peer tips across multiple HTTP clients
+	// in the same user session so a higher tip learned from one host can be
+	// carried forward to subsequent requests sent to other hosts.
+	HeightSyncPeerTips *HeightSyncPeerTips
+	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
+	// immediately before marshaling the protobuf envelope. Tests use it to inject
+	// a bogus mainnet_block_hash while keeping scheduler height; production
+	// clients must leave this nil.
+	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+}
+
+// HeightSyncPeerTips stores the highest observed peer tip for a session.
+type HeightSyncPeerTips struct {
+	mu  sync.Mutex
+	tip *heightsync.HeightSyncSection
+}
+
+func NewHeightSyncPeerTips() *HeightSyncPeerTips { return &HeightSyncPeerTips{} }
+
+func (s *HeightSyncPeerTips) Update(hs *heightsync.HeightSyncSection) {
+	if s == nil || hs == nil || hs.MainnetHeight <= 0 || strings.TrimSpace(hs.MainnetBlockHashHex) == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tip == nil || hs.MainnetHeight > s.tip.MainnetHeight {
+		cp := *hs
+		s.tip = &cp
+	}
+}
+
+func (s *HeightSyncPeerTips) Carry(sec *heightsync.HeightSyncSection) {
+	if s == nil || sec == nil {
+		return
+	}
+	s.mu.Lock()
+	tip := s.tip
+	s.mu.Unlock()
+	if tip == nil {
+		return
+	}
+	if tip.MainnetHeight > sec.MainnetHeight {
+		sec.ChainID = tip.ChainID
+		sec.MainnetHeight = tip.MainnetHeight
+		sec.MainnetBlockHashHex = tip.MainnetBlockHashHex
+	}
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -62,12 +117,16 @@ func DefaultClientConfig() ClientConfig {
 
 // HTTPClient implements user.HostClient over HTTP.
 type HTTPClient struct {
-	baseURL     string
-	routePrefix string
-	escrowID    string
-	signer      signing.Signer
-	http        *http.Client
-	config      ClientConfig
+	baseURL             string
+	routePrefix         string
+	escrowID            string
+	signer              signing.Signer
+	http                *http.Client
+	config              ClientConfig
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncLogOracle blockoracle.BlockOracle
+	heightSyncPeerTips  *HeightSyncPeerTips
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
@@ -78,16 +137,37 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		cfg = cfgs[0]
 	}
 	cfg.RoutePrefix = devshardpkg.NormalizeRoutePrefix(cfg.RoutePrefix)
-	return &HTTPClient{
-		baseURL:     baseURL,
-		routePrefix: cfg.RoutePrefix,
-		escrowID:    escrowID,
-		signer:      signer,
-		http: &http.Client{
-			Transport: getTransport(baseURL),
-		},
-		config: cfg,
+	hc := &HTTPClient{
+		baseURL:             baseURL,
+		routePrefix:         cfg.RoutePrefix,
+		escrowID:            escrowID,
+		signer:              signer,
+		http:                &http.Client{Transport: getTransport(baseURL)},
+		config:              cfg,
+		heightSync:          cfg.HeightSync,
+		heightSyncLogOracle: cfg.HeightSyncLogOracle,
 	}
+	if cfg.HeightSync != nil {
+		hc.heightSyncAudit = heightsync.NewAuditRing(0)
+		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
+		if hc.heightSyncPeerTips == nil {
+			hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+		}
+	}
+	return hc
+}
+
+func (c *HTTPClient) updateObservedPeerTip(hs *heightsync.HeightSyncSection) {
+	c.heightSyncPeerTips.Update(hs)
+}
+
+func (c *HTTPClient) carryForwardPeerTip(sec *heightsync.HeightSyncSection) {
+	c.heightSyncPeerTips.Carry(sec)
+}
+
+// HeightSyncAuditRing returns the audit ring when height sync is enabled, or nil.
+func (c *HTTPClient) HeightSyncAuditRing() *heightsync.AuditRing {
+	return c.heightSyncAudit
 }
 
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
@@ -131,20 +211,62 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	body, err := json.Marshal(ir)
-	if err != nil {
-		return nil, fmt.Errorf("marshal json: %w", err)
+	contentType := "application/json"
+	var body []byte
+	if c.heightSync != nil {
+		h := heightsync.DecideHints{
+			Nonce:       req.Nonce,
+			ForceAnchor: req.ForceHeightSyncAnchor,
+			Escrow:      req.HeightSyncEscrow,
+		}
+		if h.Escrow != nil {
+			h.ForceAnchor = false
+		}
+		sec, dErr := c.heightSync.Decide(ctx, h)
+		if dErr != nil {
+			logging.Debug("heightsync: outbound anchor error",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldDirection, "request",
+				heightsync.LogFieldNonce, req.Nonce,
+				"error", dErr.Error())
+		}
+		if sec != nil {
+			sec.Direction = "request"
+			c.carryForwardPeerTip(sec)
+			if hook := c.config.HeightSyncRequestMutateHook; hook != nil {
+				hook(sec, req.Nonce)
+			}
+			body, err = MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, sec, ir)
+			if err != nil {
+				return nil, fmt.Errorf("marshal inference envelope: %w", err)
+			}
+			contentType = "application/x-protobuf"
+			c.logEmitUserHeightSync(sec, req.Nonce)
+			c.recordUserOutboundAnchorIfAnchor(sec, "POST /chat/completions")
+		} else {
+			body, err = json.Marshal(ir)
+			if err != nil {
+				return nil, fmt.Errorf("marshal json: %w", err)
+			}
+			c.logEmitUserHeightSync(nil, req.Nonce)
+		}
+	} else {
+		body, err = json.Marshal(ir)
+		if err != nil {
+			return nil, fmt.Errorf("marshal json: %w", err)
+		}
 	}
 
-	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
+	var httpResp *http.Response
+	httpResp, err = c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body, contentType)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer httpResp.Body.Close()
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
-		result, err := c.parseSSEResponse(resp.Body, req.Nonce)
+	contentTypeHdr := httpResp.Header.Get("Content-Type")
+	if strings.HasPrefix(contentTypeHdr, "text/event-stream") {
+		result, err := c.parseSSEResponse(httpResp.Body, req.Nonce)
 		if err != nil && result != nil {
 			// Partial result: return both so caller can extract receipt from broken stream.
 			return result, err
@@ -153,7 +275,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 	}
 
 	// Backward compat: JSON response.
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +292,7 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1MB max line -- default 64KB breaks on long SSE responses
 	var result host.HostResponse
+	sawDone := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -178,6 +301,7 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			sawDone = true
 			if c.config.StreamCallback != nil {
 				c.config.StreamCallback(nonce, line)
 			}
@@ -192,6 +316,15 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 				c.config.StreamCallback(nonce, line)
 			}
 			continue
+		}
+
+		if raw, ok := envelope["height_sync"]; ok && string(raw) != "null" {
+			var hs heightsync.HeightSyncSection
+			if err := json.Unmarshal(raw, &hs); err == nil {
+				c.updateObservedPeerTip(&hs)
+				c.logPeerHeightSyncFromSSE(&hs, nonce)
+				c.recordHostInboundAnchorIfAnchor(&hs, "SSE devshard_receipt line")
+			}
 		}
 
 		if raw, ok := envelope["devshard_receipt"]; ok {
@@ -223,7 +356,19 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		logging.Warn("transport: SSE stream scanner error",
+			"subsystem", "transport",
+			"nonce", nonce,
+			"saw_done", sawDone,
+			"error", err.Error())
 		return &result, fmt.Errorf("read SSE stream: %w", err)
+	}
+	if !sawDone {
+		logging.Warn("transport: SSE closed without terminal data [DONE]",
+			"subsystem", "transport",
+			"nonce", nonce,
+			"has_state_sig", len(result.StateSig) > 0,
+			"mempool_txs", len(result.Mempool))
 	}
 	return &result, nil
 }
@@ -359,7 +504,8 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 
 // doPostRaw sends a signed POST request and returns the raw http.Response.
 // Caller is responsible for closing resp.Body.
-func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*http.Response, error) {
+// contentType is e.g. application/json or application/x-protobuf.
+func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, contentType string) (*http.Response, error) {
 	url := c.baseURL + c.routePrefix + path
 
 	ts := time.Now().Unix()
@@ -372,7 +518,10 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
 	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
 
@@ -392,7 +541,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 
 // doPost sends a signed POST request and returns the response body.
 func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]byte, error) {
-	resp, err := c.doPostRaw(ctx, path, body)
+	resp, err := c.doPostRaw(ctx, path, body, "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -419,4 +568,131 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func (c *HTTPClient) logEmitUserHeightSync(sec *heightsync.HeightSyncSection, nonce uint64) {
+	if sec == nil {
+		logging.Debug("heightsync: emit",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldDirection, "request",
+			heightsync.LogFieldMode, "omit",
+			heightsync.LogFieldNonce, nonce,
+		)
+		return
+	}
+	prefix := heightSyncHashPrefix(sec.MainnetBlockHashHex)
+	var localH int64
+	if c.heightSyncLogOracle != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hdr, err := c.heightSyncLogOracle.Latest(ctx)
+		cancel()
+		if err == nil && hdr != nil {
+			localH = hdr.Height
+		}
+	}
+	delta := sec.MainnetHeight - localH
+	logging.Debug("heightsync: emit",
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldDirection, "request",
+		heightsync.LogFieldMode, "anchor",
+		heightsync.LogFieldNonce, nonce,
+		heightsync.LogFieldHeight, sec.MainnetHeight,
+		heightsync.LogFieldBlockHashPrefix, prefix,
+		heightsync.LogFieldLocalAligned, localH,
+		heightsync.LogFieldDelta, delta,
+		heightsync.LogFieldTrustLevel, string(heightsync.TrustOracle),
+	)
+}
+
+func (c *HTTPClient) recordUserOutboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string) {
+	if c.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
+	if err != nil {
+		logging.Debug("heightsync: skip audit record", heightsync.LogFieldSubsystem, "heightsync", "error", err.Error())
+		return
+	}
+	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
+		PeerID:           c.signer.Address(),
+		Direction:        "request",
+		MainnetHeight:    hs.MainnetHeight,
+		MainnetBlockHash: raw,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+		SourceMessage:    source,
+		Trust:            heightsync.TrustOracle,
+	})
+	heightsync.IncOutboundAnchor("request", c.escrowID, c.signer.Address())
+}
+
+func (c *HTTPClient) logPeerHeightSyncFromSSE(hs *heightsync.HeightSyncSection, nonce uint64) {
+	mode := "omit"
+	var peerH int64
+	prefix := ""
+	if hs != nil && heightsync.IsAnchorSection(hs) {
+		mode = "anchor"
+		peerH = hs.MainnetHeight
+		prefix = heightSyncHashPrefix(hs.MainnetBlockHashHex)
+	}
+	var oracleHdr *blockoracle.Header
+	if c.heightSyncLogOracle != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hdr, err := c.heightSyncLogOracle.Latest(ctx)
+		cancel()
+		if err == nil && hdr != nil {
+			oracleHdr = hdr
+		}
+	}
+	var localH int64
+	if oracleHdr != nil {
+		localH = oracleHdr.Height
+	}
+	delta := peerH - localH
+	trust := heightsync.InboundTrust(hs, oracleHdr)
+	kvs := []any{
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldDirection, "response",
+		heightsync.LogFieldMode, mode,
+		heightsync.LogFieldNonce, nonce,
+		heightsync.LogFieldPeerID, c.baseURL,
+		heightsync.LogFieldPeerHeight, peerH,
+		heightsync.LogFieldPeerBlockHashPrefix, prefix,
+		heightsync.LogFieldLocalAligned, localH,
+		heightsync.LogFieldDelta, delta,
+	}
+	if trust != "" {
+		kvs = append(kvs, heightsync.LogFieldTrustLevel, string(trust))
+	}
+	logging.Debug("heightsync: peer attestation received", kvs...)
+}
+
+func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string) {
+	if c.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
+	if err != nil {
+		logging.Debug("heightsync: skip audit record", heightsync.LogFieldSubsystem, "heightsync", "error", err.Error())
+		return
+	}
+	var oracleHdr *blockoracle.Header
+	if c.heightSyncLogOracle != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hdr, err := c.heightSyncLogOracle.Latest(ctx)
+		cancel()
+		if err == nil && hdr != nil {
+			oracleHdr = hdr
+		}
+	}
+	trust := heightsync.InboundTrust(hs, oracleHdr)
+	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
+		PeerID:           c.baseURL,
+		Direction:        "response",
+		MainnetHeight:    hs.MainnetHeight,
+		MainnetBlockHash: raw,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+		SourceMessage:    source,
+		Trust:            trust,
+	})
+	heightsync.IncInboundAnchor("response", string(trust), c.escrowID)
 }

@@ -12,7 +12,7 @@ tmp_dir = "/tmp/air/devshardd"
 
 [build]
   cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/devshardd/devshardd-testenv ./testenv/cmd/devshardd-testenv"
-  bin = "sh -c 'dlv exec /tmp/air/devshardd/devshardd-testenv --listen=:${DLV_PORT:-2347} --headless=true --api-version=2 --accept-multiclient --continue --'"
+  full_bin = "sh -c 'dlv exec /tmp/air/devshardd/devshardd-testenv --listen=:${DLV_PORT:-2347} --headless=true --api-version=2 --accept-multiclient --continue --'"
   include_ext = ["go", "yaml", "toml", "proto"]
   exclude_dir = [
     ".git",

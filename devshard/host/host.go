@@ -16,6 +16,7 @@ import (
 	"devshard"
 	"devshard/blockoracle"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
@@ -44,6 +45,11 @@ type HostRequest struct {
 	Diffs   []types.Diff
 	Nonce   uint64            // nonce of the current request
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
+	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
+	// (e.g. cPoC skip/carry). Ignored when height sync is disabled on the client.
+	ForceHeightSyncAnchor bool
+	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
+	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
 
 // HostResponse carries the host's reply back to the user.
@@ -564,6 +570,11 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 
 		// Dedup: return receipt (proves executor alive) but skip execution.
 		if _, dup := h.executing[start.InferenceId]; dup {
+			logging.Debug("executor inference already in-flight; receipt only (SSE has no ML segment or [DONE])",
+				"subsystem", "host",
+				"inference_id", start.InferenceId,
+				"diff_nonce", req.Nonce,
+			)
 			return sig, confirmedAt, nil, nil, nil
 		}
 
@@ -1108,6 +1119,13 @@ func (h *Host) LatestNonce() uint64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.sm.LatestNonce()
+}
+
+// HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
+func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.HeightSyncEscrowHints(defaultK, defaultSlots)
 }
 
 // LatestHeight returns the highest mainnet block height currently known

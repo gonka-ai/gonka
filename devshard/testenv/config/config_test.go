@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"devshard/testenv/config"
 
@@ -32,7 +33,9 @@ escrow:
 
 	// Defaults kicked in.
 	require.Equal(t, config.DefaultChainID, cfg.Chain.ID)
+	require.Equal(t, config.DefaultBlockTime, cfg.Chain.BlockTime)
 	require.Equal(t, config.DefaultMockChainPort, cfg.MockChain.Port)
+	require.Equal(t, config.DefaultHeightSyncBlockIntervalDelta, cfg.HeightSync.BlockIntervalDelta)
 	require.Equal(t, config.DefaultEscrowID, cfg.Escrow.ID)
 	require.Equal(t, config.DefaultEscrowVersion, cfg.Escrow.Version)
 	require.Equal(t, config.DefaultAppHash, cfg.Escrow.AppHash)
@@ -168,6 +171,26 @@ func TestRepoConfigLoads(t *testing.T) {
 	// HeightSync defaults kicked in.
 	require.Equal(t, config.DefaultHeightSyncPort, cfg.HeightSync.Port)
 	require.EqualValues(t, 1, cfg.HeightSync.InitialHeight)
+	require.Equal(t, config.DefaultAnchorPeriodNonces, cfg.HeightSync.AnchorPeriodNonces)
+	require.Equal(t, cfg.Devshard.GroupSize, cfg.HeightSync.SyncTurnSlots)
+	require.GreaterOrEqual(t, cfg.HeightSync.AnchorPeriodNonces, cfg.HeightSync.SyncTurnSlots)
+}
+
+func TestConfig_ValidateRejectsAnchorPeriodLessThanSyncTurnSlots(t *testing.T) {
+	path := writeConfig(t, `
+hosts:
+  - {id: h0}
+escrow:
+  slots: 4
+height_sync:
+  anchor_period_nonces: 3
+  sync_turn_slots: 8
+`)
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	valErr := cfg.Validate()
+	require.Error(t, valErr)
+	require.Contains(t, valErr.Error(), "anchor_period_nonces")
 }
 
 func TestConfig_HeightSyncBlockInterval(t *testing.T) {
@@ -201,6 +224,26 @@ chain: {block_time: "not-a-duration"}
 	cfg, err = config.Load(path)
 	require.NoError(t, err)
 	require.Equal(t, 1000, int(cfg.HeightSyncBlockInterval().Milliseconds()))
+}
+
+func TestConfig_HeightSyncBlockIntervalDelta(t *testing.T) {
+	path := writeConfig(t, `
+hosts: [{id: h0}]
+escrow: {slots: 4}
+height_sync: {block_interval_delta: "250ms"}
+`)
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 250*time.Millisecond, cfg.HeightSyncBlockIntervalDelta())
+
+	path = writeConfig(t, `
+hosts: [{id: h0}]
+escrow: {slots: 4}
+height_sync: {block_interval_delta: "bad"}
+`)
+	cfg, err = config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(0), cfg.HeightSyncBlockIntervalDelta())
 }
 
 func TestConfig_HeightSyncURLDefaultsFromPort(t *testing.T) {

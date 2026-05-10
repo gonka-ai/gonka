@@ -80,3 +80,21 @@ func TestMempool_DuplicateAdd(t *testing.T) {
 
 	require.Equal(t, 1, m.Len(), "duplicate tx should overwrite, not double-add")
 }
+
+func confirmStartTx(inferenceID uint64) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: inferenceID, ExecutorSig: []byte{1}, ConfirmedAt: 1},
+	}}
+}
+
+func TestMempool_Txs_DeterministicInferencePipelineOrder(t *testing.T) {
+	m := NewMempool()
+	// Finish added before Confirm — map storage order must not leak into Txs().
+	m.Add(MempoolEntry{Tx: finishTx(7), ProposedAt: 1})
+	m.Add(MempoolEntry{Tx: confirmStartTx(7), ProposedAt: 1})
+
+	txs := m.Txs()
+	require.Len(t, txs, 2)
+	require.NotNil(t, txs[0].GetConfirmStart())
+	require.NotNil(t, txs[1].GetFinishInference())
+}

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"devshard/testenv/citest/harness"
 )
 
 // TestStackIntegrationI1andSection8_7 runs §8.2 I1 (height-sync reachable) and
@@ -97,10 +99,10 @@ func TestStackIntegrationI1andSection8_7(t *testing.T) {
 	}
 
 	// --- §8.2 I2 — per-host cached heights (from VM; Alloy scrapes devshardd /metrics) ---
-	i2HeightsConverge(httpClient, t)
+	harness.I2HeightsConverge(httpClient, t)
 
 	// --- §8.2 I9 — 20 consecutive fresh headers vs pinned verifier (config.yaml) ---
-	i9MultiValidatorStreamVsAuditor(filepath.Join(testenvDir, "config.yaml"), "http://127.0.0.1:9100", httpClient, t)
+	harness.MultiValidatorStreamVsAuditor(filepath.Join(testenvDir, "config.yaml"), "http://127.0.0.1:9100", httpClient, t)
 }
 
 func getHeightFromLatest(c *http.Client, u string) (int64, error) {

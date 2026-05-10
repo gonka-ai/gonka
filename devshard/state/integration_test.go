@@ -220,9 +220,9 @@ func TestFullSession_HappyPath(t *testing.T) {
 	// Verify Merkle structure.
 	hostStatsHash, err := ComputeHostStatsHash(state.HostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHash(state.Balance, state.Inferences, state.WarmKeys)
+	restHash, err := ComputeRestHash(state.Balance, state.Inferences, state.WarmKeys, types.HeightSyncEscrowCommitFromState(&state))
 	require.NoError(t, err)
-	recomputedRoot, err := ComputeStateRoot(state.Balance, state.HostStats, state.Inferences, state.Phase, state.WarmKeys, state.Fees)
+	recomputedRoot, err := ComputeStateRoot(state.Balance, state.HostStats, state.Inferences, state.Phase, state.WarmKeys, state.Fees, types.HeightSyncEscrowCommitFromState(&state))
 	require.NoError(t, err)
 	require.Equal(t, finalStateRoot, recomputedRoot)
 
