@@ -223,7 +223,7 @@ func TestRunInference_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	require.NoError(t, err)
 
 	// Inference 1 exists in state (applied locally by PrepareInference).
@@ -251,7 +251,7 @@ func TestRunInference_RefusalTimeout(t *testing.T) {
 	env.killables[1].Kill()
 
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timed out")
 	require.Contains(t, err.Error(), "REFUSED")
@@ -279,7 +279,7 @@ func TestRunInference_ExecutionTimeout(t *testing.T) {
 	ctx := context.Background()
 
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timed out")
 	require.Contains(t, err.Error(), "EXECUTION")
@@ -305,7 +305,7 @@ func TestRunInference_RecoveryOnRetry(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	require.NoError(t, err, "second attempt should succeed after host is revived")
 
 	// MsgFinishInference should be in pending txs (not yet applied to state).
@@ -329,7 +329,7 @@ func TestHandleTimeout_InsufficientVotes(t *testing.T) {
 	env.killables[1].Kill()
 
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "insufficient votes")
 
@@ -338,4 +338,106 @@ func TestHandleTimeout_InsufficientVotes(t *testing.T) {
 	rec, ok := st.Inferences[1]
 	require.True(t, ok)
 	require.Equal(t, types.StatusPending, rec.Status)
+}
+
+// --- Cancel-flag / client-disconnect tests ---
+
+func TestCancelFlag_NilSafeAndOneShot(t *testing.T) {
+	var nilFlag *cancelFlag
+	require.False(t, nilFlag.Gone(), "nil flag must be safe to query")
+	require.Nil(t, nilFlag.Done(), "nil flag must return a nil channel")
+	nilFlag.Trigger() // must not panic.
+
+	flag := newCancelFlag()
+	require.False(t, flag.Gone())
+	flag.Trigger()
+	require.True(t, flag.Gone())
+	flag.Trigger() // idempotent.
+	require.True(t, flag.Gone())
+
+	select {
+	case <-flag.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done channel should fire after Trigger")
+	}
+}
+
+func TestProxyWriter_SwallowsAfterClientGone(t *testing.T) {
+	rec := httptest.NewRecorder()
+	flag := newCancelFlag()
+	pw := &proxyWriter{w: rec, flag: flag}
+
+	n, err := pw.Write([]byte("data: first\n\n"))
+	require.NoError(t, err)
+	require.Equal(t, 13, n)
+	require.True(t, pw.started)
+	require.Contains(t, rec.Body.String(), "data: first")
+
+	flag.Trigger()
+	before := rec.Body.Len()
+
+	n, err = pw.Write([]byte("data: dropped\n\n"))
+	require.NoError(t, err, "writes after client cancel must succeed for callers")
+	require.Equal(t, 15, n, "Write must report full byte count to keep callers happy")
+	require.Equal(t, before, rec.Body.Len(), "no bytes should reach the recorder after cancel")
+
+	pw.Flush() // must be a no-op once client is gone -- exercises the early return.
+}
+
+// TestRunInference_ClientGoneSkipsRetry verifies mitigation 2: when the
+// cancel flag fires while attempt 1 is in flight (executor down), the proxy
+// must skip the second send attempt and go directly to the timeout flow.
+func TestRunInference_ClientGoneSkipsRetry(t *testing.T) {
+	zeroTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	ctx := context.Background()
+
+	env.killables[1].Kill()
+
+	flag := newCancelFlag()
+	flag.Trigger()
+
+	var buf bytes.Buffer
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, flag)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timed out")
+	require.Contains(t, err.Error(), "REFUSED")
+
+	// Attempt 2 must have been skipped: the executor was never revived,
+	// yet the timeout flow still committed because verifiers accept.
+	st := env.sm.SnapshotState()
+	rec, ok := st.Inferences[1]
+	require.True(t, ok)
+	require.Equal(t, types.StatusTimedOut, rec.Status)
+
+	// No stream_reset SSE event must have been written -- attempt 2 was
+	// the only writer of stream_reset, and it was skipped under cancel.
+	require.NotContains(t, buf.String(), "devshard_stream_reset",
+		"writeStreamReset must not run when client is gone")
+}
+
+// TestRunInference_ClientGoneDuringHappyPath exercises the inverse: when the
+// first attempt succeeds, the cancel flag should not change behavior. The
+// session must still merge MsgFinishInference into pendingTxs.
+func TestRunInference_ClientGoneDuringHappyPath(t *testing.T) {
+	zeroTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	ctx := context.Background()
+
+	flag := newCancelFlag()
+	flag.Trigger() // client already gone before attempt 1.
+
+	var buf bytes.Buffer
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, flag)
+	require.NoError(t, err)
+
+	pending := env.session.PendingTxs()
+	hasFinish := false
+	for _, tx := range pending {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == 1 {
+			hasFinish = true
+		}
+	}
+	require.True(t, hasFinish,
+		"MsgFinishInference must reach pendingTxs even when client disconnected -- this is the whole point of the fix")
 }
