@@ -129,7 +129,7 @@ func main() {
 		3*time.Minute,
 	)
 
-	httpClient := pserver.NewNoRedirectClient(5 * time.Minute)
+	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	chainParams := newChainParamsProvider(ctx, recorder)
 

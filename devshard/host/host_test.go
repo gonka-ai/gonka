@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -707,6 +708,48 @@ func TestHost_ExecuteFailure_ReturnsReceiptNoMempool(t *testing.T) {
 	mptxs := h.MempoolTxs()
 	require.Len(t, mptxs, 1, "mempool should have only MsgConfirmStart")
 	require.NotNil(t, mptxs[0].GetConfirmStart())
+}
+
+func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	responseBody := []byte(`{"events":["data: {\"id\":\"partial\",\"choices\":[]}"]}`)
+	responseHash := sha256.Sum256(responseBody)
+	engine := &stub.ConfigurableEngine{
+		Default: devshard.ExecuteResult{
+			ResponseHash: responseHash[:],
+			InputTokens:  12,
+			OutputTokens: 1,
+			ResponseBody: responseBody,
+		},
+	}
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob)
+
+	result, err := h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+	require.Equal(t, responseBody, result.ResponseBody)
+
+	finishTx := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, finishTx, "mempool should contain MsgFinishInference")
+	finish := finishTx.GetFinishInference()
+	require.Equal(t, uint64(1), finish.InferenceId)
+	require.Equal(t, responseHash[:], finish.ResponseHash)
+	require.Equal(t, uint64(12), finish.InputTokens)
+	require.Equal(t, uint64(1), finish.OutputTokens)
 }
 
 // countingEngine wraps stub engine and counts Execute calls.

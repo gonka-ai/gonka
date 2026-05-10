@@ -29,6 +29,11 @@ import (
 
 type MLRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
+const (
+	MLNodeHTTPTimeout   = 10 * time.Minute
+	PayloadFetchTimeout = 30 * time.Second
+)
+
 func ExecuteInferenceWithExecutor(
 	ctx context.Context,
 	req devshardpkg.ExecuteRequest,
@@ -140,14 +145,32 @@ func ProcessExecutionHTTPResponse(
 	contentType := resp.Header.Get("Content-Type")
 	isSSE := strings.HasPrefix(contentType, "text/event-stream")
 
+	var processErr error
 	if req.ResponseWriter != nil && isSSE {
-		public.ProxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		processErr = public.ProxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
 	} else {
-		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
-			return nil, fmt.Errorf("process response: %w", err)
-		}
+		processErr = completionapi.ProcessHTTPResponse(resp, processor)
 	}
 
+	processed, err := buildProcessedExecutionResponse(req, processor, isSSE)
+	if err != nil {
+		if processErr != nil {
+			return nil, fmt.Errorf("process response: %w", processErr)
+		}
+		return nil, err
+	}
+	if processErr != nil {
+		logging.Warn("Using partial devshard inference response after interrupted stream",
+			chaintypes.Inferences, "inferenceId", inferenceID, "error", processErr)
+	}
+	return processed, nil
+}
+
+func buildProcessedExecutionResponse(
+	req devshardpkg.ExecuteRequest,
+	processor *completionapi.ExecutorResponseProcessor,
+	isSSE bool,
+) (*ProcessedExecutionResponse, error) {
 	completionResp, err := processor.GetResponse()
 	if err != nil {
 		return nil, fmt.Errorf("get completion response: %w", err)
@@ -246,7 +269,8 @@ func EvaluateValidationResponse(
 	}
 
 	if validationUsage, err := validationResponse.GetUsage(); err == nil {
-		if req.InputTokens > validationUsage.PromptTokens || req.OutputTokens > validationUsage.CompletionTokens {
+		if tokenCountInflated(req.InputTokens, validationUsage.PromptTokens) ||
+			tokenCountInflated(req.OutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn(logPrefix+" validation failed: inflated token counts",
 				chaintypes.Validation, "inferenceId", inferenceID,
 				"claimedInput", req.InputTokens, "validationInput", validationUsage.PromptTokens,
@@ -269,6 +293,11 @@ func EvaluateValidationResponse(
 		return nil, err
 	}
 	return &devshardpkg.ValidateResult{Valid: valid}, nil
+}
+
+func tokenCountInflated(claimed, validation uint64) bool {
+	const tokenCountTolerance uint64 = 1
+	return claimed > validation && claimed-validation > tokenCountTolerance
 }
 
 func EvaluateValidationResult(
@@ -384,9 +413,10 @@ func FetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	payloadResp, err := validationpkg.FetchPayloadsHTTP(
+	payloadResp, err := fetchPayloadsHTTPWithTimeout(
 		ctx,
 		httpClient,
+		PayloadFetchTimeout,
 		requestURL,
 		validatorAddress,
 		timestamp,
@@ -424,4 +454,28 @@ func FetchPayloadsFromExecutor(
 	}
 
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
+}
+
+func fetchPayloadsHTTPWithTimeout(
+	ctx context.Context,
+	httpClient *http.Client,
+	timeout time.Duration,
+	requestURL string,
+	validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+) (*validationpkg.PayloadResponse, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return validationpkg.FetchPayloadsHTTP(
+		fetchCtx,
+		httpClient,
+		requestURL,
+		validatorAddress,
+		timestamp,
+		epochID,
+		signature,
+	)
 }

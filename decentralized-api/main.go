@@ -237,7 +237,7 @@ func main() {
 
 	if devshardSigner != nil {
 		devshardBridge := internaldevshard.NewChainBridge(recorder)
-		httpClient := pserver.NewNoRedirectClient(5 * time.Minute)
+		httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 		chainParams := &configParamsProvider{cm: configManager}
 		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
 		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
