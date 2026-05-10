@@ -231,7 +231,7 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
 
-	// Attempt 2 (final). Skipped when the client is gone -- mitigation 2.
+	// Attempt 2 (final). Skipped when the client is gone.
 	if !flag.Gone() {
 		if w != nil {
 			writeStreamReset(w)
@@ -510,13 +510,13 @@ type statusResponse struct {
 // statusSessionConfig is the JSON representation of session config values
 // returned by the devshardctl status endpoint.
 type statusSessionConfig struct {
-	RefusalTimeout   int64  `json:"refusal_timeout"`
-	ExecutionTimeout int64  `json:"execution_timeout"`
-	TokenPrice       uint64 `json:"token_price"`
-	CreateDevshardFee  uint64 `json:"create_devshard_fee"`
-	FeePerNonce      uint64 `json:"fee_per_nonce"`
-	VoteThreshold    uint32 `json:"vote_threshold"`
-	ValidationRate   uint32 `json:"validation_rate"`
+	RefusalTimeout    int64  `json:"refusal_timeout"`
+	ExecutionTimeout  int64  `json:"execution_timeout"`
+	TokenPrice        uint64 `json:"token_price"`
+	CreateDevshardFee uint64 `json:"create_devshard_fee"`
+	FeePerNonce       uint64 `json:"fee_per_nonce"`
+	VoteThreshold     uint32 `json:"vote_threshold"`
+	ValidationRate    uint32 `json:"validation_rate"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -613,13 +613,13 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Phase:    phaseStr,
 		Balance:  st.Balance,
 		Config: statusSessionConfig{
-			RefusalTimeout:   cfg.RefusalTimeout,
-			ExecutionTimeout: cfg.ExecutionTimeout,
-			TokenPrice:       cfg.TokenPrice,
-			CreateDevshardFee:  cfg.CreateDevshardFee,
-			FeePerNonce:      cfg.FeePerNonce,
-			VoteThreshold:    cfg.VoteThreshold,
-			ValidationRate:   cfg.ValidationRate,
+			RefusalTimeout:    cfg.RefusalTimeout,
+			ExecutionTimeout:  cfg.ExecutionTimeout,
+			TokenPrice:        cfg.TokenPrice,
+			CreateDevshardFee: cfg.CreateDevshardFee,
+			FeePerNonce:       cfg.FeePerNonce,
+			VoteThreshold:     cfg.VoteThreshold,
+			ValidationRate:    cfg.ValidationRate,
 		},
 	}
 
