@@ -46,7 +46,7 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                 // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -269,12 +269,14 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
+	diffsApplied := false
 	for _, diff := range req.Diffs {
 		if err := h.applyAndPersist(diff); err != nil {
 			h.mu.Unlock()
 			return nil, err
 		}
 		lastAppliedTxs = diff.Txs
+		diffsApplied = true
 	}
 
 	// (b) Sign executor receipt (sync, under mutex).
@@ -297,15 +299,29 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// (e) Collect validation candidates under mutex.
 	validationJobs := h.collectValidationJobs()
 
+	// (f) Collect locally-proposed Finish txs that the user has not yet
+	// absorbed into a diff. Computed under mutex; broadcast outside it.
+	var staleFinishes []*types.DevshardTx
+	if diffsApplied {
+		staleFinishes = h.collectStaleFinishesLocked()
+	}
+
 	h.mu.Unlock()
 
-	// (f) Execution job for caller to run via RunExecution.
+	// (g) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Validate other hosts' inferences outside mutex.
+	// (h) Validate other hosts' inferences outside mutex.
 	for _, vj := range validationJobs {
 		go h.validateAsync(context.Background(), vj)
+	}
+
+	// (i) Recovery gossip: re-broadcast locally produced Finish that the
+	// user sequencer skipped. gossip.BroadcastTxs dedups by tx hash so
+	// repeated triggers across diffs are harmless.
+	if len(staleFinishes) > 0 && h.gsp != nil {
+		go h.gsp.BroadcastTxs(context.Background(), staleFinishes)
 	}
 
 	return &HostResponse{
@@ -363,10 +379,38 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 // Already-applied diffs (nonce <= current) are silently skipped.
 func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for _, diff := range diffs {
 		_ = h.applyAndPersist(diff)
 	}
+	staleFinishes := h.collectStaleFinishesLocked()
+	h.mu.Unlock()
+
+	if len(staleFinishes) > 0 && h.gsp != nil {
+		go h.gsp.BroadcastTxs(context.Background(), staleFinishes)
+	}
+}
+
+// finishGossipGraceRotations is the number of full slot rotations to wait
+// before re-broadcasting a locally-proposed MsgFinishInference that the user
+// sequencer has not yet included in a diff. With round-robin host selection
+// (nonce % len(group)), one rotation = len(group) nonces, so the effective
+// grace is finishGossipGraceRotations * len(group) nonces.
+//
+// Two rotations gives the user two natural chances to pick up the Finish
+// from the executor host's devshard_meta tail (once per rotation) before we
+// fall back to peer-to-peer recovery gossip. Increase if direct-contact
+// recovery should be preferred more strongly; decrease for snappier gossip.
+const finishGossipGraceRotations uint64 = 2
+
+// collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
+// that the user sequencer has not yet included in a diff after the grace
+// period. Caller must hold h.mu. See Mempool.StaleFinishes for the criterion.
+func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
+	if h.gsp == nil {
+		return nil
+	}
+	grace := finishGossipGraceRotations * uint64(len(h.group))
+	return h.mempool.StaleFinishes(h.sm.LatestNonce(), grace)
 }
 
 // signIfAccepted computes state root, checks acceptance, signs if allowed,

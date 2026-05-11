@@ -80,3 +80,42 @@ func TestMempool_DuplicateAdd(t *testing.T) {
 
 	require.Equal(t, 1, m.Len(), "duplicate tx should overwrite, not double-add")
 }
+
+func TestMempool_StaleFinishes(t *testing.T) {
+	m := NewMempool()
+	require.Nil(t, m.StaleFinishes(10, 0), "empty mempool returns nil")
+
+	localFinish := finishTx(1)
+	peerFinish := finishTx(2)
+	val := validationTx(1, 0)
+	m.Add(MempoolEntry{Tx: localFinish, ProposedAt: 5})
+	m.Add(MempoolEntry{Tx: val, ProposedAt: 5})
+	m.AddTx(peerFinish) // ProposedAt: 0 -- gossip-imported sentinel.
+
+	// grace=0, currentNonce == ProposedAt: not yet stale.
+	require.Empty(t, m.StaleFinishes(5, 0))
+
+	// grace=0, currentNonce > ProposedAt: locally-proposed Finish is stale.
+	stale := m.StaleFinishes(6, 0)
+	require.Len(t, stale, 1, "only the local Finish should be returned")
+	require.NotNil(t, stale[0].GetFinishInference())
+	require.Equal(t, uint64(1), stale[0].GetFinishInference().InferenceId)
+
+	// grace > 0 buffers the trigger: at ProposedAt+grace we are still not
+	// stale (5+2 < 7 is false); only past that point.
+	require.Empty(t, m.StaleFinishes(7, 2), "ProposedAt+grace not yet exceeded")
+	require.Len(t, m.StaleFinishes(8, 2), 1, "exceeding ProposedAt+grace marks stale")
+
+	// Peer-imported Finish (ProposedAt=0) must never be reported, regardless
+	// of currentNonce or grace, to avoid amplifying other hosts' broadcasts.
+	for n := uint64(1); n < 100; n++ {
+		for _, tx := range m.StaleFinishes(n, 0) {
+			require.NotEqual(t, uint64(2), tx.GetFinishInference().InferenceId,
+				"peer-imported Finish must be excluded")
+		}
+	}
+
+	// Validations and other non-Finish tx types are never returned, even when
+	// locally proposed and past their proposal nonce.
+	require.Len(t, m.StaleFinishes(99, 0), 1, "only Finish txs are eligible")
+}

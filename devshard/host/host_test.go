@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/gossip"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -18,6 +20,52 @@ import (
 	"devshard/stub"
 	"devshard/types"
 )
+
+// recordingPeer implements gossip.PeerClient and records GossipTxs calls.
+// Used by tests that exercise the host's recovery-gossip trigger.
+type recordingPeer struct {
+	mu       sync.Mutex
+	txsCalls [][]*types.DevshardTx
+	txsCount atomic.Int32
+}
+
+func (p *recordingPeer) GossipNonce(_ context.Context, _ uint64, _, _ []byte, _ uint32) error {
+	return nil
+}
+
+func (p *recordingPeer) GossipTxs(_ context.Context, txs []*types.DevshardTx) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.txsCalls = append(p.txsCalls, txs)
+	p.txsCount.Add(1)
+	return nil
+}
+
+func (p *recordingPeer) Calls() [][]*types.DevshardTx {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([][]*types.DevshardTx, len(p.txsCalls))
+	copy(out, p.txsCalls)
+	return out
+}
+
+// awaitTxsCall polls until the recordingPeer has at least one GossipTxs call.
+func awaitTxsCall(t *testing.T, p *recordingPeer, deadline time.Duration) [][]*types.DevshardTx {
+	t.Helper()
+	timeout := time.NewTimer(deadline)
+	defer timeout.Stop()
+	for {
+		if p.txsCount.Load() > 0 {
+			return p.Calls()
+		}
+		select {
+		case <-timeout.C:
+			t.Fatalf("expected at least one GossipTxs call within %s, got 0", deadline)
+			return nil
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
 
 // --- Package-specific test helpers ---
 
@@ -1140,4 +1188,156 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	sigs, err := store.GetSignatures("escrow-1", 2)
 	require.NoError(t, err)
 	require.Equal(t, warmSig, sigs[1])
+}
+
+// --- finish-gossip recovery tests ---
+
+// newExecutorHostWithGossip wires host index 1 (executor for inference 1, since
+// 1 % 3 = 1) with a real *gossip.Gossip instance backed by recordingPeer so we
+// can observe the host's recovery-gossip dispatch.
+func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, *recordingPeer) {
+	t.Helper()
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100_000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	engine := stub.NewInferenceEngine()
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil,
+		WithGrace(100),
+	)
+	require.NoError(t, err)
+
+	// Build gossip with the host's own mempool as MempoolSink; attach it
+	// to the host afterward to avoid the chicken-and-egg of WithGossip
+	// inside NewHost needing the live mempool.
+	peer := &recordingPeer{}
+	g := gossip.NewGossip("escrow-1", 1 /* slotID */, []gossip.PeerClient{peer}, h.HostMempool())
+	WithGossip(g)(h)
+
+	return h, hosts, user, peer
+}
+
+// TestHost_FinishGossipRecovery_TriggersOnMissedDiff is the core recovery test:
+// after the executor produces a Finish, if the user's subsequent diffs do not
+// include it for more than `finishGossipGraceRotations * len(group)` nonces,
+// the host must broadcast the Finish via tx gossip.
+func TestHost_FinishGossipRecovery_TriggersOnMissedDiff(t *testing.T) {
+	h, _, user, peer := newExecutorHostWithGossip(t)
+	groupSize := uint64(len(h.Group()))
+	grace := finishGossipGraceRotations * groupSize
+
+	// Diff 1: StartTx for inference 1; host 1 executes (1 % 3 = 1).
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff1}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob, "host 1 should be the executor")
+
+	// Run execution; this adds MsgFinishInference to mempool with ProposedAt=1.
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+	require.NotNil(t, findMempoolFinish(h.MempoolTxs()),
+		"Finish should be in mempool after RunExecution")
+
+	// Apply empty diffs up to (but not past) the grace threshold. The Finish
+	// has ProposedAt=1, so it becomes stale once currentNonce > 1 + grace.
+	// At currentNonce == 1 + grace the trigger must NOT fire yet.
+	for nonce := uint64(2); nonce <= 1+grace; nonce++ {
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+		_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+		require.NoError(t, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int32(0), peer.txsCount.Load(),
+		"recovery gossip must not fire until ProposedAt + grace < currentNonce")
+
+	// One more empty diff crosses the threshold: 1 + grace < currentNonce.
+	crossing := testutil.SignDiff(t, user, "escrow-1", 2+grace, nil)
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{crossing}})
+	require.NoError(t, err)
+
+	// Recovery gossip is dispatched in a goroutine; await the call.
+	calls := awaitTxsCall(t, peer, 2*time.Second)
+	require.GreaterOrEqual(t, len(calls), 1)
+
+	// The broadcasted batch must contain the Finish for inference 1.
+	var found bool
+	for _, batch := range calls {
+		for _, tx := range batch {
+			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == 1 {
+				found = true
+			}
+		}
+	}
+	require.True(t, found, "broadcast must include MsgFinishInference for inference 1")
+}
+
+// TestHost_FinishGossipRecovery_NoTriggerWhenIncluded verifies that if the
+// next user diff actually includes the Finish, no recovery gossip is sent.
+func TestHost_FinishGossipRecovery_NoTriggerWhenIncluded(t *testing.T) {
+	h, _, user, peer := newExecutorHostWithGossip(t)
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff1}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	finishTxFromMempool := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, confirmTx)
+	require.NotNil(t, finishTxFromMempool)
+
+	// Diff 2 includes confirm, diff 3 includes Finish. The Finish never has
+	// a "missed" applied-diff in this sequence: applyAndPersist removes it
+	// from mempool the moment diff 3 lands.
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTxFromMempool})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
+	require.NoError(t, err)
+
+	// Give a goroutine slot for any spurious broadcast to land.
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int32(0), peer.txsCount.Load(),
+		"no recovery gossip should fire when the user includes Finish in time")
+}
+
+// TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified guards the
+// ProposedAt > 0 filter: a Finish that arrived from a peer (added via
+// gossip.OnTxsReceived → mempool.AddTx, ProposedAt=0) must not be re-broadcast
+// even after the staleness threshold would otherwise mark it stale.
+func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) {
+	h, _, user, peer := newExecutorHostWithGossip(t)
+	groupSize := uint64(len(h.Group()))
+	grace := finishGossipGraceRotations * groupSize
+
+	// Inject a peer-imported Finish for an inference this host did not execute.
+	imported := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{InferenceId: 999},
+	}}
+	h.HostMempool().AddTx(imported) // ProposedAt=0 sentinel.
+
+	// Advance well past 0 + grace so the only thing keeping this tx out of
+	// the broadcast set is the ProposedAt > 0 filter.
+	for nonce := uint64(1); nonce <= grace+2; nonce++ {
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+		_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+		require.NoError(t, err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int32(0), peer.txsCount.Load(),
+		"peer-imported Finish (ProposedAt=0) must not be re-broadcast")
 }
