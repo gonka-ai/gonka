@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"devshard/gossip"
 	"devshard/host"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/types"
@@ -100,9 +102,11 @@ func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 // Register mounts all devshard routes on the given echo group.
 // The caller typically mounts this under /v1/devshard.
 func (s *Server) Register(g *echo.Group) {
+	g.Use(observability.EchoMiddleware())
+	g.Use(observability.RequestIDMiddleware)
 	g.Use(s.AuthMiddleware)
 	if s.rateLimit != nil {
-		g.Use(rateLimitMiddleware(s.rateLimit))
+		g.Use(rateLimitMiddleware(s.rateLimit, true))
 	}
 	g.POST("/sessions/:id/chat/completions", s.HandleInference)
 	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
@@ -125,6 +129,31 @@ func writeJSON(c echo.Context, code int, v interface{}) error {
 		return err
 	}
 	return c.Blob(code, echo.MIMEApplicationJSON, b)
+}
+
+// startHandlerSpan opens an internal observability span for a handler and
+// updates the request context so downstream code inherits it. The returned
+// closure must be deferred to finalize the span with the handler's error.
+//
+// Auto-attached attributes: http.method, http.route, http.target, peer.address,
+// http.request_content_length, devshard.handler. The returned *Operation can
+// be used by the caller to attach handler-specific attributes (e.g. nonce,
+// inference id, sender) once they are parsed from the request.
+func startHandlerSpan(c echo.Context, handlerName string) (*observability.Operation, func(*error)) {
+	sessionID := c.Param("id")
+	req := c.Request()
+	ctx, op := observability.Request.StartHandler(req.Context(), handlerName, sessionID)
+	c.SetRequest(req.WithContext(ctx))
+
+	route := c.Path()
+	if route == "" {
+		route = req.URL.Path
+	}
+	observability.Request.SetHTTPRequest(op, req.Method, route, req.URL.RequestURI(), req.RemoteAddr, req.ContentLength)
+
+	return op, func(errPtr *error) {
+		op.FinishErr(errPtr)
+	}
 }
 
 // isAllowedSender returns true if addr is the session user, a group member,
@@ -248,40 +277,68 @@ func getBody(c echo.Context) ([]byte, error) {
 	return v, nil
 }
 
-func (s *Server) HandleInference(c echo.Context) error {
+func (s *Server) HandleInference(c echo.Context) (err error) {
+	sessionID := c.Param("id")
+	ctx, op := observability.Request.StartInference(c.Request().Context(), sessionID, "")
+	c.SetRequest(c.Request().WithContext(ctx))
+	defer op.FinishErr(&err)
+	doneInflight := observability.IncInflight(observability.StageRequest)
+	defer doneInflight()
+
+	route := c.Path()
+	if route == "" {
+		route = c.Request().URL.Path
+	}
+	observability.Request.SetHTTPRequest(op, c.Request().Method, route, c.Request().URL.RequestURI(), c.Request().RemoteAddr, c.Request().ContentLength)
+	observability.Request.SetEscrowID(op, s.host.EscrowID())
+
 	sender, err := getSender(c)
 	if err != nil {
-		logging.Error("HandleInference", "error", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing sender")
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
+			observability.ReasonMissingSender, observability.WhereTransportHandleInference,
+			"HandleInference: missing sender", echo.NewHTTPError(http.StatusUnauthorized, "missing sender"))
 	}
+	observability.Request.SetSender(op, sender)
 	if !s.isOwner(sender) {
-		logging.Error("HandleInference", "error", "restricted to escrow owner")
-		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
+			observability.ReasonOwnerErr, observability.WhereTransportHandleInference,
+			"HandleInference: restricted to escrow owner", echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner"))
 	}
 
 	body, err := getBody(c)
 	if err != nil {
-		logging.Error("HandleInference", "error", err)
-		return err
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
+			observability.ReasonBodyReadErr, observability.WhereTransportHandleInference,
+			"HandleInference: read body", err)
 	}
+	observability.Request.SetInferenceBodyBytes(op, len(body))
 
 	var ir InferenceRequest
 	if err := json.Unmarshal(body, &ir); err != nil {
-		logging.Error("HandleInference", "error", "invalid json: "+err.Error())
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid json: "+err.Error())
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
+			observability.ReasonParseErr, observability.WhereTransportHandleInference,
+			"HandleInference: invalid json", echo.NewHTTPError(http.StatusBadRequest, "invalid json: "+err.Error()))
 	}
 
 	req, err := HostRequestFromJSON(ir)
 	if err != nil {
-		logging.Error("HandleInference", "error", "decode request: "+err.Error())
-		return echo.NewHTTPError(http.StatusBadRequest, "decode request: "+err.Error())
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
+			observability.ReasonDecodeErr, observability.WhereTransportHandleInference,
+			"HandleInference: decode request", echo.NewHTTPError(http.StatusBadRequest, "decode request: "+err.Error()))
 	}
+	if req.Payload != nil {
+		observability.Request.SetModel(op, req.Payload.Model)
+	}
+	observability.Request.SetNonce(op, req.Nonce)
 
-	resp, err := s.host.HandleRequest(c.Request().Context(), req)
+	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
-		logging.Error("HandleInference", "error", "handle request: "+err.Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
+		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
+			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()))
 	}
+	observability.Request.SetInferenceID(op, resp.InferenceID)
+	observability.Request.SetInferenceResponse(op, resp.Nonce, resp.ExecutionExpected, resp.CachedResponseBody != nil)
 
 	// Always SSE response.
 	w := c.Response()
@@ -300,18 +357,44 @@ func (s *Server) HandleInference(c echo.Context) error {
 		ConfirmedAt: resp.ConfirmedAt,
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
-	writeSSEEvent(w, receiptWrapper)
+	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
+		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
+		if resp.ExecutionJob != nil {
+			s.host.ReleaseExecution(resp.InferenceID)
+		}
+		return nil
+	}
+
+	finishReason := observability.ReasonOK
+	var finishFailureWhere observability.Where
 
 	// Event 2+: inference result.
 	// If reconnecting to a completed inference, replay cached response.
 	// Otherwise run deferred execution with live streaming.
 	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
-		replaySSEBody(w, resp.CachedResponseBody)
+		if werr := replaySSEBody(w, resp.CachedResponseBody); werr != nil {
+			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
+			return nil
+		}
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
-		_, execErr := s.host.RunExecution(c.Request().Context(), resp.ExecutionJob)
+		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
+			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
+			if errors.Is(ctx.Err(), context.Canceled) {
+				observability.RecordClientCancelledAfterReceipt(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, where)
+				return nil
+			}
+			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, where)
 			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			return nil
+		}
+		if execResult != nil && execResult.PartialResponse {
+			finishReason = observability.Reason(execResult.PartialResponseReason)
+			if finishReason == "" {
+				finishReason = observability.ReasonPartialResponseInterrupted
+			}
+			finishFailureWhere = observability.Where(execResult.PartialResponseWhere)
 		}
 	}
 
@@ -319,7 +402,7 @@ func (s *Server) HandleInference(c echo.Context) error {
 	mempoolTxs := s.host.MempoolTxs()
 	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
-	writeSSEEvent(w, metaWrapper)
+	_ = writeSSEEvent(w, metaWrapper)
 
 	// Fire gossip in background.
 	if s.gossip != nil && resp.StateSig != nil {
@@ -329,32 +412,49 @@ func (s *Server) HandleInference(c echo.Context) error {
 		go s.gossip.BroadcastTxs(context.Background(), resp.Mempool)
 	}
 
+	switch {
+	case resp.ExecutionExpected && resp.ExecutionJob != nil:
+		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, finishReason, finishFailureWhere)
+	case resp.Receipt != nil:
+		observability.RecordReceiptNoExecutionExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
+	default:
+		observability.RecordNoReceiptExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
+	}
+
 	return nil
 }
 
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 // The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
-func replaySSEBody(w http.ResponseWriter, body []byte) {
-	fmt.Fprintf(w, "data: %s\n\n", body)
+func replaySSEBody(w http.ResponseWriter, body []byte) error {
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+		return err
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	fmt.Fprintf(w, "data: [DONE]\n\n")
+	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	return nil
 }
 
 // writeSSEEvent writes a single SSE data line with JSON payload.
-func writeSSEEvent(w http.ResponseWriter, data interface{}) {
+func writeSSEEvent(w http.ResponseWriter, data interface{}) error {
 	b, err := json.Marshal(data)
 	if err != nil {
-		return
+		return err
 	}
-	fmt.Fprintf(w, "data: %s\n\n", b)
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+		return err
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	return nil
 }
 
 // SetPeerClients sets the executor clients for timeout verification.
@@ -363,11 +463,15 @@ func (s *Server) SetPeerClients(peers map[int]*HTTPClient) {
 	s.peerClients = peers
 }
 
-func (s *Server) HandleVerifyTimeout(c echo.Context) error {
+func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "verify_timeout")
+	defer finish(&err)
+
 	sender, err := getSender(c)
 	if err != nil {
 		return err
 	}
+	observability.Request.SetSender(op, sender)
 	if !s.isOwner(sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
@@ -470,11 +574,15 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 	return sig, voterSlot, nil
 }
 
-func (s *Server) HandleChallengeReceipt(c echo.Context) error {
+func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "challenge_receipt")
+	defer finish(&err)
+
 	sender, err := getSender(c)
 	if err != nil {
 		return err
 	}
+	observability.Request.SetSender(op, sender)
 	if !s.isOwner(sender) && !s.isGroupMember(sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner or group member")
 	}
@@ -488,6 +596,8 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) error {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
 	}
+	observability.Request.SetInferenceID(op, req.InferenceID)
+	observability.Request.SetDiffsCount(op, len(req.Diffs))
 
 	diffs := make([]types.Diff, len(req.Diffs))
 	for i, dj := range req.Diffs {
@@ -506,12 +616,16 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) error {
 	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt})
 }
 
-func (s *Server) HandleGossipNonce(c echo.Context) error {
+func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "gossip_nonce")
+	defer finish(&err)
+
 	// Gossip is host-to-host only. Reject user-signed requests.
 	sender, err := getSender(c)
 	if err != nil {
 		return err
 	}
+	observability.Request.SetSender(op, sender)
 	if !s.isGroupMember(sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "gossip restricted to group members")
 	}
@@ -525,6 +639,9 @@ func (s *Server) HandleGossipNonce(c echo.Context) error {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
 	}
+	observability.Request.SetNonce(op, req.Nonce)
+	observability.Request.SetSlotID(op, req.SlotID)
+	observability.Request.SetStateHash(op, hex.EncodeToString(req.StateHash))
 
 	// Reject empty sig or invalid slot upfront. Without this, an attacker
 	// can poison the seen map with a fake (nonce, hash) and cause false
@@ -573,12 +690,16 @@ func (s *Server) HandleGossipNonce(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (s *Server) HandleGossipTxs(c echo.Context) error {
+func (s *Server) HandleGossipTxs(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "gossip_txs")
+	defer finish(&err)
+
 	// Gossip is host-to-host only.
 	sender, err := getSender(c)
 	if err != nil {
 		return err
 	}
+	observability.Request.SetSender(op, sender)
 	if !s.isGroupMember(sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "gossip restricted to group members")
 	}
@@ -592,19 +713,24 @@ func (s *Server) HandleGossipTxs(c echo.Context) error {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
 	}
+	observability.Request.SetGossipTxsBytes(op, len(req.Txs))
 
 	if s.gossip != nil {
 		txs, err := DevshardTxsFromBytes(req.Txs)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "decode txs: "+err.Error())
 		}
+		observability.Request.SetGossipTxsCount(op, len(txs))
 		s.gossip.OnTxsReceived(txs)
 	}
 
 	return c.NoContent(http.StatusOK)
 }
 
-func (s *Server) HandleGetSignatures(c echo.Context) error {
+func (s *Server) HandleGetSignatures(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "get_signatures")
+	defer finish(&err)
+
 	nonceStr := c.QueryParam("nonce")
 	if nonceStr == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing 'nonce' parameter")
@@ -613,16 +739,21 @@ func (s *Server) HandleGetSignatures(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid 'nonce' parameter")
 	}
+	observability.Request.SetNonce(op, nonce)
 
 	sigs, err := s.host.GetSignatures(nonce)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+	observability.Request.SetSignaturesReturned(op, len(sigs))
 
 	return writeJSON(c, http.StatusOK, SignaturesResponse{Signatures: sigs})
 }
 
-func (s *Server) HandleGetDiffs(c echo.Context) error {
+func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "get_diffs")
+	defer finish(&err)
+
 	if s.store == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "no storage configured")
 	}
@@ -638,11 +769,13 @@ func (s *Server) HandleGetDiffs(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid 'to' parameter")
 	}
+	observability.Request.SetDiffsRange(op, from, to)
 
 	records, err := s.store.GetDiffs(s.host.EscrowID(), from, to)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+	observability.Request.SetDiffsReturned(op, len(records))
 
 	// Convert to JSON-friendly format.
 	type diffRecordJSON struct {
@@ -662,11 +795,16 @@ func (s *Server) HandleGetDiffs(c echo.Context) error {
 	return writeJSON(c, http.StatusOK, result)
 }
 
-func (s *Server) HandleGetMempool(c echo.Context) error {
+func (s *Server) HandleGetMempool(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "get_mempool")
+	defer finish(&err)
+
 	txs := s.host.MempoolTxs()
+	observability.Request.SetMempoolSize(op, len(txs))
 	data, err := DevshardTxsToBytes(txs)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+	observability.Request.SetResponseContentLength(op, len(data))
 	return writeJSON(c, http.StatusOK, map[string]interface{}{"txs": data})
 }

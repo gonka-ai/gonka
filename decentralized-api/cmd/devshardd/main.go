@@ -48,6 +48,7 @@ import (
 
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
+	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 )
@@ -85,6 +86,21 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	shutdownObservability, err := devshardobservability.Init(ctx, devshardobservability.Config{
+		ServiceName:    devshardobservability.ServiceName,
+		ServiceVersion: runtimeVersion,
+	})
+	if err != nil {
+		log.Fatalf("init observability: %v", err)
+	}
+	devshardobservability.SetRuntime("devshardd", runtimeVersion, "standalone_devshardd")
+	devshardobservability.SetBuildInfo("devshardd", Version, "")
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = shutdownObservability(shutdownCtx)
+	}()
 
 	nodeConfig := loadNodeConfigFromEnv()
 	slog.Info("chain node", "url", nodeConfig.Url, "keyring_backend", nodeConfig.KeyringBackend, "keyring_dir", nodeConfig.KeyringDir)
@@ -169,7 +185,15 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Server.ConnState = devshardobservability.ConnState("devshardd")
+	// Register Go/process collectors only here (standalone devshardd): this
+	// registry is not merged with any other, so it owns the runtime metrics.
+	devshardobservability.RegisterRuntimeCollectors()
+	// /healthz and /metrics intentionally have no EchoMiddleware so they don't
+	// emit server spans. Session routes get EchoMiddleware from
+	// RegisterLazySessionRoutes inside manager.Register below.
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/metrics", echo.WrapHandler(devshardobservability.MetricsHandler()))
 	// Mount HostManager routes at the root. Versiond strips the /<version>/
 	// prefix before forwarding, so devshardd sees /sessions/:id/* directly.
 	manager.Register(e.Group(""))

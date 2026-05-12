@@ -11,6 +11,7 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -464,14 +465,19 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 	return len(event.Result.Events["inference_finished.inference_id"]) > 0
 }
 
-func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_finished.inference_id"]
+	_, op := observability.Inference.StartValidationEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.isNodeSynced() {
-		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
+		el.validator.SampleInferenceToValidate(ids, el.transactionRecorder)
 	}
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceFinishedRecords(event.Result.Events)
+	records, recErr := parseInferenceFinishedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -614,11 +620,16 @@ func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRP
 	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
 }
 
-func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_status_updated.inference_id"]
+	_, op := observability.Inference.StartStatusUpdateEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	records, recErr := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
 		return nil

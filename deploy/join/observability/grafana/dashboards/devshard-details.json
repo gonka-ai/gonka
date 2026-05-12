@@ -1,0 +1,332 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Devshard inference health: throughput, success rate, latency, token usage, failed traces, API metrics, and log drilldown.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "panels": [
+
+    { "id": 100, "type": "row", "title": "Inference Health", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Inferences Completed / sec",
+      "description": "Rate of successfully completed ML inference executions.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "decimals": 3, "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": 0 }, { "color": "green", "value": 0.001 }
+          ]}
+        }, "overrides": []
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum(rate(devshard_request_terminal_total{terminal=\"finish_published\"}[$__rate_interval]))", "instant": true, "refId": "A" }]
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Success Rate",
+      "description": "finish_published terminals as % of all terminals (last interval). Below 99% is a warning.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "decimals": 1, "min": 0, "max": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": 0 }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 0.99 }
+          ]}
+        }, "overrides": []
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum(rate(devshard_request_terminal_total{terminal=\"finish_published\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_request_terminal_total[$__rate_interval])), 1)", "instant": true, "refId": "A" }]
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "p95 Execution Duration",
+      "description": "95th percentile time spent inside the ML engine.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 }, { "color": "orange", "value": 30 }, { "color": "red", "value": 60 }
+          ]}
+        }, "overrides": []
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(devshard_mlnode_call_seconds_bucket{path=\"execute\",phase=\"total\"}[$__rate_interval])) by (le))", "instant": true, "refId": "A" }]
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Token Throughput",
+      "description": "Combined input + output tokens processed per second.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "color": { "fixedColor": "blue", "mode": "fixed" } },
+        "overrides": []
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum(rate(devshard_mlnode_tokens_sum{path=\"execute\"}[$__rate_interval]))", "instant": true, "refId": "A" }]
+    },
+
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Inference Rate — Completed vs Failed",
+      "description": "Inferences per second split by result. A rising 'failed' line means something is broken.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": [{ "matcher": { "id": "byName", "options": "failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }]
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum by (terminal) (rate(devshard_request_terminal_total[$__rate_interval]))", "legendFormat": "{{terminal}}", "range": true, "refId": "A" }]
+    },
+
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Execution Duration Percentiles",
+      "description": "How long the ML engine takes to produce a response.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(devshard_mlnode_call_seconds_bucket{path=\"execute\",phase=\"total\"}[$__rate_interval])) by (le))", "legendFormat": "p50", "range": true, "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum(rate(devshard_mlnode_call_seconds_bucket{path=\"execute\",phase=\"total\"}[$__rate_interval])) by (le))", "legendFormat": "p95", "range": true, "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum(rate(devshard_mlnode_call_seconds_bucket{path=\"execute\",phase=\"total\"}[$__rate_interval])) by (le))", "legendFormat": "p99", "range": true, "refId": "C" }
+      ]
+    },
+
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Token Throughput — Input & Output",
+      "description": "Tokens per second. Output tokens drive GPU cost; input tokens drive context window pressure.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 13 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        { "expr": "sum(rate(devshard_mlnode_tokens_sum{path=\"execute\",kind=\"prompt\"}[$__rate_interval]))", "legendFormat": "prompt tokens/sec", "range": true, "refId": "A" },
+        { "expr": "sum(rate(devshard_mlnode_tokens_sum{path=\"execute\",kind=\"completion\"}[$__rate_interval]))", "legendFormat": "completion tokens/sec", "range": true, "refId": "B" }
+      ]
+    },
+
+    { "id": 101, "type": "row", "title": "Errors & Traces", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 } },
+
+    {
+      "id": 8,
+      "type": "traces",
+      "title": "Failed Inference Traces — click any row to inspect in Jaeger",
+      "description": "Traces for inference executions that failed (error=true). Each row is one failed inference.",
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
+      "options": {},
+      "pluginVersion": "13.0.1",
+      "targets": [{ "datasource": { "type": "jaeger", "uid": "jaeger" }, "queryType": "search", "service": "devshardd", "tags": "error=true", "limit": 20, "refId": "A" }]
+    },
+
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Execution Errors by Reason",
+      "description": "Interruptions during inference execution (engine failure, signing failure).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum by (class, reason) (rate(devshard_interruption_total[$__rate_interval]))", "legendFormat": "{{class}} / {{reason}}", "range": true, "refId": "A" }]
+    },
+
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Validation Queue Depth & Mempool Size",
+      "description": "Pending validations and unsigned txs. Both should stay near zero between requests.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        { "expr": "sum by (escrow_id) (devshard_validation_queue_depth)", "legendFormat": "validation queue {{escrow_id}}", "range": true, "refId": "A" },
+        { "expr": "sum by (escrow_id) (devshard_mempool_size)", "legendFormat": "mempool {{escrow_id}}", "range": true, "refId": "B" }
+      ]
+    },
+
+    { "id": 102, "type": "row", "title": "API Metrics", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 } },
+
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "API Request Rate by Operation",
+      "description": "Rate of inference operations observed by the API server.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum by (operation) (rate(decentralized_api_inference_operation_duration_seconds_count{job=\"decentralized-api\"}[5m]))", "legendFormat": "{{operation}}", "range": true, "refId": "A" }]
+    },
+
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Devshard Build Info",
+      "description": "Active devshardd binaries by version. Each running binary appears as a series at value 1.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "max by (binary, version) (devshard_build_info)", "legendFormat": "{{binary}} {{version}}", "range": true, "refId": "A" }]
+    },
+
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Devshardd Operation Duration p95 By Operation",
+      "description": "p95 duration of devshardd operations from /metrics (handler/inference/mlnode/validation).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 47 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(devshardd_request_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "{{operation}}", "range": true, "refId": "A" }]
+    },
+
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Devshardd Operation Errors",
+      "description": "Error rate of devshardd operations split by operation and model.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 47 },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "expr": "sum by (operation, model) (rate(devshardd_request_errors_total[$__rate_interval]))", "legendFormat": "{{operation}} {{model}}", "range": true, "refId": "A" }]
+    },
+
+    { "id": 103, "type": "row", "title": "Log Drilldown", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 } },
+
+    {
+      "id": 15,
+      "type": "logs",
+      "title": "Devshard Runtime Logs",
+      "description": "Devshard-tagged log lines. Filter by inference_id using the variable above.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 57 },
+      "options": {
+        "dedupStrategy": "none",
+        "enableInfiniteScrolling": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": true,
+        "showLevel": true,
+        "showTime": false,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [{ "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "expr": "{compose_project=\"join\", compose_service=\"api\"} |~ \"(subsystem=devshardd)\" | logfmt | inference_id=~\"$inference_id\"", "queryType": "range", "refId": "A" }]
+    }
+
+  ],
+
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "tags": ["devshard", "inference", "metrics"],
+  "templating": {
+    "list": [
+      {
+        "current": { "text": ".*", "value": ".*" },
+        "hide": 0,
+        "label": "Inference ID Regex",
+        "name": "inference_id",
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": { "text": ".*", "value": ".*" },
+        "hide": 0,
+        "label": "Requester Regex",
+        "name": "requester_address",
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","30s","1m","5m","15m","30m","1h","2h","1d"]
+  },
+  "timezone": "browser",
+  "title": "Devshard Details",
+  "uid": "devshard-details",
+  "version": 1
+}

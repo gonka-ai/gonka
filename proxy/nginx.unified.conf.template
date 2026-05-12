@@ -90,6 +90,12 @@ http {
     # Dashboard upstream - only included if DASHBOARD_PORT is set
     ${DASHBOARD_UPSTREAM}
 
+    # Jaeger upstream - only included if JAEGER_SERVICE_NAME is set
+    ${JAEGER_UPSTREAM}
+
+    # Grafana upstream - only included if GRAFANA_ENABLED is set
+    ${GRAFANA_UPSTREAM}
+
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
     # devshard binary. /v1/devshard/* still goes to the api backend (legacy
@@ -147,6 +153,12 @@ http {
 
         # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
         ${DEVSHARD_VERSIOND_LOCATION}
+
+        # Jaeger UI (only when JAEGER_SERVICE_NAME is set)
+        ${JAEGER_LOCATION}
+
+        # Grafana UI (only when GRAFANA_ENABLED is set)
+        ${GRAFANA_LOCATION}
 
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
