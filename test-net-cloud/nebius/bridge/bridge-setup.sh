@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-# Default Genesis Host
+# Default Genesis Host and chain-api port. Override via env:
+#   GENESIS_HOST=xj7-5.s.filfox.io GENESIS_PORT=19246 ./bridge-setup.sh ...
 GENESIS_HOST="${GENESIS_HOST:-89.169.111.79}"
+GENESIS_PORT="${GENESIS_PORT:-8000}"
 # Relative path to the bridge contract directory
 BRIDGE_DIR="../../../proposals/ethereum-bridge-contact"
 ENV_FILE="$BRIDGE_DIR/.env"
@@ -31,8 +33,8 @@ else
 fi
 
 # Fetch current epoch
-echo "Fetching current epoch..."
-EPOCH=$(curl -s "http://$GENESIS_HOST:8000/chain-api/productscience/inference/inference/get_current_epoch" | jq -r .epoch)
+echo "Fetching current epoch from http://$GENESIS_HOST:$GENESIS_PORT/chain-api/ ..."
+EPOCH=$(curl -s "http://$GENESIS_HOST:$GENESIS_PORT/chain-api/productscience/inference/inference/get_current_epoch" | jq -r .epoch)
 
 if [ -z "$EPOCH" ] || [ "$EPOCH" == "null" ]; then
     echo "Error: Failed to fetch current epoch from $GENESIS_HOST"
@@ -42,7 +44,7 @@ echo "Current Epoch: $EPOCH"
 
 # Fetch Group Public Key
 echo "Fetching Group Public Key..."
-GROUP_KEY_B64=$(curl -s "http://$GENESIS_HOST:8000/chain-api/productscience/inference/bls/epoch_data/$EPOCH" | jq -r .epoch_data.group_public_key)
+GROUP_KEY_B64=$(curl -s "http://$GENESIS_HOST:$GENESIS_PORT/chain-api/productscience/inference/bls/epoch_data/$EPOCH" | jq -r .epoch_data.group_public_key)
 
 if [ -z "$GROUP_KEY_B64" ] || [ "$GROUP_KEY_B64" == "null" ]; then
     echo "Error: Failed to fetch group public key"
@@ -74,17 +76,17 @@ else
 fi
 
 if grep -q "GONKA_CHAIN_ID=" "$ENV_FILE"; then
-    sed -i.bak "s|GONKA_CHAIN_ID=.*|GONKA_CHAIN_ID=gonka-testnet|" "$ENV_FILE"
+    sed -i.bak "s|GONKA_CHAIN_ID=.*|GONKA_CHAIN_ID=gonka-testnet-4|" "$ENV_FILE"
     rm "$ENV_FILE.bak"
 else
-    echo "GONKA_CHAIN_ID=gonka-testnet" >> "$ENV_FILE"
+    echo "GONKA_CHAIN_ID=gonka-testnet-4" >> "$ENV_FILE"
 fi
 
 if grep -q "ETHEREUM_CHAIN_ID=" "$ENV_FILE"; then
-    sed -i.bak "s|ETHEREUM_CHAIN_ID=.*|ETHEREUM_CHAIN_ID=1|" "$ENV_FILE"
+    sed -i.bak "s|ETHEREUM_CHAIN_ID=.*|ETHEREUM_CHAIN_ID=11155111|" "$ENV_FILE"
     rm "$ENV_FILE.bak"
 else
-    echo "ETHEREUM_CHAIN_ID=1" >> "$ENV_FILE"
+    echo "ETHEREUM_CHAIN_ID=11155111" >> "$ENV_FILE"
 fi
 
 # Set SEPOLIA_RPC_URL for testnet setup
