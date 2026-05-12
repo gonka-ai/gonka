@@ -125,9 +125,12 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 }
 
 func validationReplaySeed(inferenceID string) int32 {
-	parsed, err := strconv.ParseUint(inferenceID, 10, 32)
+	parsed, err := strconv.ParseUint(inferenceID, 10, 64)
 	if err != nil {
 		return 0
+	}
+	if parsed > math.MaxInt32 {
+		return math.MaxInt32
 	}
 	return int32(parsed)
 }

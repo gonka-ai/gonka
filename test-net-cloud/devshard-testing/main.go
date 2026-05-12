@@ -18,7 +18,7 @@ func main() {
 	count := fs.Int("count", 3, "number of escrows to create")
 	model := fs.String("model", "Qwen/Qwen2.5-7B-Instruct", "model ID")
 	basePort := fs.Int("base-port", 18080, "first devshardctl local port")
-	routePrefix := fs.String("route-prefix", "", "devshard route prefix (e.g. /devshard/v0.2.11)")
+	routePrefix := fs.String("route-prefix", "", "devshard route prefix (e.g. /devshard/v0.2.12)")
 	amount := fs.Uint64("amount", 5_000_000_000, "escrow amount in ngonka")
 	devshardctlBin := fs.String("devshardctl", "devshardctl", "path to devshardctl binary")
 	stateFile := fs.String("state-file", "devshard-test-state.json", "path to state file for escrow ID persistence")
@@ -27,6 +27,7 @@ func main() {
 	chainID := fs.String("chain-id", defaultChainID, "chain ID")
 	inferencesPerEscrow := fs.Int("inferences", 2, "number of inferences to send per escrow")
 	skipHostsFlag := fs.String("skip-hosts", "", "comma-separated host addresses to skip (nonce is advanced past them)")
+	finalize := fs.Bool("finalize", false, "finalize escrows after inferences and remove the state file")
 	_ = fs.Parse(os.Args[1:])
 
 	if *grpcAddr == "" || *rest == "" || *privateKey == "" || *routePrefix == "" {
@@ -69,7 +70,7 @@ func main() {
 	}
 
 	skipHosts := parseSkipHosts(*skipHostsFlag)
-	if err := runSession(escrowIDs, *devshardctlBin, *privateKey, *rest, *routePrefix, *model, *stateFile, *basePort, *inferencesPerEscrow, skipHosts); err != nil {
+	if err := runSession(escrowIDs, *devshardctlBin, *privateKey, *rest, *routePrefix, *model, *stateFile, *basePort, *inferencesPerEscrow, skipHosts, *finalize); err != nil {
 		log.Printf("FAIL: %v", err)
 		os.Exit(1)
 	}
@@ -86,7 +87,7 @@ func parseSkipHosts(flag string) map[string]bool {
 	return m
 }
 
-func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefix, model, stateFile string, basePort, inferencesPerEscrow int, skipHosts map[string]bool) error {
+func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefix, model, stateFile string, basePort, inferencesPerEscrow int, skipHosts map[string]bool, finalize bool) error {
 	handles := make([]*proxyHandle, len(escrowIDs))
 	defer func() {
 		for _, h := range handles {
@@ -115,7 +116,10 @@ func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefi
 		maxAttempts := inferencesPerEscrow + len(skipHosts)*10 + 20
 		for sent < inferencesPerEscrow && attempts < maxAttempts {
 			attempts++
-			nonce, _ := queryNonce(h.proxyURL)
+			nonce, err := queryNonce(h.proxyURL)
+			if err != nil {
+				return fmt.Errorf("query nonce for escrow %d: %w", escrowIDs[i], err)
+			}
 			executor := "unknown"
 			if len(slots) > 0 {
 				executor = slots[(nonce+1)%uint64(len(slots))]
@@ -126,13 +130,13 @@ func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefi
 				waitNonceAdvanced(h.proxyURL, nonce, 3*time.Second)
 				continue
 			}
-			sent++
-			log.Printf("Sending inference %d/%d for escrow %d (nonce %d → host %s)...\n", sent, inferencesPerEscrow, escrowIDs[i], nonce+1, executor)
+			log.Printf("Sending inference %d/%d for escrow %d (nonce %d → host %s)...\n", sent+1, inferencesPerEscrow, escrowIDs[i], nonce+1, executor)
 			resp, err := sendInference(h.proxyURL, model)
 			if err != nil {
-				log.Printf("  inference %d for escrow %d failed: %v (continuing)\n", sent, escrowIDs[i], err)
+				log.Printf("  inference %d for escrow %d failed: %v (continuing)\n", sent+1, escrowIDs[i], err)
 				continue
 			}
+			sent++
 			responses[i] = resp
 			preview := resp
 			if len(preview) > 60 {
@@ -140,35 +144,40 @@ func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefi
 			}
 			log.Printf("  response: %q\n", preview)
 		}
+		if sent < inferencesPerEscrow {
+			return fmt.Errorf("escrow %d completed %d/%d successful inferences after %d attempts", escrowIDs[i], sent, inferencesPerEscrow, attempts)
+		}
 	}
 
-	// Finalization disabled — escrows stay open for manual inspection.
-	// fmt.Println("Waiting 3s before finalization...")
-	// time.Sleep(3 * time.Second)
-	//
-	// settlements := make([]settlement, len(handles))
-	// for i, h := range handles {
-	// 	log.Printf("Finalizing escrow %d...\n", escrowIDs[i])
-	// 	s, err := finalizeProxy(h.proxyURL)
-	// 	if err != nil {
-	// 		return fmt.Errorf("finalize escrow %d: %w", escrowIDs[i], err)
-	// 	}
-	// 	settlements[i] = s
-	// 	log.Printf("  nonce=%d slots=%v\n", s.Nonce, slotIDsFromSettlement(s))
-	// }
-	//
-	// // All escrows finalized — remove them from state so next run starts fresh.
-	// _ = os.Remove(stateFile)
-	//
-	// return assertResults(responses, settlements)
+	if finalize {
+		fmt.Println("Waiting 3s before finalization...")
+		time.Sleep(3 * time.Second)
+		return finalizeEscrows(handles, escrowIDs, stateFile, responses)
+	}
 
-	// log.Printf("Fetching host validation stats...")
-	// epochIndex := fetchEscrowEpoch(rest, escrowIDs[0])
-	// slots := fetchEscrowSlots(rest, escrowIDs[0])
-	// for _, addr := range slots {
-	// 	fetchHostEpochStats(rest, epochIndex, addr)
-	// }
+	log.Printf("Finalization disabled; escrows stay open for manual inspection.")
 
+	return nil
+}
+
+func finalizeEscrows(handles []*proxyHandle, escrowIDs []uint64, stateFile string, responses []string) error {
+	settlements := make([]settlement, len(handles))
+	for i, h := range handles {
+		log.Printf("Finalizing escrow %d...\n", escrowIDs[i])
+		s, err := finalizeProxy(h.proxyURL)
+		if err != nil {
+			return fmt.Errorf("finalize escrow %d: %w", escrowIDs[i], err)
+		}
+		settlements[i] = s
+		log.Printf("  nonce=%d slots=%v\n", s.Nonce, slotIDsFromSettlement(s))
+	}
+
+	if err := assertResults(responses, settlements); err != nil {
+		return err
+	}
+
+	// All escrows finalized — remove them from state so next run starts fresh.
+	_ = os.Remove(stateFile)
 	return nil
 }
 

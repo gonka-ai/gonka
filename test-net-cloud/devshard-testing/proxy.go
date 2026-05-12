@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,10 @@ type proxyHandle struct {
 	cmd      *exec.Cmd
 	done     chan struct{}
 }
+
+// Test inferences are intentionally small, so a short timeout keeps failed test
+// runs from hanging without cutting off expected responses.
+var proxyHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 type settlement struct {
 	EscrowID   string     `json:"escrow_id"`
@@ -77,7 +82,7 @@ func (h *proxyHandle) waitReady(timeout time.Duration) error {
 			return fmt.Errorf("process exited before becoming ready")
 		default:
 		}
-		resp, err := http.Get(h.proxyURL + "/v1/status")
+		resp, err := proxyHTTPClient.Get(h.proxyURL + "/v1/status")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
@@ -90,16 +95,20 @@ func (h *proxyHandle) waitReady(timeout time.Duration) error {
 }
 
 func queryNonce(proxyURL string) (uint64, error) {
-	resp, err := http.Get(proxyURL + "/v1/status")
+	resp, err := proxyHTTPClient.Get(proxyURL + "/v1/status")
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return 0, fmt.Errorf("GET /v1/status returned status %d: %s", resp.StatusCode, string(body))
+	}
 	var s struct {
 		Nonce uint64 `json:"nonce"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("decode /v1/status: %w", err)
 	}
 	return s.Nonce, nil
 }
@@ -125,7 +134,7 @@ func sendInference(proxyURL, model string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
-	resp, err := http.Post(proxyURL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	resp, err := proxyHTTPClient.Post(proxyURL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("POST /v1/chat/completions: %w", err)
 	}
@@ -150,7 +159,7 @@ func sendInference(proxyURL, model string) (string, error) {
 }
 
 func finalizeProxy(proxyURL string) (settlement, error) {
-	resp, err := http.Post(proxyURL+"/v1/finalize", "application/json", nil)
+	resp, err := proxyHTTPClient.Post(proxyURL+"/v1/finalize", "application/json", nil)
 	if err != nil {
 		return settlement{}, fmt.Errorf("POST /v1/finalize: %w", err)
 	}
