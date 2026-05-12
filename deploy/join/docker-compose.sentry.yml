@@ -1,0 +1,135 @@
+# Sentry stack — standalone Compose project (`name: sentry`).
+#
+# Runs alongside the validator without modifying its files. Validator
+# (deploy/join/docker-compose.yml) and sentry are independent compose
+# projects on independent networks. They communicate via public IPs.
+#
+# Usage
+#   cp config.env.sentry.template config.env.sentry
+#   edit config.env.sentry
+#   source config.env.sentry
+#
+#   # bring up only sentry
+#   docker compose -f docker-compose.sentry.yml up -d
+#
+#   # bring up sentry, sentry-2, sentry-3 on the same host
+#   docker compose -f docker-compose.sentry.yml --profile multi up -d
+#
+# To deploy on a separate host: copy this file + config.env.sentry.template,
+# fill in the host's public address in SENTRY_P2P_EXTERNAL_ADDRESS, run.
+#
+# Required in config.env.sentry:
+#   CHAIN_ID                        - e.g. gonka-testnet, gonka-mainnet
+#   IS_TEST_NET                     - true on testnet
+#   SEED_NODE_RPC_URL/P2P_URL       - public seeds (used for genesis download
+#                                     and statesync)
+#   RPC_SERVER_URL_1/2              - public statesync RPC endpoints
+#   P2P_EXTERNAL_ADDRESS            - default fallback for sentry advertisement
+#
+# Per-sentry (sensible defaults; required when running --profile multi):
+#   SENTRY_KEY_NAME    / SENTRY_P2P_PORT    / SENTRY_P2P_EXTERNAL_ADDRESS
+#   SENTRY2_KEY_NAME   / SENTRY2_P2P_PORT   / SENTRY2_P2P_EXTERNAL_ADDRESS
+#   SENTRY3_KEY_NAME   / SENTRY3_P2P_PORT   / SENTRY3_P2P_EXTERNAL_ADDRESS
+#
+# Filled in phase 2 (after collecting node-ids):
+#   VALIDATOR_ID                    - shielded via private_peer_ids on every sentry
+#   SENTRY_PERSISTENT_PEERS         - mesh peers for sentry (without itself)
+#   SENTRY2_PERSISTENT_PEERS        - mesh peers for sentry-2 (without itself)
+#   SENTRY3_PERSISTENT_PEERS        - mesh peers for sentry-3 (without itself)
+#   SENTRY_UNCONDITIONAL_PEER_IDS   - mesh node-ids for sentry (without itself)
+#   SENTRY2_UNCONDITIONAL_PEER_IDS  - mesh node-ids for sentry-2 (without itself)
+#   SENTRY3_UNCONDITIONAL_PEER_IDS  - mesh node-ids for sentry-3 (without itself)
+
+name: sentry
+
+x-sentry-env: &sentry-env
+  CHAIN_ID: "${CHAIN_ID}"
+  IS_TEST_NET: "${IS_TEST_NET:-false}"
+  SEED_NODE_RPC_URL: "${SEED_NODE_RPC_URL}"
+  SEED_NODE_P2P_URL: "${SEED_NODE_P2P_URL}"
+  SYNC_WITH_SNAPSHOTS: "${SYNC_WITH_SNAPSHOTS:-true}"
+  RPC_SERVER_URL_1: "${RPC_SERVER_URL_1}"
+  RPC_SERVER_URL_2: "${RPC_SERVER_URL_2}"
+  REST_API_ACTIVE: "true"
+  INIT_ONLY: "false"
+  IS_GENESIS: "false"
+  SNAPSHOT_INTERVAL: "${SNAPSHOT_INTERVAL:-1000}"
+  SNAPSHOT_KEEP_RECENT: "${SNAPSHOT_KEEP_RECENT:-5}"
+  TRUSTED_BLOCK_PERIOD: "${TRUSTED_BLOCK_PERIOD:-2000}"
+  CONFIG_p2p__allow_duplicate_ip: "true"
+  CONFIG_p2p__handshake_timeout: "30s"
+  CONFIG_p2p__dial_timeout: "30s"
+  CONFIG_p2p__pex: "true"
+  CONFIG_p2p__addr_book_strict: "false"
+  # private_peer_ids prevents every sentry from leaking the validator's
+  # node-id via PEX gossip. Empty here is a no-op (set after phase 2).
+  CONFIG_p2p__private_peer_ids: "${VALIDATOR_ID:-}"
+  CONFIG_p2p__max_num_inbound_peers: "${SENTRY_MAX_INBOUND:-100}"
+  CONFIG_p2p__max_num_outbound_peers: "${SENTRY_MAX_OUTBOUND:-50}"
+
+x-sentry-base: &sentry-base
+  image: ghcr.io/product-science/inferenced:0.2.11
+  command: ["sh", "./init-docker.sh"]
+  restart: always
+  # Genesis is downloaded from SEED_NODE_RPC_URL by init-docker.sh
+  # (IS_GENESIS=false branch). No host genesis mount needed.
+  # STATE_DIR not set on purpose: init-docker.sh runs `inferenced init`
+  # without `--home`, writing to the default /root/.inference. Per-sentry
+  # state isolation comes from the volume bind below.
+
+services:
+  sentry:
+    <<: *sentry-base
+    container_name: sentry
+    volumes:
+      - .inference-sentry:/root/.inference
+    environment:
+      <<: *sentry-env
+      KEY_NAME: "${SENTRY_KEY_NAME:-sentry}"
+      P2P_EXTERNAL_ADDRESS: "${SENTRY_P2P_EXTERNAL_ADDRESS:-${P2P_EXTERNAL_ADDRESS}}"
+      CONFIG_p2p__persistent_peers: "${SENTRY_PERSISTENT_PEERS:-}"
+      CONFIG_p2p__unconditional_peer_ids: "${SENTRY_UNCONDITIONAL_PEER_IDS:-${VALIDATOR_ID:-}}"
+    ports:
+      - "${SENTRY_P2P_PORT:-5001}:26656"
+
+  sentry-2:
+    <<: *sentry-base
+    profiles: ["multi"]
+    container_name: sentry-2
+    volumes:
+      - .inference-sentry-2:/root/.inference
+    environment:
+      <<: *sentry-env
+      KEY_NAME: "${SENTRY2_KEY_NAME:-sentry-2}"
+      P2P_EXTERNAL_ADDRESS: "${SENTRY2_P2P_EXTERNAL_ADDRESS:-${P2P_EXTERNAL_ADDRESS}}"
+      CONFIG_p2p__persistent_peers: "${SENTRY2_PERSISTENT_PEERS:-}"
+      CONFIG_p2p__unconditional_peer_ids: "${SENTRY2_UNCONDITIONAL_PEER_IDS:-${VALIDATOR_ID:-}}"
+    ports:
+      - "${SENTRY2_P2P_PORT:-5002}:26656"
+
+  sentry-3:
+    <<: *sentry-base
+    profiles: ["multi"]
+    container_name: sentry-3
+    volumes:
+      - .inference-sentry-3:/root/.inference
+    environment:
+      <<: *sentry-env
+      KEY_NAME: "${SENTRY3_KEY_NAME:-sentry-3}"
+      P2P_EXTERNAL_ADDRESS: "${SENTRY3_P2P_EXTERNAL_ADDRESS:-${P2P_EXTERNAL_ADDRESS}}"
+      CONFIG_p2p__persistent_peers: "${SENTRY3_PERSISTENT_PEERS:-}"
+      CONFIG_p2p__unconditional_peer_ids: "${SENTRY3_UNCONDITIONAL_PEER_IDS:-${VALIDATOR_ID:-}}"
+    ports:
+      - "${SENTRY3_P2P_PORT:-5003}:26656"
+
+# Notes
+# - Adding a fourth sentry: append a `<<: *sentry-base` block following
+#   the same pattern (volume = .inference-sentry-4, port default 5004,
+#   env keys SENTRY4_*).
+# - Mesh model: every sentry's *_PERSISTENT_PEERS lists ONLY the OTHER
+#   sentries by `<node-id>@<public-host>:<p2p-port>`. The validator is
+#   NOT in any sentry's persistent_peers — after isolation its port is
+#   closed, so sentries cannot dial it. Instead every sentry's
+#   *_UNCONDITIONAL_PEER_IDS includes the VALIDATOR_ID + every other
+#   sentry's id, so inbound connections from the validator (which it
+#   initiates) are always accepted.
