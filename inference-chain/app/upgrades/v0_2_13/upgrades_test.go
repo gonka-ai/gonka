@@ -99,3 +99,94 @@ func TestBackfillConfirmationWeightScales(t *testing.T) {
 	require.Equal(t, int64(50), root.ValidationWeights[0].ConfirmationWeight)
 	require.Equal(t, int64(5), root.ValidationWeights[1].ConfirmationWeight)
 }
+
+func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
+		{
+			ModelId:           kimiModelID,
+			WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
+		},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 11))
+	k.SetModel(ctx, &inferencetypes.Model{
+		Id:     kimiModelID,
+		HfRepo: kimiModelID,
+		ModelArgs: []string{
+			"--max-model-len", "240000",
+			"--tool-call-parser", "kimi_k2",
+			"--reasoning-parser", "kimi_k2",
+		},
+	})
+
+	require.NoError(t, updateModelParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.PocParams.Models, 2)
+
+	kimi := requirePoCModelConfig(t, got.PocParams.Models, kimiModelID)
+	require.Equal(t, &inferencetypes.Decimal{Value: 78, Exponent: -2}, kimi.WeightScaleFactor)
+	kimiModel, found := k.GetGovernanceModel(ctx, kimiModelID)
+	require.True(t, found)
+	require.Equal(t, []string{
+		"--enable-auto-tool-choice",
+		"--max-model-len", "240000",
+		"--tool-call-parser", "kimi_k2",
+		"--reasoning-parser", "kimi_k2",
+	}, kimiModel.ModelArgs)
+
+	minimax := requirePoCModelConfig(t, got.PocParams.Models, minimaxModelID)
+	require.Equal(t, int64(1024), minimax.SeqLen)
+	require.NotNil(t, minimax.StatTest)
+	require.Equal(t, &inferencetypes.Decimal{Value: 75, Exponent: -2}, minimax.StatTest.DistThreshold)
+	require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: -1}, minimax.StatTest.PMismatch)
+	require.Equal(t, &inferencetypes.Decimal{Value: 5, Exponent: -2}, minimax.StatTest.PValueThreshold)
+	require.Equal(t, &inferencetypes.Decimal{Value: 3024, Exponent: -4}, minimax.WeightScaleFactor)
+	require.Equal(t, uint64(16), minimax.PenaltyStartEpoch)
+
+	model, found := k.GetGovernanceModel(ctx, minimaxModelID)
+	require.True(t, found)
+	require.Equal(t, minimaxModelID, model.Id)
+	require.Equal(t, "d494266a4affc0d2995ba1fa35c8481cbd84294b", model.HfCommit)
+	require.Equal(t, uint64(320), model.VRam)
+	require.Equal(t, uint64(5000), model.ThroughputPerNonce)
+	require.Equal(t, &inferencetypes.Decimal{Value: 920, Exponent: -3}, model.ValidationThreshold)
+	require.Equal(t, []string{
+		"--enable-auto-tool-choice",
+		"--tool-call-parser", "minimax_m2",
+		"--reasoning-parser", "minimax_m2_append_think",
+	}, model.ModelArgs)
+
+	require.NoError(t, updateModelParams(ctx, k))
+	got, err = k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.PocParams.Models, 2)
+	kimiModel, found = k.GetGovernanceModel(ctx, kimiModelID)
+	require.True(t, found)
+	require.Equal(t, []string{
+		"--enable-auto-tool-choice",
+		"--max-model-len", "240000",
+		"--tool-call-parser", "kimi_k2",
+		"--reasoning-parser", "kimi_k2",
+	}, kimiModel.ModelArgs)
+}
+
+func requirePoCModelConfig(
+	t *testing.T,
+	models []*inferencetypes.PoCModelConfig,
+	modelID string,
+) *inferencetypes.PoCModelConfig {
+	t.Helper()
+	for _, model := range models {
+		if model != nil && model.ModelId == modelID {
+			return model
+		}
+	}
+	require.Failf(t, "missing PoC model config", "model_id=%s", modelID)
+	return nil
+}
