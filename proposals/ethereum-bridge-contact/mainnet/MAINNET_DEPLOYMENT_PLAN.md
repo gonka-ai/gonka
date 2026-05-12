@@ -144,7 +144,7 @@ The contract constructor requires two `bytes32` arguments:
 **Using the script:**
 
 ```bash
-cd proposals/ethereum-bridge-contact/scripts
+cd proposals/ethereum-bridge-contact/mainnet
 ./query-gonka-epoch.sh
 ```
 
