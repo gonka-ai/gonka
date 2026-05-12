@@ -90,6 +90,7 @@ HARDHAT_NETWORK=mainnet node transfer-ownership.js \
   <GNOSIS_SAFE_ADDRESS>
 ```
 
+** UPDATE: it is a single step Ownable setup. No need for steps 1-3 below. ** 
 The contract uses OpenZeppelin `Ownable2Step` — the Safe must then call `acceptOwnership()`:
 
 1. Go to Safe → **New Transaction** → **Contract Interaction**
