@@ -1,0 +1,57 @@
+# Validator P2P isolation overlay — apply on top of the validator stack
+# once a sentry mesh is up and the operator has filled in NODE_PERSISTENT_PEERS
+# / NODE_UNCONDITIONAL_PEER_IDS in config.env.
+#
+# What it does:
+#   - Closes the validator's public P2P port (`ports: !reset []`).
+#   - Disables PEX so the validator no longer gossips to the public mesh.
+#   - Pins persistent_peers / unconditional_peer_ids to the sentry mesh.
+#   - Tightens peer-count limits to match the sentry count.
+#
+# What it does NOT do:
+#   - api / proxy stay on the local node. Public chain-RPC/API/gRPC
+#     continue to be served by validator's RPC. Isolation is P2P-only.
+#   - SEED_NODE_* / RPC_SERVER_URL_* are not redirected. They are used
+#     during init/state-sync; a postfactum-isolated validator has
+#     already finished init.
+#
+# Use:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.sentry-isolate.yml up -d
+#
+# Prerequisites in config.env:
+#   NODE_PERSISTENT_PEERS           - "<sentry-id>@<host>:<port>,..." for all sentries
+#   NODE_UNCONDITIONAL_PEER_IDS     - "<sentry-id>,..." for all sentries
+#
+# Optional in config.env:
+#   NODE_MAX_INBOUND/OUTBOUND       - default 3 (matches three-sentry mesh;
+#                                     bump to match your sentry count)
+#   NODE_PRUNING / NODE_PRUNING_*   - app.toml pruning profile
+#   NODE_IAVL_DISABLE_FASTNODE      - default false
+#
+# NOTE: APP_* env support requires init-docker.sh patched with APP_*
+# overrides (see commit 7f3cda36). Stock images without that patch
+# will silently ignore APP_*.
+
+services:
+  node:
+    # `ports: !reset []` removes the public 5000:26656 mapping from base
+    # (Docker Compose >= 2.20).
+    ports: !reset []
+    environment:
+      - CONFIG_p2p__pex=false
+      - CONFIG_p2p__addr_book_strict=false
+      - CONFIG_p2p__persistent_peers=${NODE_PERSISTENT_PEERS:-}
+      - CONFIG_p2p__unconditional_peer_ids=${NODE_UNCONDITIONAL_PEER_IDS:-}
+      - CONFIG_p2p__max_num_inbound_peers=${NODE_MAX_INBOUND:-3}
+      - CONFIG_p2p__max_num_outbound_peers=${NODE_MAX_OUTBOUND:-3}
+      # GENESIS_SEEDS is dead for non-genesis nodes (init-docker.sh:49,199),
+      # but emptying it is defence in depth against future regressions.
+      - GENESIS_SEEDS=
+      # app.toml tuning via APP_* prefix (handled by init-docker.sh
+      # patched with APP_* support; ignored otherwise).
+      - APP_pruning=${NODE_PRUNING:-custom}
+      - APP_pruning_keep_recent=${NODE_PRUNING_KEEP_RECENT:-100}
+      - APP_pruning_interval=${NODE_PRUNING_INTERVAL:-1500}
+      - APP_min_retain_blocks=${NODE_MIN_RETAIN_BLOCKS:-0}
+      - APP_iavl_disable_fastnode=${NODE_IAVL_DISABLE_FASTNODE:-false}
