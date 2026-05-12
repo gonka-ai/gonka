@@ -250,11 +250,61 @@ func TestManagedStorage_NoPruneWhenBelowRetainCount(t *testing.T) {
 	}
 
 	ms.cleanup()
-	time.Sleep(50 * time.Millisecond)
 
 	pruned := mock.getPruned()
 	if len(pruned) != 0 {
 		t.Errorf("should not prune when maxEpoch <= retainCount, got %v", pruned)
+	}
+}
+
+// failingMockStorage fails PruneEpoch for specific epochs (for testing partial progress).
+type failingMockStorage struct {
+	*mockStorage
+	failEpochs map[uint64]bool
+}
+
+func newFailingMockStorage(failEpochs map[uint64]bool) *failingMockStorage {
+	return &failingMockStorage{mockStorage: newMockStorage(), failEpochs: failEpochs}
+}
+
+func (f *failingMockStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
+	if f.failEpochs[epochId] {
+		return ErrNotFound
+	}
+	return f.mockStorage.PruneEpoch(ctx, epochId)
+}
+
+func TestManagedStorage_PartialProgressOnPruneFailure(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{1: true}) // epoch 1 fails
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	for i := uint64(0); i <= 5; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// threshold = 5 - 2 = 3. Epoch 0 succeeds, epoch 1 fails, epoch 2 not attempted.
+	// minPruned should advance to 1 (partial progress past epoch 0).
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+
+	if minPruned != 1 {
+		t.Errorf("minPruned should advance to 1 (epoch 0 succeeded, epoch 1 failed), got %d", minPruned)
+	}
+
+	// Second cleanup: fix the mock so epoch 1 succeeds, then epoch 2 also succeeds.
+	mock.failEpochs = nil
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned = ms.minPruned
+	ms.mu.RUnlock()
+
+	if minPruned != 3 {
+		t.Errorf("minPruned should advance to 3 (all epochs succeeded), got %d", minPruned)
 	}
 }
 

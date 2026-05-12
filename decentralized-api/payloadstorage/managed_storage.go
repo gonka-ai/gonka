@@ -113,7 +113,6 @@ func (m *ManagedStorage) cleanupLoop() {
 
 func (m *ManagedStorage) cleanup() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	now := time.Now()
 	for id, c := range m.cache {
@@ -129,23 +128,30 @@ func (m *ManagedStorage) cleanup() {
 		}
 	}
 
+	var pruneFrom, pruneTo uint64
 	if m.maxEpoch > m.retainCount {
-		threshold := m.maxEpoch - m.retainCount
-
-		if m.minPruned+maxPruneLookback < threshold {
-			m.minPruned = threshold - maxPruneLookback
+		pruneTo = m.maxEpoch - m.retainCount
+		if m.minPruned+maxPruneLookback < pruneTo {
+			m.minPruned = pruneTo - maxPruneLookback
 		}
+		pruneFrom = m.minPruned
+	}
+	m.mu.Unlock()
 
-		for epoch := m.minPruned; epoch < threshold; epoch++ {
-			go func(e uint64) {
-				if err := m.storage.PruneEpoch(context.Background(), e); err != nil {
-					logging.Warn("Auto-prune failed", types.PayloadStorage, "epochId", e, "error", err)
-				} else {
-					logging.Info("Auto-pruned epoch", types.PayloadStorage, "epochId", e)
-				}
-			}(epoch)
+	// Prune sequentially outside the lock so Store/Retrieve are not blocked.
+	// Track partial progress: advance minPruned per successful epoch.
+	// Stop on first failure so the failed epoch is retried on the next cleanup tick.
+	if pruneFrom < pruneTo {
+		for epoch := pruneFrom; epoch < pruneTo; epoch++ {
+			if err := m.storage.PruneEpoch(context.Background(), epoch); err != nil {
+				logging.Warn("Auto-prune failed", types.PayloadStorage, "epochId", epoch, "error", err)
+				break
+			}
+			logging.Info("Auto-pruned epoch", types.PayloadStorage, "epochId", epoch)
+			m.mu.Lock()
+			m.minPruned = epoch + 1
+			m.mu.Unlock()
 		}
-		m.minPruned = threshold
 	}
 }
 
