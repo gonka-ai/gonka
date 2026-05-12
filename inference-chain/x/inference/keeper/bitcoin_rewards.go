@@ -112,9 +112,15 @@ func GetBitcoinSettleAmounts(
 					// This gives accurate response by not relying on a ratio before we need to
 					reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
 					if reducedReward > 0 && totalDistributed > math.MaxUint64-reducedReward {
-						// Overflow detected: zero this and all remaining participants' rewards.
 						amount.Settle.RewardCoins = 0
 						overflowed = true
+						bitcoinResult.SupplyCapOverflowed = true
+						logger.Warn("Bitcoin supply-cap distribution overflow guard triggered",
+							"epoch", epochGroupData.GetEpochIndex(),
+							"participant", amount.Settle.Participant,
+							"reducedReward", reducedReward,
+							"totalDistributed", totalDistributed,
+						)
 						continue
 					}
 					amount.Settle.RewardCoins = reducedReward
@@ -769,6 +775,10 @@ func CalculateParticipantBitcoinRewards(
 				// calculation below clamps any excess to governance.
 				_, overflow := bits.Add64(totalDistributed, rewardCoins, 0)
 				if overflow != 0 {
+					logger.Warn("Bitcoin reward distribution overflow: totalDistributed saturated to MaxUint64",
+						"participant", participant.Address,
+						"rewardCoins", rewardCoins,
+					)
 					totalDistributed = math.MaxUint64
 				} else {
 					totalDistributed += rewardCoins
@@ -786,6 +796,11 @@ func CalculateParticipantBitcoinRewards(
 				if totalDistributed >= debt {
 					totalDistributed -= debt
 				} else {
+					logger.Warn("Bitcoin reward underflow guard: totalDistributed < debt, saturating to 0",
+						"participant", participant.Address,
+						"totalDistributed", totalDistributed,
+						"debt", debt,
+					)
 					totalDistributed = 0
 				}
 			} else {
@@ -794,6 +809,11 @@ func CalculateParticipantBitcoinRewards(
 				if totalDistributed >= settleAmount.RewardCoins {
 					totalDistributed -= settleAmount.RewardCoins
 				} else {
+					logger.Warn("Bitcoin reward underflow guard: totalDistributed < rewardCoins, saturating to 0",
+						"participant", participant.Address,
+						"totalDistributed", totalDistributed,
+						"rewardCoins", settleAmount.RewardCoins,
+					)
 					totalDistributed = 0
 				}
 				settleAmount.RewardCoins = 0

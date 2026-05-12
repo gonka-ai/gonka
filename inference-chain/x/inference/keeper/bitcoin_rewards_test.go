@@ -2241,7 +2241,7 @@ func TestGetBitcoinSettleAmounts_SupplyCapOverflowGuard(t *testing.T) {
 	normalResults, normalResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, &SettleParameters{
 		TotalSubsidyPaid:   0,
 		TotalSubsidySupply: math.MaxInt64,
-	}, nil, false, logger)
+	}, nil, logger)
 	require.NoError(t, err, "normal calculation should succeed")
 	require.NotEmpty(t, normalResults)
 
@@ -2260,7 +2260,7 @@ func TestGetBitcoinSettleAmounts_SupplyCapOverflowGuard(t *testing.T) {
 		TotalSubsidySupply: supplyCap,
 	}
 
-	results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, nil, false, logger)
+	results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, nil, logger)
 	require.NoError(t, err, "supply cap loop must not panic or error")
 
 	remainingSupply := uint64(bitcoinResult.Amount)
@@ -2312,7 +2312,7 @@ func TestGetBitcoinSettleAmounts_SupplyCapOverflowEvent(t *testing.T) {
 	_, normalResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, &SettleParameters{
 		TotalSubsidyPaid:   0,
 		TotalSubsidySupply: math.MaxInt64,
-	}, nil, false, logger)
+	}, nil, logger)
 	require.NoError(t, err)
 
 	// Force approaching-cap with proportional reduction.
@@ -2323,7 +2323,7 @@ func TestGetBitcoinSettleAmounts_SupplyCapOverflowEvent(t *testing.T) {
 		TotalSubsidySupply: normalResult.Amount,
 	}
 
-	results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, nil, false, logger)
+	results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, nil, logger)
 	require.NoError(t, err)
 
 	var totalRewarded uint64
