@@ -428,7 +428,7 @@ var settlementFixedKeys = []string{
 	"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 }
 
-func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
+func TestUser_Finalize_DeadlineSettlement(t *testing.T) {
 	numHosts := 3
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hosts {
@@ -476,22 +476,11 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 	require.NoError(t, err)
 
 	st := session.StateMachine().SnapshotState()
-
-	// All 3 hosts should have revealed seeds.
-	require.Len(t, st.RevealedSeeds, numHosts, "all hosts should have revealed seeds")
-	for slot := range st.RevealedSeeds {
-		require.Contains(t, st.RevealedSeeds, slot)
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	for slotID, hs := range st.HostStats {
+		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slotID)
+		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slotID)
 	}
-
-	// With 100% validation rate, non-executor hosts should have RequiredValidations > 0.
-	hasRequired := false
-	for _, hs := range st.HostStats {
-		if hs.RequiredValidations > 0 {
-			hasRequired = true
-			break
-		}
-	}
-	require.True(t, hasRequired, "at least one host should have RequiredValidations > 0")
 
 	// Build settlement and verify via VerifySettlement.
 	finalNonce := session.Nonce()

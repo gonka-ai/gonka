@@ -55,6 +55,7 @@ type HostManager struct {
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
+	pruneSink    host.PruneEventSink
 	recorder     PayloadAuthClient
 
 	statsMu           sync.Mutex
@@ -115,7 +116,7 @@ func NewHostManager(
 	payloadStore payloadstorage.PayloadStorage,
 	recorder PayloadAuthClient,
 ) *HostManager {
-	return &HostManager{
+	m := &HostManager{
 		sessions:          make(map[string]*transport.Server),
 		initializing:      true,
 		store:             store,
@@ -129,6 +130,12 @@ func NewHostManager(
 		recorder:          recorder,
 		statsDetailsCache: make(map[string]statsShardDetailCache),
 	}
+	// Wire the payload prune sink. When payloadStore is nil (tests, tools)
+	// the sink is nil and hosts will not emit any prune events.
+	if payloadStore != nil {
+		m.pruneSink = newPayloadPruneSink(payloadStore, fallbackEpochFromStore(store))
+	}
+	return m
 }
 
 // Close releases the underlying storage resources.
@@ -250,9 +257,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
-		host.WithValidator(m.validator),
-		host.WithStorage(m.store),
-		host.WithEpochID(escrow.EpochID),
+		m.hostOptions(escrow.EpochID)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -432,9 +437,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
-		host.WithValidator(m.validator),
-		host.WithStorage(m.store),
-		host.WithEpochID(meta.EpochID),
+		m.hostOptions(meta.EpochID)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -448,6 +451,21 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 
 	return srv, nil
+}
+
+// hostOptions returns the common HostOption set used when constructing a
+// host either for a fresh session or a recovered one. Keeps the option list
+// in one place so future additions (prune sink, gossip, etc.) stay symmetric.
+func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
+	opts := []host.HostOption{
+		host.WithValidator(m.validator),
+		host.WithStorage(m.store),
+		host.WithEpochID(epochID),
+	}
+	if m.pruneSink != nil {
+		opts = append(opts, host.WithPruneSink(m.pruneSink))
+	}
+	return opts
 }
 
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {

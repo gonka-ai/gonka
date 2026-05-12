@@ -644,7 +644,7 @@ func TestProtocol_SignatureThreshold(t *testing.T) {
 	}
 }
 
-func TestProtocol_Finalize_WithSeedReveal(t *testing.T) {
+func TestProtocol_Finalize_DeadlineOnly(t *testing.T) {
 	env := setupEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
 	params := defaultParams()
@@ -657,20 +657,11 @@ func TestProtocol_Finalize_WithSeedReveal(t *testing.T) {
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
-	// After finalization, hosts should have produced seed reveals.
-	// Check final state for revealed seeds and compliance.
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-
-	// At least some seeds should be revealed.
-	require.True(t, len(st.RevealedSeeds) > 0, "expected seed reveals after finalization, got %d", len(st.RevealedSeeds))
-
-	// HostStats for revealed slots should have RequiredValidations set.
-	for slotID := range st.RevealedSeeds {
-		hs := st.HostStats[slotID]
-		// With 50% rate and multiple inferences, RequiredValidations should be > 0
-		// in most cases (statistically). We just verify the fields were written.
-		require.NotNil(t, hs, "host stats should exist for revealed slot %d", slotID)
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	for slotID, hs := range st.HostStats {
+		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slotID)
+		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slotID)
 	}
 }
 

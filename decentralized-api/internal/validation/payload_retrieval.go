@@ -29,6 +29,13 @@ var ErrHashMismatch = errors.New("hash mismatch: executor served wrong payload w
 // Validation is no longer useful - abort without invalidation.
 var ErrEpochStale = errors.New("inference epoch too old, validation no longer useful")
 
+// ErrPayloadGone indicates the executor returned 404 for a payload retrieval
+// request. The payload has been pruned (e.g. by per-inference Tier A pruning
+// after the inference reached a terminal status, or by epoch sweep). Callers
+// should propagate this sentinel so the validator skips silently rather than
+// surfacing the retrieval failure as a validation error.
+var ErrPayloadGone = errors.New("payload no longer available on executor")
+
 // HTTP client with timeout for payload retrieval
 var payloadRetrievalClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -72,7 +79,7 @@ func FetchPayloadsHTTP(
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("payload not found on executor")
+		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

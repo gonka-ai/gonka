@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -92,6 +93,16 @@ type Host struct {
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
+
+	// Payload prune tracking. All fields below are host-local off-state and
+	// must NOT participate in the state root or snapshot. They drive Tier A
+	// (terminal-status) and Tier C (stale-finished) pruning emission only.
+	pruneSink             PruneEventSink
+	prunedFired           map[uint64]struct{}  // inference IDs we've already emitted a prune for
+	finishedAt            map[uint64]uint64    // inference ID -> nonce of MsgFinishInference
+	finishedAtTime        map[uint64]time.Time // inference ID -> wall clock when this host saw the finish
+	validationGraceNonces uint64               // Tier C nonce gate
+	inferenceClearGrace   time.Duration        // Tier C wall-clock gate
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -156,22 +167,32 @@ func NewHost(
 		return nil, fmt.Errorf("derive seed: %w", err)
 	}
 
+	graceNonces := uint64(staleNonceGraceMultiplier * len(group))
+	if graceNonces < minStaleNonceGrace {
+		graceNonces = minStaleNonceGrace
+	}
+
 	h := &Host{
-		sm:                 sm,
-		signer:             signer,
-		engine:             engine,
-		escrowID:           escrowID,
-		slotIDs:            slotIDs,
-		group:              group,
-		mempool:            NewMempool(),
-		checker:            checker,
-		slotToAddr:         slotToAddr,
-		addrToSlots:        addrToSlots,
-		sortedSlots:        sortedSlots,
-		executing:          make(map[uint64]struct{}),
-		validating:         make(map[uint64]struct{}),
-		completedResponses: make(map[uint64][]byte),
-		ownSeed:            ownSeed,
+		sm:                    sm,
+		signer:                signer,
+		engine:                engine,
+		escrowID:              escrowID,
+		slotIDs:               slotIDs,
+		group:                 group,
+		mempool:               NewMempool(),
+		checker:               checker,
+		slotToAddr:            slotToAddr,
+		addrToSlots:           addrToSlots,
+		sortedSlots:           sortedSlots,
+		executing:             make(map[uint64]struct{}),
+		validating:            make(map[uint64]struct{}),
+		completedResponses:    make(map[uint64][]byte),
+		ownSeed:               ownSeed,
+		prunedFired:           make(map[uint64]struct{}),
+		finishedAt:            make(map[uint64]uint64),
+		finishedAtTime:        make(map[uint64]time.Time),
+		validationGraceNonces: graceNonces,
+		inferenceClearGrace:   defaultInferenceClearGrace,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -227,6 +248,28 @@ func WithGrace(grace uint64) HostOption {
 			h.checker = NewCompositeChecker(sc, h.checker)
 		} else {
 			h.checker = sc
+		}
+	}
+}
+
+// WithPruneSink installs a sink that receives InferencePruneEvent emissions
+// after each applied diff. Tier A (terminal-status) and Tier C (stale Finished)
+// events both flow through this hook. Default is nil, in which case the host
+// emits nothing and behaves exactly as before.
+func WithPruneSink(s PruneEventSink) HostOption {
+	return func(h *Host) { h.pruneSink = s }
+}
+
+// WithPruneTuning overrides Tier C gating. Used by tests to drive deterministic
+// stale-payload behavior without waiting on real wall-clock minutes. Passing
+// zero values keeps the existing default for that gate.
+func WithPruneTuning(graceNonces uint64, graceTime time.Duration) HostOption {
+	return func(h *Host) {
+		if graceNonces > 0 {
+			h.validationGraceNonces = graceNonces
+		}
+		if graceTime > 0 {
+			h.inferenceClearGrace = graceTime
 		}
 	}
 }
@@ -314,19 +357,16 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		return nil, err
 	}
 
-	// (d) Produce MsgRevealSeed if finalizing and not already revealed.
-	h.maybeRevealSeed()
-
-	// (e) Collect validation candidates under mutex.
+	// (d) Collect validation candidates under mutex.
 	validationJobs := h.collectValidationJobs()
 
 	h.mu.Unlock()
 
-	// (f) Execution job for caller to run via RunExecution.
+	// (e) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Queue validation work outside mutex.
+	// (f) Queue validation work outside mutex.
 	for _, vj := range validationJobs {
 		h.enqueueValidation(vj)
 	}
@@ -372,6 +412,12 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		}
 	}
 
+	// Emit prune events for payloads we no longer need. Tier A fires on
+	// terminal-status flips driven by txs in this diff; Tier C fires when
+	// the local nonce + wall-clock gates have both elapsed for inferences
+	// stuck in Finished. Both run under h.mu so the sink contract holds.
+	h.processPruneEventsLocked(diff)
+
 	if h.store != nil {
 		warmAfter := h.sm.WarmKeys()
 		delta := types.ComputeWarmKeyDelta(warmBefore, warmAfter)
@@ -385,6 +431,108 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
 	}
 	return nil
+}
+
+// processPruneEventsLocked walks the diff's txs to track Finish observations
+// (Tier C ledger) and to fire Tier A prune events for inferences that just
+// terminalized. After the per-tx pass it scans the Tier C ledger for entries
+// whose nonce + wall-clock grace have elapsed and fires those too.
+// Caller must hold h.mu. No-op when no sink is configured.
+func (h *Host) processPruneEventsLocked(diff types.Diff) {
+	if h.pruneSink == nil {
+		return
+	}
+	now := time.Now()
+	currentNonce := diff.Nonce
+
+	for _, tx := range diff.Txs {
+		switch {
+		case tx.GetFinishInference() != nil:
+			id := tx.GetFinishInference().InferenceId
+			if _, fired := h.prunedFired[id]; fired {
+				continue
+			}
+			// Only record if the apply actually transitioned to Finished:
+			// applyFinishInference can fail (e.g. wrong executor slot) without
+			// flipping status, in which case applyCore rolls back, so the
+			// status check protects us against that race.
+			rec, ok := h.sm.GetInference(id)
+			if !ok || rec.Status != types.StatusFinished {
+				continue
+			}
+			h.finishedAt[id] = currentNonce
+			h.finishedAtTime[id] = now
+		case tx.GetTimeoutInference() != nil:
+			id := tx.GetTimeoutInference().InferenceId
+			h.maybeEmitTerminalLocked(id)
+		case tx.GetValidation() != nil:
+			id := tx.GetValidation().InferenceId
+			h.maybeEmitTerminalLocked(id)
+		case tx.GetValidationVote() != nil:
+			id := tx.GetValidationVote().InferenceId
+			h.maybeEmitTerminalLocked(id)
+		}
+	}
+
+	h.emitTierCLocked(currentNonce, now)
+}
+
+// maybeEmitTerminalLocked emits PruneReasonTerminal exactly once for an
+// inference whose post-apply status is terminal. Caller must hold h.mu and
+// must have already verified h.pruneSink is non-nil.
+func (h *Host) maybeEmitTerminalLocked(inferenceID uint64) {
+	if _, fired := h.prunedFired[inferenceID]; fired {
+		return
+	}
+	rec, ok := h.sm.GetInference(inferenceID)
+	if !ok || !isTerminalStatus(rec.Status) {
+		return
+	}
+	h.emitPruneLocked(inferenceID, PruneReasonTerminal)
+}
+
+// emitTierCLocked walks the Tier C ledger and emits prune events for entries
+// where both gates have cleared. Inferences that are no longer in
+// StatusFinished (e.g. moved to Challenged/Validated/Invalidated under a
+// different path) drop out of the ledger silently. Caller must hold h.mu.
+func (h *Host) emitTierCLocked(currentNonce uint64, now time.Time) {
+	if len(h.finishedAt) == 0 {
+		return
+	}
+	for id, finNonce := range h.finishedAt {
+		if currentNonce < finNonce+h.validationGraceNonces {
+			continue
+		}
+		ts, hasTs := h.finishedAtTime[id]
+		if !hasTs || now.Before(ts.Add(h.inferenceClearGrace)) {
+			continue
+		}
+		rec, ok := h.sm.GetInference(id)
+		if !ok || rec.Status != types.StatusFinished {
+			delete(h.finishedAt, id)
+			delete(h.finishedAtTime, id)
+			continue
+		}
+		h.emitPruneLocked(id, PruneReasonStaleFinished)
+	}
+}
+
+// emitPruneLocked dispatches one InferencePruneEvent and updates the dedupe
+// ledger. The PayloadEpoch carries h.epochID, which is the only epoch the
+// executor stored under for this session (set via WithEpochID); when the
+// host was constructed without an epoch the manager falls back to a global
+// supplier.
+func (h *Host) emitPruneLocked(inferenceID uint64, reason PruneReason) {
+	h.prunedFired[inferenceID] = struct{}{}
+	delete(h.finishedAt, inferenceID)
+	delete(h.finishedAtTime, inferenceID)
+	h.pruneSink.OnInferencePrunable(InferencePruneEvent{
+		EscrowID:          h.escrowID,
+		InferenceID:       inferenceID,
+		Reason:            reason,
+		PayloadEpoch:      h.epochID,
+		PayloadEpochKnown: h.epochID != 0,
+	})
 }
 
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
@@ -619,64 +767,6 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	return result, nil
 }
 
-// maybeRevealSeed produces a MsgRevealSeed if the session is finalizing and
-// this host's address has not yet revealed. Caller must hold h.mu.
-func (h *Host) maybeRevealSeed() {
-	if h.sm.Phase() != types.PhaseFinalizing {
-		return
-	}
-
-	// Check if we already have a reveal in the mempool.
-	for _, tx := range h.mempool.Txs() {
-		if rs := tx.GetRevealSeed(); rs != nil {
-			if h.slotIDs[rs.SlotId] {
-				return
-			}
-		}
-	}
-
-	// Check if already revealed in state.
-	for slot := range h.slotIDs {
-		if h.sm.IsSlotRevealed(slot) {
-			return
-		}
-	}
-
-	// Pick first owned slot as representative (deterministic via sorted order).
-	repSlot := h.sortedSlots[0]
-
-	// Sign escrowID bytes to derive the seed signature.
-	seedSig, err := h.signer.Sign([]byte(h.escrowID))
-	if err != nil {
-		logging.Error("sign seed failed", "subsystem", "host", "error", err)
-		return
-	}
-
-	msg := &types.MsgRevealSeed{
-		SlotId:    repSlot,
-		Signature: seedSig,
-		EscrowId:  h.escrowID,
-	}
-	proposerSig, err := h.signProposer(msg)
-	if err != nil {
-		logging.Error("sign reveal seed failed", "subsystem", "host", "error", err)
-		return
-	}
-	msg.ProposerSig = proposerSig
-
-	seedTx := &types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{RevealSeed: msg}}
-	h.mempool.Add(MempoolEntry{
-		Tx:         seedTx,
-		ProposedAt: h.sm.LatestNonce(),
-	})
-
-	// Eager gossip: broadcast seed reveal to ALL peers so no host can
-	// suppress it. Uses BroadcastTxs which sends to every peer (not K random).
-	if h.gsp != nil {
-		go h.gsp.BroadcastTxs(context.Background(), []*types.DevshardTx{seedTx})
-	}
-}
-
 // validateJob captures data needed to run validateAsync outside the mutex.
 type validateJob struct {
 	inferenceID     uint64
@@ -836,6 +926,18 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
+		// Payload already pruned on the executor: the validation window is
+		// effectively over for us. Drop silently -- no MsgValidation, no
+		// challenge, no error in the executor receipt path.
+		if errors.Is(err, devshard.ErrValidationSkipped) {
+			logging.Info("validation skipped: payload pruned",
+				"subsystem", "host",
+				"inference_id", job.inferenceID,
+				"executor_address", job.executorAddress,
+				"epoch_id", job.epochID,
+			)
+			return
+		}
 		logging.Error("validate failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
 		return
 	}

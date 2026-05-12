@@ -91,6 +91,16 @@ func (m *mockPayloadStore) Retrieve(_ context.Context, inferenceID string, epoch
 
 func (m *mockPayloadStore) PruneEpoch(context.Context, uint64) error { return nil }
 
+func (m *mockPayloadStore) DeleteInference(_ context.Context, inferenceID string, epochID uint64) error {
+	if entries := m.byEpoch[epochID]; entries != nil {
+		if _, ok := entries[inferenceID]; ok {
+			delete(entries, inferenceID)
+			return nil
+		}
+	}
+	return payloadstorage.ErrNotFound
+}
+
 type currentEpochStore struct {
 	storage.Storage
 	epoch uint64

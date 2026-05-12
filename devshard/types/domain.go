@@ -85,7 +85,6 @@ type EscrowState struct {
 	FinalizeNonce uint64
 	Inferences    map[uint64]*InferenceRecord
 	HostStats     map[uint32]*HostStats
-	RevealedSeeds map[uint32]int64
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
 }
