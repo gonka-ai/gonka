@@ -256,6 +256,7 @@ func (k Keeper) GetDevshardPruner(params types.Params) Pruner[collections.Pair[u
 				if err := k.distributeUnsettledEscrow(ctx, escrow); err != nil {
 					k.LogError("failed to distribute unsettled escrow", types.Pruning,
 						"escrow_id", escrowID, "error", err)
+					return err
 				}
 			}
 
@@ -380,7 +381,7 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 				"epoch", epoch,
 				"error", err,
 			)
-			continue
+			return err
 		}
 		if prunedForEpoch == 0 {
 			p.Logger.LogInfo("Pruning epoch complete", types.Pruning, "epoch", epoch, "list", p.List.GetName())
