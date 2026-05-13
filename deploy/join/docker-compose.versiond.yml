@@ -1,8 +1,10 @@
 # Multi-versiond + sticky router overlay for `deploy/join`.
 #
 # Adds devshard-postgres, a second versiond instance (versiond2), and the
-# versiond-router (nginx, sticky hash on escrowID) in front of both. The
-# router image is built locally from `versiond-router/`.
+# versiond-router (nginx, sticky hash on escrowID) in front of both. Pinned
+# to the published image `ghcr.io/product-science/versiond-router:0.2.12`;
+# build it from `versiond-router/` via `make versiond-router-release` and
+# push to ghcr.io before bumping the tag.
 #
 # Override and force the active devshardd binary via the
 # `./devshards-override/devshardd` mount; uncomment the v0.2.12 lines and
@@ -79,3 +81,4 @@ services:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+      - PUBLIC_DEVSHARD_VERSION=${PUBLIC_DEVSHARD_VERSION:-v0.2.12}

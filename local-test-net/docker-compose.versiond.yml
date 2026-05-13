@@ -24,7 +24,7 @@
 x-versiond: &versiond
   image: versiond:latest
   build:
-    context: ./versioned
+    context: ../versioned
     dockerfile: Dockerfile
   environment:
     VERSIOND_ORACLE_URL: http://${KEY_NAME}-api:9100/versions
@@ -86,7 +86,7 @@ services:
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
     build:
-      context: ./versiond-router
+      context: ../versiond-router
       dockerfile: Dockerfile
     container_name: ${KEY_NAME}-versiond-router
     environment:

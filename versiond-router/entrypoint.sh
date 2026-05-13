@@ -19,7 +19,7 @@ fi
 
 LINES=""
 for host in ${VERSIOND_HOSTS}; do
-    LINES="${LINES}    server ${host}:${PORT};
+    LINES="${LINES}    server ${host}:${PORT} resolve;
 "
 done
 

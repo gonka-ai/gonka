@@ -1,9 +1,14 @@
 # Sticky router for N versiond instances. Same escrow id always lands on the
 # same versiond, so per-session state inside a versiond/devshardd-child stays
 # coherent across retries. The upstream server list below is generated from
-# the VERSIOND_HOSTS env var by entrypoint.sh (nginx-versiond/entrypoint.sh).
+# the VERSIOND_HOSTS env var by entrypoint.sh (versiond-router/entrypoint.sh).
 
 upstream versiond_pool {
+    # Required by the `resolve` flag below — nginx re-resolves upstream
+    # hostnames every TTL (Docker DNS @ 127.0.0.11) so a container restart
+    # with a new IP doesn't pin nginx to a stale address until reload.
+    zone versiond_pool 64k;
+    resolver 127.0.0.11 valid=10s ipv6=off;
     hash $sticky_key consistent;
 ${UPSTREAM_SERVERS}
 }
@@ -19,11 +24,6 @@ server {
     if ($request_uri ~ "^/[^/]+/sessions/([^/]+)") {
         set $sticky_key $1;
     }
-
-    # Echo the resolved sticky key + upstream into response headers so we can
-    # eyeball routing behaviour with curl -i.
-    add_header X-Sticky-Key $sticky_key always;
-    add_header X-Versiond-Upstream $upstream_addr always;
 
     location / {
         proxy_pass http://versiond_pool;
