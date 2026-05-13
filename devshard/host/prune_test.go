@@ -12,6 +12,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
+	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
 )
@@ -55,6 +56,7 @@ type pruneTestRig struct {
 	host     *Host
 	sink     *recordingPruneSink
 	stub     *stub.InferenceEngine
+	store    *storage.Memory
 	escrowID string
 	epochID  uint64
 }
@@ -80,7 +82,19 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 		ValidationRate: 0,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		EpochID:        7,
+		Version:        types.DefaultStateRootVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 1_000_000,
+	}))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,
+		state.WithInferenceStore(store),
+	)
 	require.NoError(t, err)
 
 	sink := &recordingPruneSink{}
@@ -103,6 +117,7 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 		host:     h,
 		sink:     sink,
 		stub:     stubEngine,
+		store:    store,
 		escrowID: "escrow-1",
 		epochID:  epochID,
 	}
@@ -203,6 +218,32 @@ func (r *pruneTestRig) inferenceStatus(inferenceID uint64) types.InferenceStatus
 	return rec.Status
 }
 
+func (r *pruneTestRig) inferenceMissing(inferenceID uint64) {
+	r.t.Helper()
+	st := r.host.SnapshotState()
+	_, ok := st.Inferences[inferenceID]
+	require.False(r.t, ok, "inference %d should be evicted from RAM", inferenceID)
+}
+
+func (r *pruneTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
+	r.t.Helper()
+	row, ok, err := r.store.GetSealedInference(r.escrowID, inferenceID)
+	require.NoError(r.t, err)
+	require.True(r.t, ok, "sealed inference %d should exist in storage", inferenceID)
+	return row
+}
+
+// committedStatus reads the post-seal terminal status of inferenceID from the
+// state machine's committed-entries map. The on-disk InferenceRow only carries
+// (id, sealed_nonce); the canonical record state lives in committedEntries
+// (and is reconstructed from snapshot + diff replay on recovery).
+func (r *pruneTestRig) committedStatus(inferenceID uint64) types.InferenceStatus {
+	r.t.Helper()
+	rec, ok := r.host.sm.GetCommittedRecord(inferenceID)
+	require.True(r.t, ok, "committed inference %d should exist", inferenceID)
+	return rec.Status
+}
+
 func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
 
@@ -225,7 +266,7 @@ func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
 
 	// Third valid vote pushes VotesValid=3 > threshold=2 -> StatusValidated.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 4, true)})
-	require.Equal(t, types.StatusValidated, rig.inferenceStatus(1))
+	rig.inferenceMissing(1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1, "exactly one Tier A on Validated flip")
@@ -233,6 +274,8 @@ func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
 	require.Equal(t, rig.escrowID, events[0].EscrowID)
 	require.Equal(t, rig.epochID, events[0].PayloadEpoch)
 	require.True(t, events[0].PayloadEpochKnown)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce, "sealed marker must record the seal nonce")
+	require.Equal(t, types.StatusValidated, rig.committedStatus(1))
 }
 
 func TestHost_PruneSink_Terminal_OnInvalidated(t *testing.T) {
@@ -250,11 +293,13 @@ func TestHost_PruneSink_Terminal_OnInvalidated(t *testing.T) {
 
 	// Third invalid vote: VotesInvalid=3 > threshold=2 -> StatusInvalidated.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
-	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
+	rig.inferenceMissing(1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
 	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
+	require.Equal(t, types.StatusInvalidated, rig.committedStatus(1))
 }
 
 func TestHost_PruneSink_Terminal_OnTimedOut(t *testing.T) {
@@ -267,11 +312,13 @@ func TestHost_PruneSink_Terminal_OnTimedOut(t *testing.T) {
 	// Threshold=2 -> need >2 accept votes; collect 3 from non-executor slots.
 	timeoutTx := rig.signTimeoutInference(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, []uint32{0, 2, 3})
 	rig.applyDiff(2, []*types.DevshardTx{timeoutTx})
-	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
+	rig.inferenceMissing(1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
 	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
+	require.Equal(t, types.StatusTimedOut, rig.committedStatus(1))
 }
 
 func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
@@ -299,6 +346,9 @@ func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
 	require.Len(t, events, 1)
 	require.Equal(t, PruneReasonStaleFinished, events[0].Reason)
 	require.Equal(t, rig.epochID, events[0].PayloadEpoch)
+	rig.inferenceMissing(1)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
+	require.Equal(t, types.StatusFinished, rig.committedStatus(1))
 
 	// Subsequent diffs must not re-emit for the same inference.
 	rig.applyDiff(nonce, nil)

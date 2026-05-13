@@ -31,7 +31,7 @@ func defaultParams() CreateSessionParams {
 	return CreateSessionParams{
 		EscrowID:       "escrow-1",
 		EpochID:        7,
-		Version:        types.LegacySessionVersion,
+		Version:        types.DefaultStateRootVersion,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          defaultGroup(),
@@ -56,7 +56,8 @@ func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, types.LegacySessionVersion, meta.Version)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+	require.Equal(t, types.DefaultSealGraceNonces(len(meta.Group)), meta.Config.SealGraceNonces)
 	require.Equal(t, "creator", meta.CreatorAddr)
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 	require.Len(t, meta.Group, 2)
@@ -79,7 +80,7 @@ func runCreateSession_Idempotent(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, types.LegacySessionVersion, meta.Version)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 }
 
@@ -106,7 +107,7 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 
 	meta, metaErr := store.GetSessionMeta("escrow-1")
 	require.NoError(t, metaErr)
-	require.Equal(t, types.LegacySessionVersion, meta.Version)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
 }
 
 func runAppendDiff_GetDiffs(t *testing.T, store Storage) {
@@ -236,6 +237,37 @@ func runSaveLoadSnapshot(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1000), nonce)
 	require.Equal(t, []byte("state-1000"), data, "older async snapshots must not overwrite newer snapshots")
+}
+
+func testInferenceRow(id uint64) InferenceRow {
+	return InferenceRow{
+		InferenceID: id,
+		SealedNonce: 42,
+	}
+}
+
+func runSealedInferenceLifecycle(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	row := testInferenceRow(1)
+	require.NoError(t, store.InsertSealedInference("escrow-1", row))
+
+	got, ok, err := store.GetSealedInference("escrow-1", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, row, got)
+
+	// A second InsertSealedInference for the same id must fail: the row is a
+	// "this id was sealed" marker and is meant to be written exactly once.
+	err = store.InsertSealedInference("escrow-1", row)
+	require.Error(t, err)
+
+	require.NoError(t, store.DeleteSealedInferences("escrow-1"))
+	_, ok, err = store.GetSealedInference("escrow-1", 1)
+	require.NoError(t, err)
+	require.False(t, ok)
 }
 
 func runAddSignature(t *testing.T, store Storage) {

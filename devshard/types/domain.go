@@ -2,14 +2,15 @@ package types
 
 import "fmt"
 
-const LegacySessionVersion = "v1"
-
-func NormalizeSessionVersion(version string) string {
-	if version == "" {
-		return LegacySessionVersion
-	}
-	return version
-}
+// DefaultStateRootVersion is the binary tag stamped into EscrowState.Version
+// (and the settlement payload's Version field) when no explicit value is
+// supplied. It identifies the state-root composition this binary uses, so the
+// chain verifier can dispatch the correct hash path when validating a
+// settlement. There is intentionally no runtime "v1 vs v2" dispatch on the
+// devshard side: each binary release ships a single composition; the value
+// here is the tag for whichever composition this binary implements. Future
+// binaries that change the composition will stamp a different tag.
+const DefaultStateRootVersion = "v1"
 
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
@@ -71,11 +72,18 @@ type SessionConfig struct {
 	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	VoteThreshold     uint32 // minimum accept votes for timeout (total_slots / 2)
 	ValidationRate    uint32 // basis points (10000 = 100%, 1000 = 10%)
+	SealGraceNonces   uint32 // post-terminal grace before sealing an inference (used only by v2-composition binaries)
 }
 
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
-	EscrowID      string
+	EscrowID string
+	// Version is the opaque binary tag stamped by devshardd at session
+	// creation (default DefaultStateRootVersion). Used by storage for
+	// peer-binding consistency and surfaced in the settlement payload so the
+	// chain verifier can pick the right hash composition. The runtime does
+	// not branch on this value - state-root composition is fixed by the
+	// running binary.
 	Version       string
 	Config        SessionConfig
 	Group         []SlotAssignment
@@ -87,6 +95,11 @@ type EscrowState struct {
 	HostStats     map[uint32]*HostStats
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
+	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
+	// commitments. Persisted/restored unconditionally so a future v2 binary
+	// can pick up where a current binary left off; the current binary keeps
+	// it nil/empty because it ships only the v1 composition.
+	SealedAcc []byte `json:"sealed_acc,omitempty"`
 }
 
 // Diff is the protocol primitive: what the user creates and signs.

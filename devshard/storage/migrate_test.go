@@ -113,9 +113,9 @@ func (s *failAfterAppendStorage) AppendDiff(escrowID string, rec types.DiffRecor
 
 func TestMigrateLegacy_RoundTrip(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "esc-a", version: types.LegacySessionVersion, status: "active", balance: 1000, latestNonce: 3, lastFinalized: 1},
-		{escrowID: "esc-b", version: types.LegacySessionVersion, status: "active", balance: 2000, latestNonce: 5, lastFinalized: 2},
-		{escrowID: "esc-settled", version: types.LegacySessionVersion, status: "settled", balance: 500, latestNonce: 1, lastFinalized: 1},
+		{escrowID: "esc-a", version: types.DefaultStateRootVersion, status: "active", balance: 1000, latestNonce: 3, lastFinalized: 1},
+		{escrowID: "esc-b", version: types.DefaultStateRootVersion, status: "active", balance: 2000, latestNonce: 5, lastFinalized: 2},
+		{escrowID: "esc-settled", version: types.DefaultStateRootVersion, status: "settled", balance: 500, latestNonce: 1, lastFinalized: 1},
 	})
 
 	dest := NewMemory()
@@ -199,8 +199,8 @@ func TestMigrateLegacy_DirPath_NoOp(t *testing.T) {
 
 func TestMigrateLegacy_SkipsUnknownEscrow(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "good", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 1},
-		{escrowID: "stale", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "good", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "stale", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()
@@ -226,8 +226,8 @@ func TestMigrateLegacy_SkipsUnknownEscrow(t *testing.T) {
 
 func TestMigrateLegacy_ResolverErrorKeepsLegacyFile(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "good", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 1},
-		{escrowID: "rpc-fails", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "good", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "rpc-fails", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()
@@ -254,7 +254,7 @@ func TestMigrateLegacy_ResolverErrorKeepsLegacyFile(t *testing.T) {
 
 func TestMigrateLegacy_RetryAfterPartialDiffCopy(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "retry", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 3, lastFinalized: 2},
+		{escrowID: "retry", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 3, lastFinalized: 2},
 	})
 
 	dest := NewMemory()
@@ -283,7 +283,7 @@ func TestMigrateLegacy_RetryAfterPartialDiffCopy(t *testing.T) {
 
 func TestMigrateLegacy_RetryAfterFullCopyBeforeRename(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "renamed-late", version: types.LegacySessionVersion, status: "settled", balance: 1, latestNonce: 2, lastFinalized: 1},
+		{escrowID: "renamed-late", version: types.DefaultStateRootVersion, status: "settled", balance: 1, latestNonce: 2, lastFinalized: 1},
 	})
 
 	dest := NewMemory()
@@ -317,7 +317,7 @@ func TestMigrateLegacy_RetryAfterFullCopyBeforeRename(t *testing.T) {
 
 func TestMigrateLegacy_DetectsConflictingCopiedDiff(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "conflict", version: types.LegacySessionVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "conflict", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()

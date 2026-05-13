@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	dstypes "devshard/types"
 )
 
 // warmCacheKey is the key for the warm key verification cache.
@@ -82,6 +84,15 @@ type epochGroupDataResponse struct {
 	} `json:"epoch_group_data"`
 }
 
+// paramsResponse matches grpc-gateway JSON for QueryParams (inference module).
+type paramsResponse struct {
+	Params *struct {
+		DevshardEscrowParams *struct {
+			DefaultSealGraceNonces uint32 `json:"default_seal_grace_nonces"`
+		} `json:"devshard_escrow_params"`
+	} `json:"params"`
+}
+
 // -- helper --
 
 func doGet[T any](client *http.Client, rawURL string) (*T, error) {
@@ -124,14 +135,27 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		return nil, fmt.Errorf("decode app_hash: %w", err)
 	}
 
+	groupSize := len(resp.Escrow.Slots)
+	sealGraceNonces := uint32(0)
+	pu := fmt.Sprintf("%s/productscience/inference/inference/params", b.baseURL)
+	if presp, perr := doGet[paramsResponse](b.client, pu); perr == nil && presp != nil {
+		if presp.Params != nil && presp.Params.DevshardEscrowParams != nil &&
+			presp.Params.DevshardEscrowParams.DefaultSealGraceNonces > 0 {
+			sealGraceNonces = presp.Params.DevshardEscrowParams.DefaultSealGraceNonces
+		} else {
+			sealGraceNonces = dstypes.DefaultSealGraceNonces(groupSize)
+		}
+	}
+
 	return &EscrowInfo{
-		EscrowID:       escrowID,
-		Amount:         resp.Escrow.Amount,
-		CreatorAddress: resp.Escrow.Creator,
-		AppHash:        appHash,
-		Slots:          resp.Escrow.Slots,
-		TokenPrice:     resp.Escrow.TokenPrice,
-		EpochID:        resp.Escrow.EpochIndex,
+		EscrowID:        escrowID,
+		Amount:          resp.Escrow.Amount,
+		CreatorAddress:  resp.Escrow.Creator,
+		AppHash:         appHash,
+		Slots:           resp.Escrow.Slots,
+		TokenPrice:      resp.Escrow.TokenPrice,
+		SealGraceNonces: sealGraceNonces,
+		EpochID:         resp.Escrow.EpochIndex,
 	}, nil
 }
 

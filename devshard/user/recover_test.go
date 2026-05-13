@@ -103,7 +103,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	}
 
 	// Recover.
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
@@ -147,7 +147,7 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), session.Nonce())
 }
@@ -238,7 +238,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 
@@ -287,7 +287,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 	}
 
 	// Recover with a warm key resolver option.
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients,
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients,
 		state.WithWarmKeyResolver(resolver),
 	)
 	require.NoError(t, err)
@@ -317,7 +317,7 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 
 	// Each inference gets a signature from the executor host.

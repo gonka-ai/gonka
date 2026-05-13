@@ -159,7 +159,11 @@ func main() {
 	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainParams)
 	defer store.Close()
 
-	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeSessionVersion(runtimeVersion), br, payloadStore, recorder)
+	boundRuntimeVersion := runtimeVersion
+	if boundRuntimeVersion == "" {
+		boundRuntimeVersion = devshardtypes.DefaultStateRootVersion
+	}
+	manager := internaldevshard.NewHostManager(store, signer, engine, validator, boundRuntimeVersion, br, payloadStore, recorder)
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}

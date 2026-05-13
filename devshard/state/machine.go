@@ -12,6 +12,7 @@ import (
 
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -77,6 +78,21 @@ type StateMachine struct {
 	state       *types.EscrowState
 	verifier    signing.Verifier
 	userAddress string
+	// committedEntries keeps the canonical protobuf entry bytes for every
+	// inference ID ever created in the session, including records already sealed
+	// out of Mutable.Inferences. This preserves byte-identical state roots under
+	// Phase 0 without rehydrating the full record set from storage on each diff.
+	committedEntries map[uint64][]byte
+	// sealedNonces remembers the nonce at which each evicted inference was
+	// sealed. It is the only piece of per-id seal metadata that survives in
+	// the durable sealed-inference index; everything else needed for cold-path
+	// validation lives in committedEntries (and on disk in the snapshot).
+	sealedNonces map[uint64]uint64
+	// testV2Composition is set only from state package tests to force Phase 1
+	// v2 paths (sealedAcc, post-terminal reject) without enabling v2 for the
+	// whole binary via useV2StateRootComposition.
+	testV2Composition bool
+	inferenceStore    storage.Storage
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -95,11 +111,28 @@ func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 	return func(sm *StateMachine) { sm.warmResolver = r }
 }
 
-// WithVersion binds the session to a specific devshard version token.
+// WithVersion binds the session to a specific devshard binary version tag.
+// Empty values fall back to types.DefaultStateRootVersion.
 func WithVersion(version string) SMOption {
 	return func(sm *StateMachine) {
-		sm.state.Version = types.NormalizeSessionVersion(version)
+		sm.state.Version = normalizeBoundVersion(version)
 	}
+}
+
+// WithInferenceStore enables Phase 0 sealed-inference persistence.
+func WithInferenceStore(store storage.Storage) SMOption {
+	return func(sm *StateMachine) { sm.inferenceStore = store }
+}
+
+// effectiveV2Composition reports whether this state machine uses Phase 1 v2
+// composition (sealed accumulator, committed entry dropped on seal, late
+// validation rejected after seal). Production uses only useV2StateRootComposition;
+// tests may set testV2Composition to exercise v2 paths in a v1 binary.
+func (sm *StateMachine) effectiveV2Composition() bool {
+	if sm == nil {
+		return useV2StateRootComposition
+	}
+	return sm.testV2Composition || useV2StateRootComposition
 }
 
 func NewStateMachine(
@@ -117,6 +150,7 @@ func NewStateMachine(
 		slotToAddr[s.SlotID] = s.ValidatorAddress
 		addrToSlotCount[s.ValidatorAddress]++
 	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	groupCopy := make([]types.SlotAssignment, len(group))
 	copy(groupCopy, group)
@@ -143,12 +177,12 @@ func NewStateMachine(
 
 	sm := &StateMachine{
 		state: &types.EscrowState{
-			EscrowID:      escrowID,
-			Version:       types.LegacySessionVersion,
-			Config:        config,
-			Group:         groupCopy,
-			Balance:       initialBalance,
-			Fees:          config.CreateDevshardFee,
+			EscrowID:   escrowID,
+			Version:    types.DefaultStateRootVersion,
+			Config:     config,
+			Group:      groupCopy,
+			Balance:    initialBalance,
+			Fees:       config.CreateDevshardFee,
 			Inferences: make(map[uint64]*types.InferenceRecord),
 			HostStats:  hostStats,
 			WarmKeys:   make(map[uint32]string),
@@ -159,6 +193,8 @@ func NewStateMachine(
 		addressToSlotCount: addrToSlotCount,
 		addressToSlots:     addrToSlots,
 		totalSlots:         uint32(len(group)),
+		committedEntries:   make(map[uint64][]byte),
+		sealedNonces:       make(map[uint64]uint64),
 	}
 	for _, o := range opts {
 		o(sm)
@@ -273,10 +309,14 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
 		if deadlinePassed {
 			sm.state.Phase = types.PhaseSettlement
+			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
+				sm.restoreMutable(snap)
+				return nil, nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+			}
 		}
 	}
 
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	root, err := sm.computeStateRootLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, nil, fmt.Errorf("compute state root: %w", err)
@@ -351,11 +391,20 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
 		if deadlinePassed {
 			sm.state.Phase = types.PhaseSettlement
+			// Under v2 composition, settling is the natural moment to drain
+			// any record still live into the sealed accumulator. This keeps
+			// the settlement payload size bounded (no live records on the
+			// wire) and lets the chain recompute rest_hash from sealed_acc
+			// alone. See devshard/docs/inferences-pruning.md \u00a71.4.
+			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
+				sm.restoreMutable(snap)
+				return nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+			}
 		}
 	}
 
 	// 7. Compute state root.
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	root, err := sm.computeStateRootLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
@@ -422,6 +471,7 @@ func (sm *StateMachine) RestoreState(state *types.EscrowState) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.state = cloneEscrowState(state)
+	sm.rebuildCommittedEntriesLocked()
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
@@ -445,6 +495,10 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	// Deep copy Inferences.
 	s.Inferences = copyInferences(src.Inferences)
 
+	if len(src.SealedAcc) > 0 {
+		s.SealedAcc = append([]byte(nil), src.SealedAcc...)
+	}
+
 	return &s
 }
 
@@ -456,8 +510,11 @@ type mutableSnapshot struct {
 	FinalizeNonce uint64
 	LatestNonce   uint64
 	Inferences    map[uint64]*types.InferenceRecord
+	Committed     map[uint64][]byte
 	HostStats     map[uint32]*types.HostStats
 	WarmKeys      map[uint32]string
+	SealedAcc     []byte
+	SealedNonces  map[uint64]uint64
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
@@ -472,6 +529,9 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 	warmCopy := make(map[uint32]string, len(sm.state.WarmKeys))
 	maps.Copy(warmCopy, sm.state.WarmKeys)
 
+	sealedNoncesCopy := make(map[uint64]uint64, len(sm.sealedNonces))
+	maps.Copy(sealedNoncesCopy, sm.sealedNonces)
+
 	return mutableSnapshot{
 		Balance:       sm.state.Balance,
 		Fees:          sm.state.Fees,
@@ -479,8 +539,11 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		FinalizeNonce: sm.state.FinalizeNonce,
 		LatestNonce:   sm.state.LatestNonce,
 		Inferences:    infCopy,
+		Committed:     cloneCommittedInferenceEntries(sm.committedEntries),
 		HostStats:     hsCopy,
 		WarmKeys:      warmCopy,
+		SealedAcc:     append([]byte(nil), sm.state.SealedAcc...),
+		SealedNonces:  sealedNoncesCopy,
 	}
 }
 
@@ -491,15 +554,50 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.FinalizeNonce = snap.FinalizeNonce
 	sm.state.LatestNonce = snap.LatestNonce
 	sm.state.Inferences = snap.Inferences
+	sm.committedEntries = snap.Committed
 	sm.state.HostStats = snap.HostStats
 	sm.state.WarmKeys = snap.WarmKeys
+	sm.state.SealedAcc = append([]byte(nil), snap.SealedAcc...)
+	sm.sealedNonces = snap.SealedNonces
+}
+
+func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
+	if _, ok := sm.state.Inferences[id]; ok {
+		return true
+	}
+	if _, ok := sm.committedEntries[id]; ok {
+		return true
+	}
+	if sm.effectiveV2Composition() {
+		_, sealed := sm.sealedNonces[id]
+		return sealed
+	}
+	return false
+}
+
+// isInferenceEvictedFromLive reports whether id is known but no longer in the
+// live RAM map. v1 composition: still in committedEntries. v2 composition:
+// in sealedNonces after the seal step has dropped both the live record and
+// the committed entry.
+func (sm *StateMachine) isInferenceEvictedFromLive(id uint64) bool {
+	if _, live := sm.state.Inferences[id]; live {
+		return false
+	}
+	if _, ok := sm.committedEntries[id]; ok {
+		return true
+	}
+	if sm.effectiveV2Composition() {
+		_, sealed := sm.sealedNonces[id]
+		return sealed
+	}
+	return false
 }
 
 // ComputeStateRoot returns the current state root without modifying state.
 func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	return sm.computeStateRootLocked()
 }
 
 // WarmKeys returns the current warm key bindings (shallow copy).
@@ -555,7 +653,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	// Duplicate inference ID guard.
-	if _, exists := sm.state.Inferences[msg.InferenceId]; exists {
+	if sm.isDuplicateInferenceID(msg.InferenceId) {
 		return types.ErrDuplicateInferenceID
 	}
 
@@ -585,6 +683,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
 	logging.Debug("new inference", "subsystem", "state", "inference_id", msg.InferenceId, "executor_slot", executorSlot)
 	return nil
 }
@@ -592,6 +693,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if rec.Status != types.StatusPending {
@@ -629,12 +733,15 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if rec.Status != types.StatusStarted {
@@ -680,13 +787,25 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		if sm.effectiveV2Composition() {
+			if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+				return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+			}
+		}
+		if !sm.hasCommittedInferenceLocked(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		}
+		var err error
+		rec, err = sm.hydrateCommittedInferenceLocked(msg.InferenceId)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Common pre-checks.
@@ -742,7 +861,10 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 	}
 
-	return nil
+	if ok {
+		return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	}
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -759,7 +881,19 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		if sm.effectiveV2Composition() {
+			if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+				return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+			}
+		}
+		if !sm.hasCommittedInferenceLocked(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		}
+		var err error
+		rec, err = sm.hydrateCommittedInferenceLocked(msg.InferenceId)
+		if err != nil {
+			return err
+		}
 	}
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)
@@ -821,12 +955,15 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		rec.Status = types.StatusValidated
 	}
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
@@ -901,7 +1038,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	// Release reserved cost back to escrow.
 	sm.state.Balance += rec.ReservedCost
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyRevealSeed(msg *types.MsgRevealSeed) error {

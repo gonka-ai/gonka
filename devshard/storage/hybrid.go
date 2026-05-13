@@ -249,7 +249,7 @@ func sessionVersionForLog(store Storage, escrowID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return types.NormalizeSessionVersion(meta.Version), nil
+	return normalizeBindingVersion(meta.Version), nil
 }
 
 func (h *HybridStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {
@@ -322,6 +322,30 @@ func (h *HybridStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 		return 0, nil, err
 	}
 	return store.LoadSnapshot(escrowID)
+}
+
+func (h *HybridStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
+	store, _, err := h.backendForSession(escrowID)
+	if err != nil {
+		return err
+	}
+	return store.InsertSealedInference(escrowID, row)
+}
+
+func (h *HybridStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	store, _, err := h.backendForSession(escrowID)
+	if err != nil {
+		return InferenceRow{}, false, err
+	}
+	return store.GetSealedInference(escrowID, inferenceID)
+}
+
+func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
+	store, _, err := h.backendForSession(escrowID)
+	if err != nil {
+		return err
+	}
+	return store.DeleteSealedInferences(escrowID)
 }
 
 func (h *HybridStorage) PruneEpoch(epochID uint64) error {

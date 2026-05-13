@@ -43,13 +43,16 @@ func RecoverSession(
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
-		recoveredVersion = types.NormalizeSessionVersion(boundVersion)
+		recoveredVersion = boundVersion
+		if recoveredVersion == "" {
+			recoveredVersion = types.DefaultStateRootVersion
+		}
 	}
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, verifier,
-		append(smOpts, state.WithVersion(recoveredVersion))...,
+		append(smOpts, state.WithInferenceStore(store), state.WithVersion(recoveredVersion))...,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
@@ -91,6 +94,10 @@ func RecoverSession(
 			}
 			sess.signatures[rec.Nonce][slotID] = sig
 		}
+	}
+
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 
 	return sess, sm, nil

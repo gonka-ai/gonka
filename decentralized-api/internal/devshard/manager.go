@@ -106,6 +106,15 @@ type statsHostStats struct {
 	CompletedValidations uint32 `json:"completed_validations"`
 }
 
+// defaultBoundVersion returns the supplied binary version tag, falling back
+// to types.DefaultStateRootVersion when the input is empty.
+func defaultBoundVersion(version string) string {
+	if version == "" {
+		return types.DefaultStateRootVersion
+	}
+	return version
+}
+
 func NewHostManager(
 	store storage.Storage,
 	signer *signing.Secp256k1Signer,
@@ -124,7 +133,7 @@ func NewHostManager(
 		verifier:          signing.NewSecp256k1Verifier(),
 		engine:            engine,
 		validator:         validator,
-		boundVersion:      types.NormalizeSessionVersion(boundVersion),
+		boundVersion:      defaultBoundVersion(boundVersion),
 		bridge:            br,
 		payloadStore:      payloadStore,
 		recorder:          recorder,
@@ -247,9 +256,13 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	creatorAddr := escrow.CreatorAddress
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
+	if escrow.SealGraceNonces > 0 {
+		config.SealGraceNonces = escrow.SealGraceNonces
+	}
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
+		state.WithInferenceStore(m.store),
 		state.WithVersion(m.boundVersion),
 	)
 	if err != nil {
@@ -385,6 +398,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
+		state.WithInferenceStore(m.store),
 		state.WithVersion(recoveredVersion),
 	)
 	if err != nil {
@@ -395,12 +409,14 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
 		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-			snapState, err := host.UnmarshalStateSnapshot(snapData)
+			snapState, committedEntries, sealedNonces, err := host.UnmarshalStateSnapshotWithCommitted(snapData)
 			if err != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", err)
 			} else {
 				sm.RestoreState(snapState)
+				sm.RestoreCommittedEntries(committedEntries)
+				sm.RestoreSealedNonces(sealedNonces)
 				replayFrom = snapNonce + 1
 				logging.Info("restored devshard snapshot", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
@@ -434,6 +450,9 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", err)
 			}
 		}
+	}
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
@@ -469,7 +488,7 @@ func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
 }
 
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
-	data, err := host.MarshalStateSnapshot(sm.ExportState())
+	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces())
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}

@@ -113,3 +113,75 @@ func TestComputeStateRoot_DifferentVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, root1, root2)
 }
+
+func TestComputeInferencesHashV2_DeterministicAcrossOrders(t *testing.T) {
+	var acc [32]byte
+	live1 := map[uint64]*types.InferenceRecord{
+		3: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 1},
+		1: {Status: types.StatusFinished, ExecutorSlot: 1, ActualCost: 2},
+	}
+	live2 := map[uint64]*types.InferenceRecord{
+		1: {Status: types.StatusFinished, ExecutorSlot: 1, ActualCost: 2},
+		3: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 1},
+	}
+	h1, err := ComputeInferencesHashV2(acc, live1)
+	require.NoError(t, err)
+	h2, err := ComputeInferencesHashV2(acc, live2)
+	require.NoError(t, err)
+	require.Equal(t, h1, h2)
+}
+
+func TestStateRoot_V1_Untouched(t *testing.T) {
+	hostStats := map[uint32]*types.HostStats{
+		0: {Cost: 50, Missed: 1},
+		1: {Cost: 75},
+	}
+	inferences := map[uint64]*types.InferenceRecord{
+		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 50},
+	}
+	balance := uint64(875)
+	fees := uint64(123)
+	version := "dev"
+
+	root, err := ComputeStateRoot(balance, hostStats, inferences, types.PhaseActive, nil, fees, version)
+	require.NoError(t, err)
+
+	hostStatsHash, err := ComputeHostStatsHash(hostStats)
+	require.NoError(t, err)
+	restHash, err := ComputeRestHash(balance, inferences, nil)
+	require.NoError(t, err)
+	expected := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
+	require.Equal(t, expected, root)
+}
+
+func TestStateRoot_V2_LiveSetOnly(t *testing.T) {
+	hostStats := map[uint32]*types.HostStats{
+		0: {Cost: 10},
+	}
+	live := map[uint64]*types.InferenceRecord{
+		7: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 10},
+	}
+	var sealedAcc [32]byte
+	sealedAcc[0] = 0xab
+	balance := uint64(1000)
+	fees := uint64(5)
+	version := "v2"
+
+	restHash, err := ComputeRestHashV2(balance, sealedAcc, live, nil)
+	require.NoError(t, err)
+	rootV1Path, err := ComputeStateRoot(balance, hostStats, live, types.PhaseActive, nil, fees, version)
+	require.NoError(t, err)
+
+	// Package-level ComputeStateRoot uses v1 rest composition regardless of
+	// version string; v2 hosts use StateMachine.computeStateRootLocked instead.
+	hostStatsHash, err := ComputeHostStatsHash(hostStats)
+	require.NoError(t, err)
+	rootV2Path := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
+	require.NotEqual(t, rootV1Path, rootV2Path, "exported ComputeStateRoot must ignore v2 rest-hash semantics")
+
+	var otherAcc [32]byte
+	otherAcc[31] = 0x01
+	restOther, err := ComputeRestHashV2(balance, otherAcc, live, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, restHash, restOther, "sealed accumulator must affect v2 rest hash")
+}

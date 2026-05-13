@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -22,6 +23,24 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
 	require.NoError(t, err)
 	return sm, user
+}
+
+func TestNewStateMachine_NormalizesSealGraceNonces(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	verifier := signing.NewSecp256k1Verifier()
+	config := types.SessionConfig{TokenPrice: 1, VoteThreshold: 1}
+
+	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, types.DefaultSealGraceNonces(len(group)), st.Config.SealGraceNonces)
 }
 
 // txStart wraps MsgStartInference in a DevshardTx.
@@ -2103,6 +2122,206 @@ func TestLateValidation_DeduplicateTerminal(t *testing.T) {
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(dupeVal)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err, "duplicate late validation must be a silent no-op")
+}
+
+// Phase 1.3: deterministic post-terminal reject for v2 composition (tests force
+// v2 via testV2Composition; production enables the same paths when
+// useV2StateRootComposition is true).
+
+func TestV2_LateValidation_Rejected(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	sm.testV2Composition = true
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	require.NoError(t, sm.SealInference(1))
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrInferenceSealed)
+}
+
+func TestV2_LateValidationVote_Rejected(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	sm.testV2Composition = true
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[1].Status)
+
+	require.NoError(t, sm.SealInference(1))
+
+	voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2, VoteValid: true, EscrowId: "escrow-1"}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], voteMsg)
+	nonce = sm.SnapshotState().LatestNonce + 1
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(voteMsg)})
+	_, err = sm.ApplyDiff(diff)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrInferenceSealed)
+}
+
+func TestV1_LateValidation_StillNoOp(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	require.NoError(t, sm.SealInference(1))
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err, "v1: post-seal validation must still apply via committed entry")
+	require.False(t, errors.Is(err, types.ErrInferenceSealed))
+
+	rec, ok := sm.GetCommittedRecord(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, rec.Status)
+	require.True(t, rec.ValidatedBy.IsSet(0))
+}
+
+// TestV2_FinalizeDeadlineDrainsLiveIntoSealedAcc verifies that under v2
+// composition the Finalizing -> Settlement deadline transition seals every
+// live record into sealed_acc, leaving an empty live map and a non-zero
+// accumulator. This is the chain-side simplification: the settlement
+// payload then never has to carry per-inference records.
+func TestV2_FinalizeDeadlineDrainsLiveIntoSealedAcc(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	sm.testV2Composition = true
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	require.NotEmpty(t, sm.SnapshotState().Inferences, "inference must be live before finalize")
+
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, types.PhaseFinalizing, sm.Phase())
+
+	st := sm.SnapshotState()
+	for n := st.LatestNonce + 1; n <= st.FinalizeNonce+uint64(len(hosts)); n++ {
+		diff = testutil.SignDiff(t, user, "escrow-1", n, nil)
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+	}
+
+	final := sm.SnapshotState()
+	require.Equal(t, types.PhaseSettlement, final.Phase)
+	require.Empty(t, final.Inferences, "v2 deadline transition must drain live inferences")
+	require.Len(t, final.SealedAcc, 32, "v2 deadline transition must produce a 32-byte sealed_acc")
+
+	var zero [32]byte
+	require.NotEqual(t, zero[:], final.SealedAcc, "sealed_acc must change after draining live records")
+}
+
+// TestV2_FinalizeDrainDeterministicOrder verifies that two state machines
+// applying the same finalize-deadline sequence end with identical sealed_acc
+// values, even if their internal map iteration order differed. This is the
+// safety net for the deterministic seal contract.
+//
+// We use two inferences (id=1 starts at nonce 1, id=4 starts at nonce 4) so
+// the drain must sort by id, not by iteration order. The two state machines
+// share the same host keys and user, so they are bit-identical inputs and
+// must produce bit-identical outputs.
+func TestV2_FinalizeDrainDeterministicOrder(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+
+	startAt := func(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, inferenceID uint64) {
+		t.Helper()
+		executorSlotIdx := inferenceID % uint64(len(hosts))
+
+		nonce := inferenceID
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})})
+		_, err := sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+		nonce++
+		diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+			InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		})})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		finishMsg := &types.MsgFinishInference{
+			InferenceId: inferenceID, ResponseHash: []byte("response"),
+			InputTokens: 80, OutputTokens: 40, ExecutorSlot: uint32(executorSlotIdx),
+			EscrowId: "escrow-1",
+		}
+		finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[executorSlotIdx], finishMsg)
+		nonce++
+		diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinish(finishMsg)})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+	}
+
+	driveTwoInferences := func(t *testing.T) *StateMachine {
+		t.Helper()
+		sm, user := newTestSM(t, hosts, 20000)
+		sm.testV2Composition = true
+		startAt(t, sm, user, 1)
+		startAt(t, sm, user, 4)
+
+		nonce := sm.LatestNonce() + 1
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
+		_, err := sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		st := sm.SnapshotState()
+		for n := st.LatestNonce + 1; n <= st.FinalizeNonce+uint64(len(hosts)); n++ {
+			diff = testutil.SignDiff(t, user, "escrow-1", n, nil)
+			_, err = sm.ApplyDiff(diff)
+			require.NoError(t, err)
+		}
+		return sm
+	}
+
+	a := driveTwoInferences(t)
+	b := driveTwoInferences(t)
+
+	require.Equal(t, types.PhaseSettlement, a.Phase())
+	require.Equal(t, types.PhaseSettlement, b.Phase())
+	require.Equal(t, a.SnapshotState().SealedAcc, b.SnapshotState().SealedAcc,
+		"deterministic drain must yield identical sealed_acc across runs")
+	require.Empty(t, a.SnapshotState().Inferences)
+	require.Empty(t, b.SnapshotState().Inferences)
+
+	rootA, err := a.ComputeStateRoot()
+	require.NoError(t, err)
+	rootB, err := b.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootA, rootB)
 }
 
 // --- Warm Key Tests ---

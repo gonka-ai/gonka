@@ -34,6 +34,10 @@ func TestMemory_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, NewMemory())
 }
 
+func TestMemory_SealedInferenceLifecycle(t *testing.T) {
+	runSealedInferenceLifecycle(t, NewMemory())
+}
+
 func TestMemory_AddSignature(t *testing.T) {
 	runAddSignature(t, NewMemory())
 }

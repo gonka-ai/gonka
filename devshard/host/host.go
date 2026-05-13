@@ -523,6 +523,16 @@ func (h *Host) emitTierCLocked(currentNonce uint64, now time.Time) {
 // host was constructed without an epoch the manager falls back to a global
 // supplier.
 func (h *Host) emitPruneLocked(inferenceID uint64, reason PruneReason) {
+	if err := h.sm.SealInference(inferenceID); err != nil {
+		logging.Warn("failed to seal inference before prune",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", inferenceID,
+			"reason", reason.String(),
+			"error", err,
+		)
+		return
+	}
 	h.prunedFired[inferenceID] = struct{}{}
 	delete(h.finishedAt, inferenceID)
 	delete(h.finishedAtTime, inferenceID)
@@ -549,17 +559,19 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 	store := h.store
 	escrowID := h.escrowID
 	state := h.sm.ExportState()
+	committedEntries := h.sm.ExportCommittedEntries()
+	sealedNonces := h.sm.ExportSealedNonces()
 
 	go func() {
 		if !settledNow {
 			defer h.snapshotInFlight.Store(false)
 		}
-		writeSnapshot(store, escrowID, nonce, state)
+		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces)
 	}()
 }
 
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState) {
-	data, err := MarshalStateSnapshot(state)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) {
+	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces)
 	if err != nil {
 		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
 		return
