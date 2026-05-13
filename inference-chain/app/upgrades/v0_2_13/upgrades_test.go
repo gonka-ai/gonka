@@ -114,8 +114,14 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, params))
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 11))
 	k.SetModel(ctx, &inferencetypes.Model{
-		Id:     kimiModelID,
-		HfRepo: kimiModelID,
+		Id:                  qwenModelID,
+		HfRepo:              qwenModelID,
+		ValidationThreshold: &inferencetypes.Decimal{Value: 958, Exponent: -3},
+	})
+	k.SetModel(ctx, &inferencetypes.Model{
+		Id:                  kimiModelID,
+		HfRepo:              kimiModelID,
+		ValidationThreshold: &inferencetypes.Decimal{Value: 920, Exponent: -3},
 		ModelArgs: []string{
 			"--max-model-len", "240000",
 			"--tool-call-parser", "kimi_k2",
@@ -124,6 +130,10 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	})
 
 	require.NoError(t, updateModelParams(ctx, k))
+
+	qwenModel, found := k.GetGovernanceModel(ctx, qwenModelID)
+	require.True(t, found)
+	require.Equal(t, &inferencetypes.Decimal{Value: 940, Exponent: -3}, qwenModel.ValidationThreshold)
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -139,6 +149,7 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 		"--tool-call-parser", "kimi_k2",
 		"--reasoning-parser", "kimi_k2",
 	}, kimiModel.ModelArgs)
+	require.Equal(t, &inferencetypes.Decimal{Value: 900, Exponent: -3}, kimiModel.ValidationThreshold)
 
 	minimax := requirePoCModelConfig(t, got.PocParams.Models, minimaxModelID)
 	require.Equal(t, int64(1024), minimax.SeqLen)
@@ -147,7 +158,7 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: -1}, minimax.StatTest.PMismatch)
 	require.Equal(t, &inferencetypes.Decimal{Value: 5, Exponent: -2}, minimax.StatTest.PValueThreshold)
 	require.Equal(t, &inferencetypes.Decimal{Value: 3024, Exponent: -4}, minimax.WeightScaleFactor)
-	require.Equal(t, uint64(16), minimax.PenaltyStartEpoch)
+	require.Equal(t, uint64(271), minimax.PenaltyStartEpoch)
 
 	model, found := k.GetGovernanceModel(ctx, minimaxModelID)
 	require.True(t, found)
@@ -155,9 +166,10 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	require.Equal(t, "d494266a4affc0d2995ba1fa35c8481cbd84294b", model.HfCommit)
 	require.Equal(t, uint64(320), model.VRam)
 	require.Equal(t, uint64(5000), model.ThroughputPerNonce)
-	require.Equal(t, &inferencetypes.Decimal{Value: 920, Exponent: -3}, model.ValidationThreshold)
+	require.Equal(t, &inferencetypes.Decimal{Value: 922, Exponent: -3}, model.ValidationThreshold)
 	require.Equal(t, []string{
 		"--enable-auto-tool-choice",
+		"--kv-cache-dtype", "fp8",
 		"--tool-call-parser", "minimax_m2",
 		"--reasoning-parser", "minimax_m2_append_think",
 	}, model.ModelArgs)

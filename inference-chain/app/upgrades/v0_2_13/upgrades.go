@@ -33,9 +33,11 @@ const (
 	USDCContractAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 	USDTContractAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
 
+	qwenModelID        = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
 	kimiModelID        = "moonshotai/Kimi-K2.6"
 	minimaxModelID     = "MiniMaxAI/MiniMax-M2.7"
 	minimaxModelCommit = "d494266a4affc0d2995ba1fa35c8481cbd84294b"
+	minimaxStartEpoch  = uint64(271)
 )
 
 // BridgeSetupData is parsed from the upgrade proposal's Plan.Info JSON field.
@@ -127,12 +129,13 @@ func updateModelParams(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	updatedKimi := setPoCModelWeightScale(params.PocParams, kimiModelID, kimiWeightScaleFactor())
-	upsertPoCModelConfig(params.PocParams, minimaxPoCModelConfig(modelPenaltyStartEpoch(ctx, k)))
+	upsertPoCModelConfig(params.PocParams, minimaxPoCModelConfig())
 
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
-	updateKimiGovernanceModelArgs(ctx, k)
+	setGovernanceModelValidationThreshold(ctx, k, qwenModelID, qwenValidationThreshold())
+	updateKimiGovernanceModel(ctx, k)
 	k.SetModel(ctx, minimaxGovernanceModel(k.GetAuthority()))
 	k.LogInfo("updated model params", types.Upgrades,
 		"kimi_model_id", kimiModelID,
@@ -141,15 +144,29 @@ func updateModelParams(ctx context.Context, k keeper.Keeper) error {
 	return nil
 }
 
-func updateKimiGovernanceModelArgs(ctx context.Context, k keeper.Keeper) {
+func setGovernanceModelValidationThreshold(
+	ctx context.Context,
+	k keeper.Keeper,
+	modelID string,
+	threshold *types.Decimal,
+) {
+	model, found := k.GetGovernanceModel(ctx, modelID)
+	if !found || model == nil {
+		return
+	}
+	model.ValidationThreshold = threshold
+	k.SetModel(ctx, model)
+}
+
+func updateKimiGovernanceModel(ctx context.Context, k keeper.Keeper) {
 	model, found := k.GetGovernanceModel(ctx, kimiModelID)
 	if !found || model == nil {
 		return
 	}
-	if hasModelArg(model.ModelArgs, "--enable-auto-tool-choice") {
-		return
+	model.ValidationThreshold = kimiValidationThreshold()
+	if !hasModelArg(model.ModelArgs, "--enable-auto-tool-choice") {
+		model.ModelArgs = append([]string{"--enable-auto-tool-choice"}, model.ModelArgs...)
 	}
-	model.ModelArgs = append([]string{"--enable-auto-tool-choice"}, model.ModelArgs...)
 	k.SetModel(ctx, model)
 }
 
@@ -188,15 +205,23 @@ func kimiWeightScaleFactor() *types.Decimal {
 	return &types.Decimal{Value: 78, Exponent: -2}
 }
 
+func qwenValidationThreshold() *types.Decimal {
+	return &types.Decimal{Value: 940, Exponent: -3}
+}
+
+func kimiValidationThreshold() *types.Decimal {
+	return &types.Decimal{Value: 900, Exponent: -3}
+}
+
 func minimaxWeightScaleFactor() *types.Decimal {
 	return &types.Decimal{Value: 3024, Exponent: -4}
 }
 
 func minimaxValidationThreshold() *types.Decimal {
-	return &types.Decimal{Value: 920, Exponent: -3}
+	return &types.Decimal{Value: 922, Exponent: -3}
 }
 
-func minimaxPoCModelConfig(penaltyStartEpoch uint64) *types.PoCModelConfig {
+func minimaxPoCModelConfig() *types.PoCModelConfig {
 	return &types.PoCModelConfig{
 		ModelId: minimaxModelID,
 		SeqLen:  1024,
@@ -206,18 +231,8 @@ func minimaxPoCModelConfig(penaltyStartEpoch uint64) *types.PoCModelConfig {
 			PValueThreshold: &types.Decimal{Value: 5, Exponent: -2},  // 0.05
 		},
 		WeightScaleFactor: minimaxWeightScaleFactor(),
-		PenaltyStartEpoch: penaltyStartEpoch,
+		PenaltyStartEpoch: minimaxStartEpoch,
 	}
-}
-
-func modelPenaltyStartEpoch(ctx context.Context, k keeper.Keeper) uint64 {
-	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if !found {
-		k.LogInfo("no effective epoch for model penalty start; using fallback", types.Upgrades,
-			"penalty_start_epoch", 5)
-		return 5
-	}
-	return epochIndex + 5
 }
 
 func minimaxGovernanceModel(authority string) *types.Model {
@@ -229,6 +244,7 @@ func minimaxGovernanceModel(authority string) *types.Model {
 		HfCommit:               minimaxModelCommit,
 		ModelArgs: []string{
 			"--enable-auto-tool-choice",
+			"--kv-cache-dtype", "fp8",
 			"--tool-call-parser", "minimax_m2",
 			"--reasoning-parser", "minimax_m2_append_think",
 		},
