@@ -3,6 +3,7 @@ package payloadstorage
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -74,18 +75,15 @@ func TestManagedStorage_CacheHit(t *testing.T) {
 		t.Fatalf("Store failed: %v", err)
 	}
 
-	// First retrieve - cache miss
 	p1, r1, err := ms.Retrieve(ctx, "inf-1", 1)
 	if err != nil {
 		t.Fatalf("Retrieve failed: %v", err)
 	}
 
-	// Modify underlying storage
 	mock.mu.Lock()
 	mock.data["inf-1"] = []byte("modifiedmodified")
 	mock.mu.Unlock()
 
-	// Second retrieve - should hit cache, return original data
 	p2, r2, err := ms.Retrieve(ctx, "inf-1", 1)
 	if err != nil {
 		t.Fatalf("Retrieve failed: %v", err)
@@ -105,21 +103,17 @@ func TestManagedStorage_CacheExpiration(t *testing.T) {
 		t.Fatalf("Store failed: %v", err)
 	}
 
-	// First retrieve
 	_, _, err := ms.Retrieve(ctx, "inf-1", 1)
 	if err != nil {
 		t.Fatalf("Retrieve failed: %v", err)
 	}
 
-	// Modify underlying storage
 	mock.mu.Lock()
 	mock.data["inf-1"] = []byte("newdatnewdat")
 	mock.mu.Unlock()
 
-	// Wait for cache to expire
 	time.Sleep(15 * time.Millisecond)
 
-	// Retrieve should get new data
 	p, r, err := ms.Retrieve(ctx, "inf-1", 1)
 	if err != nil {
 		t.Fatalf("Retrieve failed: %v", err)
@@ -135,7 +129,6 @@ func TestManagedStorage_StoreTracksMaxEpoch(t *testing.T) {
 	ms := NewManagedStorageWithSize(mock, 3, time.Minute, 100)
 	ctx := context.Background()
 
-	// Store in various epochs
 	ms.Store(ctx, "inf-1", 5, []byte("p"), []byte("r"))
 	ms.Store(ctx, "inf-2", 3, []byte("p"), []byte("r"))
 	ms.Store(ctx, "inf-3", 10, []byte("p"), []byte("r"))
@@ -155,21 +148,13 @@ func TestManagedStorage_AutoPruneTriggersInCleanup(t *testing.T) {
 	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
-	// Store enough to trigger pruning (retainCount=2, so epochs 0-7 should be pruned when maxEpoch=10)
 	for i := uint64(0); i <= 10; i++ {
 		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
 	}
 
-	// Trigger cleanup manually
 	ms.cleanup()
 
-	// Wait for async prune goroutines
-	time.Sleep(50 * time.Millisecond)
-
 	pruned := mock.getPruned()
-	// threshold = 10 - 2 = 8
-	// minPruned starts at 0, but only last 10 should be pruned
-	// so epochs 0-7 should be pruned (8 epochs)
 	if len(pruned) != 8 {
 		t.Errorf("expected 8 epochs pruned, got %d: %v", len(pruned), pruned)
 	}
@@ -180,22 +165,15 @@ func TestManagedStorage_AutoPruneSkipsOldEpochs(t *testing.T) {
 	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
-	// Jump straight to epoch 100 (simulating restart with existing data)
 	ms.Store(ctx, "inf-1", 100, []byte("p"), []byte("r"))
 
-	// Trigger cleanup
 	ms.cleanup()
-	time.Sleep(50 * time.Millisecond)
 
 	pruned := mock.getPruned()
-	// threshold = 100 - 2 = 98
-	// minPruned=0, but 0 + 10 < 98, so minPruned should jump to 98 - 10 = 88
-	// Only epochs 88-97 should be pruned (10 epochs max)
 	if len(pruned) > maxPruneLookback {
 		t.Errorf("should prune at most %d epochs, got %d: %v", maxPruneLookback, len(pruned), pruned)
 	}
 
-	// Verify we're pruning recent epochs, not from 0
 	for _, e := range pruned {
 		if e < 88 {
 			t.Errorf("should not prune epoch %d (too old, should skip)", e)
@@ -244,7 +222,6 @@ func TestManagedStorage_NoPruneWhenBelowRetainCount(t *testing.T) {
 	ms := NewManagedStorageWithSize(mock, 5, time.Minute, 100)
 	ctx := context.Background()
 
-	// Store in epochs 0-4 (maxEpoch=4, retainCount=5)
 	for i := uint64(0); i <= 4; i++ {
 		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
 	}
@@ -257,7 +234,6 @@ func TestManagedStorage_NoPruneWhenBelowRetainCount(t *testing.T) {
 	}
 }
 
-// failingMockStorage fails PruneEpoch for specific epochs (for testing partial progress).
 type failingMockStorage struct {
 	*mockStorage
 	failEpochs map[uint64]bool
@@ -269,13 +245,13 @@ func newFailingMockStorage(failEpochs map[uint64]bool) *failingMockStorage {
 
 func (f *failingMockStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
 	if f.failEpochs[epochId] {
-		return ErrNotFound
+		return fmt.Errorf("prune epoch %d: simulated storage failure", epochId)
 	}
 	return f.mockStorage.PruneEpoch(ctx, epochId)
 }
 
-func TestManagedStorage_PartialProgressOnPruneFailure(t *testing.T) {
-	mock := newFailingMockStorage(map[uint64]bool{1: true}) // epoch 1 fails
+func TestManagedStorage_PrunesPastFailure(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{1: true})
 	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
@@ -283,28 +259,177 @@ func TestManagedStorage_PartialProgressOnPruneFailure(t *testing.T) {
 		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
 	}
 
-	// threshold = 5 - 2 = 3. Epoch 0 succeeds, epoch 1 fails, epoch 2 not attempted.
-	// minPruned should advance to 1 (partial progress past epoch 0).
+	// threshold = 5 - 2 = 3.
+	// Epoch 0 succeeds, epoch 1 fails, epoch 2 succeeds.
+	// minPruned should advance past the gap to 3 (non-contiguous),
+	// epoch 1 tracked in failedEpochs.
 	ms.cleanup()
 
 	ms.mu.RLock()
 	minPruned := ms.minPruned
+	failedCount := len(ms.failedEpochs)
 	ms.mu.RUnlock()
 
-	if minPruned != 1 {
-		t.Errorf("minPruned should advance to 1 (epoch 0 succeeded, epoch 1 failed), got %d", minPruned)
+	if minPruned != 3 {
+		t.Errorf("minPruned should advance to 3 (epochs 0 and 2 succeeded), got %d", minPruned)
+	}
+	if failedCount != 1 {
+		t.Errorf("failedEpochs should contain 1 entry (epoch 1), got %d", failedCount)
 	}
 
-	// Second cleanup: fix the mock so epoch 1 succeeds, then epoch 2 also succeeds.
+	pruned := mock.getPruned()
+	prunedSet := make(map[uint64]bool)
+	for _, e := range pruned {
+		prunedSet[e] = true
+	}
+	if !prunedSet[0] || !prunedSet[2] {
+		t.Errorf("epochs 0 and 2 should be pruned, got %v", pruned)
+	}
+	if prunedSet[1] {
+		t.Errorf("epoch 1 should NOT be pruned (failed), but was in %v", pruned)
+	}
+}
+
+func TestManagedStorage_RetryHealsFailedEpoch(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{1: true})
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	for i := uint64(0); i <= 5; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	failedCount := len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if minPruned != 3 {
+		t.Errorf("minPruned should be 3 after first cleanup, got %d", minPruned)
+	}
+	if failedCount != 1 {
+		t.Errorf("failedEpochs should have 1 entry, got %d", failedCount)
+	}
+
+	// Fix the mock so epoch 1 succeeds, then run cleanup again.
 	mock.failEpochs = nil
 	ms.cleanup()
 
 	ms.mu.RLock()
 	minPruned = ms.minPruned
+	failedCount = len(ms.failedEpochs)
 	ms.mu.RUnlock()
 
 	if minPruned != 3 {
-		t.Errorf("minPruned should advance to 3 (all epochs succeeded), got %d", minPruned)
+		t.Errorf("minPruned should remain 3 (no new eligible epochs), got %d", minPruned)
+	}
+	if failedCount != 0 {
+		t.Errorf("failedEpochs should be empty after retry success, got %d entries", failedCount)
+	}
+
+	pruned := mock.getPruned()
+	prunedSet := make(map[uint64]bool)
+	for _, e := range pruned {
+		prunedSet[e] = true
+	}
+	if !prunedSet[1] {
+		t.Errorf("epoch 1 should be pruned after retry, got %v", pruned)
 	}
 }
 
+func TestManagedStorage_PersistentFailureDoesNotBlockSubsequentEpochs(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{1: true})
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	for i := uint64(0); i <= 5; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// Tick 1: epoch 1 fails, but epochs 0 and 2 succeed.
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	failedCount := len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if minPruned != 3 {
+		t.Errorf("minPruned should be 3 after first cleanup, got %d", minPruned)
+	}
+	if failedCount != 1 {
+		t.Errorf("failedEpochs should have 1 entry, got %d", failedCount)
+	}
+
+	// Tick 2: epoch 1 still fails. New epochs arrived.
+	for i := uint64(6); i <= 8; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// threshold = 8 - 2 = 6. pruneFrom = minPruned = 3.
+	// Epochs 3, 4, 5 should be pruned. Epoch 1 retry still fails.
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned = ms.minPruned
+	failedCount = len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if minPruned != 6 {
+		t.Errorf("minPruned should advance to 6 (epochs 3-5 pruned), got %d", minPruned)
+	}
+	if failedCount != 1 {
+		t.Errorf("failedEpochs should still have 1 entry (epoch 1), got %d", failedCount)
+	}
+
+	pruned := mock.getPruned()
+	prunedSet := make(map[uint64]bool)
+	for _, e := range pruned {
+		prunedSet[e] = true
+	}
+	for _, e := range []uint64{3, 4, 5} {
+		if !prunedSet[e] {
+			t.Errorf("epoch %d should be pruned despite persistent failure at epoch 1", e)
+		}
+	}
+}
+
+func TestManagedStorage_LookbackCapCleansFailedEpochs(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{88: true})
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	// Jump to epoch 100 so threshold = 98, lookback cap sets minPruned = 88
+	ms.Store(ctx, "inf-1", 100, []byte("p"), []byte("r"))
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	failedCount := len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if minPruned != 98 {
+		t.Errorf("minPruned should be 98 after cleanup, got %d", minPruned)
+	}
+
+	// Now jump far ahead so lookback cap would skip past the failed epoch
+	ms.Store(ctx, "inf-2", 120, []byte("p"), []byte("r"))
+	// threshold = 120 - 2 = 118
+	// minPruned(98) + maxPruneLookback(10) = 108 < 118 → minPruned jumps to 118-10 = 108
+	// Epoch 88 is below new minPruned(108) → should be cleaned from failedEpochs
+	ms.cleanup()
+
+	ms.mu.RLock()
+	minPruned = ms.minPruned
+	failedCount = len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if minPruned != 118 {
+		t.Errorf("minPruned should be 118 after lookahead cap, got %d", minPruned)
+	}
+	if failedCount != 0 {
+		t.Errorf("failedEpochs should be empty (epoch 88 below minPruned), got %d entries", failedCount)
+	}
+}

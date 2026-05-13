@@ -22,18 +22,21 @@ type cachedEntry struct {
 }
 
 // ManagedStorage wraps PayloadStorage with read caching and automatic epoch pruning.
-// - Caches Retrieve results to reduce disk I/O during validation bursts
-// - Automatically prunes old epochs in background (only last 10 epochs, older data requires manual prune)
+//   - Caches Retrieve results to reduce disk I/O during validation bursts
+//   - Automatically prunes old epochs in background (only last 10 epochs, older data requires manual prune)
+//   - Failed prunes are isolated in failedEpochs and retried on each cleanup tick,
+//     so a single persistent failure does not block pruning of subsequent epochs.
 type ManagedStorage struct {
 	storage      PayloadStorage
 	retainCount  uint64
 	cacheTTL     time.Duration
 	maxCacheSize int
 
-	mu        sync.RWMutex
-	cache     map[string]*cachedEntry
-	maxEpoch  uint64
-	minPruned uint64
+	mu           sync.RWMutex
+	cache        map[string]*cachedEntry
+	maxEpoch     uint64
+	minPruned    uint64
+	failedEpochs map[uint64]bool
 }
 
 func NewManagedStorage(storage PayloadStorage, retainCount uint64, cacheTTL time.Duration) *ManagedStorage {
@@ -47,6 +50,7 @@ func NewManagedStorageWithSize(storage PayloadStorage, retainCount uint64, cache
 		cacheTTL:     cacheTTL,
 		maxCacheSize: maxCacheSize,
 		cache:        make(map[string]*cachedEntry),
+		failedEpochs: make(map[uint64]bool),
 	}
 	go m.cleanupLoop()
 	return m
@@ -133,25 +137,55 @@ func (m *ManagedStorage) cleanup() {
 		pruneTo = m.maxEpoch - m.retainCount
 		if m.minPruned+maxPruneLookback < pruneTo {
 			m.minPruned = pruneTo - maxPruneLookback
+			for e := range m.failedEpochs {
+				if e < m.minPruned {
+					delete(m.failedEpochs, e)
+				}
+			}
 		}
 		pruneFrom = m.minPruned
 	}
 	m.mu.Unlock()
 
 	// Prune sequentially outside the lock so Store/Retrieve are not blocked.
-	// Track partial progress: advance minPruned per successful epoch.
-	// Stop on first failure so the failed epoch is retried on the next cleanup tick.
+	// On failure, isolate the epoch in failedEpochs and continue — a single
+	// persistent failure must not block pruning of subsequent epochs.
 	if pruneFrom < pruneTo {
 		for epoch := pruneFrom; epoch < pruneTo; epoch++ {
 			if err := m.storage.PruneEpoch(context.Background(), epoch); err != nil {
 				logging.Warn("Auto-prune failed", types.PayloadStorage, "epochId", epoch, "error", err)
-				break
+				m.mu.Lock()
+				m.failedEpochs[epoch] = true
+				m.mu.Unlock()
+				continue
 			}
 			logging.Info("Auto-pruned epoch", types.PayloadStorage, "epochId", epoch)
 			m.mu.Lock()
-			m.minPruned = epoch + 1
+			if epoch+1 > m.minPruned {
+				m.minPruned = epoch + 1
+			}
 			m.mu.Unlock()
 		}
+	}
+
+	// Retry previously failed epochs. Idempotent PruneEpoch guarantees
+	// that re-attempting an already-pruned epoch is a safe no-op.
+	m.mu.RLock()
+	retries := make([]uint64, 0, len(m.failedEpochs))
+	for e := range m.failedEpochs {
+		retries = append(retries, e)
+	}
+	m.mu.RUnlock()
+
+	for _, e := range retries {
+		if err := m.storage.PruneEpoch(context.Background(), e); err != nil {
+			logging.Warn("Auto-prune retry failed", types.PayloadStorage, "epochId", e, "error", err)
+			continue
+		}
+		logging.Info("Auto-pruned previously failed epoch", types.PayloadStorage, "epochId", e)
+		m.mu.Lock()
+		delete(m.failedEpochs, e)
+		m.mu.Unlock()
 	}
 }
 
