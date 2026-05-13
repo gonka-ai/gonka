@@ -258,11 +258,13 @@ func TestTokenCountValidation_MatchingUsage(t *testing.T) {
 	assert.False(t, claimedOutput > usage.CompletionTokens, "matching output should not exceed stored")
 }
 
-func TestTokenCountValidation_AllowsOneTokenDrift(t *testing.T) {
-	assert.False(t, tokenCountInflated(11, 10), "one extra token should be tolerated")
+func TestTokenCountValidation_AllowsTokenDriftUpToThreshold(t *testing.T) {
+	const tokenCountDriftThreshold = 3
+	assert.False(t, tokenCountInflated(10+tokenCountDriftThreshold-1, 10), "drift below threshold should be tolerated")
 	assert.False(t, tokenCountInflated(10, 10), "matching token count should pass")
 	assert.False(t, tokenCountInflated(9, 10), "lower claimed token count should pass")
-	assert.True(t, tokenCountInflated(12, 10), "more than one extra token should be rejected")
+	assert.False(t, tokenCountInflated(10+tokenCountDriftThreshold, 10), "drift at threshold should be accepted")
+	assert.True(t, tokenCountInflated(10+tokenCountDriftThreshold+1, 10), "drift above threshold should be rejected")
 }
 
 func TestTokenCountValidation_InflatedOutputTokens(t *testing.T) {

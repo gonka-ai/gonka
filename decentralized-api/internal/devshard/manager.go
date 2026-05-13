@@ -2,11 +2,12 @@ package devshard
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -324,8 +325,8 @@ func (m *HostManager) RecoverSessions() error {
 
 	jobs := make(chan storage.ActiveSession)
 	var wg sync.WaitGroup
-	var recoveredCount int64
-	var failedCount int64
+	var recoveredCount atomic.Int64
+	var failedCount atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
@@ -333,13 +334,13 @@ func (m *HostManager) RecoverSessions() error {
 			for sess := range jobs {
 				sessionStartedAt := time.Now()
 				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
-					atomic.AddInt64(&failedCount, 1)
+					failedCount.Add(1)
 					logging.Error("failed to recover devshard session", inferenceTypes.System,
 						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
 						"duration", time.Since(sessionStartedAt), "error", err)
 					continue
 				}
-				atomic.AddInt64(&recoveredCount, 1)
+				recoveredCount.Add(1)
 				logging.Info("recovered devshard session", inferenceTypes.System,
 					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
 					"duration", time.Since(sessionStartedAt))
@@ -354,8 +355,8 @@ func (m *HostManager) RecoverSessions() error {
 
 	logging.Info("completed devshard session recovery", inferenceTypes.System,
 		"session_count", len(active), "worker_count", workers,
-		"recovered_count", atomic.LoadInt64(&recoveredCount),
-		"failed_count", atomic.LoadInt64(&failedCount),
+		"recovered_count", recoveredCount.Load(),
+		"failed_count", failedCount.Load(),
 		"duration", time.Since(startedAt))
 
 	return nil
@@ -640,8 +641,8 @@ func (m *HostManager) currentEpochActiveSessions() (uint64, []storage.ActiveSess
 			filtered = append(filtered, sess)
 		}
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].EscrowID < filtered[j].EscrowID
+	slices.SortFunc(filtered, func(a, b storage.ActiveSession) int {
+		return cmp.Compare(a.EpochID, b.EpochID)
 	})
 	return currentEpochID, filtered, nil
 }

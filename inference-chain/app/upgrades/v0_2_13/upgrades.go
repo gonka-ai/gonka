@@ -1,7 +1,6 @@
 package v0_2_13
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -272,7 +271,7 @@ func confirmationWeightScalesFromModels(
 	for modelID := range models {
 		modelIDs = append(modelIDs, modelID)
 	}
-	slices.SortFunc(modelIDs, cmp.Compare)
+	slices.Sort(modelIDs)
 
 	scales := make([]*types.ConfirmationWeightScale, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
