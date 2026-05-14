@@ -8,7 +8,7 @@
 // Performance metrics
 //   cAdvisor      → container CPU / memory / network / disk I/O
 //   Node Exporter → host CPU / memory / filesystem / network
-//   devshardd     → devshardd_gossip_*, devshardd_diff_nonce, … (EXPORT_METRICS=1)
+//   devshardd     → devshardd_gossip_*, devshardd_latest_nonce, devshardd_height_at_latest_nonce, … (EXPORT_METRICS=1)
 //   → VictoriaMetrics (remote_write)
 //
 // Logs

@@ -497,7 +497,8 @@ assertion, and tears down.
 | #   | Scenario                                                                | Assertion                                                                                                                                                              |
 |-----|-------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | I1  | Bootstrap                                                               | All containers healthy ≤ 30 s; `GET height-sync:9100/block/latest` returns `height > 0`.                                                                               |
-| I2  | Height convergence                                                      | Query each devshardd's diagnostic endpoint; `max(H_i) − min(H_i) ≤ 1` in steady state.                                                                                 |
+| I2a | Height convergence (protocol)                                           | One tight loop: GET each host's published `127.0.0.1:<public_metrics_port>/metrics`, parse `devshardd_height_at_latest_nonce`; log per host; `max(H_i)−min(H_i) ≤ 1`. |
+| I2b | Height convergence (observability)                                      | VictoriaMetrics instant query on the same gauge (Alloy scrape path); `max(H_i)−min(H_i) ≤ 3` (scrape skew vs I2a).                                                      |
 | I3  | Hostile header rejection                                                | A test double replaces height-sync and emits a header with tampered `AppHash` but valid old signature; every `mock-dapi` rejects it; devshardd continues on cache.     |
 | I4  | Height-sync outage                                                      | Stop `height-sync` for 2×`BLOCK_INTERVAL`; `mock-dapi.Latest()` returns cached header with `stale=true`; verdicts requiring fresh `H(V)` enter `pending_verdicts{stale}`. Restart; full reconvergence ≤ 2×`BLOCK_INTERVAL`. |
 | I5  | Inference happy path                                                    | `devshardctl chat ...` via `devshardd-0`; response returned; `Diff` on all hosts contains `MsgStartInference @ R_req` and `MsgConfirmStart @ R_req+1`.                 |
@@ -507,7 +508,7 @@ assertion, and tears down.
 | I9  | Multi-validator stream vs. auditor                                      | `devshardctl` pins the 10-validator set and subscribes to `height-sync` for 20 consecutive headers; every header verifies; at least one commit carries < 10 but ≥ 8 signatures (exercises the partial-quorum drop path end to end). |
 | I10 | Foreign-signature injection                                             | A test double in front of `height-sync` appends an 11th signature from a non-pinned key; `devshardctl` rejects with `not in pinned set` on the first poisoned header; hosts in trust mode keep ingesting (cache records full `Commit.Signatures`) and their downstream proofs still fail external verification. |
 
-Runtime budget: ≤ 5 min. Runs on PR. **Status:** I1, I2, and I9 are implemented
+Runtime budget: ≤ 5 min. Runs on PR. **Status:** I1, I2a, I2b, and I9 are implemented
 in `devshard/testenv/citest` (`-tags=testenvci`, same docker-compose run as
 §7.7). I3–I8 and I10 are not yet automated.
 

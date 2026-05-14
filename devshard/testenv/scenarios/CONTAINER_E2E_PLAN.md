@@ -243,7 +243,7 @@ restore it before returning.
 The plan extracts these into an exported sub-package
 `**devshard/testenv/citest/harness**` and the new `container/` tests
 import them. No duplication. `TestStackIntegrationI1andSection8_7`
-keeps its own narrow scope (I1, I2, I9, §8.7 wiring) — it is **not**
+keeps its own narrow scope (I1, I2a, I2b, I9, §8.7 wiring) — it is **not**
 collapsed into the height-sync suite.
 
 ---

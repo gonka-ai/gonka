@@ -19,7 +19,7 @@ import (
 )
 
 // TestGeneratedComposeConfigValid runs gencompose (isolated config copy), then
-// `docker compose config` to validate merge/YAML. §8.7 full HTTP smoke is separate.
+// `docker compose config` to validate merge/YAML. testenv.md §7.7 full HTTP smoke is separate.
 func TestGeneratedComposeConfigValid(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not on PATH")

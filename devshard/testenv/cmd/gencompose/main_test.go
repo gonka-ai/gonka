@@ -221,8 +221,8 @@ func TestDefaultConfig_IsValid(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if len(cfg.Hosts) != 4 {
-		t.Errorf("hosts = %d, want 4", len(cfg.Hosts))
+	if len(cfg.Hosts) != 10 {
+		t.Errorf("hosts = %d, want 10", len(cfg.Hosts))
 	}
 	if len(cfg.HeightSync.Validators) != config.DefaultHeightSyncValidators {
 		t.Errorf("validators = %d, want %d",
@@ -267,10 +267,13 @@ func TestWriteCompose_EndToEnd(t *testing.T) {
 		"height-sync:",
 		"devshardd-testenv-0:",
 		"devshardd-testenv-3:",
+		"devshardd-testenv-9:",
 		"devshardctl:",
 		`- "8081:8080"`, // host user.port → container devshardctl default listen
 		`MOCK_CHAIN_URL: "mock-chain:9090"`,
 		`HEIGHT_SYNC_URL: "http://height-sync:9100"`,
+		`HEIGHT_SYNC_ANCHOR_PERIOD_NONCES: "16"`,
+		`HEIGHT_SYNC_SYNC_TURN_SLOTS: "10"`,
 		`CHAIN_ID: "gonka-testenv-1"`,
 		`ESCROW_ID: "1"`,
 		`DEVSHARD_ROUTE_PREFIX: "/v1/devshard"`,
@@ -278,8 +281,11 @@ func TestWriteCompose_EndToEnd(t *testing.T) {
 		"ipv4_address: 172.30.0.3",  // height-sync
 		"ipv4_address: 172.30.0.9",  // devshardctl
 		"ipv4_address: 172.30.0.10", // host 0
+		"ipv4_address: 172.30.0.19", // host 9
 		`EXPORT_METRICS: "1"`,
 		`METRICS_PORT: "9600"`,
+		`127.0.0.1:19600:9600`,
+		`127.0.0.1:19609:9600`,
 	}
 	for _, needle := range mustContain {
 		if !strings.Contains(compose, needle) {
@@ -294,6 +300,9 @@ func TestWriteCompose_EndToEnd(t *testing.T) {
 	services, _ := parsed["services"].(map[string]any)
 	if _, ok := services["devshardd-testenv-2"]; !ok {
 		t.Errorf("devshardd-testenv-2 service missing")
+	}
+	if _, ok := services["devshardd-testenv-9"]; !ok {
+		t.Errorf("devshardd-testenv-9 service missing")
 	}
 
 	// Re-loading the written config should not fail and should carry

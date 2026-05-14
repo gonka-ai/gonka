@@ -132,7 +132,7 @@ func (c *Client) Latest(ctx context.Context) (*blockoracle.Header, error) {
 
 // Stale reports whether Latest() would return a header older than
 // StaleAfter. Useful for consumers that need to know whether to act on a
-// cached value (see §8.2 scenario I4).
+// cached value (see testenv.md §7.2 scenario I4).
 func (c *Client) Stale() bool {
 	last := atomic.LoadInt64(&c.lastRecvUnix)
 	if last == 0 {

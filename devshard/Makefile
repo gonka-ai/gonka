@@ -25,12 +25,11 @@ ci-dep-check: ## §8.4 rules 1–6. ≤ ~30s.
 ci-unit: ## §8.1 unit tests; full module, race detector. ≤ ~2–3m on CI.
 	go test -count=1 -race -timeout=3m ./...
 
-# §8.2: I1 + §8.7 in citest; I2–I10 remain future (see testenv.md §8.2).
-# Uses -parallel 1 so host-port compose tests do not overlap.
-ci-integration: ci-compose-smoke
-
-ci-compose-smoke:
-	go test -count=1 -parallel=1 -timeout=15m -tags=testenvci ./testenv/citest/...
+# §7.2: I1 + I2a + I2b + §7.7 in citest; I3–I10 remain future (see testenv.md §7.2).
+# testenv/scripts/run-stack-citest.sh: gen config+compose, preflight, compose up,
+# height-sync gate, then citest (compile+exec, TESTENV_REUSE_STACK=1).
+ci-integration: ## Stack integration (same driver as make -C testenv citest-stack).
+	bash ./testenv/scripts/run-stack-citest.sh
 
 ci-scenarios: ## §8.3 config sanity + room for cPoC cases (testenv/scenarios). ≤ ~15m budget when expanded.
 	go test -count=1 -timeout=15m ./testenv/scenarios/...

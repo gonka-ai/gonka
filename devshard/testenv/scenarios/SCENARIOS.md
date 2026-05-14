@@ -16,6 +16,10 @@ go test -count=1 ./testenv/scenarios/...
 > intended to coexist: Go-only is the developer inner loop, the
 > container suite is the CI gate.
 
+## Block oracle Phase 3 acceptance & compose integration (I1–I10)
+
+[`blockoracle_phase3_integration.md`](blockoracle_phase3_integration.md) duplicates **[`../../docs/testenv.md`](../../docs/testenv.md)** §7.1.1 (multi-validator mock oracle unit matrix) and §7.2 (docker compose integration scenarios **I1–I10**, including **I9** / **I10** block-oracle coverage) next to this package.
+
 ## Height-sync anchor E2E (in-process HTTP)
 
 **File:** `heightsync_anchor_e2e_test.go`  

@@ -265,9 +265,14 @@ func run(cfg envConfig) error {
 	}()
 
 	// K / slots: docker-compose sets HEIGHT_SYNC_* from testenv config.yaml
-	// (gencompose). Precedence: env → defaults (K=10, slots=len(group)).
+	// (gencompose). Precedence: env → defaults (K=10, slots=len(group));
+	// if anchor K is not set via env and K < slots, K is raised to slots so
+	// heightsync.NewAnchorScheduler never sees K < SlotsNum (e.g. 16 escrow
+	// slots vs legacy default K=10).
 	anchorK := uint64(10)
+	anchorKFromEnv := false
 	if v := os.Getenv("HEIGHT_SYNC_ANCHOR_PERIOD_NONCES"); v != "" {
+		anchorKFromEnv = true
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n > 0 {
 			anchorK = n
 		}
@@ -280,6 +285,9 @@ func run(cfg envConfig) error {
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n > 0 {
 			slots = n
 		}
+	}
+	if !anchorKFromEnv && anchorK < slots {
+		anchorK = slots
 	}
 	anchorSched, err := heightsync.NewAnchorScheduler(anchorK, slots, md.Oracle)
 	if err != nil {
@@ -397,7 +405,20 @@ func startMetricsAndSampler(
 				if errH == nil {
 					hi = height
 				}
-				obs.SetHostState(h.LatestNonce(), hi, len(h.MempoolTxs()))
+				n := h.LatestNonce()
+				pending := len(h.MempoolTxs())
+				obs.SetHostState(n, hi, pending)
+				errStr := ""
+				if errH != nil {
+					errStr = errH.Error()
+				}
+				logging.Debug("metrics_sampler",
+					"subsystem", "metrics-sampler",
+					"latest_nonce", n,
+					"oracle_height", hi,
+					"oracle_height_query_err", errStr,
+					"pending_mempool", pending,
+				)
 			}
 		}
 	}()

@@ -19,10 +19,17 @@ import (
 	"devshard/testenv/citest/harness"
 )
 
-// TestStackIntegrationI1andSection8_7 runs §8.2 I1 (height-sync reachable) and
-// §8.7 observability wiring. Requires a working Docker daemon, substantial
+// testenvDocRel is the path from the devshard module root (where `go test ./testenv/citest` runs).
+const testenvDocRel = "devshard/docs/testenv.md"
+
+// TestStackIntegrationI1andSection8_7 runs testenv.md §7.2 I1 (height-sync reachable) and
+// §7.7 observability wiring. Requires a working Docker daemon, substantial
 // images/build, and free host ports (e.g. 3000, 3100, 8200+). Skip locally with
 // TESTENV_SKIP_DOCKER_STACK=1.
+//
+// For interactive debugging: start the stack yourself from devshard/testenv
+// (e.g. docker compose up -d --build), tail logs in another terminal, then run
+// this test with TESTENV_REUSE_STACK=1 so it does not docker compose up/down.
 func TestStackIntegrationI1andSection8_7(t *testing.T) {
 	if os.Getenv("TESTENV_SKIP_DOCKER_STACK") == "1" {
 		t.Skip("TESTENV_SKIP_DOCKER_STACK=1")
@@ -40,7 +47,7 @@ func TestStackIntegrationI1andSection8_7(t *testing.T) {
 		t.Fatalf("docker-compose.yml: %v", err)
 	}
 
-	project := fmt.Sprintf("citest%d", os.Getpid())
+	reuseStack := os.Getenv("TESTENV_REUSE_STACK") == "1"
 	deadline, ok := t.Deadline()
 	if !ok {
 		deadline = time.Now().Add(7 * time.Minute)
@@ -48,31 +55,43 @@ func TestStackIntegrationI1andSection8_7(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 
-	down := func() {
-		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer dcancel()
-		_ = exec.CommandContext(dctx, "docker", "compose", "-f", composeFile, "-p", project, "down", "--remove-orphans", "--timeout", "60").Run()
-	}
-	down() // best-effort cleanup if a prior run was interrupted
-	t.Cleanup(down)
+	if reuseStack {
+		harness.CitestPrintReuseStack()
+	} else {
+		project := fmt.Sprintf("citest%d", os.Getpid())
+		down := func() {
+			dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer dcancel()
+			_ = exec.CommandContext(dctx, "docker", "compose", "-f", composeFile, "-p", project, "down", "--remove-orphans", "--timeout", "60").Run()
+		}
+		down() // best-effort cleanup if a prior run was interrupted
+		t.Cleanup(down)
 
-	// --build: cold CI needs images; can take several minutes.
-	up := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "-p", project, "up", "-d", "--build")
-	up.Dir = testenvDir
-	up.Stdout, up.Stderr = os.Stdout, os.Stderr
-	if err := up.Run(); err != nil {
-		t.Fatalf("docker compose up: %v", err)
+		// --build: cold CI needs images; can take several minutes.
+		up := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "-p", project, "up", "-d", "--build")
+		up.Dir = testenvDir
+		up.Stdout, up.Stderr = os.Stdout, os.Stderr
+		if err := up.Run(); err != nil {
+			t.Fatalf("docker compose up: %v", err)
+		}
 	}
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	harness.CitestPhaseProgress("I1 — height-sync bootstrap",
+		testenvDocRel+" §7.2 row I1",
+		"GET http://127.0.0.1:9100/block/latest until JSON height > 0 (stack healthy; same URL I9 will read).",
+	)
+
 	base := time.Now()
+	lastI1Note := time.Now()
 	for {
 		if ctx.Err() != nil {
 			t.Fatalf("deadline: stack did not become ready: %v", ctx.Err())
 		}
 		h, err := getHeightFromLatest(httpClient, "http://127.0.0.1:9100/block/latest")
 		if err == nil && h > 0 {
-			t.Logf("I1: height-sync /block/latest height=%d (after %s)", h, time.Since(base).Round(time.Second))
+			harness.CitestPrintI1("height-sync /block/latest height=%d (after %s)", h, time.Since(base).Round(time.Second))
 			break
 		}
 		if time.Since(base) > 4*time.Minute {
@@ -81,27 +100,54 @@ func TestStackIntegrationI1andSection8_7(t *testing.T) {
 			}
 			t.Fatalf("I1: expected height > 0, got %d", h)
 		}
+		if time.Since(lastI1Note) >= 20*time.Second {
+			harness.CitestPrintI1("still polling /block/latest (%s elapsed, err=%v)", time.Since(base).Round(time.Second), err)
+			lastI1Note = time.Now()
+		}
 		time.Sleep(3 * time.Second)
 	}
 
-	// --- §8.7 (wiring, not dashboard contents) — poll until services answer ---
+	harness.CitestPhaseProgress("§7.7 — observability wiring smoke",
+		testenvDocRel+` §7.7 "Observability CI smoke (automated, minimal)"`,
+		"VictoriaMetrics instant query, Grafana /api/health, Loki /ready, provisioned devshard-overview dashboard JSON (wiring only, not panel-by-panel QA).",
+		"Polls up to ~2 min — Loki often returns 503 \"Ingester not ready\" briefly after compose recreate.",
+	)
+
+	// --- §7.7 (wiring, not dashboard contents) — poll until services answer ---
 	dead2 := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(dead2) {
-		if err := checkSection87(httpClient, t); err == nil {
+		if err := checkSection87(httpClient); err == nil {
 			break
 		} else {
-			t.Logf("8.7 waiting: %v", err)
+			harness.CitestPrint77Wait(err)
 		}
 		time.Sleep(2 * time.Second)
 	}
-	if err := checkSection87(httpClient, t); err != nil {
-		t.Fatalf("8.7: %v", err)
+	if err := checkSection87(httpClient); err != nil {
+		t.Fatalf("7.7: %v", err)
 	}
 
-	// --- §8.2 I2 — per-host cached heights (from VM; Alloy scrapes devshardd /metrics) ---
-	harness.I2HeightsConverge(httpClient, t)
+	harness.CitestPhaseProgress("I2a — per-host oracle height (protocol, direct /metrics)",
+		testenvDocRel+" §7.2 row I2a",
+		"In one tight loop: GET http://127.0.0.1:<public_metrics_port>/metrics per host from config.yaml; parse devshardd_height_at_latest_nonce; log each host; require max(H)−min(H) ≤ 1.",
+	)
 
-	// --- §8.2 I9 — 20 consecutive fresh headers vs pinned verifier (config.yaml) ---
+	harness.I2aDirectHostOracleHeights(filepath.Join(testenvDir, "config.yaml"), httpClient, t)
+
+	harness.CitestPhaseProgress("I2b — per-host height spread (VictoriaMetrics)",
+		testenvDocRel+" §7.2 row I2b",
+		"PromQL instant query on VictoriaMetrics: devshardd_height_at_latest_nonce (≥4 series); max(H)−min(H) ≤ 3 (Alloy→VM scrape skew vs I2a).",
+	)
+
+	harness.I2bVictoriaMetricsHostHeightSpread(httpClient, t)
+
+	harness.CitestPhaseProgress("I9 — multi-validator stream vs pinned verifier",
+		testenvDocRel+" §7.2 row I9",
+		"Load height_sync.validators from testenv/config.yaml; verify 20 consecutive GET /block/latest headers against that set.",
+		"Requires mock-chain + height-sync to have started with the same config.yaml (run-stack-citest.sh force-recreates after regen).",
+	)
+
+	// --- §7.2 I9 — 20 consecutive fresh headers vs pinned verifier (config.yaml) ---
 	harness.MultiValidatorStreamVsAuditor(filepath.Join(testenvDir, "config.yaml"), "http://127.0.0.1:9100", httpClient, t)
 }
 
@@ -137,7 +183,7 @@ func getHeightFromLatest(c *http.Client, u string) (int64, error) {
 	return 0, fmt.Errorf("no height in body: %s", string(body))
 }
 
-func checkSection87(c *http.Client, t *testing.T) error {
+func checkSection87(c *http.Client) error {
 	// 1) VictoriaMetrics / Prometheus API — at least 3 time series in vector result
 	q := url.QueryEscape(`up{job!=""}`)
 	vmURL := "http://127.0.0.1:8428/api/v1/query?query=" + q
@@ -165,7 +211,7 @@ func checkSection87(c *http.Client, t *testing.T) error {
 	if vm.Status != "success" || len(vm.Data.Result) < 3 {
 		return fmt.Errorf("vm: want ≥3 up series, got status=%q n=%d", vm.Status, len(vm.Data.Result))
 	}
-	t.Logf("8.7: victoria query ok (n=%d)", len(vm.Data.Result))
+	harness.CitestPrint77("victoria query ok (n=%d)", len(vm.Data.Result))
 
 	// 2) Grafana health
 	resp, err = c.Get("http://127.0.0.1:3000/api/health")
@@ -189,7 +235,7 @@ func checkSection87(c *http.Client, t *testing.T) error {
 	if grafanaHealth.Database != "ok" {
 		return fmt.Errorf("grafana /api/health: want database=ok, got %q", grafanaHealth.Database)
 	}
-	t.Logf("8.7: grafana /api/health ok")
+	harness.CitestPrint77("grafana /api/health ok")
 
 	// 3) Loki ready
 	resp, err = c.Get("http://127.0.0.1:3100/ready")
@@ -204,7 +250,7 @@ func checkSection87(c *http.Client, t *testing.T) error {
 	if !strings.Contains(string(lb), "ready") {
 		return fmt.Errorf("loki /ready body: %s", string(lb))
 	}
-	t.Logf("8.7: loki /ready ok")
+	harness.CitestPrint77("loki /ready ok")
 
 	// 4) provisioned overview dashboard
 	resp, err = c.Get("http://127.0.0.1:3000/api/dashboards/uid/devshard-overview")
@@ -223,6 +269,6 @@ func checkSection87(c *http.Client, t *testing.T) error {
 	if !strings.Contains(s, "Chain") || !strings.Contains(s, "Gossip") || !strings.Contains(s, "Resource") {
 		return fmt.Errorf("dashboard: expected Chain+Gossip+Resource in JSON")
 	}
-	t.Logf("8.7: grafana devshard-overview row titles ok")
+	harness.CitestPrint77("grafana devshard-overview row titles ok")
 	return nil
 }

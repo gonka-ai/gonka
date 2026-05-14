@@ -43,6 +43,7 @@ escrow:
 	require.Equal(t, 4, cfg.Escrow.Slots)
 	require.Equal(t, 1, cfg.Devshard.GroupSize) // defaults to len(Hosts)
 	require.Equal(t, config.DefaultHostPort, cfg.Hosts[0].Port)
+	require.Equal(t, config.DefaultHostPublicMetricsPort, cfg.Hosts[0].PublicMetricsPort)
 
 	require.NoError(t, cfg.Validate())
 }
@@ -172,9 +173,30 @@ func TestRepoConfigLoads(t *testing.T) {
 	// HeightSync defaults kicked in.
 	require.Equal(t, config.DefaultHeightSyncPort, cfg.HeightSync.Port)
 	require.EqualValues(t, 1, cfg.HeightSync.InitialHeight)
+	require.Equal(t, 10, len(cfg.Hosts))
 	require.Equal(t, config.DefaultAnchorPeriodNonces, cfg.HeightSync.AnchorPeriodNonces)
+	require.Equal(t, 10, cfg.Devshard.GroupSize)
 	require.Equal(t, cfg.Devshard.GroupSize, cfg.HeightSync.SyncTurnSlots)
 	require.GreaterOrEqual(t, cfg.HeightSync.AnchorPeriodNonces, cfg.HeightSync.SyncTurnSlots)
+	require.Equal(t, config.DefaultSlots, cfg.Escrow.Slots)
+	for i := range cfg.Hosts {
+		require.Equal(t, config.DefaultHostPublicMetricsPort+i, cfg.Hosts[i].PublicMetricsPort)
+	}
+}
+
+func TestConfig_ValidateRejectsDuplicatePublicMetricsPorts(t *testing.T) {
+	path := writeConfig(t, `
+hosts:
+  - {id: h0, public_metrics_port: 19601}
+  - {id: h1, public_metrics_port: 19601}
+escrow:
+  slots: 4
+`)
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	valErr := cfg.Validate()
+	require.Error(t, valErr)
+	require.Contains(t, valErr.Error(), "public_metrics_port")
 }
 
 func TestConfig_ValidateRejectsAnchorPeriodLessThanSyncTurnSlots(t *testing.T) {

@@ -124,11 +124,15 @@ type EscrowCfg struct {
 type HostCfg struct {
 	ID            string `yaml:"id"`
 	PrivateKeyHex string `yaml:"private_key_hex"`
-	Address       string `yaml:"address"`   // derived by gencompose
-	SlotIDs       []int  `yaml:"slot_ids"`  // set by gencompose
-	URL           string `yaml:"url"`       // http://<service>:<port>; set by gencompose
+	Address       string `yaml:"address"`  // derived by gencompose
+	SlotIDs       []int  `yaml:"slot_ids"` // set by gencompose
+	URL           string `yaml:"url"`      // http://<service>:<port>; set by gencompose
 	Port          int    `yaml:"port"`
 	IP            string `yaml:"ip"`
+	// PublicMetricsPort is the host-loopback TCP port gencompose maps to this
+	// container's METRICS_PORT (Prometheus /metrics). Citest §7.2 I2a uses it
+	// to read devshardd_height_at_latest_nonce directly from each process.
+	PublicMetricsPort int `yaml:"public_metrics_port"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -158,28 +162,33 @@ type NetworkCfg struct {
 
 // Defaults exported for tests and gencompose.
 const (
-	DefaultChainID        = "gonka-testenv-1"
-	DefaultBlockTime      = "6s"
-	DefaultMockChainPort  = 9090
-	DefaultMockChainHost  = "mock-chain"
-	DefaultHeightSyncPort       = 9100
-	DefaultHeightSyncHost       = "height-sync"
-	DefaultHeightSyncValidators = 10
+	DefaultChainID                      = "gonka-testenv-1"
+	DefaultBlockTime                    = "6s"
+	DefaultMockChainPort                = 9090
+	DefaultMockChainHost                = "mock-chain"
+	DefaultHeightSyncPort               = 9100
+	DefaultHeightSyncHost               = "height-sync"
+	DefaultHeightSyncValidators         = 10
 	DefaultHeightSyncBlockIntervalDelta = "3s"
-	DefaultValidatorPower       = int64(1)
-	DefaultEscrowID       = "1"
-	DefaultEscrowVersion  = "v1"
-	DefaultEscrowAmount   = uint64(1_000_000)
-	DefaultTokenPrice     = uint64(1)
-	DefaultSlots          = 16
-	DefaultUserPort       = 8081
-	DefaultHostPort       = 8080
-	DefaultNetworkCIDR    = "172.30.0.0/24"
-	DefaultNetworkBaseIP  = "172.30.0"
-	DefaultEngineMode     = "deterministic"
+	DefaultValidatorPower               = int64(1)
+	DefaultEscrowID                     = "1"
+	DefaultEscrowVersion                = "v1"
+	DefaultEscrowAmount                 = uint64(1_000_000)
+	DefaultTokenPrice                   = uint64(1)
+	DefaultSlots                        = 16
+	DefaultUserPort                     = 8081
+	DefaultHostPort                     = 8080
+	// DefaultHostPublicMetricsPort is host 0's published /metrics port
+	// (127.0.0.1:<Default+i>:9600). See gencompose devshardd ports block.
+	DefaultHostPublicMetricsPort = 19600
+	DefaultNetworkCIDR           = "172.30.0.0/24"
+	DefaultNetworkBaseIP         = "172.30.0"
+	DefaultEngineMode            = "deterministic"
 	// DefaultAnchorPeriodNonces is K for height-sync Anchor cadence (envelope nonces).
-	// Kept aligned with in-process E2E (K=8, slots=4) and CONTAINER_E2E_PLAN.md §5.1.
-	DefaultAnchorPeriodNonces = 8
+	// Must be ≥ default sync_turn_slots (devshard.group_size, default len(hosts)=10
+	// after gencompose bootstrap). Citest uses a smaller profile via
+	// scripts/gen-integration-testenv-config.sh (K=8, four hosts).
+	DefaultAnchorPeriodNonces = 16
 )
 
 // DefaultAppHash is sha256("devshard-testenv"); used when escrow.app_hash
@@ -249,6 +258,16 @@ func (c *Config) Validate() error {
 		c.HeightSync.AnchorPeriodNonces < c.HeightSync.SyncTurnSlots {
 		return fmt.Errorf("height_sync.anchor_period_nonces (%d) must be >= sync_turn_slots (%d)",
 			c.HeightSync.AnchorPeriodNonces, c.HeightSync.SyncTurnSlots)
+	}
+	seenPub := make(map[int]string)
+	for _, h := range c.Hosts {
+		if h.PublicMetricsPort <= 0 {
+			continue
+		}
+		if other, ok := seenPub[h.PublicMetricsPort]; ok {
+			return fmt.Errorf("hosts %q and %q both use public_metrics_port %d", other, h.ID, h.PublicMetricsPort)
+		}
+		seenPub[h.PublicMetricsPort] = h.ID
 	}
 	return nil
 }
@@ -372,6 +391,9 @@ func (c *Config) applyDefaults() {
 	for i := range c.Hosts {
 		if c.Hosts[i].Port == 0 {
 			c.Hosts[i].Port = DefaultHostPort
+		}
+		if c.Hosts[i].PublicMetricsPort == 0 {
+			c.Hosts[i].PublicMetricsPort = DefaultHostPublicMetricsPort + i
 		}
 	}
 	if c.User.Port == 0 {

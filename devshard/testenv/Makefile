@@ -14,9 +14,10 @@ SHELL := /bin/bash
 COMPOSE_BASE    := -f docker-compose.yml
 DEV_OVERLAY     := -f docker-compose.yml -f docker-compose.dev.yml
 
-# Number of devshardd-testenv hosts the default config spawns.
-# Makefile target dev-logs-% uses this to clamp 0..N-1.
-DEVSHARDD_HOSTS := 4
+# Number of devshardd-testenv hosts the default gen-compose bootstrap spawns.
+# Makefile target dev-logs-% uses this to clamp 0..N-1. Citest uses
+# scripts/gen-integration-testenv-config.sh (4 hosts) instead.
+DEVSHARDD_HOSTS := 10
 
 .PHONY: help
 help: ## Show this help.
@@ -45,8 +46,16 @@ e2e: ## Phase A container scenarios (Docker + observability); skip with TESTENV_
 # ------------------------------------------------------------- compose ----
 
 .PHONY: gen-compose
-gen-compose: ## Phase 10: render docker-compose.yml from config.yaml.
+gen-compose: ## Phase 10: render docker-compose.yml from config.yaml (bootstrap: 10 hosts, 16 escrow slots).
 	go run ./cmd/gencompose
+
+.PHONY: gen-integration-config
+gen-integration-config: ## Materialize config.yaml + compose for make ci-integration (4 hosts, 4 slots, K=8).
+	bash ./scripts/gen-integration-testenv-config.sh
+
+.PHONY: citest-stack
+citest-stack: ## Regen citest config, preflight, compose up if needed, run stack integration test (-v).
+	bash ./scripts/run-stack-citest.sh
 
 .PHONY: up
 up: ## Phase 11: start the base stack in the background.

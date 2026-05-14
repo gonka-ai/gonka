@@ -13,10 +13,12 @@
 //
 //   - devshardd_gossip_messages_total{direction,kind} — counter, incremented
 //     by the echo middleware in devshardd-testenv.
-//   - devshardd_diff_nonce — gauge, updated by a periodic sampler that
-//     reads host.LatestNonce().
-//   - devshardd_height_at_latest_nonce — gauge, updated by the same sampler
-//     reading host.LatestHeight() via the block oracle.
+//   - devshardd_diff_nonce — legacy name; same value as devshardd_latest_nonce.
+//   - devshardd_latest_nonce — gauge, host.LatestNonce() at sampler tick (pair with
+//     devshardd_height_at_latest_nonce on the same scrape to correlate nonce→height).
+//   - devshardd_height_at_latest_nonce — gauge, oracle mainnet height at that tick
+//     (see host.LatestHeight). All hosts share the same height-sync feed but scrape
+//     timing can differ by one block; citest I2a/I2b allow small spreads for that reason.
 //   - devshardd_pending_verdicts — gauge, updated by the same sampler
 //     via host.MempoolTxs() count. This intentionally over-counts
 //     (mempool may contain non-verdict txs too); refined labeling is a
@@ -63,7 +65,8 @@ type Metrics struct {
 	reg *prometheus.Registry
 
 	GossipMessages  *prometheus.CounterVec
-	DiffNonce       prometheus.Gauge
+	DiffNonce       prometheus.Gauge // legacy name devshardd_diff_nonce
+	LatestNonce     prometheus.Gauge // devshardd_latest_nonce
 	HeightAtLatest  prometheus.Gauge
 	PendingVerdicts prometheus.Gauge
 	CPoCSkips       *prometheus.CounterVec
@@ -88,11 +91,15 @@ func New() (*Metrics, error) {
 		),
 		DiffNonce: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "devshardd_diff_nonce",
-			Help: "Latest applied diff nonce observed by this devshardd-testenv host.",
+			Help: "Legacy alias of devshardd_latest_nonce (host session latest nonce at sampler tick).",
+		}),
+		LatestNonce: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "devshardd_latest_nonce",
+			Help: "Host session latest nonce at sampler tick; pair with devshardd_height_at_latest_nonce on the same scrape.",
 		}),
 		HeightAtLatest: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "devshardd_height_at_latest_nonce",
-			Help: "Mainnet block height cached by the host's block oracle at the latest nonce.",
+			Help: "Oracle mainnet height at sampler tick (same instant as devshardd_latest_nonce).",
 		}),
 		PendingVerdicts: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "devshardd_pending_verdicts",
@@ -112,7 +119,7 @@ func New() (*Metrics, error) {
 	}
 
 	for _, c := range []prometheus.Collector{
-		m.GossipMessages, m.DiffNonce, m.HeightAtLatest, m.PendingVerdicts, m.CPoCSkips,
+		m.GossipMessages, m.DiffNonce, m.LatestNonce, m.HeightAtLatest, m.PendingVerdicts, m.CPoCSkips,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	} {
@@ -181,7 +188,9 @@ func (m *Metrics) SetHostState(latestNonce uint64, latestHeight int64, pending i
 	if m == nil {
 		return
 	}
-	m.DiffNonce.Set(float64(latestNonce))
+	v := float64(latestNonce)
+	m.DiffNonce.Set(v)
+	m.LatestNonce.Set(v)
 	m.HeightAtLatest.Set(float64(latestHeight))
 	m.PendingVerdicts.Set(float64(pending))
 }

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -58,6 +59,10 @@ func main() {
 		log.Fatalf("validate config: %v", err)
 	}
 
+	if err := ensureHostDataBindDirs(cfg.Hosts); err != nil {
+		log.Fatalf("host data dirs: %v", err)
+	}
+
 	if err := writeCompose(cfg, *outPath, *obsFragment); err != nil {
 		log.Fatalf("write docker-compose: %v", err)
 	}
@@ -71,6 +76,23 @@ func main() {
 		cfg.Chain.ID, cfg.Escrow.ID, len(cfg.Hosts), cfg.Escrow.Slots, len(cfg.HeightSync.Validators))
 	log.Printf("devshardctl: http://localhost:%d", cfg.User.Port)
 	log.Printf("start: docker compose up -d")
+}
+
+// ensureHostDataBindDirs creates ./db/<host.ID>/ for each devshardd-testenv
+// bind mount in docker-compose.yml. If a path exists but is not a directory
+// (common mistake), compose mounts it as a file at /data and SQLite startup
+// fails with: mkdir /data/devshardd.db: not a directory.
+func ensureHostDataBindDirs(hosts []config.HostCfg) error {
+	for _, h := range hosts {
+		dir := filepath.Join("db", h.ID)
+		if fi, err := os.Stat(dir); err == nil && !fi.IsDir() {
+			return fmt.Errorf("%s exists but is not a directory; remove the file and re-run gencompose", dir)
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // loadOrDefault loads cfg from path or returns a defaulted config if
@@ -89,14 +111,13 @@ func loadOrDefault(path string) (*config.Config, error) {
 	return defaultConfig(), nil
 }
 
-// defaultConfig returns a config matching the shipped
-// testenv/config.yaml skeleton: 4 hosts, 10 mock-mainnet validators,
-// deterministic engines. All scalar defaults come from
-// config.ApplyDefaults so the defaulting logic lives in exactly one
-// place.
+// defaultConfig returns the bootstrap skeleton when config.yaml is absent:
+// 10 hosts, 16 escrow slots (defaults from config.ApplyDefaults), 10 mock-mainnet
+// validator slots (filled by fillConfig). For citest / make ci-integration use
+// scripts/gen-integration-testenv-config.sh (4 hosts, 4 slots, K=8).
 func defaultConfig() *config.Config {
 	cfg := &config.Config{}
-	cfg.Hosts = make([]config.HostCfg, 4)
+	cfg.Hosts = make([]config.HostCfg, 10)
 	for i := range cfg.Hosts {
 		cfg.Hosts[i].ID = fmt.Sprintf("devshardd-testenv-%d", i)
 	}
@@ -339,6 +360,8 @@ services:
       SLOT_INDEX: "{{ firstSlot $h.SlotIDs }}"
       MOCK_CHAIN_URL: "mock-chain:{{ $.MockChain.Port }}"
       HEIGHT_SYNC_URL: "http://height-sync:{{ $.HeightSync.Port }}"
+      HEIGHT_SYNC_ANCHOR_PERIOD_NONCES: "{{ $.HeightSync.AnchorPeriodNonces }}"
+      HEIGHT_SYNC_SYNC_TURN_SLOTS: "{{ $.HeightSync.SyncTurnSlots }}"
       CHAIN_ID: "{{ $.Chain.ID }}"
       HTTP_PORT: "{{ $h.Port }}"
       DATA_DIR: "/data"
@@ -350,6 +373,8 @@ services:
     networks:
       testenv:
         ipv4_address: {{ $h.IP }}
+    ports:
+      - "127.0.0.1:{{ $h.PublicMetricsPort }}:9600"
     depends_on:
       - mock-chain
       - height-sync
