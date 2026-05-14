@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/authz"
@@ -19,6 +21,32 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
+const BountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
+
+func USDT(amount int64) int64 {
+	return amount * 1_000_000
+}
+
+type BountyReward struct {
+	Address string
+	Amount  int64
+}
+
+var bountyRewards = []BountyReward{
+	// Prompt of death:
+	// report and investigation of prompts causing vLLM crashes around
+	// structured outputs / tool handling.
+	// Public name: @blizko
+	{Address: "gonka12jaf7m4eysyqt32mrgarum6z96vt55tckvcleq", Amount: USDT(8000)},
+
+	// Kimi experiments:
+	// report is available at
+	// https://github.com/kaitakuai/experiments/blob/main/reports/2026-04-kimi-qwen-experiments.md
+	// Public name: kaitaku.ai
+	{Address: "gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp", Amount: USDT(10000)},
+}
 
 const (
 	MaxEscrowsPerEpoch uint32 = 500_000
@@ -97,6 +125,10 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 		if err := disableConfirmationPocForUpgradeEpoch(ctx, k); err != nil {
+			return nil, err
+		}
+
+		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -603,5 +635,71 @@ func registerWrappedTokenCodeID(ctx sdk.Context, k keeper.Keeper, codeID uint64)
 
 	k.LogInfo("registered wrapped token code ID", types.Upgrades,
 		"code_id", codeID)
+	return nil
+}
+
+func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
+	if len(bountyRewards) == 0 {
+		k.Logger().Info("No bounty rewards to distribute")
+		return nil
+	}
+
+	communitySaleAddr, err := sdk.AccAddressFromBech32(BountyCommunitySaleContractAddress)
+	if err != nil {
+		k.Logger().Error("invalid hardcoded community sale contract address", "address", BountyCommunitySaleContractAddress, "error", err)
+		return nil
+	}
+	authorityAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.Logger().Error("invalid authority address", "authority", k.GetAuthority(), "error", err)
+		return nil
+	}
+
+	var totalRequired int64
+	for _, bounty := range bountyRewards {
+		totalRequired += bounty.Amount
+	}
+
+	available := k.BankView.SpendableCoin(ctx, communitySaleAddr, BountyIbcUsdtDenom).Amount.Int64()
+	if available < totalRequired {
+		k.Logger().Warn("insufficient community sale balance, skipping bounty distribution",
+			"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+		return nil
+	}
+
+	k.Logger().Info("community sale balance sufficient for bounty distribution",
+		"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+
+	permissionedKeeper := wasmkeeper.NewGovPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, bounty := range bountyRewards {
+		recipient, err := sdk.AccAddressFromBech32(bounty.Address)
+		if err != nil {
+			k.Logger().Error("invalid bounty address", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		msgBz, err := json.Marshal(map[string]any{
+			"withdraw_ibc": map[string]string{
+				"denom":     BountyIbcUsdtDenom,
+				"amount":    strconv.FormatInt(bounty.Amount, 10),
+				"recipient": recipient.String(),
+			},
+		})
+		if err != nil {
+			k.Logger().Error("failed to marshal community sale withdraw message", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		if _, err := permissionedKeeper.Execute(sdkCtx, communitySaleAddr, authorityAddr, msgBz, sdk.NewCoins()); err != nil {
+			k.Logger().Error("failed to distribute bounty from community sale contract",
+				"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom, "error", err)
+			continue
+		}
+
+		k.Logger().Info("bounty distributed from community sale contract",
+			"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom)
+	}
+
 	return nil
 }
