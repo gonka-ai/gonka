@@ -77,6 +77,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         WITHDRAW_OPERATION,  // keccak256("WITHDRAW_OPERATION")
         recipient,
+        address(this),       // Bridge contract address
         tokenContract,
         amount
     )
@@ -112,6 +113,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         MINT_OPERATION,  // keccak256("MINT_OPERATION")
         recipient,
+        address(this),   // Bridge contract address
         amount
     )
 );
@@ -210,6 +212,7 @@ error MustBeInAdminControl()      // Operation requires ADMIN_CONTROL state
 error InvalidEpochSequence()      // Epoch not sequential
 error NoValidGenesisEpoch()       // Cannot enable operations without epoch 1
 error TimeoutNotReached()         // Timeout check called too early
+error InvalidAmount()             // Zero-amount withdrawal or mint rejected
 ```
 
 ## Gas Costs
