@@ -1,19 +1,20 @@
 package public
 
 import (
+	"common/logging"
+	"common/utils"
 	"context"
-	"cosmossdk.io/errors"
-	"decentralized-api/logging"
-	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
+	"net/http"
+	"net/url"
+
+	"cosmossdk.io/errors"
 	cmcryptoed "github.com/cometbft/cometbft/crypto/ed25519"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
-	"net/url"
 )
 
 func (s *Server) postVerifyProof(ctx echo.Context) error {
@@ -40,7 +41,7 @@ func (s *Server) postVerifyProof(ctx echo.Context) error {
 
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey, "appHash", appHash, "value", proofVerificationRequest.Value)
 
-	err = merkleproof.VerifyUsingProofRt(&proofVerificationRequest.ProofOps, appHash, verKey, value)
+	err = utils.VerifyUsingProofRt(&proofVerificationRequest.ProofOps, appHash, verKey, value)
 	if err != nil {
 		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
 		return err
@@ -76,7 +77,7 @@ func (s *Server) postVerifyBlock(ctx echo.Context) error {
 
 	logging.Info("Received validators", types.Participants, "height", block.Height, "valSet", valSet)
 
-	err = merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
+	err = utils.VerifyCommit(block.Header.ChainID, block.LastCommit, block.Header.Height, valSet)
 	if err != nil {
 		logging.Error("Block signature verification failed", types.Participants, "error", err)
 		return err
@@ -97,5 +98,5 @@ func debug(address string, block *comettypes.Block) error {
 	valSet := valSetRes.Validators
 	logging.Info("Ground truth validators", types.Participants, "height", block.Height, "valSet", valSet)
 
-	return merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
+	return utils.VerifyCommit(block.Header.ChainID, block.LastCommit, block.Header.Height, valSet)
 }

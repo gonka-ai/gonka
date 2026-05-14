@@ -2,9 +2,9 @@ package apiconfig_test
 
 import (
 	"bytes"
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
-	"decentralized-api/logging"
 	"errors"
 	"os"
 	"path/filepath"

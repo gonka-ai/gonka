@@ -1,7 +1,7 @@
 package tx_manager
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"fmt"
 	"sync/atomic"
 	"time"

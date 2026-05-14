@@ -148,7 +148,7 @@ func (s *SQLite) MarkSettled(escrowID string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	return nil
 }

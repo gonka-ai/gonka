@@ -1,8 +1,8 @@
 package mlnodeclient
 
 import (
+	"common/logging"
 	"context"
-	"decentralized-api/logging"
 	"sync"
 	"testing"
 
@@ -66,9 +66,9 @@ type MockClient struct {
 	LastInferenceArgs     []string
 	LastInitGenerateV2Req *PoCInitGenerateRequestV2
 	LastGenerateV2Req     *PoCGenerateRequestV2
-	LastModelStatusCheck *Model
-	LastModelDownload    *Model
-	LastModelDelete      *Model
+	LastModelStatusCheck  *Model
+	LastModelDownload     *Model
+	LastModelDelete       *Model
 }
 
 // NewMockClient creates a new mock client with default values

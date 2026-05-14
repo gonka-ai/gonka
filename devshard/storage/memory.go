@@ -87,7 +87,7 @@ func (m *Memory) MarkSettled(escrowID string) error {
 
 	s, ok := m.sessions[escrowID]
 	if !ok {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	s.status = "settled"
 	return nil

@@ -3,7 +3,7 @@ package public
 import (
 	"testing"
 
-	"decentralized-api/completionapi"
+	"common/completionapi"
 
 	"github.com/stretchr/testify/require"
 )

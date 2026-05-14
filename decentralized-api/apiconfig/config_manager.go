@@ -1,9 +1,9 @@
 package apiconfig
 
 import (
+	"common/logging"
 	"context"
 	"database/sql"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"io"

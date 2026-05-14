@@ -1,10 +1,10 @@
 package tx_manager
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
-	"decentralized-api/logging"
 	"encoding/hex"
 	"encoding/json"
 	"errors"

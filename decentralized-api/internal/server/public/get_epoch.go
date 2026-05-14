@@ -1,21 +1,22 @@
 package public
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 type EpochResponse struct {
-	BlockHeight                int64                          `json:"block_height"`
-	LatestEpoch                LatestEpochDto                 `json:"latest_epoch"`
-	Phase                      types.EpochPhase               `json:"phase"`
-	EpochStages                types.EpochStages              `json:"epoch_stages"`
-	NextEpochStages            types.EpochStages              `json:"next_epoch_stages"`
-	EpochParams                types.EpochParams              `json:"epoch_params"`
-	IsConfirmationPocActive    bool                           `json:"is_confirmation_poc_active"`
-	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent    `json:"active_confirmation_poc_event,omitempty"`
+	BlockHeight                int64                       `json:"block_height"`
+	LatestEpoch                LatestEpochDto              `json:"latest_epoch"`
+	Phase                      types.EpochPhase            `json:"phase"`
+	EpochStages                types.EpochStages           `json:"epoch_stages"`
+	NextEpochStages            types.EpochStages           `json:"next_epoch_stages"`
+	EpochParams                types.EpochParams           `json:"epoch_params"`
+	IsConfirmationPocActive    bool                        `json:"is_confirmation_poc_active"`
+	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent `json:"active_confirmation_poc_event,omitempty"`
 }
 
 // LatestEpochDto, had to indroduced it, because types.Epoch doesn't serialize when

@@ -20,18 +20,15 @@ import (
 	"decentralized-api/statsstorage"
 	"net"
 
+	nmgen "common/nodemanager/gen"
 	"decentralized-api/nodemanager"
-	nmgen "decentralized-api/nodemanager/gen"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
-	internaldevshard "decentralized-api/internal/devshard"
+	"common/logging"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 	"decentralized-api/participant"
-	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -216,11 +213,6 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
-	devshardSigner, devshardSignerErr := internaldevshard.NewSignerFromKeyring(*recorder.GetKeyring(), recorder.GetApiAccount().SignerAccount.Name)
-	if devshardSignerErr != nil {
-		logging.Error("devshard signer init failed", types.System, "error", devshardSignerErr)
-	}
-
 	publicServer := pserver.NewServer(
 		nodeBroker,
 		configManager,
@@ -232,25 +224,6 @@ func main() {
 		pserver.WithStatsStorage(statsStore),
 	)
 
-	if devshardSigner != nil {
-		devshardBridge := internaldevshard.NewChainBridge(recorder)
-		httpClient := pserver.NewNoRedirectClient(5 * time.Minute)
-		chainParams := &configParamsProvider{cm: configManager}
-		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
-		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
-		// TODO: move to DevshardConfig when config consolidation happens.
-		devshardStore, storeErr := devshardstorage.NewSQLite("/root/.dapi/data/devshard.db")
-		if storeErr != nil {
-			logging.Error("devshard storage init failed", types.System, "error", storeErr)
-		} else {
-			defer devshardStore.Close()
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.LegacySessionVersion, devshardBridge, payloadStore, recorder)
-			if err := hostManager.RecoverSessions(); err != nil {
-				logging.Error("devshard recovery failed", types.System, "error", err)
-			}
-			hostManager.Register(publicServer.DevshardGroup())
-		}
-	}
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().MLServerPort)
@@ -334,18 +307,4 @@ func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 	}
 	logging.Error("Exhausted all retries to get chain params", types.System, "error", err)
 	return nil, err
-}
-
-// configParamsProvider implements internaldevshard.ChainParamsProvider by
-// reading from dapi's ConfigManager, which syncs chain params every block.
-type configParamsProvider struct {
-	cm *apiconfig.ConfigManager
-}
-
-func (p *configParamsProvider) LogprobsMode() string {
-	mode := p.cm.GetValidationParams().LogprobsMode
-	if mode == "" {
-		return types.DefaultLogprobsMode
-	}
-	return mode
 }

@@ -33,4 +33,4 @@ EXPOSE 80 443
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Start nginx
-CMD ["nginx", "-g", "daemon off;"] 
+CMD ["nginx", "-g", "daemon off;"]

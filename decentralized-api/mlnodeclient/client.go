@@ -1,9 +1,9 @@
 package mlnodeclient
 
 import (
+	"common/logging"
+	"common/utils"
 	"context"
-	"decentralized-api/logging"
-	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
 	"net/http"

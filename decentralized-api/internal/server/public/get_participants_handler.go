@@ -1,20 +1,17 @@
 package public
 
 import (
+	"common/logging"
+	"common/utils"
 	"context"
 	cosmos_client "decentralized-api/cosmosclient"
-	"decentralized-api/logging"
-	"decentralized-api/merkleproof"
-	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 
 	comettypes "github.com/cometbft/cometbft/types"
 
-	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -200,7 +197,7 @@ func (s *Server) getParticipants(ctx context.Context, epoch uint64) (*ActivePart
 
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
-		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+		addresses[i], err = utils.ValidatorKeyToHexAddress(participant.ValidatorKey)
 		if err != nil {
 			logging.Error("Failed to convert public key to address", types.Participants, "error", err)
 		}
@@ -250,12 +247,12 @@ func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, bl
 	verKey := "/inference/" + url.PathEscape(string(dataKey))
 	// verKey2 := string(result.Response.Key)
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
-	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	err := utils.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
-	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
+	err = utils.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
 	if err != nil {
 		logging.Error("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
@@ -340,13 +337,3 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	return result, err
 }
 
-func pubKeyToAddress3(pubKey string) (string, error) {
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
-	if err != nil {
-		return "", err
-	}
-
-	valAddr := tmhash.SumTruncated(pubKeyBytes)
-	valAddrHex := strings.ToUpper(hex.EncodeToString(valAddr))
-	return valAddrHex, nil
-}

@@ -1,19 +1,19 @@
 package public
 
 import (
-	"cosmossdk.io/errors"
-	cosmos_client "decentralized-api/cosmosclient"
-	"decentralized-api/logging"
-	"decentralized-api/merkleproof"
-	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/x/inference/types"
+	"common/logging"
+	"common/utils"
 	"net/http"
 	"strconv"
+
+	"cosmossdk.io/errors"
+	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (s *Server) debugPubKeyToAddr(ctx echo.Context) error {
 	pubkey := ctx.Param("pubkey")
-	addr, err := cosmos_client.PubKeyToAddress(pubkey)
+	addr, err := utils.PubKeyToAddress(pubkey)
 	if err != nil {
 		logging.Error("Failed to convert pubkey to address", types.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "invalid pubkey"))
@@ -29,7 +29,7 @@ func (s *Server) debugVerify(ctx echo.Context) error {
 	}
 
 	logging.Debug("Verifying block signatures", types.System, "height", height)
-	if err := merkleproof.VerifyBlockSignatures(s.configManager.GetChainNodeConfig().Url, height); err != nil {
+	if err := utils.VerifyBlockSignatures(s.configManager.GetChainNodeConfig().Url, height); err != nil {
 		logging.Error("Failed to verify block signatures", types.Participants, "error", err)
 		return err
 	}

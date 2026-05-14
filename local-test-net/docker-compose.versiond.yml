@@ -1,33 +1,60 @@
-services:
-  versiond:
-    container_name: ${KEY_NAME}-versiond
-    image: versiond:latest
-    build:
-      context: ./versioned
-      dockerfile: Dockerfile
-    environment:
-      VERSIOND_ORACLE_URL: http://${KEY_NAME}-api:9100/versions
-      VERSIOND_POLL_INTERVAL: "5s"
-      VERSIOND_BIN_DIR: /opt/versiond/bin
-      VERSIOND_DATA_DIR: /opt/versiond/data
-      # Default binary is testapp (VersiondTests). DevshardStandaloneTests
-      # exports VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=v0.2.11,
-      # VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd before bringing up
-      # the cluster, switching this versiond to run the locally-built
-      # devshardd binary instead.
-      VERSIOND_BINARY_NAME: ${VERSIOND_BINARY_NAME:-testapp}
-      VERSIOND_FORCE: ${VERSIOND_FORCE:-}
-      VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
-      NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
+# Versiond compose: canonical versiond + 2 sticky-routable extras pinned to
+# the same identity (3 versiond total), plus an nginx-based sticky router in
+# front of all three, plus the test fixtures (testapp-server,
+# devshardd-artifact-server).
+#
+# Paths are relative to local-test-net/. Run with:
+#   KEY_NAME=genesis VERSIOND_SIGNER_KEY_NAME=genesis \
+#   VERSIOND_BINARY_NAME=devshardd VERSIOND_FORCE=v0.2.11 \
+#   VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd \
+#   KEYRING_BACKEND=test \
+#   docker compose -p genesis -f docker-compose.versiond.yml up -d
+#
+# Layout:
+#   versiond            – canonical (KEY_NAME-versiond), kept for compatibility
+#                         with DevshardStandaloneTests / VersiondTests.
+#   versiond-2/3        – two extras with the same env body via YAML anchor,
+#                         only container_name differs; for multi-host testing.
+#   versiond-router     – nginx, hash $sticky_key consistent on escrowID.
+#                         Defaults VERSIOND_HOSTS to all three versiond hosts;
+#                         override at run-time if you want a different fan-out.
+#   testapp-server      – test fixture (VersiondTests).
+#   devshardd-artifact-server – test fixture (state-driven download path).
+
+x-versiond: &versiond
+  image: versiond:latest
+  build:
+    context: ../versioned
+    dockerfile: Dockerfile
+  environment:
+    VERSIOND_ORACLE_URL: http://${KEY_NAME}-api:9100/versions
+    VERSIOND_POLL_INTERVAL: "5s"
+    VERSIOND_BIN_DIR: /opt/versiond/bin
+    VERSIOND_DATA_DIR: /opt/versiond/data
+    # Default binary is testapp (VersiondTests). DevshardStandaloneTests
+    # exports VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=v0.2.11,
+    # VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd before bringing up
+    # the cluster, switching this versiond to run the locally-built
+    # devshardd binary instead.
+    VERSIOND_BINARY_NAME: ${VERSIOND_BINARY_NAME:-testapp}
+    VERSIOND_FORCE: ${VERSIOND_FORCE:-}
+    VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
+    NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
       # Inherited by child binaries (devshardd reads these). Same env
       # surface dapi's init-docker.sh uses.
-      KEY_NAME: ${VERSIOND_SIGNER_KEY_NAME}
-      ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:-}
-      NODE_HOST: ${KEY_NAME}-node
-      KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
-      KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
-      KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
-    volumes:
+    KEY_NAME: ${VERSIOND_SIGNER_KEY_NAME}
+    ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:-}
+    NODE_HOST: ${KEY_NAME}-node
+    KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
+    KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
+    KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+      # PostgreSQL connection for the payload store (inherited by devshardd child).
+      # Points at the shared devshard-postgres container started by genesis.
+    PGHOST: devshard-postgres
+    PGDATABASE: devshardd
+    PGUSER: devshardd
+    PGPASSWORD: devshardd
+  volumes:
       # Locally-built devshardd binary, served as version "v0.2.11" via the
       # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if
       # VERSIOND_FORCE is empty (versiond never references it).
@@ -37,11 +64,36 @@ services:
       # Same keyring dapi uses, read-only. Devshardd signs devshard
       # protocol messages with the same identity dapi registered on chain.
       - ./prod-local/${KEY_NAME}:/root/.inference:ro
+  networks:
+    - chain-public
+  dns:
+    - 172.25.0.10
+    - 127.0.0.11
+
+services:
+  versiond:
+    <<: *versiond
+    container_name: ${KEY_NAME}-versiond
+
+  versiond-2:
+    <<: *versiond
+    container_name: ${KEY_NAME}-versiond-2
+
+  versiond-3:
+    <<: *versiond
+    container_name: ${KEY_NAME}-versiond-3
+
+  versiond-router:
+    image: ghcr.io/product-science/versiond-router:latest
+    build:
+      context: ../versiond-router
+      dockerfile: Dockerfile
+    container_name: ${KEY_NAME}-versiond-router
+    environment:
+      VERSIOND_HOSTS: ${VERSIOND_HOSTS:-${KEY_NAME}-versiond ${KEY_NAME}-versiond-2 ${KEY_NAME}-versiond-3}
+      VERSIOND_PORT: ${VERSIOND_PORT:-8080}
     networks:
       - chain-public
-    dns:
-      - 172.25.0.10
-      - 127.0.0.11
 
   testapp-server:
     container_name: ${KEY_NAME}-testapp-server
@@ -65,3 +117,9 @@ services:
       - ./build/devshardd-artifacts:/srv/files:ro
     networks:
       - chain-public
+
+# Compose creates chain-public if absent, reuses it if it already exists (e.g.
+# when layered on top of a running base stack). No external: true needed.
+networks:
+  chain-public:
+    name: chain-public

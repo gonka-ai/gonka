@@ -1,9 +1,9 @@
 package internal
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"sync"
 
 	"github.com/productscience/inference/x/inference/types"

@@ -11,7 +11,6 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
-	"devshard"
 	"net/http"
 	"time"
 
@@ -162,12 +161,6 @@ func NewServer(
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
 	return s
-}
-
-// DevshardGroup returns an echo group for mounting devshard routes.
-// Mounted under /v1/devshard so nginx's existing /v1/ location proxies it.
-func (s *Server) DevshardGroup() *echo.Group {
-	return s.e.Group(devshard.LegacyRoutePrefix)
 }
 
 func (s *Server) Start(addr string) {

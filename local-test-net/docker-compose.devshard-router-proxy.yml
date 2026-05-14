@@ -1,0 +1,12 @@
+# Overlay for genesis only: tells genesis-proxy to route /devshard/ to
+# versiond-router (the sticky LB) instead of the single canonical versiond.
+# Applied via additionalDockerFilesByKeyName for GENESIS_KEY_NAME only.
+#
+# docker-compose.versiond.yml already brings up versiond + versiond-2 +
+# versiond-3 + versiond-router on genesis; this file wires genesis-proxy
+# to the router so all /devshard/<version>/sessions/<id>/... requests are
+# consistently hashed by escrowID across the three instances.
+services:
+  proxy:
+    environment:
+      VERSIOND_SERVICE_NAME: versiond-router

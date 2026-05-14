@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"decentralized-api/logging"
+	"common/logging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
