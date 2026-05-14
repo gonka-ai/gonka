@@ -34,6 +34,11 @@ jobs:
             devshard/go.sum
             decentralized-api/go.sum
 
+      # Gitignored pair; citest stack integration expects them under testenv/.
+      - name: Materialize testenv compose and config
+        working-directory: devshard/testenv
+        run: make gen-compose
+
       - name: Dependency invariants
         working-directory: devshard
         run: make ci-dep-check
