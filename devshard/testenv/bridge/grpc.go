@@ -187,6 +187,12 @@ func (b *GRPCBridge) GetHostInfo(address string) (*devbridge.HostInfo, error) {
 	}, nil
 }
 
+// GetValidationThreshold is not backed by mock-chain; callers that need a
+// live epoch snapshot should use the production REST bridge instead.
+func (b *GRPCBridge) GetValidationThreshold(uint64, string) (*devbridge.Decimal, error) {
+	return nil, devbridge.ErrNotImplemented
+}
+
 // VerifyWarmKey returns true iff warmAddress is a grantee authorised to
 // sign the MsgStartInference message type for validatorAddress. Matches
 // the prod bridge's semantics and cache behaviour; the testenv

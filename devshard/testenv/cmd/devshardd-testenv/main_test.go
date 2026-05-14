@@ -141,6 +141,9 @@ func (f *fakeBridge) GetHostInfo(addr string) (*bridge.HostInfo, error) {
 	}
 	return &info, nil
 }
+func (f *fakeBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, errNotImplemented
+}
 func (f *fakeBridge) VerifyWarmKey(string, string) (bool, error) { return false, nil }
 func (f *fakeBridge) OnEscrowCreated(bridge.EscrowInfo) error    { return errNotImplemented }
 func (f *fakeBridge) OnSettlementProposed(string, []byte, uint64) error {

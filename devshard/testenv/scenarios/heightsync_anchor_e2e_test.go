@@ -45,6 +45,9 @@ func (m *scenarioBridge) GetHostInfo(addr string) (*bridge.HostInfo, error) {
 	}
 	return info, nil
 }
+func (m *scenarioBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, bridge.ErrNotImplemented
+}
 func (m *scenarioBridge) VerifyWarmKey(_, _ string) (bool, error) { return false, nil }
 func (m *scenarioBridge) OnEscrowCreated(_ bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
 func (m *scenarioBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error {
