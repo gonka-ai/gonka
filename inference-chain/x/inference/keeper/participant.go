@@ -91,9 +91,11 @@ func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
 	if err != nil {
 		return 0
 	}
-	participants, err := iter.Values()
-	if err != nil {
-		return 0
+	defer iter.Close()
+
+	var count int64
+	for ; iter.Valid(); iter.Next() {
+		count++
 	}
-	return int64(len(participants))
+	return count
 }
