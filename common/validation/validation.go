@@ -124,6 +124,17 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 	return false
 }
 
+func validationReplaySeed(inferenceID string) int32 {
+	parsed, err := strconv.ParseUint(inferenceID, 10, 64)
+	if err != nil {
+		return 0
+	}
+	if parsed > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(parsed)
+}
+
 // CompareLogits compares original and validation logits and returns a ValidationResult.
 func CompareLogits(
 	originalLogits []completionapi.Logprob,
@@ -324,9 +335,18 @@ func ExecuteValidation(
 	responsePayload []byte,
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
-	if err := json.Unmarshal(promptPayload, &requestMap); err != nil {
+	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
+		promptPayload,
+		validationReplaySeed(inferenceID),
+		logprobsMode,
+	)
+	if err != nil {
+		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+	}
+	if err := json.Unmarshal(modifiedRequest.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
 
@@ -414,7 +434,12 @@ func ExecuteValidation(
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
 	if len(originalLogits) == 0 || len(validationLogits) == 0 {
-		logging.Error("No logits found in original or validation response", types.Validation, "id", inferenceID)
+		logging.Error("No logits found in original or validation response",
+			types.Validation,
+			"id", inferenceID,
+			"originalLogits", originalLogits,
+			"validationLogits", validationLogits,
+		)
 		return nil, errors.New("no logits found in original or validation response")
 	}
 

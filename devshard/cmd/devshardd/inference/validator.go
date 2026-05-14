@@ -30,6 +30,7 @@ type Validator struct {
 	engine       *Engine
 	phase        *chain.Phase
 	boundVersion string
+	chainParams  ChainParamsProvider
 }
 
 // NewValidator creates a Validator. boundVersion is the runtime version string used
@@ -40,6 +41,7 @@ func NewValidator(
 	engine *Engine,
 	phase *chain.Phase,
 	boundVersion string,
+	chainParams ChainParamsProvider,
 ) *Validator {
 	return &Validator{
 		bridge:       br,
@@ -47,6 +49,7 @@ func NewValidator(
 		engine:       engine,
 		phase:        phase,
 		boundVersion: boundVersion,
+		chainParams:  chainParams,
 	}
 }
 
@@ -73,6 +76,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 			return v.executeMLRequest(ctx, req.Model, body)
 		},
 		req.InputTokens, req.OutputTokens,
+		v.chainParams.LogprobsMode(),
 	)
 	if err != nil {
 		return nil, err
