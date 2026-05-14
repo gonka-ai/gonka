@@ -9,12 +9,13 @@ package citest
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"devshard/testenv/internal/testenvcfg"
 )
 
 // TestGeneratedComposeConfigValid runs gencompose (isolated config copy), then
@@ -34,27 +35,14 @@ func TestGeneratedComposeConfigValid(t *testing.T) {
 
 	// Generated compose uses `build.context: ..` (devshard module root). The
 	// compose file must live under testenv/ so `..` resolves correctly.
-	prefix := fmt.Sprintf("citest-%d-", os.Getpid())
-	tmpCfg := filepath.Join(testenvDir, prefix+"config.yaml")
-	outPath := filepath.Join(testenvDir, prefix+"docker-compose.yml")
-	defer func() { _ = os.Remove(tmpCfg); _ = os.Remove(outPath) }()
-
-	src, err := os.ReadFile(filepath.Join(testenvDir, "config.yaml"))
+	workDir, err := os.MkdirTemp(testenvDir, "citest-compose-*")
 	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	if err := os.WriteFile(tmpCfg, src, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = os.RemoveAll(workDir) }()
 
-	genCtx, genCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer genCancel()
-	gen := exec.CommandContext(genCtx, "go", "run", "./cmd/gencompose", "-config", tmpCfg, "-out", outPath)
-	gen.Dir = testenvDir
-	out, err := gen.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gencompose: %v\n%s", err, out)
-	}
+	testenvcfg.GenerateFilledMaterializedConfig(t, workDir)
+	outPath := filepath.Join(workDir, "docker-compose.yml")
 
 	// `docker compose config` talks to the engine; cap wait so a bad daemon
 	// does not block `go test` indefinitely.
@@ -62,7 +50,7 @@ func TestGeneratedComposeConfigValid(t *testing.T) {
 	defer composeCancel()
 	check := exec.CommandContext(composeCtx, "docker", "compose", "-f", outPath, "config")
 	check.Dir = testenvDir
-	out, err = check.CombinedOutput()
+	out, err := check.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose config: %v\n%s", err, out)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"devshard/testenv/config"
+	"devshard/testenv/internal/testenvcfg"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
@@ -159,13 +160,13 @@ escrow:
 	require.Panics(t, func() { cfg.MustAppHash() })
 }
 
-// TestRepoConfigLoads ensures the checked-in devshard/testenv/config.yaml
-// parses cleanly and passes validation. Regressions here mean the
-// committed example drifted from the schema.
+// TestRepoConfigLoads ensures a gencompose-materialized testenv config
+// parses cleanly and passes validation (same path operators use: defaults +
+// filled keys). Isolated under t.TempDir() so clones need not ship
+// devshard/testenv/config.yaml.
 func TestRepoConfigLoads(t *testing.T) {
-	// Resolve relative to the testenv tree regardless of where `go test`
-	// is invoked from.
-	cfg, err := config.Load(filepath.Join("..", "config.yaml"))
+	cfgPath := testenvcfg.GenerateFilledMaterializedConfig(t, t.TempDir())
+	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
 	require.NoError(t, cfg.Validate())
 	// HeightSync defaults kicked in.

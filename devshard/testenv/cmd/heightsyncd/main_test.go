@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 	"devshard/blockoracle/verifier"
 	"devshard/signing"
 	"devshard/testenv/config"
+	"devshard/testenv/internal/testenvcfg"
 )
 
 // writeYAML stamps a yaml blob and returns its path.
@@ -56,9 +56,8 @@ func addressFor(t *testing.T, hexKey string) []byte {
 // TestBuildStandaloneConfig_MapsValidatorsFromYAML asserts the full
 // producer-side validator set plumbed through the yaml → standalone
 // conversion preserves count, addresses, and power verbatim. This is
-// the single structural test for the Phase 3 contract: the mock-mainnet
-// validator set is declared once in testenv/config.yaml and nowhere
-// else.
+// the single structural test for the Phase 3 contract: the validator
+// set is declared once in yaml and nowhere else.
 func TestBuildStandaloneConfig_MapsValidatorsFromYAML(t *testing.T) {
 	k1, k2, k3 := genHexKey(t), genHexKey(t), genHexKey(t)
 	path := writeYAML(t, fmt.Sprintf(`
@@ -164,45 +163,16 @@ height_sync:
 	}
 }
 
-// TestBuildStandaloneConfig_ShippedConfigYAML guards the committed
-// testenv/config.yaml: parsing + plumbing must succeed end-to-end
-// against the skeleton the repo ships today (TODO placeholders are
-// rewritten by gencompose before the stack boots, so we round-trip
-// through gencompose-style key filling first).
-func TestBuildStandaloneConfig_ShippedConfigYAML(t *testing.T) {
-	// Load the shipped skeleton from testenv/.
-	dir := t.TempDir()
-	srcPath := filepath.Join("..", "..", "config.yaml")
-	data, err := os.ReadFile(srcPath)
+// TestBuildStandaloneConfig_DefaultGencomposeMaterializedConfig asserts
+// parsing + plumbing succeed for the same materialized config gencompose
+// produces from built-in defaults (no checked-in devshard/testenv/config.yaml).
+func TestBuildStandaloneConfig_DefaultGencomposeMaterializedConfig(t *testing.T) {
+	cfgPath := testenvcfg.GenerateFilledMaterializedConfig(t, t.TempDir())
+	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
-	path := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-
-	cfg, err := config.Load(path)
-	require.NoError(t, err)
-
-	// Fill TODO placeholders the way gencompose does.
-	for i := range cfg.HeightSync.Validators {
-		v := &cfg.HeightSync.Validators[i]
-		if v.PrivateKeyHex == "" ||
-			bytes.HasPrefix([]byte(v.PrivateKeyHex), []byte("TODO")) {
-			v.PrivateKeyHex = genHexKey(t)
-		}
-	}
-	for i := range cfg.Hosts {
-		if cfg.Hosts[i].PrivateKeyHex == "" ||
-			bytes.HasPrefix([]byte(cfg.Hosts[i].PrivateKeyHex), []byte("TODO")) {
-			cfg.Hosts[i].PrivateKeyHex = genHexKey(t)
-		}
-	}
-	if cfg.User.PrivateKeyHex == "" ||
-		bytes.HasPrefix([]byte(cfg.User.PrivateKeyHex), []byte("TODO")) {
-		cfg.User.PrivateKeyHex = genHexKey(t)
-	}
 
 	sc, err := buildStandaloneConfig(cfg)
 	require.NoError(t, err)
-	// Shipped skeleton declares the default 10-validator set.
 	require.Len(t, sc.Validators, config.DefaultHeightSyncValidators)
 	require.Equal(t, cfg.Chain.ID, sc.ChainID)
 }
