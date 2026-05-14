@@ -51,7 +51,7 @@
             "amount": "25_000_000"
           }
         ],
-        "expedited_voting_period": "10m0s",
+        "expedited_voting_period": "5m0s",
         "expedited_min_deposit": [
           {
             "denom": "ngonka",
