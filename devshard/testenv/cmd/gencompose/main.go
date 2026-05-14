@@ -463,5 +463,22 @@ func writeCompose(cfg *config.Config, outPath, obsFragmentPath string) error {
 	if _, err := fmt.Fprintf(f, "\n%s", stripServicesKey(string(fragment))); err != nil {
 		return fmt.Errorf("append observability fragment: %w", err)
 	}
+	composeDir := filepath.Dir(outPath)
+	if err := ensureObsDataBindDirs(composeDir); err != nil {
+		return fmt.Errorf("obs bind dirs: %w", err)
+	}
+	return nil
+}
+
+// ensureObsDataBindDirs creates ./obs-data/<svc>/ under composeDir for the
+// observability fragment bind mounts (default TESTENV_OBS_REL_SUBDIR in compose).
+func ensureObsDataBindDirs(composeDir string) error {
+	base := filepath.Join(composeDir, "obs-data")
+	for _, sub := range []string{"victoria-metrics", "loki", "grafana", "alloy"} {
+		dir := filepath.Join(base, sub)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+	}
 	return nil
 }

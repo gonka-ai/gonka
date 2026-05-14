@@ -18,8 +18,14 @@
 #       - Optionally scan recent devshardd-testenv-0 logs for scheduler fatals.
 #
 #   [3] Docker Compose (unless SKIP_UP=1)
-#       - If [1] ran: `up -d --build --force-recreate` so mock-chain, height-sync,
-#         and devshardd-* reload the new config.yaml (required for I9).
+#       - Uses default compose project (directory name). Do **not** force a separate
+#         COMPOSE_PROJECT_NAME here: compose pins testenv bridge to 172.30.0.0/24; a second
+#         project would request the same pool and Docker errors (pool overlaps).
+#       - Uses TESTENV_OBS_REL_SUBDIR=.citest-obs-data (override ok): VM/Loki/Grafana/Alloy
+#         bind-mount under ./.citest-obs-data/… instead of ./obs-data/… so citest never
+#         reads another stack’s TSDB on disk without `docker compose down -v`.
+#       - If [1] ran: compose down, rm -rf citest obs dir, then up --force-recreate
+#         (fresh observability disk + reloaded config for I9).
 #       - If SKIP_REGEN=1: `up -d --build` only when core services are down.
 #
 #   [4] Wait for height-sync GET http://127.0.0.1:9100/block/latest (height > 0).
@@ -47,6 +53,7 @@
 #   bash ./scripts/run-stack-citest.sh
 #
 # Env:
+#   TESTENV_OBS_REL_SUBDIR — default .citest-obs-data (obs bind-mount root under testenv/).
 #   SKIP_REGEN=1     — skip [1]; keep existing config.yaml / docker-compose.yml
 #   SKIP_PREFLIGHT=1 — skip [2]
 #   SKIP_UP=1        — skip [3] (dangerous right after regen; see WARN log)
@@ -125,7 +132,15 @@ need_cmd docker
 need_cmd go
 cd "$TESTENV_ROOT"
 
+# Citest stack: obs bind mounts under .citest-obs-data/ (see header [3]); same compose
+# project / bridge subnet as `docker compose up` from this directory.
+export TESTENV_OBS_REL_SUBDIR="${TESTENV_OBS_REL_SUBDIR:-.citest-obs-data}"
+CITEST_OBS_ROOT="$TESTENV_ROOT/$TESTENV_OBS_REL_SUBDIR"
+mkdir -p "$CITEST_OBS_ROOT/victoria-metrics" "$CITEST_OBS_ROOT/loki" \
+  "$CITEST_OBS_ROOT/grafana" "$CITEST_OBS_ROOT/alloy"
+
 log "━━ citest stack driver ━━ order: [1] gen config → [2] preflight → [3] compose → [4] wait HS → [5] VM? → [6] log scan → [7] go test (I1 → §7.7 → I2a → I2b → I9) ━━"
+log "  obs data dir=${TESTENV_OBS_REL_SUBDIR}/ (hand dev default: obs-data/)"
 
 did_regen=0
 if [[ "${SKIP_REGEN:-}" != "1" ]]; then
@@ -169,7 +184,11 @@ fi
 if [[ "${SKIP_UP:-}" != "1" ]]; then
   log "[3/7] docker compose: ensure stack matches disk config (I9 needs mock-chain + height-sync to have read current config.yaml)"
   if [[ "$did_regen" == "1" ]]; then
-    log "  config was regenerated → docker compose up -d --build --force-recreate"
+    log "  config was regenerated → compose down, wipe citest obs dir (${TESTENV_OBS_REL_SUBDIR}/), up -d --build --force-recreate"
+    docker compose -f docker-compose.yml down --remove-orphans --timeout 120
+    rm -rf "$CITEST_OBS_ROOT"
+    mkdir -p "$CITEST_OBS_ROOT/victoria-metrics" "$CITEST_OBS_ROOT/loki" \
+      "$CITEST_OBS_ROOT/grafana" "$CITEST_OBS_ROOT/alloy"
     docker compose -f docker-compose.yml up -d --build --force-recreate
   else
     need_up=0

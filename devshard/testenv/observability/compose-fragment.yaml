@@ -5,6 +5,12 @@
 # `subnet/testenv/observability/compose-fragment.yaml` (branch `subnet-testenv`) so
 # the tuned River config in `alloy/config.alloy` matches runtime (labels, sockets).
 # Loki/Grafana image pins remain on the devshard side (Loki 2.x file config).
+#
+# Observability state (VM/Loki/Grafana/Alloy) uses host bind mounts under
+# ./${TESTENV_OBS_REL_SUBDIR:-obs-data}/… so it never shares Docker named volumes
+# with other compose projects. Hand runs use the default (obs-data/). Citest sets
+# TESTENV_OBS_REL_SUBDIR=.citest-obs-data (see scripts/run-stack-citest.sh); use the same
+# compose project as manual `docker compose up` so the pinned 172.30.0.0/24 bridge is not duplicated.
 services:
   # ── VictoriaMetrics (time-series) — subnet-testenv image + flags ───────
   victoria-metrics:
@@ -15,7 +21,7 @@ services:
       - --httpListenAddr=:8428
       - --search.maxUniqueTimeseries=1000000
     volumes:
-      - obs-victoria:/storage
+      - ./${TESTENV_OBS_REL_SUBDIR:-obs-data}/victoria-metrics:/storage
     ports:
       - "127.0.0.1:8428:8428"
     networks:
@@ -34,7 +40,7 @@ services:
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - obs-alloy:/var/lib/alloy/data
+      - ./${TESTENV_OBS_REL_SUBDIR:-obs-data}/alloy:/var/lib/alloy/data
     ports:
       - "127.0.0.1:12345:12345"
     networks:
@@ -100,7 +106,7 @@ services:
       - -config.file=/etc/loki/config.yaml
     volumes:
       - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
-      - obs-loki:/tmp/loki
+      - ./${TESTENV_OBS_REL_SUBDIR:-obs-data}/loki:/tmp/loki
     ports:
       - "127.0.0.1:3100:3100"
     networks:
@@ -119,7 +125,7 @@ services:
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - obs-grafana:/var/lib/grafana
+      - ./${TESTENV_OBS_REL_SUBDIR:-obs-data}/grafana:/var/lib/grafana
     ports:
       - "127.0.0.1:3000:3000"
     networks:
@@ -131,9 +137,3 @@ services:
     restart: unless-stopped
 
 # Reserved for a future trace backend (§13.2): 172.30.0.106 — Tempo
-
-volumes:
-  obs-victoria: {}
-  obs-loki: {}
-  obs-grafana: {}
-  obs-alloy: {}

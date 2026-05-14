@@ -146,9 +146,9 @@ obs-query-open: ## Open VictoriaMetrics VMUI (http://127.0.0.1:8428/vmui) if 'op
 	@command -v open >/dev/null 2>&1 && open "http://127.0.0.1:8428/vmui" || echo "http://127.0.0.1:8428/vmui"
 
 .PHONY: obs-reset
-obs-reset: ## Recreate obs containers; does not remove named volumes (see OBSERVABILITY.md to wipe data).
+obs-reset: ## Recreate obs containers; TSDB/log state lives under ./obs-data/ (see OBSERVABILITY.md to wipe).
 	-docker compose $(COMPOSE_BASE) up -d --force-recreate victoria-metrics loki grafana cadvisor alloy
-	@echo "To drop metrics/log data: remove Docker volumes obs-victoria, obs-loki, obs-grafana, obs-alloy (with compose project prefix)."
+	@echo "To drop metrics/log data: rm -rf ./obs-data/ (under testenv/) then up again."
 
 # --------------------------------------------------------------- tests ----
 

@@ -1,2 +1,4 @@
 config.yaml
 docker-compose.yml
+obs-data/
+.citest-obs-data/

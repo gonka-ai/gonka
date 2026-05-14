@@ -47,10 +47,10 @@ default in generated compose, serving Prometheus text at `http://<service>:9600/
 - `make obs-grafana-open` / `make obs-query-open` — on macOS, `open(1)` the
   Grafana and VM UIs; elsewhere prints URLs.
 - `make obs-reset` — recreates obs containers; see `make help` for the exact
-  behavior. To delete persistent metrics/log data, remove the
-  `obs-victoria`, `obs-loki`, `obs-grafana`, and `obs-alloy` **named
-  volumes** (names are prefixed with the Docker Compose project name) then
-  `up -d` again.
+  behavior. To delete persistent metrics/log data, remove the host directory
+  `./obs-data/` under `testenv/` (default `TESTENV_OBS_REL_SUBDIR` in
+  `observability/compose-fragment.yaml`) then `up -d` again. Citest uses
+  `./.citest-obs-data/` instead (see `scripts/run-stack-citest.sh`).
 
 ## Grafana
 
