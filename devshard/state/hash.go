@@ -69,6 +69,8 @@ func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 
 // ComputeStateRootFromRestHash computes the canonical state root when host
 // stats hash and rest hash are already available.
+//
+//	sha256(host_stats_hash || fees_be || rest_hash || version_hash || phase_byte)
 func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version ...string) []byte {
 	// Encode fees as fixed-width big-endian to preserve deterministic hashing.
 	feesBytes := make([]byte, 8)
@@ -137,14 +139,34 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	entries := make([]*types.HostStatsProto, 0, len(slotIDs))
 	for _, id := range slotIDs {
 		s := hostStats[id]
-		entries = append(entries, &types.HostStatsProto{
+		entry := &types.HostStatsProto{
 			SlotId:               id,
 			Missed:               s.Missed,
 			Invalid:              s.Invalid,
 			Cost:                 s.Cost,
 			RequiredValidations:  s.RequiredValidations,
 			CompletedValidations: s.CompletedValidations,
-		})
+		}
+
+		if len(s.ModelStats) > 0 {
+			models := make([]string, 0, len(s.ModelStats))
+			for m := range s.ModelStats {
+				models = append(models, m)
+			}
+			slices.Sort(models)
+			for _, m := range models {
+				ms := s.ModelStats[m]
+				entry.ModelStats = append(entry.ModelStats, &types.HostModelStatsProto{
+					Model:            m,
+					PromptTokens:     ms.PromptTokens,
+					CompletionTokens: ms.CompletionTokens,
+					InferenceCount:   ms.InferenceCount,
+					Cost:             ms.Cost,
+				})
+			}
+		}
+
+		entries = append(entries, entry)
 	}
 
 	msg := &types.HostStatsMapProto{Entries: entries}

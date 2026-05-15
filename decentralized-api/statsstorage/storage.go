@@ -59,10 +59,42 @@ type DebugStats struct {
 	StatsByEpoch []DeveloperEpochStats
 }
 
+type DevshardEscrow struct {
+	EscrowID                  string
+	EpochID                   uint64
+	Participant               string
+	TotalCostInCoins          int64
+	TotalInferences           int32
+	TotalPromptTokenCount     uint64
+	TotalCompletionTokenCount uint64
+	TotalTokenCount           uint64
+	SettlementTimestamp       UnixMillis
+}
+
+type DevshardModelAggregate struct {
+	Model                string
+	PromptTokenCount     uint64
+	CompletionTokenCount uint64
+	TotalTokenCount      uint64
+	Inferences           int32
+	CostInCoins          int64
+}
+
 // StatsStorage defines storage and read models for off-chain developer stats.
 type StatsStorage interface {
 	UpsertInference(ctx context.Context, rec InferenceRecord) error
 	UpdateInferenceStatus(ctx context.Context, inferenceID, status string) error
+	UpsertDevshardEscrow(ctx context.Context, totals DevshardEscrow, modelStats []DevshardModelAggregate) error
+	GetMaxInferenceEpoch(ctx context.Context) (uint64, error)
+	GetMaxDevshardEpoch(ctx context.Context) (uint64, error)
+	GetSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error)
+	GetSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error)
+	GetDevshardSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error)
+	GetDevshardSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error)
+	GetDevshardSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error)
+	GetDevshardSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error)
+	GetDevshardSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error)
+	GetDevshardModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error)
 	GetDeveloperInferencesByTime(ctx context.Context, developer string, timeFrom, timeTo UnixMillis) ([]InferenceRecord, error)
 	GetSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error)
 	GetSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error)

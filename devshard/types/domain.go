@@ -53,6 +53,14 @@ type InferenceRecord struct {
 	ValidatedBy  Bitmap128       `json:"validated_by,omitempty"`
 }
 
+// HostModelStats tracks per-model token and inference counts for a single host.
+type HostModelStats struct {
+	PromptTokens     uint64
+	CompletionTokens uint64
+	InferenceCount   uint32
+	Cost             uint64
+}
+
 // HostStats tracks per-host performance metrics within a session.
 type HostStats struct {
 	Missed               uint32
@@ -60,6 +68,7 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+	ModelStats           map[string]*HostModelStats
 }
 
 // SessionConfig holds session-level parameters.

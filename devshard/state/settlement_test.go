@@ -74,7 +74,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 	payload, err := BuildSettlement(escrowID, st, nil, nonce)
 	require.NoError(t, err)
 
-	// Recompute state root to sign it.
+	// Recompute state root to sign it (include stats_root for non-v1).
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
 	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
@@ -226,7 +226,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	payload, err := BuildSettlement(escrowID, st, nil, nonce)
 	require.NoError(t, err)
 
-	// Recompute state root for signing.
+	// Recompute state root for signing (include stats_root for non-v1).
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
 	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)

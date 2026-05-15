@@ -14,6 +14,50 @@ func (d *DisabledStorage) UpsertInference(ctx context.Context, rec InferenceReco
 	return nil
 }
 
+func (d *DisabledStorage) UpsertDevshardEscrow(ctx context.Context, totals DevshardEscrow, modelStats []DevshardModelAggregate) error {
+	return nil
+}
+
+func (d *DisabledStorage) GetMaxInferenceEpoch(ctx context.Context) (uint64, error) {
+	return 0, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetMaxDevshardEpoch(ctx context.Context) (uint64, error) {
+	return 0, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
+	return Summary{}, ErrStatsDisabled
+}
+
+func (d *DisabledStorage) GetDevshardModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
+	return nil, ErrStatsDisabled
+}
+
 func (d *DisabledStorage) UpdateInferenceStatus(ctx context.Context, inferenceID, status string) error {
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 // SettlementPayload contains the data needed for on-chain settlement.
 // Mainnet recomputes the state root from HostStats + Fees + RestHash +
 // VersionHash + phase byte; it is not included in the payload.
+// Per-model stats are embedded in HostStats and flow through host_stats_hash.
 type SettlementPayload struct {
 	EscrowID string
 	Version  string

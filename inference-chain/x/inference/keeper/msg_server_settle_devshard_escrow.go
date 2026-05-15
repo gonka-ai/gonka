@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/bits"
@@ -242,15 +243,85 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		return nil, fmt.Errorf("failed to update escrow: %w", err)
 	}
 
-	ctx.EventManager().EmitEvent(sdk.NewEvent(
-		"devshard_escrow_settled",
+	// Aggregate per-model stats across all hosts for the event.
+	type modelTotals struct {
+		PromptTokens     uint64 `json:"prompt_tokens"`
+		CompletionTokens uint64 `json:"completion_tokens"`
+		InferenceCount   uint32 `json:"inference_count"`
+		Cost             uint64 `json:"cost"`
+	}
+	byModel := make(map[string]*modelTotals)
+	var totalPrompt, totalCompletion uint64
+	var totalInferences uint32
+	for _, hs := range msg.HostStats {
+		for _, ms := range hs.ModelStats {
+			mt := byModel[ms.Model]
+			if mt == nil {
+				mt = &modelTotals{}
+				byModel[ms.Model] = mt
+			}
+			var c uint64
+			mt.PromptTokens, c = bits.Add64(mt.PromptTokens, ms.PromptTokens, 0)
+			if c != 0 {
+				return nil, fmt.Errorf("prompt token overflow for model %q", ms.Model)
+			}
+			mt.CompletionTokens, c = bits.Add64(mt.CompletionTokens, ms.CompletionTokens, 0)
+			if c != 0 {
+				return nil, fmt.Errorf("completion token overflow for model %q", ms.Model)
+			}
+			mt.Cost, c = bits.Add64(mt.Cost, ms.Cost, 0)
+			if c != 0 {
+				return nil, fmt.Errorf("cost overflow for model %q", ms.Model)
+			}
+			if ms.InferenceCount > math.MaxUint32-mt.InferenceCount {
+				return nil, fmt.Errorf("inference count overflow for model %q", ms.Model)
+			}
+			mt.InferenceCount += ms.InferenceCount
+
+			totalPrompt, c = bits.Add64(totalPrompt, ms.PromptTokens, 0)
+			if c != 0 {
+				return nil, fmt.Errorf("total prompt token overflow")
+			}
+			totalCompletion, c = bits.Add64(totalCompletion, ms.CompletionTokens, 0)
+			if c != 0 {
+				return nil, fmt.Errorf("total completion token overflow")
+			}
+			if ms.InferenceCount > math.MaxUint32-totalInferences {
+				return nil, fmt.Errorf("total inference count overflow")
+			}
+			totalInferences += ms.InferenceCount
+		}
+	}
+
+	totalTokens, c := bits.Add64(totalPrompt, totalCompletion, 0)
+	if c != 0 {
+		return nil, fmt.Errorf("total token count overflow")
+	}
+
+	attrs := []sdk.Attribute{
 		sdk.NewAttribute("escrow_id", fmt.Sprint(escrow.Id)),
 		sdk.NewAttribute("version", msg.Version),
 		sdk.NewAttribute("settler", msg.Settler),
 		sdk.NewAttribute("total_payout", fmt.Sprint(totalPayout)),
 		sdk.NewAttribute("fees", fmt.Sprint(msg.Fees)),
 		sdk.NewAttribute("remainder", fmt.Sprint(remainder)),
-	))
+		sdk.NewAttribute("settlement_timestamp_ms", fmt.Sprint(ctx.BlockTime().UnixMilli())),
+		sdk.NewAttribute("epoch_index", fmt.Sprint(escrow.EpochIndex)),
+		sdk.NewAttribute("creator", escrow.Creator),
+		sdk.NewAttribute("prompt_token_count", fmt.Sprint(totalPrompt)),
+		sdk.NewAttribute("completion_token_count", fmt.Sprint(totalCompletion)),
+		sdk.NewAttribute("total_token_count", fmt.Sprint(totalTokens)),
+		sdk.NewAttribute("inference_count", fmt.Sprint(totalInferences)),
+	}
+
+	if len(byModel) > 0 {
+		modelStatsJSON, _ := json.Marshal(byModel)
+		attrs = append(attrs, sdk.NewAttribute("model_stats", string(modelStatsJSON)))
+	} else {
+		attrs = append(attrs, sdk.NewAttribute("model_stats", "{}"))
+	}
+
+	ctx.EventManager().EmitEvent(sdk.NewEvent("devshard_escrow_settled", attrs...))
 
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
 }

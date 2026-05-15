@@ -10,6 +10,14 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 // devshard (google-protobuf) must produce identical serialization.
 // See TestComputeDevshardHostStatsHash_GoldenValue for cross-library validation.
 
+message DevshardHostModelStatsProto {
+  string model = 1;
+  uint64 prompt_tokens = 2;
+  uint64 completion_tokens = 3;
+  uint32 inference_count = 4;
+  uint64 cost = 5;
+}
+
 message DevshardHostStatsProto {
   uint32 slot_id = 1;
   uint32 missed = 2;
@@ -17,6 +25,7 @@ message DevshardHostStatsProto {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  repeated DevshardHostModelStatsProto model_stats = 7;
 }
 
 message DevshardHostStatsMapProto {

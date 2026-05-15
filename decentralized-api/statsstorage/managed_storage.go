@@ -49,6 +49,50 @@ func (m *ManagedStorage) UpsertInference(ctx context.Context, rec InferenceRecor
 	return m.storage.UpsertInference(ctx, rec)
 }
 
+func (m *ManagedStorage) UpsertDevshardEscrow(ctx context.Context, totals DevshardEscrow, modelStats []DevshardModelAggregate) error {
+	return m.storage.UpsertDevshardEscrow(ctx, totals, modelStats)
+}
+
+func (m *ManagedStorage) GetMaxInferenceEpoch(ctx context.Context) (uint64, error) {
+	return m.storage.GetMaxInferenceEpoch(ctx)
+}
+
+func (m *ManagedStorage) GetMaxDevshardEpoch(ctx context.Context) (uint64, error) {
+	return m.storage.GetMaxDevshardEpoch(ctx)
+}
+
+func (m *ManagedStorage) GetSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return m.storage.GetSummaryByDeveloperEpochRange(ctx, developer, minEpochExclusive, maxEpochInclusive)
+}
+
+func (m *ManagedStorage) GetSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return m.storage.GetSummaryByEpochRange(ctx, minEpochExclusive, maxEpochInclusive)
+}
+
+func (m *ManagedStorage) GetDevshardSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return m.storage.GetDevshardSummaryByDeveloperEpochRange(ctx, developer, minEpochExclusive, maxEpochInclusive)
+}
+
+func (m *ManagedStorage) GetDevshardSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	return m.storage.GetDevshardSummaryByEpochRange(ctx, minEpochExclusive, maxEpochInclusive)
+}
+
+func (m *ManagedStorage) GetDevshardSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error) {
+	return m.storage.GetDevshardSummaryByDeveloperEpochsBackwards(ctx, developer, epochsN)
+}
+
+func (m *ManagedStorage) GetDevshardSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error) {
+	return m.storage.GetDevshardSummaryByEpochsBackwards(ctx, epochsN)
+}
+
+func (m *ManagedStorage) GetDevshardSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
+	return m.storage.GetDevshardSummaryByTimePeriod(ctx, timeFrom, timeTo)
+}
+
+func (m *ManagedStorage) GetDevshardModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
+	return m.storage.GetDevshardModelStatsByTime(ctx, timeFrom, timeTo)
+}
+
 func (m *ManagedStorage) UpdateInferenceStatus(ctx context.Context, inferenceID, status string) error {
 	return m.storage.UpdateInferenceStatus(ctx, inferenceID, status)
 }

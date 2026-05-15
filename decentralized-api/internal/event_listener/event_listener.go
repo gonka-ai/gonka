@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"math/bits"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -95,6 +97,7 @@ func NewEventListener(
 		&InferenceStatusUpdatedEventHandler{},
 		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
+		&DevshardEscrowSettledEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
@@ -696,6 +699,190 @@ func (e *SubmitProposalEventHandler) Handle(event *chainevents.JSONRPCResponse, 
 	logging.Debug("Handling `submit_proposal` event", types.EventProcessing, "proposalId", proposalIds[0])
 	return nil
 }
+
+type DevshardEscrowSettledEventHandler struct{}
+
+func (e *DevshardEscrowSettledEventHandler) GetName() string {
+	return "devshard_escrow_settled"
+}
+
+func (e *DevshardEscrowSettledEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
+	return len(event.Result.Events["devshard_escrow_settled.escrow_id"]) > 0
+}
+
+func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+	if el.statsStorage == nil {
+		return nil
+	}
+
+	// Use chain-derived settlement_timestamp_ms emitted by the on-chain event.
+	// This is deterministic across all DAPI nodes processing the same block.
+	// Fall back to wall clock only if the attribute is missing (pre-upgrade events).
+	var timestamp statsstorage.UnixMillis
+	if tsValues := event.Result.Events["devshard_escrow_settled.settlement_timestamp_ms"]; len(tsValues) > 0 {
+		if tsMs, err := strconv.ParseInt(tsValues[0], 10, 64); err == nil {
+			timestamp = statsstorage.UnixMillis(tsMs)
+		} else {
+			logging.Warn("Failed to parse settlement_timestamp_ms, using wall clock", types.EventProcessing, "raw", tsValues[0], "error", err)
+			timestamp = statsstorage.UnixMillis(time.Now().UnixMilli())
+		}
+	} else {
+		timestamp = statsstorage.UnixMillis(time.Now().UnixMilli())
+	}
+
+	records, parseErrors := parseDevshardEscrowSettledRecords(event.Result.Events)
+	// Log parse errors but still process any successfully parsed records
+	for _, pe := range parseErrors {
+		logging.Warn("Failed to parse devshard_escrow_settled record", types.EventProcessing, "error", pe)
+	}
+
+	for _, rec := range records {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		rec.Escrow.SettlementTimestamp = timestamp
+		err := el.statsStorage.UpsertDevshardEscrow(ctx, rec.Escrow, rec.ModelStats)
+		cancel()
+		if err != nil {
+			logging.Error("Failed to upsert devshard_escrow_settled record to stats storage", types.EventProcessing,
+				"escrow_id", rec.Escrow.EscrowID, "error", err)
+		}
+	}
+	return nil
+}
+
+type devshardSettledRecord struct {
+	Escrow     statsstorage.DevshardEscrow
+	ModelStats []statsstorage.DevshardModelAggregate
+}
+
+// parseDevshardEscrowSettledRecords parses event attributes into records.
+// It returns all successfully parsed records and a list of per-record errors,
+// so that one malformed record does not cause the entire batch to be dropped.
+func parseDevshardEscrowSettledRecords(events map[string][]string) ([]devshardSettledRecord, []error) {
+	ids := events["devshard_escrow_settled.escrow_id"]
+	if len(ids) == 0 {
+		return nil, []error{errors.New("missing devshard_escrow_settled.escrow_id")}
+	}
+
+	records := make([]devshardSettledRecord, 0, len(ids))
+	var parseErrors []error
+	for i, id := range ids {
+		rec, err := parseDevshardEscrowSettledRecord(events, id, i)
+		if err != nil {
+			parseErrors = append(parseErrors, fmt.Errorf("escrow %s: %w", id, err))
+			continue
+		}
+		if rec != nil {
+			records = append(records, *rec)
+		}
+	}
+
+	return records, parseErrors
+}
+
+// parseDevshardEscrowSettledRecord parses a single escrow settlement record from event attributes.
+// Returns nil, nil if the record should be skipped (e.g., legacy event without epoch_index).
+func parseDevshardEscrowSettledRecord(events map[string][]string, id string, i int) (*devshardSettledRecord, error) {
+	var (
+		rec devshardSettledRecord
+		err error
+	)
+
+	rec.Escrow.EscrowID = id
+
+	epochStr, hasEpoch := getEventValue(events, "devshard_escrow_settled.epoch_index", i)
+	if !hasEpoch {
+		logging.Info("Skipping devshard_escrow_settled stats ingestion: missing epoch_index (legacy event)", types.EventProcessing, "escrow_id", id)
+		return nil, nil
+	}
+	rec.Escrow.EpochID, err = strconv.ParseUint(epochStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse epoch_index %q: %w", epochStr, err)
+	}
+
+	creatorStr, ok := getEventValue(events, "devshard_escrow_settled.creator", i)
+	if !ok {
+		return nil, fmt.Errorf("missing creator")
+	}
+	rec.Escrow.Participant = creatorStr
+
+	rec.Escrow.TotalPromptTokenCount, err = parseEventUint64(events, "devshard_escrow_settled.prompt_token_count", i)
+	if err != nil {
+		return nil, fmt.Errorf("parse prompt_token_count: %w", err)
+	}
+
+	rec.Escrow.TotalCompletionTokenCount, err = parseEventUint64(events, "devshard_escrow_settled.completion_token_count", i)
+	if err != nil {
+		return nil, fmt.Errorf("parse completion_token_count: %w", err)
+	}
+
+	rec.Escrow.TotalTokenCount, err = parseEventUint64(events, "devshard_escrow_settled.total_token_count", i)
+	if err != nil {
+		return nil, fmt.Errorf("parse total_token_count: %w", err)
+	}
+
+	inferCount, err := parseEventInt64(events, "devshard_escrow_settled.inference_count", i)
+	if err != nil {
+		return nil, fmt.Errorf("parse inference_count: %w", err)
+	}
+	if inferCount < math.MinInt32 || inferCount > math.MaxInt32 {
+		return nil, fmt.Errorf("inference_count %d overflows int32 range", inferCount)
+	}
+	rec.Escrow.TotalInferences = int32(inferCount)
+
+	// model_stats is a JSON object keyed by model name (aggregated from host_stats).
+	modelStatsJson, ok := getEventValue(events, "devshard_escrow_settled.model_stats", i)
+	if !ok || modelStatsJson == "" || modelStatsJson == "{}" {
+		rec.Escrow.TotalCostInCoins = 0
+		return &rec, nil
+	}
+
+	type modelTotals struct {
+		PromptTokens     uint64 `json:"prompt_tokens"`
+		CompletionTokens uint64 `json:"completion_tokens"`
+		InferenceCount   uint32 `json:"inference_count"`
+		Cost             uint64 `json:"cost"`
+	}
+	var statsMap map[string]*modelTotals
+
+	if err := json.Unmarshal([]byte(modelStatsJson), &statsMap); err != nil {
+		return nil, fmt.Errorf("parse model_stats json: %w", err)
+	}
+
+	rec.ModelStats = make([]statsstorage.DevshardModelAggregate, 0, len(statsMap))
+	var totalCost uint64
+	var carry uint64
+	for model, mt := range statsMap {
+		if mt.Cost > uint64(math.MaxInt64) {
+			return nil, fmt.Errorf("model %q cost %d overflows int64 range", model, mt.Cost)
+		}
+		totalTokens, tc := bits.Add64(mt.PromptTokens, mt.CompletionTokens, 0)
+		if tc != 0 {
+			return nil, fmt.Errorf("model %q total token count overflows uint64", model)
+		}
+		if mt.InferenceCount > uint32(math.MaxInt32) {
+			return nil, fmt.Errorf("model %q inference count %d overflows int32", model, mt.InferenceCount)
+		}
+		rec.ModelStats = append(rec.ModelStats, statsstorage.DevshardModelAggregate{
+			Model:                model,
+			PromptTokenCount:     mt.PromptTokens,
+			CompletionTokenCount: mt.CompletionTokens,
+			TotalTokenCount:      totalTokens,
+			Inferences:           int32(mt.InferenceCount),
+			CostInCoins:          int64(mt.Cost),
+		})
+		totalCost, carry = bits.Add64(totalCost, mt.Cost, 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("aggregate model cost overflows uint64 at model %q", model)
+		}
+	}
+	if totalCost > uint64(math.MaxInt64) {
+		return nil, fmt.Errorf("aggregate cost %d overflows int64 range", totalCost)
+	}
+	rec.Escrow.TotalCostInCoins = int64(totalCost)
+
+	return &rec, nil
+}
+
 
 func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.ConfigManager, name string) bool {
 	heightString := event.Result.Events["tx.height"][0]

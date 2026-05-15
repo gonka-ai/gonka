@@ -27,6 +27,14 @@ message DevshardHostEpochStats {
   uint32 escrow_count = 8;
 }
 
+message DevshardHostModelStats {
+  string model = 1;
+  uint64 prompt_tokens = 2;
+  uint64 completion_tokens = 3;
+  uint32 inference_count = 4;
+  uint64 cost = 5;
+}
+
 message DevshardSettlementHostStats {
   uint32 slot_id = 1;
   uint32 missed = 2;
@@ -34,6 +42,7 @@ message DevshardSettlementHostStats {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  repeated DevshardHostModelStats model_stats = 7;
 }
 
 message DevshardSlotSignature {

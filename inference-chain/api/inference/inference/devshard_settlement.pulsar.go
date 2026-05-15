@@ -13,6 +13,669 @@ import (
 )
 
 var (
+	md_DevshardHostModelStatsProto                   protoreflect.MessageDescriptor
+	fd_DevshardHostModelStatsProto_model             protoreflect.FieldDescriptor
+	fd_DevshardHostModelStatsProto_prompt_tokens     protoreflect.FieldDescriptor
+	fd_DevshardHostModelStatsProto_completion_tokens protoreflect.FieldDescriptor
+	fd_DevshardHostModelStatsProto_inference_count   protoreflect.FieldDescriptor
+	fd_DevshardHostModelStatsProto_cost              protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_devshard_settlement_proto_init()
+	md_DevshardHostModelStatsProto = File_inference_inference_devshard_settlement_proto.Messages().ByName("DevshardHostModelStatsProto")
+	fd_DevshardHostModelStatsProto_model = md_DevshardHostModelStatsProto.Fields().ByName("model")
+	fd_DevshardHostModelStatsProto_prompt_tokens = md_DevshardHostModelStatsProto.Fields().ByName("prompt_tokens")
+	fd_DevshardHostModelStatsProto_completion_tokens = md_DevshardHostModelStatsProto.Fields().ByName("completion_tokens")
+	fd_DevshardHostModelStatsProto_inference_count = md_DevshardHostModelStatsProto.Fields().ByName("inference_count")
+	fd_DevshardHostModelStatsProto_cost = md_DevshardHostModelStatsProto.Fields().ByName("cost")
+}
+
+var _ protoreflect.Message = (*fastReflection_DevshardHostModelStatsProto)(nil)
+
+type fastReflection_DevshardHostModelStatsProto DevshardHostModelStatsProto
+
+func (x *DevshardHostModelStatsProto) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_DevshardHostModelStatsProto)(x)
+}
+
+func (x *DevshardHostModelStatsProto) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[0]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_DevshardHostModelStatsProto_messageType fastReflection_DevshardHostModelStatsProto_messageType
+var _ protoreflect.MessageType = fastReflection_DevshardHostModelStatsProto_messageType{}
+
+type fastReflection_DevshardHostModelStatsProto_messageType struct{}
+
+func (x fastReflection_DevshardHostModelStatsProto_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_DevshardHostModelStatsProto)(nil)
+}
+func (x fastReflection_DevshardHostModelStatsProto_messageType) New() protoreflect.Message {
+	return new(fastReflection_DevshardHostModelStatsProto)
+}
+func (x fastReflection_DevshardHostModelStatsProto_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_DevshardHostModelStatsProto
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_DevshardHostModelStatsProto) Descriptor() protoreflect.MessageDescriptor {
+	return md_DevshardHostModelStatsProto
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_DevshardHostModelStatsProto) Type() protoreflect.MessageType {
+	return _fastReflection_DevshardHostModelStatsProto_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_DevshardHostModelStatsProto) New() protoreflect.Message {
+	return new(fastReflection_DevshardHostModelStatsProto)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_DevshardHostModelStatsProto) Interface() protoreflect.ProtoMessage {
+	return (*DevshardHostModelStatsProto)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_DevshardHostModelStatsProto) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Model != "" {
+		value := protoreflect.ValueOfString(x.Model)
+		if !f(fd_DevshardHostModelStatsProto_model, value) {
+			return
+		}
+	}
+	if x.PromptTokens != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.PromptTokens)
+		if !f(fd_DevshardHostModelStatsProto_prompt_tokens, value) {
+			return
+		}
+	}
+	if x.CompletionTokens != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CompletionTokens)
+		if !f(fd_DevshardHostModelStatsProto_completion_tokens, value) {
+			return
+		}
+	}
+	if x.InferenceCount != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.InferenceCount)
+		if !f(fd_DevshardHostModelStatsProto_inference_count, value) {
+			return
+		}
+	}
+	if x.Cost != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.Cost)
+		if !f(fd_DevshardHostModelStatsProto_cost, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_DevshardHostModelStatsProto) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		return x.Model != ""
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		return x.PromptTokens != uint64(0)
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		return x.CompletionTokens != uint64(0)
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		return x.InferenceCount != uint32(0)
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		return x.Cost != uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardHostModelStatsProto) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		x.Model = ""
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		x.PromptTokens = uint64(0)
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		x.CompletionTokens = uint64(0)
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		x.InferenceCount = uint32(0)
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		x.Cost = uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_DevshardHostModelStatsProto) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		value := x.Model
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		value := x.PromptTokens
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		value := x.CompletionTokens
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		value := x.InferenceCount
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		value := x.Cost
+		return protoreflect.ValueOfUint64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardHostModelStatsProto) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		x.Model = value.Interface().(string)
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		x.PromptTokens = value.Uint()
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		x.CompletionTokens = value.Uint()
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		x.InferenceCount = uint32(value.Uint())
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		x.Cost = value.Uint()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardHostModelStatsProto) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		panic(fmt.Errorf("field model of message inference.inference.DevshardHostModelStatsProto is not mutable"))
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		panic(fmt.Errorf("field prompt_tokens of message inference.inference.DevshardHostModelStatsProto is not mutable"))
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		panic(fmt.Errorf("field completion_tokens of message inference.inference.DevshardHostModelStatsProto is not mutable"))
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		panic(fmt.Errorf("field inference_count of message inference.inference.DevshardHostModelStatsProto is not mutable"))
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		panic(fmt.Errorf("field cost of message inference.inference.DevshardHostModelStatsProto is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_DevshardHostModelStatsProto) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.DevshardHostModelStatsProto.model":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.DevshardHostModelStatsProto.prompt_tokens":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.DevshardHostModelStatsProto.completion_tokens":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.DevshardHostModelStatsProto.inference_count":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardHostModelStatsProto.cost":
+		return protoreflect.ValueOfUint64(uint64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostModelStatsProto"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardHostModelStatsProto does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_DevshardHostModelStatsProto) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.DevshardHostModelStatsProto", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_DevshardHostModelStatsProto) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardHostModelStatsProto) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_DevshardHostModelStatsProto) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_DevshardHostModelStatsProto) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*DevshardHostModelStatsProto)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Model)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.PromptTokens != 0 {
+			n += 1 + runtime.Sov(uint64(x.PromptTokens))
+		}
+		if x.CompletionTokens != 0 {
+			n += 1 + runtime.Sov(uint64(x.CompletionTokens))
+		}
+		if x.InferenceCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.InferenceCount))
+		}
+		if x.Cost != 0 {
+			n += 1 + runtime.Sov(uint64(x.Cost))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*DevshardHostModelStatsProto)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Cost != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Cost))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.InferenceCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.InferenceCount))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.CompletionTokens != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CompletionTokens))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.PromptTokens != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PromptTokens))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.Model) > 0 {
+			i -= len(x.Model)
+			copy(dAtA[i:], x.Model)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Model)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*DevshardHostModelStatsProto)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DevshardHostModelStatsProto: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DevshardHostModelStatsProto: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Model", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Model = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PromptTokens", wireType)
+				}
+				x.PromptTokens = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PromptTokens |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CompletionTokens", wireType)
+				}
+				x.CompletionTokens = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CompletionTokens |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceCount", wireType)
+				}
+				x.InferenceCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.InferenceCount |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Cost", wireType)
+				}
+				x.Cost = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Cost |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var _ protoreflect.List = (*_DevshardHostStatsProto_7_list)(nil)
+
+type _DevshardHostStatsProto_7_list struct {
+	list *[]*DevshardHostModelStatsProto
+}
+
+func (x *_DevshardHostStatsProto_7_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_DevshardHostStatsProto_7_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_DevshardHostStatsProto_7_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*DevshardHostModelStatsProto)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_DevshardHostStatsProto_7_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*DevshardHostModelStatsProto)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_DevshardHostStatsProto_7_list) AppendMutable() protoreflect.Value {
+	v := new(DevshardHostModelStatsProto)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_DevshardHostStatsProto_7_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_DevshardHostStatsProto_7_list) NewElement() protoreflect.Value {
+	v := new(DevshardHostModelStatsProto)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_DevshardHostStatsProto_7_list) IsValid() bool {
+	return x.list != nil
+}
+
+var (
 	md_DevshardHostStatsProto                       protoreflect.MessageDescriptor
 	fd_DevshardHostStatsProto_slot_id               protoreflect.FieldDescriptor
 	fd_DevshardHostStatsProto_missed                protoreflect.FieldDescriptor
@@ -20,6 +683,7 @@ var (
 	fd_DevshardHostStatsProto_cost                  protoreflect.FieldDescriptor
 	fd_DevshardHostStatsProto_required_validations  protoreflect.FieldDescriptor
 	fd_DevshardHostStatsProto_completed_validations protoreflect.FieldDescriptor
+	fd_DevshardHostStatsProto_model_stats           protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -31,6 +695,7 @@ func init() {
 	fd_DevshardHostStatsProto_cost = md_DevshardHostStatsProto.Fields().ByName("cost")
 	fd_DevshardHostStatsProto_required_validations = md_DevshardHostStatsProto.Fields().ByName("required_validations")
 	fd_DevshardHostStatsProto_completed_validations = md_DevshardHostStatsProto.Fields().ByName("completed_validations")
+	fd_DevshardHostStatsProto_model_stats = md_DevshardHostStatsProto.Fields().ByName("model_stats")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardHostStatsProto)(nil)
@@ -42,7 +707,7 @@ func (x *DevshardHostStatsProto) ProtoReflect() protoreflect.Message {
 }
 
 func (x *DevshardHostStatsProto) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[0]
+	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[1]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -134,6 +799,12 @@ func (x *fastReflection_DevshardHostStatsProto) Range(f func(protoreflect.FieldD
 			return
 		}
 	}
+	if len(x.ModelStats) != 0 {
+		value := protoreflect.ValueOfList(&_DevshardHostStatsProto_7_list{list: &x.ModelStats})
+		if !f(fd_DevshardHostStatsProto_model_stats, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -161,6 +832,8 @@ func (x *fastReflection_DevshardHostStatsProto) Has(fd protoreflect.FieldDescrip
 		return x.RequiredValidations != uint32(0)
 	case "inference.inference.DevshardHostStatsProto.completed_validations":
 		return x.CompletedValidations != uint32(0)
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		return len(x.ModelStats) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostStatsProto"))
@@ -189,6 +862,8 @@ func (x *fastReflection_DevshardHostStatsProto) Clear(fd protoreflect.FieldDescr
 		x.RequiredValidations = uint32(0)
 	case "inference.inference.DevshardHostStatsProto.completed_validations":
 		x.CompletedValidations = uint32(0)
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		x.ModelStats = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostStatsProto"))
@@ -223,6 +898,12 @@ func (x *fastReflection_DevshardHostStatsProto) Get(descriptor protoreflect.Fiel
 	case "inference.inference.DevshardHostStatsProto.completed_validations":
 		value := x.CompletedValidations
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		if len(x.ModelStats) == 0 {
+			return protoreflect.ValueOfList(&_DevshardHostStatsProto_7_list{})
+		}
+		listValue := &_DevshardHostStatsProto_7_list{list: &x.ModelStats}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostStatsProto"))
@@ -255,6 +936,10 @@ func (x *fastReflection_DevshardHostStatsProto) Set(fd protoreflect.FieldDescrip
 		x.RequiredValidations = uint32(value.Uint())
 	case "inference.inference.DevshardHostStatsProto.completed_validations":
 		x.CompletedValidations = uint32(value.Uint())
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		lv := value.List()
+		clv := lv.(*_DevshardHostStatsProto_7_list)
+		x.ModelStats = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostStatsProto"))
@@ -275,6 +960,12 @@ func (x *fastReflection_DevshardHostStatsProto) Set(fd protoreflect.FieldDescrip
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_DevshardHostStatsProto) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		if x.ModelStats == nil {
+			x.ModelStats = []*DevshardHostModelStatsProto{}
+		}
+		value := &_DevshardHostStatsProto_7_list{list: &x.ModelStats}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.DevshardHostStatsProto.slot_id":
 		panic(fmt.Errorf("field slot_id of message inference.inference.DevshardHostStatsProto is not mutable"))
 	case "inference.inference.DevshardHostStatsProto.missed":
@@ -312,6 +1003,9 @@ func (x *fastReflection_DevshardHostStatsProto) NewField(fd protoreflect.FieldDe
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardHostStatsProto.completed_validations":
 		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardHostStatsProto.model_stats":
+		list := []*DevshardHostModelStatsProto{}
+		return protoreflect.ValueOfList(&_DevshardHostStatsProto_7_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostStatsProto"))
@@ -399,6 +1093,12 @@ func (x *fastReflection_DevshardHostStatsProto) ProtoMethods() *protoiface.Metho
 		if x.CompletedValidations != 0 {
 			n += 1 + runtime.Sov(uint64(x.CompletedValidations))
 		}
+		if len(x.ModelStats) > 0 {
+			for _, e := range x.ModelStats {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -427,6 +1127,22 @@ func (x *fastReflection_DevshardHostStatsProto) ProtoMethods() *protoiface.Metho
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.ModelStats) > 0 {
+			for iNdEx := len(x.ModelStats) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.ModelStats[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x3a
+			}
 		}
 		if x.CompletedValidations != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.CompletedValidations))
@@ -621,6 +1337,40 @@ func (x *fastReflection_DevshardHostStatsProto) ProtoMethods() *protoiface.Metho
 						break
 					}
 				}
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelStats", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ModelStats = append(x.ModelStats, &DevshardHostModelStatsProto{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.ModelStats[len(x.ModelStats)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -727,7 +1477,7 @@ func (x *DevshardHostStatsMapProto) ProtoReflect() protoreflect.Message {
 }
 
 func (x *DevshardHostStatsMapProto) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[1]
+	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[2]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1174,7 +1924,7 @@ func (x *DevshardStateSignatureContent) ProtoReflect() protoreflect.Message {
 }
 
 func (x *DevshardStateSignatureContent) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[2]
+	mi := &file_inference_inference_devshard_settlement_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1697,23 +2447,91 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DevshardHostModelStatsProto struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Model            string `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	PromptTokens     uint64 `protobuf:"varint,2,opt,name=prompt_tokens,json=promptTokens,proto3" json:"prompt_tokens,omitempty"`
+	CompletionTokens uint64 `protobuf:"varint,3,opt,name=completion_tokens,json=completionTokens,proto3" json:"completion_tokens,omitempty"`
+	InferenceCount   uint32 `protobuf:"varint,4,opt,name=inference_count,json=inferenceCount,proto3" json:"inference_count,omitempty"`
+	Cost             uint64 `protobuf:"varint,5,opt,name=cost,proto3" json:"cost,omitempty"`
+}
+
+func (x *DevshardHostModelStatsProto) Reset() {
+	*x = DevshardHostModelStatsProto{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[0]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DevshardHostModelStatsProto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DevshardHostModelStatsProto) ProtoMessage() {}
+
+// Deprecated: Use DevshardHostModelStatsProto.ProtoReflect.Descriptor instead.
+func (*DevshardHostModelStatsProto) Descriptor() ([]byte, []int) {
+	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DevshardHostModelStatsProto) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *DevshardHostModelStatsProto) GetPromptTokens() uint64 {
+	if x != nil {
+		return x.PromptTokens
+	}
+	return 0
+}
+
+func (x *DevshardHostModelStatsProto) GetCompletionTokens() uint64 {
+	if x != nil {
+		return x.CompletionTokens
+	}
+	return 0
+}
+
+func (x *DevshardHostModelStatsProto) GetInferenceCount() uint32 {
+	if x != nil {
+		return x.InferenceCount
+	}
+	return 0
+}
+
+func (x *DevshardHostModelStatsProto) GetCost() uint64 {
+	if x != nil {
+		return x.Cost
+	}
+	return 0
+}
+
 type DevshardHostStatsProto struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	SlotId               uint32 `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	Missed               uint32 `protobuf:"varint,2,opt,name=missed,proto3" json:"missed,omitempty"`
-	Invalid              uint32 `protobuf:"varint,3,opt,name=invalid,proto3" json:"invalid,omitempty"`
-	Cost                 uint64 `protobuf:"varint,4,opt,name=cost,proto3" json:"cost,omitempty"`
-	RequiredValidations  uint32 `protobuf:"varint,5,opt,name=required_validations,json=requiredValidations,proto3" json:"required_validations,omitempty"`
-	CompletedValidations uint32 `protobuf:"varint,6,opt,name=completed_validations,json=completedValidations,proto3" json:"completed_validations,omitempty"`
+	SlotId               uint32                         `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Missed               uint32                         `protobuf:"varint,2,opt,name=missed,proto3" json:"missed,omitempty"`
+	Invalid              uint32                         `protobuf:"varint,3,opt,name=invalid,proto3" json:"invalid,omitempty"`
+	Cost                 uint64                         `protobuf:"varint,4,opt,name=cost,proto3" json:"cost,omitempty"`
+	RequiredValidations  uint32                         `protobuf:"varint,5,opt,name=required_validations,json=requiredValidations,proto3" json:"required_validations,omitempty"`
+	CompletedValidations uint32                         `protobuf:"varint,6,opt,name=completed_validations,json=completedValidations,proto3" json:"completed_validations,omitempty"`
+	ModelStats           []*DevshardHostModelStatsProto `protobuf:"bytes,7,rep,name=model_stats,json=modelStats,proto3" json:"model_stats,omitempty"`
 }
 
 func (x *DevshardHostStatsProto) Reset() {
 	*x = DevshardHostStatsProto{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[0]
+		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[1]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1727,7 +2545,7 @@ func (*DevshardHostStatsProto) ProtoMessage() {}
 
 // Deprecated: Use DevshardHostStatsProto.ProtoReflect.Descriptor instead.
 func (*DevshardHostStatsProto) Descriptor() ([]byte, []int) {
-	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{0}
+	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *DevshardHostStatsProto) GetSlotId() uint32 {
@@ -1772,6 +2590,13 @@ func (x *DevshardHostStatsProto) GetCompletedValidations() uint32 {
 	return 0
 }
 
+func (x *DevshardHostStatsProto) GetModelStats() []*DevshardHostModelStatsProto {
+	if x != nil {
+		return x.ModelStats
+	}
+	return nil
+}
+
 type DevshardHostStatsMapProto struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1783,7 +2608,7 @@ type DevshardHostStatsMapProto struct {
 func (x *DevshardHostStatsMapProto) Reset() {
 	*x = DevshardHostStatsMapProto{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[1]
+		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[2]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1797,7 +2622,7 @@ func (*DevshardHostStatsMapProto) ProtoMessage() {}
 
 // Deprecated: Use DevshardHostStatsMapProto.ProtoReflect.Descriptor instead.
 func (*DevshardHostStatsMapProto) Descriptor() ([]byte, []int) {
-	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{1}
+	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *DevshardHostStatsMapProto) GetEntries() []*DevshardHostStatsProto {
@@ -1820,7 +2645,7 @@ type DevshardStateSignatureContent struct {
 func (x *DevshardStateSignatureContent) Reset() {
 	*x = DevshardStateSignatureContent{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[2]
+		mi := &file_inference_inference_devshard_settlement_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1834,7 +2659,7 @@ func (*DevshardStateSignatureContent) ProtoMessage() {}
 
 // Deprecated: Use DevshardStateSignatureContent.ProtoReflect.Descriptor instead.
 func (*DevshardStateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{2}
+	return file_inference_inference_devshard_settlement_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DevshardStateSignatureContent) GetStateRoot() []byte {
@@ -1865,47 +2690,65 @@ var file_inference_inference_devshard_settlement_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x73,
 	0x65, 0x74, 0x74, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12,
 	0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x22, 0xdf, 0x01, 0x0a, 0x16, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72,
-	0x64, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74, 0x61, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x12,
-	0x17, 0x0a, 0x07, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d,
-	0x52, 0x06, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x69, 0x73, 0x73,
-	0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64,
-	0x12, 0x18, 0x0a, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x0d, 0x52, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x12, 0x0a, 0x04, 0x63, 0x6f,
-	0x73, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x12, 0x31,
-	0x0a, 0x14, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13, 0x72, 0x65,
-	0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x73, 0x12, 0x33, 0x0a, 0x15, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x5f, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0d,
-	0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x56, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x22, 0x62, 0x0a, 0x19, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61,
-	0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74, 0x61, 0x74, 0x73, 0x4d, 0x61, 0x70, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x12, 0x45, 0x0a, 0x07, 0x65, 0x6e, 0x74, 0x72, 0x69, 0x65, 0x73, 0x18, 0x01,
-	0x20, 0x03, 0x28, 0x0b, 0x32, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76, 0x73, 0x68,
-	0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74, 0x61, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74,
-	0x6f, 0x52, 0x07, 0x65, 0x6e, 0x74, 0x72, 0x69, 0x65, 0x73, 0x22, 0x71, 0x0a, 0x1d, 0x44, 0x65,
-	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x53, 0x74, 0x61, 0x74, 0x65, 0x53, 0x69, 0x67, 0x6e, 0x61,
-	0x74, 0x75, 0x72, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x73,
-	0x74, 0x61, 0x74, 0x65, 0x5f, 0x72, 0x6f, 0x6f, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52,
-	0x09, 0x73, 0x74, 0x61, 0x74, 0x65, 0x52, 0x6f, 0x6f, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x65, 0x73,
-	0x63, 0x72, 0x6f, 0x77, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65,
-	0x73, 0x63, 0x72, 0x6f, 0x77, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65,
-	0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x42, 0xc5, 0x01,
-	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x17, 0x44, 0x65, 0x76, 0x73, 0x68,
-	0x61, 0x72, 0x64, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x50, 0x72, 0x6f,
-	0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e,
-	0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58,
-	0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x6e, 0x63, 0x65, 0x22, 0xc2, 0x01, 0x0a, 0x1b, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72,
+	0x64, 0x48, 0x6f, 0x73, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x53, 0x74, 0x61, 0x74, 0x73, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x23, 0x0a, 0x0d, 0x70, 0x72,
+	0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0c, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12,
+	0x2b, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x6f,
+	0x6b, 0x65, 0x6e, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x63, 0x6f, 0x6d, 0x70,
+	0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x27, 0x0a, 0x0f,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x18, 0x05, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x22, 0xb2, 0x02, 0x0a, 0x16, 0x44, 0x65,
+	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74, 0x61, 0x74, 0x73, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64, 0x18,
+	0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x64, 0x12, 0x16, 0x0a,
+	0x06, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x6d,
+	0x69, 0x73, 0x73, 0x65, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12,
+	0x12, 0x0a, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x04, 0x63,
+	0x6f, 0x73, 0x74, 0x12, 0x31, 0x0a, 0x14, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x5f,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x13, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x33, 0x0a, 0x15, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65,
+	0x74, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18,
+	0x06, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64,
+	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x51, 0x0a, 0x0b, 0x6d,
+	0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b,
+	0x32, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48,
+	0x6f, 0x73, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x53, 0x74, 0x61, 0x74, 0x73, 0x50, 0x72, 0x6f,
+	0x74, 0x6f, 0x52, 0x0a, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x53, 0x74, 0x61, 0x74, 0x73, 0x22, 0x62,
+	0x0a, 0x19, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74,
+	0x61, 0x74, 0x73, 0x4d, 0x61, 0x70, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x45, 0x0a, 0x07, 0x65,
+	0x6e, 0x74, 0x72, 0x69, 0x65, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2b, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x53,
+	0x74, 0x61, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x52, 0x07, 0x65, 0x6e, 0x74, 0x72, 0x69,
+	0x65, 0x73, 0x22, 0x71, 0x0a, 0x1d, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x53, 0x74,
+	0x61, 0x74, 0x65, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x43, 0x6f, 0x6e, 0x74,
+	0x65, 0x6e, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x73, 0x74, 0x61, 0x74, 0x65, 0x5f, 0x72, 0x6f, 0x6f,
+	0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x73, 0x74, 0x61, 0x74, 0x65, 0x52, 0x6f,
+	0x6f, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x5f, 0x69, 0x64, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x49, 0x64, 0x12,
+	0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05,
+	0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x42, 0xc5, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x42, 0x17, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x53, 0x65, 0x74, 0x74, 0x6c,
+	0x65, 0x6d, 0x65, 0x6e, 0x74, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f,
+	0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65,
+	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1920,19 +2763,21 @@ func file_inference_inference_devshard_settlement_proto_rawDescGZIP() []byte {
 	return file_inference_inference_devshard_settlement_proto_rawDescData
 }
 
-var file_inference_inference_devshard_settlement_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_inference_inference_devshard_settlement_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_inference_inference_devshard_settlement_proto_goTypes = []interface{}{
-	(*DevshardHostStatsProto)(nil),        // 0: inference.inference.DevshardHostStatsProto
-	(*DevshardHostStatsMapProto)(nil),     // 1: inference.inference.DevshardHostStatsMapProto
-	(*DevshardStateSignatureContent)(nil), // 2: inference.inference.DevshardStateSignatureContent
+	(*DevshardHostModelStatsProto)(nil),   // 0: inference.inference.DevshardHostModelStatsProto
+	(*DevshardHostStatsProto)(nil),        // 1: inference.inference.DevshardHostStatsProto
+	(*DevshardHostStatsMapProto)(nil),     // 2: inference.inference.DevshardHostStatsMapProto
+	(*DevshardStateSignatureContent)(nil), // 3: inference.inference.DevshardStateSignatureContent
 }
 var file_inference_inference_devshard_settlement_proto_depIdxs = []int32{
-	0, // 0: inference.inference.DevshardHostStatsMapProto.entries:type_name -> inference.inference.DevshardHostStatsProto
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: inference.inference.DevshardHostStatsProto.model_stats:type_name -> inference.inference.DevshardHostModelStatsProto
+	1, // 1: inference.inference.DevshardHostStatsMapProto.entries:type_name -> inference.inference.DevshardHostStatsProto
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_devshard_settlement_proto_init() }
@@ -1942,7 +2787,7 @@ func file_inference_inference_devshard_settlement_proto_init() {
 	}
 	if !protoimpl.UnsafeEnabled {
 		file_inference_inference_devshard_settlement_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DevshardHostStatsProto); i {
+			switch v := v.(*DevshardHostModelStatsProto); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1954,7 +2799,7 @@ func file_inference_inference_devshard_settlement_proto_init() {
 			}
 		}
 		file_inference_inference_devshard_settlement_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DevshardHostStatsMapProto); i {
+			switch v := v.(*DevshardHostStatsProto); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1966,6 +2811,18 @@ func file_inference_inference_devshard_settlement_proto_init() {
 			}
 		}
 		file_inference_inference_devshard_settlement_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*DevshardHostStatsMapProto); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_devshard_settlement_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*DevshardStateSignatureContent); i {
 			case 0:
 				return &v.state
@@ -1984,7 +2841,7 @@ func file_inference_inference_devshard_settlement_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_devshard_settlement_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

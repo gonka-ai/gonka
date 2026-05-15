@@ -3128,3 +3128,148 @@ func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
 	require.Equal(t, types.StatusInvalidated, st.Inferences[1].Status)
 	require.Equal(t, uint64(0), st.HostStats[1].Cost)
 }
+
+// --- ModelStats tests ---
+
+func TestFinishInference_AccumulatesModelStats(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+
+	// inference 1 -> executor slot 1 (1%3=1), model="llama", input=80, output=40, cost=120
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	state := sm.SnapshotState()
+	hs := state.HostStats[1]
+	require.NotNil(t, hs.ModelStats)
+	ms := hs.ModelStats["llama"]
+	require.NotNil(t, ms, "model stats for 'llama' must exist")
+	require.Equal(t, uint64(80), ms.PromptTokens)
+	require.Equal(t, uint64(40), ms.CompletionTokens)
+	require.Equal(t, uint32(1), ms.InferenceCount)
+	require.Equal(t, uint64(120), ms.Cost)
+	require.Equal(t, ms.Cost, hs.Cost, "model cost must equal host cost for single model")
+}
+
+func TestFinishInference_AccumulatesModelStats_MultipleInferences(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+
+	// inference 1 -> slot 1, inference 4 -> slot 1 (4%3=1); both model="llama"
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	applyStartConfirmFinish(t, sm, user, hosts, 4)
+
+	state := sm.SnapshotState()
+	ms := state.HostStats[1].ModelStats["llama"]
+	require.NotNil(t, ms)
+	require.Equal(t, uint64(160), ms.PromptTokens)   // 80*2
+	require.Equal(t, uint64(80), ms.CompletionTokens) // 40*2
+	require.Equal(t, uint32(2), ms.InferenceCount)
+	require.Equal(t, uint64(240), ms.Cost) // 120*2
+}
+
+func TestInvalidation_ReversesModelStats(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+
+	// inference 1 -> slot 1 (1%5=1); model="llama", input=80, output=40, cost=120
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	state := sm.SnapshotState()
+	require.Equal(t, uint64(120), state.HostStats[1].Cost)
+	require.Equal(t, uint64(120), state.HostStats[1].ModelStats["llama"].Cost)
+
+	// Challenge from slot 0 (valid=false).
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	// Vote invalid from slots 2, 3 -> 3 invalid votes > threshold 2 -> invalidated.
+	var voteTxs []*types.DevshardTx
+	for _, slot := range []uint32{2, 3} {
+		voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: slot, VoteValid: false, EscrowId: "escrow-1"}
+		voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[slot], voteMsg)
+		voteTxs = append(voteTxs, txVote(voteMsg))
+	}
+	nonce = sm.SnapshotState().LatestNonce + 1
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, voteTxs)
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	state = sm.SnapshotState()
+	require.Equal(t, types.StatusInvalidated, state.Inferences[1].Status)
+	require.Equal(t, uint64(0), state.HostStats[1].Cost)
+	ms := state.HostStats[1].ModelStats["llama"]
+	require.NotNil(t, ms)
+	require.Equal(t, uint64(0), ms.Cost)
+	require.Equal(t, uint64(0), ms.PromptTokens)
+	require.Equal(t, uint64(0), ms.CompletionTokens)
+	require.Equal(t, uint32(0), ms.InferenceCount)
+}
+
+func TestSnapshotDeepCopy_ModelStatsIsolation(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1) // slot 1, cost=120
+
+	// Take snapshot.
+	snap := sm.SnapshotState()
+	require.Equal(t, uint64(120), snap.HostStats[1].ModelStats["llama"].Cost)
+
+	// Apply another inference to the same slot (inference 4 -> slot 1).
+	applyStartConfirmFinish(t, sm, user, hosts, 4)
+
+	// Snapshot values must not have changed.
+	require.Equal(t, uint64(120), snap.HostStats[1].ModelStats["llama"].Cost,
+		"snapshot model stats must be isolated from live state mutations")
+	require.Equal(t, uint32(1), snap.HostStats[1].ModelStats["llama"].InferenceCount)
+
+	// Live state has accumulated.
+	live := sm.SnapshotState()
+	require.Equal(t, uint64(240), live.HostStats[1].ModelStats["llama"].Cost)
+	require.Equal(t, uint32(2), live.HostStats[1].ModelStats["llama"].InferenceCount)
+}
+
+func TestRollback_RestoresModelStats(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1) // slot 1, cost=120
+
+	stateBefore := sm.SnapshotState()
+	require.Equal(t, uint64(120), stateBefore.HostStats[1].ModelStats["llama"].Cost)
+
+	// Apply a diff with a bad post-state-root to trigger rollback.
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", nonce,
+		[]*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: 4, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 2000,
+		})},
+		make([]byte, 32), // all-zero root won't match computed root -> rollback
+	)
+	_, err := sm.ApplyDiff(diff)
+	require.Error(t, err)
+
+	// Model stats must be restored to pre-diff values.
+	stateAfter := sm.SnapshotState()
+	require.Equal(t, uint64(120), stateAfter.HostStats[1].ModelStats["llama"].Cost,
+		"model stats must be restored after rollback")
+	require.Equal(t, uint32(1), stateAfter.HostStats[1].ModelStats["llama"].InferenceCount)
+	require.Equal(t, stateBefore.LatestNonce, stateAfter.LatestNonce,
+		"nonce must be restored after rollback")
+}

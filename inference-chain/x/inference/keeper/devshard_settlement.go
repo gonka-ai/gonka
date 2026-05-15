@@ -88,6 +88,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 
 	// Verify state_root = sha256(host_stats_hash || fees_be || rest_hash || version_hash || 0x02)
+	// Per-model stats are embedded inside host_stats and verified through host_stats_hash.
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, msg.Fees)
 	versionHash := sha256.Sum256([]byte(msg.Version))
@@ -172,6 +173,28 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		if uint64(hs.Invalid) > completed {
 			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
 		}
+
+		// Validate model stats canonical form and cost consistency.
+		seenModels := make(map[string]bool, len(hs.ModelStats))
+		var modelCostSum uint64
+		for _, ms := range hs.ModelStats {
+			if ms.Model == "" {
+				return fmt.Errorf("slot %d has model_stats entry with empty model name", hs.SlotId)
+			}
+			if seenModels[ms.Model] {
+				return fmt.Errorf("slot %d has duplicate model_stats entry for %q", hs.SlotId, ms.Model)
+			}
+			seenModels[ms.Model] = true
+			next, c := bits.Add64(modelCostSum, ms.Cost, 0)
+			if c != 0 {
+				return fmt.Errorf("slot %d model cost sum overflow", hs.SlotId)
+			}
+			modelCostSum = next
+		}
+		if modelCostSum != hs.Cost {
+			return fmt.Errorf("slot %d model_stats cost sum %d != host cost %d", hs.SlotId, modelCostSum, hs.Cost)
+		}
+
 		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
 		if carry != 0 {
 			return fmt.Errorf("total cost overflow")
@@ -200,10 +223,11 @@ func deterministicMarshal(msg interface {
 
 // ComputeDevshardHostStatsHash recomputes the host stats hash from settlement host stats.
 // Uses the same proto deterministic marshal as the devshard module.
+// Model stats embedded in each host entry are included in the hash.
 func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats) ([]byte, error) {
 	entries := make([]*types.DevshardHostStatsProto, len(hostStats))
 	for i, hs := range hostStats {
-		entries[i] = &types.DevshardHostStatsProto{
+		entry := &types.DevshardHostStatsProto{
 			SlotId:               hs.SlotId,
 			Missed:               hs.Missed,
 			Invalid:              hs.Invalid,
@@ -211,6 +235,23 @@ func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats
 			RequiredValidations:  hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
 		}
+		if len(hs.ModelStats) > 0 {
+			sorted := make([]*types.DevshardHostModelStats, len(hs.ModelStats))
+			copy(sorted, hs.ModelStats)
+			slices.SortStableFunc(sorted, func(a, b *types.DevshardHostModelStats) int {
+				return cmp.Compare(a.Model, b.Model)
+			})
+			for _, ms := range sorted {
+				entry.ModelStats = append(entry.ModelStats, &types.DevshardHostModelStatsProto{
+					Model:            ms.Model,
+					PromptTokens:     ms.PromptTokens,
+					CompletionTokens: ms.CompletionTokens,
+					InferenceCount:   ms.InferenceCount,
+					Cost:             ms.Cost,
+				})
+			}
+		}
+		entries[i] = entry
 	}
 	slices.SortStableFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
 		return cmp.Compare(a.SlotId, b.SlotId)

@@ -442,10 +442,11 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	s.Group = make([]types.SlotAssignment, len(src.Group))
 	copy(s.Group, src.Group)
 
-	// Deep copy HostStats.
+	// Deep copy HostStats (including nested ModelStats map).
 	s.HostStats = make(map[uint32]*types.HostStats, len(src.HostStats))
 	for k, v := range src.HostStats {
 		cp := *v
+		cp.ModelStats = cloneModelStats(v.ModelStats)
 		s.HostStats[k] = &cp
 	}
 
@@ -461,6 +462,18 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	s.Inferences = copyInferences(src.Inferences)
 
 	return &s
+}
+
+func cloneModelStats(src map[string]*types.HostModelStats) map[string]*types.HostModelStats {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]*types.HostModelStats, len(src))
+	for k, v := range src {
+		cp := *v
+		dst[k] = &cp
+	}
+	return dst
 }
 
 // mutableSnapshot holds the mutable fields of EscrowState for rollback.
@@ -482,6 +495,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 	hsCopy := make(map[uint32]*types.HostStats, len(sm.state.HostStats))
 	for k, v := range sm.state.HostStats {
 		cp := *v
+		cp.ModelStats = cloneModelStats(v.ModelStats)
 		hsCopy[k] = &cp
 	}
 
@@ -699,7 +713,20 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	rec.ActualCost = actualCost
 
 	// Update host stats.
-	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
+	hs := sm.state.HostStats[rec.ExecutorSlot]
+	hs.Cost += actualCost
+	if hs.ModelStats == nil {
+		hs.ModelStats = make(map[string]*types.HostModelStats)
+	}
+	ms := hs.ModelStats[rec.Model]
+	if ms == nil {
+		ms = &types.HostModelStats{}
+		hs.ModelStats[rec.Model] = ms
+	}
+	ms.PromptTokens += msg.InputTokens
+	ms.CompletionTokens += msg.OutputTokens
+	ms.InferenceCount++
+	ms.Cost += actualCost
 
 	return nil
 }
@@ -830,12 +857,32 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	if rec.VotesInvalid > threshold {
 		rec.Status = types.StatusInvalidated
 		// Refund cost.
-		sm.state.HostStats[rec.ExecutorSlot].Invalid++
 		hs := sm.state.HostStats[rec.ExecutorSlot]
+		hs.Invalid++
 		if hs.Cost < rec.ActualCost {
 			hs.Cost = 0
 		} else {
 			hs.Cost -= rec.ActualCost
+		}
+		if ms := hs.ModelStats[rec.Model]; ms != nil {
+			if ms.Cost < rec.ActualCost {
+				ms.Cost = 0
+			} else {
+				ms.Cost -= rec.ActualCost
+			}
+			if ms.PromptTokens < rec.InputTokens {
+				ms.PromptTokens = 0
+			} else {
+				ms.PromptTokens -= rec.InputTokens
+			}
+			if ms.CompletionTokens < rec.OutputTokens {
+				ms.CompletionTokens = 0
+			} else {
+				ms.CompletionTokens -= rec.OutputTokens
+			}
+			if ms.InferenceCount > 0 {
+				ms.InferenceCount--
+			}
 		}
 		sm.state.Balance += rec.ActualCost
 	} else if rec.VotesValid > threshold {

@@ -1,13 +1,11 @@
 package keeper_test
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"slices"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -64,21 +62,8 @@ func buildSettlementTestDataWithNonce(
 ) *types.MsgSettleDevshardEscrow {
 	t.Helper()
 
-	entries := make([]*types.DevshardHostStatsProto, len(hostStats))
-	for i, hs := range hostStats {
-		entries[i] = &types.DevshardHostStatsProto{
-			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
-			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
-		}
-	}
-	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
-		return cmp.Compare(a.SlotId, b.SlotId)
-	})
-	mapProto := &types.DevshardHostStatsMapProto{Entries: entries}
-	hostStatsData, err := mapProto.XXX_Marshal(nil, true)
+	hostStatsHash, err := keeper.ComputeDevshardHostStatsHash(hostStats)
 	require.NoError(t, err)
-	hostStatsHash := sha256.Sum256(hostStatsData)
 
 	restHash := sha256.Sum256([]byte("rest_data"))
 	feesBytes := make([]byte, 8)
@@ -86,7 +71,7 @@ func buildSettlementTestDataWithNonce(
 	versionHash := sha256.Sum256([]byte(settlementVersion))
 
 	rootInput := make([]byte, 0, 105)
-	rootInput = append(rootInput, hostStatsHash[:]...)
+	rootInput = append(rootInput, hostStatsHash...)
 	rootInput = append(rootInput, feesBytes...)
 	rootInput = append(rootInput, restHash[:]...)
 	rootInput = append(rootInput, versionHash[:]...)
@@ -659,4 +644,121 @@ func TestSignatureFormatConversion(t *testing.T) {
 	s := new(big.Int).SetBytes(goEthSig[32:64])
 	require.True(t, r.Sign() > 0)
 	require.True(t, s.Sign() > 0)
+}
+
+func TestVerifyDevshardSettlement_WithModelStats(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+
+	hostStats := make([]*types.DevshardSettlementHostStats, keeper.DevshardGroupSize)
+	for i := 0; i < keeper.DevshardGroupSize; i++ {
+		hostStats[i] = &types.DevshardSettlementHostStats{
+			SlotId: uint32(i),
+			Cost:   100_000_000,
+			ModelStats: []*types.DevshardHostModelStats{
+				{Model: "gpt-4", PromptTokens: 100, CompletionTokens: 200, InferenceCount: 3, Cost: 60_000_000},
+				{Model: "llama-3", PromptTokens: 50, CompletionTokens: 100, InferenceCount: 2, Cost: 40_000_000},
+			},
+		}
+	}
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
+	require.NoError(t, err)
+}
+
+func TestVerifyDevshardSettlement_ModelStatsCostMismatch(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+
+	hostStats := make([]*types.DevshardSettlementHostStats, keeper.DevshardGroupSize)
+	for i := 0; i < keeper.DevshardGroupSize; i++ {
+		hostStats[i] = &types.DevshardSettlementHostStats{
+			SlotId: uint32(i),
+			Cost:   100_000_000,
+			ModelStats: []*types.DevshardHostModelStats{
+				{Model: "gpt-4", PromptTokens: 100, CompletionTokens: 200, InferenceCount: 3, Cost: 50_000_000},
+			},
+		}
+	}
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "model_stats cost sum")
+}
+
+func TestVerifyDevshardSettlement_EmptyModelName(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+
+	hostStats := make([]*types.DevshardSettlementHostStats, keeper.DevshardGroupSize)
+	for i := 0; i < keeper.DevshardGroupSize; i++ {
+		hostStats[i] = &types.DevshardSettlementHostStats{
+			SlotId: uint32(i),
+			Cost:   100_000_000,
+			ModelStats: []*types.DevshardHostModelStats{
+				{Model: "", PromptTokens: 100, CompletionTokens: 200, InferenceCount: 3, Cost: 100_000_000},
+			},
+		}
+	}
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty model name")
+}
+
+func TestVerifyDevshardSettlement_DuplicateModelName(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+
+	hostStats := make([]*types.DevshardSettlementHostStats, keeper.DevshardGroupSize)
+	for i := 0; i < keeper.DevshardGroupSize; i++ {
+		hostStats[i] = &types.DevshardSettlementHostStats{
+			SlotId: uint32(i),
+			Cost:   100_000_000,
+			ModelStats: []*types.DevshardHostModelStats{
+				{Model: "gpt-4", PromptTokens: 50, CompletionTokens: 100, InferenceCount: 2, Cost: 50_000_000},
+				{Model: "gpt-4", PromptTokens: 50, CompletionTokens: 100, InferenceCount: 1, Cost: 50_000_000},
+			},
+		}
+	}
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duplicate model_stats")
+}
+
+func TestVerifyDevshardSettlement_CostWithoutModelStats(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+
+	// Cost > 0 but no model stats: sum(empty) = 0 != Cost
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "model_stats cost sum")
 }

@@ -116,10 +116,14 @@ func NewServer(
 	//TODO: Remove later - response format used by old dashboard
 	g.GET("governance/models-legacy", s.getGovernanceModelsLegacy)
 	g.GET("stats/models", s.getStatsModels)
+	g.GET("stats/devshard/models", s.getStatsDevshardModels)
 	g.GET("stats/developers/:developer/inferences", s.getStatsDeveloperInferences)
 	g.GET("stats/developers/:developer/summary/epochs", s.getStatsDeveloperSummaryEpochs)
+	g.GET("stats/devshard/developers/:developer/summary/epochs", s.getStatsDevshardDeveloperSummaryEpochs)
 	g.GET("stats/summary/epochs", s.getStatsSummaryEpochs)
 	g.GET("stats/summary/time", s.getStatsSummaryTime)
+	g.GET("stats/devshard/summary/epochs", s.getStatsDevshardSummaryEpochs)
+	g.GET("stats/devshard/summary/time", s.getStatsDevshardSummaryTime)
 	g.GET("stats/debug/developers", s.getStatsDebugDevelopers)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 

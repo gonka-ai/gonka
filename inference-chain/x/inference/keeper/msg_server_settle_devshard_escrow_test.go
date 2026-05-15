@@ -642,3 +642,86 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create devshard escrows")
 }
+
+func TestSettleDevshardEscrow_WithModelStatsEventEmission(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	for _, addr := range slots {
+		setParticipantForDevshardTest(t, k, ctx, addr)
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 6))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xAA
+	escrow := types.DevshardEscrow{
+		Id:         1,
+		Creator:    creator.String(),
+		Amount:     7_000_000_000,
+		Slots:      slots,
+		EpochIndex: 5,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	costPerSlot := uint64(100_000_000)
+	hostStats := make([]*types.DevshardSettlementHostStats, keeper.DevshardGroupSize)
+	for i := 0; i < keeper.DevshardGroupSize; i++ {
+		hostStats[i] = &types.DevshardSettlementHostStats{
+			SlotId: uint32(i),
+			Cost:   costPerSlot,
+			ModelStats: []*types.DevshardHostModelStats{
+				{Model: "gpt-4", PromptTokens: 50, CompletionTokens: 150, InferenceCount: 2, Cost: costPerSlot},
+			},
+		}
+	}
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Eq("devshard_escrow_payment")).
+		Return(nil).
+		Times(keeper.DevshardGroupSize)
+
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+		Return(nil)
+
+	ctx = ctx.WithEventManager(sdk.NewEventManager())
+
+	resp, err := ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	events := ctx.EventManager().Events()
+	var settledEvent *sdk.Event
+	for _, e := range events {
+		if e.Type == "devshard_escrow_settled" {
+			evt := e
+			settledEvent = &evt
+			break
+		}
+	}
+	require.NotNil(t, settledEvent, "devshard_escrow_settled event not found")
+
+	attrs := make(map[string]string)
+	for _, attr := range settledEvent.Attributes {
+		attrs[string(attr.Key)] = string(attr.Value)
+	}
+
+	expectedPrompt := fmt.Sprint(50 * keeper.DevshardGroupSize)
+	expectedCompletion := fmt.Sprint(150 * keeper.DevshardGroupSize)
+	expectedTotal := fmt.Sprint(200 * keeper.DevshardGroupSize)
+	expectedInferences := fmt.Sprint(2 * keeper.DevshardGroupSize)
+
+	require.Equal(t, expectedPrompt, attrs["prompt_token_count"])
+	require.Equal(t, expectedCompletion, attrs["completion_token_count"])
+	require.Equal(t, expectedTotal, attrs["total_token_count"])
+	require.Equal(t, expectedInferences, attrs["inference_count"])
+	require.Equal(t, "5", attrs["epoch_index"])
+	require.Equal(t, creator.String(), attrs["creator"])
+	require.Contains(t, attrs["model_stats"], "gpt-4")
+	require.NotEmpty(t, attrs["settlement_timestamp_ms"])
+}

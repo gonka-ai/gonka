@@ -29,13 +29,22 @@ type SettlementJSON struct {
 	Signatures []SlotSignatureJSON `json:"signatures"`
 }
 
+type HostModelStatsJSON struct {
+	Model            string `json:"model"`
+	PromptTokens     uint64 `json:"prompt_tokens"`
+	CompletionTokens uint64 `json:"completion_tokens"`
+	InferenceCount   uint32 `json:"inference_count"`
+	Cost             uint64 `json:"cost"`
+}
+
 type HostStatsJSON struct {
-	SlotID               uint32 `json:"slot_id"`
-	Missed               uint32 `json:"missed"`
-	Invalid              uint32 `json:"invalid"`
-	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	SlotID               uint32               `json:"slot_id"`
+	Missed               uint32               `json:"missed"`
+	Invalid              uint32               `json:"invalid"`
+	Cost                 uint64               `json:"cost"`
+	RequiredValidations  uint32               `json:"required_validations"`
+	CompletedValidations uint32               `json:"completed_validations"`
+	ModelStats           []HostModelStatsJSON `json:"model_stats,omitempty"`
 }
 
 type SlotSignatureJSON struct {
@@ -159,13 +168,23 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	}
 	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
 
-	stats := make([]HostStatsJSON, 0, len(p.HostStats))
+	hostStats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
-		stats = append(stats, HostStatsJSON{
+		hsj := HostStatsJSON{
 			SlotID: slot, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
-		})
+		}
+		for model, ms := range hs.ModelStats {
+			hsj.ModelStats = append(hsj.ModelStats, HostModelStatsJSON{
+				Model:            model,
+				PromptTokens:     ms.PromptTokens,
+				CompletionTokens: ms.CompletionTokens,
+				InferenceCount:   ms.InferenceCount,
+				Cost:             ms.Cost,
+			})
+		}
+		hostStats = append(hostStats, hsj)
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))
@@ -174,8 +193,13 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(SettlementJSON{
-		EscrowID: p.EscrowID, Version: p.Version, StateRoot: base64.StdEncoding.EncodeToString(root),
-		Nonce: p.Nonce, Fees: p.Fees, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
-		HostStats: stats, Signatures: sigs,
+		EscrowID:   p.EscrowID,
+		Version:    p.Version,
+		StateRoot:  base64.StdEncoding.EncodeToString(root),
+		Nonce:      p.Nonce,
+		Fees:       p.Fees,
+		RestHash:   base64.StdEncoding.EncodeToString(p.RestHash),
+		HostStats:  hostStats,
+		Signatures: sigs,
 	}, "", "  ")
 }

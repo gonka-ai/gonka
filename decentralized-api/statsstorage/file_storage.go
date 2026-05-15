@@ -23,6 +23,154 @@ func NewFileStorage(baseDir string) *FileStorage {
 	return &FileStorage{baseDir: baseDir}
 }
 
+func (f *FileStorage) UpsertDevshardEscrow(ctx context.Context, totals DevshardEscrow, modelStats []DevshardModelAggregate) error {
+	_ = ctx
+	if totals.EscrowID == "" {
+		return fmt.Errorf("escrow_id is required")
+	}
+	rec := devshardFileRecord{
+		Escrow:     totals,
+		ModelStats: modelStats,
+	}
+	return f.writeDevshardRecord(rec)
+}
+
+func (f *FileStorage) GetMaxInferenceEpoch(ctx context.Context) (uint64, error) {
+	records, err := f.readAllRecords(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return findMaxEpoch(records), nil
+}
+
+func (f *FileStorage) GetMaxDevshardEpoch(ctx context.Context) (uint64, error) {
+	_ = ctx
+	records, err := f.readAllDevshardRecords()
+	if err != nil {
+		return 0, err
+	}
+	return findMaxDevshardEpoch(records), nil
+}
+
+func (f *FileStorage) GetDevshardSummaryByDeveloperEpochsBackwards(ctx context.Context, developer string, epochsN int32) (Summary, error) {
+	if epochsN <= 0 {
+		return Summary{}, nil
+	}
+	maxEpoch, err := f.GetMaxDevshardEpoch(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
+	minEpochExclusive := windowMinEpochExclusive(maxEpoch, epochsN)
+	return f.GetDevshardSummaryByDeveloperEpochRange(ctx, developer, minEpochExclusive, maxEpoch)
+}
+
+func (f *FileStorage) GetDevshardSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error) {
+	if epochsN <= 0 {
+		return Summary{}, nil
+	}
+	maxEpoch, err := f.GetMaxDevshardEpoch(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
+	minEpochExclusive := windowMinEpochExclusive(maxEpoch, epochsN)
+	return f.GetDevshardSummaryByEpochRange(ctx, minEpochExclusive, maxEpoch)
+}
+
+func (f *FileStorage) GetDevshardSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	_ = ctx
+	records, err := f.readAllDevshardRecords()
+	if err != nil {
+		return Summary{}, err
+	}
+	summary := Summary{}
+	for _, rec := range records {
+		if rec.Escrow.Participant != developer {
+			continue
+		}
+		if rec.Escrow.EpochID > minEpochExclusive && rec.Escrow.EpochID <= maxEpochInclusive {
+			summary.AiTokens += int64(rec.Escrow.TotalTokenCount)
+			summary.Inferences += rec.Escrow.TotalInferences
+			summary.ActualInferencesCost += rec.Escrow.TotalCostInCoins
+		}
+	}
+	return summary, nil
+}
+
+func (f *FileStorage) GetDevshardSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	_ = ctx
+	records, err := f.readAllDevshardRecords()
+	if err != nil {
+		return Summary{}, err
+	}
+	summary := Summary{}
+	for _, rec := range records {
+		if rec.Escrow.EpochID > minEpochExclusive && rec.Escrow.EpochID <= maxEpochInclusive {
+			summary.AiTokens += int64(rec.Escrow.TotalTokenCount)
+			summary.Inferences += rec.Escrow.TotalInferences
+			summary.ActualInferencesCost += rec.Escrow.TotalCostInCoins
+		}
+	}
+	return summary, nil
+}
+
+func (f *FileStorage) GetDevshardSummaryByTimePeriod(ctx context.Context, timeFrom, timeTo UnixMillis) (Summary, error) {
+	_ = ctx
+	records, err := f.readAllDevshardRecords()
+	if err != nil {
+		return Summary{}, err
+	}
+	summary := Summary{}
+	for _, rec := range records {
+		if rec.Escrow.SettlementTimestamp >= timeFrom && rec.Escrow.SettlementTimestamp <= timeTo {
+			summary.AiTokens += int64(rec.Escrow.TotalTokenCount)
+			summary.Inferences += rec.Escrow.TotalInferences
+			summary.ActualInferencesCost += rec.Escrow.TotalCostInCoins
+		}
+	}
+	return summary, nil
+}
+
+func (f *FileStorage) GetDevshardModelStatsByTime(ctx context.Context, timeFrom, timeTo UnixMillis) ([]ModelSummary, error) {
+	_ = ctx
+	records, err := f.readAllDevshardRecords()
+	if err != nil {
+		return nil, err
+	}
+	type modelAgg struct {
+		tokens int64
+		count  int32
+	}
+	aggByModel := make(map[string]modelAgg)
+	for _, rec := range records {
+		if rec.Escrow.SettlementTimestamp < timeFrom || rec.Escrow.SettlementTimestamp > timeTo {
+			continue
+		}
+		for _, modelStat := range rec.ModelStats {
+			agg := aggByModel[modelStat.Model]
+			agg.tokens += int64(modelStat.TotalTokenCount)
+			agg.count += modelStat.Inferences
+			aggByModel[modelStat.Model] = agg
+		}
+	}
+
+	models := make([]string, 0, len(aggByModel))
+	for model := range aggByModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+
+	result := make([]ModelSummary, 0, len(models))
+	for _, model := range models {
+		agg := aggByModel[model]
+		result = append(result, ModelSummary{
+			Model:      model,
+			AiTokens:   agg.tokens,
+			Inferences: agg.count,
+		})
+	}
+	return result, nil
+}
+
 func (f *FileStorage) UpsertInference(ctx context.Context, rec InferenceRecord) error {
 	_ = ctx
 	rec = normalizeRecord(rec)
@@ -100,21 +248,37 @@ func (f *FileStorage) GetSummaryByDeveloperEpochsBackwards(ctx context.Context, 
 	if epochsN <= 0 {
 		return Summary{}, nil
 	}
-	records, err := f.readAllRecords(ctx)
+	maxEpoch, err := f.GetMaxInferenceEpoch(ctx)
 	if err != nil {
 		return Summary{}, err
 	}
-	maxEpoch := findMaxEpoch(records)
-	minEpochExclusive := maxEpoch - uint64(epochsN)
-	if maxEpoch < uint64(epochsN) {
-		minEpochExclusive = 0
+	minEpochExclusive := windowMinEpochExclusive(maxEpoch, epochsN)
+	return f.GetSummaryByDeveloperEpochRange(ctx, developer, minEpochExclusive, maxEpoch)
+}
+
+func (f *FileStorage) GetSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error) {
+	if epochsN <= 0 {
+		return Summary{}, nil
+	}
+	maxEpoch, err := f.GetMaxInferenceEpoch(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
+	minEpochExclusive := windowMinEpochExclusive(maxEpoch, epochsN)
+	return f.GetSummaryByEpochRange(ctx, minEpochExclusive, maxEpoch)
+}
+
+func (f *FileStorage) GetSummaryByDeveloperEpochRange(ctx context.Context, developer string, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
+	records, err := f.readAllRecords(ctx)
+	if err != nil {
+		return Summary{}, err
 	}
 	summary := Summary{}
 	for _, rec := range records {
 		if rec.RequestedBy != developer {
 			continue
 		}
-		if rec.EpochID > minEpochExclusive && rec.EpochID <= maxEpoch {
+		if rec.EpochID > minEpochExclusive && rec.EpochID <= maxEpochInclusive {
 			summary.AiTokens += int64(rec.TotalTokenCount)
 			summary.Inferences++
 			summary.ActualInferencesCost += rec.ActualCostInCoins
@@ -123,22 +287,14 @@ func (f *FileStorage) GetSummaryByDeveloperEpochsBackwards(ctx context.Context, 
 	return summary, nil
 }
 
-func (f *FileStorage) GetSummaryByEpochsBackwards(ctx context.Context, epochsN int32) (Summary, error) {
-	if epochsN <= 0 {
-		return Summary{}, nil
-	}
+func (f *FileStorage) GetSummaryByEpochRange(ctx context.Context, minEpochExclusive, maxEpochInclusive uint64) (Summary, error) {
 	records, err := f.readAllRecords(ctx)
 	if err != nil {
 		return Summary{}, err
 	}
-	maxEpoch := findMaxEpoch(records)
-	minEpochExclusive := maxEpoch - uint64(epochsN)
-	if maxEpoch < uint64(epochsN) {
-		minEpochExclusive = 0
-	}
 	summary := Summary{}
 	for _, rec := range records {
-		if rec.EpochID > minEpochExclusive && rec.EpochID <= maxEpoch {
+		if rec.EpochID > minEpochExclusive && rec.EpochID <= maxEpochInclusive {
 			summary.AiTokens += int64(rec.TotalTokenCount)
 			summary.Inferences++
 			summary.ActualInferencesCost += rec.ActualCostInCoins
@@ -266,6 +422,9 @@ func (f *FileStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMi
 	}
 
 	for _, entry := range entries {
+		if entry.Name() == "devshard" && entry.IsDir() {
+			continue // handled separately below
+		}
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
@@ -286,6 +445,11 @@ func (f *FileStorage) PruneOlderThan(ctx context.Context, cutoffTimestamp UnixMi
 				return fmt.Errorf("remove pruned stats file %s: %w", path, err)
 			}
 		}
+	}
+
+	// Prune devshard files using settlement_timestamp.
+	if err := f.pruneDevshardOlderThan(cutoffTimestamp); err != nil {
+		return err
 	}
 	return nil
 }
@@ -354,4 +518,124 @@ func findMaxEpoch(records []InferenceRecord) uint64 {
 	return maxEpoch
 }
 
+func findMaxDevshardEpoch(records []devshardFileRecord) uint64 {
+	var maxEpoch uint64
+	for _, rec := range records {
+		if rec.Escrow.EpochID > maxEpoch {
+			maxEpoch = rec.Escrow.EpochID
+		}
+	}
+	return maxEpoch
+}
+
+func windowMinEpochExclusive(maxEpoch uint64, epochsN int32) uint64 {
+	if maxEpoch < uint64(epochsN) {
+		return 0
+	}
+	return maxEpoch - uint64(epochsN)
+}
+
 var _ StatsStorage = (*FileStorage)(nil)
+
+// --- Devshard file storage helpers ---
+
+// devshardFileRecord is the on-disk envelope for one devshard escrow settlement.
+// Stored as {baseDir}/devshard/{hex(escrowID_epochID)}.json.
+type devshardFileRecord struct {
+	Escrow     DevshardEscrow           `json:"escrow"`
+	ModelStats []DevshardModelAggregate `json:"model_stats"`
+}
+
+func (f *FileStorage) devshardDir() string {
+	return filepath.Join(f.baseDir, "devshard")
+}
+
+func (f *FileStorage) devshardRecordPath(escrowID string, epochID uint64) string {
+	key := fmt.Sprintf("%s_%d", escrowID, epochID)
+	filename := hex.EncodeToString([]byte(key)) + ".json"
+	return filepath.Join(f.devshardDir(), filename)
+}
+
+func (f *FileStorage) writeDevshardRecord(rec devshardFileRecord) error {
+	dir := f.devshardDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create devshard stats dir: %w", err)
+	}
+	targetPath := f.devshardRecordPath(rec.Escrow.EscrowID, rec.Escrow.EpochID)
+	tempPath := targetPath + ".tmp"
+
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshal devshard record: %w", err)
+	}
+	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
+		return fmt.Errorf("write devshard temp file: %w", err)
+	}
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("rename devshard temp file: %w", err)
+	}
+	return nil
+}
+
+func (f *FileStorage) readAllDevshardRecords() ([]devshardFileRecord, error) {
+	dir := f.devshardDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read devshard stats dir: %w", err)
+	}
+
+	records := make([]devshardFileRecord, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read devshard file %s: %w", path, err)
+		}
+		var rec devshardFileRecord
+		if err := json.Unmarshal(data, &rec); err != nil {
+			logging.Warn("Skipping malformed devshard record file", types.System, "path", path, "error", err)
+			continue
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+func (f *FileStorage) pruneDevshardOlderThan(cutoff UnixMillis) error {
+	dir := f.devshardDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read devshard dir for prune: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read devshard file for prune %s: %w", path, err)
+		}
+		var rec devshardFileRecord
+		if err := json.Unmarshal(data, &rec); err != nil {
+			logging.Warn("Skipping malformed devshard record in prune", types.System, "path", path, "error", err)
+			continue
+		}
+		if rec.Escrow.SettlementTimestamp < cutoff {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove pruned devshard file %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}

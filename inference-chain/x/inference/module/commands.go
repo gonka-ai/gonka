@@ -116,13 +116,22 @@ type settlementFileJSON struct {
 	Signatures []slotSignatureJSON       `json:"signatures"`
 }
 
+type hostModelStatsJSON struct {
+	Model            string `json:"model"`
+	PromptTokens     uint64 `json:"prompt_tokens"`
+	CompletionTokens uint64 `json:"completion_tokens"`
+	InferenceCount   uint32 `json:"inference_count"`
+	Cost             uint64 `json:"cost"`
+}
+
 type settlementHostStatsJSON struct {
-	SlotID               uint32 `json:"slot_id"`
-	Missed               uint32 `json:"missed"`
-	Invalid              uint32 `json:"invalid"`
-	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	SlotID               uint32               `json:"slot_id"`
+	Missed               uint32               `json:"missed"`
+	Invalid              uint32               `json:"invalid"`
+	Cost                 uint64               `json:"cost"`
+	RequiredValidations  uint32               `json:"required_validations"`
+	CompletedValidations uint32               `json:"completed_validations"`
+	ModelStats           []hostModelStatsJSON `json:"model_stats,omitempty"`
 }
 
 type slotSignatureJSON struct {
@@ -171,7 +180,7 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 
 			hostStats := make([]*types.DevshardSettlementHostStats, len(sf.HostStats))
 			for i, hs := range sf.HostStats {
-				hostStats[i] = &types.DevshardSettlementHostStats{
+				entry := &types.DevshardSettlementHostStats{
 					SlotId:               hs.SlotID,
 					Missed:               hs.Missed,
 					Invalid:              hs.Invalid,
@@ -179,6 +188,16 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 					RequiredValidations:  hs.RequiredValidations,
 					CompletedValidations: hs.CompletedValidations,
 				}
+				for _, ms := range hs.ModelStats {
+					entry.ModelStats = append(entry.ModelStats, &types.DevshardHostModelStats{
+						Model:            ms.Model,
+						PromptTokens:     ms.PromptTokens,
+						CompletionTokens: ms.CompletionTokens,
+						InferenceCount:   ms.InferenceCount,
+						Cost:             ms.Cost,
+					})
+				}
+				hostStats[i] = entry
 			}
 
 			sigs := make([]*types.DevshardSlotSignature, len(sf.Signatures))
