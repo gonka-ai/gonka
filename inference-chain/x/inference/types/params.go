@@ -100,6 +100,14 @@ const (
 	DefaultDevshardGroupSize          uint32 = 16
 	DefaultDevshardTokenPrice         uint64 = 1
 	DefaultDevshardMaxNonce           uint32 = 20_000
+	// Session-config defaults must mirror devshard/types/config.go
+	// (DefaultSessionConfig) so that zero-value params fall back to the same
+	// canonical values shared by user and host.
+	DefaultDevshardRefusalTimeout    int64  = 60
+	DefaultDevshardExecutionTimeout  int64  = 1200
+	DefaultDevshardValidationRate    uint32 = 5000
+	DefaultDevshardCreateDevshardFee uint64 = 10_000
+	DefaultDevshardFeePerNonce       uint64 = 1_000
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
@@ -328,6 +336,11 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultDevshardTokenPrice,
 		MaxNonce:                DefaultDevshardMaxNonce,
+		RefusalTimeout:          DefaultDevshardRefusalTimeout,
+		ExecutionTimeout:        DefaultDevshardExecutionTimeout,
+		ValidationRate:          DefaultDevshardValidationRate,
+		CreateDevshardFee:       DefaultDevshardCreateDevshardFee,
+		FeePerNonce:             DefaultDevshardFeePerNonce,
 	}
 }
 
@@ -343,6 +356,15 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.MaxNonce == 0 {
 		return fmt.Errorf("devshard escrow max_nonce must be positive")
+	}
+	if p.RefusalTimeout < 0 {
+		return fmt.Errorf("devshard escrow refusal_timeout (%d) must be non-negative", p.RefusalTimeout)
+	}
+	if p.ExecutionTimeout < 0 {
+		return fmt.Errorf("devshard escrow execution_timeout (%d) must be non-negative", p.ExecutionTimeout)
+	}
+	if p.ValidationRate > 10000 {
+		return fmt.Errorf("devshard escrow validation_rate (%d) must be <= 10000 (basis points)", p.ValidationRate)
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {

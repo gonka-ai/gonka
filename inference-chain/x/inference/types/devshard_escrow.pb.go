@@ -23,15 +23,21 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type DevshardEscrow struct {
-	Id         uint64   `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Creator    string   `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
-	Amount     uint64   `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
-	Slots      []string `protobuf:"bytes,4,rep,name=slots,proto3" json:"slots,omitempty"`
-	EpochIndex uint64   `protobuf:"varint,5,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
-	AppHash    string   `protobuf:"bytes,6,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
-	Settled    bool     `protobuf:"varint,7,opt,name=settled,proto3" json:"settled,omitempty"`
-	TokenPrice uint64   `protobuf:"varint,8,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
-	ModelId    string   `protobuf:"bytes,9,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	Id                uint64   `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Creator           string   `protobuf:"bytes,2,opt,name=creator,proto3" json:"creator,omitempty"`
+	Amount            uint64   `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	Slots             []string `protobuf:"bytes,4,rep,name=slots,proto3" json:"slots,omitempty"`
+	EpochIndex        uint64   `protobuf:"varint,5,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	AppHash           string   `protobuf:"bytes,6,opt,name=app_hash,json=appHash,proto3" json:"app_hash,omitempty"`
+	Settled           bool     `protobuf:"varint,7,opt,name=settled,proto3" json:"settled,omitempty"`
+	TokenPrice        uint64   `protobuf:"varint,8,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	ModelId           string   `protobuf:"bytes,9,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	MaxNonce          uint32   `protobuf:"varint,10,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
+	RefusalTimeout    int64    `protobuf:"varint,11,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout  int64    `protobuf:"varint,12,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate    uint32   `protobuf:"varint,13,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	CreateDevshardFee uint64   `protobuf:"varint,14,opt,name=create_devshard_fee,json=createDevshardFee,proto3" json:"create_devshard_fee,omitempty"`
+	FeePerNonce       uint64   `protobuf:"varint,15,opt,name=fee_per_nonce,json=feePerNonce,proto3" json:"fee_per_nonce,omitempty"`
 }
 
 func (m *DevshardEscrow) Reset()         { *m = DevshardEscrow{} }
@@ -128,6 +134,48 @@ func (m *DevshardEscrow) GetModelId() string {
 		return m.ModelId
 	}
 	return ""
+}
+
+func (m *DevshardEscrow) GetMaxNonce() uint32 {
+	if m != nil {
+		return m.MaxNonce
+	}
+	return 0
+}
+
+func (m *DevshardEscrow) GetRefusalTimeout() int64 {
+	if m != nil {
+		return m.RefusalTimeout
+	}
+	return 0
+}
+
+func (m *DevshardEscrow) GetExecutionTimeout() int64 {
+	if m != nil {
+		return m.ExecutionTimeout
+	}
+	return 0
+}
+
+func (m *DevshardEscrow) GetValidationRate() uint32 {
+	if m != nil {
+		return m.ValidationRate
+	}
+	return 0
+}
+
+func (m *DevshardEscrow) GetCreateDevshardFee() uint64 {
+	if m != nil {
+		return m.CreateDevshardFee
+	}
+	return 0
+}
+
+func (m *DevshardEscrow) GetFeePerNonce() uint64 {
+	if m != nil {
+		return m.FeePerNonce
+	}
+	return 0
 }
 
 type DevshardHostEpochStats struct {
@@ -434,6 +482,36 @@ func (m *DevshardEscrow) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.FeePerNonce != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.FeePerNonce))
+		i--
+		dAtA[i] = 0x78
+	}
+	if m.CreateDevshardFee != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.CreateDevshardFee))
+		i--
+		dAtA[i] = 0x70
+	}
+	if m.ValidationRate != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.ValidationRate))
+		i--
+		dAtA[i] = 0x68
+	}
+	if m.ExecutionTimeout != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.ExecutionTimeout))
+		i--
+		dAtA[i] = 0x60
+	}
+	if m.RefusalTimeout != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.RefusalTimeout))
+		i--
+		dAtA[i] = 0x58
+	}
+	if m.MaxNonce != 0 {
+		i = encodeVarintDevshardEscrow(dAtA, i, uint64(m.MaxNonce))
+		i--
+		dAtA[i] = 0x50
+	}
 	if len(m.ModelId) > 0 {
 		i -= len(m.ModelId)
 		copy(dAtA[i:], m.ModelId)
@@ -699,6 +777,24 @@ func (m *DevshardEscrow) Size() (n int) {
 	l = len(m.ModelId)
 	if l > 0 {
 		n += 1 + l + sovDevshardEscrow(uint64(l))
+	}
+	if m.MaxNonce != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.MaxNonce))
+	}
+	if m.RefusalTimeout != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.RefusalTimeout))
+	}
+	if m.ExecutionTimeout != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.ExecutionTimeout))
+	}
+	if m.ValidationRate != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.ValidationRate))
+	}
+	if m.CreateDevshardFee != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.CreateDevshardFee))
+	}
+	if m.FeePerNonce != 0 {
+		n += 1 + sovDevshardEscrow(uint64(m.FeePerNonce))
 	}
 	return n
 }
@@ -1039,6 +1135,120 @@ func (m *DevshardEscrow) Unmarshal(dAtA []byte) error {
 			}
 			m.ModelId = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxNonce", wireType)
+			}
+			m.MaxNonce = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxNonce |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefusalTimeout", wireType)
+			}
+			m.RefusalTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.RefusalTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 12:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExecutionTimeout", wireType)
+			}
+			m.ExecutionTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ExecutionTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 13:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationRate", wireType)
+			}
+			m.ValidationRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ValidationRate |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 14:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreateDevshardFee", wireType)
+			}
+			m.CreateDevshardFee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CreateDevshardFee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 15:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeePerNonce", wireType)
+			}
+			m.FeePerNonce = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDevshardEscrow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FeePerNonce |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipDevshardEscrow(dAtA[iNdEx:])

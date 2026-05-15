@@ -229,6 +229,9 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	if nonce != expectedNonce {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
 	}
+	if maxNonce := uint64(sm.state.Config.MaxNonce); maxNonce > 0 && nonce > maxNonce {
+		return nil, nil, fmt.Errorf("%w: nonce %d exceeds max_nonce %d", types.ErrInvalidNonce, nonce, maxNonce)
+	}
 
 	// Same pre-check as applyCore: at most one MsgStartInference, with id == nonce.
 	startCount := 0
@@ -308,6 +311,13 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
 		return nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
+	}
+	// 1a. Cap nonce by DevshardEscrowParams.MaxNonce. Without this, a host can
+	// keep accepting diffs past the chain-side ceiling and then lose settlement
+	// when VerifyDevshardSettlement rejects the final nonce. Treat zero as
+	// "no cap configured" for forward-compat with pre-v0.2.13 sessions.
+	if maxNonce := uint64(sm.state.Config.MaxNonce); maxNonce > 0 && nonce > maxNonce {
+		return nil, fmt.Errorf("%w: nonce %d exceeds max_nonce %d", types.ErrInvalidNonce, nonce, maxNonce)
 	}
 
 	// 2. Validate at most one MsgStartInference per diff, and inference_id == nonce.

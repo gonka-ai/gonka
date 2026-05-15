@@ -2174,6 +2174,11 @@ type DevshardEscrowParams struct {
 	TokenPrice              uint64                     `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
 	ApprovedVersions        []*DevshardApprovedVersion `protobuf:"bytes,7,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
 	MaxNonce                uint32                     `protobuf:"varint,8,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
+	RefusalTimeout          int64                      `protobuf:"varint,10,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout        int64                      `protobuf:"varint,11,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate          uint32                     `protobuf:"varint,12,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	CreateDevshardFee       uint64                     `protobuf:"varint,13,opt,name=create_devshard_fee,json=createDevshardFee,proto3" json:"create_devshard_fee,omitempty"`
+	FeePerNonce             uint64                     `protobuf:"varint,14,opt,name=fee_per_nonce,json=feePerNonce,proto3" json:"fee_per_nonce,omitempty"`
 }
 
 func (m *DevshardEscrowParams) Reset()         { *m = DevshardEscrowParams{} }
@@ -2261,6 +2266,41 @@ func (m *DevshardEscrowParams) GetApprovedVersions() []*DevshardApprovedVersion 
 func (m *DevshardEscrowParams) GetMaxNonce() uint32 {
 	if m != nil {
 		return m.MaxNonce
+	}
+	return 0
+}
+
+func (m *DevshardEscrowParams) GetRefusalTimeout() int64 {
+	if m != nil {
+		return m.RefusalTimeout
+	}
+	return 0
+}
+
+func (m *DevshardEscrowParams) GetExecutionTimeout() int64 {
+	if m != nil {
+		return m.ExecutionTimeout
+	}
+	return 0
+}
+
+func (m *DevshardEscrowParams) GetValidationRate() uint32 {
+	if m != nil {
+		return m.ValidationRate
+	}
+	return 0
+}
+
+func (m *DevshardEscrowParams) GetCreateDevshardFee() uint64 {
+	if m != nil {
+		return m.CreateDevshardFee
+	}
+	return 0
+}
+
+func (m *DevshardEscrowParams) GetFeePerNonce() uint64 {
+	if m != nil {
+		return m.FeePerNonce
 	}
 	return 0
 }
@@ -3574,6 +3614,21 @@ func (this *DevshardEscrowParams) Equal(that interface{}) bool {
 		}
 	}
 	if this.MaxNonce != that1.MaxNonce {
+		return false
+	}
+	if this.RefusalTimeout != that1.RefusalTimeout {
+		return false
+	}
+	if this.ExecutionTimeout != that1.ExecutionTimeout {
+		return false
+	}
+	if this.ValidationRate != that1.ValidationRate {
+		return false
+	}
+	if this.CreateDevshardFee != that1.CreateDevshardFee {
+		return false
+	}
+	if this.FeePerNonce != that1.FeePerNonce {
 		return false
 	}
 	return true
@@ -5539,6 +5594,31 @@ func (m *DevshardEscrowParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.FeePerNonce != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.FeePerNonce))
+		i--
+		dAtA[i] = 0x70
+	}
+	if m.CreateDevshardFee != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CreateDevshardFee))
+		i--
+		dAtA[i] = 0x68
+	}
+	if m.ValidationRate != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.ValidationRate))
+		i--
+		dAtA[i] = 0x60
+	}
+	if m.ExecutionTimeout != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.ExecutionTimeout))
+		i--
+		dAtA[i] = 0x58
+	}
+	if m.RefusalTimeout != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.RefusalTimeout))
+		i--
+		dAtA[i] = 0x50
+	}
 	if m.MaxNonce != 0 {
 		i = encodeVarintParams(dAtA, i, uint64(m.MaxNonce))
 		i--
@@ -6454,6 +6534,21 @@ func (m *DevshardEscrowParams) Size() (n int) {
 	}
 	if m.MaxNonce != 0 {
 		n += 1 + sovParams(uint64(m.MaxNonce))
+	}
+	if m.RefusalTimeout != 0 {
+		n += 1 + sovParams(uint64(m.RefusalTimeout))
+	}
+	if m.ExecutionTimeout != 0 {
+		n += 1 + sovParams(uint64(m.ExecutionTimeout))
+	}
+	if m.ValidationRate != 0 {
+		n += 1 + sovParams(uint64(m.ValidationRate))
+	}
+	if m.CreateDevshardFee != 0 {
+		n += 1 + sovParams(uint64(m.CreateDevshardFee))
+	}
+	if m.FeePerNonce != 0 {
+		n += 1 + sovParams(uint64(m.FeePerNonce))
 	}
 	return n
 }
@@ -12234,6 +12329,101 @@ func (m *DevshardEscrowParams) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.MaxNonce |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RefusalTimeout", wireType)
+			}
+			m.RefusalTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.RefusalTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExecutionTimeout", wireType)
+			}
+			m.ExecutionTimeout = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ExecutionTimeout |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 12:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationRate", wireType)
+			}
+			m.ValidationRate = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ValidationRate |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 13:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreateDevshardFee", wireType)
+			}
+			m.CreateDevshardFee = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CreateDevshardFee |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 14:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeePerNonce", wireType)
+			}
+			m.FeePerNonce = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FeePerNonce |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

@@ -43,13 +43,19 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 	}
 
 	return &bridge.EscrowInfo{
-		EscrowID:       escrowID,
-		Amount:         resp.Escrow.Amount,
-		CreatorAddress: resp.Escrow.Creator,
-		AppHash:        appHash,
-		Slots:          resp.Escrow.Slots,
-		TokenPrice:     resp.Escrow.TokenPrice,
-		EpochID:        resp.Escrow.EpochIndex,
+		EscrowID:          escrowID,
+		Amount:            resp.Escrow.Amount,
+		CreatorAddress:    resp.Escrow.Creator,
+		AppHash:           appHash,
+		Slots:             resp.Escrow.Slots,
+		TokenPrice:        resp.Escrow.TokenPrice,
+		EpochID:           resp.Escrow.EpochIndex,
+		MaxNonce:          resp.Escrow.MaxNonce,
+		RefusalTimeout:    resp.Escrow.RefusalTimeout,
+		ExecutionTimeout:  resp.Escrow.ExecutionTimeout,
+		ValidationRate:    resp.Escrow.ValidationRate,
+		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
+		FeePerNonce:       resp.Escrow.FeePerNonce,
 	}, nil
 }
 

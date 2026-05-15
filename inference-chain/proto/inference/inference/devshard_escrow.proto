@@ -14,6 +14,14 @@ message DevshardEscrow {
   bool settled = 7;
   uint64 token_price = 8;
   string model_id = 9;
+  // Session-config parameters captured at escrow creation time from
+  // DevshardEscrowParams. Zero values fall back to compiled defaults.
+  uint32 max_nonce = 10;
+  int64 refusal_timeout = 11;
+  int64 execution_timeout = 12;
+  uint32 validation_rate = 13;
+  uint64 create_devshard_fee = 14;
+  uint64 fee_per_nonce = 15;
 }
 
 message DevshardHostEpochStats {

@@ -39,6 +39,72 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"valA", "valB", "valC"}, info.Slots)
 }
 
+func TestGetEscrow_ParsesSessionConfigFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":                  "42",
+				"creator":             "inference1abc",
+				"amount":              "5000000000",
+				"slots":               []string{"valA"},
+				"epoch_index":         "10",
+				"app_hash":            "deadbeef",
+				"settled":             false,
+				"token_price":         "7",
+				"max_nonce":           50000,
+				"refusal_timeout":     "90",
+				"execution_timeout":   "1800",
+				"validation_rate":     2500,
+				"create_devshard_fee": "25000",
+				"fee_per_nonce":       "500",
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	info, err := b.GetEscrow("42")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(7), info.TokenPrice)
+	assert.Equal(t, uint32(50000), info.MaxNonce)
+	assert.Equal(t, int64(90), info.RefusalTimeout)
+	assert.Equal(t, int64(1800), info.ExecutionTimeout)
+	assert.Equal(t, uint32(2500), info.ValidationRate)
+	assert.Equal(t, uint64(25000), info.CreateDevshardFee)
+	assert.Equal(t, uint64(500), info.FeePerNonce)
+}
+
+func TestGetEscrow_BackwardCompatMissingSessionConfigFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":          "42",
+				"creator":     "inference1abc",
+				"amount":      "5000000000",
+				"slots":       []string{"valA"},
+				"epoch_index": "10",
+				"app_hash":    "deadbeef",
+				"settled":     false,
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	info, err := b.GetEscrow("42")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(0), info.MaxNonce, "missing field should decode to zero")
+	assert.Equal(t, int64(0), info.RefusalTimeout)
+	assert.Equal(t, int64(0), info.ExecutionTimeout)
+	assert.Equal(t, uint32(0), info.ValidationRate)
+	assert.Equal(t, uint64(0), info.CreateDevshardFee)
+	assert.Equal(t, uint64(0), info.FeePerNonce)
+}
+
 func TestGetEscrow_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

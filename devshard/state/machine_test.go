@@ -3128,3 +3128,62 @@ func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
 	require.Equal(t, types.StatusInvalidated, st.Inferences[1].Status)
 	require.Equal(t, uint64(0), st.HostStats[1].Cost)
 }
+
+// TestApplyDiff_MaxNonceCap verifies that the host rejects diffs whose nonce
+// exceeds Config.MaxNonce. Without this cap, the chain-side
+// VerifyDevshardSettlement (which checks msg.Nonce <= DevshardEscrowParams.MaxNonce)
+// can reject the final state, causing the host to lose the settlement reward.
+// See gonka-ai/gonka#1143 discussion r3205419993.
+func TestApplyDiff_MaxNonceCap(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.MaxNonce = 1 // accept exactly one nonce
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-cap", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	// nonce=1 is at the cap — should succeed.
+	diff1 := testutil.SignDiff(t, user, "escrow-cap", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	_, err = sm.ApplyDiff(diff1)
+	require.NoError(t, err, "nonce==MaxNonce must be accepted")
+
+	// nonce=2 exceeds the cap — must be rejected with ErrInvalidNonce.
+	diff2 := testutil.SignDiff(t, user, "escrow-cap", 2, []*types.DevshardTx{})
+	_, err = sm.ApplyDiff(diff2)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrInvalidNonce)
+}
+
+// TestApplyDiff_MaxNonceCap_ZeroDisabled verifies forward-compat: a session
+// created before the MaxNonce field existed (zero on the wire → zero in
+// SessionConfig) must NOT trip the cap. Otherwise pre-v0.2.13 escrows would
+// fail on their first diff.
+func TestApplyDiff_MaxNonceCap_ZeroDisabled(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group)) // MaxNonce defaults to 0
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-nocap", config, group, 10000, user.Address(), verifier)
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-nocap", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err, "MaxNonce==0 must be treated as no-cap")
+}

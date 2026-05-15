@@ -240,7 +240,15 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	creatorAddr := escrow.CreatorAddress
 
-	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
+	config := types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
+		TokenPrice:        escrow.TokenPrice,
+		RefusalTimeout:    escrow.RefusalTimeout,
+		ExecutionTimeout:  escrow.ExecutionTimeout,
+		ValidationRate:    escrow.ValidationRate,
+		CreateDevshardFee: escrow.CreateDevshardFee,
+		FeePerNonce:       escrow.FeePerNonce,
+		MaxNonce:          escrow.MaxNonce,
+	})
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),

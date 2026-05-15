@@ -71,6 +71,7 @@ type SessionConfig struct {
 	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	VoteThreshold     uint32 // minimum accept votes for timeout (total_slots / 2)
 	ValidationRate    uint32 // basis points (10000 = 100%, 1000 = 10%)
+	MaxNonce          uint32 // upper bound for accepted nonces (mirror of DevshardEscrowParams.MaxNonce)
 }
 
 // EscrowState is the full state of a devshard session.

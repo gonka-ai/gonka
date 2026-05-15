@@ -381,6 +381,15 @@ message DevshardEscrowParams {
   uint64 token_price = 6;
   repeated DevshardApprovedVersion approved_versions = 7;
   uint32 max_nonce = 8;
+  // Tag 9 reserved for default_seal_grace_nonces — see PR #1162.
+  reserved 9;
+  // Session-config governance parameters (devshard SessionConfig).
+  // Zero values fall back to compiled defaults (see devshard/types/config.go).
+  int64 refusal_timeout = 10;
+  int64 execution_timeout = 11;
+  uint32 validation_rate = 12;
+  uint64 create_devshard_fee = 13;
+  uint64 fee_per_nonce = 14;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

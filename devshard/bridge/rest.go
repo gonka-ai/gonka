@@ -46,14 +46,20 @@ func NewRESTBridge(baseURL string, opts ...Option) *RESTBridge {
 
 type escrowResponse struct {
 	Escrow struct {
-		ID         uint64   `json:"id,string"`
-		Creator    string   `json:"creator"`
-		Amount     uint64   `json:"amount,string"`
-		Slots      []string `json:"slots"`
-		EpochIndex uint64   `json:"epoch_index,string"`
-		AppHash    string   `json:"app_hash"`
-		Settled    bool     `json:"settled"`
-		TokenPrice uint64   `json:"token_price,string"`
+		ID                uint64   `json:"id,string"`
+		Creator           string   `json:"creator"`
+		Amount            uint64   `json:"amount,string"`
+		Slots             []string `json:"slots"`
+		EpochIndex        uint64   `json:"epoch_index,string"`
+		AppHash           string   `json:"app_hash"`
+		Settled           bool     `json:"settled"`
+		TokenPrice        uint64   `json:"token_price,string"`
+		MaxNonce          uint32   `json:"max_nonce"`
+		RefusalTimeout    int64    `json:"refusal_timeout,string"`
+		ExecutionTimeout  int64    `json:"execution_timeout,string"`
+		ValidationRate    uint32   `json:"validation_rate"`
+		CreateDevshardFee uint64   `json:"create_devshard_fee,string"`
+		FeePerNonce       uint64   `json:"fee_per_nonce,string"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -125,13 +131,19 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	}
 
 	return &EscrowInfo{
-		EscrowID:       escrowID,
-		Amount:         resp.Escrow.Amount,
-		CreatorAddress: resp.Escrow.Creator,
-		AppHash:        appHash,
-		Slots:          resp.Escrow.Slots,
-		TokenPrice:     resp.Escrow.TokenPrice,
-		EpochID:        resp.Escrow.EpochIndex,
+		EscrowID:          escrowID,
+		Amount:            resp.Escrow.Amount,
+		CreatorAddress:    resp.Escrow.Creator,
+		AppHash:           appHash,
+		Slots:             resp.Escrow.Slots,
+		TokenPrice:        resp.Escrow.TokenPrice,
+		EpochID:           resp.Escrow.EpochIndex,
+		MaxNonce:          resp.Escrow.MaxNonce,
+		RefusalTimeout:    resp.Escrow.RefusalTimeout,
+		ExecutionTimeout:  resp.Escrow.ExecutionTimeout,
+		ValidationRate:    resp.Escrow.ValidationRate,
+		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
+		FeePerNonce:       resp.Escrow.FeePerNonce,
 	}, nil
 }
 

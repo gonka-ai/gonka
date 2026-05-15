@@ -28,6 +28,15 @@ type EscrowInfo struct {
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64
+	// Session-config fields captured from DevshardEscrow at creation time.
+	// Zero values are interpreted as "use compiled defaults" by
+	// devshard/types.SessionConfigFromEscrow for backward compatibility.
+	MaxNonce          uint32
+	RefusalTimeout    int64
+	ExecutionTimeout  int64
+	ValidationRate    uint32
+	CreateDevshardFee uint64
+	FeePerNonce       uint64
 }
 
 type HostInfo struct {
