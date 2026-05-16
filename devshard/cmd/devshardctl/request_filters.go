@@ -305,8 +305,8 @@ func numericJSONValueAsUint64(value any) (uint64, bool) {
 }
 
 func stripUnsupportedChatRequestParameters(request map[string]any) {
-	delete(request, "presence_penalty")
-	delete(request, "frequency_penalty")
+	// Keep standard OpenAI/Anthropic request fields and only strip known
+	// non-standard or currently unsupported gateway additions.
 	delete(request, "structured_outputs")
 	delete(request, "prompt_logprobs")
 	if _, hasStopIDs := request["stop_token_ids"]; hasStopIDs {

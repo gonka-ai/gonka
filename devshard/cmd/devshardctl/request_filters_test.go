@@ -240,7 +240,7 @@ func TestNormalizeChatRequestStripsPromptLogprobs(t *testing.T) {
 	require.False(t, exists)
 }
 
-TestNormalizeChatRequestStripsMinTokensWhenStopTokenIdsPresent(t *testing.T) {
+func TestNormalizeChatRequestStripsMinTokensWhenStopTokenIdsPresent(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
 		"stop_token_ids": [163586, 9999999],
@@ -457,7 +457,7 @@ func TestNormalizeChatRequestStripsStructuredOutputsBeforeValidation(t *testing.
 	require.NotContains(t, raw, "structured_outputs")
 }
 
-func TestNormalizeChatRequestStripsUnsupportedPenaltyFields(t *testing.T) {
+func TestNormalizeChatRequestKeepsStandardPenaltyFields(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"presence_penalty": 1.2,
 		"frequency_penalty": 0.8,
@@ -467,8 +467,42 @@ func TestNormalizeChatRequestStripsUnsupportedPenaltyFields(t *testing.T) {
 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.NotContains(t, raw, "presence_penalty")
-	require.NotContains(t, raw, "frequency_penalty")
+	require.EqualValues(t, 1.2, raw["presence_penalty"])
+	require.EqualValues(t, 0.8, raw["frequency_penalty"])
+}
+
+func TestNormalizeChatRequestPreservesStandardOpenAIAndAnthropicTopLevelFields(t *testing.T) {
+	body, _, err := normalizeChatRequest([]byte(`{
+		"messages": [{"role": "user", "content": "hello"}],
+		"metadata": {"trace_id": "abc123"},
+		"service_tier": "auto",
+		"top_k": 40,
+		"stop_sequences": ["\n\nHuman:"],
+		"system": "use concise answers",
+		"thinking": {"type": "enabled"},
+		"tool_choice": "auto",
+		"tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+		"stream_options": {"include_usage": true},
+		"response_format": {"type": "json_schema", "json_schema": {"name": "payload", "schema": {"type": "object"}}},
+		"prompt_cache_key": "cache-key-1",
+		"inference_geo": "us"
+	}`))
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.Equal(t, "abc123", raw["metadata"].(map[string]any)["trace_id"])
+	require.Equal(t, "auto", raw["service_tier"])
+	require.EqualValues(t, 40, raw["top_k"])
+	require.Equal(t, "use concise answers", raw["system"])
+	require.Equal(t, "enabled", raw["thinking"].(map[string]any)["type"])
+	require.Equal(t, "auto", raw["tool_choice"])
+	require.Len(t, raw["tools"].([]any), 1)
+	require.Equal(t, true, raw["stream_options"].(map[string]any)["include_usage"])
+	require.Equal(t, "json_schema", raw["response_format"].(map[string]any)["type"])
+	require.Equal(t, "cache-key-1", raw["prompt_cache_key"])
+	require.Equal(t, "us", raw["inference_geo"])
+	require.Equal(t, "\n\nHuman:", raw["stop_sequences"].([]any)[0])
 }
 
 func TestNormalizeChatRequestRejectsUnsupportedFields(t *testing.T) {
