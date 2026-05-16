@@ -240,7 +240,7 @@ func TestNormalizeChatRequestStripsPromptLogprobs(t *testing.T) {
 	require.False(t, exists)
 }
 
-TestNormalizeChatRequestStripsMinTokensWhenStopTokenIdsPresent(t *testing.T) {
+func TestNormalizeChatRequestStripsMinTokensWhenStopTokenIdsPresent(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
 		"stop_token_ids": [163586, 9999999],
@@ -278,6 +278,98 @@ func TestNormalizeChatRequestStripsEmptyTools(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &raw))
 	require.NotContains(t, raw, "tools")
 	require.NotContains(t, raw, "tool_choice")
+}
+
+func TestNormalizeChatRequestKeepsStandardCompletionRequestFields(t *testing.T) {
+	body, _, err := normalizeChatRequest([]byte(`{
+		"model": "Qwen/Test",
+		"audio": {"format": "mp3", "voice": "alloy"},
+		"cache_control": {"type": "ephemeral"},
+		"container": "container-1",
+		"frequency_penalty": 0.5,
+		"function_call": "auto",
+		"functions": [{"name": "legacy_function"}],
+		"inference_geo": "us",
+		"logit_bias": {"42": -1},
+		"logprobs": false,
+		"metadata": {"trace": "abc"},
+		"modalities": ["text", "audio"],
+		"n": 2,
+		"output_config": {"type": "json"},
+		"parallel_tool_calls": false,
+		"prediction": {"type": "content", "content": [{"type": "text", "text": "predicted"}]},
+		"presence_penalty": 0.5,
+		"prompt_cache_key": "cache-key",
+		"prompt_cache_retention": "24h",
+		"prompt_logprobs": 2,
+		"reasoning_effort": "low",
+		"response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": {"type": "object"}}},
+		"safety_identifier": "safe-user",
+		"seed": 123,
+		"service_tier": "auto",
+		"stop": ["\n"],
+		"stop_sequences": ["END"],
+		"store": false,
+		"stream": true,
+		"stream_options": {"include_usage": true, "include_obfuscation": false},
+		"system": [{"type": "text", "text": "system", "cache_control": {"type": "ephemeral"}}],
+		"temperature": 1.5,
+		"thinking": {"type": "enabled", "budget_tokens": 1024},
+		"tool_choice": "auto",
+		"tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+		"top_k": 5,
+		"top_logprobs": 20,
+		"top_p": 0.9,
+		"user": "user-1",
+		"verbosity": "low",
+		"web_search_options": {"search_context_size": "low"},
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	for _, field := range []string{
+		"audio",
+		"cache_control",
+		"container",
+		"function_call",
+		"functions",
+		"inference_geo",
+		"logit_bias",
+		"metadata",
+		"modalities",
+		"output_config",
+		"parallel_tool_calls",
+		"prediction",
+		"prompt_cache_key",
+		"prompt_cache_retention",
+		"reasoning_effort",
+		"response_format",
+		"safety_identifier",
+		"seed",
+		"service_tier",
+		"stop",
+		"stop_sequences",
+		"store",
+		"stream_options",
+		"system",
+		"thinking",
+		"tool_choice",
+		"tools",
+		"top_k",
+		"top_p",
+		"user",
+		"verbosity",
+		"web_search_options",
+	} {
+		require.Contains(t, raw, field)
+	}
+	require.NotContains(t, raw, "frequency_penalty")
+	require.NotContains(t, raw, "presence_penalty")
+	require.NotContains(t, raw, "prompt_logprobs")
+	require.Equal(t, true, raw["logprobs"])
+	require.EqualValues(t, 5, raw["top_logprobs"])
 }
 
 func TestApplyKimiRequestOverrides(t *testing.T) {
@@ -516,7 +608,7 @@ func TestNormalizeChatRequestRejectsMalformedMessages(t *testing.T) {
 		`{"messages":[{"content":"hello"}]}`,
 		`{"messages":[{"role":"user","content":123}]}`,
 		`{"messages":[{"role":"user","content":[{"type":"text"}]}]}`,
-		`{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`,
+		`{"messages":[{"role":"user","content":[{"type":"image_url"}]}]}`,
 		`{"messages":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]}`,
 		`{"messages":[{"role":"tool","tool_call_id":"missing","content":"hello"}]}`,
 	}
@@ -549,6 +641,78 @@ func TestPrepareChatRequestBodyNormalizesTextContentParts(t *testing.T) {
 	messages := raw["messages"].([]any)
 	message := messages[0].(map[string]any)
 	require.Equal(t, "hello\nworld", message["content"])
+}
+
+func TestPrepareChatRequestBodyKeepsStandardOpenAIContentParts(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "text", "text": "describe this"},
+				{"type": "image_url", "image_url": {"url": "https://example.com/image.png", "detail": "high"}},
+				{"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+				{"type": "file", "file": {"file_id": "file_123", "filename": "notes.txt"}}
+			]},
+			{"role": "assistant", "name": "assistant_a", "audio": {"id": "audio_1"}, "refusal": "cannot", "content": [
+				{"type": "refusal", "refusal": "cannot"}
+			]},
+			{"role": "assistant", "tool_calls": [{
+				"id": "call_custom",
+				"type": "custom",
+				"custom": {"name": "run_code", "input": "print(1)"}
+			}]}
+		]
+	}`))
+
+	body, _, err := prepareChatRequestBody(req)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	messages := raw["messages"].([]any)
+	user := messages[0].(map[string]any)
+	require.IsType(t, []any{}, user["content"])
+	parts := user["content"].([]any)
+	require.Equal(t, "image_url", parts[1].(map[string]any)["type"])
+	require.Equal(t, "custom", messages[2].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)["type"])
+}
+
+func TestPrepareChatRequestBodyKeepsStandardAnthropicContentBlocks(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}, "citations": []},
+				{"type": "image", "source": {"type": "url", "url": "https://example.com/image.png"}},
+				{"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "doc"}, "title": "Doc", "context": "ctx", "citations": {"enabled": true}},
+				{"type": "search_result", "content": [{"type": "text", "text": "result"}], "source": "web", "title": "Result"},
+				{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok", "is_error": false}
+			]},
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "hmm", "signature": "sig"},
+				{"type": "redacted_thinking", "data": "secret"},
+				{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}},
+				{"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {}, "caller": {"type": "direct"}},
+				{"type": "web_search_tool_result", "tool_use_id": "srv_1", "content": {"type": "web_search_result", "encrypted_content": "x"}, "caller": {"type": "direct"}},
+				{"type": "web_fetch_tool_result", "tool_use_id": "srv_2", "content": {"type": "web_fetch_result", "url": "https://example.com", "content": "x"}},
+				{"type": "code_execution_tool_result", "tool_use_id": "srv_3", "content": {"type": "code_execution_result", "stdout": "x"}},
+				{"type": "bash_code_execution_tool_result", "tool_use_id": "srv_4", "content": {"type": "bash_code_execution_result", "stdout": "x"}},
+				{"type": "text_editor_code_execution_tool_result", "tool_use_id": "srv_5", "content": {"type": "text_editor_code_execution_view_result", "file_text": "x"}},
+				{"type": "tool_search_tool_result", "tool_use_id": "srv_6", "content": {"type": "tool_search_tool_search_result", "content": []}},
+				{"type": "container_upload", "file_id": "file_1"}
+			]}
+		]
+	}`))
+
+	body, _, err := prepareChatRequestBody(req)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	messages := raw["messages"].([]any)
+	user := messages[0].(map[string]any)
+	require.IsType(t, []any{}, user["content"])
+	require.Equal(t, "text", user["content"].([]any)[0].(map[string]any)["type"])
+	assistant := messages[1].(map[string]any)
+	require.Len(t, assistant["content"], 11)
 }
 
 func TestPrepareChatRequestBodyNormalizesEmptyAssistantToolCallContent(t *testing.T) {
@@ -624,16 +788,16 @@ func TestPrepareChatRequestBodyNormalizesEmptyToolContent(t *testing.T) {
 	}
 }
 
-func TestPrepareChatRequestBodyRejectsNonTextContentParts(t *testing.T) {
+func TestPrepareChatRequestBodyRejectsMalformedContentParts(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
 		want string
 	}{
 		{
-			name: "image_url",
-			body: `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`,
-			want: `unsupported value "image_url"`,
+			name: "image_url missing object",
+			body: `{"messages":[{"role":"user","content":[{"type":"image_url"}]}]}`,
+			want: `image_url: is required`,
 		},
 		{
 			name: "input_text",
@@ -648,7 +812,12 @@ func TestPrepareChatRequestBodyRejectsNonTextContentParts(t *testing.T) {
 		{
 			name: "text with extra field",
 			body: `{"messages":[{"role":"user","content":[{"type":"text","text":"hello","image_url":{"url":"https://example.com/image.png"}}]}]}`,
-			want: `must only include type and text`,
+			want: `image_url is not allowed`,
+		},
+		{
+			name: "tool use missing input",
+			body: `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"lookup"}]}]}`,
+			want: `input: is required`,
 		},
 	}
 

@@ -115,14 +115,19 @@ func normalizeContent(body []byte) ([]byte, error) {
 			continue
 		}
 		var texts []string
+		allSimpleText := true
 		for partIndex, p := range parts {
-			text, err := requiredTextContentPart(p, partIndex)
+			text, ok, err := simpleTextContentPart(p, partIndex)
 			if err != nil {
 				return nil, badChatRequest("messages[%d].content%v", i, err)
 			}
+			if !ok {
+				allSimpleText = false
+				break
+			}
 			texts = append(texts, text)
 		}
-		if len(texts) > 0 {
+		if allSimpleText && len(texts) > 0 {
 			combined, _ := json.Marshal(strings.Join(texts, "\n"))
 			msgs[i]["content"] = combined
 			changed = true
