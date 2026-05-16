@@ -456,18 +456,31 @@ func validateToolCallsField(message map[string]any, messageIndex int) ([]string,
 		if err != nil {
 			return nil, true, badChatRequest("messages[%d].tool_calls[%d].type: %v", messageIndex, callIndex, err)
 		}
-		if callType != "function" {
-			return nil, true, badChatRequest("messages[%d].tool_calls[%d].type must be \"function\"", messageIndex, callIndex)
-		}
-		function, ok := call["function"].(map[string]any)
-		if !ok {
-			return nil, true, badChatRequest("messages[%d].tool_calls[%d].function must be an object", messageIndex, callIndex)
-		}
-		if _, err := requiredNonEmptyString(function, "name"); err != nil {
-			return nil, true, badChatRequest("messages[%d].tool_calls[%d].function.name: %v", messageIndex, callIndex, err)
-		}
-		if err := optionalStringField(function, "arguments"); err != nil {
-			return nil, true, badChatRequest("messages[%d].tool_calls[%d].function.arguments: %v", messageIndex, callIndex, err)
+		switch callType {
+		case "function":
+			function, ok := call["function"].(map[string]any)
+			if !ok {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].function must be an object", messageIndex, callIndex)
+			}
+			if _, err := requiredNonEmptyString(function, "name"); err != nil {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].function.name: %v", messageIndex, callIndex, err)
+			}
+			if err := optionalStringField(function, "arguments"); err != nil {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].function.arguments: %v", messageIndex, callIndex, err)
+			}
+		case "custom":
+			custom, ok := call["custom"].(map[string]any)
+			if !ok {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].custom must be an object", messageIndex, callIndex)
+			}
+			if _, err := requiredNonEmptyString(custom, "name"); err != nil {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].custom.name: %v", messageIndex, callIndex, err)
+			}
+			if _, err := requiredNonEmptyString(custom, "input"); err != nil {
+				return nil, true, badChatRequest("messages[%d].tool_calls[%d].custom.input: %v", messageIndex, callIndex, err)
+			}
+		default:
+			return nil, true, badChatRequest("messages[%d].tool_calls[%d].type has unsupported value %q", messageIndex, callIndex, callType)
 		}
 		ids = append(ids, id)
 	}
@@ -527,12 +540,8 @@ func validateNonEmptyContent(content any) error {
 			if !ok {
 				return fmt.Errorf("[%d] must be an object", i)
 			}
-			text, err := requiredTextContentPart(part, i)
-			if err != nil {
+			if err := validateStandardContentPart(part, i); err != nil {
 				return err
-			}
-			if strings.TrimSpace(text) == "" {
-				return fmt.Errorf("[%d].text must not be empty", i)
 			}
 		}
 		return nil
@@ -541,22 +550,152 @@ func validateNonEmptyContent(content any) error {
 	}
 }
 
-func requiredTextContentPart(part map[string]any, partIndex int) (string, error) {
+func simpleTextContentPart(part map[string]any, partIndex int) (string, bool, error) {
 	if len(part) != 2 {
-		return "", fmt.Errorf("[%d] must only include type and text", partIndex)
+		return "", false, nil
 	}
+	partType, ok := part["type"].(string)
+	if !ok || partType != "text" {
+		return "", false, nil
+	}
+	text, ok := part["text"].(string)
+	if !ok {
+		return "", false, fmt.Errorf("[%d].text must be a string", partIndex)
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", false, fmt.Errorf("[%d].text must not be empty", partIndex)
+	}
+	return text, true, nil
+}
+
+func validateStandardContentPart(part map[string]any, partIndex int) error {
 	partType, err := requiredNonEmptyString(part, "type")
 	if err != nil {
-		return "", fmt.Errorf("[%d].type: %w", partIndex, err)
+		return fmt.Errorf("[%d].type: %w", partIndex, err)
 	}
-	if partType != "text" {
-		return "", fmt.Errorf("[%d].type has unsupported value %q", partIndex, partType)
+
+	switch partType {
+	case "text":
+		if err := ensureOnlyFields(part, "type", "text", "cache_control", "citations"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "text"); err != nil {
+			return fmt.Errorf("[%d].text: %w", partIndex, err)
+		}
+	case "image_url":
+		if err := ensureOnlyFields(part, "type", "image_url"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "image_url"); err != nil {
+			return fmt.Errorf("[%d].image_url: %w", partIndex, err)
+		}
+	case "input_audio":
+		if err := ensureOnlyFields(part, "type", "input_audio"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "input_audio"); err != nil {
+			return fmt.Errorf("[%d].input_audio: %w", partIndex, err)
+		}
+	case "file":
+		if err := ensureOnlyFields(part, "type", "file"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "file"); err != nil {
+			return fmt.Errorf("[%d].file: %w", partIndex, err)
+		}
+	case "refusal":
+		if err := ensureOnlyFields(part, "type", "refusal"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "refusal"); err != nil {
+			return fmt.Errorf("[%d].refusal: %w", partIndex, err)
+		}
+	case "image":
+		if err := ensureOnlyFields(part, "type", "source", "cache_control"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "source"); err != nil {
+			return fmt.Errorf("[%d].source: %w", partIndex, err)
+		}
+	case "document":
+		if err := ensureOnlyFields(part, "type", "source", "cache_control", "citations", "context", "title"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "source"); err != nil {
+			return fmt.Errorf("[%d].source: %w", partIndex, err)
+		}
+	case "search_result":
+		if err := ensureOnlyFields(part, "type", "content", "source", "title", "cache_control", "citations"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, exists := part["content"]; !exists {
+			return fmt.Errorf("[%d].content: is required", partIndex)
+		}
+	case "thinking":
+		if err := ensureOnlyFields(part, "type", "thinking", "signature"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "thinking"); err != nil {
+			return fmt.Errorf("[%d].thinking: %w", partIndex, err)
+		}
+	case "redacted_thinking":
+		if err := ensureOnlyFields(part, "type", "data"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "data"); err != nil {
+			return fmt.Errorf("[%d].data: %w", partIndex, err)
+		}
+	case "tool_use", "server_tool_use":
+		if err := ensureOnlyFields(part, "type", "id", "name", "input", "cache_control", "caller"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "id"); err != nil {
+			return fmt.Errorf("[%d].id: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "name"); err != nil {
+			return fmt.Errorf("[%d].name: %w", partIndex, err)
+		}
+		if err := requiredObjectField(part, "input"); err != nil {
+			return fmt.Errorf("[%d].input: %w", partIndex, err)
+		}
+	case "tool_result":
+		if err := ensureOnlyFields(part, "type", "tool_use_id", "content", "is_error", "cache_control"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "tool_use_id"); err != nil {
+			return fmt.Errorf("[%d].tool_use_id: %w", partIndex, err)
+		}
+	case "web_search_tool_result", "web_fetch_tool_result":
+		if err := ensureOnlyFields(part, "type", "tool_use_id", "content", "cache_control", "caller"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "tool_use_id"); err != nil {
+			return fmt.Errorf("[%d].tool_use_id: %w", partIndex, err)
+		}
+		if _, exists := part["content"]; !exists {
+			return fmt.Errorf("[%d].content: is required", partIndex)
+		}
+	case "code_execution_tool_result", "bash_code_execution_tool_result", "text_editor_code_execution_tool_result", "tool_search_tool_result":
+		if err := ensureOnlyFields(part, "type", "tool_use_id", "content", "cache_control"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "tool_use_id"); err != nil {
+			return fmt.Errorf("[%d].tool_use_id: %w", partIndex, err)
+		}
+		if _, exists := part["content"]; !exists {
+			return fmt.Errorf("[%d].content: is required", partIndex)
+		}
+	case "container_upload":
+		if err := ensureOnlyFields(part, "type", "file_id", "cache_control"); err != nil {
+			return fmt.Errorf("[%d]: %w", partIndex, err)
+		}
+		if _, err := requiredNonEmptyString(part, "file_id"); err != nil {
+			return fmt.Errorf("[%d].file_id: %w", partIndex, err)
+		}
+	default:
+		return fmt.Errorf("[%d].type has unsupported value %q", partIndex, partType)
 	}
-	text, err := requiredNonEmptyString(part, "text")
-	if err != nil {
-		return "", fmt.Errorf("[%d].text: %w", partIndex, err)
-	}
-	return text, nil
+	return nil
 }
 
 func ensureFieldsAbsent(values map[string]any, fields ...string) error {
@@ -564,6 +703,30 @@ func ensureFieldsAbsent(values map[string]any, fields ...string) error {
 		if _, exists := values[field]; exists {
 			return fmt.Errorf("%s is not allowed for this role", field)
 		}
+	}
+	return nil
+}
+
+func ensureOnlyFields(values map[string]any, fields ...string) error {
+	allowed := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		allowed[field] = struct{}{}
+	}
+	for field := range values {
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("%s is not allowed for this content type", field)
+		}
+	}
+	return nil
+}
+
+func requiredObjectField(values map[string]any, field string) error {
+	rawValue, exists := values[field]
+	if !exists || rawValue == nil {
+		return fmt.Errorf("is required")
+	}
+	if _, ok := rawValue.(map[string]any); !ok {
+		return fmt.Errorf("must be an object")
 	}
 	return nil
 }
