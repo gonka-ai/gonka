@@ -65,6 +65,10 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 	return types.DefaultParams(), nil
 }
 
+func (m *mockKeeperForModelAssigner) GetGenesisGuardianAddresses(ctx context.Context) []string {
+	return nil
+}
+
 // populateSubgroupsFromParticipants writes root and per-model subgroup data at epochIdx
 // so SamplePreservedForEpisode has a candidate pool. Mirrors what production epoch
 // formation would have produced after assigning models to participants.

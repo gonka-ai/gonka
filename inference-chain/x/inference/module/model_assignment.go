@@ -12,6 +12,7 @@ import (
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
 )
 
@@ -341,6 +342,7 @@ type KeeperForModelAssigner interface {
 	GetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) (val types.EpochGroupData, found bool)
 	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
+	GetGenesisGuardianAddresses(ctx context.Context) []string
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -477,12 +479,25 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		return types.PreservedNodesSnapshot{EpisodeAnchorHeight: anchorHeight}, nil
 	}
 
+	guardianAddresses := ma.keeper.GetGenesisGuardianAddresses(ctx)
+	guardianSet := make(map[string]bool, len(guardianAddresses))
+	for _, addr := range guardianAddresses {
+		accAddr, err := utils.OperatorAddressToAccAddress(addr)
+		if err != nil {
+			ma.LogWarn("SamplePreservedForEpisode: Failed to convert guardian address", types.Allocation,
+				"operatorAddress", addr, "error", err)
+			continue
+		}
+		guardianSet[accAddr] = true
+	}
+
 	sortedModelIds := slices.Clone(rootData.SubGroupModels)
 	slices.Sort(sortedModelIds)
 
 	currentEpochData := NewEpochMLNodeData()
 	previousEpochData := NewEpochMLNodeData()
 	totalCurrentEpochWeight := int64(0)
+	participantVotingPowers := make(map[string]int64)
 
 	for _, modelId := range sortedModelIds {
 		currentSubData, foundCurrent := ma.keeper.GetEpochGroupData(ctx, epoch.Index, modelId)
@@ -500,6 +515,9 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 					"epoch_index", epoch.Index,
 				)
 				currentEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
+				if vw.VotingPower > 0 {
+					participantVotingPowers[vw.MemberAddress] += vw.VotingPower
+				}
 			}
 		}
 
@@ -527,7 +545,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	}
 
 	coefficients := modelCoefficients(params.PocParams)
-	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, totalCurrentEpochWeight, coefficients, anchorHeight)
+	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, totalCurrentEpochWeight, coefficients, anchorHeight, guardianSet, participantVotingPowers)
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
@@ -573,12 +591,12 @@ type thresholdSet struct {
 	globalMaxNodeWeight       int64            // global outlier threshold (IQR method)
 }
 
-func (ma *ModelAssigner) calculateThresholds(currentEpochData *EpochMLNodeData) thresholdSet {
-	allParticipantsWeights := currentEpochData.GetAllParticipantWeights()
+func (ma *ModelAssigner) calculateThresholds(currentEpochData *EpochMLNodeData, participantVotingPowers map[string]int64) thresholdSet {
+	allParticipantsWeights := getParticipantWeightsForThreshold(currentEpochData, participantVotingPowers)
 	participantWeightThreshold := calculateParticipantWeightThreshold75Percent(allParticipantsWeights)
 	ma.LogInfo("Calculated participant weight threshold (75% rule)", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_participant_threshold", "threshold", participantWeightThreshold, "total_participants", len(allParticipantsWeights))
 
-	participantMinNodeWeightThresholds, participantNodeCounts := calculatePerParticipantThreshold(currentEpochData, participantWeightThreshold)
+	participantMinNodeWeightThresholds, participantNodeCounts := calculatePerParticipantThreshold(currentEpochData, participantWeightThreshold, participantVotingPowers)
 	ma.LogInfo("Calculated per-participant node thresholds (25% rule)", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_per_participant_thresholds", "total_participants", len(participantMinNodeWeightThresholds))
 
 	allNodesWeights := currentEpochData.GetAllIndividualNodeWeights()
@@ -618,6 +636,8 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 	totalCappedWeight int64,
 	coefficients map[string]mathsdk.LegacyDec,
 	anchorHeight int64,
+	guardianSet map[string]bool,
+	participantVotingPowers map[string]int64,
 ) *EpochMLNodeData {
 	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
 
@@ -631,7 +651,7 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 	eligibleNodesData := NewEpochMLNodeData()
 	for _, modelId := range currentEpochData.Models() {
 		modelView := currentEpochData.ForModel(modelId)
-		thresholds := ma.calculateThresholds(modelView)
+		thresholds := ma.calculateThresholds(modelView, participantVotingPowers)
 		ma.LogInfo("Calculated per-model thresholds", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
 			"step", "per_model_thresholds", "model_id", modelId,
 			"participant_min_node_weights", thresholds.participantMinNodeWeights,
@@ -643,6 +663,9 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 		// Build eligible set for this model using per-model thresholds
 		var filteredParticipantAddrs []string
 		for _, addr := range sortedParticipantAddrs {
+			if guardianSet[addr] {
+				continue
+			}
 			nodes := filterNodesByThresholds(participantNodes[addr], addr, thresholds)
 			if len(nodes) > 0 {
 				filteredParticipantAddrs = append(filteredParticipantAddrs, addr)
@@ -933,6 +956,29 @@ func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
 	return 0
 }
 
+// getParticipantWeightsForThreshold returns voting-power-based weights for the 75% threshold.
+// Uses the same delegation-resolved VotingPower that PoC/CPoC validation uses.
+// Falls back to raw PocWeight for participants without VotingPower data.
+func getParticipantWeightsForThreshold(epochData *EpochMLNodeData, participantVotingPowers map[string]int64) []int64 {
+	uniqueParticipants := make(map[string]bool)
+	for _, modelId := range sortedKeys(epochData.data) {
+		modelData := epochData.data[modelId]
+		for _, participantAddr := range sortedKeys(modelData) {
+			uniqueParticipants[participantAddr] = true
+		}
+	}
+
+	weights := make([]int64, 0, len(uniqueParticipants))
+	for _, addr := range sortedKeys(uniqueParticipants) {
+		w := participantVotingPowers[addr]
+		if w == 0 {
+			w = epochData.GetParticipantWeight(addr)
+		}
+		weights = append(weights, w)
+	}
+	return weights
+}
+
 // calculateParticipantWeightThreshold75Percent calculates the minimum participant weight threshold
 // to ensure participants with top 75% of total weight are included.
 //
@@ -945,7 +991,8 @@ func calculateParticipantWeightThreshold75Percent(weights []int64) int64 {
 // calculatePerParticipantThreshold calculates node weight thresholds for top 75% participants.
 // For each participant, ensures top 25% of their nodes (by weight) are included.
 // Returns both weight thresholds and target node counts (for uniform weight handling).
-func calculatePerParticipantThreshold(epochData *EpochMLNodeData, participantWeightThreshold int64) (map[string]int64, map[string]int) {
+// Uses participantVotingPowers (delegation-resolved) for the 75% threshold comparison.
+func calculatePerParticipantThreshold(epochData *EpochMLNodeData, participantWeightThreshold int64, participantVotingPowers map[string]int64) (map[string]int64, map[string]int) {
 	thresholds := make(map[string]int64)
 	counts := make(map[string]int)
 
@@ -958,9 +1005,12 @@ func calculatePerParticipantThreshold(epochData *EpochMLNodeData, participantWei
 	}
 
 	for _, participantAddr := range sortedKeys(uniqueParticipants) {
-		participantWeight := epochData.GetParticipantWeight(participantAddr)
+		effectiveWeight := participantVotingPowers[participantAddr]
+		if effectiveWeight == 0 {
+			effectiveWeight = epochData.GetParticipantWeight(participantAddr)
+		}
 
-		if participantWeight < participantWeightThreshold {
+		if effectiveWeight < participantWeightThreshold {
 			continue
 		}
 
