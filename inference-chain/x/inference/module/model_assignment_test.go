@@ -19,8 +19,10 @@ type mockKeeperForModelAssigner struct {
 	epochGroupData   map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
 	// participant -> epochIndex -> summary. When present with RewardedCoins > 0, the participant
 	// counts as eligible-by-history for that epoch in SamplePreservedForEpisode.
-	perfSummaries map[string]map[uint64]types.EpochPerformanceSummary
-	params        *types.Params
+	perfSummaries    map[string]map[uint64]types.EpochPerformanceSummary
+	params           *types.Params
+	liveSubGroupOverrides    map[string]map[string]bool // modelId -> member set override for GetSubGroupDataWithLiveMembers
+	subGroupDataWithLiveErr  error
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -67,6 +69,35 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 
 func (m *mockKeeperForModelAssigner) GetGenesisGuardianAddresses(ctx context.Context) []string {
 	return nil
+}
+
+func (m *mockKeeperForModelAssigner) GetSubGroupDataWithLiveMembers(ctx context.Context, modelId string) (types.EpochGroupData, map[string]bool, error) {
+	if m.subGroupDataWithLiveErr != nil {
+		return types.EpochGroupData{}, nil, m.subGroupDataWithLiveErr
+	}
+	// Find the subgroup data (use the latest epoch available)
+	var data types.EpochGroupData
+	found := false
+	if epochMap, ok := m.epochGroupData[modelId]; ok {
+		for _, d := range epochMap {
+			data = d
+			found = true
+		}
+	}
+	if !found {
+		return types.EpochGroupData{}, nil, nil
+	}
+	// Build live member set: use override if present, otherwise all members in the data
+	if m.liveSubGroupOverrides != nil {
+		if members, ok := m.liveSubGroupOverrides[modelId]; ok {
+			return data, members, nil
+		}
+	}
+	liveSet := make(map[string]bool, len(data.ValidationWeights))
+	for _, vw := range data.ValidationWeights {
+		liveSet[vw.MemberAddress] = true
+	}
+	return data, liveSet, nil
 }
 
 // populateSubgroupsFromParticipants writes root and per-model subgroup data at epochIdx

@@ -64,6 +64,28 @@ func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epo
 	return k.epochGroupFromData(data), nil
 }
 
+// GetSubGroupDataWithLiveMembers returns the EpochGroupData for a model subgroup
+// together with the set of live SDK-group members for that subgroup, in a single pass.
+func (k Keeper) GetSubGroupDataWithLiveMembers(ctx context.Context, modelId string) (types.EpochGroupData, map[string]bool, error) {
+	currentGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		return types.EpochGroupData{}, nil, err
+	}
+	subGroup, err := currentGroup.GetSubGroup(ctx, modelId)
+	if err != nil {
+		return types.EpochGroupData{}, nil, err
+	}
+	members, err := subGroup.GetGroupMembers(ctx)
+	if err != nil {
+		return types.EpochGroupData{}, nil, err
+	}
+	liveSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		liveSet[m.Member.Address] = true
+	}
+	return *subGroup.GroupData, liveSet, nil
+}
+
 func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
 	return epochgroup.NewEpochGroup(
 		k.group,

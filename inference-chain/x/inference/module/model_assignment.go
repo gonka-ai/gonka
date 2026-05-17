@@ -343,6 +343,7 @@ type KeeperForModelAssigner interface {
 	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
 	GetGenesisGuardianAddresses(ctx context.Context) []string
+	GetSubGroupDataWithLiveMembers(ctx context.Context, modelId string) (types.EpochGroupData, map[string]bool, error)
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -459,6 +460,8 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 
 // SamplePreservedForEpisode returns the preserved-node snapshot for a single PoC episode.
 // The seed mixes in anchorHeight so each episode in the same epoch samples independently.
+// Participants removed mid-epoch are excluded per-model via GetLiveSubGroupMembers,
+// symmetric with the liveSubSet filtering in getEffectiveValidationBaseState.
 func (ma *ModelAssigner) SamplePreservedForEpisode(
 	ctx context.Context,
 	epoch types.Epoch,
@@ -500,9 +503,16 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	participantVotingPowers := make(map[string]int64)
 
 	for _, modelId := range sortedModelIds {
-		currentSubData, foundCurrent := ma.keeper.GetEpochGroupData(ctx, epoch.Index, modelId)
-		if foundCurrent {
+		currentSubData, liveSubSet, err := ma.keeper.GetSubGroupDataWithLiveMembers(ctx, modelId)
+		if err != nil {
+			ma.LogWarn("SamplePreservedForEpisode: unable to get subgroup data with live members",
+				types.Allocation, "model_id", modelId, "error", err)
+		}
+		if len(currentSubData.ValidationWeights) > 0 {
 			for _, vw := range currentSubData.ValidationWeights {
+				if liveSubSet != nil && !liveSubSet[vw.MemberAddress] {
+					continue
+				}
 				dedupedNodes, dedupStats := dedupMLNodesById(vw.MlNodes)
 				ma.logMLNodeDedupStats(
 					"Duplicate ML nodes detected in current epoch subgroup",
