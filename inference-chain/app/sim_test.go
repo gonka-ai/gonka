@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"cosmossdk.io/log"
+	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/feegrant"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -21,6 +22,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/testutil/simsx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	simcli "github.com/cosmos/cosmos-sdk/x/simulation/client/cli"
@@ -89,12 +91,25 @@ func setupStateFactory(bApp *app.App) simsx.SimStateFactory {
 //
 //  1. Add Gonka denom metadata, required by inference module init
 //     (app.initializeDenomMetadata reads BankKeeper.GetDenomMetaData(BaseCoin)).
-//  2. Recompute bank Supply from Balances. The randomized genesis sets
+//  2. Fund every sim account with ngonka: upstream
+//     simsx hardwires simState.BondDenom = sdk.DefaultBondDenom = "stake"
+//     (testutil/simsx/runner.go:286), so the randomized bank GenesisState
+//     funds accounts with `stake` but not the `ngonka` BaseCoin that
+//     StartInference's escrow flow requires (payment_handler.go).
+//     Without this, every StartInference fails at PutPaymentInEscrow with
+//     "insufficient spendable funds" and routes through failedStart — so
+//     no Inferences ever land in keeper and the rest of the first-wave
+//     ops never see paired state. We give each account simAccountNgonka
+//     coins of ngonka (~10^15 ≈ 10^6 GNK), well above the per-inference
+//     escrow even for the full-test 100K-op run.
+//  3. Recompute bank Supply from Balances. The randomized genesis sets
 //     Supply based on NumBonded staking validators, but with staking ops
 //     disabled the bonded pool is never funded, so the default Supply
-//     would fail the supply-vs-balance invariant at InitGenesis.
+//     would fail the supply-vs-balance invariant at InitGenesis. Same
+//     recompute keeps Supply in sync after the ngonka top-up.
 //
-// Ported from hleb-albau PR gonka-ai/gonka#995.
+// The denom-metadata + Supply-recompute steps are ported from hleb-albau
+// PR gonka-ai/gonka#995; the ngonka top-up is added on top.
 func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
 	bankStateBz, ok := rawState[banktypes.ModuleName]
 	if !ok {
@@ -117,6 +132,24 @@ func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
 		},
 	})
 
+	// Build the set of module-account addresses so we DON'T top them up
+	// with ngonka — staking InitGenesis verifies notBondedPool balance ==
+	// declared NotBondedCoins (stake only); adding ngonka there panics
+	// «not bonded pool balance is different from not bonded coins»
+	// (cosmos-sdk x/staking/keeper/genesis.go:174).
+	moduleAddrs := make(map[string]bool, 16)
+	for name := range app.GetMaccPerms() {
+		moduleAddrs[authtypes.NewModuleAddress(name).String()] = true
+	}
+
+	ngonkaTopUp := sdk.NewCoin(inferencetypes.BaseCoin, simAccountNgonka)
+	for i := range bankState.Balances {
+		if moduleAddrs[bankState.Balances[i].Address] {
+			continue
+		}
+		bankState.Balances[i].Coins = bankState.Balances[i].Coins.Add(ngonkaTopUp)
+	}
+
 	var actualSupply sdk.Coins
 	for _, balance := range bankState.Balances {
 		actualSupply = actualSupply.Add(balance.Coins...)
@@ -125,6 +158,12 @@ func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
 
 	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
 }
+
+// simAccountNgonka is the per-sim-account ngonka top-up amount applied by
+// fixBankGenesisState. 10^15 ngonka = 10^6 GNK — comfortable buffer
+// above the per-inference escrow (~6.3 × 10^5 ngonka in current sim) even
+// at the make sim-full-test scale of 500 blocks × 200 ops/block.
+var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
 
 // TestFullAppSimulation is the simsx entry point for `make sim-smoke-test`
 // and `make sim-full-test`. CLI flags (-NumBlocks, -BlockSize, -Seed,
@@ -200,8 +239,7 @@ func checkImportExport(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simty
 		// Defensive: even with disabledOpsSimModule on staking we keep the
 		// upstream-known skip path for the rare case of an empty validator set.
 		if strings.Contains(err.Error(), "validator set is empty after InitGenesis") {
-			tb.Log("skipping import-export comparison: validator set empty")
-			return
+			tb.Skip("import-export comparison skipped: validator set empty")
 		}
 		tb.Fatalf("InitGenesis on newApp: %v", err)
 	}

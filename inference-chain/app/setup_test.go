@@ -13,7 +13,7 @@ import (
 // fresh *app.App via createTestApp, NewSimApp, or
 // NewSimulationAppInstance. `go test` compiles each package to its own
 // binary so the flag dies with the process; production semantics (flag
-// default=false) are unaffected. See x/inference/module/genesis.go:16-22.
+// default=false) are unaffected. See x/inference/module/genesis.go.
 func TestMain(m *testing.M) {
 	inferencemodule.IgnoreDuplicateDenomRegistration = true
 	os.Exit(m.Run())

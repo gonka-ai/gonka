@@ -10,22 +10,23 @@ its phased implementation.
 From repo root:
 
 ```bash
-make sim-smoke-test   # 50 blocks × 20 ops, ~15 min
-make sim-full-test    # 500 blocks × 200 ops, ~120 min (Phase 2+ recommended)
+make sim-smoke-test   # 50 blocks × 20 ops, ~10 s
+make sim-full-test    # 500 blocks × 200 ops, ~35 s (Phase 2+ recommended)
 ```
 
-Both targets enter the `inference-chain` module and run `go test -run
-TestFullAppSimulation` with the `sims` build tag. The `*_Postrun` tests
-(see Test inventory) are not invoked by these targets; they call `t.Skip`
-with the reason and only run when invoked directly via
-`go test -tags sims ./app/...` without a `-run` filter.
+Both targets enter the `inference-chain` module and run
+`TestFullAppSimulation` with the `sims` build tag; `sim-smoke-test` also
+runs `TestFullSimulation_x_Inference_Integrated` (per-op state assertions).
+The `*_Postrun` tests (see Test inventory) are not invoked by these
+targets; they call `t.Skip` with the reason and only run when invoked
+directly via `go test -tags sims ./app/...` without a `-run` filter.
 
 ## Run modes
 
 | Target | Blocks × Ops | Seeds | Wall-clock | When to use |
 |---|---|---|---|---|
-| `sim-smoke-test` | 50 × 20 | 1 (`-Seed=99`) | ~15 min | Pre-PR sanity check; CI via [`.github/workflows/simulation.yml`](../.github/workflows/simulation.yml) (`workflow_dispatch` only, not a required PR check) |
-| `sim-full-test` | 500 × 200 | 1 (`-Seed=99`) | ~120 min | After Phase 2 real ops land. Informative only when ops are not NoOpMsg stubs |
+| `sim-smoke-test` | 50 × 20 | 1 (`-Seed=99`) | ~10 s | Pre-PR sanity check; CI via [`.github/workflows/simulation.yml`](../.github/workflows/simulation.yml) (`workflow_dispatch` only, not a required PR check) |
+| `sim-full-test` | 500 × 200 | 1 (`-Seed=99`) | ~35 s | After Phase 2 real ops land. Informative only when ops are not NoOpMsg stubs |
 | direct `go test` (with `-Seed=N`) | per `-NumBlocks` / `-BlockSize` flags | 1 (the supplied `-Seed`) | depends | Reproducing a specific seed, debugging |
 | direct `go test` (no `-Seed`) | per flags | simsx `defaultSeeds` (37 seeds, parallel subtests) | depends | Broad coverage sweep |
 
@@ -57,7 +58,50 @@ Read by `simcli.GetSimulatorFlags()` in `app/sim_test.go:init`:
 | `-NumBlocks` | (unset) | Number of blocks per simulation. |
 | `-BlockSize` | (unset) | Number of ops attempted per block. |
 | `-Seed` | (unset; falls back to simsx defaultSeeds list) | Specific seed to use. Override for reproducing failures. |
+| `-GenesisTime` | `time.Now().Unix()` at process start | UNIX timestamp of the simulated genesis. The default is the **wall clock**, so it differs every process; pin it for cross-process reproducibility (see [Reproducibility](#reproducibility)). |
 | `-Verbose` | `false` | Verbose logging. |
+
+## Reproducibility
+
+A simulation run is a pure function of **two** inputs, not one: the RNG
+`-Seed` *and* `-GenesisTime`. Pinning `-Seed` alone is not enough.
+
+`gonka-ai/cosmos-sdk@v0.53.3-ps17` registers `-GenesisTime` with a default
+of `time.Now().Unix()` (`x/simulation/client/cli/flags.go:62`), evaluated
+once per process. The genesis timestamp flows through `AppStateRandomizedFn`
+into time-gated chain logic (gov/group voting windows, access cutoffs), so
+two runs of the same `-Seed` minutes apart produce a different `opsCount`
+and a different AppHash.
+
+`TestAppStateDeterminism` does not catch this — it runs the same seed
+several times *inside one process*, where `-GenesisTime` is already fixed.
+
+`make sim-smoke-test` / `make sim-full-test` pin `-GenesisTime` (see
+`inference-chain/Makefile`, `SIM_GENESIS_TIME`) so their AppHash is
+reproducible across machines and CI. When reproducing a run with a direct
+`go test`, pass the **same** `-GenesisTime` as the original, not just
+`-Seed`.
+
+## Validator set in long runs
+
+A Cosmos simulation needs a non-empty validator set every block, or simsx
+aborts the run (`x/simulation/simulate.go:266` — `t.Skip("empty validator
+set")`).
+
+`inference-chain`'s validator set is managed by the PoC flow:
+`SetComputeValidators` (`cosmos-sdk/x/staking/keeper/compute.go`) rebuilds it
+every epoch from compute results. The simulation does not run PoC, so it never
+refreshes the set — while cosmos `x/slashing` keeps downtime-jailing validators
+on the random vote-info simsx feeds each block. Left alone the bonded set
+drains linearly to zero (observed ~block 135 of a seed-99 run) and the run
+skips.
+
+`EnsureComputeValidators` (`x/inference/simulation/bootstrap.go`) bridges the
+gap: when the bonded validator count falls below a floor it feeds every
+validator back through `SetComputeValidators`, which un-jails and re-bonds them
+— mimicking production's per-epoch refresh. The x/inference op factories call
+it, so `sim-full-test` completes a real 500-block run. Faithfully simulating
+the full PoC validator rotation is separate, larger work.
 
 ## Expected output
 
@@ -174,6 +218,7 @@ docker run --rm --network host \
 | Test | What it checks | Status |
 |---|---|---|
 | `TestFullAppSimulation` | Top-level simsx run: random genesis → simulate → CheckExportSimulation | Green |
+| `TestFullSimulation_x_Inference_Integrated` | Smoke simsx run + post-run keeper-state assertions: StartInference/FinishInference/MsgValidation each reached state mutation | Green |
 | `TestAppImportExport_Postrun` | Export → fresh app InitGenesis → KV-store diff | **Skipped** (tracks fork bonded-pool issue, see TODO and gonka-ai/gonka#1153) |
 | `TestAppSimulationAfterImport_Postrun` | Export → fresh app InitChain → second simulation | **Skipped** (same fork issue + post-import simulation step not yet wired) |
 | `TestAppStateDeterminism` | 3 seeds × 3 attempts: identical AppHash | Green |
@@ -181,13 +226,16 @@ docker run --rm --network host \
 | `TestDisabledOpsSimModule_*` | Wrapper produces empty WeightedOperations for staking/distribution/wasm | Green |
 | `TestBankGenesisFix_SupplyRecomputed` | `fixBankGenesisState` makes Supply match Balances | Green |
 
-## Phase status (as of 2026-05-08)
+## Phase status
 
-- **Phase 1** (this issue): simsx migration, smoke/full Make targets, disabled
-  upstream ops, restored test semantics, fixBankGenesisState. **In progress.**
-- **Phase 2**: first-wave x/inference real ops (SubmitNewParticipant,
+`#982` defines a four-phase roadmap. Phases 1 and 2 are implemented; both
+`sim-smoke-test` and `sim-full-test` exercise real `x/inference` operations.
+
+- **Phase 1** — simsx migration, smoke/full Make targets, disabled upstream
+  ops, restored test semantics, `fixBankGenesisState`. **Done.**
+- **Phase 2** — first-wave `x/inference` real ops (SubmitNewParticipant,
   StartInference, FinishInference, Validation, ClaimRewards) replacing
-  NoOpMsg stubs. After this phase, `sim-full-test` produces meaningful signal.
+  NoOpMsg stubs. **Done.**
 - **Phase 3**: weight tuning, store decoders, custom invariants,
   parameter-edge fuzzing. PoC-state determinism beyond AppHash.
 - **Phase 4**: simulation operations for other custom modules (bls,

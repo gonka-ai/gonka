@@ -3,6 +3,7 @@ package inference
 import (
 	"math/rand"
 
+	"github.com/cosmos/cosmos-sdk/testutil/simsx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
@@ -87,14 +88,22 @@ const (
 )
 
 // GenerateGenesisState creates a randomized GenState of the module.
+//
+//   - ParticipantList is pre-seeded so the four ActiveParticipant-gated ops
+//     (Start/Finish/Validation/ClaimRewards) have someone to promote via
+//     EnsureActiveParticipantsSeeded (x/inference/simulation/bootstrap.go).
+//   - ModelList is pre-seeded with Qwen + Kimi (mainnet-realistic values)
+//     so MsgStartInference's RecordInferencePrice has a
+//     governance-registered model to look up. EnsureModelsInEpochGroup
+//     (x/inference/simulation/bootstrap.go) promotes them into the genesis
+//     EpochGroup's SubGroupModels on first op invocation, which is the
+//     state BeginBlocker / UpdateDynamicPricing iterate.
 func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
-	accs := make([]string, len(simState.Accounts))
-	for i, acc := range simState.Accounts {
-		accs[i] = acc.Address.String()
-	}
 	inferenceGenesis := types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+		ParticipantList:   inferencesimulation.BuildSimGenesisParticipants(simState),
+		ModelList:         inferencesimulation.BuildSimGenesisModels(),
 		// this line is used by starport scaffolding # simapp/module/genesisState
 	}
 	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&inferenceGenesis) //nolint:forbidigo // Simulation code
@@ -406,4 +415,23 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 		),
 		// this line is used by starport scaffolding # simapp/module/OpMsg
 	}
+}
+
+// WeightedOperationsX registers the Phase 2 first-wave x/inference message
+// factories with the simsx runner. simsx.Run prefers this method over the
+// legacy WeightedOperations() when an AppModule implements HasWeightedOperationsX
+// (see fork testutil/simsx/runner.go:333). Phase 2 first-wave covers:
+// SubmitNewParticipant, StartInference, FinishInference, Validation, ClaimRewards.
+// Remaining ops stay on the legacy WeightedOperations() path until Phase 3.
+func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Registry) {
+	reg.Add(weights.Get(opWeightMsgSubmitNewParticipant, uint32(defaultWeightMsgSubmitNewParticipant)),
+		inferencesimulation.MsgSubmitNewParticipantFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgStartInference, uint32(defaultWeightMsgStartInference)),
+		inferencesimulation.MsgStartInferenceFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgFinishInference, uint32(defaultWeightMsgFinishInference)),
+		inferencesimulation.MsgFinishInferenceFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgValidation, uint32(defaultWeightMsgValidation)),
+		inferencesimulation.MsgValidationFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgClaimRewards, uint32(defaultWeightMsgClaimRewards)),
+		inferencesimulation.MsgClaimRewardsFactory(am.keeper))
 }
