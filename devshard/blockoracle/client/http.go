@@ -134,11 +134,24 @@ func (c *Client) Latest(ctx context.Context) (*blockoracle.Header, error) {
 // StaleAfter. Useful for consumers that need to know whether to act on a
 // cached value (see testenv.md §7.2 scenario I4).
 func (c *Client) Stale() bool {
+	stale, _, _, _ := c.StaleDetails()
+	return stale
+}
+
+// StaleDetails reports staleness and timing for height-sync decide debug logs.
+func (c *Client) StaleDetails() (stale bool, lastRecvAgeMs int64, latestHeight int64, neverReceived bool) {
 	last := atomic.LoadInt64(&c.lastRecvUnix)
 	if last == 0 {
-		return true
+		return true, 0, 0, true
 	}
-	return time.Since(time.Unix(0, last)) > c.cfg.StaleAfter
+	age := time.Since(time.Unix(0, last))
+	stale = age > c.cfg.StaleAfter
+	c.mu.RLock()
+	if c.latest != nil {
+		latestHeight = c.latest.Height
+	}
+	c.mu.RUnlock()
+	return stale, age.Milliseconds(), latestHeight, false
 }
 
 // RejectedCount returns the number of headers dropped by the client due

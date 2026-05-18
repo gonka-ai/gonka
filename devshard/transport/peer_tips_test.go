@@ -9,6 +9,30 @@ import (
 	"devshard/heightsync"
 )
 
+func TestHeightSyncPeerTips_SnapshotVerifiedReady(t *testing.T) {
+	tips := NewHeightSyncPeerTips()
+	tips.RequireVerifiedBlob = true
+	now := time.UnixMilli(2_000_000)
+
+	require.False(t, tips.Snapshot(now).CacheReady)
+
+	blob := []byte("blob")
+	sig := []byte("sig")
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         42,
+		MainnetBlockHashHex:   "abc123def456",
+		OriginatorSenderID:    "gonka1host",
+		OriginatorTimestampMs: now.UnixMilli(),
+	}, blob, sig)
+
+	st := tips.Snapshot(now)
+	require.True(t, st.CacheReady)
+	require.Equal(t, 1, st.VerifiedOriginators)
+	require.Equal(t, int64(42), st.MaxFreshHeight)
+	require.Equal(t, "abc123de", st.BlockHashPrefix)
+}
+
 func TestHeightSyncPeerTips_FreshnessFilter(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
 	tips.Freshness = 60 * time.Second

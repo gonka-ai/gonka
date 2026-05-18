@@ -252,7 +252,7 @@ Important clarification:
 
 - In current testenv wiring, `devshardd` subscribes to `height-sync` continuously (SSE stream) and ingests headers on producer cadence (`height_sync.block_interval` / fallback `chain.block_time`), **not** only when an inference request arrives.
 - Inference requests are used here only as an easy "traffic is alive" signal while observing logs.
-- The proposal-level Anchor/Omit/Strong schedule (`K`, `D`) from [`proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md) is **target design** and is not yet fully surfaced as runtime envelope behavior or testenv config knobs (`K`/`D` are not currently configurable in `testenv/config.yaml`).
+- The proposal-level Anchor/Omit/Strong schedule (`K`, `D`) from [`proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) is **target design** and is not yet fully surfaced as runtime envelope behavior or testenv config knobs (`K`/`D` are not currently configurable in `testenv/config.yaml`).
 
 #### 6.4.2 Required follow-up for full vs compact assertions
 

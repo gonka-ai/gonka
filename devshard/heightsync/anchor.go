@@ -39,11 +39,15 @@ type HeightSyncSection struct {
 	// across carry-forward; must not be overwritten by the carrier.
 	OriginatorSenderID string `json:"originator_sender_id,omitempty"`
 	// OriginatorTimestampMs is when the originator built its Anchor; used for
-	// freshness gating on carry-forward (see HEIGHT_SYNC_HEADERS_PROPOSAL).
+	// freshness gating on carry-forward (see HEIGHT_SYNC_PROTOCOL_PROPOSAL).
 	OriginatorTimestampMs int64 `json:"originator_timestamp_unix_ms,omitempty"`
 	// SenderSignature is the host originator signature on the response leg (Step 8).
 	// Omitted on courier request-leg carry-forward. JSON/SSE uses base64 encoding.
 	SenderSignature []byte `json:"sender_signature,omitempty"`
+	// TipStaleAfterMs is advisory wire metadata (not origin-signed): milliseconds since
+	// the local block oracle last ingested a new header. Present when cadence wanted an
+	// Anchor but the feed is quiet (long block time); peers still get (height, hash).
+	TipStaleAfterMs int64 `json:"tip_stale_after_ms,omitempty"`
 }
 
 // DecideHints steers when Anchor must be emitted.
@@ -85,6 +89,8 @@ type DecideHints struct {
 	// Propagator supplies per-recipient last_propagated for lazy emit in Omit
 	// windows. Nil disables lazy emission (host local-oracle path).
 	Propagator LazyPropagator
+	// Direction is optional ("request" | "response") for heightsync: decide debug logs.
+	Direction string
 }
 
 // LazyPropagator tracks which mainnet heights were already sent to each peer.
@@ -172,52 +178,79 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	k, slots := s.k, s.slotsNum
+	if h.Escrow != nil {
+		if h.Escrow.TurnK != 0 {
+			k = h.Escrow.TurnK
+		}
+		if h.Escrow.TurnSlots != 0 {
+			slots = h.Escrow.TurnSlots
+		}
+	}
+	syncTurn := NonceInSyncTurn(h.Nonce, k, slots, h.Escrow)
 	cadenceEmit := s.shouldEmit(h)
 	lazyEmit := false
 	if !cadenceEmit {
 		lazyEmit = s.shouldLazyEmit(ctx, h)
 	}
 	if !cadenceEmit && !lazyEmit {
+		logDecide(h, k, slots, cadenceEmit, lazyEmit, false, syncTurn, false, DecideEventOmitNotDue, OracleDecideSnapshot{}, nil)
 		return nil, nil, false
 	}
 
 	forceOracle := h.ForceAnchor || inEscrowForcedWindow(h)
+	now := s.now()
+	snap := snapshotOracleForDecide(s.source, now)
 
 	if s.source == nil {
 		if forceOracle {
+			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitNoSource, snap, ErrNoOracle)
 			return nil, ErrNoOracle, true
 		}
+		logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, false, DecideEventOmitNoSource, snap, nil)
 		return nil, nil, false
 	}
 
 	if s.source.Stale() {
+		if sec, dErr, ok := s.tryStaleCachedTip(ctx, h, now, snap); ok {
+			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, false, DecideEventAnchorStale, snap, dErr)
+			return sec, dErr, false
+		}
 		if forceOracle {
+			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitStale, snap, ErrNoOracle)
 			return nil, ErrNoOracle, true
 		}
+		logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitStale, snap, nil)
 		return nil, nil, true
 	}
 
 	sec, err := s.source.LatestSection(ctx)
 	if err != nil {
 		if forceOracle {
-			return nil, fmt.Errorf("latest section: %w", err), true
+			wrapped := fmt.Errorf("latest section: %w", err)
+			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitLatestErr, snap, wrapped)
+			return nil, wrapped, true
 		}
+		logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitLatestErr, snap, err)
 		return nil, nil, true
 	}
 	if sec == nil {
 		if forceOracle {
+			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitNilSection, snap, ErrNilOracleHeader)
 			return nil, ErrNilOracleHeader, true
 		}
+		logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitNilSection, snap, nil)
 		return nil, nil, true
 	}
 
-	nowMs := s.now().UnixMilli()
+	nowMs := now.UnixMilli()
 	out := *sec
 	out.TimestampUnixMs = nowMs
 	if id := h.OriginatorSenderID; id != "" {
 		out.OriginatorSenderID = id
 		out.OriginatorTimestampMs = nowMs
 	}
+	logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, false, DecideEventAnchor, snap, nil)
 	return &out, nil, false
 }
 
@@ -263,7 +296,7 @@ func (s *AnchorScheduler) shouldEmit(h DecideHints) bool {
 }
 
 // shouldLazyEmit is true in Omit windows when the courier has a fresh tip that
-// has not yet been sent to Recipient (see HEIGHT_SYNC_HEADERS_PROPOSAL lazy carry).
+// has not yet been sent to Recipient (see HEIGHT_SYNC_PROTOCOL_PROPOSAL lazy carry).
 func (s *AnchorScheduler) shouldLazyEmit(ctx context.Context, h DecideHints) bool {
 	if h.Recipient == "" || h.Propagator == nil {
 		return false
@@ -276,4 +309,27 @@ func (s *AnchorScheduler) shouldLazyEmit(ctx context.Context, h DecideHints) boo
 		return false
 	}
 	return h.Propagator.ShouldPropagateTo(h.Recipient, uint64(sec.MainnetHeight))
+}
+
+// tryStaleCachedTip emits the last cached mainnet tip when the oracle is quiet (no new
+// block within StaleAfter) but a prior header is still available. TipStaleAfterMs marks
+// how long since the last block; origin signature covers height/hash only (see §origin_signing).
+func (s *AnchorScheduler) tryStaleCachedTip(ctx context.Context, h DecideHints, now time.Time, snap OracleDecideSnapshot) (*HeightSyncSection, error, bool) {
+	if s == nil || s.source == nil || snap.NeverReceived {
+		return nil, nil, false
+	}
+	sec, err := s.source.LatestSection(ctx)
+	if err != nil || !IsAnchorSection(sec) {
+		return nil, err, false
+	}
+	out := *sec
+	out.TimestampUnixMs = now.UnixMilli()
+	if snap.LastRecvAgeMs > 0 {
+		out.TipStaleAfterMs = snap.LastRecvAgeMs
+	}
+	if id := h.OriginatorSenderID; id != "" {
+		out.OriginatorSenderID = id
+		out.OriginatorTimestampMs = out.TimestampUnixMs
+	}
+	return &out, nil, true
 }

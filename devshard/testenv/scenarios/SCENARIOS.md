@@ -84,6 +84,11 @@ go test -count=1 ./testenv/scenarios/...
 Requirements: **Docker**, **docker compose v2**, **Go**. Build tag **`testenvci`**
 is required (`container/` is excluded from plain `go test`).
 
+**Session model (default):** one shared escrow session for the whole `make e2e`
+run. Each test calls `advanceSessionToNonce` / `nextSyncTurnLeadNonce` from
+`GET /v1/status` — no per-test SQLite wipe. For a fresh session at nonce 1:
+`RESET_SESSION=1 make e2e`.
+
 **Recommended:** use the driver script (one shared stack, like citest):
 
 1. Regenerate `config.yaml` / `docker-compose.yml` (unless `SKIP_REGEN=1`)

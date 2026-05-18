@@ -13,7 +13,7 @@ message DiffContent {
 }
 
 // MsgForceHeightSyncTurn opens a forced height-sync turn of slots_num consecutive
-// nonces (same width as a cadence sync turn). See height-sync-anchor-poc §5.5.
+// nonces (same width as a cadence sync turn).
 message MsgForceHeightSyncTurn {
   uint64 trigger_nonce = 1; // must equal diff nonce
   uint64 end_nonce = 2;     // trigger_nonce + slots_num - 1

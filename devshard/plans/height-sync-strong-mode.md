@@ -1,7 +1,7 @@
 # Height-sync Strong mode — `LightBlock` + `VerifyCommit`, `D` band, (C-strong) confirmation
 
 This plan extends the PoC v2 milestone
-([`height-sync-anchor-poc.md`](./height-sync-anchor-poc.md))
+([`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) — PoC v2 baseline)
 with **Strong mode**: cryptographic mainnet-quorum verification of
 `(H, hash)` pairs via a `LightBlock`-equivalent proof, the `|Δ| > D`
 escalation rule from the proposal, and the proposal's
@@ -10,7 +10,7 @@ milestone, slashable-grade height sync no longer depends on the
 host-quorum approximation `(C-quorum)` alone.
 
 Normative spec for everything below lives in
-[`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md):
+[`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md):
 
 - §"Sync modes" — Anchor / Strong / Omit table
 - §"CometBFT `LightBlock` verification" — Steps 1–7, validator-set bind, `>2/3` rule
@@ -759,13 +759,10 @@ Coverage targets:
 ## 10. Where this fits with other documents
 
 - **Normative spec:**
-  [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md)
-  §"Sync modes", §"CometBFT `LightBlock` verification",
-  §"Validation pipeline" step 5/6, §"Confirmation API for downstream
-  consumers" — `(C-strong)` / `(C-hybrid)`.
+  [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
+  §6–§12 (Strong mode, receiver pipeline, confirmation API).
 - **PoC v2 baseline:**
-  [`height-sync-anchor-poc.md`](./height-sync-anchor-poc.md) +
-  [`height-sync-anchor-poc-implementation-status.md`](./height-sync-anchor-poc-implementation-status.md).
+  [`height-sync-tests.md`](../docs/height-sync-tests.md) §2–§4.
   Strong is **additive** to v2.
 - **Status:**
   [`height-sync-strong-mode-implementation-status.md`](./height-sync-strong-mode-implementation-status.md)

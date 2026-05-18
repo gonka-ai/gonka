@@ -96,4 +96,6 @@ func waitHeightSyncStackReady(t *testing.T, ctx context.Context, httpClient *htt
 	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8081/v1/status", time.Now().Add(4*time.Minute), "devshardctl /v1/status")
 	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:3100/ready", time.Now().Add(3*time.Minute), "loki")
 	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8428/api/v1/query?query=1", time.Now().Add(3*time.Minute), "victoria-metrics")
+	WaitMockdapiBlockOracleConsumersReady(t, httpClient)
+	assertHostsEscrowAlignedWithCourier(t, httpClient)
 }

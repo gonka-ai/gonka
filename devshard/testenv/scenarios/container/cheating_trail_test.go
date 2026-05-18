@@ -16,7 +16,7 @@ import (
 // Loki must show an inbound peer Anchor attestation while the host's response Anchor prefix
 // (oracle-backed) differs from the peer's bogus prefix.
 func TestContainerE2E_HeightSync_CheatingTrail(t *testing.T) {
-	_, _, httpClient, streamClient, _ := startHeightSyncContainerStack(t)
+	ws, project, httpClient, streamClient, _ := startHeightSyncContainerStack(t)
 	ctx := context.Background()
 	if dl, ok := t.Deadline(); ok {
 		var cancel context.CancelFunc
@@ -44,11 +44,17 @@ func TestContainerE2E_HeightSync_CheatingTrail(t *testing.T) {
 			cheatResp.StatusCode, http.StatusNoContent)
 	}
 
+	emitSince := time.Now().Add(-10 * time.Second)
 	if err := postChatCompletionStream(t, ctx, streamClient, int(cheatNonce)); err != nil {
 		t.Fatalf("nonce %d: %v", cheatNonce, err)
 	}
 
-	lokiStart := LokiWindowStart()
+	if peer, resp := cheatingTrailPrefixesFromCompose(t, ws, project, emitSince, int(cheatNonce)); peer != "" && resp != "" && peer != resp {
+		t.Logf("compose: cheating trail prefixes peer=%q resp=%q nonce=%d", peer, resp, cheatNonce)
+		return
+	}
+
+	lokiStart := emitSince
 	logQLPeer := `{service_name="devshardd-testenv"} |= "heightsync: peer attestation received"`
 	logQLResp := `{service_name="devshardd-testenv"} |= "heightsync: emit"`
 	deadline := time.Now().Add(3 * time.Minute)
@@ -90,6 +96,15 @@ func TestContainerE2E_HeightSync_CheatingTrail(t *testing.T) {
 				respPrefix = p
 			}
 		}
+		if peerPrefix == "" || respPrefix == "" {
+			p, r := cheatingTrailPrefixesFromCompose(t, ws, project, emitSince, wantNonce)
+			if p != "" {
+				peerPrefix = p
+			}
+			if r != "" {
+				respPrefix = r
+			}
+		}
 		if peerPrefix != "" && respPrefix != "" && peerPrefix != respPrefix {
 			return
 		}
@@ -109,15 +124,6 @@ func TestContainerE2E_HeightSync_CheatingTrail(t *testing.T) {
 	}
 	if peerPrefix == respPrefix {
 		t.Fatalf("expected peer bogus prefix %q to differ from oracle response prefix %q (cheat-anchor for nonce %d)", peerPrefix, respPrefix, wantNonce)
-	}
-}
-
-func cheatingTrailInboundTrustOK(trust string) bool {
-	switch strings.TrimSpace(trust) {
-	case "peer_aligned", "untrusted_peer":
-		return true
-	default:
-		return false
 	}
 }
 

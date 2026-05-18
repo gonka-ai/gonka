@@ -11,7 +11,7 @@ It is designed to:
 - reduce message flood via deterministic collector set,
 - make mainnet accept finalization only when commit phase is provably complete.
 
-Related proposal: [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md).
+Related proposal: [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md).
 
 ---
 
@@ -25,7 +25,7 @@ Related proposal: [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROP
 
 4. **Phase order for finalization.** End-to-end finalization is:
 
-   1. **State sharing** — run the dedicated protocol until all required parties share a common view of terminal state (or abort). When this phase completes, participants also **align on the same latest mainnet height** used for finalization: the value is the **aligned mainnet height** in the sense of [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md) (section 1 `HeightSyncSection`, proof verification, and **How the two views converge** / timeout-related **aligned height** rules). That scalar is what **`FinalizeInit.aligned_mainnet_height`** must carry into phases 2–4.
+   1. **State sharing** — run the dedicated protocol until all required parties share a common view of terminal state (or abort). When this phase completes, participants also **align on the same latest mainnet height** used for finalization: the value is the **aligned mainnet height** in the sense of [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (section 1 `HeightSyncSection`, proof verification, and **How the two views converge** / timeout-related **aligned height** rules). That scalar is what **`FinalizeInit.aligned_mainnet_height`** must carry into phases 2–4.
    2. **Proposal commitment** — broadcast / lock `FinalizeInit` (or equivalent) with `finalization_hash`, **`aligned_mainnet_height`**, and evidence.
    3. **Voting** — `FinalizeVote` and aggregation into `VoteQC` (**QC** = **Quorum Certificate**: proof enough hosts voted for the same `finalization_hash`).
    4. **Vote commitment** — `FinalizeCommit` and aggregation into `CommitQC` (commit phase on the agreed proposal), then `FinalizeSubmit` to mainnet.
@@ -88,13 +88,13 @@ Timeout is computed against:
 - `max(user_height_seen, host_response_height_seen)` and current mainnet tip.
 
 Envelope format, proofs, and signatures are defined in:
-[`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md) (structured HTTP body: height section + message section).
+[`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (structured HTTP body: height section + message section).
 
 ---
 
 ## Epoch-bound escrow: L1 validators from epoch participants
 
-When subnet **life is limited to one mainnet epoch** and the subnet is **finalized on epoch switch** (aligned with `EPOCH_CHANGE_IMMINENT` / epoch transition policy), **escrow start need not include the L1 validator set.** The **CometBFT validators that may sign blocks during that epoch** are defined by **mainnet epoch participants** (canonical on-chain state; exact module/query TBD). Each host **loads that participant list once per epoch**, converts entries to **Cosmos / CometBFT consensus validator addresses** (same derivation as in blocks), caches them, and uses the result to compute the **expected** `validators_hash` at height `H` for **Step 3b** in [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md), so peer `LightBlock`s cannot use a fabricated validator set.
+When subnet **life is limited to one mainnet epoch** and the subnet is **finalized on epoch switch** (aligned with `EPOCH_CHANGE_IMMINENT` / epoch transition policy), **escrow start need not include the L1 validator set.** The **CometBFT validators that may sign blocks during that epoch** are defined by **mainnet epoch participants** (canonical on-chain state; exact module/query TBD). Each host **loads that participant list once per epoch**, converts entries to **Cosmos / CometBFT consensus validator addresses** (same derivation as in blocks), caches them, and uses the result to compute the **expected** `validators_hash` at height `H` for **Step 3b** in [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md), so peer `LightBlock`s cannot use a fabricated validator set.
 
 Escrow creation may still fix **which epoch** applies (e.g. via creation height or an optional `epoch_id` field) without duplicating validator keys on the start message.
 
@@ -129,7 +129,7 @@ Collectors are selected from active slots using **`FinalizationHash`** and **`al
 Parameters:
 
 - `collector_count = c` (for example `c=3` or `c=5`, chain param)
-- **`aligned_mainnet_height`:** `uint64` from **`FinalizeInit`**, the agreed aligned mainnet height after state sharing / height sync per [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md).
+- **`aligned_mainnet_height`:** `uint64` from **`FinalizeInit`**, the agreed aligned mainnet height after state sharing / height sync per [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md).
 - selection seed (canonical encoding: big-endian 8-byte `aligned_mainnet_height`):
   - `seed = H(FinalizationHash || uint64_be(aligned_mainnet_height) || "collectors")`
 
@@ -155,7 +155,7 @@ Fallback:
 
 ## Exact protocol (initiator, order, transport)
 
-This section fixes **who starts**, **in what order messages flow**, and **which path** each message takes. It assumes **state sharing** (phase 1) has already succeeded and participants share the **same `aligned_mainnet_height`** per **Important to consider** and [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md).
+This section fixes **who starts**, **in what order messages flow**, and **which path** each message takes. It assumes **state sharing** (phase 1) has already succeeded and participants share the **same `aligned_mainnet_height`** per **Important to consider** and [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md).
 
 ### Initiator
 
@@ -213,7 +213,7 @@ Fields:
 
 - `escrow_id`
 - `round`
-- `aligned_mainnet_height` (`uint64`): **must** match the **aligned mainnet height** all required parties agreed when **state sharing** completed, as defined by [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md) (same scalar parties use for `max(local, H_peer)` / timeout alignment after verified `LightBlock`s). Hosts **reject** `FinalizeInit` if this value **diverges** from their own aligned height for the escrow session unless policy allows a defined tolerance. Collectors for the round are derived from **`FinalizationHash`** and this field (**Deterministic collectors**).
+- `aligned_mainnet_height` (`uint64`): **must** match the **aligned mainnet height** all required parties agreed when **state sharing** completed, as defined by [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (same scalar parties use for `max(local, H_peer)` / timeout alignment after verified `LightBlock`s). Hosts **reject** `FinalizeInit` if this value **diverges** from their own aligned height for the escrow session unless policy allows a defined tolerance. Collectors for the round are derived from **`FinalizationHash`** and this field (**Deterministic collectors**).
 - `trigger_reason`
 - `trigger_evidence_root`
 - `trigger_evidence_items` (or fetch references)

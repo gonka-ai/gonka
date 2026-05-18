@@ -8,7 +8,7 @@ scenario to the file(s) implementing it and its verification surface.
 
 This file is a status checklist, **not** a design document — for
 design decisions and rationale see the plan and the proposal
-([`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md)).
+([`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)).
 
 Legend: ✅ implemented · 🚧 in progress · ⏳ not started · ⏸ deferred
 (out of scope for this milestone).
@@ -19,7 +19,7 @@ Legend: ✅ implemented · 🚧 in progress · ⏳ not started · ⏸ deferred
 
 | Area | Status | Notes |
 | ---- | ------ | ----- |
-| PoC v2 / v2.1 (anchor + courier + (C-quorum) + response signatures) | ✅ | upstream baseline — see [`height-sync-anchor-poc-implementation-status.md`](./height-sync-anchor-poc-implementation-status.md). |
+| PoC v2 / v2.1 (anchor + courier + (C-quorum) + response signatures) | ✅ | upstream baseline — see [`height-sync-tests.md`](../docs/height-sync-tests.md) §2–§4. |
 | Strong mode milestone (this plan, §4 steps 1–8) | ⏳ | not started; design only. |
 | `(C-strong)` + `(C-hybrid)` confirmation rules | ⏳ | wired through `ConfirmationConfig.Rule`. |
 | `D` band enforcement on receivers + producer escalation | ⏳ | `D_default = 2`; configurable per deployment. |

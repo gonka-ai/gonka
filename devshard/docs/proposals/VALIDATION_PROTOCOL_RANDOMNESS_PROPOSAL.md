@@ -13,7 +13,7 @@ We should **replace** the current pattern of **per-host seeds + a finalization-t
 
 The **hard part** is defining **`R`** — the public seed or beacon — so that it is **binding after work is committed**, **not grindable** by the sequencer, and **efficient enough** for low-latency validation.
 
-**Related:** [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md) (mainnet height and **`rand_seed`** sketch), [`../issues/validation-protocol-remove-seed-reveal.md`](../issues/validation-protocol-remove-seed-reveal.md), [`../attacks.md`](../attacks.md).
+**Related:** [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (mainnet height and **`rand_seed`** sketch), [`../issues/validation-protocol-remove-seed-reveal.md`](../issues/validation-protocol-remove-seed-reveal.md), [`../attacks.md`](../attacks.md).
 
 ---
 
@@ -144,7 +144,7 @@ Unchanged: user-driven diffs, executor execution, **`MsgFinishInference`** with 
 #### Step 2 — **`MsgFinishInferenceCommit`** on the **next** host (user → host B)
 
 - User forms a **new** diff (next **`nonce`**). Routing uses **`hostIdx := int(nonce % uint64(len(group)))`** (`subnet/user/user.go`) — typically a **different** host than the previous diff’s receiver when **`len(group) > 1`**. That receiver is **host B**. **`len(group)==1`:** there is **no** distinct **B**; define a **fallback** (e.g. mainnet-only beacon without B/C, or **no** sampled validation for this escrow size).
-- The diff includes a **proposed** message **`MsgFinishInferenceCommit`** (encoding TBD) that **binds** the finished inference (e.g. **`inference_id`**, **`response_hash`**, **`escrow_id`**) and carries a **height-sync section** as in [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md): **latest attested mainnet height**, **`LightBlock`**, **`sender_signature`**, etc.
+- The diff includes a **proposed** message **`MsgFinishInferenceCommit`** (encoding TBD) that **binds** the finished inference (e.g. **`inference_id`**, **`response_hash`**, **`escrow_id`**) and carries a **height-sync section** as in [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md): **latest attested mainnet height**, **`LightBlock`**, **`sender_signature`**, etc.
 - **Purpose:** introduce a **second honest party** (B) besides the user, with **verifiable** chain view, before fixing randomness.
 
 #### Step 3 — Host B involves host C (height ping, deterministic third party)
@@ -152,7 +152,7 @@ Unchanged: user-driven diffs, executor execution, **`MsgFinishInference`** with 
 - **B**, by protocol, selects **host C** **deterministically at random** from the set:  
   **{ hosts that did not execute this inference and are not B }**  
   (i.e. not the executor for this **`inference_id`**, and not B). Selection uses a **public** rule (e.g. **`H(escrow_id || inference_id || …) % |eligible|`**) so all implementers agree.
-- **B** sends **C** a **minimal round-trip** (a “dummy” or **height-sync-only** request) that also carries **latest height** per **`HEIGHT_SYNC_HEADERS_PROPOSAL.md`**; **C** responds with a **signed** attestation of **their** latest aligned height (same envelope rules).
+- **B** sends **C** a **minimal round-trip** (a “dummy” or **height-sync-only** request) that also carries **latest height** per **`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`**; **C** responds with a **signed** attestation of **their** latest aligned height (same envelope rules).
 - **B** returns to the **user** (in the HTTP response path for the user’s request to B) the **evidence** needed so the user can attach **B’s** and **C’s** signed heights into the **canonical commit bundle** (exact wire format TBD).
 
 After this step, **three parties** each hold a **verifiable** view of “latest height” **at the time of the commit round**: **user (A)**, **B**, **C**.
@@ -163,7 +163,7 @@ All participants compute:
 
 `finishInferenceHeight = max(height_A, height_B, height_C)`
 
-using only **signed, verifiable** height fields from the commit bundle (each party’s section-1 style proofs as in [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md)). This value is **deterministic** given the same bundle.
+using only **signed, verifiable** height fields from the commit bundle (each party’s section-1 style proofs as in [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)). This value is **deterministic** given the same bundle.
 
 #### Step 5 — **`validationSeedHeight` and unknowable block hash**
 
@@ -206,7 +206,7 @@ For workloads that require **every** inference to be checked (user-paid or polic
 
 | Concern | Notes |
 |--------|--------|
-| **Stale or forged heights** | Mitigated by **`LightBlock`** verification and **section-1** rules in [`HEIGHT_SYNC_HEADERS_PROPOSAL.md`](./HEIGHT_SYNC_HEADERS_PROPOSAL.md); all three heights must be **attested**, not self-reported scalars. |
+| **Stale or forged heights** | Mitigated by **`LightBlock`** verification and **section-1** rules in [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md); all three heights must be **attested**, not self-reported scalars. |
 | **Delaying `MsgFinishInferenceCommit`** | **Not hash grinding in practice:** **`finishInferenceHeight`** is **`max(height_A, height_B, height_C)`** from **three** attested views (user + **B** + **C**); the user does **not** unilaterally pick that max. **`validationSeedHeight = finishInferenceHeight + VALIDATION_TRIGGER_OFFSET`** targets a block **several heights later**; the **hash** at that height is **unknowable** at commit time regardless of how “fast” the user’s RPC is — **`OFFSET`** exists precisely so the beacon is **not** the next block after the commit bundle. Delaying the commit only **shifts wall-clock** when heights are sampled; it does **not** let the user **select** **`block_hash(validationSeedHeight)`** like grinding a nonce. **Real residual:** **liveness / griefing** — the user can **withhold** **`MsgFinishInferenceCommit`** forever or past a **deadline** (mitigate with **max commit delay**, escrow policy, penalties). Optional edge cases: **`OFFSET = 0`**, or pathological **predictability** of the chain, could revive bias discussions — keep **`OFFSET`** at least **2–3** blocks as in the sketch. |
 | **B and C collude with user** | Matches **Threat model §2**: mostly **reputation / economics**; three parties still **cannot forge** mainnet **`block_hash`** at **`validationSeedHeight`**. |
 | **Omitting `MsgFinishInferenceCommit`** | If optional, **user+executor** could **never** trigger **`validationSeedHeight`** sampling — must be **mandatory** for sampled validation to count, or **treated as slash / no payout** for that inference. |

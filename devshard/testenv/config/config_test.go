@@ -269,6 +269,19 @@ height_sync: {block_interval_delta: "bad"}
 	require.Equal(t, time.Duration(0), cfg.HeightSyncBlockIntervalDelta())
 }
 
+func TestConfig_MockdapiStaleAfter(t *testing.T) {
+	path := writeConfig(t, `
+hosts: [{id: h0}]
+escrow: {slots: 4}
+chain: {block_time: 6s}
+height_sync: {block_interval_delta: 3s}
+`)
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 10*time.Second, cfg.MockdapiStaleAfter())
+	require.Equal(t, "10s", cfg.MockdapiStaleAfterString())
+}
+
 func TestConfig_HeightSyncURLDefaultsFromPort(t *testing.T) {
 	path := writeConfig(t, `
 hosts: [{id: h0}]

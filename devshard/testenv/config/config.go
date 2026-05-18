@@ -83,7 +83,7 @@ type HeightSyncCfg struct {
 	// in [750ms, 1250ms]. Leave empty or invalid to disable jitter.
 	BlockIntervalDelta string `yaml:"block_interval_delta"`
 	// AnchorPeriodNonces is K in envelope nonces between sync turns (see
-	// HEIGHT_SYNC_HEADERS_PROPOSAL). Zero or unset defaults to 10 after
+	// HEIGHT_SYNC_PROTOCOL_PROPOSAL). Zero or unset defaults to 10 after
 	// ApplyDefaults.
 	AnchorPeriodNonces int `yaml:"anchor_period_nonces"`
 	// SyncTurnSlots is the width of each sync-turn window in envelope
@@ -440,6 +440,26 @@ func (c *Config) HeightSyncBlockIntervalDelta() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// MockdapiStaleAfter returns MOCKDAPI_STALE_AFTER for compose and devshardctl.
+// It must exceed the maximum quiet period between height-sync blocks
+// (block interval + jitter) so AnchorScheduler does not treat the feed as
+// stale between blocks during sync-turn windows.
+func (c *Config) MockdapiStaleAfter() time.Duration {
+	block := c.HeightSyncBlockInterval()
+	delta := c.HeightSyncBlockIntervalDelta()
+	d := block + delta + time.Second
+	const floor = 10 * time.Second
+	if d < floor {
+		return floor
+	}
+	return d
+}
+
+// MockdapiStaleAfterString is the compose env value (e.g. "10s").
+func (c *Config) MockdapiStaleAfterString() string {
+	return c.MockdapiStaleAfter().String()
 }
 
 // HeightSyncValidator is the resolved form of a HeightSyncValidatorCfg:

@@ -23,8 +23,9 @@
 #   SKIP_REGEN=1            — skip make gen-integration-config
 #   SKIP_PREFLIGHT=1        — skip compose K/slots checks
 #   SKIP_UP=1               — skip compose up (tests only; stack must already match config)
-#   SKIP_SESSION_RESET=1    — skip DB wipe + restart before go test
-#   SKIP_DOWN=1             — leave stack running after tests
+#   SKIP_SESSION_RESET=1    — skip DB wipe + restart before go test (default: skip)
+#   RESET_SESSION=1         — force one DB wipe + restart before go test (debug only)
+#   SKIP_DOWN=1             — leave stack running after tests (make e2e-keep); use for log analysis
 #   TESTENV_SKIP_DOCKER_STACK=1 — passed through (tests skip)
 #
 # Bare `go test -tags=testenvci ./testenv/scenarios/container/...` without this script
@@ -47,6 +48,8 @@ DB_ROOT="$TESTENV_ROOT/$TESTENV_E2E_DB_REL_SUBDIR"
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
+# shellcheck source=wait-mockdapi-oracle-ready.sh
+source "$SCRIPT_DIR/wait-mockdapi-oracle-ready.sh"
 
 compose() {
   docker compose -f "$COMPOSE_FILE" -p "$CONTAINER_E2E_PROJECT" "$@"
@@ -113,6 +116,9 @@ wait_stack_healthy() {
     done
     (( ok == 1 )) || die "not ready: $url"
   done
+
+  log "  mockdapi: wait host block-oracle consumers (SSE + devshardd_height_at_latest_nonce)"
+  wait_mockdapi_oracle_ready
 }
 
 prune_stale_testenv_networks() {
@@ -210,9 +216,9 @@ else
   log "[3/7] SKIP_UP=1"
 fi
 
-log "[4/7] wait: height-sync :9100, devshardctl :8081, loki :3100, victoria-metrics :8428"
+log "[4/7] wait: height-sync :9100, devshardctl :8081, loki, VM, mockdapi oracle on hosts"
 wait_stack_healthy
-log "  stack healthy"
+log "  stack healthy (height-sync HTTP + mockdapi consumers)"
 
 if [[ "${SKIP_DOWN:-}" != "1" ]]; then
   cleanup() {
@@ -222,11 +228,13 @@ if [[ "${SKIP_DOWN:-}" != "1" ]]; then
   trap cleanup EXIT
 fi
 
-if [[ "${SKIP_SESSION_RESET:-}" != "1" ]]; then
+# Cumulative nonce suite: tests advance to the next sync-turn lead themselves.
+# Set RESET_SESSION=1 (or SKIP_SESSION_RESET=0) for a one-shot fresh session at nonce 1.
+if [[ "${RESET_SESSION:-}" == "1" ]] || [[ "${SKIP_SESSION_RESET:-1}" == "0" ]]; then
   log "[5/7] reset E2E session (fresh devshardctl + host SQLite)"
   reset_e2e_session_and_hosts
 else
-  log "[5/7] SKIP_SESSION_RESET=1"
+  log "[5/7] cumulative session (no DB reset; tests advance nonces relative to /v1/status)"
 fi
 
 log "[6/7] go test -tags=testenvci TESTENV_REUSE_STACK=1 -run '$run_re'"
@@ -239,4 +247,10 @@ go test -tags=testenvci -count=1 -timeout=60m -v \
   ./testenv/scenarios/container/... || test_status=$?
 
 log "[7/7] finished (exit $test_status)"
+if [[ "${SKIP_DOWN:-}" == "1" ]]; then
+  log "SKIP_DOWN=1 — stack left up (project=$CONTAINER_E2E_PROJECT). Example log commands:"
+  log "  docker compose -f $COMPOSE_FILE -p $CONTAINER_E2E_PROJECT logs --tail=200 devshardctl"
+  log "  docker compose -f $COMPOSE_FILE -p $CONTAINER_E2E_PROJECT logs --tail=200 devshardd-testenv-1 | grep -E 'heightsync|SendOnly|inference'"
+  log "  curl -sG 'http://127.0.0.1:3100/loki/api/v1/query_range' --data-urlencode 'query={service_name=\"devshardd-testenv\"} |= \"heightsync\"' ..."
+fi
 exit "$test_status"

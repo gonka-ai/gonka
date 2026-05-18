@@ -186,9 +186,18 @@ envelope and JSON-mirrored for tooling. Field numbers are stable.
 | 7 | `originator_timestamp_unix_ms` | `int64` | carry-forward | The originator's observation timestamp. Drives freshness gate `F`. |
 | 8 | `sender_signature` | `bytes` | **response leg only** | secp256k1 signature over canonical bytes of fields 1–7 + domain `"heightsync.origin.v1"`. Empty on request leg. |
 | 9 | `light_block` | `bytes` | Strong only | Serialized `LightBlock`-equivalent (`blockoracle.Header` with `Commit.Signatures`). |
+| 10 | `tip_stale_after_ms` | `int64` | optional (Anchor) | **Advisory only** — not origin-signed. Milliseconds since the producer's block oracle last ingested a **new** header. Set when cadence wanted Anchor but the feed is quiet (long block time, `StaleAfter` exceeded) while a cached `(H, hash)` is still available. Absent when the tip is fresh or on courier carry-forward re-emits. Receivers MUST NOT treat this field as part of the cryptographic attestation; use freshness gate `F` on originator timestamps and `(C-quorum)` / `IsStrictlyConfirmed` for liveness. |
 
 Notes:
 
+- **Degraded Anchor (quiet feed).** When the local oracle has not
+  received a new block within `StaleAfter` but `Latest()` still
+  returns a cached header, hosts emit a normal Anchor (fields 1–8) plus
+  field 10. This avoids sync-turn **response** Omit during long
+  inter-block gaps; consensus across hosts still corrects a minority
+  with an outdated tip. **Omit** remains mandatory when there is **no**
+  cached tip (feed never started), `Latest()` fails (feed unavailable),
+  or the courier peer-tip cache is empty.
 - **Direction-bound signatures.** Field 8 is set by hosts on responses
   only. `Carry()` clears field 8 before sending on the request leg;
   inbound request validation does not require an inline signature.
@@ -213,10 +222,13 @@ JSON mirror:
     "originator_sender_id": "gonka1host...",
     "originator_timestamp_unix_ms": 1700000000000,
     "sender_signature": "base64...",
-    "light_block": "base64..."
+    "light_block": "base64...",
+    "tip_stale_after_ms": 12000
   }
 }
 ```
+
+(`tip_stale_after_ms` omitted when the cached tip is fresh.)
 
 ---
 
@@ -236,12 +248,22 @@ stateDiagram-v2
 
 | Mode | Section 1 fields 2/3 | Field 9 (`light_block`) | When |
 | ---- | -------------------- | ----------------------- | ---- |
-| **Omit** | absent | absent | Between sync turns; cache cold; oracle stale. |
+| **Omit** | absent | absent | Between sync turns; courier peer-tip cache cold; host feed unavailable or **no cached tip**. |
 | **Anchor** | present | empty | Inside a sync-turn window (cadence / initial / forced) or lazy carry-forward in courier mode. |
+| **Anchor (degraded)** | present + field 10 | empty | Same as Anchor when cadence applies but the host oracle is **quiet** (`StaleAfter` since last block) and a cached tip exists — see field 10. |
 | **Strong** | present | non-empty (verified) | `\|Δ\| > D`, finalization-grade, or forced turn with `StrongRequired = true`. |
 
 Periodic alignment uses **Anchor only**. Strong is **not** a default
 cadence step — it is the disagreement / dispute path.
+
+**Quiet feed vs dead feed (hosts):**
+
+| Oracle state | Cached tip | Sync-turn response |
+| ------------ | ---------- | ------------------ |
+| Fresh (block within `StaleAfter`) | yes | Anchor (no field 10) |
+| Quiet (no new block within `StaleAfter`) | yes | **Degraded Anchor** (`tip_stale_after_ms` > 0) |
+| Quiet or fresh | no | Omit (`oracle_miss` when cadence required) |
+| Unavailable (`Latest()` error, e.g. height-sync stopped) | — | Omit |
 
 ---
 
@@ -305,6 +327,11 @@ The receiver classifies this as **`VALID_LAZY_ANCHOR`** (audit tag
   turn or forced turn applies, emit Anchor with
   `OriginatorSenderID = host_address`,
   `OriginatorTimestampMs = now`, and **sign** the section (field 8).
+  If the oracle is quiet (no new block within `StaleAfter`) but a
+  cached tip exists, still emit that Anchor and set
+  `tip_stale_after_ms` to the age of the last ingested block (field 10
+  is set **after** signing input fields 1–7). Omit only when there is
+  no usable cached tip or `Latest()` fails.
 - If `forced.StrongRequired` is set OR receiver's
   `peer_aligned_height` differs from local tip by `> D`: produce
   Strong by attaching the cached `LightBlock` for `H` (field 9).
@@ -695,7 +722,8 @@ the test scenario that proves it (full catalog in
 | 6 | Sender claims `(H, hash)` `\|Δ\| > D` ahead with Anchor (no Strong) | `INVALID(strong_required)`; carrier cannot escape via originator metadata | Planned: `TestClassify_StrongRequiredOutsideD`, S1, S8 |
 | 7 | Tampered `LightBlock` (signatures, validators_hash, BlockID) | Step 2/3/5/6 of CometBFT verification rejects | Planned: `TestVerifyLightBlock_*`, S4 |
 | 8 | Validator-set substitution (wrong epoch) | Optional Step 3b verifies against epoch participants | Planned: S9 |
-| 9 | Mainnet feed disconnects mid-session | Scheduler emits Omit on sync turn; `IsStrictlyConfirmed → stale`; no crashes; cPoC returns `Inconclusive` | `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, `TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive`, `TestAnchorScheduler_StaleFeedOmitsInSyncTurn` |
+| 9 | Mainnet feed **unavailable** mid-session (`Latest()` fails) | Scheduler emits Omit on sync turn; `IsStrictlyConfirmed → stale`; no crashes; cPoC returns `Inconclusive` | `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, `TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive` |
+| 13 | Long inter-block time (feed quiet, cached tip still valid) | Host emits **degraded Anchor** with `tip_stale_after_ms`; courier may still ingest verified response tips; `(C-quorum)` reconciles height across hosts | `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn`, `TestDecide_LogStaleSyncTurn`, container `TestContainerE2E_HeightSync_Cadence` (testenv `MOCKDAPI_STALE_AFTER` ≥ block cadence) |
 | 10 | Host equivocates across sessions (`(H, hash_A)` then `(H, hash_B)`) | Per-`V` audit ring + dispute layer cross-session check | Audit-ring tests; full cross-session detection deferred to dispute plan |
 | 11 | User omits Anchor inside a forced sync turn | Hosts MUST still emit Anchor on responses; missing user Anchor recorded as `force_request_anchor_missing` sentinel for dispute | `TestHeightSyncAnchor_E2E_ForcedSyncTurn_HostResponsesAnchorEvenIfUserOmits` |
 | 12 | Replay an old verified `LightBlock` | Recency gate `local_tip − max_lag_blocks` → `VALID_STALE`; never advances aligned height | Planned (Strong recency) |
@@ -725,6 +753,7 @@ the test scenario that proves it (full catalog in
 | Header-cache window (Strong) | `64` heights | `BlockOracleStrongSource.K` (planned) |
 | Strong recency | off (`max_lag_blocks = 0`) | follow-on hardening |
 | Confirmation rule | `(C-quorum)` | `ConfirmationConfig.Rule` (`Quorum`/`Strong`/`Hybrid`) |
+| `StaleAfter` (block oracle client) | `10 s` client default; testenv: `block_time + block_interval_delta + 1s` (floor `10s`) | `MOCKDAPI_STALE_AFTER` env (compose / devshardd-testenv) |
 
 ---
 

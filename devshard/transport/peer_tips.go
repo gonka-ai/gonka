@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"devshard/heightsync"
+	"devshard/logging"
 )
 
 // defaultPeerTipFreshness matches MOCKDAPI_STALE_AFTER / proposal courier F for PoC.
@@ -124,27 +125,155 @@ func (s *HeightSyncPeerTips) storeOriginLocked(sec *heightsync.HeightSyncSection
 	s.recomputeMaxTipLocked()
 }
 
-// RecordOrigin stores a verbatim Anchor section keyed by originator identity.
-// Unverified entries are ignored by MaxFresh when RequireVerifiedBlob is set.
-func (s *HeightSyncPeerTips) RecordOrigin(sec *heightsync.HeightSyncSection) {
-	if s == nil || !isValidPeerTip(sec) {
-		return
+// PeerTipCacheState is a point-in-time view of the courier peer-tip cache (debug / tests).
+type PeerTipCacheState struct {
+	CacheReady            bool
+	VerifiedOriginators   int
+	UnverifiedOriginators int
+	MaxFreshHeight        int64
+	BlockHashPrefix       string
+	RequireVerifiedBlob   bool
+}
+
+// snapshotLocked builds cache state; caller must hold s.mu.
+func (s *HeightSyncPeerTips) snapshotLocked(now time.Time) PeerTipCacheState {
+	if s == nil {
+		return PeerTipCacheState{}
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	freshness := s.freshness()
+	st := PeerTipCacheState{RequireVerifiedBlob: s.RequireVerifiedBlob}
+	var maxFresh *heightsync.HeightSyncSection
+	for _, ent := range s.tipsByOriginator {
+		if !s.entryEligibleLocked(ent) {
+			if ent != nil && ent.sec != nil && isValidPeerTip(ent.sec) {
+				st.UnverifiedOriginators++
+			}
+			continue
+		}
+		if len(ent.blob) > 0 && len(ent.sig) > 0 {
+			st.VerifiedOriginators++
+		} else {
+			st.UnverifiedOriginators++
+		}
+		if !s.isFreshLocked(ent.sec, now, freshness) {
+			continue
+		}
+		sec := ent.sec
+		if maxFresh == nil || sec.MainnetHeight > maxFresh.MainnetHeight {
+			maxFresh = sec
+		}
+	}
+	if maxFresh != nil {
+		st.CacheReady = true
+		st.MaxFreshHeight = maxFresh.MainnetHeight
+		st.BlockHashPrefix = heightSyncHashPrefixForLog(maxFresh.MainnetBlockHashHex)
+	}
+	return st
+}
+
+// DecidePeerTipSnapshot implements heightsync.PeerTipCacheDebug for decide logging.
+func (s *HeightSyncPeerTips) DecidePeerTipSnapshot(now time.Time) (cacheReady bool, verifiedOrigins int, maxFreshHeight int64) {
+	st := s.Snapshot(now)
+	return st.CacheReady, st.VerifiedOriginators, st.MaxFreshHeight
+}
+
+// Snapshot reports whether MaxFresh would return a tip and how many origins are cached.
+func (s *HeightSyncPeerTips) Snapshot(now time.Time) PeerTipCacheState {
+	if s == nil {
+		return PeerTipCacheState{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked(now)
+}
+
+func heightSyncHashPrefixForLog(hexStr string) string {
+	h := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(hexStr), "0x"), "0X")
+	if len(h) >= 8 {
+		return strings.ToLower(h[:8])
+	}
+	return strings.ToLower(h)
+}
+
+func (s *HeightSyncPeerTips) logCache(event string, nonce uint64, extra ...any) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	st := s.snapshotLocked(time.Now())
+	s.mu.Unlock()
+	kvs := []any{
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldEvent, event,
+		heightsync.LogFieldCacheReady, st.CacheReady,
+		heightsync.LogFieldVerifiedOrigins, st.VerifiedOriginators,
+		"unverified_origins", st.UnverifiedOriginators,
+		heightsync.LogFieldHeight, st.MaxFreshHeight,
+		heightsync.LogFieldBlockHashPrefix, st.BlockHashPrefix,
+		"require_verified_blob", st.RequireVerifiedBlob,
+	}
+	if nonce > 0 {
+		kvs = append(kvs, heightsync.LogFieldNonce, nonce)
+	}
+	kvs = append(kvs, extra...)
+	logging.Debug("heightsync: peer_tip_cache", kvs...)
+}
+
+// LogCacheState emits a debug snapshot (for tests and operational visibility).
+func (s *HeightSyncPeerTips) LogCacheState(event string, nonce uint64) {
+	s.logCache(event, nonce)
+}
+
+// RecordOrigin stores a verbatim Anchor section keyed by originator identity.
+// Unverified entries are ignored by MaxFresh when RequireVerifiedBlob is set.
+func (s *HeightSyncPeerTips) RecordOrigin(sec *heightsync.HeightSyncSection) {
+	if s == nil {
+		return
+	}
+	if !isValidPeerTip(sec) {
+		originator := ""
+		if sec != nil {
+			originator = strings.TrimSpace(sec.OriginatorSenderID)
+		}
+		s.logCache("record_origin_skip_invalid", 0, "originator", originator)
+		return
+	}
+	originator := originatorCacheKey(sec)
+	height := sec.MainnetHeight
+	s.mu.Lock()
 	s.storeOriginLocked(sec, nil, nil)
+	requireVerified := s.RequireVerifiedBlob
+	s.mu.Unlock()
+	if requireVerified {
+		s.logCache("record_origin_unverified", 0,
+			"originator", originator,
+			heightsync.LogFieldHeight, height)
+	}
 }
 
 // RecordOriginWithBlob stores a verified response-leg Anchor and its signed blob (Step 8).
 func (s *HeightSyncPeerTips) RecordOriginWithBlob(sec *heightsync.HeightSyncSection, blob, sig []byte) {
-	if s == nil || !isValidPeerTip(sec) || len(blob) == 0 || len(sig) == 0 {
+	if s == nil {
+		return
+	}
+	if !isValidPeerTip(sec) || len(blob) == 0 || len(sig) == 0 {
+		s.logCache("record_verified_skip", 0,
+			"originator", originatorCacheKey(sec))
 		return
 	}
 	cp := cloneHeightSyncSection(sec)
 	cp.SenderSignature = append([]byte(nil), sig...)
+	originator := originatorCacheKey(cp)
+	height := cp.MainnetHeight
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.storeOriginLocked(cp, blob, sig)
+	s.mu.Unlock()
+	s.logCache("record_verified", 0,
+		"originator", originator,
+		heightsync.LogFieldHeight, height)
 }
 
 // OriginSignedBlobFor returns the stored signed blob for an originator at height h.
@@ -232,6 +361,7 @@ func (s *HeightSyncPeerTips) Carry(sec *heightsync.HeightSyncSection) {
 	}
 	tip := s.MaxFresh(time.Now(), s.freshness())
 	if tip == nil {
+		s.logCache("carry_miss", 0)
 		return
 	}
 	mergePeerTipOriginPreserving(sec, tip)

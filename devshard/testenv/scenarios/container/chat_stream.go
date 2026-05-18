@@ -47,7 +47,7 @@ func postChatCompletionStreamWithBody(t *testing.T, ctx context.Context, c *http
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	const tailN = 12
 	tail := make([]string, 0, tailN)
-	var sawReceipt bool
+	var sawReceipt, sawDone bool
 	for sc.Scan() {
 		line := sc.Text()
 		if len(tail) >= tailN {
@@ -61,15 +61,13 @@ func postChatCompletionStreamWithBody(t *testing.T, ctx context.Context, c *http
 			elapsed := time.Since(started)
 			t.Logf("inference %d: SSE error after %s line=%q", inferIdx, elapsed.Round(time.Millisecond), truncateForLog(line, 400))
 			maybeAuditSlowInference(t, inferIdx, started, elapsed, lokiHTTPClient())
-			return fmt.Errorf("inference %d: %s", inferIdx, line)
+			return fmt.Errorf("inference %d: %s%s", inferIdx, line, hostEscrowDesyncHint(line))
 		}
+		// Host/engine may emit [DONE] before devshardctl finishes SendOnly; keep
+		// reading until the proxy closes the response so r.Context stays alive.
 		if strings.Contains(line, "[DONE]") {
-			elapsed := time.Since(started)
-			t.Logf("inference %d: OK after %s (saw_receipt=%v)", inferIdx, elapsed.Round(time.Millisecond), sawReceipt)
-			if elapsed >= slowInferenceAuditThreshold {
-				maybeAuditSlowInference(t, inferIdx, started, elapsed, lokiHTTPClient())
-			}
-			return nil
+			sawDone = true
+			continue
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -79,6 +77,13 @@ func postChatCompletionStreamWithBody(t *testing.T, ctx context.Context, c *http
 		return fmt.Errorf("read SSE inference %d: %w", inferIdx, err)
 	}
 	elapsed := time.Since(started)
+	if sawDone {
+		t.Logf("inference %d: OK after %s (saw_receipt=%v)", inferIdx, elapsed.Round(time.Millisecond), sawReceipt)
+		if elapsed >= slowInferenceAuditThreshold {
+			maybeAuditSlowInference(t, inferIdx, started, elapsed, lokiHTTPClient())
+		}
+		return nil
+	}
 	t.Logf("inference %d: EOF without [DONE] after %s; last SSE lines=%q", inferIdx, elapsed.Round(time.Millisecond), tail)
 	maybeAuditSlowInference(t, inferIdx, started, elapsed, lokiHTTPClient())
 	return fmt.Errorf("inference %d: stream ended without [DONE]", inferIdx)
@@ -90,6 +95,13 @@ func lokiHTTPClient() *http.Client {
 
 func sseInferenceFailed(line string) bool {
 	return strings.Contains(line, `"error"`) && strings.Contains(line, `"message"`)
+}
+
+func hostEscrowDesyncHint(line string) string {
+	if strings.Contains(line, "invalid nonce") && strings.Contains(line, "must be sequential") {
+		return " (host escrow desynced with devshardctl — run: cd devshard/testenv && RESET_SESSION=1 SKIP_DOWN=1 make e2e-keep)"
+	}
+	return ""
 }
 
 func truncateForLog(s string, max int) string {

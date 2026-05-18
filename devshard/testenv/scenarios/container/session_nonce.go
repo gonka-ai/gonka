@@ -3,10 +3,12 @@ package container
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -15,8 +17,8 @@ const (
 	heightSyncAnchorK    = 8
 	heightSyncSyncSlots  = 4
 	devshardctlStatusURL = "http://127.0.0.1:8081/v1/status"
-	// mockdapiStaleAfter matches MOCKDAPI_STALE_AFTER in gencompose (container E2E).
-	mockdapiStaleAfter = 3 * time.Second
+	// mockdapiStaleAfter matches MOCKDAPI_STALE_AFTER from gencompose (block_time + jitter + 1s, min 10s).
+	mockdapiStaleAfter = 10 * time.Second
 )
 
 type devshardctlStatus struct {
@@ -65,6 +67,24 @@ func heightSyncInSyncTurn(n uint64) bool {
 
 func wantRequestAnchorAtNonce(nonce int) bool {
 	return heightSyncInSyncTurn(uint64(nonce))
+}
+
+// isInitialCourierSyncTurn is the global first sync-turn window (nonces 1..slots).
+// devshardctl is courier-only (PeerTipOracleSource): a cold cache forces Omit on
+// these nonces even under cadence (see heightsync_anchor_e2e_courier_test.go).
+func isInitialCourierSyncTurn(nonce int) bool {
+	return uint64(nonce) >= 1 && uint64(nonce) <= heightSyncSyncSlots
+}
+
+// firstPeriodicSyncTurnInWindow is the first cadence Anchor slot in [start,end]
+// that is not the global initial sync turn (e.g. nonce 8 when start=1).
+func firstPeriodicSyncTurnInWindow(start, end int) (int, bool) {
+	for n := start; n <= end; n++ {
+		if wantRequestAnchorAtNonce(n) && !isInitialCourierSyncTurn(n) {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 // hostServiceForNonce maps round-robin executor slot to compose service name.
@@ -157,6 +177,132 @@ func armHostInferenceHold(t *testing.T, hostIdx int) {
 	t.Logf("armed inference response hold on devshardd-testenv-%d", hostIdx)
 }
 
+// runParallelInferenceWave posts count chat-completions in parallel for distinct round-robin
+// hosts within the wave, then waits for all to finish. Callers must not overlap waves on the
+// same host (cadence waves are sized so each host gets at most one new nonce per wave).
+func runParallelInferenceWave(t *testing.T, ctx context.Context, c *http.Client, startNonce, count int) {
+	t.Helper()
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var inferErrs []error
+	for i := 0; i < count; i++ {
+		n := startNonce + i
+		wg.Add(1)
+		go func(inferNonce int) {
+			defer wg.Done()
+			if err := postChatCompletionStream(t, ctx, c, inferNonce); err != nil {
+				errMu.Lock()
+				inferErrs = append(inferErrs, fmt.Errorf("inference %d: %w", inferNonce, err))
+				errMu.Unlock()
+			}
+		}(n)
+	}
+	wg.Wait()
+	if len(inferErrs) > 0 {
+		t.Fatalf("parallel wave nonces %d..%d: %v", startNonce, startNonce+count-1, errors.Join(inferErrs...))
+	}
+	t.Logf("parallel wave done: nonces %d..%d (%d in flight)", startNonce, startNonce+count-1, count)
+}
+
+// CadenceWarmOpts hooks compose/Loki for waiting on courier peer-tip cache after wave 1.
+type CadenceWarmOpts struct {
+	Ws, Project string
+	Loki        *http.Client
+	LokiStart   time.Time
+}
+
+// warmCourierPeerTipsAtNonce runs one inference at warmNonce (omit window before a periodic
+// sync-turn lead) and waits until devshardctl ingests verified host response anchors. Use after
+// devshardctl restart clears the in-memory peer-tip cache.
+func warmCourierPeerTipsAtNonce(
+	t *testing.T,
+	ctx context.Context,
+	streamClient *http.Client,
+	ws, project string,
+	httpClient *http.Client,
+	warmNonce uint64,
+) {
+	t.Helper()
+	if warmNonce == 0 {
+		return
+	}
+	advanceSessionToNonce(t, ctx, streamClient, warmNonce)
+	warmSince := time.Now().Add(-15 * time.Second)
+	if err := postChatCompletionStream(t, ctx, streamClient, int(warmNonce)); err != nil {
+		t.Fatalf("warm peer tips nonce %d: %v", warmNonce, err)
+	}
+	waitCourierPeerTipsAfterInitialWave(t, &CadenceWarmOpts{
+		Ws: ws, Project: project, Loki: httpClient, LokiStart: warmSince,
+	}, int(warmNonce), int(warmNonce))
+}
+
+// waitCourierPeerTipsAfterInitialWave blocks until devshardctl's courier peer-tip cache is
+// ready (verified origin blobs ingested; MaxFresh non-nil). Host response omit on the cold
+// initial sync turn does not warm the cache — grep heightsync: peer_tip_cache and
+// heightsync: origin_sig_invalid on devshardctl while waiting.
+func waitCourierPeerTipsAfterInitialWave(t *testing.T, warm *CadenceWarmOpts, waveStart, waveEnd int) {
+	t.Helper()
+	if warm == nil {
+		return
+	}
+	const minVerifiedOrigins = 1 // MaxFresh needs one fresh verified originator tip
+	_ = waveStart
+	_ = waveEnd
+	deadline := time.Now().Add(90 * time.Second)
+	lastLog := time.Time{}
+	var lastVerified, lastHeight int
+	for time.Now().Before(deadline) {
+		if ready, verified, maxH := composeCourierPeerTipCacheReady(t, warm.Ws, warm.Project, warm.LokiStart, minVerifiedOrigins); ready {
+			t.Logf("courier warm: peer-tip cache ready (verified_origins=%d max_height=%d after nonces %d..%d)",
+				verified, maxH, waveStart, waveEnd)
+			return
+		}
+		now := time.Now()
+		if now.Sub(lastLog) >= 8*time.Second {
+			lastLog = now
+			_, lastVerified, lastHeight = composeCourierPeerTipCacheLatest(t, warm.Ws, warm.Project, warm.LokiStart)
+			anchorCompose := countComposeHostResponseAnchors(t, warm.Ws, warm.Project, warm.LokiStart, waveStart, waveEnd)
+			t.Logf("courier warm wait: cache_ready=false verified_origins=%d max_height=%d host_response_anchor=%d (want cache_ready=true verified_origins>=%d — see devshardctl heightsync: peer_tip_cache)",
+				lastVerified, lastHeight, anchorCompose, minVerifiedOrigins)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("courier peer-tip cache not ready after nonces %d..%d (last verified_origins=%d max_height=%d; need cache_ready with verified_origins>=%d — check devshardctl for peer_tip_cache / origin_sig_invalid / request_decide_omit)",
+		waveStart, waveEnd, lastVerified, lastHeight, minVerifiedOrigins)
+}
+
+// runCadenceProductionWaves drives one K=8/slots=4 cadence window from sync-turn lead:
+// sync-turn (4 parallel) → [wait for courier cache] → omit (3 parallel) → …
+func runCadenceProductionWaves(t *testing.T, ctx context.Context, c *http.Client, lead int, warm *CadenceWarmOpts) {
+	t.Helper()
+	waves := []struct {
+		label string
+		off   int
+		n     int
+	}{
+		{"sync-turn-1", 0, 4},
+		{"omit-1", 4, 3},
+		{"sync-turn-2", 7, 4},
+		{"omit-2", 11, 4},
+		{"periodic-anchor", 15, 1},
+	}
+	for _, w := range waves {
+		start := lead + w.off
+		if w.label == "sync-turn-1" && isInitialCourierSyncTurn(lead) {
+			// Cold courier: sync-turn 1..4 are request omit; cache warms from verified host
+			// response anchors on between-turn traffic (omit-1), not from response omit.
+			t.Logf("cadence wave %s: nonces %d..%d sequential (cold courier)", w.label, start, start+w.n-1)
+			runSequentialInferenceWindow(t, ctx, c, start, w.n)
+			continue
+		}
+		t.Logf("cadence wave %s: nonces %d..%d parallel", w.label, start, start+w.n-1)
+		runParallelInferenceWave(t, ctx, c, start, w.n)
+		if w.label == "omit-1" && isInitialCourierSyncTurn(lead) && warm != nil {
+			waitCourierPeerTipsAfterInitialWave(t, warm, lead, start+w.n-1)
+		}
+	}
+}
+
 // runSequentialInferenceWindow posts count consecutive chat-completions starting at startNonce.
 // Each inference completes before the next starts so devshardctl and host escrow nonces stay aligned.
 func runSequentialInferenceWindow(t *testing.T, ctx context.Context, c *http.Client, startNonce, count int) {
@@ -164,7 +310,7 @@ func runSequentialInferenceWindow(t *testing.T, ctx context.Context, c *http.Cli
 	for i := 0; i < count; i++ {
 		n := startNonce + i
 		if err := postChatCompletionStream(t, ctx, c, n); err != nil {
-			t.Fatalf("inference %d: %w", n, err)
+			t.Fatalf("inference %d: %v", n, err)
 		}
 		t.Logf("inference nonce=%d finished — %d/%d", n, i+1, count)
 	}

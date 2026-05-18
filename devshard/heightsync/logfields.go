@@ -23,4 +23,7 @@ const (
 	LogFieldTag                 = "tag"
 	LogFieldReason              = "reason"
 	LogFieldClassification      = "classification"
+	LogFieldCacheReady          = "cache_ready"
+	LogFieldVerifiedOrigins     = "verified_origins"
+	LogFieldEvent               = "event"
 )

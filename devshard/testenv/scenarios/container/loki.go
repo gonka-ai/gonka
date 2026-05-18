@@ -212,12 +212,17 @@ func HasHeightSyncRequestEmit(lines []string, nonce int, mode string) bool {
 	return false
 }
 
-// CountHeightSyncRequestEmitInRange counts distinct nonces in [startNonce, endNonce] with the given mode.
+// CountHeightSyncRequestEmitInRange counts distinct request-direction emits in [startNonce, endNonce].
 func CountHeightSyncRequestEmitInRange(lines []string, startNonce, endNonce int, mode string) int {
+	return CountHeightSyncEmitInRange(lines, startNonce, endNonce, "request", mode)
+}
+
+// CountHeightSyncEmitInRange counts distinct nonces in [startNonce, endNonce] for direction+mode.
+func CountHeightSyncEmitInRange(lines []string, startNonce, endNonce int, direction, mode string) int {
 	seen := make(map[int]struct{})
 	for _, ln := range lines {
 		kv := ParseLogKV(ln)
-		if kv["msg"] != "heightsync: emit" || kv["direction"] != "request" {
+		if kv["msg"] != "heightsync: emit" || kv["direction"] != direction {
 			continue
 		}
 		if !strings.EqualFold(kv["mode"], mode) {

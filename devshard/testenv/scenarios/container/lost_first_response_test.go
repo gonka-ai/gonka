@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -72,35 +71,9 @@ func TestContainerE2E_HeightSync_LostFirstResponse(t *testing.T) {
 	}
 	WaitCoreStackServicesRunningOrFail(t, ctx, ws, project, time.Now().Add(4*time.Minute))
 
+	emitSince := time.Now().Add(-10 * time.Second)
 	if err := postChatCompletionStream(t, ctx, streamClient, int(recoverNonce)); err != nil {
 		t.Fatalf("nonce %d: %v", recoverNonce, err)
 	}
-
-	lokiStart := time.Now().Add(-2 * time.Minute)
-	logQLCtl := `{service_name="devshardctl"} |= "heightsync: emit"`
-	deadline := time.Now().Add(3 * time.Minute)
-	var sawRecoverAnchor bool
-	for time.Now().Before(deadline) {
-		end := time.Now().Add(30 * time.Second)
-		for _, ln := range LokiQueryRange(t, httpClient, logQLCtl, lokiStart, end, 5000) {
-			kv := ParseLogKV(ln)
-			if kv["msg"] != "heightsync: emit" || kv["direction"] != "request" {
-				continue
-			}
-			if !strings.EqualFold(kv["mode"], "anchor") {
-				continue
-			}
-			if parseNonce(kv["nonce"]) == int(recoverNonce) {
-				sawRecoverAnchor = true
-				break
-			}
-		}
-		if sawRecoverAnchor {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if !sawRecoverAnchor {
-		t.Fatalf(`Loki: expected devshardctl "heightsync: emit" request mode=anchor for nonce %d`, recoverNonce)
-	}
+	assertHeightSyncRequestEmit(t, ws, project, httpClient, int(recoverNonce), "anchor", emitSince)
 }

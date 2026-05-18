@@ -129,7 +129,8 @@ func waitComposeServiceLog(t *testing.T, ws, project, service string, timeout ti
 }
 
 // resetSharedStackHostDB clears per-host SQLite dirs, devshardctl session DB, and restarts
-// devshardd + devshardctl (used when TESTENV_RESET_STACK_DB=1).
+// devshardd + devshardctl. Opt-in only: TESTENV_RESET_STACK_DB=1 in tests, or RESET_SESSION=1
+// in run-container-heightsync-e2e.sh. Normal suite flow advances nonces instead.
 func resetSharedStackHostDB(t *testing.T, ws, project string) {
 	t.Helper()
 	ctlDBDir := filepath.Join(ws, "db", "devshardctl")
@@ -168,6 +169,29 @@ func resetSharedStackHostDB(t *testing.T, ws, project string) {
 		t.Fatalf("compose restart after db reset: %v", err)
 	}
 	WaitCoreStackServicesRunningOrFail(t, ctx, ws, project, time.Now().Add(4*time.Minute))
+}
+
+// wipeExecutorHostDB clears one host's SQLite dir under testenv/db. Use after stopping the
+// container so a restarted executor does not reject courier diffs (stale escrow nonce).
+func wipeExecutorHostDB(t *testing.T, ws string, hostIdx int) {
+	t.Helper()
+	dbDir := filepath.Join(ws, "db", fmt.Sprintf("devshardd-testenv-%d", hostIdx))
+	entries, err := os.ReadDir(dbDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if mkErr := os.MkdirAll(dbDir, 0o755); mkErr != nil {
+				t.Fatalf("mkdir %s: %v", dbDir, mkErr)
+			}
+			return
+		}
+		t.Fatalf("read %s: %v", dbDir, err)
+	}
+	for _, ent := range entries {
+		if err := os.RemoveAll(filepath.Join(dbDir, ent.Name())); err != nil {
+			t.Fatalf("remove %s: %v", filepath.Join(dbDir, ent.Name()), err)
+		}
+	}
+	t.Logf("wiped host SQLite: %s", dbDir)
 }
 
 // ModuleRoot is the devshard Go module root (parent directory of testenv/).
@@ -626,6 +650,146 @@ func parseJSONHeightField(b []byte) int64 {
 	return 0
 }
 
+func parsePrometheusGaugeFromMetrics(text, prefix string) (float64, error) {
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := fields[0]
+		if name != prefix && !strings.HasPrefix(name, prefix+"{") {
+			continue
+		}
+		var v float64
+		if _, err := fmt.Sscan(fields[1], &v); err != nil {
+			return 0, fmt.Errorf("parse %s value %q: %w", prefix, fields[1], err)
+		}
+		return v, nil
+	}
+	return 0, fmt.Errorf("%s sample not found", prefix)
+}
+
+func parseDevsharddHeightAtLatestNonceFromMetrics(text string) (float64, error) {
+	return parsePrometheusGaugeFromMetrics(text, "devshardd_height_at_latest_nonce")
+}
+
+func parseDevsharddLatestNonceFromMetrics(text string) (uint64, error) {
+	v, err := parsePrometheusGaugeFromMetrics(text, "devshardd_latest_nonce")
+	if err != nil {
+		return 0, err
+	}
+	if v < 0 {
+		return 0, nil
+	}
+	return uint64(v), nil
+}
+
+// assertHostsEscrowAlignedWithCourier fails fast when a host SQLite session lags devshardctl
+// (e.g. after LostFirstResponse stop without RESET_SESSION). Round-robin slots allow lag ≤3.
+func assertHostsEscrowAlignedWithCourier(t *testing.T, c *http.Client) {
+	t.Helper()
+	courierLast := fetchDevshardctlLastNonce(t, c)
+	cfg, err := config.Load(filepath.Join(TestenvDir(t), "config.yaml"))
+	if err != nil {
+		t.Fatalf("escrow alignment: load config: %v", err)
+	}
+	const maxLag = uint64(heightSyncSyncSlots) + 1 // 5: one sync-turn window + slack
+	metricsClient := c
+	if metricsClient == nil {
+		metricsClient = &http.Client{Timeout: 3 * time.Second}
+	}
+	for i, h := range cfg.Hosts {
+		port := h.PublicMetricsPort
+		if port <= 0 {
+			t.Fatalf("host %q: public_metrics_port unset", h.ID)
+		}
+		url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
+		resp, err := metricsClient.Get(url)
+		if err != nil {
+			t.Fatalf("host %d metrics GET: %v", i, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("host %d metrics: http %d err=%v", i, resp.StatusCode, err)
+		}
+		hostLast, err := parseDevsharddLatestNonceFromMetrics(string(body))
+		if err != nil {
+			t.Fatalf("host %d metrics parse: %v", i, err)
+		}
+		if courierLast <= hostLast {
+			continue
+		}
+		lag := courierLast - hostLast
+		if lag <= maxLag {
+			continue
+		}
+		t.Fatalf(
+			"host %d (%s) escrow desynced: devshardd_latest_nonce=%d devshardctl_last=%d (lag %d > %d). "+
+				"Likely prior LostFirstResponse or stop without session reset. "+
+				"Fix: cd devshard/testenv && RESET_SESSION=1 SKIP_DOWN=1 make e2e-keep",
+			i, h.ID, hostLast, courierLast, lag, maxLag,
+		)
+	}
+}
+
+// WaitMockdapiBlockOracleConsumersReady blocks until height-sync has advanced at least once
+// and every host reports devshardd_height_at_latest_nonce > 0 (mockdapi received SSE).
+// run-container-heightsync-e2e.sh performs the same gate before go test.
+func WaitMockdapiBlockOracleConsumersReady(t *testing.T, c *http.Client) {
+	t.Helper()
+	waitHeightSyncFeedFreshAfterRestart(t, c)
+
+	cfg, err := config.Load(filepath.Join(TestenvDir(t), "config.yaml"))
+	if err != nil {
+		t.Fatalf("mockdapi oracle ready: load config: %v", err)
+	}
+	if len(cfg.Hosts) == 0 {
+		t.Fatal("mockdapi oracle ready: no hosts in config")
+	}
+	metricsClient := c
+	if metricsClient == nil {
+		metricsClient = &http.Client{Timeout: 3 * time.Second}
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(deadline) {
+		allReady := true
+		for _, h := range cfg.Hosts {
+			port := h.PublicMetricsPort
+			if port <= 0 {
+				t.Fatalf("host %q: public_metrics_port unset", h.ID)
+			}
+			url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
+			resp, err := metricsClient.Get(url)
+			if err != nil {
+				allReady = false
+				break
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusOK {
+				allReady = false
+				break
+			}
+			v, err := parseDevsharddHeightAtLatestNonceFromMetrics(string(body))
+			if err != nil || v <= 0 {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			t.Logf("mockdapi block oracle ready on %d host(s)", len(cfg.Hosts))
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatal("timeout: mockdapi block oracle not ready on all hosts (want devshardd_height_at_latest_nonce > 0 on each /metrics)")
+}
+
 // waitHeightSyncFeedFreshAfterRestart waits until mock-chain produces a new header after
 // height-sync is back (height increases), then StaleAfter so mockdapi consumers see it.
 func waitHeightSyncFeedFreshAfterRestart(t *testing.T, c *http.Client) {
@@ -655,7 +819,8 @@ func restartDevshardctlForOracleReconnect(t *testing.T, ws, project string, ctx 
 		t.Fatalf("compose restart devshardctl: %v", err)
 	}
 	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8081/v1/status", time.Now().Add(2*time.Minute), "devshardctl /v1/status after restart")
-	waitDevshardctlOracleLive(t, ws, project, since)
+	_ = since // courier heightsync: emit appears on the next inference, not at process start
+	time.Sleep(mockdapiStaleAfter + time.Second)
 }
 
 // waitDevshardctlOracleLive polls devshardctl logs until mockdapi reports a live aligned height.

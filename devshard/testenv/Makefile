@@ -39,9 +39,12 @@ build: ## Compile every testenv binary locally (sanity check, not used in contai
 test: ## Run the devshard + testenv unit tests.
 	go test ./...
 
-.PHONY: e2e e2e-phase-b e2e-phase-c e2e-smoke e2e-isolated
+.PHONY: e2e e2e-keep e2e-phase-b e2e-phase-c e2e-smoke e2e-isolated
 e2e: ## Shared-stack container E2E (preflight + compose up + Phase A/B/C tests). See run-container-heightsync-e2e.sh.
 	bash ./scripts/run-container-heightsync-e2e.sh
+
+e2e-keep: ## Like e2e but leaves compose up (SKIP_DOWN=1) for post-failure log analysis.
+	SKIP_DOWN=1 bash ./scripts/run-container-heightsync-e2e.sh
 
 e2e-phase-b: ## Container §9.3 items 5, 6a, 7 (lost host, force anchor, cheating trail).
 	CONTAINER_E2E_PHASE=b bash ./scripts/run-container-heightsync-e2e.sh

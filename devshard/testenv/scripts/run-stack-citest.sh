@@ -71,6 +71,8 @@ COMPOSE_FILE="$TESTENV_ROOT/docker-compose.yml"
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 die() { log "ERROR: $*"; exit 1; }
+# shellcheck source=wait-mockdapi-oracle-ready.sh
+source "$SCRIPT_DIR/wait-mockdapi-oracle-ready.sh"
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 
@@ -227,6 +229,9 @@ while (( SECONDS < deadline )); do
   sleep 2
 done
 (( hs_ok == 1 )) || die "height-sync did not become ready on :9100 within 4m"
+
+log "  mockdapi: wait host block-oracle consumers (SSE + devshardd_height_at_latest_nonce)"
+wait_mockdapi_oracle_ready
 
 VM_Q='sum(devshardd_gossip_messages_total%7Bkind%3D%22inference%22%7D)'
 if command -v jq >/dev/null 2>&1; then

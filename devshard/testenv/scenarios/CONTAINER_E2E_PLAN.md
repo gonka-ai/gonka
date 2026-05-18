@@ -384,10 +384,14 @@ Each scenario follows the same shape:
 
 - **Setup**: standard 4-host stack, `K=8`, `slots=4`. `heightsyncd`
 serves the static validator set from `config.yaml`.
-- **Drive**: 16 inferences via `devshardctl`.
+- **Drive**: advance to the next sync-turn **lead** from `/v1/status`, then
+  **five waves** of parallel chat-completions (4+3+4+4+1 nonces) so each host
+  sees at most one new diff per wave — production-shaped pipelining without
+  violating per-host escrow ordering. See `runCadenceProductionWaves` in
+  `container/session_nonce.go`.
 - **Assert**:
-  - Loki: count of `{subsystem="heightsync", direction="request", mode="anchor"}` since `t0` is **9** (`{1..4} ∪ {8..11} ∪ {16}`),
-  count of `mode="omit"` is **7**.
+  - Loki: per-nonce slots in the window — sync-turn nonces **anchor**;
+  between-turn **omit or lazy anchor** (v2 courier); not global counts of 9/7.
   - Per-host: same query with `host_id=<i>` matches the round-robin
   subset (depends on first-served slot — derive deterministically).
   - PromQL: `increase(devshard_heightsync_outbound_anchors_total {direction="request"}[2m])` returns **9**.

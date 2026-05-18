@@ -58,7 +58,8 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | Test | File | What it proves |
 | ---- | ---- | -------------- |
 | ✅ `TestAnchorScheduler_SyncTurnSweepK10Slots4` | `anchor_test.go` | Cadence (`K`, `slots_num`) windows are correct and never overlap. |
-| ✅ `TestAnchorScheduler_StaleFeedOmitsInSyncTurn` | `anchor_test.go` | Stale oracle ⇒ Omit even inside sync-turn windows; metric increments. |
+| ✅ `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn` | `anchor_test.go` | Quiet oracle (no new block within `StaleAfter`) but cached tip ⇒ Anchor with `tip_stale_after_ms` on sync-turn nonces (not Omit). |
+| ✅ `TestDecide_LogStaleSyncTurn` | `decide_log_test.go` | Same degraded path; exercises `heightsync: decide` logging (`decide_anchor_stale`). |
 | ✅ `TestAnchorScheduler_SessionStartOverridesOmitWindow` | `anchor_test.go` | Session-start hint forces an Anchor on the first envelope. |
 | ✅ `TestAnchorScheduler_ForceAnchorOverridesOmitWindow` | `anchor_test.go` | Per-message force flag emits Anchor outside cadence (legacy). |
 | ✅ `TestAnchorScheduler_NonceZeroEmitsOmit` / `KZeroDefaultsToTen` / `SlotsZeroDefaultsToOne` / `SlotsOneCollapsesToCadence` / `KEqualsSlotsIsWallToWall` / `KLessThanSlotsIsRejected` | `anchor_test.go` | Boundary conditions for `K` / `slots_num`. |
@@ -195,7 +196,7 @@ real heightsyncd + mockdapi stack**:
 
 | Phase | Status | Tests | What they prove |
 | ----- | ------ | ----- | --------------- |
-| Phase A | ✅ | `TestContainerE2E_HeightSync_Cadence` | Cadence + audit + outbound metric increments under real services. |
+| Phase A | ✅ | `TestContainerE2E_HeightSync_Cadence` | Cadence from sync-turn lead via wave-parallel bursts (4+3+4+4+1); per-slot Loki + Prom on real stack. |
 | Phase B | ✅ | `TestContainerE2E_HeightSync_LostFirstResponse`, `TestContainerE2E_HeightSync_ForceAnchorSingleMessage`, `TestContainerE2E_HeightSync_CheatingTrail` | Same scenarios as in-process, validated against Loki logs and VictoriaMetrics counters. |
 | Phase C | ✅ | `TestContainerE2E_HeightSync_FeedStoppedOmits`, `TestContainerE2E_HeightSync_FeedRecovers`, `TestContainerE2E_HeightSync_Smoke` | Oracle outage / recovery proven against real SSE feed. |
 | Phase D | ⏳ | Container ports of E1..E11 | Courier-mode + confirmation under container stack. |
@@ -293,7 +294,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | `ObservedHeightNow` (cPoC C14) | `TestObservedHeightNow_*` | — |
 | Optional seed RPC | `TestHTTPClient_SeedHeightSync_RecordsOrigin`, `TestHandleHeightSync_*` | — |
 | Audit ring | `TestAuditRing_*`, all e2e tests | — |
-| Stale oracle | `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, `TestAnchorScheduler_StaleFeedOmitsInSyncTurn`, E6 | S10 |
+| Stale / quiet oracle | Feed **unavailable**: `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6. Feed **quiet** (cached tip): `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn`, `TestDecide_LogStaleSyncTurn`, container cadence | S10 |
 
 ---
 
@@ -308,7 +309,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Host returns invalid `sender_signature` on response | Drop tip + `origin_sig_invalid_total`; no cache, no carry, no slash (reputation handles persistent offenders) | E9 variant B (`…ResponseOriginSignatureInvalidDropped`), `TestClient_ResponseAnchor_DropsOnInvalidSig` |
 | User claims height well above its true follower (light path only) | Receiver classifies via `InboundTrust`; without Strong, audited as `untrusted_peer`; with Strong, `\|Δ\| > D` ⇒ INVALID(`strong_required`) | `TestServer_Inference_HeightSync_UntrustedReconcileMismatchWarns`; ⏳ S1, S8 |
 | Cross-session originator equivocation | Per-`V` audit ring + downstream dispute layer | `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash`; full dispute wiring deferred |
-| Lost mainnet feed mid-session | Sync-turn Omit gracefully; recovery resumes; never crashes | `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6, `TestAnchorScheduler_StaleFeedOmitsInSyncTurn` |
+| Lost mainnet feed mid-session | `Latest()` fails ⇒ sync-turn **Omit**; recovery resumes; never crashes. Long block time alone ⇒ **degraded Anchor** (`tip_stale_after_ms`), not Omit | `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6; `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn` |
 | Validator-set rotation (Strong) | Pinned + epoch-bound check (Step 3b); monotonic `confirmed` does not regress | ⏳ S7, S9 |
 | Tampered `LightBlock` on the wire | Step 2/3/5/6 of CometBFT verification | ⏳ S4, `TestVerifyLightBlock_*` |
 

@@ -592,8 +592,8 @@ func (s *Server) logOutboundHeightSync(sec *heightsync.HeightSyncSection, nonce 
 // appends a sentinel audit-ring entry when an inbound request whose nonce falls
 // inside an active forced sync turn arrives without a valid Anchor section.
 //
-// Per HEIGHT_SYNC_HEADERS_PROPOSAL "Forced sync turn" and
-// height-sync-anchor-poc.md §5.5, the diff that opened the turn is the only
+// Per HEIGHT_SYNC_PROTOCOL_PROPOSAL forced sync turn
+// the diff that opened the turn is the only
 // authoritative trigger; hosts learn the window from their own escrow state
 // after applying the diff, NOT from a per-request HTTP signal. A user that
 // strips height_sync from its in-window requests is therefore self-inflicting
@@ -835,10 +835,11 @@ func (s *Server) HandleInference(c echo.Context) error {
 		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
 		h := heightsync.DecideHints{
 			Nonce:              req.Nonce,
-			SessionStart:         sessionStart,
-			ForceAnchor:          req.ForceHeightSyncAnchor && escrowH == nil,
-			Escrow:               escrowH,
+			SessionStart:       sessionStart,
+			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:             escrowH,
 			OriginatorSenderID: s.host.Signer().Address(),
+			Direction:          "response",
 		}
 		sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
 		if oracleMiss {

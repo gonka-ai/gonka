@@ -370,7 +370,7 @@ services:
       LOG_LEVEL: "debug"
       TESTENV_JSON_LOGS: "1"
       DEVSHARDD_DEBUG: "1"
-      MOCKDAPI_STALE_AFTER: "3s"
+      MOCKDAPI_STALE_AFTER: "{{ $.MockdapiStaleAfterString }}"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./db/{{ $h.ID }}:/data
@@ -402,7 +402,7 @@ services:
       HEIGHT_SYNC_ANCHOR_PERIOD_NONCES: "{{ $.HeightSync.AnchorPeriodNonces }}"
       HEIGHT_SYNC_SYNC_TURN_SLOTS: "{{ $.HeightSync.SyncTurnSlots }}"
       DEVSHARDCTL_DEBUG: "1"
-      MOCKDAPI_STALE_AFTER: "3s"
+      MOCKDAPI_STALE_AFTER: "{{ .MockdapiStaleAfterString }}"
       LOG_LEVEL: "debug"
       TESTENV_JSON_LOGS: "1"
       # Persist on host so reuse-stack tests can wipe session state per test (see resetSharedStackHostDB).

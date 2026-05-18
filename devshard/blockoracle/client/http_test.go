@@ -290,4 +290,9 @@ func TestClient_StaleAfterQuietPeriod(t *testing.T) {
 
 	// No header ever ingested → stale should be true.
 	require.True(t, c.Stale())
+	stale, ageMs, height, never := c.StaleDetails()
+	require.True(t, stale)
+	require.True(t, never)
+	require.Equal(t, int64(0), ageMs)
+	require.Equal(t, int64(0), height)
 }

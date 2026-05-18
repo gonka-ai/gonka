@@ -46,6 +46,11 @@ run-parallel-tests/
 /tmp
 .worklog
 
+# devshard testenv — container height-sync E2E ephemeral data (run-container-heightsync-e2e.sh)
+devshard/testenv/.container-e2e-obs-data/
+devshard/testenv/.container-e2e-db/
+devshard/testenv/db
+
 # Generated proto artifacts (buf output in wrong location)
 inference-chain/proto/github.com/
 inference-chain/proto/api/

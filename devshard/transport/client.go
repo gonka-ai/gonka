@@ -92,10 +92,10 @@ type HTTPClient struct {
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncAudit     *heightsync.AuditRing
 	heightSyncLogOracle blockoracle.BlockOracle
-	heightSyncPeerTips    *HeightSyncPeerTips
-	heightSyncVerifier    signing.Verifier
+	heightSyncPeerTips  *HeightSyncPeerTips
+	heightSyncVerifier  signing.Verifier
 
-	oneShotMu                sync.Mutex
+	oneShotMu               sync.Mutex
 	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
@@ -307,6 +307,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 			ForceAnchor: req.ForceHeightSyncAnchor,
 			Escrow:      req.HeightSyncEscrow,
 			Recipient:   c.baseURL,
+			Direction:   "request",
 		}
 		if c.heightSyncPeerTips != nil {
 			h.Propagator = c.heightSyncPeerTips
@@ -355,6 +356,13 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 			body, err = json.Marshal(ir)
 			if err != nil {
 				return nil, fmt.Errorf("marshal json: %w", err)
+			}
+			if c.heightSyncPeerTips != nil {
+				ev := "request_decide_omit"
+				if oracleMiss {
+					ev = "request_decide_omit_oracle_miss"
+				}
+				c.heightSyncPeerTips.LogCacheState(ev, req.Nonce)
 			}
 			c.logEmitUserHeightSync(nil, req.Nonce)
 		}

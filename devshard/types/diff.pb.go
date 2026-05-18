@@ -91,7 +91,7 @@ func (x *DiffContent) GetPostStateRoot() []byte {
 }
 
 // MsgForceHeightSyncTurn opens a forced height-sync turn of slots_num consecutive
-// nonces (same width as a cadence sync turn). See height-sync-anchor-poc §5.5.
+// nonces (same width as a cadence sync turn). See HEIGHT_SYNC_PROTOCOL_PROPOSAL §7.
 type MsgForceHeightSyncTurn struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TriggerNonce  uint64                 `protobuf:"varint,1,opt,name=trigger_nonce,json=triggerNonce,proto3" json:"trigger_nonce,omitempty"` // must equal diff nonce

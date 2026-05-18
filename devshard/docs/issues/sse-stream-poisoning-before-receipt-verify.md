@@ -9,12 +9,12 @@ verification), `devshard/transport/server.go` (host SSE emitter).
 
 **Related:**
 
-- [`docs/proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md`](../proposals/HEIGHT_SYNC_HEADERS_PROPOSAL.md)
+- [`docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
   §"Asymmetric verification: responses signed, requests trusted, proof on
   demand (PoC v2.1)" — same deniability property for height-sync sections.
 - [`docs/attacks.md`](../attacks.md) §"Executor refuses to work" — adjacent
   failure mode (no receipt at all).
-- [`plans/height-sync-anchor-poc.md`](../../plans/height-sync-anchor-poc.md)
+- [`docs/height-sync-tests.md`](../height-sync-tests.md)
   §3.8 "Pathology: invalid signature" (planned addition).
 
 ---

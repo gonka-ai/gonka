@@ -44,7 +44,14 @@ type fakeStaleOracle struct {
 
 func (f *fakeStaleOracle) Stale() bool { return f.stale }
 
-func TestAnchorScheduler_StaleFeedOmitsInSyncTurn(t *testing.T) {
+func (f *fakeStaleOracle) StaleDetails() (stale bool, lastRecvAgeMs int64, latestHeight int64, neverReceived bool) {
+	if f.hdr != nil {
+		return f.stale, 12_000, f.hdr.Height, false
+	}
+	return f.stale, 0, 0, true
+}
+
+func TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn(t *testing.T) {
 	or := &fakeStaleOracle{
 		fakeOracle: fakeOracle{hdr: &blockoracle.Header{Height: 100, ChainID: "gonka", BlockHash: []byte{0xab}}},
 		stale:      true,
@@ -52,8 +59,10 @@ func TestAnchorScheduler_StaleFeedOmitsInSyncTurn(t *testing.T) {
 	s := heightsync.MustNewAnchorScheduler(8, 4, heightsync.NewLocalOracleSource(or))
 	got, err, miss := s.Decide(context.Background(), heightsync.DecideHints{Nonce: 2})
 	require.NoError(t, err)
-	require.Nil(t, got)
-	require.True(t, miss)
+	require.False(t, miss)
+	require.NotNil(t, got)
+	require.Equal(t, int64(100), got.MainnetHeight)
+	require.Equal(t, int64(12_000), got.TipStaleAfterMs)
 }
 
 func TestAnchorScheduler_SyncTurnSweepK10Slots4(t *testing.T) {

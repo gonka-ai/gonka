@@ -4,7 +4,6 @@ package container
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
@@ -14,7 +13,7 @@ import (
 // force_height_sync_anchor composes MsgForceHeightSyncTurn and Anchors on the forced window
 // (trigger nonce 7 mod 8, window trigger..trigger+3), not legacy single-message force at nonce 5.
 func TestContainerE2E_HeightSync_ForceAnchorSingleMessage(t *testing.T) {
-	_, _, httpClient, streamClient, _ := startHeightSyncContainerStack(t)
+	ws, project, httpClient, streamClient, _ := startHeightSyncContainerStack(t)
 	ctx := context.Background()
 	if dl, ok := t.Deadline(); ok {
 		var cancel context.CancelFunc
@@ -30,36 +29,10 @@ func TestContainerE2E_HeightSync_ForceAnchorSingleMessage(t *testing.T) {
 
 	advanceSessionToNonce(t, ctx, streamClient, trigger)
 
+	emitSince := time.Now().Add(-10 * time.Second)
 	forceBody := []byte(`{"model":"llama","stream":true,"max_tokens":50,"force_height_sync_anchor":true}`)
 	if err := postChatCompletionStreamWithBody(t, ctx, streamClient, int(trigger), forceBody); err != nil {
 		t.Fatalf("nonce %d (forced sync turn trigger): %v", trigger, err)
 	}
-
-	lokiStart := LokiWindowStart()
-	logQL := `{service_name="devshardctl"} |= "heightsync: emit"`
-	deadline := time.Now().Add(3 * time.Minute)
-	var saw bool
-	for time.Now().Before(deadline) {
-		end := time.Now().Add(30 * time.Second)
-		for _, ln := range LokiQueryRange(t, httpClient, logQL, lokiStart, end, 5000) {
-			kv := ParseLogKV(ln)
-			if kv["msg"] != "heightsync: emit" || kv["direction"] != "request" {
-				continue
-			}
-			if !strings.EqualFold(kv["mode"], "anchor") {
-				continue
-			}
-			if parseNonce(kv["nonce"]) == int(trigger) {
-				saw = true
-				break
-			}
-		}
-		if saw {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if !saw {
-		t.Fatalf(`Loki: expected devshardctl "heightsync: emit" request mode=anchor for nonce %d (MsgForceHeightSyncTurn via force_height_sync_anchor)`, trigger)
-	}
+	assertHeightSyncRequestEmit(t, ws, project, httpClient, int(trigger), "anchor", emitSince)
 }
