@@ -37,19 +37,9 @@ http {
         default $time_iso8601;
     }
 
-    map $request_uri $log_zone_name {
-        ~^/chain-rpc/ "CHAINRPC";
-        ~^/chain-api/ "CHAINAPI";
-        ~^/chain-grpc/ "CHAINGRPC";
-        ~^/api/ "GNKAPI";
-        ~^/v[0-9]+/ "GNKAPI";
-        ~^/devshard/ "EXEMPT";
-        default "GLOBAL";
-    }
-
     # Custom Log Format with Timing and Whitelist Indicator
     # Using tabs (\t) for better visual alignment
-    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$log_zone_name]\t$log_status_symbol\t'
+    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$limit_zone_name]\t$log_status_symbol\t'
                         '"$request" $status $body_bytes_sent '
                         '"$http_referer" "$http_user_agent" '
                         'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time" '
@@ -127,6 +117,9 @@ http {
         # Real IP Configuration
         ${REAL_IP_CONFIG}
 
+        # Default Zone Label
+        set $$limit_zone_name "GLOBAL";
+
         # Global Ban Check
         if ($$is_banned) {
             return 444; # Drop connection
@@ -162,6 +155,7 @@ http {
 
         # Generic API routes
         location /api/ {
+            set $$limit_zone_name "GNKAPI";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
@@ -183,6 +177,7 @@ http {
 
         # Chain RPC endpoint
         location /chain-rpc/ {
+            set $$limit_zone_name "CHAINRPC";
             mirror /__rpc_method_log;
             mirror_request_body on;
             ${LIMIT_REQ_RULE_CHAIN_RPC}
@@ -219,6 +214,7 @@ http {
 
         # Chain API endpoint (REST API)
         location /chain-api/ {
+            set $$limit_zone_name "CHAINAPI";
             ${LIMIT_REQ_RULE_CHAIN_API}
             ${LIMIT_CONN_RULE_CHAIN_API}
             ${CHAIN_API_STATUS}
@@ -239,6 +235,7 @@ http {
 
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
+            set $$limit_zone_name "CHAINGRPC";
             ${LIMIT_REQ_RULE_CHAIN_GRPC}
             ${LIMIT_CONN_RULE_CHAIN_GRPC}
             ${CHAIN_GRPC_STATUS}
