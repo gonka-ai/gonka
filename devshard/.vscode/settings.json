@@ -1,0 +1,6 @@
+{
+  "go.buildTags": "testenvci",
+  "gopls": {
+    "build.buildFlags": ["-tags=testenvci"]
+  }
+}

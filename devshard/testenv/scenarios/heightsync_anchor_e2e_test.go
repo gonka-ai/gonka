@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
 	"devshard/blockoracle"
@@ -150,6 +153,13 @@ func (o *sharedStoppingOracle) Subscribe(context.Context, int64) (<-chan *blocko
 	return ch, nil
 }
 
+// Stale reports whether the height-sync feed is unavailable (plan §3.6 / E6).
+func (o *sharedStoppingOracle) Stale() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.stopped
+}
+
 type fourHostStack struct {
 	Session   *user.Session
 	Servers   []*transport.Server
@@ -157,6 +167,8 @@ type fourHostStack struct {
 	UserAddr  string
 	HostAddrs []string
 	httpSrvs  []*httptest.Server
+	// Confirm is the shared user-side confirmation index (nil when height sync off).
+	Confirm *heightsync.ConfirmationIndex
 }
 
 type testLogEntry struct {
@@ -324,7 +336,7 @@ func setupFourHostHTTPHeightSyncFromBlockOracles(t *testing.T, hostSchedOracle, 
 		h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), hsAnchorE2EEscrowID, group, nil, host.WithGrace(10_000), host.WithStorage(st))
 		require.NoError(t, err)
 
-		hostSched := heightsync.MustNewAnchorScheduler(8, 4, hostSchedOracle[i])
+		hostSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, hostSchedOracle[i])
 		srv, err := transport.NewServer(h, st, verifier, userSigner.Address(), transport.WithHeightSync(hostSched, hostLogOracle[i]))
 		require.NoError(t, err)
 		e := echo.New()
@@ -347,10 +359,15 @@ func setupFourHostHTTPHeightSyncFromBlockOracles(t *testing.T, hostSchedOracle, 
 		},
 		hosts: brHosts,
 	}
-	clientSched := heightsync.MustNewAnchorScheduler(8, 4, clientOracle)
+	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, clientOracle)
+	sharedConfirm := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
+		Roster: slots,
+		Oracle: clientLogOracle,
+	})
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientLogOracle
+	cc.HeightSyncConfirmation = sharedConfirm
 	for _, f := range tweak {
 		if f != nil {
 			f(&cc)
@@ -372,6 +389,7 @@ func setupFourHostHTTPHeightSyncFromBlockOracles(t *testing.T, hostSchedOracle, 
 		UserAddr:  userSigner.Address(),
 		HostAddrs: hostAddrs,
 		httpSrvs:  httpSrvs,
+		Confirm:   sharedConfirm,
 	}
 	t.Cleanup(func() {
 		_ = sess.Close()
@@ -474,6 +492,293 @@ func countInboundUserAnchorsOnHost(t *testing.T, srv *transport.Server, userAddr
 		}
 	}
 	return n
+}
+
+func countInboundUserAnchorsWithTag(t *testing.T, srv *transport.Server, userAddr string, tag heightsync.AnchorCadenceTag) int {
+	t.Helper()
+	ar := srv.HeightSyncAuditRing()
+	if ar == nil {
+		return 0
+	}
+	n := 0
+	for _, a := range ar.List(userAddr) {
+		if a.Direction == "request" && a.Tag == tag && len(a.MainnetBlockHash) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+func hostIdxForNonce(n uint64) int {
+	return int(n % 4)
+}
+
+// setupFourHostHTTPHeightSyncCourier wires courier-mode user (PeerTipOracleSource, no local follower).
+func setupFourHostHTTPHeightSyncCourier(t *testing.T, hostOracles []*staticOracle, tweak ...func(*transport.ClientConfig)) (*fourHostStack, *transport.HeightSyncPeerTips) {
+	t.Helper()
+	peerTips := transport.NewHeightSyncPeerTips()
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	dummyClient := staticOracleWith(1, []byte{0x01})
+	var tweaks []func(*transport.ClientConfig)
+	tweaks = append(tweaks, func(cc *transport.ClientConfig) {
+		cc.HeightSync = sched
+		cc.HeightSyncPeerTips = peerTips
+	})
+	tweaks = append(tweaks, tweak...)
+	st := setupFourHostHTTPHeightSyncWithOracles(t, hostOracles, dummyClient, tweaks...)
+	require.Same(t, peerTips, peerTipsFromSession(t, st.Session),
+		"courier peer-tip cache must be shared across session HTTP clients")
+	return st, peerTips
+}
+
+func peerTipsFromSession(t *testing.T, sess *user.Session) *transport.HeightSyncPeerTips {
+	t.Helper()
+	var shared *transport.HeightSyncPeerTips
+	for _, cl := range sess.Clients() {
+		hc, ok := cl.(*transport.HTTPClient)
+		require.True(t, ok)
+		pt := hc.HeightSyncPeerTips()
+		require.NotNil(t, pt, "height sync enabled clients must have peer tips")
+		if shared == nil {
+			shared = pt
+			continue
+		}
+		require.Same(t, shared, pt)
+	}
+	require.NotNil(t, shared)
+	return shared
+}
+
+// seedCourierPeerTipsFromHostOracles seeds the courier cache from each host's oracle tip
+// (deterministic setup for e2e after the initial sync turn completes).
+func seedCourierPeerTipsFromHostOracles(t *testing.T, st *fourHostStack, hostOracles []*staticOracle, peerTips *transport.HeightSyncPeerTips) {
+	t.Helper()
+	require.Len(t, hostOracles, len(st.HostAddrs))
+	now := time.Now().UnixMilli()
+	for i, or := range hostOracles {
+		require.NotNil(t, or.hdr, "host oracle %d", i)
+		peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+			ChainID:               "gonka-testenv-1",
+			ProofType:             heightsync.AnchorProofType,
+			MainnetHeight:         or.hdr.Height,
+			MainnetBlockHashHex:   hex.EncodeToString(or.hdr.BlockHash),
+			OriginatorSenderID:    st.HostAddrs[i],
+			OriginatorTimestampMs: now,
+		})
+	}
+}
+
+// warmCourierPeerTipsFromResponses copies host response anchors from user audit rings
+// into the courier peer-tip cache when SSE ingest recorded them under the host base URL.
+func warmCourierPeerTipsFromResponses(t *testing.T, st *fourHostStack, peerTips *transport.HeightSyncPeerTips) {
+	t.Helper()
+	urlToHost := make(map[string]string, len(st.httpSrvs))
+	for i, ts := range st.httpSrvs {
+		urlToHost[ts.URL] = st.HostAddrs[i]
+	}
+	for _, cl := range st.Session.Clients() {
+		hc, ok := cl.(*transport.HTTPClient)
+		if !ok {
+			continue
+		}
+		ar := hc.HeightSyncAuditRing()
+		if ar == nil {
+			continue
+		}
+		for _, peerID := range ar.ListPeers() {
+			hostAddr, ok := urlToHost[peerID]
+			if !ok {
+				continue // user-outbound bucket uses peer_id = user address
+			}
+			for _, a := range ar.List(peerID) {
+				if a.Direction != "response" || a.MainnetHeight <= 0 || len(a.MainnetBlockHash) == 0 {
+					continue
+				}
+				peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+					ChainID:               "gonka-testenv-1",
+					ProofType:             heightsync.AnchorProofType,
+					MainnetHeight:         a.MainnetHeight,
+					MainnetBlockHashHex:   hex.EncodeToString(a.MainnetBlockHash),
+					OriginatorSenderID:    hostAddr,
+					OriginatorTimestampMs: time.Now().UnixMilli(),
+				})
+			}
+		}
+	}
+}
+
+func ensureHeightSyncPromMetrics(t *testing.T) {
+	t.Helper()
+	require.NoError(t, heightsync.RegisterAnchorMetrics(prometheus.NewRegistry()))
+}
+
+// courierSyncTurnWithHeldResponses runs sync-turn nonces [1, releaseAt] with HTTP
+// responses for 1..releaseAt-1 blocked on each host until PrepareInference(releaseAt),
+// then releases all holds so peer tips land deterministically before the release nonce send.
+// Requires go test -tags=dev (transport.Server inference hold hooks).
+func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, releaseAt uint64) {
+	t.Helper()
+	if !inferenceHoldsEnabled() {
+		t.Skip("courierSyncTurnWithHeldResponses requires -tags=dev")
+	}
+	require.GreaterOrEqual(t, releaseAt, uint64(2))
+
+	type sendResult struct {
+		hostIdx int
+		nonce   uint64
+		resp    *host.HostResponse
+		err     error
+	}
+
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out []sendResult
+	)
+	for n := uint64(1); n < releaseAt; n++ {
+		p, err := st.Session.PrepareInference(params)
+		require.NoError(t, err, "prepare nonce=%d", n)
+		require.Equal(t, n, p.Nonce())
+
+		hostIdx := p.HostIdx()
+		armInferenceResponseHold(t, st.Servers[hostIdx])
+		wg.Add(1)
+		go func(p *user.PreparedInference, nonce uint64, hi int) {
+			defer wg.Done()
+			resp, err := st.Session.SendOnly(ctx, p)
+			mu.Lock()
+			out = append(out, sendResult{hostIdx: hi, nonce: nonce, resp: resp, err: err})
+			mu.Unlock()
+		}(p, n, hostIdx)
+	}
+
+	pRelease, err := st.Session.PrepareInference(params)
+	require.NoError(t, err, "prepare releaseAt=%d", releaseAt)
+	require.Equal(t, releaseAt, pRelease.Nonce())
+
+	for _, srv := range st.Servers {
+		releaseInferenceResponseHold(t, srv)
+	}
+	wg.Wait()
+
+	results := append([]sendResult(nil), out...)
+	require.Len(t, results, int(releaseAt-1))
+	sort.Slice(results, func(i, j int) bool { return results[i].nonce < results[j].nonce })
+	for _, r := range results {
+		require.NoError(t, r.err, "SendOnly nonce=%d", r.nonce)
+		require.NoError(t, st.Session.ProcessResponse(r.hostIdx, r.resp, r.nonce),
+			"ProcessResponse nonce=%d", r.nonce)
+	}
+
+	resp, err := st.Session.SendOnly(ctx, pRelease)
+	require.NoError(t, err, "SendOnly releaseAt=%d", releaseAt)
+	require.NoError(t, st.Session.ProcessResponse(pRelease.HostIdx(), resp, releaseAt),
+		"ProcessResponse releaseAt=%d", releaseAt)
+	syncHostsFromSession(t, st)
+}
+
+// courierPipelinedSyncTurn prepares every nonce in [from, through] first, then runs
+// SendOnly for all of them while each host holds its HTTP response until a single
+// release processes the whole wave. With a cold peer-tip cache every outbound Decide
+// in the wave sees Stale() and omits; responses then warm the cache together.
+func courierPipelinedSyncTurn(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, from, through uint64) {
+	t.Helper()
+	if !inferenceHoldsEnabled() {
+		t.Skip("courierPipelinedSyncTurn requires -tags=dev")
+	}
+	require.GreaterOrEqual(t, through, from)
+
+	type sendResult struct {
+		hostIdx int
+		nonce   uint64
+		resp    *host.HostResponse
+		err     error
+	}
+
+	prepared := make([]*user.PreparedInference, 0, int(through-from+1))
+	for n := from; n <= through; n++ {
+		p, err := st.Session.PrepareInference(params)
+		require.NoError(t, err, "prepare nonce=%d", n)
+		require.Equal(t, n, p.Nonce())
+		prepared = append(prepared, p)
+	}
+
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out []sendResult
+	)
+	for _, p := range prepared {
+		hostIdx := p.HostIdx()
+		armInferenceResponseHold(t, st.Servers[hostIdx])
+		wg.Add(1)
+		go func(p *user.PreparedInference, nonce uint64, hi int) {
+			defer wg.Done()
+			resp, err := st.Session.SendOnly(ctx, p)
+			mu.Lock()
+			out = append(out, sendResult{hostIdx: hi, nonce: nonce, resp: resp, err: err})
+			mu.Unlock()
+		}(p, p.Nonce(), hostIdx)
+	}
+	for _, srv := range st.Servers {
+		releaseInferenceResponseHold(t, srv)
+	}
+	wg.Wait()
+
+	results := append([]sendResult(nil), out...)
+	require.Len(t, results, len(prepared))
+	sort.Slice(results, func(i, j int) bool { return results[i].nonce < results[j].nonce })
+	for _, r := range results {
+		require.NoError(t, r.err, "SendOnly nonce=%d", r.nonce)
+		require.NoError(t, st.Session.ProcessResponse(r.hostIdx, r.resp, r.nonce),
+			"ProcessResponse nonce=%d", r.nonce)
+	}
+	syncHostsFromSession(t, st)
+}
+
+func requireInboundUserAnchorOriginator(
+	t *testing.T,
+	srv *transport.Server,
+	userAddr, wantOriginator string,
+	wantHeight int64,
+	wantHash []byte,
+	wantTag heightsync.AnchorCadenceTag,
+) {
+	t.Helper()
+	ar := srv.HeightSyncAuditRing()
+	require.NotNil(t, ar)
+	var matches []heightsync.AnchorAttestation
+	for _, a := range ar.List(userAddr) {
+		if a.Direction != "request" || a.MainnetHeight != wantHeight {
+			continue
+		}
+		if !bytes.Equal(a.MainnetBlockHash, wantHash) {
+			continue
+		}
+		matches = append(matches, a)
+	}
+	require.NotEmpty(t, matches, "host must record inbound user anchor at height=%d", wantHeight)
+	best := matches[len(matches)-1]
+	require.Equal(t, wantOriginator, best.OriginatorSenderID,
+		"inbound anchor must attribute originator %s, not the carrier", wantOriginator)
+	require.NotEqual(t, userAddr, best.OriginatorSenderID,
+		"originator must not be the user carrier address")
+	if wantTag != "" {
+		require.Equal(t, wantTag, best.Tag)
+	}
+}
+
+func requestEmitModeAtNonce(entries []testLogEntry, nonce int) string {
+	for _, e := range entries {
+		if e.msg != "heightsync: emit" || e.kv["direction"] != "request" {
+			continue
+		}
+		if e.kv["nonce"] == fmt.Sprint(nonce) {
+			return strings.ToLower(strings.TrimSpace(e.kv["mode"]))
+		}
+	}
+	return ""
 }
 
 // TestHeightSyncAnchor_E2E_CadenceLogsAndAuditTrail validates stack wiring,
@@ -823,7 +1128,7 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 		h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), hsAnchorE2EEscrowID, group, nil, host.WithGrace(10_000), host.WithStorage(mst))
 		require.NoError(t, err)
 
-		hostSched := heightsync.MustNewAnchorScheduler(8, 4, hostOracles[i])
+		hostSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, hostOracles[i])
 		srv, err := transport.NewServer(h, mst, verifier, userSigner.Address(), transport.WithHeightSync(hostSched, hostOracles[i]))
 		require.NoError(t, err)
 		e := echo.New()
@@ -846,7 +1151,7 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 		},
 		hosts: brHosts,
 	}
-	clientSched := heightsync.MustNewAnchorScheduler(8, 4, clientOracle)
+	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, clientOracle)
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientOracle
@@ -1221,7 +1526,7 @@ func TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash(t *testing.T) {
 	base := staticOracleWith(100, []byte{0xab, 0xcd, 0xef, 0x42})
 	canonical := append([]byte(nil), base.hdr.BlockHash...)
 	bogus := append([]byte(nil), canonical...)
-	bogus[len(bogus)-1] ^= 0xff
+	bogus[0] ^= 0xff
 	require.False(t, bytes.Equal(bogus, canonical))
 
 	hostOracles := []*staticOracle{
@@ -1261,4 +1566,191 @@ func TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash(t *testing.T) {
 		"PoC accepts in-window Anchors at oracle height even when the hash disagrees with the local oracle (offline verifier compares)")
 	require.False(t, bytes.Equal(matches[0].MainnetBlockHash, canonical),
 		"recorded hash must differ from canonical BlockID.Hash at the same height")
+}
+
+// TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn covers plan §5/E2:
+// omit-window nonces 5–7 lazy-carry a peer tip; per-host dedup skips repeat propagation.
+func TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn(t *testing.T) {
+	ctx := context.Background()
+	logs := installCaptureLogger(t)
+
+	const tipHeight = int64(101)
+	tipHash := []byte{0xbb, 0xbb, 0xbb, 0xbb}
+	base := staticOracleWith(100, []byte{0xab, 0xcd, 0xef, 0x42})
+	hostOracles := []*staticOracle{
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(tipHeight, tipHash),
+	}
+	st, peerTips := setupFourHostHTTPHeightSyncCourier(t, hostOracles)
+	params := defaultInferenceParams()
+
+	courierSyncTurnWithHeldResponses(t, ctx, st, params, 4)
+	peerTips = peerTipsFromSession(t, st.Session)
+	tip := peerTips.MaxFresh(time.Now(), peerTips.Freshness)
+	require.NotNil(t, tip)
+	require.Equal(t, tipHeight, tip.MainnetHeight)
+	require.Equal(t, st.HostAddrs[3], tip.OriginatorSenderID)
+
+	for n := 5; n <= 7; n++ {
+		_, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err, "omit window nonce=%d", n)
+		syncHostsFromSession(t, st)
+	}
+
+	entries := logs.snapshot()
+	for n := 5; n <= 7; n++ {
+		require.Equal(t, "anchor", requestEmitModeAtNonce(entries, n),
+			"user must lazy-emit Anchor at omit-window nonce=%d", n)
+	}
+
+	for n := 5; n <= 7; n++ {
+		hostIdx := hostIdxForNonce(uint64(n))
+		require.Equal(t, 1, countInboundUserAnchorsWithTag(t, st.Servers[hostIdx], st.UserAddr, heightsync.TagLazy),
+			"host idx=%d (nonce=%d) must record inbound tag=lazy", hostIdx, n)
+	}
+
+	// Per-recipient dedup at the same height is asserted below (nonce 5 → host 1, then omit at nonce 13).
+
+	// Advance through periodic sync turn 8–12; nonce 13 (omit) targets same host as nonce 5.
+	for n := 8; n <= 12; n++ {
+		_, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err, "advance nonce=%d", n)
+		syncHostsFromSession(t, st)
+	}
+	host1 := hostIdxForNonce(5)
+	lazyOnHost1Before := countInboundUserAnchorsWithTag(t, st.Servers[host1], st.UserAddr, heightsync.TagLazy)
+
+	_, err := st.Session.SendInference(ctx, params)
+	require.NoError(t, err)
+	syncHostsFromSession(t, st)
+
+	entries = logs.snapshot()
+	require.Equal(t, "omit", requestEmitModeAtNonce(entries, 13),
+		"user must Omit lazy re-send to host already propagated at nonce 5")
+	require.Equal(t, lazyOnHost1Before, countInboundUserAnchorsWithTag(t, st.Servers[host1], st.UserAddr, heightsync.TagLazy),
+		"receiver must not grow lazy audit ring on deduped omit-window nonce")
+}
+
+// TestHeightSyncAnchor_E2E_StaleOriginRejected covers plan §5/E3: backdated originator → stale_origin.
+func TestHeightSyncAnchor_E2E_StaleOriginRejected(t *testing.T) {
+	ctx := context.Background()
+	logs := installCaptureLogger(t)
+	ensureHeightSyncPromMetrics(t)
+
+	const tipHeight = int64(101)
+	tipHash := []byte{0xcc, 0xcc, 0xcc, 0xcc}
+	base := staticOracleWith(100, []byte{0xab, 0xcd, 0xef, 0x42})
+	hostOracles := []*staticOracle{
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(tipHeight, tipHash),
+	}
+	st, _ := setupFourHostHTTPHeightSyncCourier(t, hostOracles, func(cc *transport.ClientConfig) {
+		cc.HeightSyncRequestMutateHook = func(sec *heightsync.HeightSyncSection, nonce uint64) {
+			if sec == nil || nonce != 5 {
+				return
+			}
+			if sec.OriginatorSenderID != "" || sec.OriginatorTimestampMs > 0 {
+				sec.OriginatorTimestampMs = time.Now().Add(-5 * time.Minute).UnixMilli()
+			}
+		}
+	})
+	params := defaultInferenceParams()
+
+	courierSyncTurnWithHeldResponses(t, ctx, st, params, 4)
+	_ = peerTipsFromSession(t, st.Session) // courier cache warmed by held sync-turn responses
+
+	staleBefore := heightsync.StaleOriginRejectedTotal()
+	lazyBefore := heightsync.LazyAnchorTotal()
+
+	_, err := st.Session.SendInference(ctx, params)
+	require.NoError(t, err)
+	syncHostsFromSession(t, st)
+
+	require.Equal(t, staleBefore+1, heightsync.StaleOriginRejectedTotal())
+	require.Equal(t, lazyBefore, heightsync.LazyAnchorTotal(), "stale origin must not count as lazy anchor")
+
+	var sawStaleWarn bool
+	for _, e := range logs.snapshot() {
+		if e.msg == "heightsync: invalid inbound anchor" && e.kv["reason"] == "stale_origin" {
+			sawStaleWarn = true
+			break
+		}
+	}
+	require.True(t, sawStaleWarn, "host must warn with stale_origin")
+
+	hostIdx := hostIdxForNonce(5)
+	ar := st.Servers[hostIdx].HeightSyncAuditRing()
+	require.NotNil(t, ar)
+	var sawDispute bool
+	for _, a := range ar.List(st.UserAddr) {
+		if a.Trust == heightsync.TrustDisputeCarrier {
+			sawDispute = true
+		}
+		require.NotEqual(t, heightsync.TagLazy, a.Tag, "stale carry-forward must not be tagged lazy")
+	}
+	require.True(t, sawDispute, "audit ring must record dispute_carrier for stale origin")
+}
+
+// TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected covers plan §5/E8: held signed
+// originator section replayed after freshness budget F expires.
+func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E8 requires 70s wall-clock hold (run without -short)")
+	}
+	ctx := context.Background()
+	logs := installCaptureLogger(t)
+	ensureHeightSyncPromMetrics(t)
+
+	const tipHeight int64 = 101
+	tipHash := []byte{0xcc, 0xcc, 0xcc, 0xcc}
+	base := staticOracleWith(100, []byte{0xab, 0xcd, 0xef, 0x42})
+	hostOracles := []*staticOracle{
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(100, base.hdr.BlockHash),
+		staticOracleWith(tipHeight, tipHash),
+	}
+	st, peerTips := setupFourHostHTTPHeightSyncCourier(t, hostOracles)
+	params := defaultInferenceParams()
+
+	courierSyncTurnWithHeldResponses(t, ctx, st, params, 4)
+	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
+		"sync turn must warm courier cache before hold")
+
+	time.Sleep(70 * time.Second)
+
+	staleBefore := heightsync.StaleOriginRejectedTotal()
+	lazyBefore := heightsync.LazyAnchorTotal()
+
+	_, err := st.Session.SendInference(ctx, params)
+	require.NoError(t, err)
+	syncHostsFromSession(t, st)
+
+	require.Equal(t, staleBefore+1, heightsync.StaleOriginRejectedTotal())
+	require.Equal(t, lazyBefore, heightsync.LazyAnchorTotal(), "stale held replay must not count as lazy anchor")
+
+	var sawStaleWarn bool
+	for _, e := range logs.snapshot() {
+		if e.msg == "heightsync: invalid inbound anchor" && e.kv["reason"] == "stale_origin" {
+			sawStaleWarn = true
+			break
+		}
+	}
+	require.True(t, sawStaleWarn, "host must warn with stale_origin after held replay")
+
+	hostIdx := hostIdxForNonce(5)
+	ar := st.Servers[hostIdx].HeightSyncAuditRing()
+	require.NotNil(t, ar)
+	var sawDispute bool
+	for _, a := range ar.List(st.UserAddr) {
+		if a.Trust == heightsync.TrustDisputeCarrier {
+			sawDispute = true
+		}
+		require.NotEqual(t, heightsync.TagLazy, a.Tag, "stale held replay must not be tagged lazy")
+	}
+	require.True(t, sawDispute, "audit ring must record dispute_carrier for held replay")
 }

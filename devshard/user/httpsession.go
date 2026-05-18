@@ -22,8 +22,8 @@ type HTTPSessionConfig struct {
 	StreamCallback func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix    string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
 	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
-	// Used by testenv devshardctl to attach HeightSync + oracle without importing
-	// mockdapi into this package.
+	// Used by testenv devshardctl to attach courier-mode HeightSync (peer-tip cache;
+	// no local mainnet follower on the user).
 	ExtraClientConfig *transport.ClientConfig
 }
 
@@ -65,7 +65,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	clientCache := make(map[string]*transport.HTTPClient)
 	var sharedPeerTips *transport.HeightSyncPeerTips
 	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
-		sharedPeerTips = transport.NewHeightSyncPeerTips()
+		if cfg.ExtraClientConfig.HeightSyncPeerTips != nil {
+			sharedPeerTips = cfg.ExtraClientConfig.HeightSyncPeerTips
+		} else {
+			sharedPeerTips = transport.NewHeightSyncPeerTips()
+		}
 	}
 	for i, slot := range group {
 		if c, ok := clientCache[slot.ValidatorAddress]; ok {
@@ -93,6 +97,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			}
 			if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
 				cc.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
+			}
+			if cfg.ExtraClientConfig.HeightSyncConfirmation != nil {
+				cc.HeightSyncConfirmation = cfg.ExtraClientConfig.HeightSyncConfirmation
 			}
 		}
 		var clientCfgs []transport.ClientConfig

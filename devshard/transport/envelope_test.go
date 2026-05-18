@@ -13,6 +13,44 @@ import (
 	"devshard/transport"
 )
 
+func TestEnvelope_OriginatorFields_RoundTrip(t *testing.T) {
+	hs := &heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         99,
+		MainnetBlockHashHex:   "aabb",
+		TimestampUnixMs:       1000,
+		Direction:             "request",
+		OriginatorSenderID:    "gonka1origin",
+		OriginatorTimestampMs: 900,
+	}
+	req := transport.InferenceRequest{Nonce: 2}
+
+	raw, err := transport.MarshalWrappedInferenceRequest(transport.CurrentInferenceEnvelopeSchemaVersion, hs, req)
+	require.NoError(t, err)
+
+	var env types.InferenceRequestEnvelope
+	require.NoError(t, proto.Unmarshal(raw, &env))
+	require.NotNil(t, env.HeightSync)
+	require.Equal(t, hs.OriginatorSenderID, env.HeightSync.GetOriginatorSenderId())
+	require.Equal(t, hs.OriginatorTimestampMs, env.HeightSync.GetOriginatorTimestampUnixMs())
+
+	got, err := transport.UnwrapInferenceRequestBody(raw)
+	require.NoError(t, err)
+	want := *hs
+	want.ChainID = ""
+	require.Equal(t, &want, got.HeightSync)
+
+	hsResp := *hs
+	hsResp.Direction = "response"
+	rawResp, err := transport.MarshalWrappedInferenceResponse(transport.CurrentInferenceEnvelopeSchemaVersion, &hsResp, transport.InferenceResponse{Nonce: 2})
+	require.NoError(t, err)
+	gotResp, err := transport.UnwrapInferenceResponseBody(rawResp)
+	require.NoError(t, err)
+	wantResp := hsResp
+	wantResp.ChainID = ""
+	require.Equal(t, &wantResp, gotResp.HeightSync)
+}
+
 func TestMarshalWrappedInferenceRequest_RoundTrip_Anchor(t *testing.T) {
 	hs := &heightsync.HeightSyncSection{
 		ChainID:             "gonka-testenv-1",

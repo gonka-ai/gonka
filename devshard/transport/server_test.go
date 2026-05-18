@@ -584,7 +584,7 @@ func TestServer_Inference_HeightSync_OutboundAnchor(t *testing.T) {
 		ChainID:   "chain-x",
 		BlockHash: []byte{0xab, 0xcd},
 	}}
-	sched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
@@ -621,13 +621,16 @@ func TestServer_Inference_HeightSync_OutboundAnchor(t *testing.T) {
 		}
 	}
 	require.True(t, foundHS, "expected height_sync on first SSE receipt")
+	localAddr := env.hostSigner.Address()
 	require.Equal(t, heightsync.AnchorProofType, hs.ProofType)
 	require.Equal(t, int64(77), hs.MainnetHeight)
 	require.Equal(t, "response", hs.Direction)
+	require.NotEmpty(t, hs.SenderSignature)
+	require.Equal(t, localAddr, hs.OriginatorSenderID)
+	require.NoError(t, heightsync.VerifyOrigin(signing.NewSecp256k1Verifier(), &hs, hs.SenderSignature))
 
 	ring := env.server.HeightSyncAuditRing()
 	require.NotNil(t, ring)
-	localAddr := env.hostSigner.Address()
 	var sawResponse bool
 	for _, a := range ring.List(localAddr) {
 		if a.Direction == "response" && a.MainnetHeight == 77 {
@@ -676,7 +679,7 @@ func TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest(t *testing.T
 		ChainID:   "chain-x",
 		BlockHash: []byte{0xab, 0xcd},
 	}}
-	sched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
 	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000}
@@ -745,7 +748,19 @@ type warnCaptureLogger struct {
 }
 
 func (w *warnCaptureLogger) Warn(msg string, kv ...any) {
-	w.warns = append(w.warns, msg)
+	w.warns = append(w.warns, formatLogLine(msg, kv))
+}
+
+func formatLogLine(msg string, kv []any) string {
+	if len(kv) == 0 {
+		return msg
+	}
+	var b strings.Builder
+	b.WriteString(msg)
+	for i := 0; i+1 < len(kv); i += 2 {
+		fmt.Fprintf(&b, " %v=%v", kv[i], kv[i+1])
+	}
+	return b.String()
 }
 
 type mutableTestOracle struct {
@@ -786,7 +801,7 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMismatchWarns(t *testing.
 		ChainID:   "chain-x",
 		BlockHash: bytes.Repeat([]byte{0x01}, 32),
 	}}
-	sched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
 	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -859,7 +874,7 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMatchNoWarn(t *testing.T)
 		ChainID:   "chain-x",
 		BlockHash: bytes.Repeat([]byte{0x01}, 32),
 	}}
-	sched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
 	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -930,7 +945,7 @@ func TestServer_Inference_HeightSync_ForcedTurn_HostAnchorsEvenIfRequestOmits(t 
 	// K=10, slots=1: cadence anchors at nonces 1 and 10. Nonce 2 would
 	// normally Omit, so any Anchor at nonce 2 is attributable to the
 	// forced turn alone.
-	sched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
 	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000}
@@ -999,4 +1014,259 @@ func TestServer_Inference_HeightSync_ForcedTurn_HostAnchorsEvenIfRequestOmits(t 
 	}
 	require.True(t, sawMissing,
 		"audit ring must contain a TrustForceRequestAnchorMissing entry for the in-window request")
+}
+
+func courierCarryForwardHS(height int64, originator string, observedAt time.Time) *heightsync.HeightSyncSection {
+	return &heightsync.HeightSyncSection{
+		ChainID:               "chain-x",
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         height,
+		MainnetBlockHashHex:   hex.EncodeToString(bytes.Repeat([]byte{0xab}, 32)),
+		TimestampUnixMs:       observedAt.UnixMilli(),
+		OriginatorSenderID:    originator,
+		OriginatorTimestampMs: observedAt.UnixMilli(),
+		Direction:             "request",
+	}
+}
+
+func advanceSessionToNonce(t *testing.T, env *serverTestEnv, targetNonce uint64) {
+	t.Helper()
+	for n := uint64(1); n < targetNonce; n++ {
+		rec := postProtobufInference(t, env, n, nil)
+		require.Equal(t, http.StatusOK, rec.Code, "advance nonce=%d: %s", n, rec.Body.String())
+	}
+}
+
+func postProtobufInference(t *testing.T, env *serverTestEnv, nonce uint64, hs *heightsync.HeightSyncSection) *httptest.ResponseRecorder {
+	t.Helper()
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(nonce)})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	ir := InferenceRequest{
+		Diffs:   []DiffJSON{dj},
+		Nonce:   nonce,
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+	}
+	var body []byte
+	if hs != nil {
+		body, err = MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, hs, ir)
+		require.NoError(t, err)
+		return env.doPostContentType(t, "/v1/devshard/sessions/escrow-1/chat/completions", "application/x-protobuf", body)
+	}
+	body, err = json.Marshal(ir)
+	require.NoError(t, err)
+	return env.doPost(t, "/v1/devshard/sessions/escrow-1/chat/completions", body)
+}
+
+// TestServer_LazyAnchorAcceptedOutsideSyncTurn covers Step 5: VALID_LAZY_ANCHOR on omit-window nonces.
+func TestServer_LazyAnchorAcceptedOutsideSyncTurn(t *testing.T) {
+	or := &mutableTestOracle{hdr: &blockoracle.Header{
+		Height:    10,
+		ChainID:   "chain-x",
+		BlockHash: bytes.Repeat([]byte{0x01}, 32),
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	advanceSessionToNonce(t, env, 5)
+	now := time.Now()
+	hs := courierCarryForwardHS(11, "gonka1origin", now)
+	rec := postProtobufInference(t, env, 5, hs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	ring := env.server.HeightSyncAuditRing()
+	userAddr := env.userSigner.Address()
+	var sawLazy bool
+	for _, a := range ring.List(userAddr) {
+		if a.Direction == "request" && a.MainnetHeight == 11 && a.Trust == heightsync.TrustUntrustedPeer && a.Tag == heightsync.TagLazy {
+			sawLazy = true
+			break
+		}
+	}
+	require.True(t, sawLazy, "omit-window carry-forward must be audit-tagged lazy")
+}
+
+// TestServer_StaleOriginRejected covers Step 5 freshness gate (reason=stale_origin).
+func TestServer_StaleOriginRejected(t *testing.T) {
+	capLog := &warnCaptureLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(discardRestLogger{}) })
+
+	or := &mutableTestOracle{hdr: &blockoracle.Header{
+		Height:    10,
+		ChainID:   "chain-x",
+		BlockHash: bytes.Repeat([]byte{0x01}, 32),
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	advanceSessionToNonce(t, env, 5)
+	staleAt := time.Now().Add(-5 * time.Minute)
+	hs := courierCarryForwardHS(11, "gonka1origin", staleAt)
+	rec := postProtobufInference(t, env, 5, hs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var sawStaleWarn bool
+	for _, w := range capLog.warns {
+		if strings.Contains(w, "stale_origin") {
+			sawStaleWarn = true
+			break
+		}
+	}
+	require.True(t, sawStaleWarn, "stale carry-forward must log warn with stale_origin")
+
+	ring := env.server.HeightSyncAuditRing()
+	userAddr := env.userSigner.Address()
+	var sawDispute bool
+	for _, a := range ring.List(userAddr) {
+		if a.Trust == heightsync.TrustDisputeCarrier {
+			sawDispute = true
+			require.NotEqual(t, heightsync.TagLazy, a.Tag)
+		}
+		if a.Tag == heightsync.TagLazy {
+			t.Fatal("stale origin must not produce a lazy-tagged accepted anchor")
+		}
+	}
+	require.True(t, sawDispute, "audit ring must record dispute_carrier for stale origin")
+}
+
+// TestServer_ConfirmationView_AfterLazyInbound covers Step 6: server quorum via carry-forward.
+func TestServer_ConfirmationView_AfterLazyInbound(t *testing.T) {
+	or := &mutableTestOracle{hdr: &blockoracle.Header{
+		Height:    10,
+		ChainID:   "chain-x",
+		BlockHash: bytes.Repeat([]byte{0x01}, 32),
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	roster := []string{"gonka1b", "gonka1c", "gonka1d"}
+	idx := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
+		Roster: roster,
+		Quorum: 3,
+		Oracle: or,
+	})
+	env.server.HeightSyncAuditRing().AttachConfirmation(idx)
+
+	now := time.Now()
+	hash := bytes.Repeat([]byte{0x02}, 32)
+	for _, origin := range roster {
+		advanceSessionToNonce(t, env, 5)
+		hs := courierCarryForwardHS(11, origin, now)
+		rec := postProtobufInference(t, env, 5, hs)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		idx.RecordAttestation(heightsync.AnchorAttestation{
+			PeerID:             env.userSigner.Address(),
+			OriginatorSenderID: origin,
+			MainnetHeight:      11,
+			MainnetBlockHash:   hash,
+			ObservedAtUnixMs:   now.UnixMilli(),
+			Trust:              heightsync.TrustUntrustedPeer,
+			Tag:                heightsync.TagLazy,
+		})
+	}
+	require.Equal(t, heightsync.ConfirmConfirmed, idx.IsStrictlyConfirmed(11))
+}
+
+// TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor covers Step 5: carry-forward inside sync turn is cadence, not lazy.
+func TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor(t *testing.T) {
+	or := &mutableTestOracle{hdr: &blockoracle.Header{
+		Height:    10,
+		ChainID:   "chain-x",
+		BlockHash: bytes.Repeat([]byte{0x01}, 32),
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	advanceSessionToNonce(t, env, 2)
+	hs := courierCarryForwardHS(11, "gonka1origin", time.Now())
+	rec := postProtobufInference(t, env, 2, hs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	ring := env.server.HeightSyncAuditRing()
+	userAddr := env.userSigner.Address()
+	var sawCadence bool
+	for _, a := range ring.List(userAddr) {
+		if a.Direction == "request" && a.MainnetHeight == 11 && a.Tag == heightsync.TagCadence {
+			sawCadence = true
+			break
+		}
+	}
+	require.True(t, sawCadence, "sync-turn carry-forward must be audit-tagged cadence")
+}
+
+func TestHandleHeightSync_DisabledReturnsNotFound(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height: 10, ChainID: "c", BlockHash: []byte{0x01},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	rec := env.doPost(t, "/v1/devshard/sessions/escrow-1/height-sync", []byte("{}"))
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestHandleHeightSync_ForcesAnchor(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height:    88,
+		ChainID:   "chain-seed",
+		BlockHash: []byte{0xca, 0xfe},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or), WithHeightSyncSeedRPC(true))
+
+	rec := env.doPost(t, "/v1/devshard/sessions/escrow-1/height-sync", []byte("{}"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var out heightSyncSeedResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotNil(t, out.HeightSync)
+	require.Equal(t, heightsync.AnchorProofType, out.HeightSync.ProofType)
+	require.Equal(t, int64(88), out.HeightSync.MainnetHeight)
+	require.Equal(t, "response", out.HeightSync.Direction)
+	require.Equal(t, env.hostSigner.Address(), out.HeightSync.OriginatorSenderID)
+
+	ring := env.server.HeightSyncAuditRing()
+	require.NotNil(t, ring)
+	localAddr := env.hostSigner.Address()
+	var saw bool
+	for _, a := range ring.List(localAddr) {
+		if a.Direction == "response" && a.MainnetHeight == 88 {
+			saw = true
+			break
+		}
+	}
+	require.True(t, saw, "seed RPC must record outbound anchor in audit ring")
+}
+
+func TestServer_ResponseAnchor_SignedByHost(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height: 33, ChainID: "c", BlockHash: []byte{0x01},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or), WithHeightSyncSeedRPC(true))
+
+	rec := env.doPost(t, "/v1/devshard/sessions/escrow-1/height-sync", []byte("{}"))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var out heightSyncSeedResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.NotNil(t, out.HeightSync)
+	require.NotEmpty(t, out.HeightSync.SenderSignature)
+	require.Equal(t, env.hostSigner.Address(), out.HeightSync.OriginatorSenderID)
+	require.NoError(t, heightsync.VerifyOrigin(signing.NewSecp256k1Verifier(), out.HeightSync, out.HeightSync.SenderSignature))
+}
+
+func TestServer_RequestLeg_DoesNotVerifyOriginSig(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height: 44, ChainID: "c", BlockHash: []byte{0x02},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	// Unsigned carry-forward from user is accepted on sync-turn nonce 1.
+	hs := courierCarryForwardHS(44, "gonka1external", time.Now())
+	require.Empty(t, hs.SenderSignature)
+	rec := postProtobufInference(t, env, 1, hs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

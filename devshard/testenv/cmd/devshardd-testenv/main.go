@@ -114,9 +114,7 @@ func main() {
 	_ = flag.String("escrow-id", "", "escrow ID (overrides ESCROW_ID)")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})))
+	logging.ConfigureSlogFromEnv()
 
 	cfg, err := loadEnvConfig()
 	if err != nil {
@@ -167,6 +165,7 @@ func run(cfg envConfig) error {
 	md, err := mockdapi.New(ctx, mockdapi.Config{
 		HeightSyncURL: cfg.HeightSyncURL,
 		ChainID:       cfg.ChainID,
+		StaleAfter:    mockdapi.StaleAfterFromEnv(),
 	})
 	if err != nil {
 		return fmt.Errorf("mockdapi.New: %w", err)
@@ -289,7 +288,7 @@ func run(cfg envConfig) error {
 	if !anchorKFromEnv && anchorK < slots {
 		anchorK = slots
 	}
-	anchorSched, err := heightsync.NewAnchorScheduler(anchorK, slots, md.Oracle)
+	anchorSched, err := heightsync.NewAnchorSchedulerFromOracle(anchorK, slots, md.Oracle)
 	if err != nil {
 		return fmt.Errorf("height sync anchor scheduler: %w", err)
 	}
@@ -330,6 +329,7 @@ func run(cfg envConfig) error {
 	}
 
 	srv.Register(e.Group("/v1/devshard"))
+	registerHostInferenceHoldDebugRoutes(e, srv)
 	e.GET("/healthz", func(c echo.Context) error {
 		return c.String(http.StatusOK,
 			fmt.Sprintf("devshardd-testenv ok escrow=%s address=%s",

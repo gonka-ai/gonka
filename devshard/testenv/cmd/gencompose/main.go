@@ -367,6 +367,10 @@ services:
       DATA_DIR: "/data"
       EXPORT_METRICS: "1"
       METRICS_PORT: "9600"
+      LOG_LEVEL: "debug"
+      TESTENV_JSON_LOGS: "1"
+      DEVSHARDD_DEBUG: "1"
+      MOCKDAPI_STALE_AFTER: "3s"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./db/{{ $h.ID }}:/data
@@ -394,8 +398,18 @@ services:
       # Hosts mount transport under /v1/devshard (see devshardd-testenv); default Version=dev would use /devshard/dev.
       DEVSHARD_ROUTE_PREFIX: "/v1/devshard"
       CONFIG_PATH: "/app/config.yaml"
+      # Courier user: no HEIGHT_SYNC_URL / local oracle — peer tips from host Anchors only.
+      HEIGHT_SYNC_ANCHOR_PERIOD_NONCES: "{{ $.HeightSync.AnchorPeriodNonces }}"
+      HEIGHT_SYNC_SYNC_TURN_SLOTS: "{{ $.HeightSync.SyncTurnSlots }}"
+      DEVSHARDCTL_DEBUG: "1"
+      MOCKDAPI_STALE_AFTER: "3s"
+      LOG_LEVEL: "debug"
+      TESTENV_JSON_LOGS: "1"
+      # Persist on host so reuse-stack tests can wipe session state per test (see resetSharedStackHostDB).
+      DEVSHARD_STORAGE_PATH: "/data/session.db"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - ./db/devshardctl:/data
     ports:
       # Host publishes config user.port; container listens on devshardctl default (:8080).
       - "{{ .User.Port }}:8080"
@@ -404,7 +418,6 @@ services:
         ipv4_address: 172.30.0.9
     depends_on:
       - mock-chain
-      - height-sync
 {{- range $i, $h := .Hosts }}
       - {{ $h.ID }}
 {{- end }}

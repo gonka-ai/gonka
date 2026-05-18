@@ -3,89 +3,31 @@
 package container
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-func wantRequestAnchorAtNonce(nonce int) bool {
-	switch {
-	case nonce >= 1 && nonce <= 4:
-		return true
-	case nonce >= 8 && nonce <= 11:
-		return true
-	case nonce == 16:
-		return true
-	default:
-		return false
-	}
-}
-
 func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
-	if os.Getenv("TESTENV_SKIP_DOCKER_STACK") == "1" {
-		t.Skip("TESTENV_SKIP_DOCKER_STACK=1")
+	_, _, httpClient, streamClient, _ := startHeightSyncContainerStack(t)
+	ctx := context.Background()
+	if dl, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, dl)
+		defer cancel()
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH")
-	}
-
-	testenvDir := PrepareIsolatedE2EWorkspace(t, WithDevsharddSchedulerFromCopiedConfig())
-	composeFile := filepath.Join(testenvDir, "docker-compose.yml")
-	if _, err := os.Stat(composeFile); err != nil {
-		t.Fatalf("workspace docker-compose.yml: %v", err)
-	}
-
-	project := ComposeProjectForTest(t)
-	deadline, ok := t.Deadline()
-	if !ok {
-		deadline = time.Now().Add(20 * time.Minute)
-	}
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
-
-	down := func() {
-		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer dcancel()
-		_ = DockerCompose(dctx, testenvDir, project, nil, nil, "down", "--remove-orphans", "--timeout", "60").Run()
-	}
-	down()
-	t.Cleanup(down)
-
-	PruneStaleContainerE2EDockerStacks(t, testenvDir)
-
-	up := DockerCompose(ctx, testenvDir, project, os.Stdout, os.Stderr, "up", "-d", "--build")
-	if err := up.Run(); err != nil {
-		t.Fatalf("docker compose up: %v", err)
-	}
-
-	LogComposeDebugHints(t, testenvDir, project)
-	WaitCoreStackServicesRunningOrFail(t, ctx, testenvDir, project, time.Now().Add(4*time.Minute))
-
-	httpClient := &http.Client{Timeout: 15 * time.Second}
-	streamClient := &http.Client{Timeout: 5 * time.Minute}
-
-	WaitHeightSyncPositive(t, httpClient, time.Now().Add(5*time.Minute))
-	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8081/v1/status", time.Now().Add(4*time.Minute), "devshardctl /v1/status")
-	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:3100/ready", time.Now().Add(3*time.Minute), "loki")
-	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8428/api/v1/query?query=1", time.Now().Add(3*time.Minute), "victoria-metrics")
-
-	t0 := time.Now().Add(-30 * time.Second)
 
 	const metricOutboundAnchors = "devshard_heightsync_outbound_anchors_total"
 	baselineOutbound := PromInstantScalar(t, httpClient,
 		fmt.Sprintf(`sum(%s{direction="response"})`, metricOutboundAnchors))
+
+	startNonce := int(fetchDevshardctlNextNonce(t, httpClient))
+	t.Logf("cadence burst: nonces %d..%d from /v1/status", startNonce, startNonce+15)
 
 	// Fire all chat-completions in parallel: do not wait for one inference stream to finish
 	// before starting the next. Completion is async on devshardctl/hosts; we only wait for
@@ -99,7 +41,8 @@ func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
 	var inferErrs []error
 	var inferMu sync.Mutex
 	completedOK := 0
-	for i := 1; i <= nInfer; i++ {
+	for i := 0; i < nInfer; i++ {
+		inferNonce := startNonce + i
 		wg.Add(1)
 		go func(inferIdx int) {
 			defer wg.Done()
@@ -114,13 +57,14 @@ func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
 			done := completedOK
 			inferMu.Unlock()
 			t.Logf("inference nonce=%d finished — burst %d/%d (%d%%)", inferIdx, done, nInfer, (100*done)/nInfer)
-		}(i)
+		}(inferNonce)
 	}
 	wg.Wait()
 	if len(inferErrs) > 0 {
 		t.Fatalf("inference errors: %v", errors.Join(inferErrs...))
 	}
 
+	lokiStart := LokiWindowStart()
 	logQLCtl := `{service_name="devshardctl"} |= "heightsync: emit"`
 	logQLHost := `{service_name="devshardd-testenv"} |= "heightsync: peer attestation received"`
 
@@ -132,11 +76,11 @@ func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
 	var lastStatusLog time.Time
 	for time.Now().Before(deadlinePoll) {
 		end := time.Now().Add(30 * time.Second)
-		ctlLines = LokiQueryRange(t, httpClient, logQLCtl, t0, end, 5000)
-		hostLines = LokiQueryRange(t, httpClient, logQLHost, t0, end, 5000)
-		a := CountHeightSyncEmitModes(ctlLines, "request", "anchor")
-		o := CountHeightSyncEmitModes(ctlLines, "request", "omit")
-		if a >= 9 && o >= 7 {
+		ctlLines = LokiQueryRange(t, httpClient, logQLCtl, lokiStart, end, 5000)
+		hostLines = LokiQueryRange(t, httpClient, logQLHost, lokiStart, end, 5000)
+		a := CountHeightSyncRequestEmitInRange(ctlLines, startNonce, startNonce+nInfer-1, "anchor")
+		o := CountHeightSyncRequestEmitInRange(ctlLines, startNonce, startNonce+nInfer-1, "omit")
+		if a >= 9 && o >= 6 {
 			break
 		}
 		for _, n := range distinctEmitNonces(ctlLines, "anchor") {
@@ -164,16 +108,9 @@ func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
 		time.Sleep(3 * time.Second)
 	}
 
-	anchor := CountHeightSyncEmitModes(ctlLines, "request", "anchor")
-	omit := CountHeightSyncEmitModes(ctlLines, "request", "omit")
-	if anchor != 9 {
-		t.Fatalf("Loki devshardctl request anchor emits: got %d want 9", anchor)
-	}
-	if omit != 7 {
-		t.Fatalf("Loki devshardctl request omit emits: got %d want 7", omit)
-	}
+	assertCadenceRequestEmits(t, ctlLines, startNonce, startNonce+nInfer-1)
 
-	assertPrefixParity(t, ctlLines, hostLines)
+	assertPrefixParity(t, ctlLines, hostLines, startNonce, startNonce+nInfer-1)
 
 	// Host-exported Prometheus counters (response-direction outbound anchors), summed across replicas.
 	promDeadline := time.Now().Add(3 * time.Minute)
@@ -193,60 +130,28 @@ func TestContainerE2E_HeightSync_Cadence(t *testing.T) {
 	}
 }
 
-func postChatCompletionStream(t *testing.T, ctx context.Context, c *http.Client, inferIdx int) error {
+// assertCadenceRequestEmits checks sync-turn slots emit Anchor; between-turn slots may Omit
+// or Anchor (v2 lazy carry-forward). Total anchor count may exceed 9 when lazy fires.
+func assertCadenceRequestEmits(t *testing.T, ctlLines []string, startNonce, endNonce int) {
 	t.Helper()
-	body := []byte(`{"model":"llama","stream":true,"max_tokens":50}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:8081/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.Do(req)
-	if err != nil {
-		t.Logf("inference %d: POST devshardctl: %v", inferIdx, err)
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(resp.Body)
-		msg := strings.TrimSpace(truncateForLog(buf.String(), 800))
-		t.Logf("inference %d: non-OK %d body=%q", inferIdx, resp.StatusCode, msg)
-		return fmt.Errorf("http %d: %s", resp.StatusCode, buf.String())
-	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	const tailN = 12
-	tail := make([]string, 0, tailN)
-	for sc.Scan() {
-		line := sc.Text()
-		if len(tail) >= tailN {
-			tail = tail[1:]
+	for n := startNonce; n <= endNonce; n++ {
+		if wantRequestAnchorAtNonce(n) {
+			if !HasHeightSyncRequestEmit(ctlLines, n, "anchor") {
+				t.Fatalf("cadence: sync-turn nonce %d missing request mode=anchor", n)
+			}
+			continue
 		}
-		tail = append(tail, truncateForLog(line, 400))
-		if strings.Contains(line, "[DONE]") {
-			return nil
+		if !HasHeightSyncRequestEmit(ctlLines, n, "omit") && !HasHeightSyncRequestEmit(ctlLines, n, "anchor") {
+			t.Fatalf("cadence: between-turn nonce %d missing request emit (omit or lazy anchor)", n)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		t.Logf("inference %d: SSE scanner error: %v; last lines=%q", inferIdx, err, tail)
-		return fmt.Errorf("read SSE inference %d: %w", inferIdx, err)
+	omit := CountHeightSyncRequestEmitInRange(ctlLines, startNonce, endNonce, "omit")
+	if omit < 6 {
+		t.Fatalf("cadence: distinct omit emits in window: got %d want at least 6 (lazy carry may replace some)", omit)
 	}
-	t.Logf("inference %d: EOF without [DONE]; last SSE lines=%q", inferIdx, tail)
-	return fmt.Errorf("inference %d: stream ended without [DONE]", inferIdx)
 }
 
-func truncateForLog(s string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
-func assertPrefixParity(t *testing.T, ctlLines, hostLines []string) {
+func assertPrefixParity(t *testing.T, ctlLines, hostLines []string, startNonce, endNonce int) {
 	t.Helper()
 	type prefixRec struct {
 		userPrefix string
@@ -288,7 +193,7 @@ func assertPrefixParity(t *testing.T, ctlLines, hostLines []string) {
 		byNonce[n] = rec
 	}
 
-	for nonce := 1; nonce <= 16; nonce++ {
+	for nonce := startNonce; nonce <= endNonce; nonce++ {
 		if !wantRequestAnchorAtNonce(nonce) {
 			continue
 		}
@@ -300,18 +205,6 @@ func assertPrefixParity(t *testing.T, ctlLines, hostLines []string) {
 			t.Fatalf("prefix parity mismatch nonce=%d user=%q host=%q", nonce, rec.userPrefix, rec.hostPrefix)
 		}
 	}
-}
-
-func parseNonce(s string) int {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	u, err := strconv.ParseUint(s, 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int(u)
 }
 
 // distinctEmitNonces returns sorted distinct nonce values from heightsync: emit lines (request + mode).

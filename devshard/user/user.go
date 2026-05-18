@@ -16,6 +16,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/transport"
 	"devshard/types"
 )
 
@@ -686,6 +687,27 @@ func (s *Session) TimeoutVerifiers() map[int]TimeoutVerifier {
 // Clients returns the underlying host clients. Useful for constructing
 // timeout verifiers or other operations that need direct host access.
 func (s *Session) Clients() []HostClient { return s.clients }
+
+// SetOneShotHeightSyncRequestMutateHookForDebug registers a one-shot hook on each
+// distinct *transport.HTTPClient backing this session. Intended for testenv only
+// (devshardctl /v1/debug/cheat-anchor behind DEVSHARDCTL_DEBUG=1).
+func (s *Session) SetOneShotHeightSyncRequestMutateHookForDebug(fn func(*heightsync.HeightSyncSection, uint64)) {
+	s.mu.Lock()
+	clients := append([]HostClient(nil), s.clients...)
+	s.mu.Unlock()
+	seen := make(map[*transport.HTTPClient]struct{})
+	for _, cl := range clients {
+		hc, ok := cl.(*transport.HTTPClient)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[hc]; dup {
+			continue
+		}
+		seen[hc] = struct{}{}
+		hc.SetOneShotHeightSyncRequestMutateHook(fn)
+	}
+}
 
 // Close releases the underlying storage, if any. Safe to call multiple times.
 func (s *Session) Close() error {

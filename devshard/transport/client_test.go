@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -77,8 +78,8 @@ func setupClientTestEnvWithHeightSync(t *testing.T) (*HTTPClient, *httptest.Serv
 		BlockHash: []byte{0x01, 0x02},
 	}}
 	// Separate schedulers: host and user must not share one AnchorScheduler instance.
-	hostSched := heightsync.MustNewAnchorScheduler(10, 1, or)
-	clientSched := heightsync.MustNewAnchorScheduler(10, 1, or)
+	hostSched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 
 	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithHeightSync(hostSched, or))
 	require.NoError(t, err)
@@ -165,6 +166,83 @@ func TestHTTPClient_Send_HeightSync_ProtobufRequestAndAudit(t *testing.T) {
 	}
 	require.True(t, foundReq, "expected outbound user anchor in audit ring")
 	require.True(t, foundResp, "expected inbound host anchor from SSE in audit ring")
+}
+
+func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
+	t.Helper()
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	require.NoError(t, err)
+	engine := stub.NewInferenceEngine()
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
+
+	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
+	require.NoError(t, err)
+
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height:    42,
+		ChainID:   "test-chain",
+		BlockHash: []byte{0x01, 0x02},
+	}}
+	hostSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithHeightSync(hostSched, or))
+	require.NoError(t, err)
+
+	e := echo.New()
+	g := e.Group("/v1/devshard")
+	srv.Register(g)
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	peerTips := NewHeightSyncPeerTips()
+	peerTips.RequireVerifiedBlob = false
+	peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         51,
+		MainnetBlockHashHex:   "aabb",
+		OriginatorSenderID:    "gonka1origin",
+		OriginatorTimestampMs: time.Now().UnixMilli(),
+	})
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	clientSched := heightsync.MustNewAnchorScheduler(8, 4, src)
+
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = clientSched
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
+
+	require.True(t, peerTips.ShouldPropagateTo(ts.URL, 51))
+
+	ctx := context.Background()
+	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	payload := &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}
+	for n := uint64(1); n <= 4; n++ {
+		diff := testutil.SignDiff(t, userSigner, "escrow-1", n, []*types.DevshardTx{testutil.StartTx(n)})
+		_, err = plain.Send(ctx, host.HostRequest{Diffs: []types.Diff{diff}, Nonce: n, Payload: payload})
+		require.NoError(t, err, "advance session to omit window at nonce=%d", n)
+	}
+
+	diff := testutil.SignDiff(t, userSigner, "escrow-1", 5, []*types.DevshardTx{testutil.StartTx(5)})
+	_, err = client.Send(ctx, host.HostRequest{
+		Diffs:   []types.Diff{diff},
+		Nonce:   5,
+		Payload: payload,
+	})
+	require.NoError(t, err)
+	require.False(t, peerTips.ShouldPropagateTo(ts.URL, 51), "successful lazy send must MarkPropagated for recipient baseURL")
 }
 
 func TestHostRequest_ForceHeightSyncAnchor_TransportJSONRoundTrip(t *testing.T) {
@@ -331,4 +409,171 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
+}
+
+func TestObservedHeightNow_CacheEmpty(t *testing.T) {
+	peerTips := NewHeightSyncPeerTips()
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = sched
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
+
+	h, ok := client.ObservedHeightNow()
+	require.False(t, ok)
+	require.Equal(t, uint64(0), h)
+}
+
+func TestObservedHeightNow_FreshTip(t *testing.T) {
+	peerTips := NewHeightSyncPeerTips()
+	now := time.Now().UnixMilli()
+	peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         99,
+		MainnetBlockHashHex:   "aabb",
+		OriginatorSenderID:    "gonka1host",
+		OriginatorTimestampMs: now,
+	})
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = sched
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
+
+	h, ok := client.ObservedHeightNow()
+	require.True(t, ok)
+	require.Equal(t, uint64(99), h)
+}
+
+func TestObservedHeightNow_NoHeightSync(t *testing.T) {
+	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t))
+	h, ok := client.ObservedHeightNow()
+	require.False(t, ok)
+	require.Equal(t, uint64(0), h)
+}
+
+func TestHTTPClient_SeedHeightSync_RecordsOrigin(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000,
+	}))
+	hst, err := host.NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil,
+		host.WithGrace(100), host.WithStorage(store))
+	require.NoError(t, err)
+
+	or := &heightSyncTestOracle{hdr: &blockoracle.Header{
+		Height: 55, ChainID: "chain-x", BlockHash: []byte{0xde, 0xad},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	srv, err := NewServer(hst, store, verifier, userSigner.Address(),
+		WithHeightSync(sched, or), WithHeightSyncSeedRPC(true))
+	require.NoError(t, err)
+	e := echo.New()
+	g := e.Group("/v1/devshard")
+	srv.Register(g)
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	peerTips := NewHeightSyncPeerTips()
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	clientSched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = clientSched
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
+
+	_, ok := client.ObservedHeightNow()
+	require.False(t, ok)
+
+	seeded, err := client.SeedHeightSync(context.Background())
+	require.NoError(t, err)
+	require.True(t, seeded)
+
+	obsH, ok := client.ObservedHeightNow()
+	require.True(t, ok)
+	require.Equal(t, uint64(55), obsH)
+}
+
+func TestClient_ResponseAnchor_VerifiesOriginSignature(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	sec := &heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         90,
+		MainnetBlockHashHex:   "beef",
+		Direction:             "response",
+		OriginatorSenderID:    hostSigner.Address(),
+		OriginatorTimestampMs: time.Now().UnixMilli(),
+	}
+	_, sig, err := heightsync.SignOrigin(hostSigner, sec)
+	require.NoError(t, err)
+	sec.SenderSignature = sig
+
+	peerTips := NewHeightSyncPeerTips()
+	cfg := DefaultClientConfig()
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
+
+	client.ingestResponseHeightSync(sec, 1, "test")
+	_, _, ok := peerTips.OriginSignedBlobFor(hostSigner.Address(), 90)
+	require.True(t, ok)
+}
+
+func TestClient_ResponseAnchor_DropsOnInvalidSig(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	heightsync.RegisterAnchorMetrics(nil)
+	before := heightsync.OriginSigInvalidTotal()
+
+	sec := &heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         91,
+		MainnetBlockHashHex:   "beef",
+		Direction:             "response",
+		OriginatorSenderID:    hostSigner.Address(),
+		OriginatorTimestampMs: time.Now().UnixMilli(),
+	}
+	sec.SenderSignature = []byte{0, 1, 2}
+
+	peerTips := NewHeightSyncPeerTips()
+	cfg := DefaultClientConfig()
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
+
+	client.ingestResponseHeightSync(sec, 1, "test")
+	_, _, ok := peerTips.OriginSignedBlobFor(hostSigner.Address(), 91)
+	require.False(t, ok)
+	require.Equal(t, before+1, heightsync.OriginSigInvalidTotal())
+}
+
+func TestClient_RequestLeg_OmitsSenderSignature(t *testing.T) {
+	peerTips := NewHeightSyncPeerTips()
+	peerTips.RequireVerifiedBlob = true
+	now := time.Now().UnixMilli()
+	peerTips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         100,
+		MainnetBlockHashHex:   "aa",
+		OriginatorSenderID:    "gonka1origin",
+		OriginatorTimestampMs: now,
+	}, []byte("blob"), []byte{1})
+
+	outbound := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       10,
+		MainnetBlockHashHex: "local",
+		SenderSignature:     []byte{99},
+	}
+	peerTips.Carry(outbound)
+	require.Nil(t, outbound.SenderSignature)
 }

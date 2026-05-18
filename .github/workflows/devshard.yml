@@ -42,10 +42,58 @@ jobs:
         working-directory: devshard
         run: make ci-unit
 
-      - name: Integration
+      - name: Scenarios
+        working-directory: devshard
+        run: make ci-scenarios
+
+  integration:
+    name: Stack integration (citest I1–I9)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2'
+          cache-dependency-path: devshard/go.sum
+
+      - name: Docker info
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Stack integration
         working-directory: devshard
         run: make ci-integration
 
-      - name: Scenarios (§8.3)
+  container-e2e:
+    name: Container height-sync E2E
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2'
+          cache-dependency-path: devshard/go.sum
+
+      - name: Docker info
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Container height-sync E2E
         working-directory: devshard
-        run: make ci-scenarios
+        run: make ci-container-e2e

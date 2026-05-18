@@ -2,7 +2,8 @@ vue/node_modules
 vue/dist
 release/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 /.claude
 .cursor/
 /.claude

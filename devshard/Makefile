@@ -1,6 +1,7 @@
 # devshard module — see devshard/docs/testenv.md §8.8 (Phase 15 CI targets).
 .PHONY: proto test integration-test stress-test fault-test
-.PHONY: ci-unit ci-integration ci-scenarios ci-dep-check
+.PHONY: ci-unit ci-integration ci-scenarios ci-container-e2e ci-dep-check
+# ci-container-e2e runs all TestContainerE2E_HeightSync_* (phases A–C).
 
 proto:
 	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard proto/devshard/v1/*.proto
@@ -32,4 +33,7 @@ ci-integration: ## Stack integration (same driver as make -C testenv citest-stac
 	bash ./testenv/scripts/run-stack-citest.sh
 
 ci-scenarios: ## §8.3 config sanity + room for cPoC cases (testenv/scenarios). ≤ ~15m budget when expanded.
-	go test -count=1 -timeout=15m ./testenv/scenarios/...
+	go test -tags=dev -count=1 -timeout=15m ./testenv/scenarios/...
+
+ci-container-e2e: ## Container height-sync E2E (compose + TestContainerE2E_HeightSync_*). Needs Docker.
+	$(MAKE) -C testenv e2e

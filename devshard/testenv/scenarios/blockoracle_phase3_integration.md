@@ -8,6 +8,7 @@ This file collects **[`devshard/docs/testenv.md`](../../docs/testenv.md)** **§7
 
 - Unit / in-process: `devshard/blockoracle/...`, `devshard/testenv/config`, `heightsync_anchor_e2e_test.go` in this directory.
 - Compose citest (I1, I2a, I2b, I9, §7.7 wiring): `devshard/testenv/citest/`, driver `devshard/testenv/scripts/run-stack-citest.sh`.
+- **Height-sync Anchor container E2E** (different goal from I-rows): [`CONTAINER_E2E_PLAN.md`](CONTAINER_E2E_PLAN.md) **§7.1 Phase A** (cadence + harness + metrics/logs) and **§7.2 Phase B** (lost first response, single-message force anchor, cheating-trail via debug cheat endpoint + `oracle_failures_total`) are implemented under `devshard/testenv/scenarios/container/` with **`-tags=testenvci`** (`make e2e` from `devshard/testenv`). Same compose-style stack as testenv, not a duplicate of I3–I8/I10 coverage.
 
 ---
 

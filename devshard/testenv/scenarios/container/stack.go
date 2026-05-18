@@ -1,5 +1,3 @@
-//go:build testenvci
-
 package container
 
 import (
@@ -30,56 +28,11 @@ type e2eWorkspaceOpts struct {
 }
 
 // WithConfigMutate loads workspace config.yaml after the canonical copy, applies fn,
-// validates, and saves. Runs before hooks such as [WithDevsharddSchedulerFromCopiedConfig].
+// validates, and saves. Runs before [e2eWorkspaceOpts.afterConfig] hooks.
 func WithConfigMutate(fn func(*testing.T, *config.Config)) E2EWorkspaceOption {
 	return func(o *e2eWorkspaceOpts) {
 		o.mutateConfig = fn
 	}
-}
-
-// WithDevsharddSchedulerFromCopiedConfig injects HEIGHT_SYNC_ANCHOR_PERIOD_NONCES and
-// HEIGHT_SYNC_SYNC_TURN_SLOTS into each devshardd-testenv service in the workspace
-// compose file, from height_sync.anchor_period_nonces and height_sync.sync_turn_slots
-// in config.yaml (including edits from [WithConfigMutate]).
-//
-// devshardd-testenv applies these environment variables; it does not derive anchor
-// cadence from the mounted config path by itself.
-func WithDevsharddSchedulerFromCopiedConfig() E2EWorkspaceOption {
-	return func(o *e2eWorkspaceOpts) {
-		o.afterConfig = append(o.afterConfig, injectDevsharddSchedulerEnvFromWorkspaceConfig)
-	}
-}
-
-func injectDevsharddSchedulerEnvFromWorkspaceConfig(t *testing.T, ws string) {
-	t.Helper()
-	cfgPath := filepath.Join(ws, "config.yaml")
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		t.Fatalf("load workspace config for scheduler env injection: %v", err)
-	}
-	k := cfg.HeightSync.AnchorPeriodNonces
-	turn := cfg.HeightSync.SyncTurnSlots
-	if k < 1 || turn < 1 {
-		t.Fatalf("height_sync.anchor_period_nonces and sync_turn_slots must be positive after defaults (got k=%d turn=%d)", k, turn)
-	}
-	composePath := filepath.Join(ws, "docker-compose.yml")
-	data, err := os.ReadFile(composePath)
-	if err != nil {
-		t.Fatalf("read workspace docker-compose.yml: %v", err)
-	}
-	const needle = "      METRICS_PORT: \"9600\""
-	if !strings.Contains(string(data), needle) {
-		t.Fatalf("workspace compose missing %q (cannot inject scheduler env)", needle)
-	}
-	replacement := fmt.Sprintf(
-		"      METRICS_PORT: \"9600\"\n      HEIGHT_SYNC_ANCHOR_PERIOD_NONCES: \"%d\"\n      HEIGHT_SYNC_SYNC_TURN_SLOTS: \"%d\"",
-		k, turn,
-	)
-	out := strings.ReplaceAll(string(data), needle, replacement)
-	if err := os.WriteFile(composePath, []byte(out), 0o644); err != nil {
-		t.Fatalf("write workspace docker-compose.yml: %v", err)
-	}
-	t.Logf("injected devshardd HEIGHT_SYNC_ANCHOR_PERIOD_NONCES=%d HEIGHT_SYNC_SYNC_TURN_SLOTS=%d", k, turn)
 }
 
 // TestenvDir returns the absolute path to devshard/testenv (directory containing docker-compose.yml).
@@ -116,6 +69,107 @@ func ComposeProjectForTest(t *testing.T) string {
 	return fmt.Sprintf("containere2e%d_%d", os.Getpid(), n)
 }
 
+const defaultContainerE2EComposeProject = "heightsynce2e"
+
+// ReuseContainerE2EStack reports whether run-container-heightsync-e2e.sh already
+// brought up the shared compose project (TESTENV_REUSE_STACK=1).
+func ReuseContainerE2EStack() bool {
+	return os.Getenv("TESTENV_REUSE_STACK") == "1"
+}
+
+// ContainerE2EComposeProject is the docker compose project for the shared stack
+// (env CONTAINER_E2E_PROJECT, default heightsynce2e).
+func ContainerE2EComposeProject() string {
+	if p := strings.TrimSpace(os.Getenv("CONTAINER_E2E_PROJECT")); p != "" {
+		return p
+	}
+	return defaultContainerE2EComposeProject
+}
+
+// PrintReuseStack logs that tests attach to a pre-started stack.
+func PrintReuseStack(t *testing.T) {
+	t.Helper()
+	t.Logf("TESTENV_REUSE_STACK=1 — using compose project %q in %s (no per-test compose up/down)",
+		ContainerE2EComposeProject(), TestenvDir(t))
+}
+
+// waitComposeServiceLog polls docker compose logs until service output contains all substrings.
+func waitComposeServiceLog(t *testing.T, ws, project, service string, timeout time.Duration, contains ...string) {
+	t.Helper()
+	if len(contains) == 0 {
+		return
+	}
+	composeFile := filepath.Join(ws, "docker-compose.yml")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "-p", project,
+			"logs", "--tail=300", service)
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			t.Logf("compose logs %s: %v", service, err)
+		} else {
+			text := string(out)
+			ok := true
+			for _, sub := range contains {
+				if !strings.Contains(text, sub) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				t.Logf("compose logs %s: matched %v", service, contains)
+				return
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s logs to contain %v", service, contains)
+}
+
+// resetSharedStackHostDB clears per-host SQLite dirs, devshardctl session DB, and restarts
+// devshardd + devshardctl (used when TESTENV_RESET_STACK_DB=1).
+func resetSharedStackHostDB(t *testing.T, ws, project string) {
+	t.Helper()
+	ctlDBDir := filepath.Join(ws, "db", "devshardctl")
+	if err := os.RemoveAll(ctlDBDir); err != nil {
+		t.Fatalf("remove %s: %v", ctlDBDir, err)
+	}
+	if err := os.MkdirAll(ctlDBDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", ctlDBDir, err)
+	}
+	for i := 0; i < 4; i++ {
+		dbDir := filepath.Join(ws, "db", fmt.Sprintf("devshardd-testenv-%d", i))
+		entries, err := os.ReadDir(dbDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if mkErr := os.MkdirAll(dbDir, 0o755); mkErr != nil {
+					t.Fatalf("mkdir %s: %v", dbDir, mkErr)
+				}
+				continue
+			}
+			t.Fatalf("read %s: %v", dbDir, err)
+		}
+		for _, ent := range entries {
+			if err := os.RemoveAll(filepath.Join(dbDir, ent.Name())); err != nil {
+				t.Fatalf("remove %s: %v", filepath.Join(dbDir, ent.Name()), err)
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	services := []string{
+		"devshardctl",
+		"devshardd-testenv-0", "devshardd-testenv-1", "devshardd-testenv-2", "devshardd-testenv-3",
+	}
+	args := append([]string{"restart"}, services...)
+	if err := DockerCompose(ctx, ws, project, nil, nil, args...).Run(); err != nil {
+		t.Fatalf("compose restart after db reset: %v", err)
+	}
+	WaitCoreStackServicesRunningOrFail(t, ctx, ws, project, time.Now().Add(4*time.Minute))
+}
+
 // ModuleRoot is the devshard Go module root (parent directory of testenv/).
 func ModuleRoot(t *testing.T) string {
 	t.Helper()
@@ -127,8 +181,10 @@ func ModuleRoot(t *testing.T) string {
 // db/ trees so each test does not share repo-local SQLite or config files.
 //
 // Options run after the canonical tree is copied: [WithConfigMutate] persists an
-// edited config.yaml; further options (for example [WithDevsharddSchedulerFromCopiedConfig])
-// read that file and patch sibling artifacts such as docker-compose.yml.
+// edited config.yaml; [e2eWorkspaceOpts.afterConfig] hooks may patch sibling artifacts.
+// Note: canonical docker-compose.yml is produced by gencompose (see container TestMain)
+// and already lists HEIGHT_SYNC_ANCHOR_PERIOD_NONCES / HEIGHT_SYNC_SYNC_TURN_SLOTS per
+// service — do not append duplicate YAML keys.
 func PrepareIsolatedE2EWorkspace(t *testing.T, opts ...E2EWorkspaceOption) string {
 	t.Helper()
 	var wo e2eWorkspaceOpts
@@ -229,12 +285,14 @@ func copyDirRecursive(srcRoot, dstRoot string) error {
 	})
 }
 
-// PruneStaleContainerE2EDockerStacks runs `docker compose down` for every project whose user-defined
-// network still exists as containere2e*_testenv. All stacks share subnet 172.30.0.0/24 in compose; Docker
-// rejects a second network with the same pool, so leftovers (crashed test, `logs -f` in another terminal)
-// must be torn down before the next up.
-func PruneStaleContainerE2EDockerStacks(t *testing.T, testenvRoot string) {
+// PruneStaleContainerE2EDockerStacks tears down compose projects whose bridge network
+// still exists as *_testenv. Every gencompose stack pins 172.30.0.0/24; Docker rejects a
+// second network on that pool ("Pool overlaps with other one on this address space").
+// Leftovers come from crashed container E2E tests, manual `docker compose up` in testenv/,
+// or run-stack-citest.sh — not only containere2e* project names.
+func PruneStaleContainerE2EDockerStacks(t *testing.T) {
 	t.Helper()
+	canonical := TestenvDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	ls := exec.CommandContext(ctx, "docker", "network", "ls", "--format", "{{.Name}}")
@@ -243,20 +301,31 @@ func PruneStaleContainerE2EDockerStacks(t *testing.T, testenvRoot string) {
 		t.Logf("prune e2e stacks: docker network ls: %v", err)
 		return
 	}
+	seenProj := make(map[string]struct{})
 	for _, name := range strings.Split(string(out), "\n") {
 		name = strings.TrimSpace(name)
-		if name == "" || !strings.HasPrefix(name, "containere2e") || !strings.HasSuffix(name, "_testenv") {
+		if name == "" || !strings.HasSuffix(name, "_testenv") {
 			continue
 		}
 		proj := strings.TrimSuffix(name, "_testenv")
-		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		errDown := DockerCompose(dctx, testenvRoot, proj, nil, nil, "down", "--remove-orphans", "--timeout", "60").Run()
-		dcancel()
-		if errDown != nil {
-			t.Logf("stale compose project %q: down failed: %v", proj, errDown)
+		if proj == "" {
 			continue
 		}
-		t.Logf("tore down stale compose project %q", proj)
+		if _, ok := seenProj[proj]; ok {
+			continue
+		}
+		seenProj[proj] = struct{}{}
+		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		errDown := DockerCompose(dctx, canonical, proj, nil, nil, "down", "--remove-orphans", "--timeout", "60").Run()
+		dcancel()
+		if errDown != nil {
+			t.Logf("stale compose project %q: down failed: %v (try: docker network rm %q)", proj, errDown, name)
+			rmCtx, rmCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_ = exec.CommandContext(rmCtx, "docker", "network", "rm", name).Run()
+			rmCancel()
+			continue
+		}
+		t.Logf("tore down stale compose project %q (freed %s)", proj, name)
 	}
 }
 
@@ -520,4 +589,99 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// fetchHeightSyncLatestHeight reads height-sync GET /block/latest (0 if unavailable).
+func fetchHeightSyncLatestHeight(t *testing.T, c *http.Client) int64 {
+	t.Helper()
+	resp, err := c.Get("http://127.0.0.1:9100/block/latest")
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	return parseJSONHeightField(b)
+}
+
+func parseJSONHeightField(b []byte) int64 {
+	s := string(b)
+	for _, key := range []string{`"height":`, `"Height":`} {
+		i := indexOf(s, key)
+		if i < 0 {
+			continue
+		}
+		j := i + len(key)
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+		var n int64
+		_, err := fmt.Sscanf(s[j:], "%d", &n)
+		if err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// waitHeightSyncFeedFreshAfterRestart waits until mock-chain produces a new header after
+// height-sync is back (height increases), then StaleAfter so mockdapi consumers see it.
+func waitHeightSyncFeedFreshAfterRestart(t *testing.T, c *http.Client) {
+	t.Helper()
+	h0 := fetchHeightSyncLatestHeight(t, c)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(400 * time.Millisecond)
+		if h1 := fetchHeightSyncLatestHeight(t, c); h1 > h0 {
+			t.Logf("height-sync feed fresh: mainnet height %d → %d", h0, h1)
+			time.Sleep(mockdapiStaleAfter + time.Second)
+			return
+		}
+	}
+	t.Logf("height-sync height stuck at %d for 30s; sleeping MOCKDAPI_STALE_AFTER anyway", h0)
+	time.Sleep(mockdapiStaleAfter + 3*time.Second)
+}
+
+// restartDevshardctlForOracleReconnect restarts only devshardctl so its mockdapi client
+// re-subscribes to height-sync SSE. Session SQLite is preserved; host executors stay up.
+func restartDevshardctlForOracleReconnect(t *testing.T, ws, project string, ctx context.Context, httpClient *http.Client) {
+	t.Helper()
+	since := time.Now()
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := DockerCompose(rctx, ws, project, nil, nil, "restart", "devshardctl").Run(); err != nil {
+		t.Fatalf("compose restart devshardctl: %v", err)
+	}
+	WaitHTTP_OK(t, httpClient, "http://127.0.0.1:8081/v1/status", time.Now().Add(2*time.Minute), "devshardctl /v1/status after restart")
+	waitDevshardctlOracleLive(t, ws, project, since)
+}
+
+// waitDevshardctlOracleLive polls devshardctl logs until mockdapi reports a live aligned height.
+func waitDevshardctlOracleLive(t *testing.T, ws, project string, since time.Time) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, ln := range composeLogsSince(t, ws, project, "devshardctl", since, 400) {
+			kv := parseLogPayloadFromLine(ln)
+			if kv["msg"] != "heightsync: emit" || kv["direction"] != "request" {
+				continue
+			}
+			la := strings.TrimSpace(kv["local_aligned"])
+			if la != "" && la != "0" {
+				t.Logf("devshardctl oracle live: local_aligned=%s mode=%s nonce=%s", la, kv["mode"], kv["nonce"])
+				return
+			}
+			if strings.EqualFold(kv["mode"], "anchor") {
+				h := strings.TrimSpace(kv["height"])
+				if h != "" && h != "0" {
+					t.Logf("devshardctl oracle live: anchor height=%s nonce=%s", h, kv["nonce"])
+					return
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("timeout: devshardctl height-sync oracle not live after restart (see heightsync: emit / local_aligned)")
 }

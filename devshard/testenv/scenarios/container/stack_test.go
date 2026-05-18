@@ -12,7 +12,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if os.Getenv("TESTENV_SKIP_DOCKER_STACK") != "1" {
+	// run-container-heightsync-e2e.sh runs gencompose before compose up; skip duplicate regen.
+	if os.Getenv("TESTENV_SKIP_DOCKER_STACK") != "1" &&
+		os.Getenv("TESTENV_REUSE_STACK") != "1" &&
+		os.Getenv("SKIP_REGEN") != "1" {
 		_, file, _, ok := runtime.Caller(0)
 		if ok {
 			testenvDir := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))

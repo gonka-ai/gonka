@@ -1,5 +1,3 @@
-//go:build testenvci
-
 package container
 
 import (

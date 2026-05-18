@@ -2,8 +2,23 @@ package mockdapi
 
 import (
 	"net/http"
+	"os"
 	"time"
 )
+
+// StaleAfterFromEnv reads MOCKDAPI_STALE_AFTER (e.g. "3s" in compose for container E2E).
+// Zero duration means use the blockoracle client default (10s).
+func StaleAfterFromEnv() time.Duration {
+	v := os.Getenv("MOCKDAPI_STALE_AFTER")
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0
+	}
+	return d
+}
 
 // Config parameterizes mockdapi.New.
 //

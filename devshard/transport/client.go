@@ -66,43 +66,9 @@ type ClientConfig struct {
 	// a bogus mainnet_block_hash while keeping scheduler height; production
 	// clients must leave this nil.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
-}
-
-// HeightSyncPeerTips stores the highest observed peer tip for a session.
-type HeightSyncPeerTips struct {
-	mu  sync.Mutex
-	tip *heightsync.HeightSyncSection
-}
-
-func NewHeightSyncPeerTips() *HeightSyncPeerTips { return &HeightSyncPeerTips{} }
-
-func (s *HeightSyncPeerTips) Update(hs *heightsync.HeightSyncSection) {
-	if s == nil || hs == nil || hs.MainnetHeight <= 0 || strings.TrimSpace(hs.MainnetBlockHashHex) == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.tip == nil || hs.MainnetHeight > s.tip.MainnetHeight {
-		cp := *hs
-		s.tip = &cp
-	}
-}
-
-func (s *HeightSyncPeerTips) Carry(sec *heightsync.HeightSyncSection) {
-	if s == nil || sec == nil {
-		return
-	}
-	s.mu.Lock()
-	tip := s.tip
-	s.mu.Unlock()
-	if tip == nil {
-		return
-	}
-	if tip.MainnetHeight > sec.MainnetHeight {
-		sec.ChainID = tip.ChainID
-		sec.MainnetHeight = tip.MainnetHeight
-		sec.MainnetBlockHashHex = tip.MainnetBlockHashHex
-	}
+	// HeightSyncConfirmation is a shared confirmation index across session HTTP
+	// clients (courier user aggregates host response attestations).
+	HeightSyncConfirmation *heightsync.ConfirmationIndex
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -126,7 +92,11 @@ type HTTPClient struct {
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncAudit     *heightsync.AuditRing
 	heightSyncLogOracle blockoracle.BlockOracle
-	heightSyncPeerTips  *HeightSyncPeerTips
+	heightSyncPeerTips    *HeightSyncPeerTips
+	heightSyncVerifier    signing.Verifier
+
+	oneShotMu                sync.Mutex
+	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
@@ -149,25 +119,142 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	}
 	if cfg.HeightSync != nil {
 		hc.heightSyncAudit = heightsync.NewAuditRing(0)
-		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
-		if hc.heightSyncPeerTips == nil {
-			hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+		if cfg.HeightSyncConfirmation != nil {
+			hc.heightSyncAudit.AttachConfirmation(cfg.HeightSyncConfirmation)
 		}
+	}
+	if cfg.HeightSyncPeerTips != nil {
+		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
+	} else if cfg.HeightSync != nil {
+		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+	}
+	if hc.heightSyncPeerTips != nil {
+		hc.heightSyncPeerTips.RequireVerifiedBlob = true
+		hc.heightSyncVerifier = signing.NewSecp256k1Verifier()
 	}
 	return hc
 }
 
+// SetOneShotHeightSyncRequestMutateHook registers a hook that runs once on the next
+// outbound inference request that carries a non-nil height-sync section (after the
+// optional config HeightSyncRequestMutateHook). Used by testenv devshardctl debug only.
+func (c *HTTPClient) SetOneShotHeightSyncRequestMutateHook(fn func(*heightsync.HeightSyncSection, uint64)) {
+	if c == nil {
+		return
+	}
+	c.oneShotMu.Lock()
+	defer c.oneShotMu.Unlock()
+	c.oneShotHeightSyncMutate = fn
+}
+
 func (c *HTTPClient) updateObservedPeerTip(hs *heightsync.HeightSyncSection) {
-	c.heightSyncPeerTips.Update(hs)
+	if c.heightSyncPeerTips == nil {
+		return
+	}
+	c.heightSyncPeerTips.RecordOrigin(hs)
+}
+
+// HeightSyncEvidenceFor returns the verified signed origin blob for dispute exculpation (Step 8).
+func (c *HTTPClient) HeightSyncEvidenceFor(originator string, height int64) (blob, sig []byte, ok bool) {
+	if c == nil || c.heightSyncPeerTips == nil {
+		return nil, nil, false
+	}
+	return c.heightSyncPeerTips.OriginSignedBlobFor(originator, height)
+}
+
+func (c *HTTPClient) ingestResponseHeightSync(hs *heightsync.HeightSyncSection, nonce uint64, source string) {
+	if hs == nil || !heightsync.IsAnchorSection(hs) {
+		return
+	}
+	var blobOK bool
+	if c.heightSyncPeerTips != nil && c.heightSyncVerifier != nil {
+		if err := heightsync.VerifyOrigin(c.heightSyncVerifier, hs, hs.SenderSignature); err != nil {
+			heightsync.IncOriginSigInvalid()
+			logging.Warn("heightsync: origin_sig_invalid",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldDirection, "response",
+				heightsync.LogFieldNonce, nonce,
+				"error", err.Error())
+			return
+		}
+		blob, err := heightsync.CanonicalOriginBytes(hs)
+		if err != nil {
+			heightsync.IncOriginSigInvalid()
+			return
+		}
+		c.heightSyncPeerTips.RecordOriginWithBlob(hs, blob, hs.SenderSignature)
+		blobOK = true
+	} else if c.heightSyncPeerTips != nil {
+		c.updateObservedPeerTip(hs)
+	}
+	c.logPeerHeightSyncFromSSE(hs, nonce)
+	c.recordHostInboundAnchorIfAnchor(hs, source, blobOK)
 }
 
 func (c *HTTPClient) carryForwardPeerTip(sec *heightsync.HeightSyncSection) {
 	c.heightSyncPeerTips.Carry(sec)
 }
 
+func (c *HTTPClient) markHeightSyncPropagated(sec *heightsync.HeightSyncSection) {
+	if c.heightSyncPeerTips == nil || sec == nil || sec.MainnetHeight <= 0 {
+		return
+	}
+	c.heightSyncPeerTips.MarkPropagated(c.baseURL, uint64(sec.MainnetHeight))
+}
+
 // HeightSyncAuditRing returns the audit ring when height sync is enabled, or nil.
 func (c *HTTPClient) HeightSyncAuditRing() *heightsync.AuditRing {
 	return c.heightSyncAudit
+}
+
+// ConfirmationView returns the shared confirmation index when height sync is enabled.
+func (c *HTTPClient) ConfirmationView() heightsync.ConfirmationView {
+	if c == nil || c.heightSyncAudit == nil {
+		return nil
+	}
+	return c.heightSyncAudit.ConfirmationView()
+}
+
+// HeightSyncPeerTips returns the shared peer-tip cache when height sync is enabled, or nil.
+func (c *HTTPClient) HeightSyncPeerTips() *HeightSyncPeerTips {
+	return c.heightSyncPeerTips
+}
+
+// ObservedHeightNow returns the highest fresh mainnet height in the courier peer-tip
+// cache (plan §3.7). The bool is false when height sync is off or no fresh tip exists.
+func (c *HTTPClient) ObservedHeightNow() (uint64, bool) {
+	if c == nil || c.heightSyncPeerTips == nil {
+		return 0, false
+	}
+	tip := c.heightSyncPeerTips.MaxFresh(time.Now(), c.heightSyncPeerTips.freshness())
+	if tip == nil || tip.MainnetHeight <= 0 {
+		return 0, false
+	}
+	return uint64(tip.MainnetHeight), true
+}
+
+// SeedHeightSync calls the optional host cold-start RPC and records the returned
+// Anchor in the peer-tip cache. ok is false when height sync is disabled, the RPC
+// is unavailable (404), or the host omitted the section (oracle miss).
+func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
+	if c == nil || c.heightSyncPeerTips == nil {
+		return false, nil
+	}
+	var out heightSyncSeedResponse
+	err = c.post(ctx, "/sessions/"+c.escrowID+"/height-sync", c.config.QueryTimeout, struct{}{}, &out)
+	if err != nil {
+		return false, err
+	}
+	if out.HeightSync == nil || !heightsync.IsAnchorSection(out.HeightSync) {
+		return false, nil
+	}
+	out.HeightSync.Direction = "response"
+	c.ingestResponseHeightSync(out.HeightSync, 0, "POST /height-sync")
+	_, _, ok = c.heightSyncPeerTips.OriginSignedBlobFor(
+		strings.TrimSpace(out.HeightSync.OriginatorSenderID),
+		out.HeightSync.MainnetHeight,
+	)
+	return ok, nil
 }
 
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
@@ -213,16 +300,27 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 
 	contentType := "application/json"
 	var body []byte
+	var outboundHS *heightsync.HeightSyncSection
 	if c.heightSync != nil {
 		h := heightsync.DecideHints{
 			Nonce:       req.Nonce,
 			ForceAnchor: req.ForceHeightSyncAnchor,
 			Escrow:      req.HeightSyncEscrow,
+			Recipient:   c.baseURL,
+		}
+		if c.heightSyncPeerTips != nil {
+			h.Propagator = c.heightSyncPeerTips
+		} else {
+			// Host / user-with-follower: local oracle emission is originator-signed.
+			h.OriginatorSenderID = c.signer.Address()
 		}
 		if h.Escrow != nil {
 			h.ForceAnchor = false
 		}
-		sec, dErr := c.heightSync.Decide(ctx, h)
+		sec, dErr, oracleMiss := c.heightSync.Decide(ctx, h)
+		if oracleMiss {
+			heightsync.IncOracleFailure(c.signer.Address())
+		}
 		if dErr != nil {
 			logging.Debug("heightsync: outbound anchor error",
 				heightsync.LogFieldSubsystem, "heightsync",
@@ -231,10 +329,20 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 				"error", dErr.Error())
 		}
 		if sec != nil {
+			outboundHS = sec
 			sec.Direction = "request"
 			c.carryForwardPeerTip(sec)
 			if hook := c.config.HeightSyncRequestMutateHook; hook != nil {
 				hook(sec, req.Nonce)
+			}
+			c.oneShotMu.Lock()
+			fn := c.oneShotHeightSyncMutate
+			if fn != nil {
+				c.oneShotHeightSyncMutate = nil
+			}
+			c.oneShotMu.Unlock()
+			if fn != nil {
+				fn(sec, req.Nonce)
 			}
 			body, err = MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, sec, ir)
 			if err != nil {
@@ -263,6 +371,9 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 		return nil, err
 	}
 	defer httpResp.Body.Close()
+	if outboundHS != nil && httpResp.StatusCode >= 200 && httpResp.StatusCode < 300 {
+		c.markHeightSyncPropagated(outboundHS)
+	}
 
 	contentTypeHdr := httpResp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentTypeHdr, "text/event-stream") {
@@ -321,9 +432,8 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResp
 		if raw, ok := envelope["height_sync"]; ok && string(raw) != "null" {
 			var hs heightsync.HeightSyncSection
 			if err := json.Unmarshal(raw, &hs); err == nil {
-				c.updateObservedPeerTip(&hs)
-				c.logPeerHeightSyncFromSSE(&hs, nonce)
-				c.recordHostInboundAnchorIfAnchor(&hs, "SSE devshard_receipt line")
+				hs.Direction = "response"
+				c.ingestResponseHeightSync(&hs, nonce, "SSE devshard_receipt line")
 			}
 		}
 
@@ -666,7 +776,7 @@ func (c *HTTPClient) logPeerHeightSyncFromSSE(hs *heightsync.HeightSyncSection, 
 	logging.Debug("heightsync: peer attestation received", kvs...)
 }
 
-func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string) {
+func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string, originBlobAvailable bool) {
 	if c.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
@@ -686,13 +796,15 @@ func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSe
 	}
 	trust := heightsync.InboundTrust(hs, oracleHdr)
 	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:           c.baseURL,
-		Direction:        "response",
-		MainnetHeight:    hs.MainnetHeight,
-		MainnetBlockHash: raw,
-		ObservedAtUnixMs: time.Now().UnixMilli(),
-		SourceMessage:    source,
-		Trust:            trust,
+		PeerID:                    c.baseURL,
+		Direction:                 "response",
+		MainnetHeight:             hs.MainnetHeight,
+		MainnetBlockHash:          raw,
+		ObservedAtUnixMs:          time.Now().UnixMilli(),
+		SourceMessage:             source,
+		Trust:                     trust,
+		OriginatorSenderID:        strings.TrimSpace(hs.OriginatorSenderID),
+		OriginSignedBlobAvailable: originBlobAvailable,
 	})
 	heightsync.IncInboundAnchor("response", string(trust), c.escrowID)
 }

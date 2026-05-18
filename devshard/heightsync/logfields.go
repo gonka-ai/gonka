@@ -20,4 +20,7 @@ const (
 	LogFieldForcedStart         = "forced_start"
 	LogFieldForcedEnd           = "forced_end"
 	LogFieldSource              = "source"
+	LogFieldTag                 = "tag"
+	LogFieldReason              = "reason"
+	LogFieldClassification      = "classification"
 )

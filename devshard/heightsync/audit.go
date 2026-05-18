@@ -21,6 +21,9 @@ const (
 	TrustUntrustedPeer AttestationTrust = "untrusted_peer"
 	// TrustPeerAligned is an inbound Anchor at or below the local oracle height at observation time.
 	TrustPeerAligned AttestationTrust = "peer_aligned"
+	// TrustDisputeCarrier marks an inbound carry-forward Anchor rejected by the
+	// receiver (e.g. stale originator timestamp); dispute evidence only.
+	TrustDisputeCarrier AttestationTrust = "dispute_carrier"
 	// TrustForceRequestAnchorMissing is a sentinel local-only audit marker recorded
 	// when an inbound request whose nonce falls inside an active forced sync turn
 	// arrives without a valid Anchor section. The entry carries no oracle data
@@ -65,6 +68,14 @@ type AnchorAttestation struct {
 	ObservedAtUnixMs int64
 	SourceMessage    string
 	Trust            AttestationTrust
+	// Tag is cadence vs lazy for accepted inbound request Anchors (empty otherwise).
+	Tag AnchorCadenceTag
+	// OriginatorSenderID is the first observer of (height, hash) on carry-forward
+	// request Anchors (empty for host-oracle emissions and legacy entries).
+	OriginatorSenderID string
+	// OriginSignedBlobAvailable is true when the user cached a verified response-leg
+	// signed blob for this attestation (Step 8).
+	OriginSignedBlobAvailable bool
 }
 
 // AuditRing stores recent attestations in bounded per-peer rings.
@@ -72,6 +83,7 @@ type AuditRing struct {
 	mu       sync.RWMutex
 	capacity int
 	peers    map[string]*peerRing
+	confirm  *ConfirmationIndex
 }
 
 type peerRing struct {
@@ -92,9 +104,38 @@ func NewAuditRing(capacity int) *AuditRing {
 	}
 }
 
+// AttachConfirmation wires quorum tracking into subsequent Append calls.
+func (r *AuditRing) AttachConfirmation(idx *ConfirmationIndex) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.confirm = idx
+	r.mu.Unlock()
+}
+
+// ConfirmationView returns the attached confirmation index, or nil.
+func (r *AuditRing) ConfirmationView() ConfirmationView {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	idx := r.confirm
+	r.mu.RUnlock()
+	return idx
+}
+
 // Append inserts one attestation, dropping the oldest entry for that peer
 // when the configured capacity is reached.
 func (r *AuditRing) Append(a AnchorAttestation) {
+	var confirm *ConfirmationIndex
+	r.mu.Lock()
+	confirm = r.confirm
+	r.mu.Unlock()
+	if confirm != nil {
+		confirm.RecordAttestation(a)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

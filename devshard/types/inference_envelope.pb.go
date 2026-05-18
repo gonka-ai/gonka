@@ -69,14 +69,18 @@ func (InferenceHeightSyncProofType) EnumDescriptor() ([]byte, []int) {
 
 // InferenceHeightSyncSection is the PoC Anchor payload (compact wire; no chain_id).
 type InferenceHeightSyncSection struct {
-	state               protoimpl.MessageState       `protogen:"open.v1"`
-	ProofType           InferenceHeightSyncProofType `protobuf:"varint,1,opt,name=proof_type,json=proofType,proto3,enum=devshard.v1.InferenceHeightSyncProofType" json:"proof_type,omitempty"`
-	MainnetHeight       int64                        `protobuf:"varint,2,opt,name=mainnet_height,json=mainnetHeight,proto3" json:"mainnet_height,omitempty"`
-	MainnetBlockHashHex string                       `protobuf:"bytes,3,opt,name=mainnet_block_hash_hex,json=mainnetBlockHashHex,proto3" json:"mainnet_block_hash_hex,omitempty"`
-	TimestampUnixMs     int64                        `protobuf:"varint,4,opt,name=timestamp_unix_ms,json=timestampUnixMs,proto3" json:"timestamp_unix_ms,omitempty"`
-	Response            bool                         `protobuf:"varint,5,opt,name=response,proto3" json:"response,omitempty"` // false = request, true = response
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                     protoimpl.MessageState       `protogen:"open.v1"`
+	ProofType                 InferenceHeightSyncProofType `protobuf:"varint,1,opt,name=proof_type,json=proofType,proto3,enum=devshard.v1.InferenceHeightSyncProofType" json:"proof_type,omitempty"`
+	MainnetHeight             int64                        `protobuf:"varint,2,opt,name=mainnet_height,json=mainnetHeight,proto3" json:"mainnet_height,omitempty"`
+	MainnetBlockHashHex       string                       `protobuf:"bytes,3,opt,name=mainnet_block_hash_hex,json=mainnetBlockHashHex,proto3" json:"mainnet_block_hash_hex,omitempty"`
+	TimestampUnixMs           int64                        `protobuf:"varint,4,opt,name=timestamp_unix_ms,json=timestampUnixMs,proto3" json:"timestamp_unix_ms,omitempty"`
+	Response                  bool                         `protobuf:"varint,5,opt,name=response,proto3" json:"response,omitempty"` // false = request, true = response
+	OriginatorSenderId        string                       `protobuf:"bytes,6,opt,name=originator_sender_id,json=originatorSenderId,proto3" json:"originator_sender_id,omitempty"`
+	OriginatorTimestampUnixMs int64                        `protobuf:"varint,7,opt,name=originator_timestamp_unix_ms,json=originatorTimestampUnixMs,proto3" json:"originator_timestamp_unix_ms,omitempty"`
+	// Response leg only (PoC v2.1 Step 8): signature over canonical bytes of fields 1–7.
+	SenderSignature []byte `protobuf:"bytes,8,opt,name=sender_signature,json=senderSignature,proto3" json:"sender_signature,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *InferenceHeightSyncSection) Reset() {
@@ -142,6 +146,27 @@ func (x *InferenceHeightSyncSection) GetResponse() bool {
 		return x.Response
 	}
 	return false
+}
+
+func (x *InferenceHeightSyncSection) GetOriginatorSenderId() string {
+	if x != nil {
+		return x.OriginatorSenderId
+	}
+	return ""
+}
+
+func (x *InferenceHeightSyncSection) GetOriginatorTimestampUnixMs() int64 {
+	if x != nil {
+		return x.OriginatorTimestampUnixMs
+	}
+	return 0
+}
+
+func (x *InferenceHeightSyncSection) GetSenderSignature() []byte {
+	if x != nil {
+		return x.SenderSignature
+	}
+	return nil
 }
 
 // InferenceRequestEnvelope wraps the existing JSON InferenceRequest (transport.InferenceRequest)
@@ -271,14 +296,17 @@ var File_devshard_v1_inference_envelope_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_inference_envelope_proto_rawDesc = "" +
 	"\n" +
-	"$devshard/v1/inference_envelope.proto\x12\vdevshard.v1\"\x8a\x02\n" +
+	"$devshard/v1/inference_envelope.proto\x12\vdevshard.v1\"\xa8\x03\n" +
 	"\x1aInferenceHeightSyncSection\x12H\n" +
 	"\n" +
 	"proof_type\x18\x01 \x01(\x0e2).devshard.v1.InferenceHeightSyncProofTypeR\tproofType\x12%\n" +
 	"\x0emainnet_height\x18\x02 \x01(\x03R\rmainnetHeight\x123\n" +
 	"\x16mainnet_block_hash_hex\x18\x03 \x01(\tR\x13mainnetBlockHashHex\x12*\n" +
 	"\x11timestamp_unix_ms\x18\x04 \x01(\x03R\x0ftimestampUnixMs\x12\x1a\n" +
-	"\bresponse\x18\x05 \x01(\bR\bresponse\"\xc1\x01\n" +
+	"\bresponse\x18\x05 \x01(\bR\bresponse\x120\n" +
+	"\x14originator_sender_id\x18\x06 \x01(\tR\x12originatorSenderId\x12?\n" +
+	"\x1coriginator_timestamp_unix_ms\x18\a \x01(\x03R\x19originatorTimestampUnixMs\x12)\n" +
+	"\x10sender_signature\x18\b \x01(\fR\x0fsenderSignature\"\xc1\x01\n" +
 	"\x18InferenceRequestEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12H\n" +
 	"\vheight_sync\x18\x02 \x01(\v2'.devshard.v1.InferenceHeightSyncSectionR\n" +

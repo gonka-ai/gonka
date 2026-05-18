@@ -12,13 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/logging"
 	"devshard/state"
 	testenvbridge "devshard/testenv/bridge"
-	"devshard/testenv/mockdapi"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
@@ -180,6 +181,8 @@ func parseFlags(args []string) (*flagSet, error) {
 }
 
 func main() {
+	logging.ConfigureSlogFromEnv()
+
 	fs, err := parseFlags(os.Args[1:])
 	if err != nil {
 		log.Fatal(err)
@@ -201,49 +204,38 @@ func main() {
 		log.Fatalf("build bridge: %v", err)
 	}
 
-	var md *mockdapi.MockDapi
 	var extraCC *transport.ClientConfig
 	if cfg.MockChainURL != "" {
-		hsURL := os.Getenv("HEIGHT_SYNC_URL")
-		chainID := os.Getenv("CHAIN_ID")
-		if hsURL != "" && chainID != "" {
-			md, err = mockdapi.New(context.Background(), mockdapi.Config{
-				HeightSyncURL: hsURL,
-				ChainID:       chainID,
-			})
-			if err != nil {
-				log.Fatalf("height-sync oracle: %v", err)
-			}
-			group, errG := bridge.BuildGroup(cfg.EscrowID, br)
-			if errG != nil {
-				md.Close()
-				log.Fatalf("build group for anchor scheduler: %v", errG)
-			}
-			anchorK := uint64(10)
-			if v := os.Getenv("HEIGHT_SYNC_ANCHOR_PERIOD_NONCES"); v != "" {
-				if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
-					anchorK = n
-				}
-			}
-			slots := uint64(len(group))
-			if slots == 0 {
-				slots = 1
-			}
-			if v := os.Getenv("HEIGHT_SYNC_SYNC_TURN_SLOTS"); v != "" {
-				if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
-					slots = n
-				}
-			}
-			sched, errS := heightsync.NewAnchorScheduler(anchorK, slots, md.Oracle)
-			if errS != nil {
-				md.Close()
-				log.Fatalf("anchor scheduler: %v", errS)
-			}
-			cc := transport.DefaultClientConfig()
-			cc.HeightSync = sched
-			cc.HeightSyncLogOracle = md.Oracle
-			extraCC = &cc
+		group, errG := bridge.BuildGroup(cfg.EscrowID, br)
+		if errG != nil {
+			log.Fatalf("build group for anchor scheduler: %v", errG)
 		}
+		anchorK := uint64(10)
+		if v := os.Getenv("HEIGHT_SYNC_ANCHOR_PERIOD_NONCES"); v != "" {
+			if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
+				anchorK = n
+			}
+		}
+		slots := uint64(len(group))
+		if slots == 0 {
+			slots = 1
+		}
+		if v := os.Getenv("HEIGHT_SYNC_SYNC_TURN_SLOTS"); v != "" {
+			if n, errP := strconv.ParseUint(v, 10, 64); errP == nil && n > 0 {
+				slots = n
+			}
+		}
+		peerTips := transport.NewHeightSyncPeerTips()
+		peerTips.Freshness = peerTipFreshnessFromEnv()
+		src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+		sched, errS := heightsync.NewAnchorScheduler(anchorK, slots, src)
+		if errS != nil {
+			log.Fatalf("anchor scheduler: %v", errS)
+		}
+		cc := transport.DefaultClientConfig()
+		cc.HeightSync = sched
+		cc.HeightSyncPeerTips = peerTips
+		extraCC = &cc
 	}
 
 	sessionCfg := user.HTTPSessionConfig{
@@ -258,16 +250,10 @@ func main() {
 
 	session, sm, err := user.NewHTTPSession(sessionCfg)
 	if err != nil {
-		if md != nil {
-			md.Close()
-		}
 		log.Fatalf("create session: %v", err)
 	}
 	defer func() {
 		_ = session.Close()
-		if md != nil {
-			md.Close()
-		}
 	}()
 
 	proxy := &Proxy{
@@ -285,6 +271,7 @@ func main() {
 	mux.HandleFunc("/v1/debug/pending", proxy.handleDebugPending)
 	mux.HandleFunc("/v1/debug/state", proxy.handleDebugState)
 	mux.HandleFunc("/v1/inference", proxy.handleInference)
+	registerCtlDebugRoutes(mux, proxy)
 
 	addr := ":" + cfg.Port
 	log.Printf("devshardctl listening on %s (escrow=%s model=%s bridge=%s)",
@@ -331,6 +318,20 @@ func firstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// peerTipFreshnessFromEnv reads MOCKDAPI_STALE_AFTER (compose name retained)
+// for courier peer-tip cache freshness on devshardctl.
+func peerTipFreshnessFromEnv() time.Duration {
+	v := os.Getenv("MOCKDAPI_STALE_AFTER")
+	if v == "" {
+		return 60 * time.Second
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 60 * time.Second
+	}
+	return d
 }
 
 func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {

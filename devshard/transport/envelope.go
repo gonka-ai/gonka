@@ -194,11 +194,14 @@ func heightSyncToProto(hs *heightsync.HeightSyncSection) *types.InferenceHeightS
 	}
 	resp := hs.Direction == "response"
 	return &types.InferenceHeightSyncSection{
-		ProofType:           pt,
-		MainnetHeight:       hs.MainnetHeight,
-		MainnetBlockHashHex: hs.MainnetBlockHashHex,
-		TimestampUnixMs:     hs.TimestampUnixMs,
-		Response:            resp,
+		ProofType:                 pt,
+		MainnetHeight:             hs.MainnetHeight,
+		MainnetBlockHashHex:       hs.MainnetBlockHashHex,
+		TimestampUnixMs:           hs.TimestampUnixMs,
+		Response:                  resp,
+		OriginatorSenderId:        hs.OriginatorSenderID,
+		OriginatorTimestampUnixMs: hs.OriginatorTimestampMs,
+		SenderSignature:           append([]byte(nil), hs.SenderSignature...),
 	}
 }
 
@@ -216,11 +219,14 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 		dir = "response"
 	}
 	return &heightsync.HeightSyncSection{
-		ChainID:             "",
-		ProofType:           proof,
-		MainnetHeight:       hs.GetMainnetHeight(),
-		MainnetBlockHashHex: hs.GetMainnetBlockHashHex(),
-		TimestampUnixMs:     hs.GetTimestampUnixMs(),
-		Direction:           dir,
+		ChainID:               "",
+		ProofType:             proof,
+		MainnetHeight:         hs.GetMainnetHeight(),
+		MainnetBlockHashHex:   hs.GetMainnetBlockHashHex(),
+		TimestampUnixMs:       hs.GetTimestampUnixMs(),
+		Direction:             dir,
+		OriginatorSenderID:    hs.GetOriginatorSenderId(),
+		OriginatorTimestampMs: hs.GetOriginatorTimestampUnixMs(),
+		SenderSignature:       append([]byte(nil), hs.GetSenderSignature()...),
 	}
 }

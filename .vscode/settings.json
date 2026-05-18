@@ -1,0 +1,7 @@
+{
+  "java.compile.nullAnalysis.mode": "automatic",
+  "go.goroot": "/usr/local/go",
+  "files.watcherExclude": {
+    "**/target": true
+  }
+}

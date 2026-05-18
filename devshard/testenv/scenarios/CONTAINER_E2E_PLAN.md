@@ -1,17 +1,25 @@
-# Container-level E2E plan — height-sync anchor + future scenarios
+# Container-level E2E plan — height-sync (baseline + v2 parity + Strong)
 
-This plan describes how to **re-implement every scenario currently covered by
-in-process `httptest` tests** in `devshard/testenv/scenarios/` against the
-**real Docker Compose stack** that `devshard/testenv` already ships. It
-locks in the patterns we want every container-level scenario to follow so
-new tests do not each re-invent harness code.
+This plan describes how to **re-implement in-process `httptest` scenarios**
+against the **real Docker Compose stack** that `devshard/testenv` already
+ships. It locks in harness patterns so new tests do not re-invent bring-up /
+assertion code.
+
+**Relationship to protocol v2.** The seven existing container tests
+(Phases A–C) remain **valid and required**: they gate cadence, feed
+health, cheating trail, lost-first-response, and single-message force on
+the real stack. They do **not** cover courier mode, `(C-quorum)`,
+lazy carry, freshness `F`, or response-leg origin signatures — those are
+proven in-process today and are **Phase D** below. Strong mode is
+**Phase E**. Do not delete or skip Phases A–C while building v2 parity.
 
 Source documents:
 
-- `[devshard/plans/height-sync-anchor-poc.md](../../plans/height-sync-anchor-poc.md)`
-§9.3 / §9.4 — protocol-level acceptance.
-- `[devshard/testenv/scenarios/SCENARIOS.md](SCENARIOS.md)` — current
-in-process scenarios (the contract this plan must preserve).
+- [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](../../docs/proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
+  — normative protocol.
+- [`height-sync-tests.md`](../../docs/height-sync-tests.md) — test catalog
+  (implemented vs planned; maps tests to protocol sections).
+- [`SCENARIOS.md`](SCENARIOS.md) — runbook for each scenario (how to run).
 - `[devshard/testenv/README.md](../README.md)` — testenv runbook,
 per-service env vars, `Makefile` targets.
 - `[devshard/docs/proposals/PROTOCOL_TESTING_PROPOSAL.md](../../docs/proposals/PROTOCOL_TESTING_PROPOSAL.md)`
@@ -32,8 +40,10 @@ pattern; it does **not** introduce a new framework.
 
 This plan has **four** goals, in order of priority:
 
-1. **Re-implement every height-sync E2E scenario** (currently in-process)
-   on the real Docker Compose stack — see §1, §2, §5.
+1. **Re-implement every height-sync E2E scenario** (in-process catalog in
+   `height-sync-tests.md` §4–§5) on the real Docker Compose stack — see
+   §1, §2, §5. Phases A–C cover the **v1 baseline**; Phase D covers **v2**
+   (E1–E11, forced turn, carry-forward); Phase E covers **Strong** (S1–S12).
 2. **Continuously validate the testenv platform itself.** Every scenario
    doubles as a smoke check that `gencompose`, `mockdapi`, `heightsyncd`,
    the observability pipeline (Alloy → Loki → VictoriaMetrics → Grafana),
@@ -100,21 +110,41 @@ co-exist: in-process stays the inner loop; container is the gate.
 
 Three concentric scopes, each delivered alongside the height-sync work:
 
-**A. Height-sync scenarios (primary, this plan).** Re-cover every scenario
-from `SCENARIOS.md` against the compose stack:
+**A. Height-sync scenarios (primary, this plan).** Re-cover scenarios from
+`height-sync-tests.md` / `SCENARIOS.md` against the compose stack.
 
+**Phase A–C (implemented)** — v1 baseline; still the CI gate for real
+`heightsyncd` + `mockdapi`:
 
-| In-process test                                                             | Compose-equivalent test (proposed)                     | §9.3        |
-| --------------------------------------------------------------------------- | ------------------------------------------------------ | ----------- |
-| `TestHeightSyncAnchor_E2E_CadenceLogsAndAuditTrail`                         | `TestContainerE2E_HeightSync_Cadence`                  | 1–4         |
-| `TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts`                  | `TestContainerE2E_HeightSync_CarriesHigherPeerTip`     | 4.1         |
-| `TestHeightSyncAnchor_E2E_LostFirstResponseSelfHealing`                     | `TestContainerE2E_HeightSync_LostFirstResponse`        | 5           |
-| `TestHeightSyncAnchor_E2E_ForceAnchorOutsideSyncTurn`                       | `TestContainerE2E_HeightSync_ForceAnchorSingleMessage` | 6 (current) |
-| (planned) `TestHeightSyncAnchor_E2E_ForcedSyncTurn_`*                       | `TestContainerE2E_HeightSync_ForcedSyncTurn_*`         | 6 (§5.5)    |
-| `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash`                 | `TestContainerE2E_HeightSync_CheatingTrail`            | 7           |
-| `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_SyncTurnOmitsWithoutErrors` | `TestContainerE2E_HeightSync_FeedStoppedOmits`         | 8           |
-| `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_RecoversWhenFeedReturns`    | `TestContainerE2E_HeightSync_FeedRecovers`             | 8           |
-| (none today)                                                                | `TestContainerE2E_HeightSync_Smoke` (§9.4)             | 9.4         |
+| In-process test | Container test | Phase | Status |
+| --------------- | -------------- | ----- | ------ |
+| `…_CadenceLogsAndAuditTrail` | `TestContainerE2E_HeightSync_Cadence` | A | **done** |
+| `…_LostFirstResponseSelfHealing` | `…_LostFirstResponse` | B | **done** |
+| `…_ForceAnchorOutsideSyncTurn` | `…_ForceAnchorSingleMessage` | B | **done** |
+| `…_CheatingTrailStoresBogusUserHash` | `…_CheatingTrail` | B | **done** |
+| `…_HeightSyncFeedStopped_*` (2) | `…_FeedStoppedOmits` / `…_FeedRecovers` | C | **done** |
+| — | `TestContainerE2E_HeightSync_Smoke` | C | **done** |
+
+**Phase D (planned)** — v2 parity (`height-sync-tests.md` §4, E1–E11):
+
+| In-process test | Planned container test | Status |
+| --------------- | ---------------------- | ------ |
+| `…_CourierBootstrap` (E1) | `TestContainerE2E_HeightSync_CourierBootstrap` | planned |
+| `…_PipelinedCourier` (E7) | `…_PipelinedCourier` | planned |
+| `…_LazyCarryForwardOutsideSyncTurn` (E2) | `…_LazyCarryForward` | planned |
+| `…_StaleOriginRejected` (E3) | `…_StaleOriginRejected` | planned |
+| `…_HeldOriginatorReplayRejected` (E8) | `…_HeldOriginatorReplay` | planned |
+| `…_IsStrictlyConfirmed_Quorum` (E4) | `…_StrictConfirmQuorum` | planned |
+| `…_MixedHeights_Confirmed` (E5) | `…_StrictConfirmMixedHeights` | planned |
+| `…_StaleOracle_Inconclusive` (E6) | `…_StrictConfirmStaleOracle` | planned |
+| `…_LateOracleHost_*` (E11) | `…_LateOracleCourier` | planned |
+| `…_ResponseOriginSignature*` (E9) | `…_ResponseOriginSignature` | planned |
+| `…_CarrierExculpation` (E10) | `…_CarrierExculpation` | planned |
+| `…_ForcedSyncTurn_HostResponsesAnchorEvenIfUserOmits` | `…_ForcedSyncTurn_*` | planned (§7.4) |
+| `…_CarriesHigherPeerTipAcrossHosts` | `…_CarriesHigherPeerTip` | planned (§7.5) |
+
+**Phase E (planned)** — Strong mode (`height-sync-tests.md` §6, S1–S12):
+`TestContainerE2E_HeightSync_Strong*` (escalation, invalid proof, C-strong gauge).
 
 
 **B. Testenv platform validation (delivered for free).** Every scenario
@@ -156,9 +186,9 @@ positives. See §12.
 
 - **Replacing** the in-process suite. The Go-only tests stay as the fast
 developer loop. Container tests run on PR / nightly, not on every save.
-- Verifying the **Strong** path (`light_block`, `VerifyCommit`,
-`> D` escalation). Out of scope for the proof of concept; carry-forward malware  
-detection is also tracked under "follow-ups" in `SCENARIOS.md`.
+- Verifying **Strong** mode in this plan's early phases — Strong is
+  **Phase E** only (`light_block`, `VerifyCommit`, `D` band). Baseline
+  container tests (Phases A–C) intentionally stay Anchor-only.
 - Adding a brand-new test framework. We extend the existing
 `devshard/testenv/citest` package and its `//go:build testenvci`
 pattern.
@@ -297,8 +327,8 @@ container plan **also** locks them as Loki contract — see §6.
 ### 4.2 VictoriaMetrics / PromQL (secondary — counters)
 
 `devshardd-testenv` exports Prometheus on `:9600` (env `EXPORT_METRICS=1`,
-`METRICS_PORT=9600`). VM scrapes every host. Scenario suite adds **light
-heightsync counters** before phase 1 ships:
+`METRICS_PORT=9600`). VM scrapes every host. The suite relies on **light
+heightsync counters** (§4.2 implementation status below) alongside Loki.
 
 
 | Metric                                                   | Labels                                  | Where                                                          |
@@ -306,8 +336,9 @@ heightsync counters** before phase 1 ships:
 | `devshard_heightsync_outbound_anchors_total`             | `direction` (`request` or `response`), `escrow_id`, `host_id` | `transport.HTTPClient`, `transport.Server`                     |
 | `devshard_heightsync_inbound_anchors_total`              | `direction`, `trust_level`, `escrow_id` | `transport.Server`                                             |
 | `devshard_heightsync_force_request_anchor_missing_total` | `escrow_id`, `host_id`                  | `transport.Server.recordForceRequestAnchorMissingIfApplicable` |
-| `devshard_heightsync_oracle_failures_total`              | `host_id`                               | `transport.Server.latestOracleHeader`                          |
+| `devshard_heightsync_oracle_failures_total`              | `host_id`                               | `transport` client/server when `AnchorScheduler.Decide` marks an oracle miss for a required Anchor |
 
+**§4.2 implementation status:** `devshard_heightsync_outbound_anchors_total`, `devshard_heightsync_inbound_anchors_total`, and `devshard_heightsync_oracle_failures_total` are registered in `devshard/heightsync/prom_anchor.go` and incremented from `devshard/transport` (see §7.1–7.2). The series **`devshard_heightsync_force_request_anchor_missing_total`** is still **planned** (forced-sync-turn / malicious-user window; no Prom counter yet — host emits structured warn logs today).
 
 Helper:
 
@@ -316,10 +347,9 @@ func PromQuery(t *testing.T, expr string) float64       // single-vector value
 func PromVector(t *testing.T, expr string) []PromSample // labeled samples
 ```
 
-These metrics are **new code** (not yet present); they are tracked as
-explicit deliverables in §7.1. They make every scenario's assertions
-mechanical (`+4` request anchors over `nonces 1..4` becomes a
-PromQL `increase(...) == 4`).
+The three implemented series plus Loki log lines make Phase A/B assertions
+mechanical (for example cadence uses PromQL on outbound response anchors).
+The remaining counter row above tracks a later forced-turn deliverable.
 
 ### 4.3 Container exec (tertiary — escape hatch)
 
@@ -385,16 +415,22 @@ hosts 3–4 receive `peer_block_hash_prefix=hash'`.
 
 ### 5.3 `TestContainerE2E_HeightSync_LostFirstResponse` (§9.3 5)
 
-- **Setup**: standard stack.
-- **Drive**: send nonce 1 inference, immediately
-`docker compose -f docker-compose.yml stop devshardd-testenv-X`
-where `X` is the round-robin target. Send nonce 2.
-- **Assert**: nonce 2 still emits Anchor (Loki query `mode=anchor`),
-nonce 1 reports a transport error in `devshardctl` proxy logs, by
-nonce 4 the user audit ring has at least one host attestation
-(verified via PromQL — `devshard_heightsync_inbound_anchors_total`
-on the **client side** which we add for symmetry).
-- **Cleanup**: `docker compose start devshardd-testenv-X`.
+- **Setup**: standard stack; `DEVSHARDD_DEBUG=1` on `devshardd-testenv-*`
+  (gencompose) for `POST /v1/debug/arm-hold-inference-response`.
+- **Drive** (matches in-process “kill before response,” not “stop before POST”):
+  1. Read `GET /v1/status` → advance with inferences until nonce == next
+     **sync-turn lead** (1, 8, 16, …).
+  2. On executor host `devshardd-testenv-{lead % 4}`: arm hold
+     (`POST …/v1/debug/arm-hold-inference-response`).
+  3. `POST` chat completion at **lead** (host applies diff; SSE held).
+  4. `docker compose stop` that host while proxy is blocked.
+  5. `compose start` host; `POST` at **lead+1** (recover).
+- **Assert**: devshardctl logs `SendOnly failed` for **lead**; Loki
+  `heightsync: emit` request `mode=anchor` at **lead+1**.
+- **Cleanup**: host restarted in test cleanup.
+- **Manual**: `devshard/testenv/scripts/debug-lost-first-response.sh`.
+- **Note**: Session nonce advances on `PrepareInference`; warm-up does not
+  require waiting for `[DONE]`. Do not `compose stop` before the lead POST.
 
 ### 5.4 `TestContainerE2E_HeightSync_ForceAnchorSingleMessage` (§9.3 6, current)
 
@@ -438,20 +474,19 @@ host's debug logs report from its own oracle, and trust label is
 
 ### 5.7 `TestContainerE2E_HeightSync_FeedStopped*` (§9.3 8)
 
-- `**TestContainerE2E_HeightSync_FeedStoppedOmits`**:
-  1. Send nonce 1 (Anchor).
-  2. `docker compose -f docker-compose.yml stop height-sync`.
-  3. Wait for `mockdapi` `StaleAfter` (default 10 s — config-tuned to 3 s
-    for tests via `MOCKDAPI_STALE_AFTER=3s` env override on each host;
-     the harness sets it before `compose up`).
-  4. Send nonce 2 — assert Loki `mode=omit` on user emit, host inbound,
-    and user outbound; PromQL
-     `increase(devshard_heightsync_oracle_failures_total[1m])` ≥ 1.
-  5. Inference HTTP body returns 200; receipt is delivered.
-- `**TestContainerE2E_HeightSync_FeedRecovers**`:
-  1. `docker compose start height-sync`.
-  2. Send nonce 8 — assert Loki `mode=anchor` and PromQL counter
-    resumes climbing.
+**Status — implemented and passing** (`make e2e-phase-c`, ~75s total in CI-style runs).
+
+- `**TestContainerE2E_HeightSync_FeedStoppedOmits`** (relative leads; fresh session → nonce 1 / 2):
+  1. Anchor at sync-turn **lead** while `height-sync` is up.
+  2. `docker compose stop height-sync`.
+  3. Wait `MOCKDAPI_STALE_AFTER` (3s in compose via `MOCKDAPI_STALE_AFTER=3s`).
+  4. POST **lead+1** — assert Loki `heightsync: emit` **request** `mode=omit` on devshardctl and **host inbound** peer attestation; PromQL `devshard_heightsync_oracle_failures_total` increases.
+  5. Inference returns 200 (`[DONE]` on SSE).
+- `**TestContainerE2E_HeightSync_FeedRecovers**` (after DB reset: lead **1**, drain **2..7**, recover **8**):
+  1. Anchor at lead; `stop height-sync`; advance through **recoverNonce−1** (all omit).
+  2. `start height-sync`; wait until `/block/latest` height **increases** (`waitHeightSyncFeedFreshAfterRestart`).
+  3. **`compose restart devshardctl` only** (`restartDevshardctlForOracleReconnect`) — hosts keep running; session SQLite preserved; devshardctl mockdapi re-subscribes to SSE (HTTP height advancing alone is not enough).
+  4. POST **recoverNonce** — assert compose (then Loki) `heightsync: emit` **request** `mode=anchor` (`assertHeightSyncRequestEmit`; fast-fail if still omit).
 
 ### 5.8 `TestContainerE2E_HeightSync_Smoke` (§9.4)
 
@@ -491,6 +526,8 @@ Land in this order so each phase is independently reviewable.
 
 ### 7.1 Phase A — harness + cadence (covers §9.3 1–4)
 
+**Status — implemented:** package `devshard/testenv/scenarios/container/` (`cadence_test.go`, `common_stack_test.go`, `stack.go`, Loki/Prom helpers), shared **`citest/harness`** used from `citest/stack_integration_test.go`, **`testenv/Makefile` target `e2e`**, `force_height_sync_anchor` on devshardctl proxy JSON, structured log fields (`devshard/heightsync/logfields.go`), and the three Prom counter families listed in §4.2 (except `force_request_anchor_missing_total`, still planned).
+
 - New package `devshard/testenv/scenarios/container/` with
 `stack_test.go` (TestMain) and `cadence_test.go`.
 - Promote `citest/stack_helpers.go` to `citest/harness/` and switch
@@ -503,6 +540,8 @@ on the inference JSON.
 
 ### 7.2 Phase B — recovery + force + cheating-trail (covers 5, 6 current, 7)
 
+**Status — implemented:** `lost_first_response_test.go` (`TestContainerE2E_HeightSync_LostFirstResponse`), `force_anchor_test.go` (`TestContainerE2E_HeightSync_ForceAnchorSingleMessage`), `cheating_trail_test.go` (`TestContainerE2E_HeightSync_CheatingTrail`); devshardctl **`POST /v1/debug/cheat-anchor`** when **`DEVSHARDCTL_DEBUG=1`** (compose sets this for testenv `devshardctl` via `gencompose`); **`devshard_heightsync_oracle_failures_total`** wired per §4.2.
+
 - `lost_first_response_test.go`,
 `force_anchor_test.go` (single-message),
 `cheating_trail_test.go`.
@@ -512,24 +551,37 @@ for the bogus-hash injection (§5.6 option A).
 
 ### 7.3 Phase C — feed stopped (covers 8) + smoke (§9.4)
 
-- `feed_stopped_test.go` and `smoke_test.go`.
-- Wire the `MOCKDAPI_STALE_AFTER` env knob through `devshardd-testenv`
-→ `mockdapi.Config.StaleAfter` so tests can shorten the
-oracle-stale window without bloating real boot times.
+**Status — implemented and passing:** `feed_stopped_test.go`, `smoke_test.go`, helpers in `session_nonce.go`, `stack.go` (`waitHeightSyncFeedFreshAfterRestart`, `restartDevshardctlForOracleReconnect`), `height_sync_emit.go` (`assertHeightSyncRequestEmit`, compose log JSON parsing), `inference_audit.go` (slow-step diagnostics). Driver: `CONTAINER_E2E_PHASE=c`, `make e2e-phase-c`, `make e2e-smoke`; full suite `make e2e`.
 
-### 7.4 Phase D — forced sync turn (covers 6 §5.5)
+- Relative sync-turn leads via `advanceSessionToNonce` / `nextSyncTurnLeadNonce` (same pattern as Phase B).
+- `MOCKDAPI_STALE_AFTER=3s` in `gencompose` → `mockdapi.Config.StaleAfter` on hosts and devshardctl.
+- **FeedRecovers** requires devshardctl oracle refresh after feed return (see §5.7 step 3); do not restart all hosts before the recover POST (causes `TIMEOUT_REASON_REFUSED`).
 
-- Lands **after** `MsgForceHeightSyncTurn` (Step 9 of the PoC plan)
-is implemented.
-- `forced_sync_turn_test.go` covers Scenarios A–E from
-`SCENARIOS.md`. Honest + malicious users.
+### 7.4 Phase D — protocol v2 container parity
 
-### 7.5 Phase E — mixed-height carry-forward (covers 4.1)
+Ports the in-process v2 suite (`height-sync-tests.md` §4: E1–E11,
+origin signatures, `(C-quorum)`) plus forced sync turn and
+carry-forward:
 
-- `carry_forward_test.go` plus the
-`docker-compose.scenario-mixed-height.yml` override file.
-- Cleanup hook stops the second heightsyncd instance even on
-failure.
+- `courier_bootstrap_test.go`, `confirm_test.go`, `origin_sig_test.go`,
+  `lazy_carry_test.go`, `forced_sync_turn_test.go`.
+- Loki/Prom assertions for `origin_sig_invalid_total`,
+  `devshard_heightsync_confirmed_height` (or successor gauge), courier
+  `mode=anchor` with `originator_sender_id` ≠ user address.
+- Forced-turn sub-scenarios A–E from `SCENARIOS.md` §6b (E already
+  green in-process).
+
+Depends on: `MsgForceHeightSyncTurn` (already implemented), devshardctl
+proxy passing courier peer-tip config, optional Prom counter for
+`force_request_anchor_missing_total` (§4.2).
+
+### 7.5 Phase E — Strong mode + mixed-height carry-forward
+
+- Strong: `strong_escalation_test.go`, `strong_proof_invalid_test.go`,
+  `strict_confirm_strong_test.go` — see `height-sync-tests.md` §6.
+- Mixed-height carry-forward (§9.3 item 4.1):
+  `carry_forward_test.go` plus `docker-compose.scenario-mixed-height.yml`
+  override; cleanup stops the second `heightsyncd` on failure.
 
 ---
 
@@ -565,9 +617,10 @@ are not real-prod knobs; document them in `README.md` §3.2 once
 Phase A lands so future readers do not mistake them for protocol
 config.
 - `**docker compose stop`/`start` semantics.** Stopping
-`height-sync` keeps the container's IP, so `mockdapi` SSE clients
-see TCP RST then reconnect. Verify behaviour matches a real outage
-before relying on it for §9.3 item 8 (Phase C task).
+`height-sync` makes SSE clients go quiet until `StaleAfter`, then Omit.
+After `start`, hosts pick up new headers quickly; **devshardctl** may
+need `compose restart devshardctl` so its long-lived mockdapi client
+re-subscribes (verified in `FeedRecovers`).
 - **Force-anchor field on the proxy.** §5.4 requires a tiny API
 surface change on `cmd/devshardctl/proxy.go`. If we want to keep
 the proxy "production-shape," gate the new field behind
@@ -925,8 +978,8 @@ and 4: cPoC malice-detection tests will not need a new harness layer.
 - **§9.3 item 1 short-block stack** (`block_interval_delta: 1s`) is
 already tunable via `config.yaml`; no plan-level work, just CI
 configuration when we want even faster scenarios.
-- **Strong / `> D` escalation** — separate PoC, not relevant to
-Anchor-only suite.
+- **Strong / `> D` escalation** — Phase E; not part of Phases A–C
+  (baseline Anchor suite).
 - **Multi-escrow / multi-user concurrency** — handled by existing
 Phase 8 protocol stress tests, not by this suite.
 - **cPoC scenario implementations** — covered by §10 primitives but
@@ -942,7 +995,9 @@ primitives plus the validation log/metric contract (§10.4).
 ## 14. Acceptance — when is the plan done?
 
 - `go test -tags testenvci ./testenv/scenarios/container/...` passes
-on a clean Docker host with **all** §9.3 1–8 + §9.4 covered.
+  on a clean Docker host with **Phases A–C** (baseline §9.3 1–8 + smoke)
+  green; **Phase D** (v2) and **Phase E** (Strong) tracked separately in
+  `height-sync-tests.md` §5–§6.
 - `container.AssertPlatformReady` (§11) passes for every scenario
 and is invoked from a single shared helper (no copy/paste).
 - The four "foundation" files exist with at least the height-sync
@@ -953,13 +1008,10 @@ subset implemented and TODO markers for cPoC / validation:
 `*_MaliciousClient_MutatedRequest`) are green, and §12.4's
 detection contract is wired (counters export, audit ring trust
 states emitted).
-- `SCENARIOS.md` is updated so each scenario points to **both** its
-in-process test and its container counterpart, and includes a new
-"Production realism & malware detection" section mirroring §12.
+- `SCENARIOS.md` points each scenario to in-process and container
+  counterparts; v2 matrix and "container still relevant" note present.
+- `height-sync-tests.md` §5 container rows updated as Phase D/E land.
 - `README.md` §4 has a runbook entry for `make e2e`.
-- The PoC implementation status file (`devshard/plans/height-sync-anchor-poc-implementation-status.md`)
-flips Step 7 from "in-process" to "in-process + container" and
-drops the §9.4 smoke open item.
 - A short follow-up note is added to `CPOC_PROTOCOL.md` and (when it
 lands) to the validation plan, confirming they can build on
 `container/{escrow,faults,scenario,platform}.go` without changes.

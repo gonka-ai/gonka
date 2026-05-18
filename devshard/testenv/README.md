@@ -15,6 +15,7 @@ operator-facing summary plus a runbook.
   in-process suite: [`scenarios/SCENARIOS.md`](scenarios/SCENARIOS.md);
   re-implementation plan against the live stack:
   [`scenarios/CONTAINER_E2E_PLAN.md`](scenarios/CONTAINER_E2E_PLAN.md).
+  Go sources use build tag **`testenvci`** — see [§4.9](#49-ide--gopls-testenvci-build-tag).
 
 ## 1. What this stack simulates
 
@@ -376,6 +377,46 @@ day-to-day work — they are documented alongside Phase 14:
   `make obs-up` is an alias of `make up`. URLs and cleanup:
   [`OBSERVABILITY.md`](OBSERVABILITY.md) (`make obs-logs`, `make obs-grafana-open`, …).
 
+### 4.9 IDE / gopls (`testenvci` build tag)
+
+Container E2E helpers (`scenarios/container/*.go` except `*_test.go`) have
+**no** build tag so `gopls` can resolve symbols across `stack.go`,
+`session_nonce.go`, etc. without extra settings. **Test files** keep
+`//go:build testenvci` so they are only compiled when the tag is on.
+
+| Path | Build tag | Examples |
+| ---- | --------- | -------- |
+| `scenarios/container/*_test.go` | `testenvci` | `make e2e`, `make e2e-phase-c` |
+| `scenarios/container/*.go` (helpers) | *(none)* | IDE-friendly; not imported by production |
+| `citest/` | `testenvci` (all files) | `make ci-integration`, etc. |
+
+**CLI / Makefile** pass `-tags=testenvci` for tests, e.g.:
+
+```bash
+cd devshard/testenv
+go test -tags=testenvci -c ./scenarios/container/...
+make e2e
+```
+
+`go test` without the tag finds no tests in `scenarios/container/` (expected).
+
+**VS Code / Cursor — editing `*_test.go` or `citest/`:** set build tags so
+`gopls` includes tagged test sources:
+
+```json
+{
+  "go.buildTags": "testenvci",
+  "gopls": {
+    "build.buildFlags": ["-tags=testenvci"]
+  }
+}
+```
+
+Then **Command Palette** → **Go: Restart Language Server**. Helper files
+(`stack.go`, `session_nonce.go`, …) should type-check **without** this;
+if you still see `undefined: mockdapiStaleAfter` there, restart gopls or
+open the **`devshard`** folder (`devshard/go.mod`) in a monorepo workspace.
+
 ## 5. Directory map
 
 | Path                                        | Purpose                                                                           |
@@ -398,7 +439,9 @@ day-to-day work — they are documented alongside Phase 14:
 | `Dockerfile.dev`                            | shared base with `air` + `dlv` for the dev overlay                                |
 | `docker-compose.yml` *(generated)*          | emitted by `gencompose`; do not hand-edit                                         |
 | `docker-compose.dev.yml`                    | live-reload overlay (Phase 12)                                                    |
-| `Makefile`                                  | `make help` — `proto` through `integration-test` (see §4.0)                |
+| `Makefile`                                  | `make help` — `proto` through `integration-test`, `e2e`, `e2e-phase-c` (see §4.0) |
+| `scenarios/container/`                      | Docker height-sync E2E (`-tags=testenvci`; see §4.9)                              |
+| `citest/`                                   | Compose citest harness (`-tags=testenvci`; see §4.9)                              |
 | `vscode-launch.json`                        | IDE launch configs for attaching `dlv` to running containers                      |
 
 ## 6. Troubleshooting
@@ -420,6 +463,8 @@ day-to-day work — they are documented alongside Phase 14:
   arrive for `StaleAfter` (default 10 s). Verdicts are deferred, not
   failed, until the oracle catches up; see `docs/testenv.md` §5 for
   the contract.
+- **Red squiggles in `scenarios/container/` but `make e2e` passes** —
+  enable `testenvci` for gopls; see [§4.9](#49-ide--gopls-testenvci-build-tag).
 
 ## 7. Where to go next
 

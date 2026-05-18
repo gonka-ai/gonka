@@ -137,6 +137,13 @@ func TestDockerfiles_StaticContract(t *testing.T) {
 				t.Errorf("%s: must build with CGO_ENABLED=0 for distroless/static", spec.name)
 			}
 
+			// devshardd-testenv and devshardctl ship testenv-only debug routes behind -tags=dev.
+			if spec.binaryName == "devshardd-testenv" || spec.binaryName == "devshardctl" {
+				if !strings.Contains(body, "-tags=dev") {
+					t.Errorf("%s: must build with -tags=dev so inference-hold debug routes are available", spec.name)
+				}
+			}
+
 			// The build path must match the Go package gencompose
 			// expects — the failure mode is otherwise extremely loud
 			// at runtime, not at build time.

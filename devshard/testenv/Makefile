@@ -39,9 +39,21 @@ build: ## Compile every testenv binary locally (sanity check, not used in contai
 test: ## Run the devshard + testenv unit tests.
 	go test ./...
 
-.PHONY: e2e
-e2e: ## Phase A container scenarios (Docker + observability); skip with TESTENV_SKIP_DOCKER_STACK=1. Test logs include copy-paste `docker compose logs` lines for devshardctl / devshardd hosts.
-	cd .. && go test -tags=testenvci -v -timeout=20m ./testenv/scenarios/container/...
+.PHONY: e2e e2e-phase-b e2e-phase-c e2e-smoke e2e-isolated
+e2e: ## Shared-stack container E2E (preflight + compose up + Phase A/B/C tests). See run-container-heightsync-e2e.sh.
+	bash ./scripts/run-container-heightsync-e2e.sh
+
+e2e-phase-b: ## Container §9.3 items 5, 6a, 7 (lost host, force anchor, cheating trail).
+	CONTAINER_E2E_PHASE=b bash ./scripts/run-container-heightsync-e2e.sh
+
+e2e-phase-c: ## Container §9.3 item 8 + §9.4 smoke (feed stopped / recovery).
+	CONTAINER_E2E_PHASE=c bash ./scripts/run-container-heightsync-e2e.sh
+
+e2e-smoke: ## Minimal container smoke (TestContainerE2E_HeightSync_Smoke only).
+	CONTAINER_E2E_RUN='^TestContainerE2E_HeightSync_Smoke$$' bash ./scripts/run-container-heightsync-e2e.sh
+
+e2e-isolated: ## Per-test compose up/down (slow); no shared stack. Skip with TESTENV_SKIP_DOCKER_STACK=1.
+	cd .. && go test -tags=testenvci -count=1 -v -timeout=25m ./testenv/scenarios/container/...
 
 # ------------------------------------------------------------- compose ----
 
