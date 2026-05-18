@@ -415,6 +415,20 @@ func TestSamplePreservedForEpisode_MatchesSubgroupData(t *testing.T) {
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
 }
 
+func TestCanAllocateParticipantNode_UsesVotingPowerCap(t *testing.T) {
+	canAllocate, updatedVP := canAllocateParticipantNode(10, 10, 0, 40, 34)
+	require.False(t, canAllocate)
+	require.Equal(t, int64(0), updatedVP)
+
+	canAllocate, updatedVP = canAllocateParticipantNode(10, 10, 0, 30, 34)
+	require.True(t, canAllocate)
+	require.Equal(t, int64(30), updatedVP)
+
+	canAllocate, updatedVP = canAllocateParticipantNode(5, 10, 0, 40, 34)
+	require.True(t, canAllocate)
+	require.Equal(t, int64(0), updatedVP)
+}
+
 func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
 	ctx := context.Background()
 	modelID := "model-anchor-test"

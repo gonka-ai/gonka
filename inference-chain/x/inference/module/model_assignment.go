@@ -9,8 +9,6 @@ import (
 	"math/rand"
 	"slices"
 
-	mathsdk "cosmossdk.io/math"
-	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -499,7 +497,12 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 
 	currentEpochData := NewEpochMLNodeData()
 	previousEpochData := NewEpochMLNodeData()
-	totalCurrentEpochWeight := int64(0)
+	totalNetworkWeight := int64(0)
+	for _, vw := range rootData.ValidationWeights {
+		if vw != nil {
+			totalNetworkWeight += vw.Weight
+		}
+	}
 	participantVotingPowers := make(map[string]map[string]int64)
 
 	for _, modelId := range sortedModelIds {
@@ -553,12 +556,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		}
 	}
 
-	for _, modelId := range currentEpochData.Models() {
-		totalCurrentEpochWeight += currentEpochData.GetTotalWeightForModel(modelId)
-	}
-
-	coefficients := modelCoefficients(params.PocParams)
-	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, totalCurrentEpochWeight, coefficients, anchorHeight, guardianSet, participantVotingPowers)
+	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, totalNetworkWeight, anchorHeight, guardianSet, participantVotingPowers)
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
@@ -639,30 +637,25 @@ func filterNodesByThresholds(nodes []*types.MLNodeInfo, participantAddr string, 
 // comparable, so applying a single global threshold would bias preservation toward models
 // with larger weight scales.
 //
-// The non-voting cap (<34% of total capped weight) prevents preserving so many of a
-// participant's nodes that the participant has no nodes left to vote in PoC validation.
-// That cap is what keeps the PoC validation quorum >=75% of total weight.
+// The non-voting cap uses the same units as PoC validation: per-model voting
+// power over total network weight.
 func (ma *ModelAssigner) filterEligibleMLNodes(
 	upcomingEpoch types.Epoch,
 	previousEpochData *EpochMLNodeData,
 	currentEpochData *EpochMLNodeData,
-	totalCappedWeight int64,
-	coefficients map[string]mathsdk.LegacyDec,
+	totalNetworkWeight int64,
 	anchorHeight int64,
 	guardianSet map[string]bool,
 	participantVotingPowers map[string]map[string]int64,
 ) *EpochMLNodeData {
 	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
 
-	// Step 1: Calculate Phase 3 voting constraint (max 34% non-voting weight)
-	maxAllowedNonVotingWeight := decimal.NewFromInt(34).Div(decimal.NewFromInt(100)).Mul(decimal.NewFromInt(totalCappedWeight)).IntPart()
-	totalNonVotingWeight := int64(0)
-	ma.LogInfo("Calculated voting constraint threshold", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_voting_constraint", "max_allowed_non_voting_weight", maxAllowedNonVotingWeight, "total_capped_weight", totalCappedWeight)
+	maxNonVotingVP := decimal.NewFromInt(34).Div(decimal.NewFromInt(100)).Mul(decimal.NewFromInt(totalNetworkWeight)).IntPart()
+	ma.LogInfo("Calculated voting constraint threshold", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_voting_constraint", "max_non_voting_vp", maxNonVotingVP, "total_network_weight", totalNetworkWeight)
 
-	// Step 2: Apply thresholds and sample participants per model.
-	// Thresholds are computed per model -- raw PocWeights from different models are not comparable.
 	eligibleNodesData := NewEpochMLNodeData()
 	for _, modelId := range currentEpochData.Models() {
+		nonVotingVPForModel := int64(0)
 		modelView := currentEpochData.ForModel(modelId)
 		participantVotingPowersPerModel := participantVotingPowers[modelId]
 		thresholds := ma.calculateThresholds(modelView, participantVotingPowersPerModel)
@@ -700,34 +693,30 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 			currentNodes := participantNodes[participantAddr]
 			filteredNodes := filterNodesByThresholds(currentNodes, participantAddr, thresholds)
 
-			// Add nodes with Phase 3 voting constraint check.
-			// Both sides use coefficient-adjusted weight so the comparison with
-			// maxAllowedNonVotingWeight (derived from capped consensus weight) is consistent.
-			totalParticipantWeight := keeper.CoefficientAdjustedWeight(
-				currentEpochData.GetParticipantModelNodes(participantAddr), coefficients, nil)
-			for _, node := range filteredNodes {
-				currentParticipantWeight := keeper.CoefficientAdjustedWeight(
-					eligibleNodesData.GetParticipantModelNodes(participantAddr), coefficients, nil)
-				coeff, ok := coefficients[modelId]
-				if !ok {
-					coeff = mathsdk.LegacyOneDec()
+			var participantModelWeight int64
+			for _, n := range currentNodes {
+				if n != nil {
+					participantModelWeight += n.PocWeight
 				}
-				adjustedNodeWeight := coeff.MulInt64(node.PocWeight).TruncateInt64()
-				eligibleNodesWeightIfAdded := currentParticipantWeight + adjustedNodeWeight
+			}
+			participantVP := participantVotingPowersPerModel[participantAddr]
+			eligibleParticipantModelWeight := int64(0)
 
-				// Phase 3: Check if adding this node would violate voting constraints
-				canAllocate, updatedWeight := canAllocateParticipantNode(
-					eligibleNodesWeightIfAdded,
-					totalParticipantWeight,
-					totalNonVotingWeight,
-					maxAllowedNonVotingWeight,
+			for _, node := range filteredNodes {
+				eligibleParticipantModelWeight += node.PocWeight
+
+				canAllocate, updatedNonVotingVP := canAllocateParticipantNode(
+					eligibleParticipantModelWeight,
+					participantModelWeight,
+					nonVotingVPForModel,
+					participantVP,
+					maxNonVotingVP,
 				)
 				if !canAllocate {
-					// Stop adding nodes for this participant - would violate constraints
-					ma.LogInfo("Stopped adding nodes due to voting constraint", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "voting_constraint_limit", "participant", participantAddr, "model_id", modelId, "total_non_voting_weight", totalNonVotingWeight, "max_allowed", maxAllowedNonVotingWeight)
+					ma.LogInfo("Stopped adding nodes due to voting constraint", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "voting_constraint_limit", "participant", participantAddr, "model_id", modelId, "non_voting_vp_for_model", nonVotingVPForModel, "max_non_voting_vp", maxNonVotingVP)
 					break
 				}
-				totalNonVotingWeight = updatedWeight
+				nonVotingVPForModel = updatedNonVotingVP
 				eligibleNodesData.Append(modelId, participantAddr, node)
 			}
 		}
@@ -736,40 +725,19 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 	return eligibleNodesData
 }
 
-// canAllocateParticipantNode checks if a node can be allocated without violating voting constraints.
-//
-// VOTING CONSTRAINTS:
-// A participant can only vote in PoC validation if they have at least some nodes with POC_SLOT=false.
-// If all a participant's nodes have POC_SLOT=true (all in eligible set), they become "non-voting".
-//
-// To ensure sufficient PoC validation, we limit non-voting participants to <34% of capped total weight.
-// This guarantees at least 75% of capped weight can participate in PoC validation.
-//
-// PARAMETERS:
-//   - eligibleNodesWeightIfAdded: Total weight of eligible nodes if we add the current node being considered
-//   - totalParticipantWeight: Total weight of all the participant's nodes
-//   - totalNonVotingWeight: Current sum of weights for all non-voting participants
-//   - maxAllowedNonVotingWeight: Maximum allowed total weight for non-voting participants (34% threshold)
-//
-// RETURNS:
-//   - canAllocate: Whether this node can be added to eligible set
-//   - updatedNonVotingWeight: Updated total non-voting weight if node is allocated
+// canAllocateParticipantNode updates non-voting VP if this node would make all
+// of the participant's model nodes eligible for preservation.
 func canAllocateParticipantNode(
-	eligibleNodesWeightIfAdded, totalParticipantWeight int64,
-	totalNonVotingWeight, maxAllowedNonVotingWeight int64,
-) (canAllocate bool, updatedNonVotingWeight int64) {
-	// Check if adding this node would make all participant's nodes eligible (participant becomes non-voting)
-	if eligibleNodesWeightIfAdded >= totalParticipantWeight {
-		// Check if adding this participant's weight to non-voting group would exceed 34% threshold
-		if totalNonVotingWeight+totalParticipantWeight < maxAllowedNonVotingWeight {
-			// Can allocate - participant becomes non-voting but total non-voting weight still under limit
-			return true, totalNonVotingWeight + totalParticipantWeight
-		}
-		// Cannot allocate - would exceed non-voting weight limit
-		return false, totalNonVotingWeight
+	eligibleParticipantModelWeight, participantModelWeight int64,
+	nonVotingVPForModel, participantVP, maxNonVotingVP int64,
+) (canAllocate bool, updatedNonVotingVP int64) {
+	if eligibleParticipantModelWeight < participantModelWeight {
+		return true, nonVotingVPForModel
 	}
-	// Can allocate - participant will still have nodes for voting (POC_SLOT=false)
-	return true, totalNonVotingWeight
+	if nonVotingVPForModel+participantVP < maxNonVotingVP {
+		return true, nonVotingVPForModel + participantVP
+	}
+	return false, nonVotingVPForModel
 }
 
 // samplePreservedForModel runs a round-robin allocator over eligible nodes for one
@@ -972,7 +940,6 @@ func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
 
 // getParticipantWeightsForThreshold returns voting-power-based weights for the 75% threshold.
 // Uses the same delegation-resolved VotingPower that PoC/CPoC validation uses.
-// Falls back to raw PocWeight for participants without VotingPower data.
 func getParticipantWeightsForThreshold(epochData *EpochMLNodeData, participantVotingPowers map[string]int64) []int64 {
 	uniqueParticipants := make(map[string]bool)
 	for _, modelId := range sortedKeys(epochData.data) {
