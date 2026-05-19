@@ -341,7 +341,7 @@ type KeeperForModelAssigner interface {
 	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
 	GetGenesisGuardianAddresses(ctx context.Context) []string
-	GetSubGroupDataWithLiveMembers(ctx context.Context, modelId string) (types.EpochGroupData, map[string]bool, error)
+	GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (map[string]types.EpochGroupData, map[string]map[string]bool, error)
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -505,12 +505,15 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	}
 	participantVotingPowers := make(map[string]map[string]int64)
 
+	subGroupDataByModel, liveSetsByModel, subErr := ma.keeper.GetLiveSubGroupsForCurrentEpoch(ctx)
+	if subErr != nil {
+		ma.LogWarn("SamplePreservedForEpisode: unable to fetch live subgroups for current epoch",
+			types.Allocation, "error", subErr)
+	}
+
 	for _, modelId := range sortedModelIds {
-		currentSubData, liveSubSet, err := ma.keeper.GetSubGroupDataWithLiveMembers(ctx, modelId)
-		if err != nil {
-			ma.LogWarn("SamplePreservedForEpisode: unable to get subgroup data with live members",
-				types.Allocation, "model_id", modelId, "error", err)
-		}
+		currentSubData := subGroupDataByModel[modelId]
+		liveSubSet := liveSetsByModel[modelId]
 		if len(currentSubData.ValidationWeights) > 0 {
 			for _, vw := range currentSubData.ValidationWeights {
 				if liveSubSet != nil && !liveSubSet[vw.MemberAddress] {
