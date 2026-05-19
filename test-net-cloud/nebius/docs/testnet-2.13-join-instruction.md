@@ -212,7 +212,6 @@ curl -fL -o inferenced-amd64.zip \
   "https://github.com/gonka-ai/gonka/releases/download/release/v0.2.13/inferenced-amd64.zip"
 
 unzip -o inferenced-amd64.zip
-chmod +x inferenced   # name may be inferenced-amd64 depending on zip layout; rename if needed
 ```
 
 ### 8. Place binary for the node container
