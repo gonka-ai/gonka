@@ -39,13 +39,14 @@ type mockKeeperForModelAssigner struct {
 	epochGroupData   map[string]map[uint64]types.EpochGroupData // modelId -> epochIndex -> data
 	// participant -> epochIndex -> summary. When present with RewardedCoins > 0, the participant
 	// counts as eligible-by-history for that epoch in SamplePreservedForEpisode.
-	perfSummaries    map[string]map[uint64]types.EpochPerformanceSummary
-	params           *types.Params
+	perfSummaries map[string]map[uint64]types.EpochPerformanceSummary
+	params        *types.Params
 	// liveSubGroupOverrides[modelId] = explicit live member set for that subgroup.
 	// When unset for a model, the mock falls back to "all members in
 	// epochGroupData[modelId][latest].ValidationWeights are live".
-	liveSubGroupOverrides   map[string]map[string]bool
-	liveSubGroupsErr        error
+	liveSubGroupOverrides map[string]map[string]bool
+	liveRootOverrides     map[string]bool // member set override for GetRootGroupDataWithLiveMembers
+	liveSubGroupsErr      error
 	// guardianAddresses is what the mock returns from GetGenesisGuardianAddresses.
 	// Test bodies should populate this with valoper-bech32 strings; the production
 	// code converts them to acc-bech32 before checking membership against subgroup
@@ -97,6 +98,30 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 
 func (m *mockKeeperForModelAssigner) GetGenesisGuardianAddresses(ctx context.Context) []string {
 	return m.guardianAddresses
+}
+
+func (m *mockKeeperForModelAssigner) GetRootGroupDataWithLiveMembers(ctx context.Context) (types.EpochGroupData, map[string]bool, error) {
+	var data types.EpochGroupData
+	found := false
+	if epochMap, ok := m.epochGroupData[""]; ok {
+		for _, d := range epochMap {
+			data = d
+			found = true
+		}
+	}
+	if !found {
+		return types.EpochGroupData{}, nil, nil
+	}
+	if m.liveRootOverrides != nil {
+		return data, m.liveRootOverrides, nil
+	}
+	liveSet := make(map[string]bool, len(data.ValidationWeights))
+	for _, vw := range data.ValidationWeights {
+		if vw != nil {
+			liveSet[vw.MemberAddress] = true
+		}
+	}
+	return data, liveSet, nil
 }
 
 func (m *mockKeeperForModelAssigner) GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (
@@ -456,6 +481,26 @@ func TestSamplePreservedForEpisode_MatchesSubgroupData(t *testing.T) {
 	modelGroup := participants[0].MlNodes[0]
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 2)
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
+}
+
+func TestSumLiveRootTotalWeight_ExcludesRemovedMembers(t *testing.T) {
+	rootData := types.EpochGroupData{
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "live", Weight: 40},
+			{MemberAddress: "removed", Weight: 60},
+		},
+	}
+	liveSet := map[string]bool{"live": true}
+	require.Equal(t, int64(40), sumLiveRootTotalWeight(rootData, liveSet))
+}
+
+func TestCalculateParticipantWeightThreshold75Percent_UsesLiveRootTotal(t *testing.T) {
+	// Model VP 80+10=90; model-local 75% target would be 67 and keep both.
+	// Live root total 100 -> network 75% target keeps only the 80 VP participant.
+	threshold := calculateParticipantWeightThreshold75Percent([]int64{80, 10}, 100)
+	require.Equal(t, int64(79), threshold)
+	require.True(t, 80 > threshold)
+	require.False(t, 10 > threshold)
 }
 
 func TestCanAllocateParticipantNode_UsesVotingPowerCap(t *testing.T) {

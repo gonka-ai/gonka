@@ -341,7 +341,19 @@ type KeeperForModelAssigner interface {
 	GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (val types.EpochPerformanceSummary, found bool)
 	GetParams(ctx context.Context) (types.Params, error)
 	GetGenesisGuardianAddresses(ctx context.Context) []string
+	GetRootGroupDataWithLiveMembers(ctx context.Context) (types.EpochGroupData, map[string]bool, error)
 	GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (map[string]types.EpochGroupData, map[string]map[string]bool, error)
+}
+
+func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[string]bool) int64 {
+	var total int64
+	for _, vw := range rootData.ValidationWeights {
+		if vw == nil || (liveRootSet != nil && !liveRootSet[vw.MemberAddress]) {
+			continue
+		}
+		total += vw.Weight
+	}
+	return total
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -458,8 +470,8 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 
 // SamplePreservedForEpisode returns the preserved-node snapshot for a single PoC episode.
 // The seed mixes in anchorHeight so each episode in the same epoch samples independently.
-// Participants removed mid-epoch are excluded per-model via GetLiveSubGroupMembers,
-// symmetric with the liveSubSet filtering in getEffectiveValidationBaseState.
+// Participants removed mid-epoch are excluded via live root/subgroup member sets,
+// symmetric with getEffectiveValidationBaseState.
 func (ma *ModelAssigner) SamplePreservedForEpisode(
 	ctx context.Context,
 	epoch types.Epoch,
@@ -475,10 +487,11 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		allocationFraction = &types.Decimal{Value: 5, Exponent: -1}
 	}
 
-	rootData, found := ma.keeper.GetEpochGroupData(ctx, epoch.Index, "")
-	if !found {
+	rootData, liveRootSet, err := ma.keeper.GetRootGroupDataWithLiveMembers(ctx)
+	if err != nil {
 		return types.PreservedNodesSnapshot{EpisodeAnchorHeight: anchorHeight}, nil
 	}
+	liveRootTotalWeight := sumLiveRootTotalWeight(rootData, liveRootSet)
 
 	guardianAddresses := ma.keeper.GetGenesisGuardianAddresses(ctx)
 	guardianSet := make(map[string]bool, len(guardianAddresses))
@@ -497,12 +510,6 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 
 	currentEpochData := NewEpochMLNodeData()
 	previousEpochData := NewEpochMLNodeData()
-	totalNetworkWeight := int64(0)
-	for _, vw := range rootData.ValidationWeights {
-		if vw != nil {
-			totalNetworkWeight += vw.Weight
-		}
-	}
 	participantVotingPowers := make(map[string]map[string]int64)
 
 	subGroupDataByModel, liveSetsByModel, subErr := ma.keeper.GetLiveSubGroupsForCurrentEpoch(ctx)
@@ -559,7 +566,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		}
 	}
 
-	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, totalNetworkWeight, anchorHeight, guardianSet, participantVotingPowers)
+	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, liveRootTotalWeight, anchorHeight, guardianSet, participantVotingPowers)
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
@@ -605,9 +612,9 @@ type thresholdSet struct {
 	globalMaxNodeWeight       int64            // global outlier threshold (IQR method)
 }
 
-func (ma *ModelAssigner) calculateThresholds(currentEpochData *EpochMLNodeData, participantVotingPowersPerModel map[string]int64) thresholdSet {
+func (ma *ModelAssigner) calculateThresholds(currentEpochData *EpochMLNodeData, participantVotingPowersPerModel map[string]int64, liveRootTotalWeight int64) thresholdSet {
 	allParticipantsWeights := getParticipantWeightsForThreshold(currentEpochData, participantVotingPowersPerModel)
-	participantWeightThreshold := calculateParticipantWeightThreshold75Percent(allParticipantsWeights)
+	participantWeightThreshold := calculateParticipantWeightThreshold75Percent(allParticipantsWeights, liveRootTotalWeight)
 	ma.LogInfo("Calculated participant weight threshold (75% rule)", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_participant_threshold", "threshold", participantWeightThreshold, "total_participants", len(allParticipantsWeights))
 
 	participantMinNodeWeightThresholds, participantNodeCounts := calculatePerParticipantThreshold(currentEpochData, participantWeightThreshold, participantVotingPowersPerModel)
@@ -641,27 +648,27 @@ func filterNodesByThresholds(nodes []*types.MLNodeInfo, participantAddr string, 
 // with larger weight scales.
 //
 // The non-voting cap uses the same units as PoC validation: per-model voting
-// power over total network weight.
+// power over live root total weight.
 func (ma *ModelAssigner) filterEligibleMLNodes(
 	upcomingEpoch types.Epoch,
 	previousEpochData *EpochMLNodeData,
 	currentEpochData *EpochMLNodeData,
-	totalNetworkWeight int64,
+	liveRootTotalWeight int64,
 	anchorHeight int64,
 	guardianSet map[string]bool,
 	participantVotingPowers map[string]map[string]int64,
 ) *EpochMLNodeData {
 	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
 
-	maxNonVotingVP := decimal.NewFromInt(34).Div(decimal.NewFromInt(100)).Mul(decimal.NewFromInt(totalNetworkWeight)).IntPart()
-	ma.LogInfo("Calculated voting constraint threshold", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_voting_constraint", "max_non_voting_vp", maxNonVotingVP, "total_network_weight", totalNetworkWeight)
+	maxNonVotingVP := decimal.NewFromInt(34).Div(decimal.NewFromInt(100)).Mul(decimal.NewFromInt(liveRootTotalWeight)).IntPart()
+	ma.LogInfo("Calculated voting constraint threshold", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_voting_constraint", "max_non_voting_vp", maxNonVotingVP, "live_root_total_weight", liveRootTotalWeight)
 
 	eligibleNodesData := NewEpochMLNodeData()
 	for _, modelId := range currentEpochData.Models() {
 		nonVotingVPForModel := int64(0)
 		modelView := currentEpochData.ForModel(modelId)
 		participantVotingPowersPerModel := participantVotingPowers[modelId]
-		thresholds := ma.calculateThresholds(modelView, participantVotingPowersPerModel)
+		thresholds := ma.calculateThresholds(modelView, participantVotingPowersPerModel, liveRootTotalWeight)
 		ma.LogInfo("Calculated per-model thresholds", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
 			"step", "per_model_thresholds", "model_id", modelId,
 			"participant_min_node_weights", thresholds.participantMinNodeWeights,
@@ -881,26 +888,9 @@ func calculateWeightThresholdWithCount(weights []int64, targetPercent int) (int6
 	return 0, len(weights)
 }
 
-// calculateWeightThreshold calculates minimum weight threshold to reach targetPercent of total weight.
-// Returns (w - 1) where w reaches targetPercent. Returns 0 if all weights needed.
-// For uniform weights at the cutoff point, returns the exact weight value instead of (w - 1).
-func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
-	if len(weights) == 0 {
-		return 0
-	}
-	if len(weights) == 1 {
-		// Single node: choose Option B (0% eligible, 100% voting)
-		// Ensures at least 25% weight preserved for voting
-		return weights[0] - 1 // Exclude node (weight > threshold in filter)
-	}
-
-	totalWeight := int64(0)
-	for _, w := range weights {
-		totalWeight += w
-	}
-	targetWeight := (totalWeight * int64(targetPercent)) / 100
-
-	// Sort descending
+// weightThresholdForTarget returns the minimum weight cutoff so participants with
+// weight > threshold sum to at least targetWeight.
+func weightThresholdForTarget(weights []int64, targetWeight int64) int64 {
 	sorted := make([]int64, len(weights))
 	copy(sorted, weights)
 	slices.SortFunc(sorted, func(a, b int64) int {
@@ -913,14 +903,12 @@ func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
 		return 0
 	})
 
-	// Accumulate until reaching target
 	sum := int64(0)
 	nodeCount := 0
 	for _, w := range sorted {
 		nodeCount++
 		sum += w
 		if sum >= targetWeight {
-			// Check if remaining nodes have the same weight (uniform at cutoff)
 			hasLowerWeight := false
 			for i := nodeCount; i < len(sorted); i++ {
 				if sorted[i] < w {
@@ -928,17 +916,30 @@ func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
 					break
 				}
 			}
-
-			// If all remaining weights are same as current weight, return exact value
-			// This enables count-based filtering for uniform weights
 			if !hasLowerWeight {
 				return w
 			}
 			return w - 1
 		}
 	}
-
 	return 0
+}
+
+// calculateWeightThreshold calculates minimum weight threshold to reach targetPercent of total weight.
+// Returns (w - 1) where w reaches targetPercent. Returns 0 if all weights needed.
+// For uniform weights at the cutoff point, returns the exact weight value instead of (w - 1).
+func calculateWeightThreshold(weights []int64, targetPercent int) int64 {
+	if len(weights) == 0 {
+		return 0
+	}
+	if len(weights) == 1 {
+		return weights[0] - 1
+	}
+	totalWeight := int64(0)
+	for _, w := range weights {
+		totalWeight += w
+	}
+	return weightThresholdForTarget(weights, (totalWeight*int64(targetPercent))/100)
 }
 
 // getParticipantWeightsForThreshold returns voting-power-based weights for the 75% threshold.
@@ -960,13 +961,27 @@ func getParticipantWeightsForThreshold(epochData *EpochMLNodeData, participantVo
 	return weights
 }
 
-// calculateParticipantWeightThreshold75Percent calculates the minimum participant weight threshold
-// to ensure participants with top 75% of total weight are included.
-//
-// Returns the weight threshold such that participants with weight > threshold sum to >= 75% of total weight.
-// Returns 0 if all participants are needed (edge cases: 0, 1 participant, or cumulative includes all).
-func calculateParticipantWeightThreshold75Percent(weights []int64) int64 {
-	return calculateWeightThreshold(weights, 75)
+// calculateParticipantWeightThreshold75Percent ranks by per-model VP but targets
+// 75% of live root total weight. Returns 0 when the model cannot reach that target.
+func calculateParticipantWeightThreshold75Percent(weights []int64, liveRootTotalWeight int64) int64 {
+	if len(weights) == 0 || liveRootTotalWeight <= 0 {
+		return 0
+	}
+	targetWeight := liveRootTotalWeight * 75 / 100
+	if len(weights) == 1 {
+		if weights[0] < targetWeight {
+			return 0
+		}
+		return weights[0] - 1
+	}
+	modelVPTotal := int64(0)
+	for _, w := range weights {
+		modelVPTotal += w
+	}
+	if modelVPTotal < targetWeight {
+		return 0
+	}
+	return weightThresholdForTarget(weights, targetWeight)
 }
 
 // calculatePerParticipantThreshold calculates node weight thresholds for top 75% participants.
