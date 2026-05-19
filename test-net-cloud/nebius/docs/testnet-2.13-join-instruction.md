@@ -90,9 +90,9 @@ cd gonka/deploy/join
 
 ### 3. Create `config.env`
 
-Copy from the [quickstart](https://gonka.ai/docs/host/quickstart/#local-machine-create-account-key) and replace placeholders with your values.
+You can use a template from [quickstart](https://gonka.ai/docs/host/quickstart/#local-machine-create-account-key) and replace placeholders with your values.
 
-Example (testnet seed at `89.169.111.79`):
+For the testnet variables use the information below (testnet seed at `89.169.111.79`):
 
 ```bash
 export KEY_NAME="join-18217"
