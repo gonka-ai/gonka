@@ -213,7 +213,6 @@ curl -fL -o inferenced-amd64.zip \
 
 unzip -o inferenced-amd64.zip
 chmod +x inferenced   # name may be inferenced-amd64 depending on zip layout; rename if needed
-./inferenced version  # must report v0.2.13
 ```
 
 ### 8. Place binary for the node container
