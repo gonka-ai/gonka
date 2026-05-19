@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testReceiptsRoot = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
 func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
+	owner := sample.AccAddress()
 	tests := []struct {
 		name string
 		msg  MsgBridgeExchange
@@ -20,26 +23,42 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 				Validator:       "invalid_address",
 				OriginChain:     "ethereum",
 				ContractAddress: "0xabc",
-				OwnerAddress:    "0xowner",
+				OwnerAddress:    owner,
 				OwnerPubKey:     "pk",
 				Amount:          "100",
 				BlockNumber:     "1",
 				ReceiptIndex:    "0",
-				ReceiptsRoot:    "0xroot",
+				ReceiptsRoot:    testReceiptsRoot,
 			},
 			err: sdkerrors.ErrInvalidAddress,
-		}, {
+		},
+		{
+			name: "rejects leading zeros in block number",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    owner,
+				OwnerPubKey:     "pk",
+				Amount:          "100",
+				BlockNumber:     "01",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    testReceiptsRoot,
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		},
+		{
 			name: "valid minimal",
 			msg: MsgBridgeExchange{
 				Validator:       sample.AccAddress(),
 				OriginChain:     "ethereum",
 				ContractAddress: "0xabc",
-				OwnerAddress:    "0xowner",
+				OwnerAddress:    owner,
 				OwnerPubKey:     "pk",
 				Amount:          "100",
 				BlockNumber:     "1",
 				ReceiptIndex:    "0",
-				ReceiptsRoot:    "0xroot",
+				ReceiptsRoot:    testReceiptsRoot,
 			},
 		},
 	}

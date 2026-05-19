@@ -61,14 +61,18 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 		}, nil,
 	).AnyTimes()
 
+	receiptsRoot := "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
 	// First Vote (Lowercase)
 	msg1 := &types.MsgBridgeExchange{
 		OriginChain:     "ethereum",
 		ContractAddress: "0x123",
-		OwnerAddress:    "0xabc",
+		OwnerAddress:    validatorLower,
+		OwnerPubKey:     "pk",
 		Amount:          "100",
 		BlockNumber:     "1000",
 		ReceiptIndex:    "1",
+		ReceiptsRoot:    receiptsRoot,
 		Validator:       validatorLower,
 	}
 
@@ -79,10 +83,12 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 	msg2 := &types.MsgBridgeExchange{
 		OriginChain:     "ethereum",
 		ContractAddress: "0x123",
-		OwnerAddress:    "0xabc",
+		OwnerAddress:    validatorLower,
+		OwnerPubKey:     "pk",
 		Amount:          "100",
 		BlockNumber:     "1000",
 		ReceiptIndex:    "1",
+		ReceiptsRoot:    receiptsRoot,
 		Validator:       validatorUpper, // Uppercase
 	}
 
