@@ -140,8 +140,8 @@ alongside the existing epoch-granular `PruneEpoch`. The host emits a
 prune event over a small callback interface
 (`PruneEventSink.OnInferencePrunable(InferencePruneEvent)`); the
 adapter inside `decentralized-api` translates each event into a
-`DeleteInference` call (with adjacent-epoch fallback to cover
-epoch-boundary races). A validator that fetches a payload after it
+`DeleteInference` call under the host's pinned escrow epoch (epoch
+`PruneEpoch` sweep is the backstop for orphans). A validator that fetches a payload after it
 has been deleted receives an HTTP 404 from the executor and **skips
 silently**: no `MsgValidation`, no challenge, no failure record.
 

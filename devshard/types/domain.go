@@ -12,6 +12,17 @@ import "fmt"
 // binaries that change the composition will stamp a different tag.
 const DefaultStateRootVersion = "v1"
 
+// NormalizeVersion returns the state-root version tag, defaulting to
+// DefaultStateRootVersion when version is empty. Use at storage bind, host
+// manager wiring, settlement payload assembly, and hash preimages so empty
+// legacy rows and unset caller input share one canonical default.
+func NormalizeVersion(version string) string {
+	if version == "" {
+		return DefaultStateRootVersion
+	}
+	return version
+}
+
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
 

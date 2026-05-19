@@ -43,10 +43,7 @@ func RecoverSession(
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
-		recoveredVersion = boundVersion
-		if recoveredVersion == "" {
-			recoveredVersion = types.DefaultStateRootVersion
-		}
+		recoveredVersion = types.NormalizeVersion(boundVersion)
 	}
 
 	sm, err := state.NewStateMachine(

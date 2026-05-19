@@ -21,17 +21,6 @@ var ErrSessionEpochConflict = errors.New("session epoch conflict")
 // state-root composition from attaching to live state mid-session.
 var ErrSessionVersionConflict = errors.New("session version conflict")
 
-// normalizeBindingVersion returns the supplied binary tag, defaulting to
-// types.DefaultStateRootVersion for empty input. Used by the various
-// storage backends so a row written without an explicit Version (e.g. a
-// legacy migration) is treated as the default composition tag.
-func normalizeBindingVersion(version string) string {
-	if version == "" {
-		return types.DefaultStateRootVersion
-	}
-	return version
-}
-
 // ErrSnapshotNotFound is returned when no snapshot exists for a session.
 var ErrSnapshotNotFound = errors.New("snapshot not found")
 

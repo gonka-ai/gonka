@@ -302,6 +302,8 @@ data class DevshardEscrowParams(
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
     @SerializedName("max_nonce")
     val maxNonce: Long = 0,
+    @SerializedName("default_seal_grace_nonces")
+    val defaultSealGraceNonces: Long = 0,
 )
 
 data class PocParams(

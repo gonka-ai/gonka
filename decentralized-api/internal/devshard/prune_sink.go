@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"decentralized-api/logging"
@@ -16,100 +17,153 @@ import (
 	"devshard/storage"
 )
 
-// pruneDeleteTimeout caps the delete RPC so a slow backend cannot stall the
-// prune queue. The actual delete is fire-and-forget; epoch sweep is a backstop.
-const pruneDeleteTimeout = 5 * time.Second
+const (
+	// pruneDeleteTimeout caps each delete so a slow backend cannot stall a worker.
+	pruneDeleteTimeout = 5 * time.Second
+	// pruneWorkerCount bounds concurrent payload-storage deletes.
+	pruneWorkerCount = 8
+	// pruneQueueCapacity is the buffered enqueue depth before drops (epoch sweep backstop).
+	pruneQueueCapacity = 256
+	// pruneShutdownTimeout is how long HostManager.Close waits for in-flight deletes.
+	pruneShutdownTimeout = 15 * time.Second
+)
 
 // payloadPruneSink translates host.InferencePruneEvent into PayloadStorage
-// DeleteInference calls. It is intentionally narrow: no caching, no retry
-// queue, and no awareness of the host beyond the event itself. The
-// ManagedStorage epoch sweep stays as the cleanup backstop.
+// DeleteInference calls via a bounded worker pool. The host must not block
+// on storage I/O; events are enqueued and workers run deletes asynchronously.
+// ManagedStorage epoch sweep remains the cleanup backstop for dropped work.
 type payloadPruneSink struct {
-	store payloadstorage.PayloadStorage
-	// fallbackEpoch is consulted when the host did not stamp an epoch on the
-	// event. In practice this only happens when the host was constructed with
-	// no WithEpochID (epochID == 0), so the supplier is best-effort.
+	store         payloadstorage.PayloadStorage
 	fallbackEpoch func() uint64
+
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	queue        chan pruneJob
+	shutdownOnce sync.Once
+}
+
+type pruneJob struct {
+	escrowID    string
+	inferenceID uint64
+	reason      host.PruneReason
+	epochID     uint64
+	storageKey  string
 }
 
 func newPayloadPruneSink(store payloadstorage.PayloadStorage, fallbackEpoch func() uint64) *payloadPruneSink {
-	return &payloadPruneSink{store: store, fallbackEpoch: fallbackEpoch}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &payloadPruneSink{
+		store:         store,
+		fallbackEpoch: fallbackEpoch,
+		ctx:           ctx,
+		cancel:        cancel,
+		queue:         make(chan pruneJob, pruneQueueCapacity),
+	}
+	for i := 0; i < pruneWorkerCount; i++ {
+		s.wg.Add(1)
+		go s.worker()
+	}
+	return s
 }
 
-// OnInferencePrunable runs the delete asynchronously so the host mutex is
-// never held across the storage I/O. ErrNotFound is treated as success
-// because adjacent epochs and idempotent re-emission both make ErrNotFound a
-// normal outcome.
+// OnInferencePrunable enqueues a delete without blocking the host mutex.
+// ErrNotFound on delete is success; a full queue drops the job and relies on
+// epoch PruneEpoch as backstop.
 func (s *payloadPruneSink) OnInferencePrunable(event host.InferencePruneEvent) {
 	if s == nil || s.store == nil {
 		return
 	}
-	primaryEpoch := uint64(0)
-	if event.PayloadEpochKnown {
-		primaryEpoch = event.PayloadEpoch
-	} else if s.fallbackEpoch != nil {
-		primaryEpoch = s.fallbackEpoch()
+	if s.ctx.Err() != nil {
+		return
 	}
-	storageKey := devshardserver.PayloadKey(event.EscrowID, event.InferenceID)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), pruneDeleteTimeout)
-		defer cancel()
-		err := deletePayloadWithAdjacentEpochs(ctx, s.store, storageKey, primaryEpoch)
-		if err == nil || errors.Is(err, payloadstorage.ErrNotFound) {
-			return
-		}
-		logging.Warn("payload prune failed", inferenceTypes.PayloadStorage,
+
+	epochID := uint64(0)
+	if event.PayloadEpochKnown {
+		epochID = event.PayloadEpoch
+	} else if s.fallbackEpoch != nil {
+		epochID = s.fallbackEpoch()
+	}
+
+	job := pruneJob{
+		escrowID:    event.EscrowID,
+		inferenceID: event.InferenceID,
+		reason:      event.Reason,
+		epochID:     epochID,
+		storageKey:  devshardserver.PayloadKey(event.EscrowID, event.InferenceID),
+	}
+
+	select {
+	case s.queue <- job:
+	case <-s.ctx.Done():
+	default:
+		logging.Warn("payload prune queue full, dropping event", inferenceTypes.PayloadStorage,
 			"escrow_id", event.EscrowID,
 			"inference_id", strconv.FormatUint(event.InferenceID, 10),
 			"reason", event.Reason.String(),
-			"epoch_id", primaryEpoch,
-			"error", err,
+			"epoch_id", epochID,
+			"queue_capacity", pruneQueueCapacity,
 		)
-	}()
+	}
 }
 
-// deletePayloadWithAdjacentEpochs attempts the delete against primaryEpoch
-// first and then probes primaryEpoch-1 / primaryEpoch+1. This mirrors the
-// retrieval-side adjacent fallback so a payload that straddled an epoch
-// boundary between Store and the prune event is still cleaned up. Returns
-// nil if at least one epoch matched; ErrNotFound if every epoch reported
-// missing; or the last non-ErrNotFound error otherwise.
-func deletePayloadWithAdjacentEpochs(ctx context.Context, store payloadstorage.PayloadStorage, key string, primaryEpoch uint64) error {
-	seen := make(map[uint64]struct{}, 3)
-	candidates := make([]uint64, 0, 3)
-	add := func(epoch uint64) {
-		if _, ok := seen[epoch]; ok {
-			return
-		}
-		seen[epoch] = struct{}{}
-		candidates = append(candidates, epoch)
+func (s *payloadPruneSink) worker() {
+	defer s.wg.Done()
+	for job := range s.queue {
+		s.runDelete(job)
 	}
-	add(primaryEpoch)
-	if primaryEpoch > 0 {
-		add(primaryEpoch - 1)
-	}
-	add(primaryEpoch + 1)
+}
 
-	var lastErr error
-	matched := false
-	for _, epoch := range candidates {
-		err := store.DeleteInference(ctx, key, epoch)
-		switch {
-		case err == nil:
-			matched = true
-		case errors.Is(err, payloadstorage.ErrNotFound):
-			// expected: probe the remaining epochs
-		default:
-			lastErr = err
-		}
+func (s *payloadPruneSink) runDelete(job pruneJob) {
+	ctx, cancel := context.WithTimeout(s.ctx, pruneDeleteTimeout)
+	defer cancel()
+
+	err := deletePayloadAtEpoch(ctx, s.store, job.storageKey, job.epochID)
+	if err == nil || errors.Is(err, payloadstorage.ErrNotFound) {
+		return
 	}
-	if matched {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	logging.Warn("payload prune failed", inferenceTypes.PayloadStorage,
+		"escrow_id", job.escrowID,
+		"inference_id", strconv.FormatUint(job.inferenceID, 10),
+		"reason", job.reason.String(),
+		"epoch_id", job.epochID,
+		"error", err,
+	)
+}
+
+// shutdown stops accepting work, drains the queue, and waits for workers.
+// It is safe to call more than once.
+func (s *payloadPruneSink) shutdown(ctx context.Context) error {
+	if s == nil {
 		return nil
 	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return payloadstorage.ErrNotFound
+	var waitErr error
+	s.shutdownOnce.Do(func() {
+		s.cancel()
+		close(s.queue)
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			waitErr = ctx.Err()
+		}
+	})
+	return waitErr
+}
+
+// deletePayloadAtEpoch deletes the payload row in the partition keyed by
+// epochID. Store and prune both use the host's pinned escrow epoch when
+// PayloadEpochKnown; a wrong or missing partition returns ErrNotFound and
+// ManagedStorage.PruneEpoch drops the row when that epoch is swept.
+func deletePayloadAtEpoch(ctx context.Context, store payloadstorage.PayloadStorage, key string, epochID uint64) error {
+	return store.DeleteInference(ctx, key, epochID)
 }
 
 // fallbackEpochFromStore exposes the same epoch resolver the retrieval path

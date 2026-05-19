@@ -39,6 +39,17 @@ func defaultParams() CreateSessionParams {
 	}
 }
 
+// defaultLegacyParams returns CreateSessionParams whose Version is empty,
+// simulating a row written by a pre-DefaultStateRootVersion binary (no
+// explicit version stamp). Storage backends must normalize this to
+// types.DefaultStateRootVersion via types.NormalizeVersion so legacy data
+// surfaces under the current binary's composition tag.
+func defaultLegacyParams() CreateSessionParams {
+	p := defaultParams()
+	p.Version = ""
+	return p
+}
+
 func paramsForEpoch(escrowID string, epochID uint64) CreateSessionParams {
 	p := defaultParams()
 	p.EscrowID = escrowID
@@ -107,6 +118,32 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 
 	meta, metaErr := store.GetSessionMeta("escrow-1")
 	require.NoError(t, metaErr)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+}
+
+// runCreateSession_LegacyEmptyVersionNormalizes pins the storage-boundary
+// contract: a row written with an empty Version (pre-DefaultStateRootVersion
+// binary) must surface through GetSessionMeta as DefaultStateRootVersion, and
+// re-creating the same escrow with the explicit current default must be
+// idempotent (no ErrSessionVersionConflict). This exercises
+// types.NormalizeVersion at every backend and the related branch in
+// RecoverSession that bridges meta.Version == "" to the caller's bound value.
+func runCreateSession_LegacyEmptyVersionNormalizes(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultLegacyParams()))
+
+	meta, err := store.GetSessionMeta("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version,
+		"empty input Version must be normalized to DefaultStateRootVersion")
+
+	// Recreating with the explicit current default tag is a no-op, not a
+	// version conflict: legacy and current rows are the same composition.
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	meta, err = store.GetSessionMeta("escrow-1")
+	require.NoError(t, err)
 	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
 }
 

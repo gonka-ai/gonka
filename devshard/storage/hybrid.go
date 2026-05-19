@@ -249,7 +249,7 @@ func sessionVersionForLog(store Storage, escrowID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalizeBindingVersion(meta.Version), nil
+	return types.NormalizeVersion(meta.Version), nil
 }
 
 func (h *HybridStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {

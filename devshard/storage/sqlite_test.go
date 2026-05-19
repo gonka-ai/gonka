@@ -104,6 +104,10 @@ func TestSQLite_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestSQLite(t))
 }
 
+func TestSQLite_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
+	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestSQLite(t))
+}
+
 func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }

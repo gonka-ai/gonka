@@ -107,15 +107,6 @@ type statsHostStats struct {
 	CompletedValidations uint32 `json:"completed_validations"`
 }
 
-// defaultBoundVersion returns the supplied binary version tag, falling back
-// to types.DefaultStateRootVersion when the input is empty.
-func defaultBoundVersion(version string) string {
-	if version == "" {
-		return types.DefaultStateRootVersion
-	}
-	return version
-}
-
 func NewHostManager(
 	store storage.Storage,
 	signer *signing.Secp256k1Signer,
@@ -134,7 +125,7 @@ func NewHostManager(
 		verifier:          signing.NewSecp256k1Verifier(),
 		engine:            engine,
 		validator:         validator,
-		boundVersion:      defaultBoundVersion(boundVersion),
+		boundVersion:      types.NormalizeVersion(boundVersion),
 		bridge:            br,
 		payloadStore:      payloadStore,
 		recorder:          recorder,
@@ -148,8 +139,17 @@ func NewHostManager(
 	return m
 }
 
-// Close releases the underlying storage resources.
+// Close drains the payload prune worker pool (when configured) and releases
+// session storage resources.
 func (m *HostManager) Close() error {
+	if sink, ok := m.pruneSink.(*payloadPruneSink); ok {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), pruneShutdownTimeout)
+		if err := sink.shutdown(shutdownCtx); err != nil {
+			logging.Warn("payload prune sink shutdown timed out", inferenceTypes.PayloadStorage,
+				"error", err)
+		}
+		cancel()
+	}
 	return m.store.Close()
 }
 

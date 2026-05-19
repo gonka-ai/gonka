@@ -180,6 +180,38 @@ func TestMigrateLegacy_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestMigrateLegacy_NormalizesEmptyVersion exercises the legacy-compatibility
+// contract end-to-end: a pre-DefaultStateRootVersion SQLite row (version
+// column NULL or empty) migrates into the destination store with
+// meta.Version == DefaultStateRootVersion via types.NormalizeVersion. This
+// is the only path in production that can produce a Version-empty row at the
+// boundary; once the migrate ships it, the destination row carries the
+// current binary's composition tag.
+func TestMigrateLegacy_NormalizesEmptyVersion(t *testing.T) {
+	legacyPath := writeLegacyDB(t, []legacyTestSession{
+		{escrowID: "no-ver", version: "", status: "active", balance: 1000, latestNonce: 2, lastFinalized: 1},
+	})
+
+	dest := NewMemory()
+	resolve := func(string) (uint64, error) { return 9, nil }
+
+	n, err := MigrateLegacySQLite(legacyPath, dest, resolve)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	meta, err := dest.GetSessionMeta("no-ver")
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultStateRootVersion, meta.Version,
+		"legacy empty version must be normalized to DefaultStateRootVersion")
+	require.Equal(t, uint64(9), meta.EpochID)
+	require.Equal(t, uint64(2), meta.LatestNonce)
+	require.Equal(t, uint64(1), meta.LastFinalized)
+
+	diffs, err := dest.GetDiffs("no-ver", 1, 2)
+	require.NoError(t, err)
+	require.Len(t, diffs, 2)
+}
+
 func TestMigrateLegacy_NoFile_NoOp(t *testing.T) {
 	dest := NewMemory()
 	n, err := MigrateLegacySQLite(filepath.Join(t.TempDir(), "missing.db"), dest, func(string) (uint64, error) { return 0, nil })

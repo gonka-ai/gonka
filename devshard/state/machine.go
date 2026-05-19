@@ -115,7 +115,7 @@ func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 // Empty values fall back to types.DefaultStateRootVersion.
 func WithVersion(version string) SMOption {
 	return func(sm *StateMachine) {
-		sm.state.Version = normalizeBoundVersion(version)
+		sm.state.Version = types.NormalizeVersion(version)
 	}
 }
 

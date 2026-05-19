@@ -37,7 +37,7 @@ func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint3
 
 	return &SettlementPayload{
 		EscrowID:   escrowID,
-		Version:    normalizeBoundVersion(st.Version),
+		Version:    types.NormalizeVersion(st.Version),
 		Nonce:      nonce,
 		Fees:       st.Fees,
 		RestHash:   restHash,

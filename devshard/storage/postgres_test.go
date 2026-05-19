@@ -119,6 +119,9 @@ func TestPostgres_CreateSession_ConflictingEpoch(t *testing.T) {
 func TestPostgres_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestPostgres(t))
 }
+func TestPostgres_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
+	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestPostgres(t))
+}
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestPostgres(t))
 }

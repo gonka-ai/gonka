@@ -433,7 +433,7 @@ func (s *SQLite) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := normalizeBindingVersion(params.Version)
+	requestedVersion := types.NormalizeVersion(params.Version)
 
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
@@ -510,7 +510,7 @@ func (s *SQLite) sessionVersion(p *epochPool, escrowID string) (string, error) {
 		return "", err
 	}
 	if version.Valid {
-		return normalizeBindingVersion(version.String), nil
+		return types.NormalizeVersion(version.String), nil
 	}
 	return types.DefaultStateRootVersion, nil
 }

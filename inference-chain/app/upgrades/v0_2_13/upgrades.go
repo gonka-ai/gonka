@@ -101,12 +101,29 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	}
 	params.DevshardEscrowParams.MaxEscrowsPerEpoch = MaxEscrowsPerEpoch
 	params.DevshardEscrowParams.MaxNonce = MaxNonce
+
+	// Initialize DefaultSealGraceNonces for existing chains. The field is new
+	// in v0.2.13: a fresh-genesis chain seeds it from
+	// types.DefaultDevshardSealGraceNonces(GroupSize), but an existing chain
+	// upgrading from <=v0.2.12 deserializes it to 0. Leaving 0 would diverge
+	// from fresh-genesis state and break any consumer that reads the chain
+	// default (e.g. governance UIs, AppExport parsers, future on-chain
+	// callers). We backfill the canonical value here, using the existing
+	// GroupSize when present so the derivation matches genesis exactly.
+	if params.DevshardEscrowParams.DefaultSealGraceNonces == 0 {
+		groupSize := params.DevshardEscrowParams.GroupSize
+		if groupSize == 0 {
+			groupSize = types.DefaultDevshardGroupSize
+		}
+		params.DevshardEscrowParams.DefaultSealGraceNonces = types.DefaultDevshardSealGraceNonces(groupSize)
+	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("set devshard escrow params", types.Upgrades,
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
-		"max_nonce", MaxNonce)
+		"max_nonce", MaxNonce,
+		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces)
 	return nil
 }
 

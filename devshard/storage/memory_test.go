@@ -18,6 +18,10 @@ func TestMemory_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, NewMemory())
 }
 
+func TestMemory_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
+	runCreateSession_LegacyEmptyVersionNormalizes(t, NewMemory())
+}
+
 func TestMemory_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, NewMemory())
 }

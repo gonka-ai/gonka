@@ -150,7 +150,7 @@ func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees ui
 
 // ComputeVersionHash computes sha256 over the bound session version string.
 func ComputeVersionHash(version string) []byte {
-	sum := sha256.Sum256([]byte(normalizeBoundVersion(version)))
+	sum := sha256.Sum256([]byte(types.NormalizeVersion(version)))
 	return sum[:]
 }
 
@@ -158,7 +158,7 @@ func resolveVersion(version ...string) string {
 	if len(version) == 0 {
 		return types.DefaultStateRootVersion
 	}
-	return normalizeBoundVersion(version[0])
+	return types.NormalizeVersion(version[0])
 }
 
 // computeWarmKeysHash computes sha256 over sorted (slotID, address) pairs.

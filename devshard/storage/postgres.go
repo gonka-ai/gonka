@@ -295,7 +295,7 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := normalizeBindingVersion(params.Version)
+	requestedVersion := types.NormalizeVersion(params.Version)
 
 	ctx := context.Background()
 	if err := s.ensurePartition(ctx, params.EpochID); err != nil {
@@ -361,7 +361,7 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	}
 	normalizedStoredVersion := types.DefaultStateRootVersion
 	if storedVersion != nil {
-		normalizedStoredVersion = normalizeBindingVersion(*storedVersion)
+		normalizedStoredVersion = types.NormalizeVersion(*storedVersion)
 	}
 	if normalizedStoredVersion != requestedVersion {
 		return fmt.Errorf("%w: escrow %s exists with version %s, requested %s",
