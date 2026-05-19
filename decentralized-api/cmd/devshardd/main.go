@@ -34,6 +34,7 @@ import (
 	"decentralized-api/apiconfig"
 	internaldevshard "decentralized-api/internal/devshard"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/logging"
 	"decentralized-api/payloadstorage"
 
 	igniteclient "github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
@@ -165,7 +166,7 @@ func main() {
 	}
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, boundRuntimeVersion, br, payloadStore, recorder)
 	if err := manager.RecoverSessions(); err != nil {
-		slog.Warn("recover sessions failed", "error", err)
+		logging.Warn("recover sessions failed", chaintypes.System, "error", err)
 	}
 	store.Start()
 	manager.SetReady()

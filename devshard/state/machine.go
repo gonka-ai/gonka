@@ -861,9 +861,6 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 	}
 
-	if ok {
-		return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
-	}
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 

@@ -36,10 +36,22 @@ type payloadPruneSink struct {
 	store         payloadstorage.PayloadStorage
 	fallbackEpoch func() uint64
 
-	ctx          context.Context
-	cancel       context.CancelFunc
+	// workerCtx is the parent context for in-flight DeleteInference calls. It
+	// stays alive across normal shutdown so the queue actually drains;
+	// shutdown cancels it only after the caller's outer context times out,
+	// so a slow storage backend cannot outlive HostManager.Close.
+	workerCtx    context.Context
+	workerCancel context.CancelFunc
+
+	// mu coordinates send-vs-close on queue. Senders take RLock and check
+	// closed before sending; shutdown takes the write lock to flip closed
+	// and close the channel atomically. RLock contention with the host is
+	// limited to the (very short) shutdown window.
+	mu     sync.RWMutex
+	closed bool
+	queue  chan pruneJob
+
 	wg           sync.WaitGroup
-	queue        chan pruneJob
 	shutdownOnce sync.Once
 }
 
@@ -56,8 +68,8 @@ func newPayloadPruneSink(store payloadstorage.PayloadStorage, fallbackEpoch func
 	s := &payloadPruneSink{
 		store:         store,
 		fallbackEpoch: fallbackEpoch,
-		ctx:           ctx,
-		cancel:        cancel,
+		workerCtx:     ctx,
+		workerCancel:  cancel,
 		queue:         make(chan pruneJob, pruneQueueCapacity),
 	}
 	for i := 0; i < pruneWorkerCount; i++ {
@@ -69,12 +81,11 @@ func newPayloadPruneSink(store payloadstorage.PayloadStorage, fallbackEpoch func
 
 // OnInferencePrunable enqueues a delete without blocking the host mutex.
 // ErrNotFound on delete is success; a full queue drops the job and relies on
-// epoch PruneEpoch as backstop.
+// epoch PruneEpoch as backstop. Safe to call concurrently with shutdown:
+// senders check the closed flag under RLock so send-on-closed-channel is not
+// possible.
 func (s *payloadPruneSink) OnInferencePrunable(event host.InferencePruneEvent) {
 	if s == nil || s.store == nil {
-		return
-	}
-	if s.ctx.Err() != nil {
 		return
 	}
 
@@ -93,9 +104,13 @@ func (s *payloadPruneSink) OnInferencePrunable(event host.InferencePruneEvent) {
 		storageKey:  devshardserver.PayloadKey(event.EscrowID, event.InferenceID),
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return
+	}
 	select {
 	case s.queue <- job:
-	case <-s.ctx.Done():
 	default:
 		logging.Warn("payload prune queue full, dropping event", inferenceTypes.PayloadStorage,
 			"escrow_id", event.EscrowID,
@@ -115,7 +130,7 @@ func (s *payloadPruneSink) worker() {
 }
 
 func (s *payloadPruneSink) runDelete(job pruneJob) {
-	ctx, cancel := context.WithTimeout(s.ctx, pruneDeleteTimeout)
+	ctx, cancel := context.WithTimeout(s.workerCtx, pruneDeleteTimeout)
 	defer cancel()
 
 	err := deletePayloadAtEpoch(ctx, s.store, job.storageKey, job.epochID)
@@ -134,26 +149,39 @@ func (s *payloadPruneSink) runDelete(job pruneJob) {
 	)
 }
 
-// shutdown stops accepting work, drains the queue, and waits for workers.
-// It is safe to call more than once.
+// shutdown stops accepting new work and drains the queue. Workers complete
+// their current and queued deletes using workerCtx (not cancelled here) so
+// the drain is honored. If the caller's ctx fires before drain completes,
+// workerCtx is cancelled to abort in-flight DeleteInference calls and the
+// method returns ctx.Err(); a final wg.Wait keeps workers from outliving the
+// payload store close that follows HostManager.Close. Idempotent.
 func (s *payloadPruneSink) shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
 	var waitErr error
 	s.shutdownOnce.Do(func() {
-		s.cancel()
+		s.mu.Lock()
+		s.closed = true
 		close(s.queue)
+		s.mu.Unlock()
+
 		done := make(chan struct{})
 		go func() {
 			s.wg.Wait()
 			close(done)
 		}()
+
 		select {
 		case <-done:
+			s.workerCancel()
+			return
 		case <-ctx.Done():
 			waitErr = ctx.Err()
 		}
+
+		s.workerCancel()
+		s.wg.Wait()
 	})
 	return waitErr
 }

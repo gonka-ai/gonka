@@ -1,21 +1,19 @@
 package types
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestDefaultSealGraceNonces(t *testing.T) {
 	t.Run("floor", func(t *testing.T) {
-		if got := DefaultSealGraceNonces(0); got != 20 {
-			t.Fatalf("DefaultSealGraceNonces(0) = %d, want 20", got)
-		}
-		if got := DefaultSealGraceNonces(1); got != 20 {
-			t.Fatalf("DefaultSealGraceNonces(1) = %d, want 20", got)
-		}
+		require.Equal(t, uint32(20), DefaultSealGraceNonces(0))
+		require.Equal(t, uint32(20), DefaultSealGraceNonces(1))
 	})
 
 	t.Run("scaled", func(t *testing.T) {
-		if got := DefaultSealGraceNonces(3); got != 30 {
-			t.Fatalf("DefaultSealGraceNonces(3) = %d, want 30", got)
-		}
+		require.Equal(t, uint32(30), DefaultSealGraceNonces(3))
 	})
 }
 
@@ -27,15 +25,12 @@ func TestNormalizeSessionConfig_FillsSealGraceNoncesOnlyWhenUnset(t *testing.T) 
 		ValidationRate:   1234,
 	}, 4)
 
-	if cfg.SealGraceNonces != 40 {
-		t.Fatalf("NormalizeSessionConfig filled SealGraceNonces = %d, want 40", cfg.SealGraceNonces)
-	}
-	if cfg.RefusalTimeout != 7 || cfg.ExecutionTimeout != 9 || cfg.TokenPrice != 11 || cfg.ValidationRate != 1234 {
-		t.Fatalf("NormalizeSessionConfig changed unrelated fields: %+v", cfg)
-	}
+	require.Equal(t, uint32(40), cfg.SealGraceNonces)
+	require.Equal(t, int64(7), cfg.RefusalTimeout)
+	require.Equal(t, int64(9), cfg.ExecutionTimeout)
+	require.Equal(t, uint64(11), cfg.TokenPrice)
+	require.Equal(t, uint32(1234), cfg.ValidationRate)
 
 	explicit := NormalizeSessionConfig(SessionConfig{SealGraceNonces: 77}, 4)
-	if explicit.SealGraceNonces != 77 {
-		t.Fatalf("NormalizeSessionConfig overwrote explicit SealGraceNonces: got %d, want 77", explicit.SealGraceNonces)
-	}
+	require.Equal(t, uint32(77), explicit.SealGraceNonces)
 }
