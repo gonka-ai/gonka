@@ -1,6 +1,6 @@
 # Gonka testnet — host join guide
 
-Verified join procedure for **gonka-testnet**. Use this document to bring up a new host from scratch: sync the chain via state sync, register as a participant, and serve inference.
+Use this document to bring up a new host from scratch and join **gonka-testnet**: sync the chain via state sync, register as a participant, and serve inference.
 
 ## Quick links
 
@@ -10,7 +10,7 @@ Verified join procedure for **gonka-testnet**. Use this document to bring up a n
 | Chain binary (on-chain) | [inferenced v0.2.13](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.13) |
 | CLI for keygen (off-chain) | [inferenced v0.2.12](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.12) |
 | Official quickstart | https://gonka.ai/docs/host/quickstart/ |
-| Repo branch for deploy | `gm/microrelease` |
+| Repo branch for deploy | `[gm/microrelease](https://github.com/gonka-ai/gonka/tree/gm/microrelease)` |
 
 ## Prerequisites
 
