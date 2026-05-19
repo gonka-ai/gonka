@@ -697,6 +697,23 @@ func (k Keeper) MintTokens(ctx sdk.Context, contractAddr string, recipient strin
 
 // handleCompletedBridgeTransaction handles minting tokens when a bridge transaction is completed
 func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *types.BridgeTransaction) error {
+	alreadyCompleted, err := k.isBridgeDepositEventCompleted(ctx, bridgeTx)
+	if err != nil {
+		return fmt.Errorf("failed to check bridge deposit completion registry: %w", err)
+	}
+	if alreadyCompleted {
+		k.LogWarn("Bridge exchange: duplicate L1 deposit completion blocked",
+			types.Messages,
+			"chainId", bridgeTx.ChainId,
+			"blockNumber", bridgeTx.BlockNumber,
+			"receiptIndex", bridgeTx.ReceiptIndex,
+			"contractAddress", bridgeTx.ContractAddress,
+			"ownerAddress", bridgeTx.OwnerAddress,
+			"amount", bridgeTx.Amount,
+		)
+		return nil
+	}
+
 	// Check if this is a native token release (WGNK burn on Ethereum)
 	isBridgeContract := k.IsBridgeContractAddress(ctx, bridgeTx.ChainId, bridgeTx.ContractAddress)
 	if isBridgeContract {
@@ -714,7 +731,7 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 			"amount", bridgeTx.Amount,
 			"chainId", bridgeTx.ChainId)
 
-		return nil
+		return k.markBridgeDepositEventCompleted(ctx, bridgeTx)
 	}
 
 	// Handle wrapped token minting (existing logic)
@@ -738,7 +755,7 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 		"recipient", bridgeTx.OwnerAddress,
 		"amount", bridgeTx.Amount)
 
-	return nil
+	return k.markBridgeDepositEventCompleted(ctx, bridgeTx)
 }
 
 // GetAllBridgeTokenMetadata retrieves all bridge token metadata from chain state

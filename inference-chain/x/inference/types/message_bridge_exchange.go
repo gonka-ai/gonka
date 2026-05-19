@@ -41,6 +41,9 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	if len(msg.OwnerAddress) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "ownerAddress is required")
 	}
+	if _, err := sdk.AccAddressFromBech32(msg.OwnerAddress); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid ownerAddress (%s)", err)
+	}
 	if len(msg.OwnerPubKey) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "ownerPubKey is required")
 	}
@@ -56,16 +59,18 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	if len(msg.ReceiptsRoot) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptsRoot is required")
 	}
-	// numeric strings: blockNumber and receiptIndex must be unsigned integers
-	if !reDigits.MatchString(msg.BlockNumber) {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber must be a base-10 unsigned integer string")
+	// numeric strings: blockNumber and receiptIndex must be unsigned integers without leading zeros
+	if !reDigits.MatchString(msg.BlockNumber) || !decimalStringWithoutLeadingZeros(msg.BlockNumber) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber must be a base-10 unsigned integer string without leading zeros")
 	}
-	if !reDigits.MatchString(msg.ReceiptIndex) {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptIndex must be a base-10 unsigned integer string")
+	if !reDigits.MatchString(msg.ReceiptIndex) || !decimalStringWithoutLeadingZeros(msg.ReceiptIndex) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptIndex must be a base-10 unsigned integer string without leading zeros")
 	}
-	// amount must be a positive integer (no decimal point) in base-10
-	if !reDigits.MatchString(msg.Amount) {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be a base-10 unsigned integer string")
+	if !reDigits.MatchString(msg.Amount) || !decimalStringWithoutLeadingZeros(msg.Amount) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be a base-10 unsigned integer string without leading zeros")
+	}
+	if !isValidReceiptsRootHex(msg.ReceiptsRoot) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptsRoot must be 0x-prefixed 32-byte hex")
 	}
 	if bi, ok := new(big.Int).SetString(msg.Amount, 10); !ok || bi.Sign() <= 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be > 0")

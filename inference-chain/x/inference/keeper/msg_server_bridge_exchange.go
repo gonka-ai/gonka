@@ -54,18 +54,11 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	// Create transaction object with all the content for secure validation
-	// ContractAddress is normalized to lowercase to ensure consistent dedup and comparison
-	// regardless of EIP-55 checksum casing used by individual validator nodes.
-	proposedTx := &types.BridgeTransaction{
-		ChainId:         msg.OriginChain,
-		ContractAddress: strings.ToLower(msg.ContractAddress),
-		OwnerAddress:    msg.OwnerAddress,
-		Amount:          msg.Amount,
-		BlockNumber:     msg.BlockNumber,
-		ReceiptIndex:    msg.ReceiptIndex,
-		ReceiptsRoot:    msg.ReceiptsRoot,
-		// Status and other fields will be set later
+	// Normalize all fields that feed vote-aggregation keys and mint deduplication.
+	proposedTx, err := buildCanonicalBridgeTransaction(msg)
+	if err != nil {
+		k.LogError("Bridge exchange: invalid canonical transaction fields", types.Messages, "error", err)
+		return nil, fmt.Errorf("invalid bridge exchange content: %w", err)
 	}
 
 	// Check if this exact transaction content has already been processed
