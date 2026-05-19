@@ -10,7 +10,7 @@ Use this document to bring up a new host from scratch and join **gonka-testnet**
 | Chain binary (on-chain) | [inferenced v0.2.13](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.13) |
 | CLI for keygen (off-chain) | [inferenced v0.2.12](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.12) |
 | Official quickstart | https://gonka.ai/docs/host/quickstart/ |
-| Repo branch for deploy | `[gm/microrelease](https://github.com/gonka-ai/gonka/tree/gm/microrelease)` |
+| Repo branch for deploy | [gm/microrelease](https://github.com/gonka-ai/gonka/tree/gm/microrelease) |
 
 ## Prerequisites
 
