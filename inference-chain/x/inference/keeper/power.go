@@ -64,26 +64,43 @@ func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epo
 	return k.epochGroupFromData(data), nil
 }
 
-// GetSubGroupDataWithLiveMembers returns the EpochGroupData for a model subgroup
-// together with the set of live SDK-group members for that subgroup, in a single pass.
-func (k Keeper) GetSubGroupDataWithLiveMembers(ctx context.Context, modelId string) (types.EpochGroupData, map[string]bool, error) {
+// GetLiveSubGroupsForCurrentEpoch returns EpochGroupData and the set of live
+// SDK-group members for every model subgroup of the current epoch group,
+// resolving the current epoch group exactly once. Both maps are keyed by
+// model id; callers may look up by any modelId, with missing entries treated
+// as "no data" (zero-value EpochGroupData, nil live set).
+//
+// Used by SamplePreservedForEpisode to avoid a per-model GetCurrentEpochGroup
+// round-trip when sampling across many model subgroups in one episode.
+func (k Keeper) GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (
+	map[string]types.EpochGroupData,
+	map[string]map[string]bool,
+	error,
+) {
 	currentGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		return types.EpochGroupData{}, nil, err
+		return nil, nil, err
 	}
-	subGroup, err := currentGroup.GetSubGroup(ctx, modelId)
-	if err != nil {
-		return types.EpochGroupData{}, nil, err
+	modelIds := currentGroup.GroupData.SubGroupModels
+	subGroupDataByModel := make(map[string]types.EpochGroupData, len(modelIds))
+	liveSetsByModel := make(map[string]map[string]bool, len(modelIds))
+	for _, modelId := range modelIds {
+		subGroup, err := currentGroup.GetSubGroup(ctx, modelId)
+		if err != nil {
+			return nil, nil, err
+		}
+		members, err := subGroup.GetGroupMembers(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		liveSet := make(map[string]bool, len(members))
+		for _, m := range members {
+			liveSet[m.Member.Address] = true
+		}
+		subGroupDataByModel[modelId] = *subGroup.GroupData
+		liveSetsByModel[modelId] = liveSet
 	}
-	members, err := subGroup.GetGroupMembers(ctx)
-	if err != nil {
-		return types.EpochGroupData{}, nil, err
-	}
-	liveSet := make(map[string]bool, len(members))
-	for _, m := range members {
-		liveSet[m.Member.Address] = true
-	}
-	return *subGroup.GroupData, liveSet, nil
+	return subGroupDataByModel, liveSetsByModel, nil
 }
 
 func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
