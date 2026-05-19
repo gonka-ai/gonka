@@ -31,7 +31,20 @@ and route through a local `escrow_id -> epoch_id` index.
 
 ## Decisions
 
-As
+### Epoch ID Is The Partition Key
+
+Decision: `epoch_id` is `DevshardEscrow.epoch_index` from the chain.
+
+Why: The escrow pins the session's epoch once. All diffs and signatures for that
+escrow belong to that partition even if settlement happens after an epoch
+boundary.
+
+Consequence: If local storage sees the same escrow in two epochs, it is
+corruption. The code must return an error rather than choosing a side.
+
+Epoch `0`: the chain can set effective epoch index to `0`, and
+`MsgCreateDevshardEscrow` stores that value. Storage therefore treats epoch `0`
+as valid and does not use it as a missing-value sentinel.
 
 ### Postgres Mirrors Payload Storage Style
 
