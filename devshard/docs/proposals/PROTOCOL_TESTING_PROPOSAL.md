@@ -1,6 +1,6 @@
 # Protocol testing proposal (testenv + Python + Go)
 
-This document consolidates design decisions for **declarative-style protocol tests** around `subnetctl`, `subnethost`, the **mock gRPC chain**, and **timeout / voting / fault injection**. It is a **proposal**: implementation can follow in phases.
+This document consolidates design decisions for **declarative-style protocol tests** around `devshardctl`, `devshardd`, the **mock gRPC chain**, and **timeout / voting / fault injection**. It is a **proposal**: implementation can follow in phases.
 
 ---
 
@@ -8,7 +8,7 @@ This document consolidates design decisions for **declarative-style protocol tes
 
 ### High-level idea: protocol end-to-end tests
 
-**Protocol E2E tests** drive the subnet **as it actually runs**: a **user-facing** path (`subnetctl` over HTTP), **multiple participant processes** (`subnethost`, each with real `transport.Server`, gossip, and signing), and a **stand-in for mainnet** (`mock-server` gRPC). Assertions span **more than one binary** and **more than one hop**—for example refusal and execution timeouts, timeout **votes**, mempool and diff propagation, and behavior under **faults** (stopped containers, flaky network, or, injected bad responses of hosts).
+**Protocol E2E tests** drive the devshard **as it actually runs**: a **user-facing** path (`devshardctl` over HTTP), **multiple participant processes** (`devshardd`, each with real `transport.Server`, gossip, and signing), and a **stand-in for mainnet** (`mock-server` gRPC). Assertions span **more than one binary** and **more than one hop**—for example refusal and execution timeouts, timeout **votes**, mempool and diff propagation, and behavior under **faults** (stopped containers, flaky network, or, injected bad responses of hosts).
 
 The goal is not a single happy-path API call, but **cross-cutting protocol guarantees** observable only when those pieces are wired together.
 
@@ -27,13 +27,13 @@ So unit tests **prove local invariants**; they cannot alone prove that the **dep
 
 ### Why Testermint is not the right tool for this layer
 
-**Testermint** (the repo’s Kotlin integration stack against a **full** chain + application cluster) is aimed at **system-level** validation: many moving parts, heavier bring-up, and coupling to **live** or **dockerized** chain and API surfaces. That is valuable, but **orthogonal** to **subnet-only** protocol work.
+**Testermint** (the repo’s Kotlin integration stack against a **full** chain + application cluster) is aimed at **system-level** validation: many moving parts, heavier bring-up, and coupling to **live** or **dockerized** chain and API surfaces. That is valuable, but **orthogonal** to **devshard-only** protocol work.
 
-Subnet development needs to iterate **without** paying the cost of a full Testermint cluster for every protocol tweak. **`subnet/testenv`** exists precisely to **decouple subnet work from mainnet, testnet, and Testermint** (`subnet/testenv/README.md`): a **mock gRPC mainnet**, compose-defined participants, and a local user proxy. Protocol E2E belongs **here**, at the **subnet boundary**, not as a substitute for Testermint’s full-stack mission.
+Devshard development needs to iterate **without** paying the cost of a full Testermint cluster for every protocol tweak. **`devshard/testenv`** exists precisely to **decouple devshard work from mainnet, testnet, and Testermint** (`devshard/testenv/README.md`): a **mock gRPC mainnet**, compose-defined participants, and a local user proxy. Protocol E2E belongs **here**, at the **devshard boundary**, not as a substitute for Testermint’s full-stack mission.
 
 ### Where the testing tool lives
 
-The **protocol testing harness and fixtures** are intended to be **created and maintained under `subnet/testenv`**: Docker Compose definitions, `mock-server`, `subnethost`, testenv `subnetctl`, shell smoke scripts, and (per this proposal) a **Python/pytest** driver plus optional **control-plane** hooks on mock-server and participants. That keeps one **canonical lab** for subnet protocol behavior, separate from chain-wide Testermint jobs and from pure Go unit tests.
+The **protocol testing harness and fixtures** are intended to be **created and maintained under `devshard/testenv`**: Docker Compose definitions, `mock-server`, `devshardd`, testenv `devshardctl`, shell smoke scripts, and (per this proposal) a **Python/pytest**, **go**, **sh** drivers plus optional **control-plane** hooks on mock-server and participants. That keeps one **canonical lab** for devshard protocol behavior, separate from chain-wide Testermint jobs and from pure Go unit tests.
 
 ---
 
@@ -44,17 +44,17 @@ This is how a **declarative** scenario reads conceptually: named steps, explicit
 | Phase | Declarative intent |
 |--------|-------------------|
 | **Name** | `refusal-timeout` |
-| **Preconditions** | Compose stack healthy: `mock-server`, all `participant-*`, `subnetctl` reachable. |
+| **Preconditions** | Compose stack healthy: `mock-server`, all `participant-*`, `devshardctl` reachable. |
 | **Resolve** | Read `GET /v1/status` → current `nonce` → next inference id `nonce + 1` → executor **slot** `(nonce + 1) mod group_size` → map slot to **compose service** (e.g. default layout: `participant-{slot mod 10}`; confirm against `config.yaml`). Pick a **different** participant as **malicious verifier** (not the executor for this inference): must remain a **non-executor** slot for timeout vote rules. |
 | **Fault (executor)** | **Stop** the executor’s container (or equivalent: no TCP connect). Other participants and mock chain stay up. |
-| **Fault (malicious host)** | On the chosen verifier, enable **testenv-only** injection, e.g. **`verify-timeout` returns wrong outcome** (reject when should accept, invalid signature, malformed vote payload), and/or **block outbound gossip** (`POST …/gossip/nonce`, `…/gossip/txs`) so bad or missing fan-out is exercised. Exact mechanism: control-plane on `subnethost` or env-driven fault profile (see §6). |
+| **Fault (malicious host)** | On the chosen verifier, enable **testenv-only** injection, e.g. **`verify-timeout` returns wrong outcome** (reject when should accept, invalid signature, malformed vote payload), and/or **block outbound gossip** (`POST …/gossip/nonce`, `…/gossip/txs`) so bad or missing fan-out is exercised. Exact mechanism: control-plane on `devshardd` or env-driven fault profile (see §6). |
 | **Stimulus** | Single **`POST /v1/chat/completions`** (non-streaming is enough) with a small prompt and bounded client timeout (long enough for refusal + timeout-vote path). |
 | **Expect (client)** | HTTP **502**; response body mentions **timed out** and **REFUSED** (refusal-class timeout). |
-| **Expect (devshard / state)** | **Required.** Poll `GET /v1/debug/state` and `GET /v1/status` on subnetctl until assertions pass: **session state reflects the refusal timeout** (e.g. `status_counts.timed_out` increases, `nonce` advances as expected after the timeout diff). This is part of what we test—not a thin HTTP-only smoke. |
-| **Expect (voting / propagation)** | **Required.** **Timeout voting still succeeds:** honest verifiers supply enough **valid** votes that the protocol reaches quorum; the malicious host’s **bad vote or silence** must **not** prevent a correct outcome. Assert via subnetctl `GET /v1/debug/pending` / state snapshots and, where useful, **honest** hosts’ `GET …/mempool` and `GET …/diffs` (no reliance on the malicious host’s mempool for the final truth). |
+| **Expect (devshard / state)** | **Required.** Poll `GET /v1/debug/state` and `GET /v1/status` on devshardctl until assertions pass: **session state reflects the refusal timeout** (e.g. `status_counts.timed_out` increases, `nonce` advances as expected after the timeout diff). This is part of what we test—not a thin HTTP-only smoke. |
+| **Expect (voting / propagation)** | **Required.** **Timeout voting still succeeds:** honest verifiers supply enough **valid** votes that the protocol reaches quorum; the malicious host’s **bad vote or silence** must **not** prevent a correct outcome. Assert via devshardctl `GET /v1/debug/pending` / state snapshots and, where useful, **honest** hosts’ `GET …/mempool` and `GET …/diffs` (no reliance on the malicious host’s mempool for the final truth). |
 | **Teardown** | Clear malicious fault profile; **start** the stopped executor again; short wait if needed for the next scenario. |
 
-**Devshard** in this scenario means the **subnetctl session lab state** visible through **`/v1/status`** and **`/v1/debug/*`** (aggregates, pending txs, nonce)—what we assert changed correctly after the run, distinct from on-chain mainnet state.
+**Devshard** in this scenario means the **devshardctl session lab state** visible through **`/v1/status`** and **`/v1/debug/*`** (aggregates, pending txs, nonce)—what we assert changed correctly after the run, distinct from on-chain mainnet state.
 
 The scenario is **declarative** because it states **what** the world should look like and **what** should happen, not **how** the harness implements compose or HTTP (that stays in the driver library).
 
@@ -70,7 +70,7 @@ flowchart LR
 
   subgraph run [Run]
     E[POST /v1/chat/completions]
-    F[Subnetctl: send fails / no valid response]
+    F[Devshardctl: send fails / no valid response]
     G[Refusal path: timeout votes from honest + malicious M]
     E --> F --> G
   end
@@ -94,7 +94,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant H as Test harness
-  participant C as Subnetctl
+  participant C as Devshardctl
   participant X as Executor host
   participant M as Malicious verifier
   participant V as Honest verifiers
@@ -104,7 +104,7 @@ sequenceDiagram
   H->>X: stop container
   H->>M: inject bad timeout vote and/or block outbound gossip
   H->>C: POST /v1/chat/completions
-  C->>X: subnet send
+  C->>X: devshard send
   Note over C,X: unreachable: no usable response
   C->>M: verify-timeout
   M-->>C: wrong vote / reject / invalid
@@ -122,8 +122,8 @@ sequenceDiagram
 ## Python → Go mocks and assertion data (pointers)
 
 - **Injection (chain):** **`mock-server`** — pytest posts JSON rules to dev-only HTTP (§6.1).
-- **Injection (hosts):** **`subnethost`** — same idea (§6.2): rules shape **HTTP-level behavior** per **stage**—inference start/stream/receipt (`HandleInference`), **validation**, **`verify-timeout`**, **gossip**—via matches on **path/handler**, **nonce**, **attempt**. Pytest **reloads rules between scenario steps** (`PUT` / `POST`); Go applies them in handlers (no Python in Go). **§5** step 2; repeat the control call whenever a stage needs a new response profile; **§8** examples remain placeholders.
-- **Assertions:** combine **client responses** (e.g. chat completion) with **poll loops** over **§2** endpoints—subnetctl `/v1/status`, `/v1/debug/*`, and per-host `GET …/mempool`, `…/diffs`, `…/signatures`. Harness shape: **§5** (`Observer`, shared context); refusal-timeout table shows concrete expectations; **§10** phase 4 for a shared observers helper.
+- **Injection (hosts):** **`devshardd`** — same idea (§6.2): rules shape **HTTP-level behavior** per **stage**—inference start/stream/receipt (`HandleInference`), **validation**, **`verify-timeout`**, **gossip**—via matches on **path/handler**, **nonce**, **attempt**. Pytest **reloads rules between scenario steps** (`PUT` / `POST`); Go applies them in handlers (no Python in Go). **§5** step 2; repeat the control call whenever a stage needs a new response profile; **§8** examples remain placeholders.
+- **Assertions:** combine **client responses** (e.g. chat completion) with **poll loops** over **§2** endpoints—devshardctl `/v1/status`, `/v1/debug/*`, and per-host `GET …/mempool`, `…/diffs`, `…/signatures`. Harness shape: **§5** (`Observer`, shared context); refusal-timeout table shows concrete expectations; **§10** phase 4 for a shared observers helper.
 
 ---
 
@@ -131,7 +131,7 @@ sequenceDiagram
 
 - **Reproducible** scenarios (refusal timeout, execution timeout, recover-on-retry, voting, byzantine behavior).
 - **Readable** tests: structure and data look “declarative”; assertions stay in a real language.
-- **Observable** system: record **subnetctl** and **every participant** where needed (mempool, diffs, signatures, debug endpoints).
+- **Observable** system: record **devshardctl** and **every participant** where needed (mempool, diffs, signatures, debug endpoints).
 - **Runtime control**: change mock / fault behavior **between phases** from the test harness (e.g. Python) without rebuilding images.
 
 Non-goals: running arbitrary Python inside Go; production exposure of fault APIs.
@@ -142,29 +142,29 @@ Non-goals: running arbitrary Python inside Go; production exposure of fault APIs
 
 Endpoints and services tests and tooling can call during protocol scenarios.
 
-### 2.1 User proxy — subnetctl (testenv)
+### 2.1 User proxy — devshardctl (testenv)
 
 | Area | Base path | Examples |
 |------|-----------|----------|
 | OpenAI-style API | `/v1/…` | `POST /v1/chat/completions` |
 | Session / debug | `/v1/…` | `GET /v1/status`, `GET /v1/debug/state`, `GET /v1/debug/pending`, `POST /v1/finalize` |
 
-Implementation: `subnet/testenv/cmd/subnetctl/`.
+Implementation: `devshard/testenv/cmd/devshardctl/`.
 
 ### 2.2 Participants — `transport.Server`
 
 | Area | Base path | Examples |
 |------|-----------|----------|
-| Subnet protocol (signed POSTs) | `/v1/subnet/sessions/:id/…` | inference, gossip, verify-timeout, etc. |
+| Devshard protocol (signed POSTs) | `/v1/devshard/sessions/:id/…` | inference, gossip, verify-timeout, etc. |
 | Read-only observation (GET) | same prefix | `GET …/diffs`, `GET …/mempool`, `GET …/signatures` |
 
-**Note:** GET routes currently **skip auth** in transport (`subnet/transport/server.go`). Treat them as **test / lab only**, not a public security boundary.
+**Note:** GET routes currently **skip auth** in transport (`devshard/transport/server.go`). Treat them as **test / lab only**, not a public security boundary.
 
 ### 2.3 Mock mainnet — `mock-server`
 
 | Transport | Where | Examples |
 |-----------|--------|----------|
-| gRPC | listener port from config (e.g. `9090`) | `MockQuery`, `MockTx` (`subnet/testenv/cmd/mockserver`) |
+| gRPC | listener port from config (e.g. `9090`) | `MockQuery`, `MockTx` (`devshard/testenv/cmd/mockserver`) |
 | HTTP (sidecar) | **gRPC port + 1** | `GET /health`, `GET /status` |
 
 ---
@@ -198,7 +198,7 @@ YAML is fine for **static** inputs. **Voting**, **quorum**, **cross-participant 
 
 Suggested building blocks:
 
-- **`Env`**: `subnetctl_base`, `escrow_id`, `compose_dir`, `num_slots`, participant base URLs.
+- **`Env`**: `devshardctl_base`, `escrow_id`, `compose_dir`, `num_slots`, participant base URLs.
 - **`Fault`**: stop/start participant, delay, **control-plane rules** (see §6), engine mode (`fail_execution`, …).
 - **`RequestSpec`**: id, method/path/body, timeout.
 - **`Observer`**: poll `GET` endpoints on ctl + each participant; store time series for asserts.
@@ -229,13 +229,13 @@ Extend the existing HTTP server (port **gRPC + 1**) with a **dev-only** API, e.g
 
 Gate with `TESTENV_FAULT_API=1` and/or build tag; bind only on test networks; optional shared secret header.
 
-### 6.2 Participants (`subnethost`)
+### 6.2 Participants (`devshardd`)
 
 Add **`POST /test/faults`** (or **`PUT /test/rules`** with `clear`) so pytest can **reload behavior between scenario stages** without restarting the container.
 
 Rules should attach to **ingress HTTP / handler boundaries** the user traffic actually hits, not only to “the engine” as an abstract knob. Concretely, the Go side matches something like **`handler`** or **`path_prefix`** + **`escrow_id`** + **`nonce`** (or “next N calls”) and then:
 
-- **Inference path** (`HandleInference` / `…/chat/completions`): delay, non-200, truncate SSE, omit `subnet_receipt`, wrong `ConfirmedAt`, stall after receipt (execution-timeout), etc.
+- **Inference path** (`HandleInference` / `…/chat/completions`): delay, non-200, truncate SSE, omit `devshard_receipt`, wrong `ConfirmedAt`, stall after receipt (execution-timeout), etc.
 - **Validation** (validator hook / validation-related responses): force invalid, flaky, or delayed validation where the stack exposes it.
 - **Timeout votes** (`verify-timeout`): bad signature, reject, malformed body.
 - **Gossip** (`gossip/nonce`, `gossip/txs`): drop, delay, duplicate (requires `gossip` hooks).
@@ -260,7 +260,7 @@ In this codebase, “consensus” is largely **host state + signed txs + gossip*
 | Timeout vote quirks | Rules on **`verify-timeout`** handling |
 | Gossip loss | **Drop** rules on gossip send path (dev hook) |
 
-Observers: poll each host’s **`/v1/subnet/sessions/:id/mempool`** and **`diffs`** (and subnetctl **`/v1/debug/*`**) to assert **timeout txs**, **vote-related txs**, and **convergence**.
+Observers: poll each host’s **`/v1/devshard/sessions/:id/mempool`** and **`diffs`** (and devshardctl **`/v1/debug/*`**) to assert **timeout txs**, **vote-related txs**, and **convergence**.
 
 ---
 
@@ -268,8 +268,8 @@ Observers: poll each host’s **`/v1/subnet/sessions/:id/mempool`** and **`diffs
 
 | Scenario | Fault | Client expectation | Notes |
 |----------|--------|-------------------|--------|
-| **refusal-timeout** | Executor **stopped** or unreachable | **502**, body contains `timed out` and **`REFUSED`** | Latency follows subnetctl refusal / timeout path; see `subnet/docs/issues/subnetctl-network-errors-refusal-fast-path.md` for a proposed fast path. |
-| **execution-timeout** | Executor **up** but engine **never completes** finish path | **502**, body contains **execution** / **`EXECUTION`** | Requires **subnethost** fault or failing engine mode (not only `docker stop`). |
+| **refusal-timeout** | Executor **stopped** or unreachable | **502**, body contains `timed out` and **`REFUSED`** | Latency follows devshardctl refusal / timeout path; see `devshard/docs/issues/devshardctl-network-errors-refusal-fast-path.md` for a proposed fast path. |
+| **execution-timeout** | Executor **up** but engine **never completes** finish path | **502**, body contains **execution** / **`EXECUTION`** | Requires **devshardd** fault or failing engine mode (not only `docker stop`). |
 | **recover-on-retry** | Stop executor, **restart mid-flight** before refusal exhausts | **200**, valid completion | Second `sendAndProcess` succeeds after revive. |
 
 ---
@@ -278,8 +278,8 @@ Observers: poll each host’s **`/v1/subnet/sessions/:id/mempool`** and **`diffs
 
 Below: **illustrative** pytest-style modules. They assume:
 
-- Stack is up (`docker compose` in `subnet/testenv`).
-- `SUBNETCTL_URL` (default `http://127.0.0.1:8081`).
+- Stack is up (`docker compose` in `devshard/testenv`).
+- `DEVSHARDCTL_URL` (default `http://127.0.0.1:8081`).
 - `docker` and `compose` available for container faults.
 - **Execution-timeout** and **control-plane** URLs are **placeholders** until Go endpoints exist (`pytest.skip` or env gate).
 
@@ -299,7 +299,7 @@ from typing import Optional
 
 import httpx
 
-DEFAULT_SUBNETCTL = os.environ.get("SUBNETCTL_URL", "http://127.0.0.1:8081")
+DEFAULT_DEVSHARDCTL = os.environ.get("DEVSHARDCTL_URL", "http://127.0.0.1:8081")
 DEFAULT_ESCROW = os.environ.get("TESTENV_ESCROW_ID", "1")
 DEFAULT_NUM_SLOTS = int(os.environ.get("NUM_SLOTS", "16"))
 COMPOSE_DIR = os.environ.get("TESTENV_COMPOSE_DIR", os.path.join(os.path.dirname(__file__), ".."))
@@ -308,7 +308,7 @@ COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 
 @dataclass
 class CtlClient:
-    base: str = DEFAULT_SUBNETCTL
+    base: str = DEFAULT_DEVSHARDCTL
     timeout: float = 200.0
 
     def status(self) -> dict:
@@ -325,7 +325,7 @@ class CtlClient:
 
     def chat_completion(self, prompt: str, stream: bool = False, max_tokens: int = 32) -> httpx.Response:
         body = {
-            "model": os.environ.get("SUBNET_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+            "model": os.environ.get("DEVSHARD_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
             "stream": stream,
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
@@ -372,7 +372,7 @@ from harness import CtlClient, executor_slot_for_next_inference, participant_ser
 
 
 @pytest.mark.integration
-def test_refusal_timeout_subnetctl():
+def test_refusal_timeout_devshardctl():
     ctl = CtlClient()
     nonce = ctl.status()["nonce"]
     slot = executor_slot_for_next_inference(nonce)
@@ -390,14 +390,14 @@ def test_refusal_timeout_subnetctl():
         start_participant(svc)
         time.sleep(2)
 
-    # Optional: assert subnetctl debug state shows timed_out count increased
+    # Optional: assert devshardctl debug state shows timed_out count increased
     st = ctl.debug_state()
     assert st.get("status_counts", {}).get("timed_out", 0) >= 1
 ```
 
 ### 8.3 Execution-timeout
 
-Requires a **Go-side** way to run the executor **without** ever emitting a successful finish for that inference (e.g. `SUBNETHOST_ENGINE_MODE=fail_execution` on the executor container, or `POST /test/faults`). Below: **structure** + skip if not configured.
+Requires a **Go-side** way to run the executor **without** ever emitting a successful finish for that inference (e.g. `DEVSHARDD_ENGINE_MODE=fail_execution` on the executor container, or `POST /test/faults`). Below: **structure** + skip if not configured.
 
 ```python
 # test_execution_timeout.py
@@ -409,9 +409,9 @@ from harness import CtlClient
 
 
 @pytest.mark.integration
-def test_execution_timeout_subnetctl():
+def test_execution_timeout_devshardctl():
     if os.environ.get("EXECUTOR_FAULT_URL", "") == "":
-        pytest.skip("Set EXECUTOR_FAULT_URL or implement subnethost fault API / engine env")
+        pytest.skip("Set EXECUTOR_FAULT_URL or implement devshardd fault API / engine env")
 
     ctl = CtlClient()
 
@@ -439,7 +439,7 @@ from harness import CtlClient, executor_slot_for_next_inference, participant_ser
 
 
 @pytest.mark.integration
-def test_recover_on_retry_subnetctl():
+def test_recover_on_retry_devshardctl():
     ctl = CtlClient()
     nonce = ctl.status()["nonce"]
     slot = executor_slot_for_next_inference(nonce)
@@ -465,17 +465,17 @@ def test_recover_on_retry_subnetctl():
 
 ---
 
-## 9. Relation to `subnetctl_timeout_check.sh`
+## 9. Relation to `devshardctl_timeout_check.sh`
 
-The shell script in `subnet/testenv/scripts/subnetctl_timeout_check.sh` implements **refusal-timeout** (and optional happy path) without Python. The **Python** suite should **subsume** that script over time: same slot math, stronger asserts (debug state, multi-participant polling), and **phased fault + control-plane** rules.
+The shell script in `devshard/testenv/scripts/devshardctl_timeout_check.sh` implements **refusal-timeout** (and optional happy path) without Python. The **Python** suite should **subsume** that script over time: same slot math, stronger asserts (debug state, multi-participant polling), and **phased fault + control-plane** rules.
 
 ---
 
 ## 10. Implementation phases (suggested)
 
-1. **Python harness + pytest** in `subnet/testenv/py/` (or repo `tests/protocol/`): `harness.py`, refusal + recover tests, CI job with compose.
+1. **Python harness + pytest** in `devshard/testenv/py/` (or repo `tests/protocol/`): `harness.py`, refusal + recover tests, CI job with compose.
 2. **`mock-server`**: `PUT /test/rules` for gRPC query/tx behavior (errors, delays, payload overrides).
-3. **`subnethost`**: engine fault modes + optional HTTP `/test/faults` for byzantine / gossip drops.
+3. **`devshardd`**: engine fault modes + optional HTTP `/test/faults` for byzantine / gossip drops.
 4. **Observers library**: poll all participant GET endpoints; assert **quorum**, **timeout tx propagation**, **rejection of invalid signatures**.
 5. Deprecate or wrap shell script as `make protocol-smoke`.
 
@@ -483,12 +483,12 @@ The shell script in `subnet/testenv/scripts/subnetctl_timeout_check.sh` implemen
 
 ## 11. References (code)
 
-- Subnetctl proxy / timeouts: `subnet/testenv/cmd/subnetctl/proxy.go`
-- Session / executor slot: `subnet/user/user.go` (`composeDiffLocked`, `SendOnly`)
-- Transport client: `subnet/transport/client.go`
-- Participant HTTP routes: `subnet/transport/server.go`
-- Mock server HTTP sidecar: `subnet/testenv/cmd/mockserver/main.go`
-- Shell smoke: `subnet/testenv/scripts/subnetctl_timeout_check.sh`
+- Devshardctl proxy / timeouts: `devshard/testenv/cmd/devshardctl/proxy.go`
+- Session / executor slot: `devshard/user/user.go` (`composeDiffLocked`, `SendOnly`)
+- Transport client: `devshard/transport/client.go`
+- Participant HTTP routes: `devshard/transport/server.go`
+- Mock server HTTP sidecar: `devshard/testenv/cmd/mockserver/main.go`
+- Shell smoke: `devshard/testenv/scripts/devshardctl_timeout_check.sh`
 
 ---
 

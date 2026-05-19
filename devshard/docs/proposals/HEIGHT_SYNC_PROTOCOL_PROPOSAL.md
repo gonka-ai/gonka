@@ -5,6 +5,8 @@ attests to a mainnet `(height, block_hash)` pair. This section is the
 sole input to cross-host time alignment, timeout decisions, and the
 `IsStrictlyConfirmed(h)` predicate that downstream protocols
 (cPoC, finalization) gate verdicts on.
+`block_hash` is a source of determenistic randomness that is unknown
+in advance, used by [`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md)
 
 This document is the **canonical, single-version** spec. The
 in-tree implementation matches this document; the test catalog
@@ -15,28 +17,30 @@ Related docs:
 [`height-sync-tests.md`](../height-sync-tests.md) (test catalog — implemented and planned),
 [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md),
 [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md),
-[`VALIDATION_PROTOCOL_RANDOMNESS_PROPOSAL.md`](./VALIDATION_PROTOCOL_RANDOMNESS_PROPOSAL.md).
+[`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md).
 
 ---
 
 ## Table of contents
 
 1. [Summary](#1-summary)
-2. [Goals and non-goals](#2-goals-and-non-goals)
-3. [Glossary](#3-glossary)
-4. [Architecture overview](#4-architecture-overview)
-5. [Wire format](#5-wire-format)
-6. [Sync modes (Omit / Anchor / Strong)](#6-sync-modes-omit--anchor--strong)
-7. [Cadence (sync turns, `K`, `slots_num`, forced turns)](#7-cadence)
-8. [Producer rules](#8-producer-rules)
-9. [Receiver pipeline](#9-receiver-pipeline)
-10. [Trust model and signatures](#10-trust-model-and-signatures)
-11. [Carry-forward, provenance, attribution](#11-carry-forward-provenance-attribution)
-12. [Confirmation API (`IsStrictlyConfirmed`)](#12-confirmation-api)
-13. [cPoC integration — full API](#13-cpoc-integration-api)
-14. [Attack model and mitigations](#14-attack-model)
-15. [Defaults and configuration](#15-defaults-and-configuration)
-16. [Status and milestones](#16-status-and-milestones)
+2. [Problem](#2-problem)
+3. [High-level overview of protocol](#3-high-level-overview-of-protocol)
+4. [Goals](#4-goals)
+5. [Glossary](#5-glossary)
+6. [Architecture overview](#6-architecture-overview)
+7. [Wire format](#7-wire-format)
+8. [Sync modes (Omit / Anchor / Strong)](#8-sync-modes-omit--anchor--strong)
+9. [Cadence (sync turns, `K`, `slots_num`, forced turns)](#9-cadence)
+10. [Producer rules](#10-producer-rules)
+11. [Receiver pipeline](#11-receiver-pipeline)
+12. [Trust model and signatures](#12-trust-model-and-signatures)
+13. [Carry-forward, provenance, attribution](#13-carry-forward-provenance-attribution)
+14. [Confirmation API (`IsStrictlyConfirmed`)](#14-confirmation-api)
+15. [cPoC integration — full API](#15-cpoc-integration-api)
+16. [Attack model and mitigations](#16-attack-model)
+17. [Defaults and configuration](#17-defaults-and-configuration)
+18. [Status and milestones](#18-status-and-milestones)
 
 ---
 
@@ -73,9 +77,27 @@ A single **`IsStrictlyConfirmed(h)`** predicate exposes a discrete
 
 ---
 
-## 2. Goals and non-goals
+## 2. Problem
 
-### Goals
+At devshard we need source of mainnet height and randomness, that is unknowm in advance but is determenistic to make all hosts and user to aggree.
+
+Each host has it's own latest `(height, block_hash)` oracle (inference chain grpc), and the prove by inference chain validators signatures. But hosts should aggree that any `height` provided to protocol is really latest. So there should be height sync protocol provided in this doc.
+
+## 3. High-level overview of protocol
+
+As devshard is designed for high throughput we aim to minimize extra data transferred in messages and minimize checks of minnet signatures. Also we are minimizing gossipping that should happen only on disputes and settlement to minimize traffic (as one host could be in a lot of devshard's)
+
+So main design decitions are made:
+
+- Height synchronization happens not on every nonce but only in specialized windows, where we add to request/response only `(height, block_hash)` and originator's (host that is responding to request) signature, to proove origin of this data for possible disputes. User is carrying forward `(height, block_hash)` at next requests to propogate this data to other hosts.
+- We trust heights in the future without additional mainnet proove if the height is close to the one we know is current. If there is a large disagreement between hosts on height (`height_in_the_future - known_height = |Δ| > D`) we use the full data from mainnet (block hash and validators signatures) to validate the height
+- If we find that any earlier provided by any host `height` doesn't match the oracle `block_hash` we start the dispute
+
+As the result we provide API at devshardd and devshardctl that gives latest height, block hash and the knowledge if majority of devshard network participants agree on this.
+
+---
+
+## 4. Goals
 
 1. **Cheap periodic alignment** — Anchor (no `LightBlock`) on a
    sync-turn schedule keeps every host's view of mainnet time within
@@ -97,15 +119,9 @@ A single **`IsStrictlyConfirmed(h)`** predicate exposes a discrete
    their own can still carry signed host tips between hosts in the
    round-robin and reach `(C-quorum)` confirmation.
 
-### Non-goals
-
-- **Slashing dispatch.** Height sync exposes evidence APIs; the
-  dispute layer / cPoC owns on-chain `MsgHeightSyncEvidence` and
-  slashing.
-
 ---
 
-## 3. Glossary
+## 5. Glossary
 
 | Term | Meaning |
 | ---- | ------- |
@@ -128,7 +144,7 @@ A single **`IsStrictlyConfirmed(h)`** predicate exposes a discrete
 
 ---
 
-## 4. Architecture overview
+## 6. Architecture overview
 
 ```mermaid
 flowchart LR
@@ -170,7 +186,7 @@ Key invariants:
 
 ---
 
-## 5. Wire format
+## 7. Wire format
 
 `HeightSyncSection` is carried as protobuf field on the inference
 envelope and JSON-mirrored for tooling. Field numbers are stable.
@@ -232,7 +248,7 @@ JSON mirror:
 
 ---
 
-## 6. Sync modes (Omit / Anchor / Strong)
+## 8. Sync modes (Omit / Anchor / Strong)
 
 ```mermaid
 stateDiagram-v2
@@ -267,13 +283,13 @@ cadence step — it is the disagreement / dispute path.
 
 ---
 
-## 7. Cadence
+## 9. Cadence
 
 ### Sync-turn windows
 
 For a session direction, on outgoing nonce `n`:
 
-- **Initial sync turn:** `1 ≤ n ≤ slots_num` → Anchor (or Strong, see §8).
+- **Initial sync turn:** `1 ≤ n ≤ slots_num` → Anchor (or Strong, see §10).
 - **Periodic sync turns:** for every `i ≥ 1`, `i·K ≤ n ≤ i·K + slots_num − 1` → Anchor.
 - All other nonces → **Omit**, unless a force directive or lazy carry-forward applies.
 
@@ -319,7 +335,7 @@ The receiver classifies this as **`VALID_LAZY_ANCHOR`** (audit tag
 
 ---
 
-## 8. Producer rules
+## 10. Producer rules
 
 ### Hosts (have own oracle)
 
@@ -336,7 +352,7 @@ The receiver classifies this as **`VALID_LAZY_ANCHOR`** (audit tag
   `peer_aligned_height` differs from local tip by `> D`: produce
   Strong by attaching the cached `LightBlock` for `H` (field 9).
 - On inbound **requests**: do not sign anything; classify via the
-  receiver pipeline (§9).
+  receiver pipeline (§11).
 
 ### Courier user (no own oracle)
 
@@ -351,7 +367,7 @@ The receiver classifies this as **`VALID_LAZY_ANCHOR`** (audit tag
 
 ---
 
-## 9. Receiver pipeline
+## 11. Receiver pipeline
 
 ```mermaid
 flowchart TD
@@ -432,7 +448,7 @@ Normative steps for a non-Omit envelope:
 
 ---
 
-## 10. Trust model and signatures
+## 12. Trust model and signatures
 
 The protocol is **asymmetric**: responses are signed, requests are
 trusted, exculpation is on-demand.
@@ -466,7 +482,7 @@ sequenceDiagram
 
 1. Carry copies originator fields (6, 7) from the cached blob.
 2. `Carry()` strips field 8 before sending.
-3. Host accepts the section subject to receiver pipeline (§9). No
+3. Host accepts the section subject to receiver pipeline (§11). No
    inline signature is required or verified.
 
 ### Exculpation
@@ -496,7 +512,7 @@ When Strong is on the wire (`light_block` non-empty), validation is
 
 ---
 
-## 11. Carry-forward, provenance, attribution
+## 13. Carry-forward, provenance, attribution
 
 ### Rules
 
@@ -525,7 +541,7 @@ the same `H`.
 
 ---
 
-## 12. Confirmation API
+## 14. Confirmation API
 
 ### Contract
 
@@ -593,12 +609,12 @@ ring and clock. Two verifiers may transiently disagree (`pending` vs
 
 ---
 
-## 13. cPoC integration — full API
+## 15. cPoC integration — full API
 
 The following Go APIs are the **stable surface** that cPoC and
 finalization consume. Implementation paths in parentheses.
 
-### 13.1 Discrete confirmation predicate
+### 15.1 Discrete confirmation predicate
 
 ```go
 // On the user side (courier):
@@ -624,7 +640,7 @@ case heightsync.ConfirmStale:
 }
 ```
 
-### 13.2 Observed height (courier heartbeat)
+### 15.2 Observed height (courier heartbeat)
 
 ```go
 func (c *transport.HTTPClient) ObservedHeightNow() (uint64, bool)
@@ -635,7 +651,7 @@ courier peer-tip cache; `(0, false)` when no fresh tip exists or
 height sync is not configured. Used by cPoC C14 heartbeats — a
 `false` return means "Inconclusive — no fresh height".
 
-### 13.3 Exculpation evidence (dispute layer)
+### 15.3 Exculpation evidence (dispute layer)
 
 ```go
 // User side: produce the originator's signed blob for (originator, h).
@@ -648,7 +664,7 @@ Returned by the courier cache (`HeightSyncPeerTips.OriginSignedBlobFor`).
 Verifiable with `heightsync.VerifyOriginDetached(verifier, sec, blob, sig)`
 without reaching the user.
 
-### 13.4 Strong-grade evidence (Strong mode)
+### 15.4 Strong-grade evidence (Strong mode)
 
 ```go
 // Host side: return cached LightBlock for h, if available.
@@ -663,7 +679,7 @@ dispute packet may carry both halves:
 
 A mock dispute verifier returns `DISPUTE_ORIGINATOR` when both pass.
 
-### 13.5 Cold-start seed (optional)
+### 15.5 Cold-start seed (optional)
 
 ```go
 // Server option:
@@ -677,7 +693,7 @@ Anchor (originator-signed). The courier verifies + caches it before
 issuing the first inference — useful for short-lived sessions where
 the first inference is not in a sync turn.
 
-### 13.6 Force a sync turn
+### 15.6 Force a sync turn
 
 ```go
 // Operator / dispute / cPoC trigger:
@@ -688,7 +704,7 @@ Opens an `ActiveForcedTurn` in the next diff; every envelope in
 `[trigger, trigger + slots_num − 1]` MUST be Anchor (or Strong when
 `strongRequired = true`).
 
-### 13.7 Audit and dispute consumers
+### 15.7 Audit and dispute consumers
 
 ```go
 type AuditRing interface {
@@ -706,7 +722,7 @@ attestations and per-peer history.
 
 ---
 
-## 14. Attack model
+## 16. Attack model
 
 Each row maps an adversary action to the protocol's defence and to
 the test scenario that proves it (full catalog in
@@ -739,7 +755,7 @@ the test scenario that proves it (full catalog in
 
 ---
 
-## 15. Defaults and configuration
+## 17. Defaults and configuration
 
 | Parameter | Default | Configurable via |
 | --------- | ------- | ---------------- |
@@ -757,7 +773,7 @@ the test scenario that proves it (full catalog in
 
 ---
 
-## 16. Status and milestones
+## 18. Status and milestones
 
 | Milestone | Status | Notes |
 | --------- | ------ | ----- |
@@ -776,14 +792,14 @@ Development notes and unresolved design choices:
 
 ## Reading order for contributors
 
-1. §4 — architecture diagram. Build a mental model of the host
+1. §6 — architecture diagram. Build a mental model of the host
    producer (own oracle, signs response leg) and the courier user
    (peer-tip cache, request-leg carrier) feeding a single receiver
    pipeline.
-2. §6 — the three sync modes and the state diagram.
-3. §9 — the receiver pipeline flowchart; this is the load-bearing
+2. §8 — the three sync modes and the state diagram.
+3. §11 — the receiver pipeline flowchart; this is the load-bearing
    normative section.
-4. §10 — asymmetric signing model.
-5. §12 + §13 — what cPoC actually consumes.
+4. §12 — asymmetric signing model.
+5. §14 + §15 — what cPoC actually consumes.
 6. [`height-sync-tests.md`](../height-sync-tests.md) — every behaviour
    above is bound to at least one named test.
