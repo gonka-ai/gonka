@@ -124,6 +124,18 @@ func WithInferenceStore(store storage.Storage) SMOption {
 	return func(sm *StateMachine) { sm.inferenceStore = store }
 }
 
+// WithTestV2Composition forces Phase 1 v2 composition paths in tests without
+// flipping the release-wide useV2StateRootComposition constant.
+func WithTestV2Composition() SMOption {
+	return func(sm *StateMachine) { sm.testV2Composition = true }
+}
+
+// EffectiveV2Composition reports whether this session uses Phase 1 v2
+// state-root composition (sealed accumulator, delayed post-terminal seal policy).
+func (sm *StateMachine) EffectiveV2Composition() bool {
+	return sm.effectiveV2Composition()
+}
+
 // effectiveV2Composition reports whether this state machine uses Phase 1 v2
 // composition (sealed accumulator, committed entry dropped on seal, late
 // validation rejected after seal). Production uses only useV2StateRootComposition;

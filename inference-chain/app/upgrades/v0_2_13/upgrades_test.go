@@ -32,6 +32,23 @@ func TestSetDevshardEscrowParams_BackfillsDefaultSealGraceNonces(t *testing.T) {
 	require.Equal(t, expected, got.DevshardEscrowParams.DefaultSealGraceNonces)
 	require.Equal(t, MaxEscrowsPerEpoch, got.DevshardEscrowParams.MaxEscrowsPerEpoch)
 	require.Equal(t, MaxNonce, got.DevshardEscrowParams.MaxNonce)
+	require.Equal(t, inferencetypes.DefaultDevshardInferenceClearGraceSeconds, got.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+}
+
+func TestSetDevshardEscrowParams_BackfillsDefaultInferenceClearGraceSeconds(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, params.DevshardEscrowParams)
+	params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = 0
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardEscrowParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultDevshardInferenceClearGraceSeconds, got.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
 }
 
 func TestSetDevshardEscrowParams_PreservesExistingDefaultSealGraceNonces(t *testing.T) {

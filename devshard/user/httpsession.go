@@ -51,6 +51,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if escrow.SealGraceNonces > 0 {
 		config.SealGraceNonces = escrow.SealGraceNonces
 	}
+	if escrow.InferenceClearGraceSeconds > 0 {
+		config.InferenceClearGraceSeconds = escrow.InferenceClearGraceSeconds
+	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),

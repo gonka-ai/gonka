@@ -32,6 +32,9 @@ type EscrowInfo struct {
 	// devshard-side default (NormalizeSessionConfig) — used only if the chain
 	// query fails or omits the field.
 	SealGraceNonces uint32
+	// InferenceClearGraceSeconds is the governance-pinned wall-clock grace (seconds)
+	// paired with SealGraceNonces, frozen at session bind.
+	InferenceClearGraceSeconds uint32
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

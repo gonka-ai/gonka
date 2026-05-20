@@ -117,13 +117,17 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 		}
 		params.DevshardEscrowParams.DefaultSealGraceNonces = types.DefaultDevshardSealGraceNonces(groupSize)
 	}
+	if params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds == 0 {
+		params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
+	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("set devshard escrow params", types.Upgrades,
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
 		"max_nonce", MaxNonce,
-		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces)
+		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
+		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
 	return nil
 }
 

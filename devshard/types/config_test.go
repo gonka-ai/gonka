@@ -26,6 +26,7 @@ func TestNormalizeSessionConfig_FillsSealGraceNoncesOnlyWhenUnset(t *testing.T) 
 	}, 4)
 
 	require.Equal(t, uint32(40), cfg.SealGraceNonces)
+	require.Equal(t, uint32(120), cfg.InferenceClearGraceSeconds)
 	require.Equal(t, int64(7), cfg.RefusalTimeout)
 	require.Equal(t, int64(9), cfg.ExecutionTimeout)
 	require.Equal(t, uint64(11), cfg.TokenPrice)
@@ -33,4 +34,8 @@ func TestNormalizeSessionConfig_FillsSealGraceNoncesOnlyWhenUnset(t *testing.T) 
 
 	explicit := NormalizeSessionConfig(SessionConfig{SealGraceNonces: 77}, 4)
 	require.Equal(t, uint32(77), explicit.SealGraceNonces)
+
+	explicitClear := NormalizeSessionConfig(SessionConfig{InferenceClearGraceSeconds: 45}, 4)
+	require.Equal(t, uint32(45), explicitClear.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(40), explicitClear.SealGraceNonces)
 }

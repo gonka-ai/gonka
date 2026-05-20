@@ -101,8 +101,10 @@ type Host struct {
 	prunedFired           map[uint64]struct{}  // inference IDs we've already emitted a prune for
 	finishedAt            map[uint64]uint64    // inference ID -> nonce of MsgFinishInference
 	finishedAtTime        map[uint64]time.Time // inference ID -> wall clock when this host saw the finish
-	validationGraceNonces uint64               // Tier C nonce gate
-	inferenceClearGrace   time.Duration        // Tier C wall-clock gate
+	terminalAt            map[uint64]uint64    // inference ID -> nonce when status became terminal (v2)
+	terminalAtTime        map[uint64]time.Time // inference ID -> wall clock at terminal (v2)
+	sealGraceNonces       uint64               // nonce gate from SessionConfig.SealGraceNonces
+	inferenceClearGrace   time.Duration        // wall-clock gate from SessionConfig
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -167,9 +169,12 @@ func NewHost(
 		return nil, fmt.Errorf("derive seed: %w", err)
 	}
 
-	graceNonces := uint64(staleNonceGraceMultiplier * len(group))
-	if graceNonces < minStaleNonceGrace {
-		graceNonces = minStaleNonceGrace
+	st := sm.SnapshotState()
+	cfg := types.NormalizeSessionConfig(st.Config, len(group))
+	sealGraceNonces := uint64(cfg.SealGraceNonces)
+	clearGrace := time.Duration(cfg.InferenceClearGraceSeconds) * time.Second
+	if clearGrace <= 0 {
+		clearGrace = defaultInferenceClearGrace
 	}
 
 	h := &Host{
@@ -189,10 +194,12 @@ func NewHost(
 		completedResponses:    make(map[uint64][]byte),
 		ownSeed:               ownSeed,
 		prunedFired:           make(map[uint64]struct{}),
-		finishedAt:            make(map[uint64]uint64),
-		finishedAtTime:        make(map[uint64]time.Time),
-		validationGraceNonces: graceNonces,
-		inferenceClearGrace:   defaultInferenceClearGrace,
+		finishedAt:          make(map[uint64]uint64),
+		finishedAtTime:      make(map[uint64]time.Time),
+		terminalAt:          make(map[uint64]uint64),
+		terminalAtTime:      make(map[uint64]time.Time),
+		sealGraceNonces:     sealGraceNonces,
+		inferenceClearGrace: clearGrace,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -260,13 +267,12 @@ func WithPruneSink(s PruneEventSink) HostOption {
 	return func(h *Host) { h.pruneSink = s }
 }
 
-// WithPruneTuning overrides Tier C gating. Used by tests to drive deterministic
-// stale-payload behavior without waiting on real wall-clock minutes. Passing
-// zero values keeps the existing default for that gate.
+// WithPruneTuning overrides seal grace gating. Used by tests to drive
+// deterministic stale-payload behavior without waiting on real wall-clock time.
 func WithPruneTuning(graceNonces uint64, graceTime time.Duration) HostOption {
 	return func(h *Host) {
 		if graceNonces > 0 {
-			h.validationGraceNonces = graceNonces
+			h.sealGraceNonces = graceNonces
 		}
 		if graceTime > 0 {
 			h.inferenceClearGrace = graceTime
@@ -464,23 +470,25 @@ func (h *Host) processPruneEventsLocked(diff types.Diff) {
 			h.finishedAtTime[id] = now
 		case tx.GetTimeoutInference() != nil:
 			id := tx.GetTimeoutInference().InferenceId
-			h.maybeEmitTerminalLocked(id)
+			h.maybeEmitTerminalLocked(id, currentNonce, now)
 		case tx.GetValidation() != nil:
 			id := tx.GetValidation().InferenceId
-			h.maybeEmitTerminalLocked(id)
+			h.maybeEmitTerminalLocked(id, currentNonce, now)
 		case tx.GetValidationVote() != nil:
 			id := tx.GetValidationVote().InferenceId
-			h.maybeEmitTerminalLocked(id)
+			h.maybeEmitTerminalLocked(id, currentNonce, now)
 		}
 	}
 
+	h.emitTerminalTierLocked(currentNonce, now)
 	h.emitTierCLocked(currentNonce, now)
 }
 
-// maybeEmitTerminalLocked emits PruneReasonTerminal exactly once for an
-// inference whose post-apply status is terminal. Caller must hold h.mu and
-// must have already verified h.pruneSink is non-nil.
-func (h *Host) maybeEmitTerminalLocked(inferenceID uint64) {
+// maybeEmitTerminalLocked records or emits a terminal prune for an inference
+// whose post-apply status is terminal. Under v2 composition the event is
+// deferred until sealGraceNonces and inferenceClearGrace have both elapsed.
+// Caller must hold h.mu and must have already verified h.pruneSink is non-nil.
+func (h *Host) maybeEmitTerminalLocked(inferenceID uint64, currentNonce uint64, now time.Time) {
 	if _, fired := h.prunedFired[inferenceID]; fired {
 		return
 	}
@@ -488,7 +496,40 @@ func (h *Host) maybeEmitTerminalLocked(inferenceID uint64) {
 	if !ok || !isTerminalStatus(rec.Status) {
 		return
 	}
+	if h.sm.EffectiveV2Composition() {
+		if _, tracked := h.terminalAt[inferenceID]; !tracked {
+			h.terminalAt[inferenceID] = currentNonce
+			h.terminalAtTime[inferenceID] = now
+			delete(h.finishedAt, inferenceID)
+			delete(h.finishedAtTime, inferenceID)
+		}
+		return
+	}
 	h.emitPruneLocked(inferenceID, PruneReasonTerminal)
+}
+
+// emitTerminalTierLocked fires deferred terminal prunes under v2 composition
+// once both the nonce and wall-clock gates have cleared.
+func (h *Host) emitTerminalTierLocked(currentNonce uint64, now time.Time) {
+	if !h.sm.EffectiveV2Composition() || len(h.terminalAt) == 0 {
+		return
+	}
+	for id, termNonce := range h.terminalAt {
+		if currentNonce < termNonce+h.sealGraceNonces {
+			continue
+		}
+		ts, hasTs := h.terminalAtTime[id]
+		if !hasTs || now.Before(ts.Add(h.inferenceClearGrace)) {
+			continue
+		}
+		rec, ok := h.sm.GetInference(id)
+		if !ok || !isTerminalStatus(rec.Status) {
+			delete(h.terminalAt, id)
+			delete(h.terminalAtTime, id)
+			continue
+		}
+		h.emitPruneLocked(id, PruneReasonTerminal)
+	}
 }
 
 // emitTierCLocked walks the Tier C ledger and emits prune events for entries
@@ -500,7 +541,7 @@ func (h *Host) emitTierCLocked(currentNonce uint64, now time.Time) {
 		return
 	}
 	for id, finNonce := range h.finishedAt {
-		if currentNonce < finNonce+h.validationGraceNonces {
+		if currentNonce < finNonce+h.sealGraceNonces {
 			continue
 		}
 		ts, hasTs := h.finishedAtTime[id]
@@ -536,6 +577,8 @@ func (h *Host) emitPruneLocked(inferenceID uint64, reason PruneReason) {
 	h.prunedFired[inferenceID] = struct{}{}
 	delete(h.finishedAt, inferenceID)
 	delete(h.finishedAtTime, inferenceID)
+	delete(h.terminalAt, inferenceID)
+	delete(h.terminalAtTime, inferenceID)
 	h.pruneSink.OnInferencePrunable(InferencePruneEvent{
 		EscrowID:          h.escrowID,
 		InferenceID:       inferenceID,

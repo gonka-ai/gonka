@@ -260,6 +260,10 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	if escrow.SealGraceNonces > 0 {
 		config.SealGraceNonces = escrow.SealGraceNonces
 	}
+	if escrow.InferenceClearGraceSeconds > 0 {
+		config.InferenceClearGraceSeconds = escrow.InferenceClearGraceSeconds
+	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),

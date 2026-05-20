@@ -1,8 +1,9 @@
 package types
 
 const (
-	defaultSealGraceMultiplier = 10
-	minSealGraceNonces         = 20
+	defaultSealGraceMultiplier        = 10
+	minSealGraceNonces                = 20
+	DefaultInferenceClearGraceSeconds = 120 // 2 minutes
 )
 
 // DefaultSealGraceNonces returns the canonical seal grace for a session group.
@@ -23,6 +24,9 @@ func DefaultSealGraceNonces(groupSize int) uint32 {
 func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 	if cfg.SealGraceNonces == 0 {
 		cfg.SealGraceNonces = DefaultSealGraceNonces(groupSize)
+	}
+	if cfg.InferenceClearGraceSeconds == 0 {
+		cfg.InferenceClearGraceSeconds = DefaultInferenceClearGraceSeconds
 	}
 	return cfg
 }

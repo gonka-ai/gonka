@@ -380,6 +380,77 @@ func TestHost_PruneSink_TierC_DoesNotFireWhenWallClockGateUnmet(t *testing.T) {
 	require.Empty(t, rig.sink.findFor(1), "wall-clock gate prevents Tier C")
 }
 
+func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
+	hosts := make([]*signing.Secp256k1Signer, 5)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1,
+		VoteThreshold: 2, ValidationRate: 0,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", EpochID: 7, Version: types.DefaultStateRootVersion,
+		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 1_000_000,
+	}))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,
+		state.WithInferenceStore(store),
+		state.WithTestV2Composition(),
+	)
+	require.NoError(t, err)
+
+	sink := &recordingPruneSink{}
+	rig := &pruneTestRig{
+		t: t, hosts: hosts, user: user, group: group, config: config,
+		host: nil, sink: sink, stub: stub.NewInferenceEngine(),
+		store: store, escrowID: "escrow-1", epochID: 7,
+	}
+	h, err := NewHost(sm, hosts[0], rig.stub, "escrow-1", group, nil,
+		WithPruneSink(sink), WithEpochID(7), WithGrace(0),
+		WithPruneTuning(2, 10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	rig.host = h
+
+	nonce := rig.driveStartConfirmFinish(1, 1)
+	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
+	nonce++
+	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, true)})
+	nonce++
+	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, true)})
+	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
+	require.Empty(t, rig.sink.findFor(1), "v2 defers terminal prune until gates clear")
+
+	time.Sleep(20 * time.Millisecond)
+	rig.applyDiff(nonce, nil)
+	nonce++
+	require.Empty(t, rig.sink.findFor(1), "nonce gate should still hold")
+
+	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 4, true)})
+	nonce++
+	require.Equal(t, types.StatusValidated, rig.inferenceStatus(1))
+	require.Empty(t, rig.sink.findFor(1), "terminal recorded but gates not yet cleared")
+
+	time.Sleep(20 * time.Millisecond)
+	rig.applyDiff(nonce, nil)
+	nonce++
+	require.Empty(t, rig.sink.findFor(1), "nonce gate should still hold after terminal")
+
+	rig.applyDiff(nonce, nil)
+	events := rig.sink.findFor(1)
+	require.Len(t, events, 1)
+	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	rig.inferenceMissing(1)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
+	sealed, ok := rig.host.sm.ExportSealedNonces()[1]
+	require.True(t, ok, "v2 seal should record sealed nonce")
+	require.NotZero(t, sealed)
+}
+
 func TestHost_PruneSink_TerminalFlipPreemptsTierC(t *testing.T) {
 	// If an inference terminalizes before the Tier C gates expire, only one
 	// Tier A event should fire and the Tier C ledger entry must be cleared.

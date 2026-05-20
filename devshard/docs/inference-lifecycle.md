@@ -199,9 +199,11 @@ touched by a validation, challenge, or timeout. The host evicts it
 only when **both** of:
 
 - enough nonces have passed since `MsgFinishInference`
-  (`validationGraceNonces`, default `10 * len(group)`), and
+  (`SealGraceNonces`, governance-pinned at session create, default
+  `10 * len(group)` with floor 20), and
 - enough wall-clock time has passed since the host observed that
-  finish (`graceInferenceClear`, default `2 minutes`).
+  finish (`InferenceClearGraceSeconds`, governance-pinned at session
+  create, default `120` seconds).
 
 A two-gate is needed because nonce growth is traffic-dependent — at
 high throughput a nonce-only gate collapses to near-zero wall-clock
@@ -220,12 +222,12 @@ requirement is bounded by a protocol-visible event (e.g. an explicit
 "validation window closed" message or an on-chain commitment), at
 which point Trigger C disappears.
 
-The grace defaults are conservative on purpose: they reflect the
-operator trade-off between memory / disk pressure and the chance
-that a late but legitimate validator misses a payload. They are
-runtime knobs on the host (not on `DevshardEscrow`) and do not feed
-into the state root, so adjusting them does not affect settlement
-determinism.
+Under v2 composition, **Trigger A** uses the same nonce and
+wall-clock gates before sealing and pruning post-terminal inferences
+(delayed seal after terminal). The grace values are frozen in
+`SessionConfig` at session create (from chain `DevshardEscrowParams`
+via `GetEscrow`) and do not feed into the state root, so adjusting
+governance defaults only affects newly created sessions.
 
 ## 5. Cross-cutting consequences
 

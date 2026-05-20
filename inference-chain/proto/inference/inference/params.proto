@@ -382,6 +382,8 @@ message DevshardEscrowParams {
   repeated DevshardApprovedVersion approved_versions = 7;
   uint32 max_nonce = 8;
   uint32 default_seal_grace_nonces = 9;
+  // Wall-clock grace before sealing stale-finished or post-terminal inferences (seconds).
+  uint32 default_inference_clear_grace_seconds = 10;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

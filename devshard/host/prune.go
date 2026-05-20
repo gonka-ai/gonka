@@ -67,17 +67,9 @@ func (f PruneEventSinkFunc) OnInferencePrunable(event InferencePruneEvent) {
 	}
 }
 
-// Default Tier C gating values. Both gates must clear before a stale Finished
-// payload is pruned: enough nonces have passed *and* enough wall-clock time
-// has elapsed since this host first observed the finish locally.
-const (
-	defaultInferenceClearGrace = 2 * time.Minute
-	// minStaleNonceGrace is the floor for the nonce gate so very small groups
-	// still keep payloads around for a sensible number of diffs.
-	minStaleNonceGrace = 20
-	// staleNonceGraceMultiplier scales validationGraceNonces with group size.
-	staleNonceGraceMultiplier = 10
-)
+// defaultInferenceClearGrace is the host fallback when SessionConfig does not
+// pin InferenceClearGraceSeconds (NormalizeSessionConfig defaults to 120s).
+const defaultInferenceClearGrace = 2 * time.Minute
 
 // isTerminalStatus returns true for inference statuses that no longer require
 // payload retention (validated, invalidated, or timed out).
