@@ -112,7 +112,7 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 
 	require.NoError(t, store.CreateSession(defaultParams()))
 	p := defaultParams()
-	p.Version = "v2"
+	p.Version = "v1"
 	err := store.CreateSession(p)
 	require.ErrorIs(t, err, ErrSessionVersionConflict)
 
