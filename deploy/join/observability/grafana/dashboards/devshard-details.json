@@ -29,7 +29,7 @@
         "x": 0,
         "y": 0
       },
-      "id": 17,
+      "id": 22,
       "title": "Inference Health",
       "type": "row"
     },
@@ -598,7 +598,7 @@
         "x": 0,
         "y": 19
       },
-      "id": 18,
+      "id": 23,
       "title": "Errors & Traces",
       "type": "row"
     },
@@ -607,21 +607,35 @@
         "type": "jaeger",
         "uid": "jaeger"
       },
-      "description": "Traces for inference executions that failed (error=true). Each row is one failed inference.",
+      "description": "Timeline of failed inference traces. Each point is one failed trace: X = start time, Y = duration. Hover for trace details, click the Trace ID link to inspect the full trace in the Selected Trace panel below.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "continuous-GrYlRd"
           },
           "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
             },
-            "footer": {
-              "reducers": []
+            "lineWidth": 0,
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 9
             },
-            "inspect": false
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "log": 2,
+              "type": "log"
+            },
+            "show": "points"
           },
           "thresholds": {
             "mode": "absolute",
@@ -641,41 +655,72 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Start time"
+              "options": "Duration",
+              "scope": "series"
             },
             "properties": [
               {
-                "id": "custom.width",
-                "value": 170
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Duration"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 80
+                "id": "links",
+                "value": [
+                  {
+                    "targetBlank": true,
+                    "title": "Open in Jaeger UI",
+                    "url": "../jaeger/trace/${__data.fields.traceID}"
+                  }
+                ]
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 10,
+        "h": 8,
         "w": 24,
         "x": 0,
         "y": 20
       },
       "id": 8,
       "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true,
-        "sortBy": []
+        "legend": {
+          "calcs": [],
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mapping": "manual",
+        "series": [
+          {
+            "color": {
+              "matcher": {
+                "id": "byName",
+                "options": "Duration"
+              }
+            },
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Start time"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "Duration"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "all",
+          "sort": "none"
+        }
       },
       "pluginVersion": "13.0.1",
       "targets": [
@@ -685,15 +730,15 @@
             "uid": "jaeger"
           },
           "limit": 200,
-          "operation": "devshardd.request",
+          "operation": "devshardd.inference",
           "queryType": "search",
           "refId": "A",
           "service": "decentralized-api",
           "tags": "error=true"
         }
       ],
-      "title": "Failed Inference Traces — click any row to inspect in Jaeger",
-      "type": "table"
+      "title": "Failed Inference Traces — timeline",
+      "type": "xychart"
     },
     {
       "datasource": {
@@ -760,7 +805,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 42
       },
       "id": 9,
       "options": {
@@ -861,7 +906,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 42
       },
       "id": 10,
       "options": {
@@ -913,9 +958,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 50
       },
-      "id": 19,
+      "id": 24,
       "title": "API Metrics",
       "type": "row"
     },
@@ -984,7 +1029,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 51
       },
       "id": 11,
       "options": {
@@ -1085,7 +1130,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 51
       },
       "id": 16,
       "options": {
@@ -1186,7 +1231,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 59
       },
       "id": 12,
       "options": {
@@ -1287,7 +1332,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 59
       },
       "id": 13,
       "options": {
@@ -1329,9 +1374,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 67
       },
-      "id": 20,
+      "id": 25,
       "title": "Log Drilldown",
       "type": "row"
     },
@@ -1345,7 +1390,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 68
       },
       "id": 15,
       "options": {
@@ -1412,11 +1457,24 @@
         "query": ".*",
         "skipUrlSync": false,
         "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "description": "Click a Trace ID in the failed traces table, or paste one here.",
+        "hide": 0,
+        "label": "Trace ID",
+        "name": "traceId",
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
       }
     ]
   },
   "time": {
-    "from": "now-3h",
+    "from": "now-24h",
     "to": "now"
   },
   "timepicker": {
