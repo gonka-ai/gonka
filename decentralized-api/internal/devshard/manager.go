@@ -53,6 +53,7 @@ type HostManager struct {
 	verifier     signing.Verifier
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
+	availability devshardpkg.AvailabilityProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
@@ -158,6 +159,10 @@ func (m *HostManager) SetUnavailable(err error) {
 	m.initErr = err
 }
 
+func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
+	m.availability = p
+}
+
 // SessionServer resolves or creates the per-escrow transport server.
 func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) {
 	if err := m.readinessError(); err != nil {
@@ -254,6 +259,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(escrow.EpochID),
+		host.WithAvailabilityProvider(m.availability),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -436,6 +442,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(meta.EpochID),
+		host.WithAvailabilityProvider(m.availability),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)

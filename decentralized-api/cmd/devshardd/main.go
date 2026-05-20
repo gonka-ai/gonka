@@ -46,6 +46,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
+	devshardpkg "devshard"
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
 	devshardstorage "devshard/storage"
@@ -131,7 +132,8 @@ func main() {
 
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
-	chainParams := newChainParamsProvider(ctx, recorder)
+	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
+	chainParams := newChainParamsProvider(ctx, recorder, availabilityTracker)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
@@ -160,6 +162,7 @@ func main() {
 	defer store.Close()
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeSessionVersion(runtimeVersion), br, payloadStore, recorder)
+	manager.SetAvailabilityProvider(availabilityTracker)
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}
@@ -323,13 +326,15 @@ type chainParamsProvider struct {
 	mu           sync.Mutex
 	logprobsMode string
 	currentEpoch uint64
+	availability *devshardpkg.AvailabilityTracker
 }
 
-func newChainParamsProvider(ctx context.Context, recorder internaldevshard.PayloadAuthClient) *chainParamsProvider {
-	p := &chainParamsProvider{logprobsMode: chaintypes.DefaultLogprobsMode}
+func newChainParamsProvider(ctx context.Context, recorder internaldevshard.PayloadAuthClient, availability *devshardpkg.AvailabilityTracker) *chainParamsProvider {
+	p := &chainParamsProvider{logprobsMode: chaintypes.DefaultLogprobsMode, availability: availability}
 
 	refresh := func() {
 		qc := recorder.NewInferenceQueryClient()
+		var requestsEnabled *bool
 		resp, err := qc.Params(ctx, &chaintypes.QueryParamsRequest{})
 		if err != nil {
 			slog.Warn("failed to query chain params, keeping current values", "error", err)
@@ -337,6 +342,10 @@ func newChainParamsProvider(ctx context.Context, recorder internaldevshard.Paylo
 			mode := resp.Params.ValidationParams.GetLogprobsMode()
 			if mode == "" {
 				mode = chaintypes.DefaultLogprobsMode
+			}
+			if resp.Params.DevshardEscrowParams != nil {
+				enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
+				requestsEnabled = &enabled
 			}
 			p.mu.Lock()
 			if mode != p.logprobsMode {
@@ -357,6 +366,9 @@ func newChainParamsProvider(ctx context.Context, recorder internaldevshard.Paylo
 			p.currentEpoch = idx
 		}
 		p.mu.Unlock()
+		if requestsEnabled != nil && p.availability != nil {
+			p.availability.Record(*requestsEnabled, time.Now().Unix(), idx)
+		}
 	}
 
 	refresh()

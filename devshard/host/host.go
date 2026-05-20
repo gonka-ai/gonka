@@ -65,20 +65,21 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu        sync.Mutex
-	sm        *state.StateMachine
-	signer    signing.Signer
-	verifier  signing.Verifier
-	engine    devshard.InferenceEngine
-	validator devshard.ValidationEngine // optional, nil = no validation
-	escrowID  string
-	epochID   uint64
-	slotIDs   map[uint32]bool
-	group     []types.SlotAssignment
-	mempool   *Mempool
-	checker   AcceptanceChecker
-	store     storage.Storage // optional, nil = no persistence
-	gsp       *gossip.Gossip  // optional, nil = no gossip pruning
+	mu           sync.Mutex
+	sm           *state.StateMachine
+	signer       signing.Signer
+	verifier     signing.Verifier
+	engine       devshard.InferenceEngine
+	validator    devshard.ValidationEngine // optional, nil = no validation
+	escrowID     string
+	epochID      uint64
+	slotIDs      map[uint32]bool
+	group        []types.SlotAssignment
+	mempool      *Mempool
+	checker      AcceptanceChecker
+	store        storage.Storage // optional, nil = no persistence
+	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
+	availability devshard.AvailabilityProvider
 
 	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
 
@@ -217,6 +218,10 @@ func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
 }
 
+func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
+	return func(h *Host) { h.availability = p }
+}
+
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
@@ -290,6 +295,11 @@ func (h *Host) Signer() signing.Signer { return h.signer }
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
 
+	if requestBlockedWhenUnavailable(req) && !h.completionRequestsEnabled() {
+		h.mu.Unlock()
+		return nil, devshard.ErrRequestsDisabled
+	}
+
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
 	for _, diff := range req.Diffs {
@@ -341,6 +351,38 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
 	}, nil
+}
+
+func requestBlockedWhenUnavailable(req HostRequest) bool {
+	if req.Payload != nil {
+		return true
+	}
+	for _, diff := range req.Diffs {
+		for _, tx := range diff.Txs {
+			if tx.GetStartInference() != nil ||
+				tx.GetTimeoutInference() != nil ||
+				tx.GetValidation() != nil ||
+				tx.GetValidationVote() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (h *Host) CompletionRequestsEnabled() bool {
+	return h.completionRequestsEnabled()
+}
+
+func (h *Host) completionRequestsEnabled() bool {
+	return h.currentAvailability().Enabled
+}
+
+func (h *Host) currentAvailability() devshard.AvailabilityStatus {
+	if h.availability == nil {
+		return devshard.AvailabilityStatus{Enabled: true}
+	}
+	return h.availability.CurrentAvailability()
 }
 
 // applyAndPersist applies a diff, removes included txs from mempool, and persists.
@@ -695,6 +737,9 @@ type validateJob struct {
 // Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
 	if h.validator == nil || h.validationQueue == nil {
+		return nil
+	}
+	if !h.completionRequestsEnabled() {
 		return nil
 	}
 

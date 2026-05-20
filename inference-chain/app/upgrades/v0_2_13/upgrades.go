@@ -222,12 +222,14 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	}
 	params.DevshardEscrowParams.MaxEscrowsPerEpoch = MaxEscrowsPerEpoch
 	params.DevshardEscrowParams.MaxNonce = MaxNonce
+	params.DevshardEscrowParams.DevshardRequestsEnabled = types.DefaultDevshardRequestsEnabled
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("set devshard escrow params", types.Upgrades,
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
-		"max_nonce", MaxNonce)
+		"max_nonce", MaxNonce,
+		"devshard_requests_enabled", types.DefaultDevshardRequestsEnabled)
 	return nil
 }
 

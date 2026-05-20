@@ -163,6 +163,63 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 	require.Equal(t, hosts[1].Address(), addr)
 }
 
+func TestHost_DisabledAvailabilityRejectsCompletionButAllowsFinalize(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+	h.availability = devshard.NewAvailabilityTracker(false, 100, 7)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.ErrorIs(t, err, devshard.ErrRequestsDisabled)
+	require.Contains(t, err.Error(), "completion and timeout requests are disabled")
+	require.Equal(t, uint64(0), h.SnapshotState().LatestNonce)
+
+	timeoutDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
+			InferenceId: 1,
+			Reason:      types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
+		}}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{timeoutDiff}})
+	require.ErrorIs(t, err, devshard.ErrRequestsDisabled)
+	require.Contains(t, err.Error(), "completion and timeout requests are disabled")
+	require.Equal(t, uint64(0), h.SnapshotState().LatestNonce)
+
+	validationDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{
+			InferenceId:   1,
+			ValidatorSlot: 0,
+			Valid:         true,
+			EscrowId:      "escrow-1",
+		}}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{validationDiff}})
+	require.ErrorIs(t, err, devshard.ErrRequestsDisabled)
+	require.Equal(t, uint64(0), h.SnapshotState().LatestNonce)
+
+	validationVoteDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: &types.MsgValidationVote{
+			InferenceId: 1,
+			VoterSlot:   0,
+			VoteValid:   true,
+			EscrowId:    "escrow-1",
+		}}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{validationVoteDiff}})
+	require.ErrorIs(t, err, devshard.ErrRequestsDisabled)
+	require.Equal(t, uint64(0), h.SnapshotState().LatestNonce)
+
+	finalizeDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
+	})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{finalizeDiff}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), resp.Nonce)
+}
+
 func TestHost_NonExecutorNoReceipt(t *testing.T) {
 	// 3 hosts. Inference 1: executor = slot 1. Host 0 is NOT executor.
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}

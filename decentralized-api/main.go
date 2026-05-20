@@ -30,6 +30,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant"
+	devshardpkg "devshard"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 	"encoding/json"
@@ -100,6 +101,10 @@ func main() {
 		return
 	}
 	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
+	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
+	if params.Params.DevshardEscrowParams != nil {
+		availabilityTracker.Record(params.Params.DevshardEscrowParams.DevshardRequestsEnabled, time.Now().Unix(), 0)
+	}
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
 	if err != nil {
@@ -181,6 +186,7 @@ func main() {
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
 	)
+	listener.SetAvailabilityTracker(availabilityTracker)
 	go listener.Start(ctx)
 
 	mlnodeBackgroundManager := modelmanager.NewMLNodeBackgroundManager(
@@ -256,6 +262,7 @@ func main() {
 			defer devshardStore.Close()
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.LegacySessionVersion, devshardBridge, payloadStore, recorder)
+			hostManager.SetAvailabilityProvider(availabilityTracker)
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
