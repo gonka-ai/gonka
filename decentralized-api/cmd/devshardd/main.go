@@ -9,6 +9,11 @@
 // block queue, no config sync, no NodeManager gRPC server, no NATS, and no
 // transaction manager. devshardd never writes to mainnet.
 //
+// TODO(devshard): when devshardd moves under the devshard/ module, replace the
+// dapi-owned chainParamsProvider/AvailabilityTracker wiring with a devshard-owned
+// mainnet params snapshot. The current shape is temporary while devshardd reuses
+// dapi internals.
+//
 // Versiond's process manager invokes this binary with `--port <N>` and
 // `--data-dir <PATH>` as its contract (see versioned/internal/process/manager.go).
 // Everything else is configured via env vars.

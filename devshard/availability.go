@@ -17,6 +17,9 @@ type AvailabilityProvider interface {
 	CurrentAvailability() AvailabilityStatus
 }
 
+// AvailabilityTracker is a lightweight process-local snapshot used by the host
+// hot path. Long-term standalone devshardd should receive this state from a
+// devshard-owned mainnet params provider rather than dapi-specific wiring.
 type AvailabilityTracker struct {
 	mu      sync.RWMutex
 	current AvailabilityStatus
