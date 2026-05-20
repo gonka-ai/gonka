@@ -450,3 +450,47 @@ func runPruneEpoch_WriteAfter(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Len(t, diffs, 1)
 }
+
+func runAvailabilityPeriods_PersistAndPruneByEpoch(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.RecordAvailabilityPeriod(AvailabilityPeriod{EpochID: 7, StartTime: 100, EndTime: 0}))
+	require.NoError(t, store.RecordAvailabilityPeriod(AvailabilityPeriod{EpochID: 7, StartTime: 100, EndTime: 200}))
+	require.NoError(t, store.RecordAvailabilityPeriod(AvailabilityPeriod{EpochID: 8, StartTime: 300, EndTime: 400}))
+
+	periods, err := store.ListAvailabilityPeriods()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []AvailabilityPeriod{
+		{EpochID: 7, StartTime: 100, EndTime: 200},
+		{EpochID: 8, StartTime: 300, EndTime: 400},
+	}, periods)
+
+	require.NoError(t, store.PruneEpoch(7))
+	periods, err = store.ListAvailabilityPeriods()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []AvailabilityPeriod{
+		{EpochID: 8, StartTime: 300, EndTime: 400},
+	}, periods)
+}
+
+func runPoCActivityPeriods_PersistAndPruneByEpoch(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.RecordPoCActivityPeriod(PoCActivityPeriod{EpochID: 7, StartTime: 100, EndTime: 0}))
+	require.NoError(t, store.RecordPoCActivityPeriod(PoCActivityPeriod{EpochID: 7, StartTime: 100, EndTime: 200}))
+	require.NoError(t, store.RecordPoCActivityPeriod(PoCActivityPeriod{EpochID: 8, StartTime: 300, EndTime: 400}))
+
+	periods, err := store.ListPoCActivityPeriods()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []PoCActivityPeriod{
+		{EpochID: 7, StartTime: 100, EndTime: 200},
+		{EpochID: 8, StartTime: 300, EndTime: 400},
+	}, periods)
+
+	require.NoError(t, store.PruneEpoch(7))
+	periods, err = store.ListPoCActivityPeriods()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []PoCActivityPeriod{
+		{EpochID: 8, StartTime: 300, EndTime: 400},
+	}, periods)
+}

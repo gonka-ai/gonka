@@ -74,5 +74,3 @@ func (m *Mempool) Len() int {
 func (m *Mempool) AddTx(tx *types.DevshardTx) {
 	m.Add(MempoolEntry{Tx: tx, ProposedAt: 0})
 }
-
-

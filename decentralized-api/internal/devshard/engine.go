@@ -3,6 +3,7 @@ package devshard
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -12,6 +13,7 @@ import (
 
 	"devshard"
 	devshardserver "devshard/server"
+	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
 // EngineAdapter implements devshard.InferenceEngine by delegating to broker and completionapi.
@@ -70,9 +72,28 @@ func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body
 		},
 	)
 	if err != nil {
+		if errors.Is(err, broker.ErrNoNodesAvailable) && e.isPoCActive() {
+			return nil, devshard.NewUnavailableFinishError(devshard.FinishReason_FINISH_REASON_NO_PRESERVE_NODES, err)
+		}
 		return nil, fmt.Errorf("broker execute: %w", err)
 	}
 	return resp, nil
+}
+
+func (e *EngineAdapter) isPoCActive() bool {
+	if e.phaseTracker == nil {
+		return false
+	}
+	state := e.phaseTracker.GetCurrentEpochState()
+	if state == nil || !state.IsSynced {
+		return false
+	}
+	switch state.CurrentPhase {
+	case chaintypes.PoCGeneratePhase, chaintypes.PoCGenerateWindDownPhase, chaintypes.PoCValidatePhase:
+		return true
+	default:
+		return state.ActiveConfirmationPoCEvent != nil
+	}
 }
 
 // DevshardPayloadKey creates a namespaced storage key for devshard payloads.

@@ -51,6 +51,7 @@ type InferenceRecord struct {
 	VotesValid   uint32          `json:"votes_valid,omitempty"`
 	VotesInvalid uint32          `json:"votes_invalid,omitempty"`
 	ValidatedBy  Bitmap128       `json:"validated_by,omitempty"`
+	FinishReason FinishReason    `json:"finish_reason,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.

@@ -83,6 +83,18 @@ func (s *legacyOnlyStorage) MarkSettled(escrowID string) error {
 func (s *legacyOnlyStorage) ListActiveSessions() ([]ActiveSession, error) {
 	return s.inner.ListActiveSessions()
 }
+func (s *legacyOnlyStorage) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	return s.inner.RecordAvailabilityPeriod(period)
+}
+func (s *legacyOnlyStorage) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	return s.inner.ListAvailabilityPeriods()
+}
+func (s *legacyOnlyStorage) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	return s.inner.RecordPoCActivityPeriod(period)
+}
+func (s *legacyOnlyStorage) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	return s.inner.ListPoCActivityPeriods()
+}
 func (s *legacyOnlyStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	return s.inner.AppendDiff(escrowID, rec)
 }
@@ -261,6 +273,18 @@ func TestManaged_UsesRangePruneWhenAvailable(t *testing.T) {
 	require.Equal(t, 0, inner.pruneEpochCalls)
 	require.Equal(t, uint64(8), inner.lastCutoff)
 	require.Equal(t, []uint64{10}, sessionsAt(t, m))
+}
+
+func TestManaged_PrunedUpToReturnsCutoff(t *testing.T) {
+	m, _ := newManagedForTest(t, 3, nil)
+	require.Equal(t, uint64(0), m.PrunedUpTo())
+
+	require.NoError(t, m.CreateSession(paramsForEpoch("old", 1)))
+	require.NoError(t, m.CreateSession(paramsForEpoch("new", 10)))
+
+	m.PruneOnce(context.Background())
+
+	require.Equal(t, uint64(8), m.PrunedUpTo())
 }
 
 // itoa is a tiny strconv-free helper to keep the test file dependency-light.

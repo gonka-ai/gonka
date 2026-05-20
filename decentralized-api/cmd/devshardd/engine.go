@@ -16,6 +16,8 @@ import (
 	mlnodegen "devshard/mlnode/gen"
 )
 
+var errNoInferenceNodesAvailable = errors.New("no inference nodes available")
+
 // devshardEngine implements devshard.InferenceEngine for the standalone
 // devshardd binary. Unlike dapi's in-process adapter it has no broker; it
 // acquires a locked ML node via NodeManager gRPC, POSTs directly, and releases
@@ -25,6 +27,7 @@ type devshardEngine struct {
 	payloadStore payloadstorage.PayloadStorage
 	httpClient   *http.Client
 	chainParams  internaldevshard.ChainParamsProvider
+	phaseState   interface{ IsPoCActive() bool }
 }
 
 func newDevshardEngine(
@@ -32,12 +35,14 @@ func newDevshardEngine(
 	payloadStore payloadstorage.PayloadStorage,
 	httpClient *http.Client,
 	chainParams internaldevshard.ChainParamsProvider,
+	phaseState interface{ IsPoCActive() bool },
 ) *devshardEngine {
 	return &devshardEngine{
 		mlClient:     mlClient,
 		payloadStore: payloadStore,
 		httpClient:   httpClient,
 		chainParams:  chainParams,
+		phaseState:   phaseState,
 	}
 }
 
@@ -69,6 +74,12 @@ func (e *devshardEngine) executeMLRequest(ctx context.Context, model string, bod
 		return e.httpClient.Do(httpReq)
 	})
 	if err != nil {
+		if errors.Is(err, mlnodeclient.ErrNoNodesAvailable) {
+			if e.isPoCActive() {
+				return nil, devshard.NewUnavailableFinishError(devshard.FinishReason_FINISH_REASON_NO_PRESERVE_NODES, err)
+			}
+			return nil, fmt.Errorf("%w: %w", errNoInferenceNodesAvailable, err)
+		}
 		return nil, fmt.Errorf("execute inference: %w", err)
 	}
 	return resp, nil
@@ -145,6 +156,10 @@ func (e *devshardEngine) doWithLockedNode(
 		lastErr = errors.New("no attempts made")
 	}
 	return nil, lastErr
+}
+
+func (e *devshardEngine) isPoCActive() bool {
+	return e.phaseState != nil && e.phaseState.IsPoCActive()
 }
 
 // Compile-time check.

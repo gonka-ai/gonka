@@ -687,6 +687,12 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	if actualCost > rec.ReservedCost {
 		actualCost = rec.ReservedCost
 	}
+	switch msg.Reason {
+	case types.FinishReason_FINISH_REASON_DEVSHARD_REQUESTS_DISABLED,
+		types.FinishReason_FINISH_REASON_POC_ABORTED,
+		types.FinishReason_FINISH_REASON_NO_PRESERVE_NODES:
+		actualCost = 0
+	}
 
 	// Release surplus.
 	surplus := rec.ReservedCost - actualCost
@@ -697,6 +703,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	rec.InputTokens = msg.InputTokens
 	rec.OutputTokens = msg.OutputTokens
 	rec.ActualCost = actualCost
+	rec.FinishReason = msg.Reason
 
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost

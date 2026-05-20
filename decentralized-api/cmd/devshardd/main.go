@@ -46,6 +46,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 
+	devshardpkg "devshard"
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
 	devshardstorage "devshard/storage"
@@ -131,10 +132,10 @@ func main() {
 
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
-	chainParams := newChainParamsProvider(ctx, recorder)
+	chainState := newChainStateTracker(ctx, recorder)
 
-	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
-	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
+	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainState, chainState)
+	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainState)
 
 	storeDir := filepath.Join(*dataDir, "devshardd")
 	legacyDB := filepath.Join(*dataDir, "devshardd.db")
@@ -156,10 +157,16 @@ func main() {
 	} else if migrated > 0 {
 		slog.Info("devshardd legacy migration complete", "sessions_migrated", migrated)
 	}
-	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainParams)
+	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainState)
 	defer store.Close()
+	chainState.availability.SetStore(store)
+	chainState.pocActivity.SetStore(store)
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeSessionVersion(runtimeVersion), br, payloadStore, recorder)
+	// main owns the standalone chain-state poller; HostManager only needs the
+	// availability view to decide/validate request-disabled finishes.
+	manager.SetAvailabilityProvider(chainState.availability)
+	manager.SetPoCActivityProvider(chainState.pocActivity)
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}
@@ -313,37 +320,53 @@ func newIgniteClient(ctx context.Context, nodeConfig apiconfig.ChainNodeConfig) 
 	return &c, nil
 }
 
-// chainParamsProvider implements internaldevshard.ChainParamsProvider and
-// devshardstorage.EpochProvider for the standalone devshardd binary. It
-// queries chain params + the latest epoch on construction and refreshes in
-// the background every 60s so long-lived processes pick up governance changes
+// chainStateTracker implements internaldevshard.ChainParamsProvider and
+// devshardstorage.EpochProvider for the standalone devshardd binary. It queries
+// chain params + the latest epoch on construction and refreshes in the
+// background every 60s so long-lived processes pick up governance changes
 // (and so the storage pruner advances even when the host is quiet) without a
-// restart.
-type chainParamsProvider struct {
+// restart. It also owns PoC/CPoC phase and request availability state.
+type pocPhase string
+
+const (
+	pocPhaseNone                 pocPhase = "none"
+	pocPhaseGenerate             pocPhase = "poc_generate"
+	pocPhaseGenerateWindDown     pocPhase = "poc_generate_wind_down"
+	pocPhaseValidate             pocPhase = "poc_validate"
+	pocPhaseConfirmationGrace    pocPhase = "confirmation_poc_grace"
+	pocPhaseConfirmationGenerate pocPhase = "confirmation_poc_generate"
+	pocPhaseConfirmationValidate pocPhase = "confirmation_poc_validate"
+)
+
+type chainStateTracker struct {
 	mu           sync.Mutex
 	logprobsMode string
 	currentEpoch uint64
+	pocPhase     pocPhase
+	availability *devshardpkg.AvailabilityTracker
+	pocActivity  *devshardpkg.PoCActivityTracker
 }
 
-func newChainParamsProvider(ctx context.Context, recorder internaldevshard.PayloadAuthClient) *chainParamsProvider {
-	p := &chainParamsProvider{logprobsMode: chaintypes.DefaultLogprobsMode}
+func newChainStateTracker(ctx context.Context, recorder internaldevshard.PayloadAuthClient) *chainStateTracker {
+	t := &chainStateTracker{
+		logprobsMode: chaintypes.DefaultLogprobsMode,
+		availability: devshardpkg.NewAvailabilityTracker(true, 0, 0),
+		pocActivity:  devshardpkg.NewPoCActivityTracker(false, 0, 0),
+	}
 
 	refresh := func() {
 		qc := recorder.NewInferenceQueryClient()
+		var requestsEnabled *bool
 		resp, err := qc.Params(ctx, &chaintypes.QueryParamsRequest{})
 		if err != nil {
 			slog.Warn("failed to query chain params, keeping current values", "error", err)
 		} else {
-			mode := resp.Params.ValidationParams.GetLogprobsMode()
-			if mode == "" {
-				mode = chaintypes.DefaultLogprobsMode
+			t.setLogprobsMode(resp.Params.ValidationParams.GetLogprobsMode())
+
+			if resp.Params.DevshardEscrowParams != nil {
+				enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
+				requestsEnabled = &enabled
 			}
-			p.mu.Lock()
-			if mode != p.logprobsMode {
-				slog.Info("logprobs_mode updated from chain", "old", p.logprobsMode, "new", mode)
-				p.logprobsMode = mode
-			}
-			p.mu.Unlock()
 		}
 
 		epochResp, eErr := qc.EpochInfo(ctx, &chaintypes.QueryEpochInfoRequest{})
@@ -352,11 +375,24 @@ func newChainParamsProvider(ctx context.Context, recorder internaldevshard.Paylo
 			return
 		}
 		idx := epochResp.LatestEpoch.Index
-		p.mu.Lock()
-		if idx != p.currentEpoch {
-			p.currentEpoch = idx
+		phase := currentPoCPhase(epochResp)
+		if epochResp.Params.EpochParams != nil {
+			epochContext := chaintypes.NewEpochContext(epochResp.LatestEpoch, *epochResp.Params.EpochParams)
+			switch epochContext.GetCurrentPhase(epochResp.BlockHeight) {
+			case chaintypes.PoCGeneratePhase, chaintypes.PoCGenerateWindDownPhase, chaintypes.PoCValidatePhase:
+				phase = regularPoCPhase(epochContext.GetCurrentPhase(epochResp.BlockHeight))
+			}
 		}
-		p.mu.Unlock()
+		t.mu.Lock()
+		if idx != t.currentEpoch {
+			t.currentEpoch = idx
+		}
+		t.pocPhase = phase
+		t.mu.Unlock()
+		if requestsEnabled != nil {
+			t.availability.Record(*requestsEnabled, time.Now().Unix(), idx)
+		}
+		t.pocActivity.Record(phase != pocPhaseNone, time.Now().Unix(), idx)
 	}
 
 	refresh()
@@ -374,19 +410,72 @@ func newChainParamsProvider(ctx context.Context, recorder internaldevshard.Paylo
 		}
 	}()
 
-	return p
+	return t
 }
 
-func (p *chainParamsProvider) LogprobsMode() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.logprobsMode
+func (t *chainStateTracker) setLogprobsMode(mode string) {
+	if mode == "" {
+		mode = chaintypes.DefaultLogprobsMode
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if mode != t.logprobsMode {
+		slog.Info("logprobs_mode updated from chain", "old", t.logprobsMode, "new", mode)
+		t.logprobsMode = mode
+	}
 }
 
-func (p *chainParamsProvider) CurrentEpochID() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentEpoch
+func (t *chainStateTracker) LogprobsMode() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.logprobsMode
+}
+
+func (t *chainStateTracker) CurrentEpochID() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.currentEpoch
+}
+
+func (t *chainStateTracker) IsPoCActive() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.pocPhase != pocPhaseNone
+}
+
+func (t *chainStateTracker) CurrentPoCPhase() pocPhase {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.pocPhase
+}
+
+func currentPoCPhase(epochResp *chaintypes.QueryEpochInfoResponse) pocPhase {
+	if epochResp == nil || epochResp.Params.EpochParams == nil || epochResp.ActiveConfirmationPocEvent == nil {
+		return pocPhaseNone
+	}
+	switch epochResp.ActiveConfirmationPocEvent.GetExpectedPhase(epochResp.BlockHeight, epochResp.Params.EpochParams) {
+	case chaintypes.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD:
+		return pocPhaseConfirmationGrace
+	case chaintypes.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION:
+		return pocPhaseConfirmationGenerate
+	case chaintypes.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION:
+		return pocPhaseConfirmationValidate
+	default:
+		return pocPhaseNone
+	}
+}
+
+func regularPoCPhase(phase chaintypes.EpochPhase) pocPhase {
+	switch phase {
+	case chaintypes.PoCGeneratePhase:
+		return pocPhaseGenerate
+	case chaintypes.PoCGenerateWindDownPhase:
+		return pocPhaseGenerateWindDown
+	case chaintypes.PoCValidatePhase:
+		return pocPhaseValidate
+	default:
+		return pocPhaseNone
+	}
 }
 
 func envOr(key, fallback string) string {

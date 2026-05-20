@@ -19,6 +19,7 @@ import (
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	devshardpkg "devshard"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -72,6 +73,8 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
 	epochGroupDataCache  *internal.EpochGroupDataCache
+	availability         *devshardpkg.AvailabilityTracker
+	pocActivity          *devshardpkg.PoCActivityTracker
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -121,6 +124,14 @@ func NewOnNewBlockDispatcher(
 		configManager:        configManager,
 		validator:            validator,
 	}
+}
+
+func (d *OnNewBlockDispatcher) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
+	d.availability = tracker
+}
+
+func (d *OnNewBlockDispatcher) SetPoCActivityTracker(tracker *devshardpkg.PoCActivityTracker) {
+	d.pocActivity = tracker
 }
 
 // NewOnNewBlockDispatcherFromCosmosClient creates a dispatcher using a full cosmos client
@@ -245,6 +256,10 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
+				if d.availability != nil {
+					d.availability.Record(params.Params.DevshardEscrowParams.DevshardRequestsEnabled, time.Now().Unix(), networkInfo.LatestEpoch.Index)
+				}
+
 				versions := make([]apiconfig.DevshardVersion, len(params.Params.DevshardEscrowParams.ApprovedVersions))
 				for i, v := range params.Params.DevshardEscrowParams.ApprovedVersions {
 					versions[i] = apiconfig.DevshardVersion{
@@ -289,6 +304,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
 		return nil
 	}
+	if d.pocActivity != nil {
+		d.pocActivity.Record(isPoCActiveForDevshard(*epochState), time.Now().Unix(), epochState.LatestEpoch.EpochIndex)
+	}
 
 	// 3. Check for phase transitions and stage events
 	d.handlePhaseTransitions(*epochState)
@@ -305,6 +323,15 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	return nil
+}
+
+func isPoCActiveForDevshard(epochState chainphase.EpochState) bool {
+	switch epochState.CurrentPhase {
+	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase, types.PoCValidatePhase:
+		return true
+	default:
+		return epochState.ActiveConfirmationPoCEvent != nil
+	}
 }
 
 // NetworkInfo contains information queried from the network

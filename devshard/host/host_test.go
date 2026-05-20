@@ -1261,6 +1261,49 @@ func TestHost_ResponseCache_Lifecycle(t *testing.T) {
 	require.False(t, stillCached, "cache should be evicted after MsgFinishInference in diff")
 }
 
+func TestHost_DisabledRequestCachesFinishReasonImmediately(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	h.availability = devshard.NewAvailabilityTracker(false, time.Now().Unix(), 7)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp.ExecutionJob)
+	require.Nil(t, resp.CachedResponseBody)
+
+	h.mu.Lock()
+	cached, ok := h.completedResponses[1]
+	h.mu.Unlock()
+	require.True(t, ok, "disabled request should be marked complete immediately")
+	require.Empty(t, cached)
+
+	finishTx := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, finishTx)
+	require.Equal(t, types.FinishReason_FINISH_REASON_DEVSHARD_REQUESTS_DISABLED, finishTx.GetFinishInference().Reason)
+
+	resp2, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp2.ExecutionJob)
+	require.Empty(t, resp2.CachedResponseBody)
+	require.Len(t, finishMempoolTxs(h.MempoolTxs()), 1)
+}
+
+func finishMempoolTxs(txs []*types.DevshardTx) []*types.DevshardTx {
+	var finishes []*types.DevshardTx
+	for _, tx := range txs {
+		if tx.GetFinishInference() != nil {
+			finishes = append(finishes, tx)
+		}
+	}
+	return finishes
+}
+
 func findMempoolConfirm(txs []*types.DevshardTx) *types.DevshardTx {
 	for _, tx := range txs {
 		if tx.GetConfirmStart() != nil {

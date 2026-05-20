@@ -2,6 +2,7 @@ package mlnode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"devshard/mlnode/gen"
@@ -11,6 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+var ErrNoNodesAvailable = errors.New("nodemanager: no nodes available")
 
 // Client is a gRPC client for the node-manager NodeManager service.
 type Client struct {
@@ -42,7 +45,7 @@ func (c *Client) Acquire(ctx context.Context, model string, excludedNodeIDs []st
 	})
 	if err != nil {
 		if code := status.Code(err); code == codes.ResourceExhausted {
-			return nil, fmt.Errorf("nodemanager: no nodes available for model %q", model)
+			return nil, fmt.Errorf("%w for model %q", ErrNoNodesAvailable, model)
 		}
 		return nil, fmt.Errorf("nodemanager: acquire: %w", err)
 	}

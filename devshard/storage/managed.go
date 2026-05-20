@@ -93,6 +93,12 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 	return m.maxObservedEpoch.Load()
 }
 
+func (m *ManagedStorage) PrunedUpTo() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.prunedUpTo
+}
+
 func (m *ManagedStorage) loop() {
 	defer close(m.done)
 	t := time.NewTicker(m.pruneInterval)
@@ -195,6 +201,44 @@ func (m *ManagedStorage) MarkSettled(escrowID string) error {
 
 func (m *ManagedStorage) ListActiveSessions() ([]ActiveSession, error) {
 	return m.inner.ListActiveSessions()
+}
+
+func (m *ManagedStorage) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	m.mu.Lock()
+	if period.EpochID < m.prunedUpTo {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: epoch %d below prune cursor %d", ErrEpochPruned, period.EpochID, m.prunedUpTo)
+	}
+	if err := m.inner.RecordAvailabilityPeriod(period); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	m.mu.Unlock()
+	m.observe(period.EpochID)
+	return nil
+}
+
+func (m *ManagedStorage) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	return m.inner.ListAvailabilityPeriods()
+}
+
+func (m *ManagedStorage) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	m.mu.Lock()
+	if period.EpochID < m.prunedUpTo {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: epoch %d below prune cursor %d", ErrEpochPruned, period.EpochID, m.prunedUpTo)
+	}
+	if err := m.inner.RecordPoCActivityPeriod(period); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	m.mu.Unlock()
+	m.observe(period.EpochID)
+	return nil
+}
+
+func (m *ManagedStorage) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	return m.inner.ListPoCActivityPeriods()
 }
 
 func (m *ManagedStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {

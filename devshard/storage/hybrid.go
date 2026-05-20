@@ -244,6 +244,82 @@ func (h *HybridStorage) ListActiveSessions() ([]ActiveSession, error) {
 	return result, nil
 }
 
+func (h *HybridStorage) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	if pg := h.getOrConnectPostgres(); pg != nil {
+		if err := pg.RecordAvailabilityPeriod(period); err == nil {
+			return nil
+		} else {
+			slog.Warn("devshard storage: postgres availability write failed, falling back to sqlite", "error", err)
+		}
+	}
+	return h.sqlite.RecordAvailabilityPeriod(period)
+}
+
+func (h *HybridStorage) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	result, err := h.sqlite.ListAvailabilityPeriods()
+	if err != nil {
+		return nil, err
+	}
+	pg := h.getOrConnectPostgres()
+	if pg == nil {
+		return result, nil
+	}
+	pgPeriods, err := pg.ListAvailabilityPeriods()
+	if err != nil {
+		slog.Warn("devshard storage: postgres availability period list failed", "error", err)
+		return result, nil
+	}
+	seen := make(map[AvailabilityPeriod]struct{}, len(result))
+	for _, period := range result {
+		seen[period] = struct{}{}
+	}
+	for _, period := range pgPeriods {
+		if _, ok := seen[period]; ok {
+			continue
+		}
+		result = append(result, period)
+	}
+	return result, nil
+}
+
+func (h *HybridStorage) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	if pg := h.getOrConnectPostgres(); pg != nil {
+		if err := pg.RecordPoCActivityPeriod(period); err == nil {
+			return nil
+		} else {
+			slog.Warn("devshard storage: postgres poc activity write failed, falling back to sqlite", "error", err)
+		}
+	}
+	return h.sqlite.RecordPoCActivityPeriod(period)
+}
+
+func (h *HybridStorage) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	result, err := h.sqlite.ListPoCActivityPeriods()
+	if err != nil {
+		return nil, err
+	}
+	pg := h.getOrConnectPostgres()
+	if pg == nil {
+		return result, nil
+	}
+	pgPeriods, err := pg.ListPoCActivityPeriods()
+	if err != nil {
+		slog.Warn("devshard storage: postgres poc activity period list failed", "error", err)
+		return result, nil
+	}
+	seen := make(map[PoCActivityPeriod]struct{}, len(result))
+	for _, period := range result {
+		seen[period] = struct{}{}
+	}
+	for _, period := range pgPeriods {
+		if _, ok := seen[period]; ok {
+			continue
+		}
+		result = append(result, period)
+	}
+	return result, nil
+}
+
 func sessionVersionForLog(store Storage, escrowID string) (string, error) {
 	meta, err := store.GetSessionMeta(escrowID)
 	if err != nil {

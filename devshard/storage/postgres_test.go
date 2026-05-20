@@ -152,6 +152,23 @@ func TestPostgres_PruneEpoch_Idempotent(t *testing.T) {
 func TestPostgres_PruneEpoch_WriteAfter(t *testing.T) {
 	runPruneEpoch_WriteAfter(t, newTestPostgres(t))
 }
+func TestPostgres_AvailabilityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runAvailabilityPeriods_PersistAndPruneByEpoch(t, newTestPostgres(t))
+}
+
+func TestPostgres_PoCActivityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runPoCActivityPeriods_PersistAndPruneByEpoch(t, newTestPostgres(t))
+}
+
+func TestPostgres_AvailabilityPartitionCreatedIndependently(t *testing.T) {
+	pg := newTestPostgres(t)
+
+	require.NoError(t, pg.CreateSession(paramsForEpoch("a", 100)))
+	require.NotContains(t, listDevshardPartitions(t, pg.pool), "devshard_availability_periods_epoch_100")
+
+	require.NoError(t, pg.RecordAvailabilityPeriod(AvailabilityPeriod{EpochID: 100, StartTime: 1000, EndTime: 0}))
+	require.Contains(t, listDevshardPartitions(t, pg.pool), "devshard_availability_periods_epoch_100")
+}
 
 // TestPostgres_PartitionTablesPhysicallyDropped is the assertion specific to
 // the Postgres backend: PruneEpoch must DROP the per-epoch partition tables,
@@ -537,7 +554,7 @@ func listDevshardPartitions(t *testing.T, pool *pgxpool.Pool) []string {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_availability_periods', 'devshard_poc_activity_periods')
 		ORDER BY c.relname
 	`)
 	require.NoError(t, err)

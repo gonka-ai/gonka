@@ -62,6 +62,14 @@ func TestMemory_PruneEpoch_WriteAfter(t *testing.T) {
 	runPruneEpoch_WriteAfter(t, NewMemory())
 }
 
+func TestMemory_AvailabilityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runAvailabilityPeriods_PersistAndPruneByEpoch(t, NewMemory())
+}
+
+func TestMemory_PoCActivityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runPoCActivityPeriods_PersistAndPruneByEpoch(t, NewMemory())
+}
+
 func TestMemory_DuplicateNonce(t *testing.T) {
 	store := NewMemory()
 	err := store.CreateSession(defaultParams())

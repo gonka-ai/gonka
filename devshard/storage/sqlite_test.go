@@ -148,6 +148,14 @@ func TestSQLite_PruneEpoch_WriteAfter(t *testing.T) {
 	runPruneEpoch_WriteAfter(t, newTestSQLite(t))
 }
 
+func TestSQLite_AvailabilityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runAvailabilityPeriods_PersistAndPruneByEpoch(t, newTestSQLite(t))
+}
+
+func TestSQLite_PoCActivityPeriods_PersistAndPruneByEpoch(t *testing.T) {
+	runPoCActivityPeriods_PersistAndPruneByEpoch(t, newTestSQLite(t))
+}
+
 // SQLite-specific durability tests.
 
 func TestSQLite_PersistAcrossReopen(t *testing.T) {

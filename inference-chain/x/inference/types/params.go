@@ -100,6 +100,7 @@ const (
 	DefaultDevshardGroupSize          uint32 = 16
 	DefaultDevshardTokenPrice         uint64 = 1
 	DefaultDevshardMaxNonce           uint32 = 20_000
+	DefaultDevshardRequestsEnabled    bool   = true
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
@@ -328,6 +329,7 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultDevshardTokenPrice,
 		MaxNonce:                DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: DefaultDevshardRequestsEnabled,
 	}
 }
 

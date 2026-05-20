@@ -39,6 +39,7 @@ message InferenceRecordProto {
   uint32 votes_valid = 15;
   uint32 votes_invalid = 16;
   bytes  validated_by = 17;
+  uint32 finish_reason = 18;
 }
 
 message InferencesMapProto {

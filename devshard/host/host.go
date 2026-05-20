@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -65,20 +66,22 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu        sync.Mutex
-	sm        *state.StateMachine
-	signer    signing.Signer
-	verifier  signing.Verifier
-	engine    devshard.InferenceEngine
-	validator devshard.ValidationEngine // optional, nil = no validation
-	escrowID  string
-	epochID   uint64
-	slotIDs   map[uint32]bool
-	group     []types.SlotAssignment
-	mempool   *Mempool
-	checker   AcceptanceChecker
-	store     storage.Storage // optional, nil = no persistence
-	gsp       *gossip.Gossip  // optional, nil = no gossip pruning
+	mu           sync.Mutex
+	sm           *state.StateMachine
+	signer       signing.Signer
+	verifier     signing.Verifier
+	engine       devshard.InferenceEngine
+	validator    devshard.ValidationEngine // optional, nil = no validation
+	availability devshard.AvailabilityProvider
+	pocActivity  devshard.PoCActivityProvider
+	escrowID     string
+	epochID      uint64
+	slotIDs      map[uint32]bool
+	group        []types.SlotAssignment
+	mempool      *Mempool
+	checker      AcceptanceChecker
+	store        storage.Storage // optional, nil = no persistence
+	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
 
 	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
 
@@ -90,12 +93,14 @@ type Host struct {
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
-	completedResponses map[uint64][]byte // inference ID -> cached ML response body
+	completedResponses map[uint64][]byte // inference ID -> cached ML response body, or empty marker for zero-body terminal finishes
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
 const SnapshotInterval = 500
+
+const finishReasonEvidenceEarlyGraceSeconds = int64(60)
 
 func NewHost(
 	sm *state.StateMachine,
@@ -217,6 +222,14 @@ func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
 }
 
+func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
+	return func(h *Host) { h.availability = p }
+}
+
+func WithPoCActivityProvider(p devshard.PoCActivityProvider) HostOption {
+	return func(h *Host) { h.pocActivity = p }
+}
+
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
@@ -301,10 +314,35 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, err := h.signReceipt(req)
+	receipt, confirmedAt, receiptStart, cachedBody, err := h.signReceipt(req)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
+	}
+	var job *devshard.ExecuteRequest
+	var disabledFinish *disabledFinishCandidate
+	if receiptStart != nil {
+		availability := h.currentAvailability()
+		if !availability.Enabled {
+			h.completedResponses[receiptStart.inferenceID] = []byte{}
+			disabledFinish = &disabledFinishCandidate{
+				inferenceID:  receiptStart.inferenceID,
+				executorSlot: receiptStart.executorSlot,
+				diffNonce:    h.sm.LatestNonce(),
+			}
+		} else {
+			h.executing[receiptStart.inferenceID] = struct{}{}
+			job = &devshard.ExecuteRequest{
+				InferenceID: receiptStart.inferenceID,
+				Model:       receiptStart.start.Model,
+				Prompt:      req.Payload.Prompt,
+				PromptHash:  receiptStart.start.PromptHash,
+				InputLength: receiptStart.start.InputLength,
+				MaxTokens:   receiptStart.start.MaxTokens,
+				EscrowID:    h.escrowID,
+				EpochID:     h.epochID,
+			}
+		}
 	}
 
 	// (c) Sign state (with acceptance check + mempool staleness).
@@ -322,11 +360,19 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	h.mu.Unlock()
 
-	// (f) Execution job for caller to run via RunExecution.
+	// (f) Add disabled-request finish outside h.mu; proposer signing may touch
+	// slow keyring backends, and Mempool handles its own lock.
+	if disabledFinish != nil {
+		if err := h.addFinishToMempool(disabledFinish.inferenceID, disabledFinish.executorSlot, disabledFinish.diffNonce, nil, types.FinishReason_FINISH_REASON_DEVSHARD_REQUESTS_DISABLED); err != nil {
+			return nil, err
+		}
+	}
+
+	// (g) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Queue validation work outside mutex.
+	// (h) Queue validation work outside mutex.
 	for _, vj := range validationJobs {
 		h.enqueueValidation(vj)
 	}
@@ -473,11 +519,23 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 	return nil
 }
 
+type signedReceiptStart struct {
+	inferenceID  uint64
+	executorSlot uint32
+	start        *types.MsgStartInference
+}
+
+type disabledFinishCandidate struct {
+	inferenceID  uint64
+	executorSlot uint32
+	diffNonce    uint64
+}
+
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
 // Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
 // and cached response body if the inference already completed (reconnect case).
 // Caller must hold h.mu.
-func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, error) {
+func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *signedReceiptStart, []byte, error) {
 	if req.Payload == nil {
 		return nil, 0, nil, nil, nil
 	}
@@ -543,19 +601,11 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 			return sig, confirmedAt, nil, cached, nil
 		}
 
-		h.executing[start.InferenceId] = struct{}{}
-
-		job := &devshard.ExecuteRequest{
-			InferenceID: start.InferenceId,
-			Model:       start.Model,
-			Prompt:      req.Payload.Prompt,
-			PromptHash:  start.PromptHash,
-			InputLength: start.InputLength,
-			MaxTokens:   start.MaxTokens,
-			EscrowID:    h.escrowID,
-			EpochID:     h.epochID,
-		}
-		return sig, confirmedAt, job, nil, nil
+		return sig, confirmedAt, &signedReceiptStart{
+			inferenceID:  start.InferenceId,
+			executorSlot: executorSlot,
+			start:        start,
+		}, nil, nil
 	}
 	return nil, 0, nil, nil, nil
 }
@@ -583,29 +633,51 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 
 	result, err := h.engine.Execute(ctx, *job)
 	if err != nil {
+		var unavailable *devshard.UnavailableFinishError
+		if errors.As(err, &unavailable) {
+			if finishErr := h.addFinishToMempool(inferenceID, executorSlot, diffNonce, nil, unavailable.Reason); finishErr != nil {
+				return nil, finishErr
+			}
+			return nil, nil
+		}
 		logging.Error("execute failed", "subsystem", "host", "inference_id", inferenceID, "error", err)
 		return nil, err
 	}
 
-	// Cache response body for reconnection replay.
-	if len(result.ResponseBody) > 0 {
-		h.mu.Lock()
-		h.completedResponses[inferenceID] = result.ResponseBody
-		h.mu.Unlock()
+	h.mu.Lock()
+	h.completedResponses[inferenceID] = result.ResponseBody
+	h.mu.Unlock()
+
+	if err := h.addFinishToMempool(inferenceID, executorSlot, diffNonce, result, types.FinishReason_FINISH_REASON_COMPLETED); err != nil {
+		return result, err
 	}
 
+	return result, nil
+}
+
+func (h *Host) currentAvailability() devshard.AvailabilityStatus {
+	if h.availability == nil {
+		return devshard.AvailabilityStatus{Enabled: true}
+	}
+	return h.availability.CurrentAvailability()
+}
+
+func (h *Host) addFinishToMempool(inferenceID uint64, executorSlot uint32, diffNonce uint64, result *devshard.ExecuteResult, reason types.FinishReason) error {
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: result.ResponseHash,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
 		ExecutorSlot: executorSlot,
 		EscrowId:     h.escrowID,
+		Reason:       reason,
+	}
+	if result != nil {
+		finishMsg.ResponseHash = result.ResponseHash
+		finishMsg.InputTokens = result.InputTokens
+		finishMsg.OutputTokens = result.OutputTokens
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
 		logging.Error("sign finish msg failed", "subsystem", "host", "inference_id", inferenceID, "error", err)
-		return result, err
+		return err
 	}
 	finishMsg.ProposerSig = proposerSig
 
@@ -615,8 +687,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		}},
 		ProposedAt: diffNonce,
 	})
-
-	return result, nil
+	return nil
 }
 
 // maybeRevealSeed produces a MsgRevealSeed if the session is finalizing and
@@ -679,16 +750,19 @@ func (h *Host) maybeRevealSeed() {
 
 // validateJob captures data needed to run validateAsync outside the mutex.
 type validateJob struct {
-	inferenceID     uint64
-	validatorSlot   uint32
-	model           string
-	promptHash      []byte
-	responseHash    []byte
-	inputTokens     uint64
-	outputTokens    uint64
-	escrowID        string
-	executorAddress string
-	epochID         uint64
+	inferenceID      uint64
+	validatorSlot    uint32
+	model            string
+	promptHash       []byte
+	responseHash     []byte
+	inputTokens      uint64
+	outputTokens     uint64
+	finishReason     types.FinishReason
+	startedAt        int64
+	executionTimeout int64
+	escrowID         string
+	executorAddress  string
+	epochID          uint64
 }
 
 // collectValidationJobs finds finished inferences that this host should validate.
@@ -746,16 +820,19 @@ func (h *Host) collectValidationJobs() []validateJob {
 
 		h.validating[infID] = struct{}{}
 		jobs = append(jobs, validateJob{
-			inferenceID:     infID,
-			validatorSlot:   validatorSlot,
-			model:           rec.Model,
-			promptHash:      rec.PromptHash,
-			responseHash:    rec.ResponseHash,
-			inputTokens:     rec.InputTokens,
-			outputTokens:    rec.OutputTokens,
-			escrowID:        h.escrowID,
-			executorAddress: executorAddr,
-			epochID:         h.epochID,
+			inferenceID:      infID,
+			validatorSlot:    validatorSlot,
+			model:            rec.Model,
+			promptHash:       rec.PromptHash,
+			responseHash:     rec.ResponseHash,
+			inputTokens:      rec.InputTokens,
+			outputTokens:     rec.OutputTokens,
+			finishReason:     rec.FinishReason,
+			startedAt:        rec.StartedAt,
+			executionTimeout: st.Config.ExecutionTimeout,
+			escrowID:         h.escrowID,
+			executorAddress:  executorAddr,
+			epochID:          h.epochID,
 		})
 		available--
 		if available == 0 {
@@ -824,20 +901,39 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Unlock()
 	}()
 
-	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
-		InferenceID:     job.inferenceID,
-		Model:           job.model,
-		PromptHash:      job.promptHash,
-		ResponseHash:    job.responseHash,
-		InputTokens:     job.inputTokens,
-		OutputTokens:    job.outputTokens,
-		EscrowID:        job.escrowID,
-		ExecutorAddress: job.executorAddress,
-		EpochID:         job.epochID,
-	})
-	if err != nil {
-		logging.Error("validate failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
-		return
+	result := &devshard.ValidateResult{Valid: true}
+	switch job.finishReason {
+	case types.FinishReason_FINISH_REASON_DEVSHARD_REQUESTS_DISABLED:
+		result.Valid = h.availability != nil &&
+			h.availability.WasUnavailableAtWithGrace(job.startedAt, finishReasonEvidenceEarlyGraceSeconds)
+	case types.FinishReason_FINISH_REASON_NO_PRESERVE_NODES:
+		result.Valid = h.pocActivity != nil &&
+			h.pocActivity.WasPoCActiveAtWithGrace(job.startedAt, finishReasonEvidenceEarlyGraceSeconds)
+	case types.FinishReason_FINISH_REASON_POC_ABORTED:
+		result.Valid = h.pocActivity != nil &&
+			h.pocActivity.WasPoCActiveBetween(
+				job.startedAt,
+				job.startedAt+job.executionTimeout,
+				finishReasonEvidenceEarlyGraceSeconds,
+			)
+	case types.FinishReason_FINISH_REASON_UNSPECIFIED,
+		types.FinishReason_FINISH_REASON_COMPLETED:
+		var err error
+		result, err = h.validator.Validate(ctx, devshard.ValidateRequest{
+			InferenceID:     job.inferenceID,
+			Model:           job.model,
+			PromptHash:      job.promptHash,
+			ResponseHash:    job.responseHash,
+			InputTokens:     job.inputTokens,
+			OutputTokens:    job.outputTokens,
+			EscrowID:        job.escrowID,
+			ExecutorAddress: job.executorAddress,
+			EpochID:         job.epochID,
+		})
+		if err != nil {
+			logging.Error("validate failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+			return
+		}
 	}
 
 	rec, ok := h.sm.GetInference(job.inferenceID)

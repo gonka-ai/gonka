@@ -13,6 +13,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
+	devshardpkg "devshard"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,6 +117,14 @@ func NewEventListener(
 		opt(el)
 	}
 	return el
+}
+
+func (el *EventListener) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
+	el.dispatcher.SetAvailabilityTracker(tracker)
+}
+
+func (el *EventListener) SetPoCActivityTracker(tracker *devshardpkg.PoCActivityTracker) {
+	el.dispatcher.SetPoCActivityTracker(tracker)
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {

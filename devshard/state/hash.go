@@ -203,6 +203,7 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 			VotesValid:   r.VotesValid,
 			VotesInvalid: r.VotesInvalid,
 			ValidatedBy:  r.ValidatedBy.Bytes(),
+			FinishReason: uint32(r.FinishReason),
 		})
 	}
 

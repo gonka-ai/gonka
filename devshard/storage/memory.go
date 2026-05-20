@@ -57,8 +57,10 @@ type sessionData struct {
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionData
+	mu                  sync.RWMutex
+	sessions            map[string]*sessionData
+	availabilityPeriods []AvailabilityPeriod
+	pocActivityPeriods  []PoCActivityPeriod
 }
 
 func NewMemory() *Memory {
@@ -274,6 +276,12 @@ func (m *Memory) PruneEpoch(epochID uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.availabilityPeriods = filterAvailabilityPeriods(m.availabilityPeriods, func(p AvailabilityPeriod) bool {
+		return p.EpochID != epochID
+	})
+	m.pocActivityPeriods = filterPoCActivityPeriods(m.pocActivityPeriods, func(p PoCActivityPeriod) bool {
+		return p.EpochID != epochID
+	})
 	return nil
 }
 
@@ -286,10 +294,74 @@ func (m *Memory) pruneBefore(cutoff uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.availabilityPeriods = filterAvailabilityPeriods(m.availabilityPeriods, func(p AvailabilityPeriod) bool {
+		return p.EpochID >= cutoff
+	})
+	m.pocActivityPeriods = filterPoCActivityPeriods(m.pocActivityPeriods, func(p PoCActivityPeriod) bool {
+		return p.EpochID >= cutoff
+	})
 	return nil
 }
 
 func (m *Memory) Close() error { return nil }
+
+func (m *Memory) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, existing := range m.availabilityPeriods {
+		if existing.EpochID == period.EpochID && existing.StartTime == period.StartTime {
+			m.availabilityPeriods[i] = period
+			return nil
+		}
+	}
+	m.availabilityPeriods = append(m.availabilityPeriods, period)
+	return nil
+}
+
+func (m *Memory) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]AvailabilityPeriod(nil), m.availabilityPeriods...), nil
+}
+
+func (m *Memory) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, existing := range m.pocActivityPeriods {
+		if existing.EpochID == period.EpochID && existing.StartTime == period.StartTime {
+			m.pocActivityPeriods[i] = period
+			return nil
+		}
+	}
+	m.pocActivityPeriods = append(m.pocActivityPeriods, period)
+	return nil
+}
+
+func (m *Memory) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]PoCActivityPeriod(nil), m.pocActivityPeriods...), nil
+}
+
+func filterAvailabilityPeriods(in []AvailabilityPeriod, keep func(AvailabilityPeriod) bool) []AvailabilityPeriod {
+	out := in[:0]
+	for _, period := range in {
+		if keep(period) {
+			out = append(out, period)
+		}
+	}
+	return out
+}
+
+func filterPoCActivityPeriods(in []PoCActivityPeriod, keep func(PoCActivityPeriod) bool) []PoCActivityPeriod {
+	out := in[:0]
+	for _, period := range in {
+		if keep(period) {
+			out = append(out, period)
+		}
+	}
+	return out
+}
 
 func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	m.mu.RLock()

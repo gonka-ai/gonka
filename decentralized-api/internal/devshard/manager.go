@@ -57,6 +57,8 @@ type HostManager struct {
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
 	recorder     PayloadAuthClient
+	availability devshardpkg.AvailabilityProvider
+	pocActivity  devshardpkg.PoCActivityProvider
 
 	statsMu           sync.Mutex
 	statsShardsCache  *statsShardsResponse
@@ -135,6 +137,18 @@ func NewHostManager(
 // Close releases the underlying storage resources.
 func (m *HostManager) Close() error {
 	return m.store.Close()
+}
+
+func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.availability = p
+}
+
+func (m *HostManager) SetPoCActivityProvider(p devshardpkg.PoCActivityProvider) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pocActivity = p
 }
 
 func (m *HostManager) SetInitializing() {
@@ -254,6 +268,8 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(escrow.EpochID),
+		host.WithAvailabilityProvider(m.availability),
+		host.WithPoCActivityProvider(m.pocActivity),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -436,6 +452,8 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(meta.EpochID),
+		host.WithAvailabilityProvider(m.availability),
+		host.WithPoCActivityProvider(m.pocActivity),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)

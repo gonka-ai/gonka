@@ -352,6 +352,16 @@ func openEpochPool(dbPath string) (*epochPool, error) {
 		state_data BLOB NOT NULL,
 		created_at INTEGER NOT NULL DEFAULT 0
 	);
+
+	CREATE TABLE IF NOT EXISTS availability_periods (
+		start_time INTEGER PRIMARY KEY,
+		end_time   INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS poc_activity_periods (
+		start_time INTEGER PRIMARY KEY,
+		end_time   INTEGER NOT NULL DEFAULT 0
+	);
 	`
 	if _, err := writeDB.Exec(schema); err != nil {
 		writeDB.Close()
@@ -904,6 +914,118 @@ func (s *SQLite) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 		return 0, nil, err
 	}
 	return nonce, data, nil
+}
+
+func (s *SQLite) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	p, err := s.openOrLoadPool(period.EpochID)
+	if err != nil {
+		return err
+	}
+	_, err = p.writeDB.Exec(
+		`INSERT INTO availability_periods (start_time, end_time)
+		 VALUES (?, ?)
+		 ON CONFLICT(start_time) DO UPDATE SET end_time = excluded.end_time`,
+		period.StartTime, period.EndTime,
+	)
+	return err
+}
+
+func (s *SQLite) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	entries, err := os.ReadDir(s.baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("read base dir %s: %w", s.baseDir, err)
+	}
+	var result []AvailabilityPeriod
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		m := epochFileRegex.FindStringSubmatch(ent.Name())
+		if m == nil {
+			continue
+		}
+		epochID, err := strconv.ParseUint(m[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		p, err := s.openOrLoadPool(epochID)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := p.readDB.Query(`SELECT start_time, end_time FROM availability_periods`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			period := AvailabilityPeriod{EpochID: epochID}
+			if err := rows.Scan(&period.StartTime, &period.EndTime); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result = append(result, period)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (s *SQLite) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	p, err := s.openOrLoadPool(period.EpochID)
+	if err != nil {
+		return err
+	}
+	_, err = p.writeDB.Exec(
+		`INSERT INTO poc_activity_periods (start_time, end_time)
+		 VALUES (?, ?)
+		 ON CONFLICT(start_time) DO UPDATE SET end_time = excluded.end_time`,
+		period.StartTime, period.EndTime,
+	)
+	return err
+}
+
+func (s *SQLite) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	entries, err := os.ReadDir(s.baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("read base dir %s: %w", s.baseDir, err)
+	}
+	var result []PoCActivityPeriod
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		m := epochFileRegex.FindStringSubmatch(ent.Name())
+		if m == nil {
+			continue
+		}
+		epochID, err := strconv.ParseUint(m[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		p, err := s.openOrLoadPool(epochID)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := p.readDB.Query(`SELECT start_time, end_time FROM poc_activity_periods`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			period := PoCActivityPeriod{EpochID: epochID}
+			if err := rows.Scan(&period.StartTime, &period.EndTime); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result = append(result, period)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 // PruneEpoch closes the pool for epochID, removes the database file and its

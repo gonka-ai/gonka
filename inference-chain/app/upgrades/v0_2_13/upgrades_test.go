@@ -80,6 +80,24 @@ func TestSetDevshardApprovedVersionsAppendsV1WhenMissing(t *testing.T) {
 	}, got.DevshardEscrowParams.ApprovedVersions[1])
 }
 
+func TestSetDevshardEscrowParamsEnablesRequests(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.DevshardRequestsEnabled = false
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardEscrowParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, MaxEscrowsPerEpoch, got.DevshardEscrowParams.MaxEscrowsPerEpoch)
+	require.Equal(t, MaxNonce, got.DevshardEscrowParams.MaxNonce)
+	require.True(t, got.DevshardEscrowParams.DevshardRequestsEnabled)
+}
+
 func TestBackfillConfirmationWeightScales(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

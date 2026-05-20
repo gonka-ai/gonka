@@ -31,17 +31,21 @@ import (
 type Postgres struct {
 	pool *pgxpool.Pool
 
-	mu          sync.RWMutex
-	knownEpochs map[uint64]struct{}
-	escrowIdx   map[string]uint64
+	mu                      sync.RWMutex
+	knownEpochs             map[uint64]struct{}
+	knownAvailabilityEpochs map[uint64]struct{}
+	knownPoCActivityEpochs  map[uint64]struct{}
+	escrowIdx               map[string]uint64
 }
 
 const (
-	pgSessionsParent   = "devshard_sessions"
-	pgDiffsParent      = "devshard_diffs"
-	pgSignaturesParent = "devshard_signatures"
-	pgSnapshotsParent  = "devshard_snapshots"
-	pgSessionIndex     = "devshard_session_index"
+	pgSessionsParent     = "devshard_sessions"
+	pgDiffsParent        = "devshard_diffs"
+	pgSignaturesParent   = "devshard_signatures"
+	pgSnapshotsParent    = "devshard_snapshots"
+	pgAvailabilityParent = "devshard_availability_periods"
+	pgPoCActivityParent  = "devshard_poc_activity_periods"
+	pgSessionIndex       = "devshard_session_index"
 )
 
 func pgSessionsPartition(epochID uint64) string {
@@ -55,6 +59,12 @@ func pgSignaturesPartition(epochID uint64) string {
 }
 func pgSnapshotsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSnapshotsParent, epochID)
+}
+func pgAvailabilityPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgAvailabilityParent, epochID)
+}
+func pgPoCActivityPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgPoCActivityParent, epochID)
 }
 
 const pgCreateParents = `
@@ -109,6 +119,20 @@ CREATE TABLE IF NOT EXISTS devshard_snapshots (
     created_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id)
 ) PARTITION BY RANGE (epoch_id);
+
+CREATE TABLE IF NOT EXISTS devshard_availability_periods (
+    epoch_id   BIGINT NOT NULL,
+    start_time BIGINT NOT NULL,
+    end_time   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, start_time)
+) PARTITION BY RANGE (epoch_id);
+
+CREATE TABLE IF NOT EXISTS devshard_poc_activity_periods (
+    epoch_id   BIGINT NOT NULL,
+    start_time BIGINT NOT NULL,
+    end_time   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, start_time)
+) PARTITION BY RANGE (epoch_id);
 `
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
@@ -130,9 +154,11 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 	}
 
 	s := &Postgres{
-		pool:        pool,
-		knownEpochs: make(map[uint64]struct{}),
-		escrowIdx:   make(map[string]uint64),
+		pool:                    pool,
+		knownEpochs:             make(map[uint64]struct{}),
+		knownAvailabilityEpochs: make(map[uint64]struct{}),
+		knownPoCActivityEpochs:  make(map[uint64]struct{}),
+		escrowIdx:               make(map[string]uint64),
 	}
 	if err := s.indexExisting(ctx); err != nil {
 		pool.Close()
@@ -214,9 +240,25 @@ func (s *Postgres) Close() error {
 	return nil
 }
 
-// ensurePartition creates per-epoch partitions for all three parents on first
-// touch. The check + create is racy across multiple writers, but PG returns
-// 42P07 (table already exists) which we swallow.
+func (s *Postgres) createPartition(ctx context.Context, parent, partition string, epochID uint64) error {
+	q := fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM (%d) TO (%d)`,
+		partition, parent, epochID, epochID+1,
+	)
+	_, err := s.pool.Exec(ctx, q)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
+			return nil
+		}
+		return fmt.Errorf("create partition %s: %w", partition, err)
+	}
+	return nil
+}
+
+// ensurePartition creates per-epoch session state partitions on first touch.
+// The check + create is racy across multiple writers, but PG returns 42P07
+// (table already exists) which we swallow.
 func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 	s.mu.RLock()
 	_, ok := s.knownEpochs[epochID]
@@ -225,37 +267,57 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return nil
 	}
 
-	create := func(parent, partition string) error {
-		q := fmt.Sprintf(
-			`CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM (%d) TO (%d)`,
-			partition, parent, epochID, epochID+1,
-		)
-		_, err := s.pool.Exec(ctx, q)
-		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
-				return nil
-			}
-			return fmt.Errorf("create partition %s: %w", partition, err)
-		}
-		return nil
-	}
-
-	if err := create(pgSessionsParent, pgSessionsPartition(epochID)); err != nil {
+	if err := s.createPartition(ctx, pgSessionsParent, pgSessionsPartition(epochID), epochID); err != nil {
 		return err
 	}
-	if err := create(pgDiffsParent, pgDiffsPartition(epochID)); err != nil {
+	if err := s.createPartition(ctx, pgDiffsParent, pgDiffsPartition(epochID), epochID); err != nil {
 		return err
 	}
-	if err := create(pgSignaturesParent, pgSignaturesPartition(epochID)); err != nil {
+	if err := s.createPartition(ctx, pgSignaturesParent, pgSignaturesPartition(epochID), epochID); err != nil {
 		return err
 	}
-	if err := create(pgSnapshotsParent, pgSnapshotsPartition(epochID)); err != nil {
+	if err := s.createPartition(ctx, pgSnapshotsParent, pgSnapshotsPartition(epochID), epochID); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
 	s.knownEpochs[epochID] = struct{}{}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Postgres) ensureAvailabilityPartition(ctx context.Context, epochID uint64) error {
+	s.mu.RLock()
+	_, ok := s.knownAvailabilityEpochs[epochID]
+	s.mu.RUnlock()
+	if ok {
+		return nil
+	}
+
+	if err := s.createPartition(ctx, pgAvailabilityParent, pgAvailabilityPartition(epochID), epochID); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.knownAvailabilityEpochs[epochID] = struct{}{}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Postgres) ensurePoCActivityPartition(ctx context.Context, epochID uint64) error {
+	s.mu.RLock()
+	_, ok := s.knownPoCActivityEpochs[epochID]
+	s.mu.RUnlock()
+	if ok {
+		return nil
+	}
+
+	if err := s.createPartition(ctx, pgPoCActivityParent, pgPoCActivityPartition(epochID), epochID); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.knownPoCActivityEpochs[epochID] = struct{}{}
 	s.mu.Unlock()
 	return nil
 }
@@ -705,6 +767,74 @@ func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return nonce, data, nil
 }
 
+func (s *Postgres) RecordAvailabilityPeriod(period AvailabilityPeriod) error {
+	ctx := context.Background()
+	if err := s.ensureAvailabilityPartition(ctx, period.EpochID); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO devshard_availability_periods (epoch_id, start_time, end_time)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (epoch_id, start_time) DO UPDATE SET end_time = EXCLUDED.end_time`,
+		period.EpochID, period.StartTime, period.EndTime,
+	)
+	return err
+}
+
+func (s *Postgres) ListAvailabilityPeriods() ([]AvailabilityPeriod, error) {
+	rows, err := s.pool.Query(context.Background(),
+		`SELECT epoch_id, start_time, end_time FROM devshard_availability_periods`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AvailabilityPeriod
+	for rows.Next() {
+		var period AvailabilityPeriod
+		if err := rows.Scan(&period.EpochID, &period.StartTime, &period.EndTime); err != nil {
+			return nil, err
+		}
+		result = append(result, period)
+	}
+	return result, rows.Err()
+}
+
+func (s *Postgres) RecordPoCActivityPeriod(period PoCActivityPeriod) error {
+	ctx := context.Background()
+	if err := s.ensurePoCActivityPartition(ctx, period.EpochID); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO devshard_poc_activity_periods (epoch_id, start_time, end_time)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (epoch_id, start_time) DO UPDATE SET end_time = EXCLUDED.end_time`,
+		period.EpochID, period.StartTime, period.EndTime,
+	)
+	return err
+}
+
+func (s *Postgres) ListPoCActivityPeriods() ([]PoCActivityPeriod, error) {
+	rows, err := s.pool.Query(context.Background(),
+		`SELECT epoch_id, start_time, end_time FROM devshard_poc_activity_periods`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []PoCActivityPeriod
+	for rows.Next() {
+		var period PoCActivityPeriod
+		if err := rows.Scan(&period.EpochID, &period.StartTime, &period.EndTime); err != nil {
+			return nil, err
+		}
+		result = append(result, period)
+	}
+	return result, rows.Err()
+}
+
 // PruneEpoch drops all per-epoch partitions for epochID and forgets every
 // escrow index entry that pointed at it. Other epochs are not touched.
 // No-op if the partitions do not exist.
@@ -714,6 +844,8 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 		pgDiffsPartition(epochID),
 		pgSignaturesPartition(epochID),
 		pgSnapshotsPartition(epochID),
+		pgAvailabilityPartition(epochID),
+		pgPoCActivityPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))
@@ -727,6 +859,8 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 
 	s.mu.Lock()
 	delete(s.knownEpochs, epochID)
+	delete(s.knownAvailabilityEpochs, epochID)
+	delete(s.knownPoCActivityEpochs, epochID)
 	for esc, ep := range s.escrowIdx {
 		if ep == epochID {
 			delete(s.escrowIdx, esc)
@@ -746,7 +880,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_availability_periods', 'devshard_poc_activity_periods')
 	`)
 	if err != nil {
 		return fmt.Errorf("list devshard partitions: %w", err)
@@ -783,6 +917,16 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 			delete(s.knownEpochs, epochID)
 		}
 	}
+	for epochID := range s.knownAvailabilityEpochs {
+		if epochID < cutoff {
+			delete(s.knownAvailabilityEpochs, epochID)
+		}
+	}
+	for epochID := range s.knownPoCActivityEpochs {
+		if epochID < cutoff {
+			delete(s.knownPoCActivityEpochs, epochID)
+		}
+	}
 	for esc, ep := range s.escrowIdx {
 		if ep < cutoff {
 			delete(s.escrowIdx, esc)
@@ -793,7 +937,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 }
 
 func pgPartitionEpoch(name string) (uint64, bool) {
-	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent} {
+	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgAvailabilityParent, pgPoCActivityParent} {
 		prefix := parent + "_epoch_"
 		if strings.HasPrefix(name, prefix) {
 			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)

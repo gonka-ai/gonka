@@ -8,6 +8,14 @@ enum TimeoutReason {
   TIMEOUT_REASON_EXECUTION = 2;
 }
 
+enum FinishReason {
+  FINISH_REASON_UNSPECIFIED = 0;
+  FINISH_REASON_COMPLETED = 1;
+  FINISH_REASON_DEVSHARD_REQUESTS_DISABLED = 2;
+  FINISH_REASON_POC_ABORTED = 3;
+  FINISH_REASON_NO_PRESERVE_NODES = 4;
+}
+
 message MsgStartInference {
   uint64 inference_id = 1;
   bytes  prompt_hash = 2;
@@ -31,6 +39,7 @@ message MsgFinishInference {
   uint32 executor_slot = 5;
   bytes  proposer_sig = 6;
   string escrow_id = 7;
+  FinishReason reason = 8;
 }
 
 message MsgTimeoutInference {

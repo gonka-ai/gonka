@@ -39,6 +39,10 @@ type Storage interface {
 	CreateSession(params CreateSessionParams) error
 	MarkSettled(escrowID string) error
 	ListActiveSessions() ([]ActiveSession, error)
+	RecordAvailabilityPeriod(period AvailabilityPeriod) error
+	ListAvailabilityPeriods() ([]AvailabilityPeriod, error)
+	RecordPoCActivityPeriod(period PoCActivityPeriod) error
+	ListPoCActivityPeriods() ([]PoCActivityPeriod, error)
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error
@@ -50,6 +54,18 @@ type Storage interface {
 	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
 	PruneEpoch(epochID uint64) error
 	Close() error
+}
+
+type AvailabilityPeriod struct {
+	EpochID   uint64
+	StartTime int64
+	EndTime   int64
+}
+
+type PoCActivityPeriod struct {
+	EpochID   uint64
+	StartTime int64
+	EndTime   int64
 }
 
 // CreateSessionParams holds all parameters for creating a new session.
