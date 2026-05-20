@@ -1,8 +1,6 @@
 package state
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"slices"
 
@@ -73,25 +71,10 @@ func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 		return nil, err
 	}
 
-	var restHash []byte
-	if sm.effectiveV2Composition() {
-		acc := sealedAccBytes32(sm.state.SealedAcc)
-		restHash, err = ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		infHash := computeInferencesHashFromEntries(sm.committedEntries)
-		warmKeysHash := computeWarmKeysHash(sm.state.WarmKeys)
-
-		balBytes := make([]byte, 8)
-		binary.BigEndian.PutUint64(balBytes, sm.state.Balance)
-
-		h := sha256.New()
-		h.Write(balBytes)
-		h.Write(infHash)
-		h.Write(warmKeysHash)
-		restHash = h.Sum(nil)
+	acc := sealedAccBytes32(sm.state.SealedAcc)
+	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
+	if err != nil {
+		return nil, err
 	}
 
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.Version), nil
@@ -176,12 +159,7 @@ func (sm *StateMachine) GetCommittedRecord(id uint64) (types.InferenceRecord, bo
 // records: rest_hash is then fully determined by sealed_acc + balance + warm
 // keys at the moment of settlement.
 //
-// On v1 composition this is a no-op (live inferences remain in the map and
-// contribute to the v1 inferences hash directly).
 func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
-	if !sm.effectiveV2Composition() {
-		return nil
-	}
 	if len(sm.state.Inferences) == 0 {
 		return nil
 	}
@@ -238,12 +216,10 @@ func (sm *StateMachine) SealInference(id uint64) error {
 	}
 	sm.sealedNonces[id] = sealedNonce
 
-	if sm.effectiveV2Composition() {
-		cur := sealedAccBytes32(sm.state.SealedAcc)
-		cur = FoldSealedAccumulator(cur, sealedNonce, id, entry)
-		sm.state.SealedAcc = append([]byte(nil), cur[:]...)
-		delete(sm.committedEntries, id)
-	}
+	cur := sealedAccBytes32(sm.state.SealedAcc)
+	cur = FoldSealedAccumulator(cur, sealedNonce, id, entry)
+	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
+	delete(sm.committedEntries, id)
 
 	if sm.inferenceStore != nil {
 		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, sealedNonce)); err != nil {
@@ -264,36 +240,17 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	if err := sm.inferenceStore.DeleteSealedInferences(sm.state.EscrowID); err != nil {
 		return err
 	}
-	if sm.effectiveV2Composition() {
-		ids := make([]uint64, 0, len(sm.sealedNonces))
-		for id := range sm.sealedNonces {
-			ids = append(ids, id)
-		}
-		slices.Sort(ids)
-		for _, id := range ids {
-			if _, live := sm.state.Inferences[id]; live {
-				continue
-			}
-			nonce, ok := sm.sealedNonces[id]
-			if !ok {
-				nonce = sm.state.LatestNonce
-			}
-			if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, nonce)); err != nil {
-				return err
-			}
-		}
-		return nil
+	ids := make([]uint64, 0, len(sm.sealedNonces))
+	for id := range sm.sealedNonces {
+		ids = append(ids, id)
 	}
-	for id := range sm.committedEntries {
+	slices.Sort(ids)
+	for _, id := range ids {
 		if _, live := sm.state.Inferences[id]; live {
 			continue
 		}
 		nonce, ok := sm.sealedNonces[id]
 		if !ok {
-			// We have an entry sealed before we started tracking nonces (e.g. a
-			// snapshot from a build that did not persist sealed_nonces). Use the
-			// current latest nonce as a best-effort marker; the row only signals
-			// "this id was sealed", the precise seal nonce is purely audit data.
 			nonce = sm.state.LatestNonce
 		}
 		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, nonce)); err != nil {

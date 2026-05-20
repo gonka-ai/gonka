@@ -48,7 +48,8 @@ func ComputeStateRoot(
 	if err != nil {
 		return nil, err
 	}
-	restHash, err := computeRestHash(balance, inferences, warmKeys)
+	acc := sealedAccBytes32(nil)
+	restHash, err := ComputeRestHashV2(balance, acc, inferences, warmKeys)
 	if err != nil {
 		return nil, err
 	}

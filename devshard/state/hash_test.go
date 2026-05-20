@@ -60,7 +60,7 @@ func TestStateRoot_MerkleStructure(t *testing.T) {
 	// Manually recompute and verify structure.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHash(balance, inferences, nil)
+	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil)
 	require.NoError(t, err)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, fees)
@@ -131,7 +131,7 @@ func TestComputeInferencesHashV2_DeterministicAcrossOrders(t *testing.T) {
 	require.Equal(t, h1, h2)
 }
 
-func TestStateRoot_V1_Untouched(t *testing.T) {
+func TestStateRoot_ExportedHelper_MatchesRestHashV2WithZeroSealedAcc(t *testing.T) {
 	hostStats := map[uint32]*types.HostStats{
 		0: {Cost: 50, Missed: 1},
 		1: {Cost: 75},
@@ -148,13 +148,13 @@ func TestStateRoot_V1_Untouched(t *testing.T) {
 
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHash(balance, inferences, nil)
+	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil)
 	require.NoError(t, err)
 	expected := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
 	require.Equal(t, expected, root)
 }
 
-func TestStateRoot_V2_LiveSetOnly(t *testing.T) {
+func TestStateRoot_V2_SealedAccChangesRestHash(t *testing.T) {
 	hostStats := map[uint32]*types.HostStats{
 		0: {Cost: 10},
 	}
@@ -169,15 +169,13 @@ func TestStateRoot_V2_LiveSetOnly(t *testing.T) {
 
 	restHash, err := ComputeRestHashV2(balance, sealedAcc, live, nil)
 	require.NoError(t, err)
-	rootV1Path, err := ComputeStateRoot(balance, hostStats, live, types.PhaseActive, nil, fees, version)
+	rootZeroAcc, err := ComputeStateRoot(balance, hostStats, live, types.PhaseActive, nil, fees, version)
 	require.NoError(t, err)
 
-	// Package-level ComputeStateRoot uses v1 rest composition regardless of
-	// version string; v2 hosts use StateMachine.computeStateRootLocked instead.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	rootV2Path := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
-	require.NotEqual(t, rootV1Path, rootV2Path, "exported ComputeStateRoot must ignore v2 rest-hash semantics")
+	rootWithAcc := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
+	require.NotEqual(t, rootZeroAcc, rootWithAcc, "non-zero SealedAcc must change rest_hash vs zero-acc helper")
 
 	var otherAcc [32]byte
 	otherAcc[31] = 0x01

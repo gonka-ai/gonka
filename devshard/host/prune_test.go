@@ -104,6 +104,8 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 		WithPruneSink(sink),
 		WithEpochID(epochID),
 		WithGrace(0),
+		// v2 defers terminal prune until grace gates clear; tests override as needed.
+		WithPruneTuning(1, 10*time.Millisecond),
 	}
 	allOpts = append(allOpts, opts...)
 	h, err := NewHost(sm, hosts[observerIdx], stubEngine, "escrow-1", group, nil, allOpts...)
@@ -233,15 +235,26 @@ func (r *pruneTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-// committedStatus reads the post-seal terminal status of inferenceID from the
-// state machine's committed-entries map. The on-disk InferenceRow only carries
-// (id, sealed_nonce); the canonical record state lives in committedEntries
-// (and is reconstructed from snapshot + diff replay on recovery).
-func (r *pruneTestRig) committedStatus(inferenceID uint64) types.InferenceStatus {
+// awaitTerminalPrune advances nonces until the v2 terminal grace gates clear
+// and asserts exactly one PruneReasonTerminal event was emitted.
+func (r *pruneTestRig) awaitTerminalPrune(inferenceID uint64, nonce uint64) []InferencePruneEvent {
 	r.t.Helper()
-	rec, ok := r.host.sm.GetCommittedRecord(inferenceID)
-	require.True(r.t, ok, "committed inference %d should exist", inferenceID)
-	return rec.Status
+	time.Sleep(20 * time.Millisecond)
+	limit := int(r.host.sealGraceNonces) + 3
+	if limit < 3 {
+		limit = 3
+	}
+	for i := 0; i < limit; i++ {
+		if events := r.sink.findFor(inferenceID); len(events) == 1 {
+			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+			return events
+		}
+		r.applyDiff(nonce, nil)
+		nonce++
+	}
+	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
+		inferenceID, len(r.sink.findFor(inferenceID)))
+	return nil
 }
 
 func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
@@ -266,16 +279,16 @@ func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
 
 	// Third valid vote pushes VotesValid=3 > threshold=2 -> StatusValidated.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 4, true)})
-	rig.inferenceMissing(1)
+	nonce++
+	require.Equal(t, types.StatusValidated, rig.inferenceStatus(1))
+	require.Empty(t, rig.sink.findFor(1), "v2 defers terminal prune until gates clear")
 
-	events := rig.sink.findFor(1)
-	require.Len(t, events, 1, "exactly one Tier A on Validated flip")
-	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	events := rig.awaitTerminalPrune(1, nonce)
 	require.Equal(t, rig.escrowID, events[0].EscrowID)
 	require.Equal(t, rig.epochID, events[0].PayloadEpoch)
 	require.True(t, events[0].PayloadEpochKnown)
-	require.NotZero(t, rig.sealedRow(1).SealedNonce, "sealed marker must record the seal nonce")
-	require.Equal(t, types.StatusValidated, rig.committedStatus(1))
+	rig.inferenceMissing(1)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
 }
 
 func TestHost_PruneSink_Terminal_OnInvalidated(t *testing.T) {
@@ -293,13 +306,12 @@ func TestHost_PruneSink_Terminal_OnInvalidated(t *testing.T) {
 
 	// Third invalid vote: VotesInvalid=3 > threshold=2 -> StatusInvalidated.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
-	rig.inferenceMissing(1)
-
-	events := rig.sink.findFor(1)
-	require.Len(t, events, 1)
-	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	nonce++
+	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
+	events := rig.awaitTerminalPrune(1, nonce)
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	require.Equal(t, types.StatusInvalidated, rig.committedStatus(1))
+	_ = events
+	rig.inferenceMissing(1)
 }
 
 func TestHost_PruneSink_Terminal_OnTimedOut(t *testing.T) {
@@ -312,13 +324,11 @@ func TestHost_PruneSink_Terminal_OnTimedOut(t *testing.T) {
 	// Threshold=2 -> need >2 accept votes; collect 3 from non-executor slots.
 	timeoutTx := rig.signTimeoutInference(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, []uint32{0, 2, 3})
 	rig.applyDiff(2, []*types.DevshardTx{timeoutTx})
-	rig.inferenceMissing(1)
-
-	events := rig.sink.findFor(1)
-	require.Len(t, events, 1)
-	require.Equal(t, PruneReasonTerminal, events[0].Reason)
+	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
+	events := rig.awaitTerminalPrune(1, 3)
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	require.Equal(t, types.StatusTimedOut, rig.committedStatus(1))
+	_ = events
+	rig.inferenceMissing(1)
 }
 
 func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
@@ -348,7 +358,6 @@ func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
 	require.Equal(t, rig.epochID, events[0].PayloadEpoch)
 	rig.inferenceMissing(1)
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	require.Equal(t, types.StatusFinished, rig.committedStatus(1))
 
 	// Subsequent diffs must not re-emit for the same inference.
 	rig.applyDiff(nonce, nil)
@@ -399,7 +408,6 @@ func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
 	}))
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,
 		state.WithInferenceStore(store),
-		state.WithTestV2Composition(),
 	)
 	require.NoError(t, err)
 
@@ -453,26 +461,28 @@ func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
 
 func TestHost_PruneSink_TerminalFlipPreemptsTierC(t *testing.T) {
 	// If an inference terminalizes before the Tier C gates expire, only one
-	// Tier A event should fire and the Tier C ledger entry must be cleared.
-	rig := newPruneRig(t, 0, 5,
-		WithPruneTuning(50, time.Hour),
-	)
+	// terminal prune should fire (after v2 grace) and the Tier C ledger cleared.
+	// Default tuning (1 nonce, 10ms wall) is enough: status leaves Finished before Tier C fires.
+	rig := newPruneRig(t, 0, 5)
 	nonce := rig.driveStartConfirmFinish(1, 1)
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
 	nonce++
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, false)})
 	nonce++
+	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
+	nonce++
+	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
 
-	events := rig.sink.findFor(1)
-	require.Len(t, events, 1)
+	events := rig.awaitTerminalPrune(1, nonce)
 	require.Equal(t, PruneReasonTerminal, events[0].Reason)
 
-	// finishedAt entry must be gone.
 	rig.host.mu.Lock()
-	_, stillTracked := rig.host.finishedAt[1]
+	_, stillFinished := rig.host.finishedAt[1]
+	_, stillTerminal := rig.host.terminalAt[1]
 	rig.host.mu.Unlock()
-	require.False(t, stillTracked, "Tier C ledger must drop terminalized inference")
+	require.False(t, stillFinished, "Tier C ledger must drop terminalized inference")
+	require.False(t, stillTerminal, "terminal ledger cleared after prune")
 }
 
 func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {

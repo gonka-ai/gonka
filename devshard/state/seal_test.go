@@ -97,7 +97,7 @@ func TestSealInference_PreservesRootAndBlocksDuplicateID(t *testing.T) {
 
 	rootAfter, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
-	require.Equal(t, rootBefore, rootAfter)
+	require.NotEqual(t, rootBefore, rootAfter, "v2 seal folds into SealedAcc and changes the root")
 
 	row, ok, err := store.GetSealedInference("escrow-seal", 1)
 	require.NoError(t, err)
@@ -105,10 +105,8 @@ func TestSealInference_PreservesRootAndBlocksDuplicateID(t *testing.T) {
 	require.Equal(t, uint64(1), row.InferenceID)
 	require.Equal(t, sm.LatestNonce(), row.SealedNonce)
 
-	rec, ok := sm.GetCommittedRecord(1)
-	require.True(t, ok)
-	require.Equal(t, types.StatusFinished, rec.Status,
-		"the canonical post-seal record state lives in committedEntries, not in InferenceRow")
+	_, hasCommitted := sm.ExportCommittedEntries()[1]
+	require.False(t, hasCommitted, "v2 seal drops committed entry for sealed id")
 
 	err = sm.applyStartInference(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("other"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 3000,
@@ -116,7 +114,7 @@ func TestSealInference_PreservesRootAndBlocksDuplicateID(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrDuplicateInferenceID)
 }
 
-func TestSealedValidationAndVote_MatchLiveStateRoot(t *testing.T) {
+func TestSealInference_LateValidationRejectedAfterSeal(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -124,65 +122,25 @@ func TestSealedValidationAndVote_MatchLiveStateRoot(t *testing.T) {
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
 	}
-	sealedSM, _, _, _ := newSealTestSM(t, "escrow-sealed", hosts, true)
-	liveSM, _, _, _ := newSealTestSM(t, "escrow-live", hosts, false)
+	sm, _, _, _ := newSealTestSM(t, "escrow-sealed", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-sealed", hosts)
+	require.NoError(t, sm.SealInference(1))
 
-	driveSealInferenceToFinished(t, sealedSM, "escrow-sealed", hosts)
-	driveSealInferenceToFinished(t, liveSM, "escrow-live", hosts)
-	require.NoError(t, sealedSM.SealInference(1))
-
-	validationSealed := &types.MsgValidation{
+	validation := &types.MsgValidation{
 		InferenceId:   1,
 		ValidatorSlot: 2,
 		Valid:         false,
 		EscrowId:      "escrow-sealed",
 	}
-	validationSealed.ProposerSig = testutil.SignProposerTx(t, hosts[2], validationSealed)
-	_, err := sealedSM.ApplyLocal(4, []*types.DevshardTx{txValidation(validationSealed)})
-	require.NoError(t, err)
+	validation.ProposerSig = testutil.SignProposerTx(t, hosts[2], validation)
+	_, err := sm.ApplyLocal(4, []*types.DevshardTx{txValidation(validation)})
+	require.ErrorIs(t, err, types.ErrInferenceSealed)
 
-	validationLive := &types.MsgValidation{
-		InferenceId:   1,
-		ValidatorSlot: 2,
-		Valid:         false,
-		EscrowId:      "escrow-live",
-	}
-	validationLive.ProposerSig = testutil.SignProposerTx(t, hosts[2], validationLive)
-	_, err = liveSM.ApplyLocal(4, []*types.DevshardTx{txValidation(validationLive)})
-	require.NoError(t, err)
-
-	voteSealed := &types.MsgValidationVote{
-		InferenceId: 1,
-		VoterSlot:   3,
-		VoteValid:   false,
-		EscrowId:    "escrow-sealed",
-	}
-	voteSealed.ProposerSig = testutil.SignProposerTx(t, hosts[3], voteSealed)
-	_, err = sealedSM.ApplyLocal(5, []*types.DevshardTx{txVote(voteSealed)})
-	require.NoError(t, err)
-
-	voteLive := &types.MsgValidationVote{
-		InferenceId: 1,
-		VoterSlot:   3,
-		VoteValid:   false,
-		EscrowId:    "escrow-live",
-	}
-	voteLive.ProposerSig = testutil.SignProposerTx(t, hosts[3], voteLive)
-	_, err = liveSM.ApplyLocal(5, []*types.DevshardTx{txVote(voteLive)})
-	require.NoError(t, err)
-
-	sealedRoot, err := sealedSM.ComputeStateRoot()
-	require.NoError(t, err)
-	liveRoot, err := liveSM.ComputeStateRoot()
-	require.NoError(t, err)
-	require.Equal(t, liveRoot, sealedRoot)
-
-	sealedState := sealedSM.SnapshotState()
-	_, exists := sealedState.Inferences[1]
-	require.False(t, exists, "sealed inference must stay out of RAM on cold-path votes")
+	_, exists := sm.SnapshotState().Inferences[1]
+	require.False(t, exists, "sealed inference must stay out of RAM")
 }
 
-func TestSealInference_V2_FoldsAccumulatorAndChangesRoot(t *testing.T) {
+func TestSeal_BuildSettlement_RestHashMatchesAfterSeal(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -190,28 +148,27 @@ func TestSealInference_V2_FoldsAccumulatorAndChangesRoot(t *testing.T) {
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
 	}
-	sm, _, _, _ := newSealTestSMVersion(t, "escrow-v2-seal", hosts, true, types.DefaultStateRootVersion)
-	sm.testV2Composition = true
-	driveSealInferenceToFinished(t, sm, "escrow-v2-seal", hosts)
-
-	rootBefore, err := sm.ComputeStateRoot()
-	require.NoError(t, err)
-
+	sm, _, _, _ := newSealTestSM(t, "escrow-settle", hosts, false)
+	driveSealInferenceToFinished(t, sm, "escrow-settle", hosts)
 	require.NoError(t, sm.SealInference(1))
 
-	committed := sm.ExportCommittedEntries()
-	_, has := committed[1]
-	require.False(t, has, "v2 seal must drop committed entry for sealed id")
-
 	st := sm.SnapshotState()
-	require.Len(t, st.SealedAcc, 32, "v2 seal must persist 32-byte accumulator")
-
-	rootAfter, err := sm.ComputeStateRoot()
+	payload, err := BuildSettlement("escrow-settle", st, nil, sm.LatestNonce())
 	require.NoError(t, err)
-	require.NotEqual(t, rootBefore, rootAfter, "v2 root must change when folding a sealed inference")
 
-	err = sm.applyStartInference(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("other"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 3000,
-	})
-	require.ErrorIs(t, err, types.ErrDuplicateInferenceID)
+	acc := sealedAccBytes32(st.SealedAcc)
+	restFromState, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
+	require.NoError(t, err)
+	require.Equal(t, restFromState, payload.RestHash)
+
+	hostStatsHash, err := ComputeHostStatsHash(st.HostStats)
+	require.NoError(t, err)
+	rootFromPayload := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, st.Fees, types.PhaseSettlement, st.Version)
+	rootFromSM, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	hostStatsHashActive, err := ComputeHostStatsHash(st.HostStats)
+	require.NoError(t, err)
+	rootActivePhase := ComputeStateRootFromRestHash(hostStatsHashActive, restFromState, st.Fees, st.Phase, st.Version)
+	require.Equal(t, rootActivePhase, rootFromSM, "intra-session root uses active phase")
+	require.NotEqual(t, rootFromPayload, rootFromSM, "settlement phase byte differs from active")
 }

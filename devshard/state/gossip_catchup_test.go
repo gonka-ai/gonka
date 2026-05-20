@@ -83,7 +83,6 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	leader, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier,
 		WithInferenceStore(leaderStore))
 	require.NoError(t, err)
-	leader.testV2Composition = true
 
 	executorSlotIdx := uint64(1) % uint64(len(hosts))
 
@@ -142,7 +141,6 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	follower, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier,
 		WithInferenceStore(followerStore))
 	require.NoError(t, err)
-	follower.testV2Composition = true
 
 	records, err := followerStore.GetDiffs(escrowID, 1, meta.LatestNonce)
 	require.NoError(t, err)

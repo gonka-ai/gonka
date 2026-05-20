@@ -88,10 +88,6 @@ type StateMachine struct {
 	// the durable sealed-inference index; everything else needed for cold-path
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces map[uint64]uint64
-	// testV2Composition is set only from state package tests to force Phase 1
-	// v2 paths (sealedAcc, post-terminal reject) without enabling v2 for the
-	// whole binary via useV2StateRootComposition.
-	testV2Composition bool
 	inferenceStore    storage.Storage
 
 	// Lookup maps derived from group at construction time.
@@ -124,27 +120,10 @@ func WithInferenceStore(store storage.Storage) SMOption {
 	return func(sm *StateMachine) { sm.inferenceStore = store }
 }
 
-// WithTestV2Composition forces Phase 1 v2 composition paths in tests without
-// flipping the release-wide useV2StateRootComposition constant.
-func WithTestV2Composition() SMOption {
-	return func(sm *StateMachine) { sm.testV2Composition = true }
-}
-
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
-// state-root composition (sealed accumulator, delayed post-terminal seal policy).
+// state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
-	return sm.effectiveV2Composition()
-}
-
-// effectiveV2Composition reports whether this state machine uses Phase 1 v2
-// composition (sealed accumulator, committed entry dropped on seal, late
-// validation rejected after seal). Production uses only useV2StateRootComposition;
-// tests may set testV2Composition to exercise v2 paths in a v1 binary.
-func (sm *StateMachine) effectiveV2Composition() bool {
-	if sm == nil {
-		return useV2StateRootComposition
-	}
-	return sm.testV2Composition || useV2StateRootComposition
+	return true
 }
 
 func NewStateMachine(
@@ -580,17 +559,12 @@ func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
 	if _, ok := sm.committedEntries[id]; ok {
 		return true
 	}
-	if sm.effectiveV2Composition() {
-		_, sealed := sm.sealedNonces[id]
-		return sealed
-	}
-	return false
+	_, sealed := sm.sealedNonces[id]
+	return sealed
 }
 
 // isInferenceEvictedFromLive reports whether id is known but no longer in the
-// live RAM map. v1 composition: still in committedEntries. v2 composition:
-// in sealedNonces after the seal step has dropped both the live record and
-// the committed entry.
+// live RAM map (sealed into SealedAcc; may still be in sealedNonces).
 func (sm *StateMachine) isInferenceEvictedFromLive(id uint64) bool {
 	if _, live := sm.state.Inferences[id]; live {
 		return false
@@ -598,11 +572,8 @@ func (sm *StateMachine) isInferenceEvictedFromLive(id uint64) bool {
 	if _, ok := sm.committedEntries[id]; ok {
 		return true
 	}
-	if sm.effectiveV2Composition() {
-		_, sealed := sm.sealedNonces[id]
-		return sealed
-	}
-	return false
+	_, sealed := sm.sealedNonces[id]
+	return sealed
 }
 
 // ComputeStateRoot returns the current state root without modifying state.
@@ -805,19 +776,10 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
-		if sm.effectiveV2Composition() {
-			if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
-				return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
-			}
+		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
 		}
-		if !sm.hasCommittedInferenceLocked(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
-		}
-		var err error
-		rec, err = sm.hydrateCommittedInferenceLocked(msg.InferenceId)
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
 	// Common pre-checks.
@@ -890,19 +852,10 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
-		if sm.effectiveV2Composition() {
-			if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
-				return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
-			}
+		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
 		}
-		if !sm.hasCommittedInferenceLocked(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
-		}
-		var err error
-		rec, err = sm.hydrateCommittedInferenceLocked(msg.InferenceId)
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)

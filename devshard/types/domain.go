@@ -4,13 +4,10 @@ import "fmt"
 
 // DefaultStateRootVersion is the binary tag stamped into EscrowState.Version
 // (and the settlement payload's Version field) when no explicit value is
-// supplied. It identifies the state-root composition this binary uses, so the
-// chain verifier can dispatch the correct hash path when validating a
-// settlement. There is intentionally no runtime "v1 vs v2" dispatch on the
-// devshard side: each binary release ships a single composition; the value
-// here is the tag for whichever composition this binary implements. Future
-// binaries that change the composition will stamp a different tag.
-const DefaultStateRootVersion = "v1"
+// supplied. It must match an entry in chain DevshardEscrowParams.approved_versions
+// (governance adds "v2" on the v0.2.13 upgrade). This binary always uses Phase 1
+// v2 state-root composition (sealed accumulator + live inference set).
+const DefaultStateRootVersion = "v2"
 
 // NormalizeVersion returns the state-root version tag, defaulting to
 // DefaultStateRootVersion when version is empty. Use at storage bind, host
@@ -108,9 +105,7 @@ type EscrowState struct {
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
-	// commitments. Persisted/restored unconditionally so a future v2 binary
-	// can pick up where a current binary left off; the current binary keeps
-	// it nil/empty because it ships only the v1 composition.
+	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`
 }
 

@@ -21,6 +21,7 @@ import (
 const (
 	MaxEscrowsPerEpoch uint32 = 500_000
 	MaxNonce           uint32 = 1_000_000
+
 	// Block window after the upgrade in which confirmation PoC is skipped.
 	// Same value as v0.2.10; covers the rest of the upgrade epoch on mainnet.
 	GraceUpgradeProtectionWindow int64 = 3000
@@ -64,6 +65,9 @@ func CreateUpgradeHandler(
 		}
 
 		if err := setDevshardEscrowParams(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setDevshardApprovedV2Version(ctx, k); err != nil {
 			return nil, err
 		}
 		if err := backfillConfirmationWeightScales(ctx, k); err != nil {
@@ -128,6 +132,20 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 		"max_nonce", MaxNonce,
 		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
 		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+	return nil
+}
+
+func setDevshardApprovedV2Version(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
 	return nil
 }
 

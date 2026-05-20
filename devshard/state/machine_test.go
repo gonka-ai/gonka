@@ -1,7 +1,6 @@
 package state
 
 import (
-	"errors"
 	"math"
 	"testing"
 
@@ -2124,17 +2123,12 @@ func TestLateValidation_DeduplicateTerminal(t *testing.T) {
 	require.NoError(t, err, "duplicate late validation must be a silent no-op")
 }
 
-// Phase 1.3: deterministic post-terminal reject for v2 composition (tests force
-// v2 via testV2Composition; production enables the same paths when
-// useV2StateRootComposition is true).
-
-func TestV2_LateValidation_Rejected(t *testing.T) {
+func TestLateValidation_RejectedAfterSeal(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	sm, user := newTestSM(t, hosts, 10000)
-	sm.testV2Composition = true
 
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
 	require.NoError(t, sm.SealInference(1))
@@ -2148,13 +2142,12 @@ func TestV2_LateValidation_Rejected(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInferenceSealed)
 }
 
-func TestV2_LateValidationVote_Rejected(t *testing.T) {
+func TestLateValidationVote_RejectedAfterSeal(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	sm, user := newTestSM(t, hosts, 10000)
-	sm.testV2Composition = true
 
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
 
@@ -2177,41 +2170,16 @@ func TestV2_LateValidationVote_Rejected(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInferenceSealed)
 }
 
-func TestV1_LateValidation_StillNoOp(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{
-		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
-		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
-	}
-	sm, user := newTestSM(t, hosts, 10000)
-
-	applyStartConfirmFinish(t, sm, user, hosts, 1)
-	require.NoError(t, sm.SealInference(1))
-
-	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
-	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
-	nonce := sm.SnapshotState().LatestNonce + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
-	_, err := sm.ApplyDiff(diff)
-	require.NoError(t, err, "v1: post-seal validation must still apply via committed entry")
-	require.False(t, errors.Is(err, types.ErrInferenceSealed))
-
-	rec, ok := sm.GetCommittedRecord(1)
-	require.True(t, ok)
-	require.Equal(t, types.StatusFinished, rec.Status)
-	require.True(t, rec.ValidatedBy.IsSet(0))
-}
-
-// TestV2_FinalizeDeadlineDrainsLiveIntoSealedAcc verifies that under v2
+// TestFinalizeDeadlineDrainsLiveIntoSealedAcc verifies that the Finalizing ->
 // composition the Finalizing -> Settlement deadline transition seals every
 // live record into sealed_acc, leaving an empty live map and a non-zero
 // accumulator. This is the chain-side simplification: the settlement
 // payload then never has to carry per-inference records.
-func TestV2_FinalizeDeadlineDrainsLiveIntoSealedAcc(t *testing.T) {
+func TestFinalizeDeadlineDrainsLiveIntoSealedAcc(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	sm, user := newTestSM(t, hosts, 10000)
-	sm.testV2Composition = true
 
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
 
@@ -2289,7 +2257,6 @@ func TestV2_FinalizeDrainDeterministicOrder(t *testing.T) {
 	driveTwoInferences := func(t *testing.T) *StateMachine {
 		t.Helper()
 		sm, user := newTestSM(t, hosts, 20000)
-		sm.testV2Composition = true
 		startAt(t, sm, user, 1)
 		startAt(t, sm, user, 4)
 
