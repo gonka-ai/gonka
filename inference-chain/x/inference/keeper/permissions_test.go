@@ -214,6 +214,25 @@ func TestPermission_InvalidSignerAddress(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPermission_GuardianSkipsMalformedConfiguredAddress(t *testing.T) {
+	k, ms, ctx, _ := setupPermissionsHarness(t)
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+
+	signer := sdk.MustAccAddressFromBech32(testutil.Validator)
+	guardianOperator := sdk.ValAddress(signer).String()
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		GuardianAddresses: []string{"not-a-validator-address", guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	msg := &types.MsgSetDevshardRequestsEnabled{Authority: testutil.Validator, Enabled: false}
+	err = keeper.CheckPermission(ms, ctx, msg, keeper.GuardianPermission)
+	require.NoError(t, err)
+}
+
 func TestPermission_Contract(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
 
@@ -294,4 +313,3 @@ func TestPermission_Contract_ViaGetWasmKeeper(t *testing.T) {
 		require.ErrorIs(t, err, types.ErrNotAContractAddress)
 	})
 }
-

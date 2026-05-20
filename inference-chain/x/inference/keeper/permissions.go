@@ -272,7 +272,7 @@ func (k msgServer) checkGuardianPermission(ctx context.Context, signer sdk.AccAd
 	for _, operatorAddress := range k.GetGenesisGuardianAddresses(ctx) {
 		accAddr, err := utils.OperatorAddressToAccAddress(operatorAddress)
 		if err != nil {
-			return err
+			continue
 		}
 		if accAddr == signer.String() {
 			return nil

@@ -6,6 +6,9 @@ The release fixes confirmation PoC reward accounting, devshard escrow params,
 complaint-response authz grants, upstream response parsing, participant
 reactivation, node-manager gRPC defaults, and devshard storage growth.
 
+It also adds a guardian-controlled emergency switch for disabling devshard
+inference requests.
+
 The upgrade also disables confirmation PoC for the rest of the upgrade epoch
 so the new snapshot logic starts cleanly from the next epoch.
 
@@ -84,6 +87,8 @@ Migrations:
   sets the chain-wide governance quorum to `0.25`. Quorum is computed against
   total bonded power; with guardians not voting, this gives an effective 1/3
   quorum among the remaining 75% of voting power (`0.25 / 0.75 = 0.334`).
+- Adds `MsgSetDevshardRequestsEnabled`, a guardian-signed transaction for
+  emergency disabling and re-enabling devshard inference requests.
 
 ### decentralized-api
 
