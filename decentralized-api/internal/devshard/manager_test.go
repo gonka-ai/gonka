@@ -91,6 +91,16 @@ func (m *mockPayloadStore) Retrieve(_ context.Context, inferenceID string, epoch
 
 func (m *mockPayloadStore) PruneEpoch(context.Context, uint64) error { return nil }
 
+func (m *mockPayloadStore) DeleteInference(_ context.Context, inferenceID string, epochID uint64) error {
+	if entries := m.byEpoch[epochID]; entries != nil {
+		if _, ok := entries[inferenceID]; ok {
+			delete(entries, inferenceID)
+			return nil
+		}
+	}
+	return payloadstorage.ErrNotFound
+}
+
 type currentEpochStore struct {
 	storage.Storage
 	epoch uint64
@@ -290,7 +300,7 @@ func createStoredSession(t *testing.T, store storage.Storage, escrowID string, e
 		Config:         config,
 		Group:          group,
 		InitialBalance: 100000000,
-		Version:        types.LegacySessionVersion,
+		Version:        types.DefaultStateRootVersion,
 	}))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, 100000000, user.Address(), verifier)
@@ -323,7 +333,7 @@ func TestStatsShardsListsCurrentEpochWithoutDetails(t *testing.T) {
 	createStoredSession(t, base, "escrow-old", 6, 0)
 
 	counting := &countingListStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
-	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, &mockBridge{}, nil, nil)
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, &mockBridge{}, nil, nil)
 	mgr.SetReady()
 
 	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards")
@@ -361,7 +371,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	base := newManagerTestStore(t)
 	group, _, hostSigner := createStoredSession(t, base, "escrow-detail", 7, 1)
 	store := currentEpochStore{Storage: base, epoch: 7}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, &mockBridge{}, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, &mockBridge{}, nil, nil)
 	mgr.SetReady()
 
 	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-detail")
@@ -389,7 +399,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	require.Equal(t, "escrow-detail", resp.EscrowID)
 	require.Equal(t, uint64(7), resp.EpochID)
 	require.Equal(t, uint64(1), resp.Nonce)
-	require.Equal(t, types.LegacySessionVersion, resp.Version)
+	require.Equal(t, types.DefaultStateRootVersion, resp.Version)
 	require.Len(t, resp.HostStats, len(group))
 	require.Equal(t, group, resp.Group)
 
@@ -420,7 +430,7 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	engine := stub.NewInferenceEngine()
 	validator := stub.NewValidationEngine()
 
-	mgr := NewHostManager(store, signer, engine, validator, types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, signer, engine, validator, types.DefaultStateRootVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -449,7 +459,7 @@ func TestRecoverSessions_LogsRecoveryDurations(t *testing.T) {
 	}
 	logs := captureInfoLogs(t)
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	require.NoError(t, mgr.RecoverSessions())
 
 	entries := readLogEntries(t, logs)
@@ -497,7 +507,7 @@ func TestRecoverSessions_LoadsEscrowsInParallel(t *testing.T) {
 		bothStarted: bothStarted,
 	}
 	br := &mockBridge{}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -553,7 +563,7 @@ func TestRecoverSessions_UsesSnapshotBeforeReplay(t *testing.T) {
 	}
 
 	recording := &rangeRecordingStore{Storage: store}
-	mgr := NewHostManager(recording, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(recording, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	require.NoError(t, mgr.RecoverSessions())
 	require.Equal(t, uint64(host.SnapshotInterval+1), recording.from)
 	require.Equal(t, uint64(750), recording.to)
@@ -597,7 +607,7 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -633,7 +643,7 @@ func TestGetOrCreate_RecoversExistingStoredSession(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	srv, err := mgr.getOrCreate("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), srv.Host().LatestNonce(), "existing storage session should be replayed before serving")
@@ -657,7 +667,7 @@ func TestSessionServer_DefaultsToInitializing(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 
 	_, err := mgr.SessionServer("escrow-1")
 	require.ErrorIs(t, err, devshardserver.ErrInitializing)
@@ -665,7 +675,7 @@ func TestSessionServer_DefaultsToInitializing(t *testing.T) {
 
 func TestSessionServer_UnavailableIncludesCause(t *testing.T) {
 	store := newManagerTestStore(t)
-	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, &mockBridge{}, nil, nil)
+	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, &mockBridge{}, nil, nil)
 	mgr.SetUnavailable(errors.New("boom"))
 
 	_, err := mgr.SessionServer("escrow-1")
@@ -691,7 +701,7 @@ func TestSessionServer_GatedUntilReady(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	mgr.SetReady()
 
 	srv, err := mgr.SessionServer("escrow-1")
@@ -729,6 +739,39 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	meta, err := store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, standaloneVersion, meta.Version)
+}
+
+func TestCreateSession_FreezesSealGraceFromBridge(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:        "escrow-1",
+			Amount:          100000,
+			CreatorAddress:  user.Address(),
+			Slots:           addresses,
+			SealGraceNonces: 123,
+			TokenPrice:      1,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
+	_, err := mgr.getOrCreate("escrow-1")
+	require.NoError(t, err)
+
+	meta, err := store.GetSessionMeta("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
 }
 
 func TestCreateSession_RejectsExistingDifferentVersion(t *testing.T) {
@@ -793,7 +836,7 @@ func TestCreateSession_DoesNotPersistWhenSignerNotInGroup(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, outsider, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, outsider, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	_, err := mgr.getOrCreate("escrow-1")
 	require.ErrorIs(t, err, types.ErrHostNotInGroup)
 
@@ -812,7 +855,7 @@ func TestRetrievePayloadsFallsBackToChainEscrowEpoch(t *testing.T) {
 		mustGenerateKey(t),
 		stub.NewInferenceEngine(),
 		stub.NewValidationEngine(),
-		types.LegacySessionVersion,
+		types.DefaultStateRootVersion,
 		&mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "460", EpochID: 254}},
 		payloadStore,
 		nil,
@@ -841,7 +884,7 @@ func TestRetrievePayloadsKeyIncludesEscrowID(t *testing.T) {
 		mustGenerateKey(t),
 		stub.NewInferenceEngine(),
 		stub.NewValidationEngine(),
-		types.LegacySessionVersion,
+		types.DefaultStateRootVersion,
 		&mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "460", EpochID: 254}},
 		payloadStore,
 		nil,
@@ -862,7 +905,7 @@ func TestRetrievePayloadsEpochZeroFallsBackToCurrentEpoch(t *testing.T) {
 		mustGenerateKey(t),
 		stub.NewInferenceEngine(),
 		stub.NewValidationEngine(),
-		types.LegacySessionVersion,
+		types.DefaultStateRootVersion,
 		&mockBridge{},
 		payloadStore,
 		nil,
@@ -880,7 +923,7 @@ func TestRecoverSessions_EmptyStore(t *testing.T) {
 	signer := mustGenerateKey(t)
 	br := &mockBridge{}
 
-	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -941,7 +984,7 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 	}
 
 	signer := mustGenerateKey(t)
-	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.LegacySessionVersion, br, nil, nil)
+	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
 	err = mgr.RecoverSessions()
 	// RecoverSessions logs and skips corrupt sessions, does not return error.
 	require.NoError(t, err)

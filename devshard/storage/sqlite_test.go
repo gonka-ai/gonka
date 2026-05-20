@@ -104,6 +104,10 @@ func TestSQLite_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestSQLite(t))
 }
 
+func TestSQLite_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
+	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestSQLite(t))
+}
+
 func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }
@@ -118,6 +122,10 @@ func TestSQLite_MarkFinalized_LastFinalized(t *testing.T) {
 
 func TestSQLite_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestSQLite(t))
+}
+
+func TestSQLite_SealedInferenceLifecycle(t *testing.T) {
+	runSealedInferenceLifecycle(t, newTestSQLite(t))
 }
 
 func TestSQLite_AddSignature(t *testing.T) {
@@ -700,7 +708,7 @@ func TestSQLite_MetaIndex_DuplicateEscrowAcrossEpochFiles(t *testing.T) {
 	_, err = p.writeDB.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		"dup", types.LegacySessionVersion, "creator", `{}`, `[]`, 1000,
+		"dup", types.DefaultStateRootVersion, "creator", `{}`, `[]`, 1000,
 	)
 	require.NoError(t, err)
 	require.NoError(t, p.close())

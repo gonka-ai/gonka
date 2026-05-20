@@ -119,6 +119,9 @@ func TestPostgres_CreateSession_ConflictingEpoch(t *testing.T) {
 func TestPostgres_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestPostgres(t))
 }
+func TestPostgres_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
+	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestPostgres(t))
+}
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestPostgres(t))
 }
@@ -130,6 +133,9 @@ func TestPostgres_MarkFinalized_LastFinalized(t *testing.T) {
 }
 func TestPostgres_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestPostgres(t))
+}
+func TestPostgres_SealedInferenceLifecycle(t *testing.T) {
+	runSealedInferenceLifecycle(t, newTestPostgres(t))
 }
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
@@ -174,6 +180,7 @@ func TestPostgres_PartitionTablesPhysicallyDropped(t *testing.T) {
 	// All per-epoch partition tables should exist.
 	require.Equal(t, []string{
 		"devshard_diffs_epoch_100", "devshard_diffs_epoch_101", "devshard_diffs_epoch_102",
+		"devshard_sealed_inferences_epoch_100", "devshard_sealed_inferences_epoch_101", "devshard_sealed_inferences_epoch_102",
 		"devshard_sessions_epoch_100", "devshard_sessions_epoch_101", "devshard_sessions_epoch_102",
 		"devshard_signatures_epoch_100", "devshard_signatures_epoch_101", "devshard_signatures_epoch_102",
 		"devshard_snapshots_epoch_100", "devshard_snapshots_epoch_101", "devshard_snapshots_epoch_102",
@@ -186,6 +193,7 @@ func TestPostgres_PartitionTablesPhysicallyDropped(t *testing.T) {
 	// Only epoch 101's partitions are gone; the others survive.
 	require.Equal(t, []string{
 		"devshard_diffs_epoch_100", "devshard_diffs_epoch_102",
+		"devshard_sealed_inferences_epoch_100", "devshard_sealed_inferences_epoch_102",
 		"devshard_sessions_epoch_100", "devshard_sessions_epoch_102",
 		"devshard_signatures_epoch_100", "devshard_signatures_epoch_102",
 		"devshard_snapshots_epoch_100", "devshard_snapshots_epoch_102",
@@ -216,6 +224,7 @@ func TestPostgres_PruneBefore_DropsOnlyExistingOldPartitions(t *testing.T) {
 
 	require.Equal(t, []string{
 		"devshard_diffs_epoch_105",
+		"devshard_sealed_inferences_epoch_105",
 		"devshard_sessions_epoch_105",
 		"devshard_signatures_epoch_105",
 		"devshard_snapshots_epoch_105",
@@ -361,8 +370,8 @@ func TestHybrid_ListActiveSessionsSkipsDuplicateEscrow(t *testing.T) {
 
 	duplicateLog := requireStorageLogEntry(t, readStorageLogEntries(t, logs),
 		"devshard storage: duplicate active session in sqlite and postgres, using sqlite copy")
-	require.Equal(t, types.LegacySessionVersion, duplicateLog["sqlite_version"])
-	require.Equal(t, types.LegacySessionVersion, duplicateLog["postgres_version"])
+	require.Equal(t, types.DefaultStateRootVersion, duplicateLog["sqlite_version"])
+	require.Equal(t, types.DefaultStateRootVersion, duplicateLog["postgres_version"])
 }
 
 func TestHybrid_PruneEpochPrunesBothBackendsAndRoutes(t *testing.T) {
@@ -537,7 +546,7 @@ func listDevshardPartitions(t *testing.T, pool *pgxpool.Pool) []string {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences')
 		ORDER BY c.relname
 	`)
 	require.NoError(t, err)

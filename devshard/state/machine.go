@@ -12,11 +12,9 @@ import (
 
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 )
-
-// Assumed validation rate (bps) for unrevealed seed penalty. 10000 = 100%.
-const penaltyValidationRate = 10000
 
 func safeMul(a, b uint64) (uint64, bool) {
 	if a == 0 || b == 0 {
@@ -73,13 +71,24 @@ type WarmKeyResolver func(warmAddr, coldAddr string) (bool, error)
 
 // StateMachine applies diffs and tracks session state.
 // The embedded RWMutex protects mutable fields in state (Inferences,
-// HostStats, RevealedSeeds, WarmKeys, Balance, Phase, nonces).
+// HostStats, WarmKeys, Balance, Phase, nonces).
 // Immutable lookup maps (slotToAddress, etc.) are safe to read without locking.
 type StateMachine struct {
 	mu          sync.RWMutex
 	state       *types.EscrowState
 	verifier    signing.Verifier
 	userAddress string
+	// committedEntries keeps the canonical protobuf entry bytes for every
+	// inference ID ever created in the session, including records already sealed
+	// out of Mutable.Inferences. This preserves byte-identical state roots under
+	// Phase 0 without rehydrating the full record set from storage on each diff.
+	committedEntries map[uint64][]byte
+	// sealedNonces remembers the nonce at which each evicted inference was
+	// sealed. It is the only piece of per-id seal metadata that survives in
+	// the durable sealed-inference index; everything else needed for cold-path
+	// validation lives in committedEntries (and on disk in the snapshot).
+	sealedNonces map[uint64]uint64
+	inferenceStore    storage.Storage
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -98,11 +107,23 @@ func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 	return func(sm *StateMachine) { sm.warmResolver = r }
 }
 
-// WithVersion binds the session to a specific devshard version token.
+// WithVersion binds the session to a specific devshard binary version tag.
+// Empty values fall back to types.DefaultStateRootVersion.
 func WithVersion(version string) SMOption {
 	return func(sm *StateMachine) {
-		sm.state.Version = types.NormalizeSessionVersion(version)
+		sm.state.Version = types.NormalizeVersion(version)
 	}
+}
+
+// WithInferenceStore enables Phase 0 sealed-inference persistence.
+func WithInferenceStore(store storage.Storage) SMOption {
+	return func(sm *StateMachine) { sm.inferenceStore = store }
+}
+
+// EffectiveV2Composition reports whether this session uses Phase 1 v2
+// state-root composition. This binary always returns true (sealed accumulator).
+func (sm *StateMachine) EffectiveV2Composition() bool {
+	return true
 }
 
 func NewStateMachine(
@@ -120,6 +141,7 @@ func NewStateMachine(
 		slotToAddr[s.SlotID] = s.ValidatorAddress
 		addrToSlotCount[s.ValidatorAddress]++
 	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	groupCopy := make([]types.SlotAssignment, len(group))
 	copy(groupCopy, group)
@@ -146,16 +168,15 @@ func NewStateMachine(
 
 	sm := &StateMachine{
 		state: &types.EscrowState{
-			EscrowID:      escrowID,
-			Version:       types.LegacySessionVersion,
-			Config:        config,
-			Group:         groupCopy,
-			Balance:       initialBalance,
-			Fees:          config.CreateDevshardFee,
-			Inferences:    make(map[uint64]*types.InferenceRecord),
-			HostStats:     hostStats,
-			RevealedSeeds: make(map[uint32]int64),
-			WarmKeys:      make(map[uint32]string),
+			EscrowID:   escrowID,
+			Version:    types.DefaultStateRootVersion,
+			Config:     config,
+			Group:      groupCopy,
+			Balance:    initialBalance,
+			Fees:       config.CreateDevshardFee,
+			Inferences: make(map[uint64]*types.InferenceRecord),
+			HostStats:  hostStats,
+			WarmKeys:   make(map[uint32]string),
 		},
 		verifier:           verifier,
 		userAddress:        userAddress,
@@ -163,6 +184,8 @@ func NewStateMachine(
 		addressToSlotCount: addrToSlotCount,
 		addressToSlots:     addrToSlots,
 		totalSlots:         uint32(len(group)),
+		committedEntries:   make(map[uint64][]byte),
+		sealedNonces:       make(map[uint64]uint64),
 	}
 	for _, o := range opts {
 		o(sm)
@@ -274,16 +297,17 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 		sm.state.FinalizeNonce = nonce
 	}
 	if sm.state.Phase == types.PhaseFinalizing {
-		sm.recomputeCompliance()
-		sm.penalizeUnrevealedSeeds()
-		allRevealed := sm.allUniqueAddressesRevealed()
 		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
-		if allRevealed || deadlinePassed {
+		if deadlinePassed {
 			sm.state.Phase = types.PhaseSettlement
+			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
+				sm.restoreMutable(snap)
+				return nil, nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+			}
 		}
 	}
 
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	root, err := sm.computeStateRootLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, nil, fmt.Errorf("compute state root: %w", err)
@@ -354,19 +378,24 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	}
 
 	if sm.state.Phase == types.PhaseFinalizing {
-		sm.recomputeCompliance()
-		sm.penalizeUnrevealedSeeds()
-
-		// Auto-transition Finalizing -> Settlement.
-		allRevealed := sm.allUniqueAddressesRevealed()
+		// Auto-transition Finalizing -> Settlement on deadline only.
 		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
-		if allRevealed || deadlinePassed {
+		if deadlinePassed {
 			sm.state.Phase = types.PhaseSettlement
+			// Under v2 composition, settling is the natural moment to drain
+			// any record still live into the sealed accumulator. This keeps
+			// the settlement payload size bounded (no live records on the
+			// wire) and lets the chain recompute rest_hash from sealed_acc
+			// alone. See devshard/docs/inferences-pruning.md \u00a71.4.
+			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
+				sm.restoreMutable(snap)
+				return nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+			}
 		}
 	}
 
 	// 7. Compute state root.
-	root, err := ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	root, err := sm.computeStateRootLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
@@ -433,6 +462,7 @@ func (sm *StateMachine) RestoreState(state *types.EscrowState) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.state = cloneEscrowState(state)
+	sm.rebuildCommittedEntriesLocked()
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
@@ -449,16 +479,16 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 		s.HostStats[k] = &cp
 	}
 
-	// Deep copy RevealedSeeds.
-	s.RevealedSeeds = make(map[uint32]int64, len(src.RevealedSeeds))
-	maps.Copy(s.RevealedSeeds, src.RevealedSeeds)
-
 	// Deep copy WarmKeys.
 	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
 	maps.Copy(s.WarmKeys, src.WarmKeys)
 
 	// Deep copy Inferences.
 	s.Inferences = copyInferences(src.Inferences)
+
+	if len(src.SealedAcc) > 0 {
+		s.SealedAcc = append([]byte(nil), src.SealedAcc...)
+	}
 
 	return &s
 }
@@ -471,9 +501,11 @@ type mutableSnapshot struct {
 	FinalizeNonce uint64
 	LatestNonce   uint64
 	Inferences    map[uint64]*types.InferenceRecord
+	Committed     map[uint64][]byte
 	HostStats     map[uint32]*types.HostStats
-	RevealedSeeds map[uint32]int64
 	WarmKeys      map[uint32]string
+	SealedAcc     []byte
+	SealedNonces  map[uint64]uint64
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
@@ -485,11 +517,11 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		hsCopy[k] = &cp
 	}
 
-	seedsCopy := make(map[uint32]int64, len(sm.state.RevealedSeeds))
-	maps.Copy(seedsCopy, sm.state.RevealedSeeds)
-
 	warmCopy := make(map[uint32]string, len(sm.state.WarmKeys))
 	maps.Copy(warmCopy, sm.state.WarmKeys)
+
+	sealedNoncesCopy := make(map[uint64]uint64, len(sm.sealedNonces))
+	maps.Copy(sealedNoncesCopy, sm.sealedNonces)
 
 	return mutableSnapshot{
 		Balance:       sm.state.Balance,
@@ -498,9 +530,11 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		FinalizeNonce: sm.state.FinalizeNonce,
 		LatestNonce:   sm.state.LatestNonce,
 		Inferences:    infCopy,
+		Committed:     cloneCommittedInferenceEntries(sm.committedEntries),
 		HostStats:     hsCopy,
-		RevealedSeeds: seedsCopy,
 		WarmKeys:      warmCopy,
+		SealedAcc:     append([]byte(nil), sm.state.SealedAcc...),
+		SealedNonces:  sealedNoncesCopy,
 	}
 }
 
@@ -511,16 +545,42 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.FinalizeNonce = snap.FinalizeNonce
 	sm.state.LatestNonce = snap.LatestNonce
 	sm.state.Inferences = snap.Inferences
+	sm.committedEntries = snap.Committed
 	sm.state.HostStats = snap.HostStats
-	sm.state.RevealedSeeds = snap.RevealedSeeds
 	sm.state.WarmKeys = snap.WarmKeys
+	sm.state.SealedAcc = append([]byte(nil), snap.SealedAcc...)
+	sm.sealedNonces = snap.SealedNonces
+}
+
+func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
+	if _, ok := sm.state.Inferences[id]; ok {
+		return true
+	}
+	if _, ok := sm.committedEntries[id]; ok {
+		return true
+	}
+	_, sealed := sm.sealedNonces[id]
+	return sealed
+}
+
+// isInferenceEvictedFromLive reports whether id is known but no longer in the
+// live RAM map (sealed into SealedAcc; may still be in sealedNonces).
+func (sm *StateMachine) isInferenceEvictedFromLive(id uint64) bool {
+	if _, live := sm.state.Inferences[id]; live {
+		return false
+	}
+	if _, ok := sm.committedEntries[id]; ok {
+		return true
+	}
+	_, sealed := sm.sealedNonces[id]
+	return sealed
 }
 
 // ComputeStateRoot returns the current state root without modifying state.
 func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
+	return sm.computeStateRootLocked()
 }
 
 // WarmKeys returns the current warm key bindings (shallow copy).
@@ -576,7 +636,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	// Duplicate inference ID guard.
-	if _, exists := sm.state.Inferences[msg.InferenceId]; exists {
+	if sm.isDuplicateInferenceID(msg.InferenceId) {
 		return types.ErrDuplicateInferenceID
 	}
 
@@ -606,6 +666,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
 	logging.Debug("new inference", "subsystem", "state", "inference_id", msg.InferenceId, "executor_slot", executorSlot)
 	return nil
 }
@@ -613,6 +676,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if rec.Status != types.StatusPending {
@@ -650,12 +716,15 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if rec.Status != types.StatusStarted {
@@ -701,12 +770,15 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
@@ -744,8 +816,8 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	// Mutation: set bitmap, count vote weight.
 	// TODO: only the validator's emitting slot is set here, while
 	// applyValidationVote sets every slot owned by the voter address.
-	// Consumers (collectValidationJobs, addressHasValidated,
-	// recomputeCompliance) all use "any slot of this address" semantics so
+	// Consumers (collectValidationJobs and addressHasValidated) both use
+	// "any slot of this address" semantics so
 	// the asymmetry is benign, but the unified bitmap would be more
 	// consistent. Changing it shifts state-machine output, so it requires a
 	// coordinated upgrade.
@@ -763,7 +835,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 	}
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -780,6 +852,9 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
@@ -842,12 +917,15 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		rec.Status = types.StatusValidated
 	}
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	rec, ok := sm.state.Inferences[msg.InferenceId]
 	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
@@ -922,154 +1000,16 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	// Release reserved cost back to escrow.
 	sm.state.Balance += rec.ReservedCost
 
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyRevealSeed(msg *types.MsgRevealSeed) error {
-	// Guard: must be in PhaseFinalizing. Rejected in Active (too early) and Settlement (too late).
-	if sm.state.Phase == types.PhaseSettlement {
-		return types.ErrSessionSettlement
-	}
-	if sm.state.Phase != types.PhaseFinalizing {
-		return types.ErrSessionNotFinalizing
-	}
-
-	// Verify slot is in group.
-	revealerAddr, ok := sm.slotToAddress[msg.SlotId]
-	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.SlotId)
-	}
-
-	// Verify proposer signature from slot owner.
-	clonedRS := proto.Clone(msg).(*types.MsgRevealSeed)
-	clonedRS.ProposerSig = nil
-	if err := sm.verifyProposerSig(clonedRS, msg.ProposerSig, revealerAddr, msg.SlotId); err != nil {
-		return err
-	}
-
-	// Cross-session replay protection.
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
-	}
-
-	// Verify seed signature recovers to slot owner (proves honest derivation).
-	seedAddr, err := sm.verifier.RecoverAddress([]byte(sm.state.EscrowID), msg.Signature)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidSeedSig, err)
-	}
-	if seedAddr != revealerAddr {
-		boundWarm, ok := sm.state.WarmKeys[msg.SlotId]
-		if !ok || boundWarm != seedAddr {
-			return fmt.Errorf("%w: expected %s or bound warm key, got %s",
-				types.ErrInvalidSeedSig, revealerAddr, seedAddr)
-		}
-	}
-
-	// Dedup by address: check if any slot owned by same address already revealed.
-	for _, slot := range slices.Sorted(maps.Keys(sm.state.RevealedSeeds)) {
-		if sm.slotToAddress[slot] == revealerAddr {
-			return fmt.Errorf("%w: address %s already revealed via slot %d", types.ErrDuplicateSeedReveal, revealerAddr, slot)
-		}
-	}
-
-	// Derive seed from signature.
-	seed, err := DeriveSeed(msg.Signature)
-	if err != nil {
-		return err
-	}
-
-	// Store seed. Compliance is computed later in recomputeCompliance.
-	sm.state.RevealedSeeds[msg.SlotId] = seed
-
+	logging.Debug("ignoring deprecated reveal-seed tx",
+		"subsystem", "state",
+		"escrow_id", sm.state.EscrowID,
+		"slot_id", msg.GetSlotId(),
+	)
 	return nil
-}
-
-// recomputeCompliance recalculates RequiredValidations and CompletedValidations
-// for all revealed seeds. Called during PhaseFinalizing so that MsgFinishInference
-// arriving in the same diff as MsgRevealSeed is counted.
-func (sm *StateMachine) recomputeCompliance() {
-	for revealSlot, seed := range sm.state.RevealedSeeds {
-		revealerAddr := sm.slotToAddress[revealSlot]
-		validatorSlotCount := sm.addressToSlotCount[revealerAddr]
-		requiredValidations := uint32(0)
-		completedValidations := uint32(0)
-
-		for _, infID := range slices.Sorted(maps.Keys(sm.state.Inferences)) {
-			rec := sm.state.Inferences[infID]
-			switch rec.Status {
-			case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
-			default:
-				continue
-			}
-
-			executorAddr := sm.slotToAddress[rec.ExecutorSlot]
-			if executorAddr == revealerAddr {
-				continue
-			}
-
-			executorSlotCount := sm.addressToSlotCount[executorAddr]
-			if ShouldValidate(seed, infID, validatorSlotCount, executorSlotCount, sm.totalSlots, sm.state.Config.ValidationRate) {
-				requiredValidations++
-				for _, vSlot := range sm.addressToSlots[revealerAddr] {
-					if rec.ValidatedBy.IsSet(vSlot) {
-						completedValidations++
-						break
-					}
-				}
-			}
-		}
-
-		for _, slot := range sm.addressToSlots[revealerAddr] {
-			if hs, ok := sm.state.HostStats[slot]; ok {
-				hs.RequiredValidations = requiredValidations
-				hs.CompletedValidations = completedValidations
-			}
-		}
-	}
-}
-
-// penalizeUnrevealedSeeds sets RequiredValidations for unrevealed hosts.
-// Mirrors applyRevealSeed with penaltyValidationRate. CompletedValidations stays 0.
-// Uses integer math only (no float64/math.Ceil) to avoid architecture-dependent state root splits.
-func (sm *StateMachine) penalizeUnrevealedSeeds() {
-	revealedAddrs := make(map[string]bool, len(sm.state.RevealedSeeds))
-	for slot := range sm.state.RevealedSeeds {
-		revealedAddrs[sm.slotToAddress[slot]] = true
-	}
-
-	for addr, slots := range sm.addressToSlots {
-		if revealedAddrs[addr] {
-			continue
-		}
-
-		validatorSlotCount := sm.addressToSlotCount[addr]
-		var probSumScaled uint64
-		for _, infID := range slices.Sorted(maps.Keys(sm.state.Inferences)) {
-			rec := sm.state.Inferences[infID]
-			switch rec.Status {
-			case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
-			default:
-				continue
-			}
-			executorAddr := sm.slotToAddress[rec.ExecutorSlot]
-			if executorAddr == addr {
-				continue
-			}
-			executorSlotCount := sm.addressToSlotCount[executorAddr]
-			if sm.totalSlots <= executorSlotCount {
-				continue
-			}
-			denom := uint64(sm.totalSlots - executorSlotCount)
-			probSumScaled += penalizePerInferenceScaled32(uint64(penaltyValidationRate), uint64(validatorSlotCount), denom)
-		}
-
-		required := uint32CeilScaledSum32(probSumScaled)
-		for _, slot := range slots {
-			if hs, ok := sm.state.HostStats[slot]; ok {
-				hs.RequiredValidations = required
-			}
-		}
-	}
 }
 
 func (sm *StateMachine) applyFinalizeRound() error {
@@ -1078,16 +1018,6 @@ func (sm *StateMachine) applyFinalizeRound() error {
 	}
 	sm.state.Phase = types.PhaseFinalizing
 	return nil
-}
-
-// allUniqueAddressesRevealed returns true when every unique address in the
-// group has revealed a seed.
-func (sm *StateMachine) allUniqueAddressesRevealed() bool {
-	revealedAddrs := make(map[string]bool, len(sm.state.RevealedSeeds))
-	for slot := range sm.state.RevealedSeeds {
-		revealedAddrs[sm.slotToAddress[slot]] = true
-	}
-	return len(revealedAddrs) == len(sm.addressToSlots)
 }
 
 // BuildDiffContent creates the proto DiffContent from nonce, txs, escrowID, and postStateRoot for signing.
@@ -1178,14 +1108,6 @@ func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
 }
 
-// IsSlotRevealed returns true if the given slot has already revealed its seed.
-func (sm *StateMachine) IsSlotRevealed(slotID uint32) bool {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	_, ok := sm.state.RevealedSeeds[slotID]
-	return ok
-}
-
 // GetInference returns a copy of the inference record for the given ID.
 func (sm *StateMachine) GetInference(id uint64) (types.InferenceRecord, bool) {
 	sm.mu.RLock()
@@ -1195,18 +1117,6 @@ func (sm *StateMachine) GetInference(id uint64) (types.InferenceRecord, bool) {
 		return types.InferenceRecord{}, false
 	}
 	return *rec, ok
-}
-
-// RevealedSlots returns a shallow copy of the revealed seeds map.
-func (sm *StateMachine) RevealedSlots() map[uint32]int64 {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	if len(sm.state.RevealedSeeds) == 0 {
-		return nil
-	}
-	cp := make(map[uint32]int64, len(sm.state.RevealedSeeds))
-	maps.Copy(cp, sm.state.RevealedSeeds)
-	return cp
 }
 
 // VoteThreshold returns the session's vote threshold.

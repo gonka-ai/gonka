@@ -30,7 +30,7 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 func VersionForRoutePrefix(routePrefix string) (string, error) {
 	normalized := NormalizeRoutePrefix(routePrefix)
 	if normalized == LegacyRoutePrefix {
-		return types.LegacySessionVersion, nil
+		return types.DefaultStateRootVersion, nil
 	}
 
 	trimmed := strings.Trim(normalized, "/")

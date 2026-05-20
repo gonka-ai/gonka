@@ -41,6 +41,7 @@ const (
 	pgDiffsParent      = "devshard_diffs"
 	pgSignaturesParent = "devshard_signatures"
 	pgSnapshotsParent  = "devshard_snapshots"
+	pgInferencesParent = "devshard_sealed_inferences"
 	pgSessionIndex     = "devshard_session_index"
 )
 
@@ -55,6 +56,9 @@ func pgSignaturesPartition(epochID uint64) string {
 }
 func pgSnapshotsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSnapshotsParent, epochID)
+}
+func pgInferencesPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgInferencesParent, epochID)
 }
 
 const pgCreateParents = `
@@ -108,6 +112,14 @@ CREATE TABLE IF NOT EXISTS devshard_snapshots (
     state_data BYTEA  NOT NULL,
     created_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id)
+) PARTITION BY RANGE (epoch_id);
+
+CREATE TABLE IF NOT EXISTS devshard_sealed_inferences (
+    epoch_id     BIGINT NOT NULL,
+    escrow_id    TEXT   NOT NULL,
+    inference_id BIGINT NOT NULL,
+    sealed_nonce BIGINT NOT NULL,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id)
 ) PARTITION BY RANGE (epoch_id);
 `
 
@@ -253,6 +265,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 	if err := create(pgSnapshotsParent, pgSnapshotsPartition(epochID)); err != nil {
 		return err
 	}
+	if err := create(pgInferencesParent, pgInferencesPartition(epochID)); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	s.knownEpochs[epochID] = struct{}{}
@@ -271,6 +286,7 @@ func (s *Postgres) lookupEpoch(escrowID string) (uint64, error) {
 }
 
 func (s *Postgres) CreateSession(params CreateSessionParams) error {
+	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
 	configJSON, err := json.Marshal(params.Config)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -279,7 +295,7 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeSessionVersion(params.Version)
+	requestedVersion := types.NormalizeVersion(params.Version)
 
 	ctx := context.Background()
 	if err := s.ensurePartition(ctx, params.EpochID); err != nil {
@@ -343,9 +359,9 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	).Scan(&storedVersion); err != nil {
 		return fmt.Errorf("read session version: %w", err)
 	}
-	normalizedStoredVersion := types.LegacySessionVersion
+	normalizedStoredVersion := types.DefaultStateRootVersion
 	if storedVersion != nil {
-		normalizedStoredVersion = types.NormalizeSessionVersion(*storedVersion)
+		normalizedStoredVersion = types.NormalizeVersion(*storedVersion)
 	}
 	if normalizedStoredVersion != requestedVersion {
 		return fmt.Errorf("%w: escrow %s exists with version %s, requested %s",
@@ -705,6 +721,56 @@ func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return nonce, data, nil
 }
 
+func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(),
+		`INSERT INTO devshard_sealed_inferences (epoch_id, escrow_id, inference_id, sealed_nonce)
+		 VALUES ($1, $2, $3, $4)`,
+		epochID, escrowID, row.InferenceID, row.SealedNonce,
+	)
+	if err != nil {
+		return fmt.Errorf("insert sealed inference: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return InferenceRow{}, false, err
+	}
+	row := s.pool.QueryRow(context.Background(),
+		`SELECT sealed_nonce FROM devshard_sealed_inferences
+		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+		epochID, escrowID, inferenceID,
+	)
+	out := InferenceRow{InferenceID: inferenceID}
+	if err := row.Scan(&out.SealedNonce); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return InferenceRow{}, false, nil
+		}
+		return InferenceRow{}, false, err
+	}
+	return out, true, nil
+}
+
+func (s *Postgres) DeleteSealedInferences(escrowID string) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(context.Background(),
+		`DELETE FROM devshard_sealed_inferences WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	); err != nil {
+		return fmt.Errorf("delete sealed inferences: %w", err)
+	}
+	return nil
+}
+
 // PruneEpoch drops all per-epoch partitions for epochID and forgets every
 // escrow index entry that pointed at it. Other epochs are not touched.
 // No-op if the partitions do not exist.
@@ -714,6 +780,7 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 		pgDiffsPartition(epochID),
 		pgSignaturesPartition(epochID),
 		pgSnapshotsPartition(epochID),
+		pgInferencesPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))
@@ -746,7 +813,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences')
 	`)
 	if err != nil {
 		return fmt.Errorf("list devshard partitions: %w", err)
@@ -793,7 +860,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 }
 
 func pgPartitionEpoch(name string) (uint64, bool) {
-	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent} {
+	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent} {
 		prefix := parent + "_epoch_"
 		if strings.HasPrefix(name, prefix) {
 			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)

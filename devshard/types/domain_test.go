@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestNormalizeVersion(t *testing.T) {
+	if got := NormalizeVersion(""); got != DefaultStateRootVersion {
+		t.Fatalf("empty: got %q, want %q", got, DefaultStateRootVersion)
+	}
+	if got := NormalizeVersion("v2"); got != "v2" {
+		t.Fatalf("explicit: got %q, want v2", got)
+	}
+}
+
 func TestValidateGroup(t *testing.T) {
 	tests := []struct {
 		name    string

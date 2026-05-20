@@ -23,6 +23,7 @@ import (
 const (
 	MaxEscrowsPerEpoch uint32 = 500_000
 	MaxNonce           uint32 = 1_000_000
+
 	// Block window after the upgrade in which confirmation PoC is skipped.
 	// Same value as v0.2.10; covers the rest of the upgrade epoch on mainnet.
 	GraceUpgradeProtectionWindow int64 = 3000
@@ -75,6 +76,9 @@ func CreateUpgradeHandler(
 		}
 
 		if err := setDevshardEscrowParams(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setDevshardApprovedV2Version(ctx, k); err != nil {
 			return nil, err
 		}
 		if err := backfillConfirmationWeightScales(ctx, k); err != nil {
@@ -168,12 +172,47 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	}
 	params.DevshardEscrowParams.MaxEscrowsPerEpoch = MaxEscrowsPerEpoch
 	params.DevshardEscrowParams.MaxNonce = MaxNonce
+
+	// Initialize DefaultSealGraceNonces for existing chains. The field is new
+	// in v0.2.13: a fresh-genesis chain seeds it from
+	// types.DefaultDevshardSealGraceNonces(GroupSize), but an existing chain
+	// upgrading from <=v0.2.12 deserializes it to 0. Leaving 0 would diverge
+	// from fresh-genesis state and break any consumer that reads the chain
+	// default (e.g. governance UIs, AppExport parsers, future on-chain
+	// callers). We backfill the canonical value here, using the existing
+	// GroupSize when present so the derivation matches genesis exactly.
+	if params.DevshardEscrowParams.DefaultSealGraceNonces == 0 {
+		groupSize := params.DevshardEscrowParams.GroupSize
+		if groupSize == 0 {
+			groupSize = types.DefaultDevshardGroupSize
+		}
+		params.DevshardEscrowParams.DefaultSealGraceNonces = types.DefaultDevshardSealGraceNonces(groupSize)
+	}
+	if params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds == 0 {
+		params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
+	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("set devshard escrow params", types.Upgrades,
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
-		"max_nonce", MaxNonce)
+		"max_nonce", MaxNonce,
+		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
+		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+	return nil
+}
+
+func setDevshardApprovedV2Version(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
 	return nil
 }
 

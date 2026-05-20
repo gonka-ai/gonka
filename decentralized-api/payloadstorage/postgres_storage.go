@@ -158,6 +158,19 @@ func (s *PostgresStorage) PruneEpoch(ctx context.Context, epochId uint64) error 
 	return nil
 }
 
+func (s *PostgresStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
+	const query = `DELETE FROM inferences WHERE epoch_id = $1 AND inference_id = $2`
+	tag, err := s.pool.Exec(ctx, query, epochId, inferenceId)
+	if err != nil {
+		return fmt.Errorf("delete payload: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	logging.Debug("Deleted payload row", types.PayloadStorage, "inferenceId", inferenceId, "epochId", epochId)
+	return nil
+}
+
 func (s *PostgresStorage) Close() {
 	s.pool.Close()
 }

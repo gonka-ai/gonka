@@ -103,7 +103,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	}
 
 	// Recover.
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
@@ -147,7 +147,7 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), session.Nonce())
 }
@@ -238,7 +238,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 
@@ -287,7 +287,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 	}
 
 	// Recover with a warm key resolver option.
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients,
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients,
 		state.WithWarmKeyResolver(resolver),
 	)
 	require.NoError(t, err)
@@ -317,7 +317,7 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
 	require.NoError(t, err)
 
 	// Each inference gets a signature from the executor host.
@@ -334,4 +334,95 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 	// Verify the prompt hash is computed correctly for test data (sanity check).
 	_, err = devshard.CanonicalPromptHash(testutil.TestPrompt)
 	require.NoError(t, err)
+}
+
+// legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
+// specific escrow. This simulates a pre-DefaultStateRootVersion row that was
+// written directly to disk (e.g. by an older binary) and bypasses the
+// types.NormalizeVersion step CreateSession applies. The production API
+// cannot produce such a row anymore, but the empty-meta-version branch in
+// RecoverSession exists to bridge data written before that normalization
+// landed; this wrapper is the only way to exercise it from tests.
+type legacyMetaWrapper struct {
+	storage.Storage
+	legacyEscrow string
+}
+
+func (w *legacyMetaWrapper) GetSessionMeta(escrowID string) (*storage.SessionMeta, error) {
+	meta, err := w.Storage.GetSessionMeta(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	if escrowID == w.legacyEscrow {
+		meta.Version = ""
+	}
+	return meta, nil
+}
+
+// TestRecoverSession_LegacyEmptyMetaVersion locks in the legacy bridge in
+// RecoverSession: when storage returns meta.Version == "" (a pre-versioning
+// row), recovery must succeed by falling back to the caller's boundVersion
+// and the resulting state machine must be stamped with that bound value so
+// the next settlement payload reports the running binary's composition tag.
+func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 3
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	legacy := &legacyMetaWrapper{Storage: store, legacyEscrow: "escrow-1"}
+
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	session, recSM, err := RecoverSession(legacy, user, verifier, "escrow-1",
+		types.DefaultStateRootVersion, group, clients)
+	require.NoError(t, err, "recovery must bridge empty stored Version to boundVersion")
+	require.Equal(t, uint64(numInferences), session.Nonce())
+
+	exported := recSM.ExportState()
+	require.NotNil(t, exported)
+	require.Equal(t, types.DefaultStateRootVersion, exported.Version,
+		"recovered state machine must carry the caller's boundVersion when meta.Version is empty")
+}
+
+// TestRecoverSession_LegacyEmptyMetaVersion_FallsBackToDefault covers the
+// inner branch of the bridge: when both meta.Version and the caller's
+// boundVersion are empty, recovery defaults to DefaultStateRootVersion.
+func TestRecoverSession_LegacyEmptyMetaVersion_FallsBackToDefault(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, 1, store)
+	legacy := &legacyMetaWrapper{Storage: store, legacyEscrow: "escrow-1"}
+
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	_, recSM, err := RecoverSession(legacy, user, verifier, "escrow-1", "", group, clients)
+	require.NoError(t, err)
+
+	exported := recSM.ExportState()
+	require.NotNil(t, exported)
+	require.Equal(t, types.DefaultStateRootVersion, exported.Version,
+		"empty meta.Version + empty boundVersion must default to DefaultStateRootVersion")
 }

@@ -233,6 +233,18 @@ func (m *ManagedStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return m.inner.LoadSnapshot(escrowID)
 }
 
+func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return m.inner.InsertSealedInference(escrowID, row)
+}
+
+func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	return m.inner.GetSealedInference(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
+	return m.inner.DeleteSealedInferences(escrowID)
+}
+
 // PruneEpoch is exposed so callers can trigger an explicit drop. The managed
 // background pass uses this method too.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {

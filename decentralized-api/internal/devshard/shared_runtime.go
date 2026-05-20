@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -111,6 +112,18 @@ func ValidateInferenceWithExecutor(
 		requestPath,
 	)
 	if err != nil {
+		// Pruned payload: executor returned 404. Treat as a deliberate skip
+		// so the host's validateAsync drops the work silently without
+		// emitting a MsgValidation that would record a "failed" attempt.
+		if errors.Is(err, validationpkg.ErrPayloadGone) {
+			logging.Info("devshard validation skipped: payload pruned on executor",
+				chaintypes.Validation,
+				"inferenceId", inferenceID,
+				"executor", req.ExecutorAddress,
+				"epoch", payloadEpoch,
+			)
+			return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
+		}
 		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
 	}
 

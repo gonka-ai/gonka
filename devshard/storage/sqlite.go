@@ -352,6 +352,13 @@ func openEpochPool(dbPath string) (*epochPool, error) {
 		state_data BLOB NOT NULL,
 		created_at INTEGER NOT NULL DEFAULT 0
 	);
+
+	CREATE TABLE IF NOT EXISTS sealed_inferences (
+		escrow_id    TEXT NOT NULL,
+		inference_id INTEGER NOT NULL,
+		sealed_nonce INTEGER NOT NULL,
+		PRIMARY KEY (escrow_id, inference_id)
+	);
 	`
 	if _, err := writeDB.Exec(schema); err != nil {
 		writeDB.Close()
@@ -417,6 +424,7 @@ func (s *SQLite) closeAllLocked() error {
 }
 
 func (s *SQLite) CreateSession(params CreateSessionParams) error {
+	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
 	configJSON, err := json.Marshal(params.Config)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -425,7 +433,7 @@ func (s *SQLite) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeSessionVersion(params.Version)
+	requestedVersion := types.NormalizeVersion(params.Version)
 
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
@@ -502,9 +510,9 @@ func (s *SQLite) sessionVersion(p *epochPool, escrowID string) (string, error) {
 		return "", err
 	}
 	if version.Valid {
-		return types.NormalizeSessionVersion(version.String), nil
+		return types.NormalizeVersion(version.String), nil
 	}
-	return types.LegacySessionVersion, nil
+	return types.DefaultStateRootVersion, nil
 }
 
 func (s *SQLite) findSessionEpoch(escrowID string) (uint64, bool, error) {
@@ -904,6 +912,53 @@ func (s *SQLite) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 		return 0, nil, err
 	}
 	return nonce, data, nil
+}
+
+func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	_, err = p.writeDB.Exec(
+		`INSERT INTO sealed_inferences (escrow_id, inference_id, sealed_nonce)
+		 VALUES (?, ?, ?)`,
+		escrowID, row.InferenceID, row.SealedNonce,
+	)
+	if err != nil {
+		return fmt.Errorf("insert sealed inference: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return InferenceRow{}, false, err
+	}
+	row := p.readDB.QueryRow(
+		`SELECT sealed_nonce FROM sealed_inferences
+		  WHERE escrow_id = ? AND inference_id = ?`,
+		escrowID, inferenceID,
+	)
+	out := InferenceRow{InferenceID: inferenceID}
+	if err := row.Scan(&out.SealedNonce); err != nil {
+		if err == sql.ErrNoRows {
+			return InferenceRow{}, false, nil
+		}
+		return InferenceRow{}, false, err
+	}
+	return out, true, nil
+}
+
+func (s *SQLite) DeleteSealedInferences(escrowID string) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	if _, err := p.writeDB.Exec(`DELETE FROM sealed_inferences WHERE escrow_id = ?`, escrowID); err != nil {
+		return fmt.Errorf("delete sealed inferences: %w", err)
+	}
+	return nil
 }
 
 // PruneEpoch closes the pool for epochID, removes the database file and its

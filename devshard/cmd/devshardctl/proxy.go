@@ -62,6 +62,17 @@ func writeStreamReset(w io.Writer) {
 	}
 }
 
+// inferenceLookupResponse is the JSON shape for GET /v1/inference. InferenceRecord
+// fields are promoted to the top level so testermint and curl see a flat object;
+// sealed marks whether the id is still in the live map (false) or only in
+// sealedNonces / SealedAcc (true).
+type inferenceLookupResponse struct {
+	Sealed      bool   `json:"sealed"`
+	InferenceID uint64 `json:"inference_id"`
+	SealNonce   uint64 `json:"seal_nonce,omitempty"`
+	types.InferenceRecord
+}
+
 // Proxy is the OpenAI-compatible HTTP proxy backed by a devshard session.
 type Proxy struct {
 	session  *user.Session
@@ -395,13 +406,14 @@ type statusResponse struct {
 // statusSessionConfig is the JSON representation of session config values
 // returned by the devshardctl status endpoint.
 type statusSessionConfig struct {
-	RefusalTimeout   int64  `json:"refusal_timeout"`
-	ExecutionTimeout int64  `json:"execution_timeout"`
-	TokenPrice       uint64 `json:"token_price"`
-	CreateDevshardFee  uint64 `json:"create_devshard_fee"`
-	FeePerNonce      uint64 `json:"fee_per_nonce"`
-	VoteThreshold    uint32 `json:"vote_threshold"`
-	ValidationRate   uint32 `json:"validation_rate"`
+	RefusalTimeout    int64  `json:"refusal_timeout"`
+	ExecutionTimeout  int64  `json:"execution_timeout"`
+	TokenPrice        uint64 `json:"token_price"`
+	CreateDevshardFee uint64 `json:"create_devshard_fee"`
+	FeePerNonce       uint64 `json:"fee_per_nonce"`
+	VoteThreshold     uint32 `json:"vote_threshold"`
+	ValidationRate    uint32 `json:"validation_rate"`
+	SealGraceNonces   uint32 `json:"seal_grace_nonces"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -441,6 +453,7 @@ func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	st := p.sm.SnapshotState()
+	sealed := p.sm.ExportSealedNonces()
 
 	statusNames := map[types.InferenceStatus]string{
 		types.StatusPending:     "pending",
@@ -452,20 +465,33 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 		types.StatusTimedOut:    "timed_out",
 	}
 
-	counts := make(map[string]int)
+	liveStatusCounts := make(map[string]int)
 	for _, rec := range st.Inferences {
 		name := statusNames[rec.Status]
 		if name == "" {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
 		}
-		counts[name]++
+		liveStatusCounts[name]++
+	}
+
+	phaseStr := "active"
+	switch st.Phase {
+	case types.PhaseFinalizing:
+		phaseStr = "finalizing"
+	case types.PhaseSettlement:
+		phaseStr = "settlement"
 	}
 
 	resp := map[string]any{
-		"nonce":            st.LatestNonce,
-		"balance":          st.Balance,
+		"nonce":             st.LatestNonce,
+		"phase":             phaseStr,
+		"balance":           st.Balance,
+		"live_inferences":   len(st.Inferences),
+		"sealed_inferences": len(sealed),
+		"live_status_counts": liveStatusCounts,
+		// Deprecated: same as live_inferences; kept for older scripts.
 		"total_inferences": len(st.Inferences),
-		"status_counts":    counts,
+		"status_counts":    liveStatusCounts,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -498,13 +524,14 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Phase:    phaseStr,
 		Balance:  st.Balance,
 		Config: statusSessionConfig{
-			RefusalTimeout:   cfg.RefusalTimeout,
-			ExecutionTimeout: cfg.ExecutionTimeout,
-			TokenPrice:       cfg.TokenPrice,
-			CreateDevshardFee:  cfg.CreateDevshardFee,
-			FeePerNonce:      cfg.FeePerNonce,
-			VoteThreshold:    cfg.VoteThreshold,
-			ValidationRate:   cfg.ValidationRate,
+			RefusalTimeout:    cfg.RefusalTimeout,
+			ExecutionTimeout:  cfg.ExecutionTimeout,
+			TokenPrice:        cfg.TokenPrice,
+			CreateDevshardFee: cfg.CreateDevshardFee,
+			FeePerNonce:       cfg.FeePerNonce,
+			VoteThreshold:     cfg.VoteThreshold,
+			ValidationRate:    cfg.ValidationRate,
+			SealGraceNonces:   cfg.SealGraceNonces,
 		},
 	}
 
@@ -530,13 +557,43 @@ func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := p.sm.SnapshotState()
-	inference, found := st.Inferences[parsedID]
-	if !found {
+	writeInferenceLookup := func(resp inferenceLookupResponse) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		}
+	}
+
+	if rec, ok := p.sm.GetInference(parsedID); ok {
+		writeInferenceLookup(inferenceLookupResponse{
+			Sealed:          false,
+			InferenceID:     parsedID,
+			InferenceRecord: rec,
+		})
+		return
+	}
+
+	sealed := p.sm.ExportSealedNonces()
+	sealNonce, isSealed := sealed[parsedID]
+	if !isSealed {
 		http.Error(w, fmt.Sprintf("inference not found for inference ID: %s", inferenceID), http.StatusNotFound)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(inference)
+	// Committed entry bytes may still exist briefly after seal; usually empty post-drain.
+	if rec, ok := p.sm.GetCommittedRecord(parsedID); ok {
+		writeInferenceLookup(inferenceLookupResponse{
+			Sealed:          true,
+			InferenceID:     parsedID,
+			SealNonce:       sealNonce,
+			InferenceRecord: rec,
+		})
+		return
+	}
+
+	writeInferenceLookup(inferenceLookupResponse{
+		Sealed:      true,
+		InferenceID: parsedID,
+		SealNonce:   sealNonce,
+	})
 }

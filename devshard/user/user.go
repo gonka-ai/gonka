@@ -418,12 +418,11 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 //
 // Phase A (N iterations): The first diff carries MsgFinalizeRound plus any
 // pending txs. Each subsequent diff carries txs returned by the previous
-// host's response. Hosts see Finalizing for the first time and produce
-// MsgRevealSeed in their mempool.
+// host's response.
 //
-// Phase A+1 (1 iteration): Drains the last host's MsgRevealSeed that
-// remained in pendingTxs after Phase A. This is the final nonce that
-// carries any txs. After this, state is frozen.
+// Phase A+1 (1 iteration): Drains any last host-proposed txs that remained in
+// pendingTxs after Phase A. This is the final nonce that carries any txs.
+// After this, state is frozen.
 //
 // Phase B (N iterations): Pure propagation + signature collection. No new
 // diffs created. Sends catch-up diffs so every host reaches the final
@@ -446,7 +445,7 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 	}
 
-	// Phase A+1: drain the last host's reveal.
+	// Phase A+1: drain the last host's pending txs.
 	if err := s.sendDiffRound(ctx, nil); err != nil {
 		return err
 	}

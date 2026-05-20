@@ -2,11 +2,20 @@ package types
 
 import "fmt"
 
-const LegacySessionVersion = "v1"
+// DefaultStateRootVersion is the binary tag stamped into EscrowState.Version
+// (and the settlement payload's Version field) when no explicit value is
+// supplied. It must match an entry in chain DevshardEscrowParams.approved_versions
+// (governance adds "v2" on the v0.2.13 upgrade). This binary always uses Phase 1
+// v2 state-root composition (sealed accumulator + live inference set).
+const DefaultStateRootVersion = "v2"
 
-func NormalizeSessionVersion(version string) string {
+// NormalizeVersion returns the state-root version tag, defaulting to
+// DefaultStateRootVersion when version is empty. Use at storage bind, host
+// manager wiring, settlement payload assembly, and hash preimages so empty
+// legacy rows and unset caller input share one canonical default.
+func NormalizeVersion(version string) string {
 	if version == "" {
-		return LegacySessionVersion
+		return DefaultStateRootVersion
 	}
 	return version
 }
@@ -64,18 +73,26 @@ type HostStats struct {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout    int64  // seconds before reason=refused timeout
-	ExecutionTimeout  int64  // seconds before reason=execution timeout
-	TokenPrice        uint64 // price per input / output token (flat per session)
-	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce       uint64 // fee charged per applied nonce (diff)
-	VoteThreshold     uint32 // minimum accept votes for timeout (total_slots / 2)
-	ValidationRate    uint32 // basis points (10000 = 100%, 1000 = 10%)
+	RefusalTimeout             int64  // seconds before reason=refused timeout
+	ExecutionTimeout           int64  // seconds before reason=execution timeout
+	TokenPrice                 uint64 // price per input / output token (flat per session)
+	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	VoteThreshold              uint32 // minimum accept votes for timeout (total_slots / 2)
+	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
+	SealGraceNonces            uint32
+	InferenceClearGraceSeconds uint32
 }
 
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
-	EscrowID      string
+	EscrowID string
+	// Version is the opaque binary tag stamped by devshardd at session
+	// creation (default DefaultStateRootVersion). Used by storage for
+	// peer-binding consistency and surfaced in the settlement payload so the
+	// chain verifier can pick the right hash composition. The runtime does
+	// not branch on this value - state-root composition is fixed by the
+	// running binary.
 	Version       string
 	Config        SessionConfig
 	Group         []SlotAssignment
@@ -85,9 +102,11 @@ type EscrowState struct {
 	FinalizeNonce uint64
 	Inferences    map[uint64]*InferenceRecord
 	HostStats     map[uint32]*HostStats
-	RevealedSeeds map[uint32]int64
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
+	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
+	// commitments (32 bytes). Updated on each SealInference and settlement drain.
+	SealedAcc []byte `json:"sealed_acc,omitempty"`
 }
 
 // Diff is the protocol primitive: what the user creates and signs.

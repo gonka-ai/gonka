@@ -110,6 +110,15 @@ func (s *legacyOnlyStorage) SaveSnapshot(escrowID string, nonce uint64, data []b
 func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return s.inner.LoadSnapshot(escrowID)
 }
+func (s *legacyOnlyStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return s.inner.InsertSealedInference(escrowID, row)
+}
+func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	return s.inner.GetSealedInference(escrowID, inferenceID)
+}
+func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
+	return s.inner.DeleteSealedInferences(escrowID)
+}
 func (s *legacyOnlyStorage) PruneEpoch(epochID uint64) error {
 	s.pruneEpochCalls++
 	if epochID == s.failEpoch && !s.failed {

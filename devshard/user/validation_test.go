@@ -48,6 +48,14 @@ var validationTestHostKeys = []string{
 
 const validationTestUserKey = "9999999999999999999999999999999999999999999999999999999999999999"
 
+func sumHostStatsInvalid(st types.EscrowState) uint32 {
+	var n uint32
+	for _, hs := range st.HostStats {
+		n += hs.Invalid
+	}
+	return n
+}
+
 func TestSession_Validation_InvalidationConverges(t *testing.T) {
 	const numHosts = 5
 	const numInferences = 100
@@ -129,11 +137,10 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
-	require.NoError(t, session.Finalize(ctx))
-
-	st := session.StateMachine().SnapshotState()
+	// Snapshot before finalize: v2 drains state.Inferences into SealedAcc at settlement.
+	preFinalize := session.StateMachine().SnapshotState()
 	var finished, challenged, invalidated, validated, other int
-	for _, rec := range st.Inferences {
+	for _, rec := range preFinalize.Inferences {
 		switch rec.Status {
 		case types.StatusFinished:
 			finished++
@@ -147,17 +154,14 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 			other++
 		}
 	}
-	var totalHostStatsInvalid uint32
-	for _, hs := range st.HostStats {
-		totalHostStatsInvalid += hs.Invalid
-	}
+	totalHostStatsInvalid := sumHostStatsInvalid(preFinalize)
 	var totalCalls uint64
 	for _, v := range validators {
 		totalCalls += v.calls.Load()
 	}
 	hist := fmt.Sprintf(
-		"histogram: total=%d finished=%d challenged=%d invalidated=%d validated=%d other=%d host_stats_invalid=%d validate_calls=%d",
-		len(st.Inferences), finished, challenged, invalidated, validated, other,
+		"histogram: live=%d finished=%d challenged=%d invalidated=%d validated=%d other=%d host_stats_invalid=%d validate_calls=%d",
+		len(preFinalize.Inferences), finished, challenged, invalidated, validated, other,
 		totalHostStatsInvalid, totalCalls,
 	)
 	t.Log(hist)
@@ -165,6 +169,12 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 	require.Greater(t, challenged+invalidated, 0, "validators never produced any MsgValidation; %s", hist)
 	require.GreaterOrEqual(t, invalidated, 10, hist)
 	require.Greater(t, totalHostStatsInvalid, uint32(0), hist)
+
+	require.NoError(t, session.Finalize(ctx))
+	st := session.StateMachine().SnapshotState()
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences, "live map must be empty after settlement drain")
+	require.Equal(t, numInferences, len(session.StateMachine().ExportSealedNonces()))
 }
 
 // TestSession_Validation_MultiSlotValidatorCountedOnce verifies that a host
@@ -261,14 +271,13 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	for i := 0; i < 2*len(hosts); i++ {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
-	require.NoError(t, session.Finalize(ctx))
 
-	st := session.StateMachine().SnapshotState()
+	preFinalize := session.StateMachine().SnapshotState()
 	megaSlots := []uint32{1, 2, 3}
 
 	megaParticipations := 0
 	invalidated := 0
-	for _, rec := range st.Inferences {
+	for _, rec := range preFinalize.Inferences {
 		participated := false
 		for _, slot := range megaSlots {
 			if rec.ValidatedBy.IsSet(slot) {
@@ -299,4 +308,10 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	require.Equal(t, uint64(megaParticipations), validators[1].calls.Load(),
 		"mega should run Validate once per participation, got %d calls for %d participations",
 		validators[1].calls.Load(), megaParticipations)
+
+	require.NoError(t, session.Finalize(ctx))
+	st := session.StateMachine().SnapshotState()
+	require.Empty(t, st.Inferences)
+	require.Greater(t, sumHostStatsInvalid(st), uint32(0))
+	require.Equal(t, numInferences, len(session.StateMachine().ExportSealedNonces()))
 }

@@ -42,14 +42,34 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		return nil, fmt.Errorf("decode app_hash: %w", err)
 	}
 
+	groupSize := uint32(len(resp.Escrow.Slots))
+	sealGraceNonces := uint32(0)
+	clearGraceSeconds := uint32(0)
+	if presp, perr := qc.Params(ctx, &types.QueryParamsRequest{}); perr == nil && presp != nil {
+		if dep := presp.Params.DevshardEscrowParams; dep != nil {
+			if dep.DefaultSealGraceNonces > 0 {
+				sealGraceNonces = dep.DefaultSealGraceNonces
+			} else {
+				sealGraceNonces = types.DefaultDevshardSealGraceNonces(groupSize)
+			}
+			if dep.DefaultInferenceClearGraceSeconds > 0 {
+				clearGraceSeconds = dep.DefaultInferenceClearGraceSeconds
+			} else {
+				clearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
+			}
+		}
+	}
+
 	return &bridge.EscrowInfo{
-		EscrowID:       escrowID,
-		Amount:         resp.Escrow.Amount,
-		CreatorAddress: resp.Escrow.Creator,
-		AppHash:        appHash,
-		Slots:          resp.Escrow.Slots,
-		TokenPrice:     resp.Escrow.TokenPrice,
-		EpochID:        resp.Escrow.EpochIndex,
+		EscrowID:                   escrowID,
+		Amount:                     resp.Escrow.Amount,
+		CreatorAddress:             resp.Escrow.Creator,
+		AppHash:                    appHash,
+		Slots:                      resp.Escrow.Slots,
+		TokenPrice:                 resp.Escrow.TokenPrice,
+		SealGraceNonces:            sealGraceNonces,
+		InferenceClearGraceSeconds: clearGraceSeconds,
+		EpochID:                    resp.Escrow.EpochIndex,
 	}, nil
 }
 

@@ -150,16 +150,20 @@ func TestHTTP_HappyPath(t *testing.T) {
 		require.NotNil(t, result)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	require.Equal(t, 15, len(preFinalize.Inferences))
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	require.Equal(t, 15, len(st.Inferences))
-
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences, "v2 drains live inferences at settlement")
+	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
 
 	// After finalize, check signatures for the settlement nonce
 	// (last Phase A nonce -- all hosts have seen it via Phase B catch-up).
@@ -503,14 +507,18 @@ func TestHTTP_Finalize(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences)
 
 	// Verify signatures collected from all hosts.
 	sigs := env.session.Signatures()

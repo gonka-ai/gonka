@@ -27,12 +27,12 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		{
 			name:        "default legacy",
 			routePrefix: "",
-			want:        "v1",
+			want:        "v2",
 		},
 		{
 			name:        "explicit legacy",
 			routePrefix: LegacyRoutePrefix,
-			want:        "v1",
+			want:        "v2",
 		},
 		{
 			name:        "versioned",

@@ -27,6 +27,21 @@ const (
 	DevshardSettlementPhase = byte(0x02)
 )
 
+// validateDevshardSettlementVersionApproved enforces that the settlement
+// version tag is in the chain's approved-versions allowlist (when one is
+// configured). An empty allowlist is permissive (used in tests / dev).
+func validateDevshardSettlementVersionApproved(approved []*types.DevshardApprovedVersion, version string) error {
+	if len(approved) == 0 {
+		return nil
+	}
+	for _, v := range approved {
+		if v != nil && v.Name == version {
+			return nil
+		}
+	}
+	return fmt.Errorf("settlement version %q is not listed in devshard_escrow_params.approved_versions", version)
+}
+
 // DevshardQuorumFor returns the minimum slot votes required for a given group size.
 func DevshardQuorumFor(groupSize int) int {
 	return 2*groupSize/3 + 1
@@ -63,7 +78,11 @@ type WarmKeyChecker func(granter, grantee string) bool
 
 // VerifyDevshardSettlement verifies settlement proof: state root, signatures, quorum, cost.
 // If isWarmKey is non-nil, mismatched signatures are checked against authz grants.
-func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, maxNonce uint32, isWarmKey WarmKeyChecker) error {
+// params must be non-nil (includes MaxNonce and ApprovedVersions for settlement tag checks).
+func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, isWarmKey WarmKeyChecker) error {
+	if params == nil {
+		return fmt.Errorf("devshard escrow params is required")
+	}
 	if escrow.Settled {
 		return fmt.Errorf("escrow %d already settled", escrow.Id)
 	}
@@ -73,12 +92,16 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	if msg.Version == "" {
 		return fmt.Errorf("version is required")
 	}
-	if msg.Nonce > uint64(maxNonce) {
-		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, maxNonce)
+	if msg.Nonce > uint64(params.MaxNonce) {
+		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, params.MaxNonce)
 	}
 	const maxVersionLength = 128
 	if len(msg.Version) > maxVersionLength {
 		return fmt.Errorf("version exceeds maximum length of %d", maxVersionLength)
+	}
+
+	if err := validateDevshardSettlementVersionApproved(params.ApprovedVersions, msg.Version); err != nil {
+		return err
 	}
 
 	// Recompute host_stats_hash

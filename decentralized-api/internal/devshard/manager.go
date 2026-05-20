@@ -56,6 +56,7 @@ type HostManager struct {
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
+	pruneSink    host.PruneEventSink
 	recorder     PayloadAuthClient
 
 	statsMu           sync.Mutex
@@ -116,7 +117,7 @@ func NewHostManager(
 	payloadStore payloadstorage.PayloadStorage,
 	recorder PayloadAuthClient,
 ) *HostManager {
-	return &HostManager{
+	m := &HostManager{
 		sessions:          make(map[string]*transport.Server),
 		initializing:      true,
 		store:             store,
@@ -124,16 +125,31 @@ func NewHostManager(
 		verifier:          signing.NewSecp256k1Verifier(),
 		engine:            engine,
 		validator:         validator,
-		boundVersion:      types.NormalizeSessionVersion(boundVersion),
+		boundVersion:      types.NormalizeVersion(boundVersion),
 		bridge:            br,
 		payloadStore:      payloadStore,
 		recorder:          recorder,
 		statsDetailsCache: make(map[string]statsShardDetailCache),
 	}
+	// Wire the payload prune sink. When payloadStore is nil (tests, tools)
+	// the sink is nil and hosts will not emit any prune events.
+	if payloadStore != nil {
+		m.pruneSink = newPayloadPruneSink(payloadStore, fallbackEpochFromStore(store))
+	}
+	return m
 }
 
-// Close releases the underlying storage resources.
+// Close drains the payload prune worker pool (when configured) and releases
+// session storage resources.
 func (m *HostManager) Close() error {
+	if sink, ok := m.pruneSink.(*payloadPruneSink); ok {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), pruneShutdownTimeout)
+		if err := sink.shutdown(shutdownCtx); err != nil {
+			logging.Warn("payload prune sink shutdown timed out", inferenceTypes.PayloadStorage,
+				"error", err)
+		}
+		cancel()
+	}
 	return m.store.Close()
 }
 
@@ -241,9 +257,17 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	creatorAddr := escrow.CreatorAddress
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
+	if escrow.SealGraceNonces > 0 {
+		config.SealGraceNonces = escrow.SealGraceNonces
+	}
+	if escrow.InferenceClearGraceSeconds > 0 {
+		config.InferenceClearGraceSeconds = escrow.InferenceClearGraceSeconds
+	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
+		state.WithInferenceStore(m.store),
 		state.WithVersion(m.boundVersion),
 	)
 	if err != nil {
@@ -251,9 +275,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
-		host.WithValidator(m.validator),
-		host.WithStorage(m.store),
-		host.WithEpochID(escrow.EpochID),
+		m.hostOptions(escrow.EpochID)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -381,6 +403,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
+		state.WithInferenceStore(m.store),
 		state.WithVersion(recoveredVersion),
 	)
 	if err != nil {
@@ -391,12 +414,14 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
 		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-			snapState, err := host.UnmarshalStateSnapshot(snapData)
+			snapState, committedEntries, sealedNonces, err := host.UnmarshalStateSnapshotWithCommitted(snapData)
 			if err != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", err)
 			} else {
 				sm.RestoreState(snapState)
+				sm.RestoreCommittedEntries(committedEntries)
+				sm.RestoreSealedNonces(sealedNonces)
 				replayFrom = snapNonce + 1
 				logging.Info("restored devshard snapshot", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
@@ -431,11 +456,12 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 			}
 		}
 	}
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, fmt.Errorf("rebuild sealed inference index: %w", err)
+	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
-		host.WithValidator(m.validator),
-		host.WithStorage(m.store),
-		host.WithEpochID(meta.EpochID),
+		m.hostOptions(meta.EpochID)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -451,8 +477,23 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	return srv, nil
 }
 
+// hostOptions returns the common HostOption set used when constructing a
+// host either for a fresh session or a recovered one. Keeps the option list
+// in one place so future additions (prune sink, gossip, etc.) stay symmetric.
+func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
+	opts := []host.HostOption{
+		host.WithValidator(m.validator),
+		host.WithStorage(m.store),
+		host.WithEpochID(epochID),
+	}
+	if m.pruneSink != nil {
+		opts = append(opts, host.WithPruneSink(m.pruneSink))
+	}
+	return opts
+}
+
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
-	data, err := host.MarshalStateSnapshot(sm.ExportState())
+	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces())
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}

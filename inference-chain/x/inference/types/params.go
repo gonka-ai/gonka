@@ -102,6 +102,28 @@ const (
 	DefaultDevshardMaxNonce           uint32 = 20_000
 )
 
+// DevshardSealGraceFloor is the floor applied when computing the chain-wide
+// default seal grace. Mirrors devshard/types.minSealGraceNonces so the two
+// layers agree without an import dependency.
+const DevshardSealGraceFloor uint32 = 20
+
+// DefaultDevshardInferenceClearGraceSeconds is the default wall-clock grace
+// before sealing stale-finished or post-terminal inferences. Mirrors
+// devshard/types.DefaultInferenceClearGraceSeconds.
+const DefaultDevshardInferenceClearGraceSeconds uint32 = 120
+
+// DefaultDevshardSealGraceNonces returns the canonical default seal grace
+// nonces value derived from the configured group size. This mirrors
+// devshard/types.DefaultSealGraceNonces (10 * groupSize, floor 20). It is
+// used at genesis to seed DevshardEscrowParams.DefaultSealGraceNonces.
+func DefaultDevshardSealGraceNonces(groupSize uint32) uint32 {
+	grace := groupSize * 10
+	if grace < DevshardSealGraceFloor {
+		grace = DevshardSealGraceFloor
+	}
+	return grace
+}
+
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
 		TotalSupply:                             1_000 * million * billion,
@@ -328,6 +350,8 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultDevshardTokenPrice,
 		MaxNonce:                DefaultDevshardMaxNonce,
+		DefaultSealGraceNonces:              DefaultDevshardSealGraceNonces(DefaultDevshardGroupSize),
+		DefaultInferenceClearGraceSeconds: DefaultDevshardInferenceClearGraceSeconds,
 	}
 }
 

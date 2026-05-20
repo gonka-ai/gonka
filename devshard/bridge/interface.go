@@ -25,6 +25,16 @@ type EscrowInfo struct {
 	AppHash        []byte
 	Slots          []string // host addresses, len == DevshardGroupSize
 	TokenPrice     uint64
+	// SealGraceNonces is the governance-pinned post-terminal grace (from
+	// DevshardEscrowParams.default_seal_grace_nonces at the time the bridge
+	// answered GetEscrow). Devshardd copies it into SessionConfig.SealGraceNonces
+	// when creating a session. Zero means callers should apply their usual
+	// devshard-side default (NormalizeSessionConfig) — used only if the chain
+	// query fails or omits the field.
+	SealGraceNonces uint32
+	// InferenceClearGraceSeconds is the governance-pinned wall-clock grace (seconds)
+	// paired with SealGraceNonces, frozen at session bind.
+	InferenceClearGraceSeconds uint32
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

@@ -92,6 +92,16 @@ func (m *ManagedStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
 	return m.storage.PruneEpoch(ctx, epochId)
 }
 
+// DeleteInference evicts the cache entry for inferenceId and forwards the
+// delete to the backing storage. Cache eviction is unconditional so a stale
+// cache cannot resurrect a deleted payload via Retrieve.
+func (m *ManagedStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
+	m.mu.Lock()
+	delete(m.cache, inferenceId)
+	m.mu.Unlock()
+	return m.storage.DeleteInference(ctx, inferenceId, epochId)
+}
+
 func (m *ManagedStorage) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

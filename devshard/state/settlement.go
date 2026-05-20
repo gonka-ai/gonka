@@ -23,14 +23,15 @@ type SettlementPayload struct {
 
 // BuildSettlement constructs a SettlementPayload from the final escrow state.
 func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint32][]byte, nonce uint64) (*SettlementPayload, error) {
-	restHash, err := ComputeRestHash(st.Balance, st.Inferences, st.WarmKeys)
+	acc := sealedAccBytes32(st.SealedAcc)
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SettlementPayload{
 		EscrowID:   escrowID,
-		Version:    types.NormalizeSessionVersion(st.Version),
+		Version:    types.NormalizeVersion(st.Version),
 		Nonce:      nonce,
 		Fees:       st.Fees,
 		RestHash:   restHash,

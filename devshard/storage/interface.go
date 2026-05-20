@@ -15,9 +15,10 @@ var ErrSessionNotFound = errors.New("session not found")
 var ErrSessionEpochConflict = errors.New("session epoch conflict")
 
 // ErrSessionVersionConflict is returned when an escrow already belongs to a
-// different devshard protocol version. Versiond can run multiple devshardd
-// versions against the same Postgres database, so storage pins one version per
-// escrow to prevent wrong-version state machines from attaching to live state.
+// different devshard binary version tag. Operators can run multiple
+// devshardd binaries against the same Postgres database, so storage pins one
+// binary tag per escrow to prevent a binary that ships a different
+// state-root composition from attaching to live state mid-session.
 var ErrSessionVersionConflict = errors.New("session version conflict")
 
 // ErrSnapshotNotFound is returned when no snapshot exists for a session.
@@ -48,6 +49,9 @@ type Storage interface {
 	LastFinalized(escrowID string) (uint64, error)
 	SaveSnapshot(escrowID string, nonce uint64, data []byte) error
 	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
+	InsertSealedInference(escrowID string, row InferenceRow) error
+	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
+	DeleteSealedInferences(escrowID string) error
 	PruneEpoch(epochID uint64) error
 	Close() error
 }
@@ -83,4 +87,16 @@ type SessionMeta struct {
 type ActiveSession struct {
 	EscrowID string
 	EpochID  uint64
+}
+
+// InferenceRow is the durable sealed-inference marker used by Phase 0 RAM
+// pruning. It only records that an inference id was sealed and the nonce at
+// which the seal happened. Cold-path validation (late MsgValidation /
+// MsgValidationVote on an evicted record) reads the full per-record state
+// from the in-memory committed-entries map, which is itself rebuilt from the
+// host snapshot and the diff log on recovery; this row is purely the durable
+// "this id was sealed" signal.
+type InferenceRow struct {
+	InferenceID uint64
+	SealedNonce uint64
 }

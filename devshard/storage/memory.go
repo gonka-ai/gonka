@@ -53,6 +53,7 @@ type sessionData struct {
 	lastFinalized uint64
 	status        string // "active", "settled"
 	snapshot      *snapshotData
+	inferences    map[uint64]InferenceRow
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -71,7 +72,8 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	requestedVersion := types.NormalizeSessionVersion(params.Version)
+	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
+	requestedVersion := types.NormalizeVersion(params.Version)
 	if existing, exists := m.sessions[params.EscrowID]; exists {
 		if existing.epochID != params.EpochID {
 			return fmt.Errorf("%w: escrow %s exists in epoch %d, requested epoch %d",
@@ -94,6 +96,7 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 		balance:      params.InitialBalance,
 		nonceToIndex: make(map[uint64]int),
 		status:       "active",
+		inferences:   make(map[uint64]InferenceRow),
 	}
 	return nil
 }
@@ -263,6 +266,48 @@ func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 		return 0, nil, ErrSnapshotNotFound
 	}
 	return s.snapshot.nonce, append([]byte(nil), s.snapshot.data...), nil
+}
+
+func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	if _, exists := s.inferences[row.InferenceID]; exists {
+		return fmt.Errorf("sealed inference %d already exists for session %s", row.InferenceID, escrowID)
+	}
+	s.inferences[row.InferenceID] = row
+	return nil
+}
+
+func (m *Memory) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return InferenceRow{}, false, fmt.Errorf("session %s not found", escrowID)
+	}
+	row, exists := s.inferences[inferenceID]
+	if !exists {
+		return InferenceRow{}, false, nil
+	}
+	return row, true, nil
+}
+
+func (m *Memory) DeleteSealedInferences(escrowID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.inferences = make(map[uint64]InferenceRow)
+	return nil
 }
 
 func (m *Memory) PruneEpoch(epochID uint64) error {
