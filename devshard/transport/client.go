@@ -70,6 +70,22 @@ type HTTPClient struct {
 	config      ClientConfig
 }
 
+// HTTPStatusError reports a non-OK response from a devshard host while
+// preserving the status code for proxy retry/fatal classification.
+type HTTPStatusError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("http %s %s: status %d", e.Method, e.Path, e.StatusCode)
+	}
+	return fmt.Sprintf("http %s %s: status %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
 // Uses shared transport for connection pooling, per-call context timeouts.
 func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...ClientConfig) *HTTPClient {
@@ -384,7 +400,12 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("http %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		return nil, &HTTPStatusError{
+			Method:     http.MethodPost,
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
 
 	return resp, nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 	"devshard/host"
 	"devshard/state"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -194,6 +196,9 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64) (finished bool, confirmedAt int64, err error) {
 	resp, sendErr := p.session.SendOnly(ctx, prepared)
 	if sendErr != nil && resp == nil {
+		if fatalHostSendError(sendErr) {
+			return false, 0, fmt.Errorf("send inference to host %d: %w", prepared.HostIdx(), sendErr)
+		}
 		return false, 0, nil
 	}
 
@@ -206,6 +211,19 @@ func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInfer
 	}
 
 	return false, resp.ConfirmedAt, nil
+}
+
+func fatalHostSendError(err error) bool {
+	var statusErr *transport.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+
+	switch statusErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return statusErr.StatusCode >= http.StatusBadRequest && statusErr.StatusCode < http.StatusInternalServerError
 }
 
 // sleepUntil blocks until deadline or context cancellation.
@@ -395,13 +413,13 @@ type statusResponse struct {
 // statusSessionConfig is the JSON representation of session config values
 // returned by the devshardctl status endpoint.
 type statusSessionConfig struct {
-	RefusalTimeout   int64  `json:"refusal_timeout"`
-	ExecutionTimeout int64  `json:"execution_timeout"`
-	TokenPrice       uint64 `json:"token_price"`
-	CreateDevshardFee  uint64 `json:"create_devshard_fee"`
-	FeePerNonce      uint64 `json:"fee_per_nonce"`
-	VoteThreshold    uint32 `json:"vote_threshold"`
-	ValidationRate   uint32 `json:"validation_rate"`
+	RefusalTimeout    int64  `json:"refusal_timeout"`
+	ExecutionTimeout  int64  `json:"execution_timeout"`
+	TokenPrice        uint64 `json:"token_price"`
+	CreateDevshardFee uint64 `json:"create_devshard_fee"`
+	FeePerNonce       uint64 `json:"fee_per_nonce"`
+	VoteThreshold     uint32 `json:"vote_threshold"`
+	ValidationRate    uint32 `json:"validation_rate"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -498,13 +516,13 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Phase:    phaseStr,
 		Balance:  st.Balance,
 		Config: statusSessionConfig{
-			RefusalTimeout:   cfg.RefusalTimeout,
-			ExecutionTimeout: cfg.ExecutionTimeout,
-			TokenPrice:       cfg.TokenPrice,
-			CreateDevshardFee:  cfg.CreateDevshardFee,
-			FeePerNonce:      cfg.FeePerNonce,
-			VoteThreshold:    cfg.VoteThreshold,
-			ValidationRate:   cfg.ValidationRate,
+			RefusalTimeout:    cfg.RefusalTimeout,
+			ExecutionTimeout:  cfg.ExecutionTimeout,
+			TokenPrice:        cfg.TokenPrice,
+			CreateDevshardFee: cfg.CreateDevshardFee,
+			FeePerNonce:       cfg.FeePerNonce,
+			VoteThreshold:     cfg.VoteThreshold,
+			ValidationRate:    cfg.ValidationRate,
 		},
 	}
 

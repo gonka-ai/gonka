@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -76,6 +78,61 @@ func TestHasMsgFinish(t *testing.T) {
 	txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}})
 	require.True(t, hasMsgFinish(txs, 1))
 	require.False(t, hasMsgFinish(txs, 2))
+}
+
+func TestFatalHostSendError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "bad request",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusBadRequest},
+			want: true,
+		},
+		{
+			name: "forbidden wrapped",
+			err:  fmt.Errorf("send failed: %w", &transport.HTTPStatusError{StatusCode: http.StatusForbidden}),
+			want: true,
+		},
+		{
+			name: "not found",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusNotFound},
+			want: true,
+		},
+		{
+			name: "request timeout is retryable",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusRequestTimeout},
+			want: false,
+		},
+		{
+			name: "too early is retryable",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusTooEarly},
+			want: false,
+		},
+		{
+			name: "rate limit is retryable",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusTooManyRequests},
+			want: false,
+		},
+		{
+			name: "server error uses timeout path",
+			err:  &transport.HTTPStatusError{StatusCode: http.StatusInternalServerError},
+			want: false,
+		},
+		{
+			name: "network error uses timeout path",
+			err:  fmt.Errorf("connection refused"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, fatalHostSendError(tt.err))
+		})
+	}
 }
 
 // --- Test infrastructure for proxy-level tests ---
