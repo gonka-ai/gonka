@@ -81,8 +81,8 @@ type (
 		LastUpgradeHeight              collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
 		// Bridge & Wrapped Token collections
-		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
-		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
+		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
+		BridgeTransactionsMap   collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
 		// BridgeTransactionValidators records per-validator confirmations
 		// for a bridge transaction. Key is (chainId, blockNumber, contentHashPart, validator_bech32),
 		// mirroring BridgeTransactionsMap's parent key so conflict txs (same
@@ -95,6 +95,7 @@ type (
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
 		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
+		BridgeCompletedDepositEvents   collections.KeySet[string]
 		WrappedTokenCodeIDItem         collections.Item[uint64]
 		WrappedTokenMetadataMap        collections.Map[collections.Pair[string, string], types.BridgeTokenMetadata]
 		WrappedTokenContractsMap       collections.Map[collections.Pair[string, string], types.BridgeWrappedTokenContract]
@@ -102,7 +103,7 @@ type (
 		LiquidityPoolItem              collections.Item[types.LiquidityPool]
 		LiquidityPoolApprovedTokensMap collections.Map[collections.Pair[string, string], types.BridgeTokenReference]
 		// PoC validation sampling snapshots
-		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
+		PoCValidationSnapshots     collections.Map[int64, types.PoCValidationSnapshot]
 		PreservedNodesSnapshotItem collections.Item[types.PreservedNodesSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
@@ -456,6 +457,12 @@ func NewKeeper(
 			"bridge_withdrawal_token_refs",
 			collections.StringKey,
 			codec.CollValue[types.BridgeTokenReference](cdc),
+		),
+		BridgeCompletedDepositEvents: collections.NewKeySet(
+			sb,
+			types.BridgeCompletedDepositEventsPrefix,
+			"bridge_completed_deposit_events",
+			collections.StringKey,
 		),
 		WrappedTokenMetadataMap: collections.NewMap(
 			sb,

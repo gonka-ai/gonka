@@ -2,7 +2,6 @@ package types
 
 import (
 	"math/big"
-	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -74,25 +73,6 @@ func (msg *MsgRequestBridgeMint) ValidateBasic() error {
 	}
 
 	return nil
-}
-
-// isValidEthereumAddress validates basic Ethereum address format
-func isValidEthereumAddress(address string) bool {
-	if len(address) != 42 {
-		return false
-	}
-	if !strings.HasPrefix(strings.ToLower(address), "0x") {
-		return false
-	}
-
-	// Check if the rest are valid hex characters
-	hexPart := address[2:]
-	for _, r := range hexPart {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 // isSupportedChainId checks if the chain ID is supported for bridging
