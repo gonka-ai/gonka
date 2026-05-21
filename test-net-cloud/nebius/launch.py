@@ -57,6 +57,7 @@ def load_config_from_env(hf_home: str = None):
         "SEED_NODE_P2P_URL": "tcp://xj7-5.s.filfox.io:19245",
         "RPC_SERVER_URL_1": "http://xj7-5.s.filfox.io:19246/chain-rpc/",
         "RPC_SERVER_URL_2": "http://xj7-5.s.filfox.io:19246/chain-rpc/",
+        "NODE_RPC_URL": "http://127.0.0.1:26657",
         "PORT": "8080",
         "INFERENCE_PORT": "5050",
         "KEYRING_BACKEND": "file",
@@ -65,6 +66,12 @@ def load_config_from_env(hf_home: str = None):
         "IS_TEST_NET": "true",
         "ETHEREUM_NETWORK": "sepolia",
         "BEACON_STATE_URL": "https://sepolia.checkpoint-sync.ethpandaops.io",
+        "CHAIN_ID": "gonka-testnet",
+        # Optional tx gas price (empty = zero fee on testnet where min_gas_price=0).
+        "TX_GAS_PRICES": "",
+        # Only checked when TX_GAS_PRICES is set (paid txs need funded cold key).
+        "GRANT_MIN_SPENDABLE_NGONKA": "20000000000",
+        "JOIN_FUND_WAIT_SECONDS": "600",
     }
     
     config = default_config.copy()
@@ -120,11 +127,16 @@ def docker_compose_down():
     if DEPLOY_DIR.exists():
         print("Stopping any running Docker containers...")
         
-        # Check if env-override file exists
-        env_override_file = DEPLOY_DIR / "docker-compose.env-override.yml"
         compose_files = ["-f", "docker-compose.yml", "-f", "docker-compose.mlnode.yml"]
-        if env_override_file.exists():
-            compose_files.extend(["-f", "docker-compose.env-override.yml"])
+        for override_name in (
+            "docker-compose.env-override.yml",
+            "docker-compose.rpc-override.yml",
+            "docker-compose.runtime-override.yml",
+            "docker-compose.genesis-override.yml",
+        ):
+            override_path = DEPLOY_DIR / override_name
+            if override_path.exists():
+                compose_files.extend(["-f", override_name])
         
         try:
             # First try to stop containers gracefully
@@ -275,6 +287,74 @@ def install_inferenced():
         print(f"{inferenced_path} already exists")
 
 
+def _parse_cold_key_from_show_output(output: str) -> AccountKey:
+    """Parse address and pubkey from `inferenced keys show` text or JSON output."""
+    stripped = output.strip()
+    if stripped.startswith("{"):
+        payload = json.loads(stripped)
+        pubkey_field = payload.get("pubkey")
+        if isinstance(pubkey_field, dict):
+            pubkey = pubkey_field.get("key", "")
+        else:
+            pubkey = pubkey_field or ""
+        address = payload.get("address", "")
+        name = payload.get("name", COLD_KEY_NAME)
+        if not address or not pubkey:
+            raise ValueError(f"Incomplete cold key data in output: {payload}")
+        return AccountKey(address=address, pubkey=pubkey, name=name)
+
+    address_match = re.search(r"address:\s*([a-z0-9]+)", stripped)
+    if not address_match:
+        raise ValueError("Could not find address in keys show output")
+    pubkey_match = re.search(r"pubkey: '(.+?)'", stripped)
+    if not pubkey_match:
+        raise ValueError("Could not find pubkey in keys show output")
+    pubkey_data = json.loads(pubkey_match.group(1))
+    pubkey = pubkey_data.get("key", "")
+    if not pubkey:
+        raise ValueError("Could not extract key from pubkey JSON")
+    name_match = re.search(r"name:\s*\"?([^\"]+)\"?", stripped)
+    name = name_match.group(1) if name_match else COLD_KEY_NAME
+    return AccountKey(address=address_match.group(1), pubkey=pubkey, name=name)
+
+
+def load_existing_cold_account_key() -> AccountKey:
+    """Load the cold account key from the host keyring (requires passphrase on stdin)."""
+    inferenced_binary = INFERENCED_BINARY.path
+    password = CONFIG_ENV.get("KEYRING_PASSWORD")
+    if not password:
+        raise ValueError("KEYRING_PASSWORD not found in CONFIG_ENV")
+
+    cmd = [
+        str(inferenced_binary),
+        "keys",
+        "show",
+        COLD_KEY_NAME,
+        "--keyring-backend",
+        "file",
+        "--home",
+        str(INFERENCED_STATE_DIR),
+        "--output",
+        "json",
+    ]
+    process = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate(input=f"{password}\n")
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(
+            process.returncode,
+            cmd,
+            output=stdout,
+            stderr=stderr,
+        )
+    return _parse_cold_key_from_show_output(stdout)
+
+
 def create_account_key():
     """Create account key using inferenced CLI"""
     inferenced_binary = INFERENCED_BINARY.path
@@ -290,9 +370,9 @@ def create_account_key():
             text=True,
             check=True
         )
-        if "gonka-account-key" in result.stdout:
-            print("Account key 'gonka-account-key' already exists")
-            return
+        if COLD_KEY_NAME in result.stdout:
+            print(f"Account key '{COLD_KEY_NAME}' already exists, loading from keyring")
+            return load_existing_cold_account_key()
     except subprocess.CalledProcessError:
         # Keyring might not exist yet, which is fine
         pass
@@ -350,7 +430,7 @@ def create_account_key():
     
     # Extract name
     name_match = re.search(r"name:\s*\"?([^\"]+)\"?", full_output)
-    name = name_match.group(1) if name_match else CONFIG_ENV["KEY_NAME"]
+    name = name_match.group(1) if name_match else COLD_KEY_NAME
     
     print(f"Extracted address: {address}")
     print(f"Extracted pubkey: {pubkey}")
@@ -382,6 +462,7 @@ def create_config_env_file():
     
     # Create docker-compose override for environment variables
     create_env_override()
+    create_rpc_override()
 
 
 def create_env_override():
@@ -429,15 +510,49 @@ services:
     return override_file
 
 
-def get_compose_files_arg(include_mlnode=True):
-    """Get docker compose -f arguments including env-override"""
+def create_rpc_override():
+    """Publish Comet RPC on localhost so host-side launch.py can reach the node."""
+    working_dir = GONKA_REPO_DIR / "deploy/join"
+    override_file = working_dir / "docker-compose.rpc-override.yml"
+    override_content = """# Auto-generated RPC override - do not commit
+services:
+  node:
+    ports:
+      - "127.0.0.1:26657:26657"
+"""
+    with open(override_file, "w") as f:
+        f.write(override_content)
+    print(f"Created RPC override at {override_file}")
+    return override_file
+
+
+def standard_compose_files(include_mlnode=True):
+    """Compose file list including generated overrides when present."""
     files = ["docker-compose.yml"]
     if include_mlnode:
         files.append("docker-compose.mlnode.yml")
-    files.append("docker-compose.env-override.yml")
-    
+    deploy_dir = GONKA_REPO_DIR / "deploy/join"
+    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+        path = deploy_dir / name
+        if path.exists() and name not in files:
+            files.append(name)
+    return files
+
+
+def ensure_compose_overrides(compose_files):
+    """Append generated override files to an explicit compose file list."""
+    files = list(compose_files)
+    deploy_dir = GONKA_REPO_DIR / "deploy/join"
+    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+        if (deploy_dir / name).exists() and name not in files:
+            files.append(name)
+    return files
+
+
+def get_compose_files_arg(include_mlnode=True):
+    """Get docker compose -f arguments including env-override and rpc-override"""
     args = []
-    for f in files:
+    for f in standard_compose_files(include_mlnode=include_mlnode):
         args.extend(["-f", f])
     return " ".join(args)
 
@@ -496,10 +611,10 @@ def create_docker_compose_override(init_only=True, node_id=None):
     
     if init_only:
         override_file = working_dir / "docker-compose.genesis-override.yml"
+        # RPC host port is published by docker-compose.rpc-override.yml (127.0.0.1:26657).
+        # Do not add 26657:26657 here — duplicate binds cause "address already in use".
         override_content = f"""services:
   node:
-    ports:
-      - "26657:26657"
     environment:
       - INIT_ONLY=true
       - IS_GENESIS=true
@@ -531,10 +646,9 @@ def create_docker_compose_override(init_only=True, node_id=None):
         # Putting just some dummy value!
         genesis_seeds = f"7ea21aa72f90556628eb7354ee2d3f75a4b6148e@10.1.2.3:5000"
         
+        # RPC host port is published by docker-compose.rpc-override.yml (127.0.0.1:26657).
         override_content = f"""services:
   node:
-    ports:
-      - "26657:26657"
     environment:
       - INIT_ONLY=false
       - IS_GENESIS=true
@@ -1298,7 +1412,12 @@ def copy_final_genesis_to_repo():
     print("Finalized genesis.json copied to repository successfully!")
 
 
-def register_joining_participant(service="api", max_retries=5, retry_delay=30):
+def register_joining_participant(
+    cold_address: str = None,
+    service="api",
+    max_retries=5,
+    retry_delay=30,
+):
     """
     Register this node as a new participant in the existing network using Docker compose.
     Retries if the node is not ready yet.
@@ -1354,6 +1473,9 @@ def register_joining_participant(service="api", max_retries=5, retry_delay=30):
         
         if result.returncode == 0:
             print("Participant registration completed successfully!")
+            if cold_address:
+                # Seed proxy RPC (/chain-rpc/) is HTTP-only; use seed REST API here.
+                wait_for_participant_on_seed(cold_address, timeout_seconds=120)
             return
         
         # Check if it's a connection error (node not ready yet)
@@ -1372,40 +1494,222 @@ def register_joining_participant(service="api", max_retries=5, retry_delay=30):
     raise subprocess.CalledProcessError(result.returncode, register_cmd)
 
 
+def _parse_ngonka_from_balance_payload(payload: dict) -> int:
+    """Sum ngonka amounts from bank balance / spendable-balances JSON."""
+    total = 0
+    for key in ("balances", "spendable_balances"):
+        for coin in payload.get(key) or []:
+            if not isinstance(coin, dict):
+                continue
+            if coin.get("denom") == "ngonka":
+                try:
+                    total += int(coin.get("amount", "0"))
+                except (TypeError, ValueError):
+                    pass
+    if total:
+        return total
+    # Seed REST /v2/accounts DTO
+    if payload.get("denom") == "ngonka":
+        try:
+            return int(payload.get("balance", 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def query_spendable_balance_ngonka(address: str, node_rpc_url: str) -> int:
+    """Return spendable ngonka for address (0 if account exists but empty)."""
+    inferenced_binary = INFERENCED_BINARY.path
+    if not inferenced_binary.exists():
+        raise FileNotFoundError(f"Inferenced binary not found at {inferenced_binary}")
+
+    node = _normalize_node_rpc_url(node_rpc_url)
+    for query_path in ("spendable-balances", "balances"):
+        cmd = [
+            str(inferenced_binary),
+            "query",
+            "bank",
+            query_path,
+            address,
+            "--node",
+            node,
+            "-o",
+            "json",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            try:
+                return _parse_ngonka_from_balance_payload(json.loads(result.stdout))
+            except json.JSONDecodeError:
+                pass
+
+    seed_api = (CONFIG_ENV.get("SEED_API_URL") or "").strip().rstrip("/")
+    if seed_api:
+        url = f"{seed_api}/v2/accounts/{address}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                if resp.status == 200:
+                    return _parse_ngonka_from_balance_payload(
+                        json.loads(resp.read().decode("utf-8", errors="replace"))
+                    )
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+            pass
+
+    return 0
+
+
+def _grant_funding_instructions(cold_address: str, warm_address: str, min_ngonka: int) -> str:
+    chain_id = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet-4")
+    seed_api = (CONFIG_ENV.get("SEED_API_URL") or "<seed-api-url>").rstrip("/")
+    seed_rpc = CONFIG_ENV.get("SEED_NODE_RPC_URL") or f"{seed_api}/chain-rpc/"
+    amount = f"{min_ngonka}ngonka"
+    return f"""
+Join cold account needs GNK to pay grant-ml-ops-permissions gas (~11+ GNK).
+
+1) On the funded GENESIS host, send coins to this join cold key:
+
+   inferenced tx bank send <funded-key-name> {cold_address} {amount} \\
+     --from <funded-key-name> --chain-id {chain_id} \\
+     --node {seed_rpc} -y --gas auto --gas-prices 10ngonka
+
+2) Verify balance:
+
+   curl -s {seed_api}/v2/accounts/{cold_address} | jq .
+
+3) Run grant on the join host:
+
+   printf '%s\\n%s\\n' "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | \\
+     inferenced tx inference grant-ml-ops-permissions {COLD_KEY_NAME} {warm_address} \\
+     --from {COLD_KEY_NAME} --keyring-backend file --home {INFERENCED_STATE_DIR} \\
+     --chain-id {chain_id} --node tcp://127.0.0.1:26657 -y \\
+     --gas auto --gas-adjustment 1.5
+"""
+
+
+def grant_tx_requires_funding() -> bool:
+    """True when grant txs declare a non-zero gas price (mainnet-style)."""
+    return bool((CONFIG_ENV.get("TX_GAS_PRICES") or "").strip())
+
+
+def wait_for_cold_funding_before_grant(
+    cold_address: str,
+    warm_address: str,
+    node_rpc_url: str,
+):
+    """Ensure cold key has enough ngonka for grant when TX_GAS_PRICES is set."""
+    if not grant_tx_requires_funding():
+        print(
+            "TX_GAS_PRICES unset — grant uses zero/minimal fee (testnet min_gas_price=0). "
+            "No cold-key funding required."
+        )
+        return
+
+    min_ngonka = int(CONFIG_ENV.get("GRANT_MIN_SPENDABLE_NGONKA", "20000000000"))
+    wait_seconds = int(CONFIG_ENV.get("JOIN_FUND_WAIT_SECONDS", "600"))
+
+    balance = query_spendable_balance_ngonka(cold_address, node_rpc_url)
+    if balance >= min_ngonka:
+        print(f"Cold account balance OK: {balance} ngonka (need >= {min_ngonka})")
+        return
+
+    instructions = _grant_funding_instructions(cold_address, warm_address, min_ngonka)
+    print(instructions)
+
+    if wait_seconds <= 0:
+        raise RuntimeError(
+            f"Cold account {cold_address} has {balance} ngonka; need >= {min_ngonka} before grant. "
+            "Fund from genesis (see instructions above) or set JOIN_FUND_WAIT_SECONDS>0 to poll."
+        )
+
+    print(
+        f"Waiting up to {wait_seconds}s for cold account funding "
+        f"({balance} / {min_ngonka} ngonka)..."
+    )
+    deadline = time.time() + wait_seconds
+    last_progress = 0.0
+    while time.time() < deadline:
+        balance = query_spendable_balance_ngonka(cold_address, node_rpc_url)
+        if balance >= min_ngonka:
+            print(f"Cold account funded: {balance} ngonka")
+            return
+        now = time.time()
+        if now - last_progress >= 30:
+            remaining = int(deadline - now)
+            print(f"  still unfunded ({balance} ngonka, {remaining}s left)...")
+            last_progress = now
+        time.sleep(15)
+
+    raise TimeoutError(
+        f"Cold account {cold_address} still has {balance} ngonka after {wait_seconds}s; "
+        f"need >= {min_ngonka}. Fund from genesis and re-run grant."
+    )
+
+
+def _cold_address_from_keyring() -> str:
+    """Best-effort cold address for error messages."""
+    try:
+        return load_existing_cold_account_key().address
+    except Exception:
+        return "<cold-address>"
+
+
+def _verify_warm_account_after_grant(warm_key_address: str, node_rpc_url: str):
+    """Best-effort check that warm has an auth account after grant (non-blocking)."""
+    try:
+        if auth_account_exists(warm_key_address, node_rpc_url):
+            print(f"Warm auth account present: {warm_key_address}")
+        else:
+            print(
+                f"Note: warm auth account not visible yet at {warm_key_address}; "
+                "DAPI may still work once grant tx is indexed."
+            )
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        print(f"Note: could not verify warm auth account: {e}")
+
+
 def grant_key_permissions(warm_key_address: str):
     """
     Grant ML operations permissions to the warm key
-    
+
     Args:
         warm_key_address: The address of the warm key to grant permissions to
     """
     print("Granting ML operations permissions...")
-    
-    # Get required configuration values
-    seed_api_url = CONFIG_ENV.get("SEED_API_URL")
+
     keyring_password = CONFIG_ENV.get("KEYRING_PASSWORD")
     node_rpc_url = CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
-    
+    chain_id = CONFIG_ENV.get("CHAIN_ID")
+
     if not keyring_password:
         raise ValueError("KEYRING_PASSWORD not found in CONFIG_ENV")
-    
-    # Build the command
+    if not chain_id:
+        raise ValueError("CHAIN_ID not found in CONFIG_ENV")
+
     cmd = [
         str(INFERENCED_BINARY.path),
         "tx", "inference", "grant-ml-ops-permissions",
-        COLD_KEY_NAME,  # The key name to grant permissions to
-        warm_key_address,  # The warm key address
+        COLD_KEY_NAME,
+        warm_key_address,
         "--from", COLD_KEY_NAME,
         "--keyring-backend", "file",
         "--home", str(INFERENCED_STATE_DIR),
-        "--gas", "2000000",
-        "--node", node_rpc_url
+        "--chain-id", chain_id,
+        "--node", _normalize_node_rpc_url(node_rpc_url),
+        "-y",
+        "--gas", "auto",
+        "--gas-adjustment", "1.5",
     ]
-    
+    gas_prices = (CONFIG_ENV.get("TX_GAS_PRICES") or "").strip()
+    if gas_prices:
+        cmd.extend(["--gas-prices", gas_prices])
+    else:
+        # Match testermint / pre-fee testnet joins: no --gas-prices → zero tx fee when chain min_gas_price=0.
+        print("Grant tx: no TX_GAS_PRICES (zero-fee path for testnet)")
+
     print(f"Running command: {' '.join(cmd)}")
     
-    max_retries = 3
-    retry_delay = 10
+    max_retries = 5
+    retry_delay = 15
     for attempt in range(max_retries):
         try:
             process = subprocess.Popen(
@@ -1426,11 +1730,24 @@ def grant_key_permissions(warm_key_address: str):
                 if stdout:
                     print("Output:")
                     print(stdout)
+                _verify_warm_account_after_grant(warm_key_address, node_rpc_url)
                 return
 
             if "fee allowance already exists" in combined.lower():
                 print("Feegrant already exists; proceeding.")
+                _verify_warm_account_after_grant(warm_key_address, node_rpc_url)
                 return
+
+            if "insufficient funds" in combined.lower():
+                cold_addr = _cold_address_from_keyring()
+                hint = (
+                    "Grant failed: insufficient GNK. If you passed --gas-prices manually, "
+                    "retry without it (testnet min_gas_price=0), or fund the cold key.\n"
+                )
+                if grant_tx_requires_funding():
+                    min_ngonka = int(CONFIG_ENV.get("GRANT_MIN_SPENDABLE_NGONKA", "20000000000"))
+                    hint += _grant_funding_instructions(cold_addr, warm_key_address, min_ngonka)
+                raise RuntimeError(hint)
 
             print(f"Grant permissions failed with return code: {process.returncode}")
             if stdout:
@@ -1444,6 +1761,8 @@ def grant_key_permissions(warm_key_address: str):
                 "timed out waiting for transaction" in combined.lower()
                 or "connection refused" in combined.lower()
                 or "context deadline exceeded" in combined.lower()
+                or "not found: key not found" in combined.lower()
+                or "account" in combined.lower() and "not found" in combined.lower()
             )
             if retryable and attempt < max_retries - 1:
                 print(f"Retrying grant in {retry_delay}s ({attempt + 1}/{max_retries})...")
@@ -1461,40 +1780,357 @@ def grant_key_permissions(warm_key_address: str):
             raise
 
 
-def wait_for_rpc_ready(node_rpc_url: str, timeout_seconds: int = 180, poll_interval: int = 2):
+def _rpc_height_from_status_payload(payload):
+    """Return (ready, height, error_message) from a Comet /status JSON payload."""
+    sync_info = payload.get("result", {}).get("sync_info", {})
+    height_raw = sync_info.get("latest_block_height", "0")
+    try:
+        height = int(height_raw)
+    except (TypeError, ValueError):
+        height = 0
+    if height >= 1:
+        return True, height, ""
+    return False, height, f"latest_block_height not ready yet: {height_raw}"
+
+
+def _rpc_catching_up_from_status_payload(payload):
+    """Return catching_up flag from a Comet /status JSON payload (defaults to True if missing)."""
+    sync_info = payload.get("result", {}).get("sync_info", {})
+    return bool(sync_info.get("catching_up", True))
+
+
+def _normalize_node_rpc_url(node_rpc_url: str) -> str:
+    """
+    Normalize RPC URL for inferenced --node.
+
+    - Proxied seed RPC (path contains /chain-rpc) must stay http(s) with trailing slash.
+    - Direct local Comet (http://host:26657, no path) uses tcp:// for the CLI.
+    """
+    url = (node_rpc_url or "").strip()
+    if not url:
+        return url
+
+    lower = url.lower()
+    if "/chain-rpc" in lower:
+        if not url.endswith("/"):
+            url += "/"
+        return url
+
+    if lower.startswith("http://") or lower.startswith("https://"):
+        rest = url.split("://", 1)[1]
+        if "/" in rest:
+            return url if url.endswith("/") else url + "/"
+        return "tcp://" + rest.rstrip("/")
+
+    return url
+
+
+def participant_exists_on_seed(address: str, seed_api_url: str = None) -> bool:
+    """Return True if the seed node's public API exposes this participant."""
+    seed_api_url = (seed_api_url or CONFIG_ENV.get("SEED_API_URL", "")).strip().rstrip("/")
+    if not seed_api_url:
+        return False
+
+    url = f"{seed_api_url}/v2/participants/{address}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                return False
+            body = resp.read().decode("utf-8", errors="replace").strip()
+            if not body:
+                return False
+            payload = json.loads(body)
+            if isinstance(payload, dict):
+                participant = payload.get("participant") or payload.get("Participant")
+                if isinstance(participant, dict):
+                    return bool(participant.get("address") or participant.get("Address"))
+                return bool(payload.get("address") or payload.get("Address"))
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        raise RuntimeError(f"participant query failed ({e.code}): {e.read().decode('utf-8', errors='replace')}")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        raise RuntimeError(f"participant query failed for {address}: {e}")
+
+
+def wait_for_participant_on_seed(
+    address: str,
+    seed_api_url: str = None,
+    timeout_seconds: int = 120,
+    poll_interval: int = 3,
+):
+    """Poll seed HTTP API until /v2/participants/{address} returns 200."""
+    seed_api_url = (seed_api_url or CONFIG_ENV.get("SEED_API_URL", "")).strip().rstrip("/")
+    if not seed_api_url:
+        print("WARNING: SEED_API_URL not set, skipping participant availability wait")
+        return
+
+    url = f"{seed_api_url}/v2/participants/{address}"
+    deadline = time.time() + timeout_seconds
+    print(f"Waiting for participant on seed API: {url} (timeout {timeout_seconds}s)...")
+    while time.time() < deadline:
+        try:
+            if participant_exists_on_seed(address, seed_api_url):
+                print(f"Participant visible on seed: {address}")
+                return
+        except RuntimeError as e:
+            print(f"  participant query error: {e}")
+        time.sleep(poll_interval)
+
+    print(
+        f"WARNING: participant not visible on seed after {timeout_seconds}s "
+        f"(registration may still have succeeded; check {url})"
+    )
+
+
+def auth_account_exists(address: str, node_rpc_url: str) -> bool:
+    """Return True if the auth module has an account for this bech32 address."""
+    inferenced_binary = INFERENCED_BINARY.path
+    if not inferenced_binary.exists():
+        raise FileNotFoundError(f"Inferenced binary not found at {inferenced_binary}")
+
+    cmd = [
+        str(inferenced_binary),
+        "query",
+        "auth",
+        "account",
+        address,
+        "--node",
+        _normalize_node_rpc_url(node_rpc_url),
+        "-o",
+        "json",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    combined = (result.stdout or "") + (result.stderr or "")
+    if result.returncode == 0:
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return False
+        return bool(payload.get("account"))
+
+    lowered = combined.lower()
+    if "not found" in lowered or "does not exist" in lowered:
+        return False
+    raise RuntimeError(f"auth account query failed for {address}: {combined.strip()}")
+
+
+def wait_for_auth_account(
+    address: str,
+    node_rpc_url: str,
+    label: str,
+    timeout_seconds: int = 300,
+    poll_interval: int = 5,
+    required: bool = True,
+):
+    """Poll until the address has an on-chain auth account."""
+    deadline = time.time() + timeout_seconds
+    print(f"Waiting for on-chain auth account ({label}): {address} (timeout {timeout_seconds}s)...")
+    last_progress = 0.0
+    while time.time() < deadline:
+        try:
+            if auth_account_exists(address, node_rpc_url):
+                print(f"Auth account ready ({label}): {address}")
+                return
+        except subprocess.TimeoutExpired:
+            print(f"  auth query timed out ({label}), retrying...")
+        except RuntimeError as e:
+            print(f"  auth query error: {e}")
+        now = time.time()
+        if now - last_progress >= 30:
+            remaining = int(deadline - now)
+            print(f"  still waiting for {label} ({remaining}s left)...")
+            last_progress = now
+        time.sleep(poll_interval)
+
+    message = f"Auth account not found for {label} ({address}) after {timeout_seconds}s"
+    if required:
+        raise TimeoutError(message)
+    print(f"WARNING: {message} — continuing anyway")
+
+
+def _fetch_rpc_status_http(status_url: str, timeout_seconds: int = 5):
+    """Fetch /status over HTTP. Returns (ok, height, error)."""
+    try:
+        with urllib.request.urlopen(status_url, timeout=timeout_seconds) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        payload = json.loads(raw)
+        return _rpc_height_from_status_payload(payload)
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        TimeoutError,
+        json.JSONDecodeError,
+        ValueError,
+        OSError,
+    ) as e:
+        return False, 0, str(e)
+
+
+def _fetch_rpc_status_via_docker(container: str = "node", timeout_seconds: int = 10):
+    """Fetch /status via wget inside the node container (join hosts omit host port mapping)."""
+    cmd = [
+        "docker", "exec", container,
+        "wget", "-qO-", "http://127.0.0.1:26657/status",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, 0, f"docker exec {container} timed out after {timeout_seconds}s"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, 0, f"docker exec {container} failed: {detail}"
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        return False, 0, f"invalid JSON from docker exec: {e}"
+    return _rpc_height_from_status_payload(payload)
+
+
+def _host_rpc_unreachable(err: str) -> bool:
+    lowered = err.lower()
+    return (
+        "connection refused" in lowered
+        or "errno 111" in lowered
+        or "failed to establish a new connection" in lowered
+        or "name or service not known" in lowered
+    )
+
+
+def wait_for_rpc_ready(
+    node_rpc_url: str,
+    timeout_seconds: int = 180,
+    poll_interval: int = 2,
+    docker_container: str = "node",
+):
     """Wait until Comet RPC is reachable and returns a valid status payload."""
     status_url = node_rpc_url.rstrip("/") + "/status"
     deadline = time.time() + timeout_seconds
     last_error = None
+    use_docker = False
 
     print(f"Waiting for RPC readiness at {status_url} (timeout: {timeout_seconds}s)...")
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(status_url, timeout=5) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-            payload = json.loads(raw)
-            sync_info = payload.get("result", {}).get("sync_info", {})
-            height_raw = sync_info.get("latest_block_height", "0")
-            try:
-                height = int(height_raw)
-            except (TypeError, ValueError):
-                height = 0
-            if height >= 1:
-                print(f"RPC is ready at height {height}")
+        if not use_docker:
+            ok, height, err = _fetch_rpc_status_http(status_url)
+            if ok:
+                print(f"RPC is ready at height {height} (host)")
                 return
-            last_error = f"latest_block_height not ready yet: {height_raw}"
-        except (
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-            TimeoutError,
-            json.JSONDecodeError,
-            ValueError,
-            OSError,  # includes ConnectionResetError and other transient socket errors
-        ) as e:
-            last_error = str(e)
+            last_error = err
+            if _host_rpc_unreachable(err):
+                use_docker = True
+                print(
+                    f"Host RPC unreachable ({err}); "
+                    f"falling back to docker exec {docker_container} ..."
+                )
+        else:
+            ok, height, err = _fetch_rpc_status_via_docker(container=docker_container)
+            if ok:
+                print(f"RPC is ready at height {height} (via {docker_container})")
+                return
+            last_error = err
         time.sleep(poll_interval)
 
     raise TimeoutError(f"RPC not ready after {timeout_seconds}s: {last_error}")
+
+
+def wait_for_rpc_synced(
+    node_rpc_url: str,
+    timeout_seconds: int = 900,
+    poll_interval: int = 10,
+    docker_container: str = "node",
+):
+    """Wait until the local node reports catching_up=false."""
+    status_url = node_rpc_url.rstrip("/") + "/status"
+    deadline = time.time() + timeout_seconds
+    last_error = None
+    use_docker = False
+
+    print(f"Waiting for node sync (catching_up=false) at {status_url} (timeout: {timeout_seconds}s)...")
+    while time.time() < deadline:
+        payload = None
+        if not use_docker:
+            try:
+                with urllib.request.urlopen(status_url, timeout=5) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                TimeoutError,
+                json.JSONDecodeError,
+                OSError,
+            ) as e:
+                last_error = str(e)
+                if _host_rpc_unreachable(last_error):
+                    use_docker = True
+        else:
+            ok, _, err = _fetch_rpc_status_via_docker(container=docker_container)
+            if ok:
+                cmd = [
+                    "docker", "exec", docker_container,
+                    "wget", "-qO-", "http://127.0.0.1:26657/status",
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    try:
+                        payload = json.loads(result.stdout)
+                    except json.JSONDecodeError as e:
+                        last_error = str(e)
+                else:
+                    last_error = (result.stderr or result.stdout or "").strip()
+            else:
+                last_error = err
+
+        if payload is not None:
+            catching_up = _rpc_catching_up_from_status_payload(payload)
+            _, height, _ = _rpc_height_from_status_payload(payload)
+            if not catching_up:
+                print(f"Node is synced at height {height}")
+                return
+            last_error = f"still catching up at height {height}"
+        time.sleep(poll_interval)
+
+    raise TimeoutError(f"Node did not finish syncing after {timeout_seconds}s: {last_error}")
+
+
+def print_join_deploy_summary(account_key: AccountKey, warm_key: AccountKey, chain_id: str):
+    """Print addresses and post-deploy verification hints for join hosts."""
+    public_url = CONFIG_ENV.get("PUBLIC_URL", "http://127.0.0.1:8000")
+    admin_base = public_url.rstrip("/")
+    if ":8000" in admin_base:
+        admin_base = admin_base.replace(":8000", ":9200", 1)
+    setup_report_url = f"{admin_base}/admin/v1/setup/report"
+
+    print("\n=== JOIN HOST DEPLOYED ===")
+    print(f"Chain ID:     {chain_id}")
+    print(f"Cold key:     {account_key.address} ({COLD_KEY_NAME})")
+    print(f"Warm key:     {warm_key.address} ({CONFIG_ENV.get('KEY_NAME', 'warm')})")
+    print(f"Public URL:   {public_url}")
+    print(f"Setup report: {setup_report_url}")
+    print("Verify: curl -s", setup_report_url, "| jq .")
+    print("==========================\n")
+
+
+def republish_node_rpc_if_needed():
+    """Apply RPC host port mapping on the node service (join compose omits it by default)."""
+    working_dir = GONKA_REPO_DIR / "deploy/join"
+    rpc_override = working_dir / "docker-compose.rpc-override.yml"
+    if not rpc_override.exists():
+        return
+    config_file = working_dir / "config.env"
+    if not config_file.exists():
+        return
+    compose_files = get_compose_files_arg(include_mlnode=False)
+    cmd = f"bash -c 'source {config_file} && docker compose {compose_files} up -d node'"
+    print("Ensuring node publishes RPC on 127.0.0.1:26657...")
+    subprocess.run(cmd, shell=True, cwd=working_dir, check=False)
+    time.sleep(3)
 
 
 def start_docker_services(
@@ -1521,11 +2157,9 @@ def start_docker_services(
     
     # Set defaults
     if compose_files is None:
-        compose_files = ["docker-compose.yml", "docker-compose.mlnode.yml"]
-    
-    # Always include env-override file to inject IS_TEST_NET
-    if "docker-compose.env-override.yml" not in compose_files:
-        compose_files.append("docker-compose.env-override.yml")
+        compose_files = standard_compose_files(include_mlnode=True)
+    else:
+        compose_files = ensure_compose_overrides(compose_files)
     
     if additional_args is None:
         additional_args = ["-d"]
@@ -1654,7 +2288,7 @@ def join_route(account_key: AccountKey, chain_id: str) -> AccountKey:
     time.sleep(15)
 
     warm_key = get_or_create_warm_key()
-    register_joining_participant()
+    register_joining_participant(cold_address=account_key.address)
     return warm_key
 
 
@@ -1669,8 +2303,8 @@ Examples:
   python launch.py
   python launch.py --mode genesis
   
-  # Run in join mode
-  python launch.py --mode join
+  # Run in join mode (export host-specific env first: PUBLIC_URL, KEY_NAME, KEYRING_PASSWORD, SEED_*)
+  python launch.py --mode join --branch testnet/main --chainid gonka-testnet-4
   
   # Use specific branch
   python launch.py --branch nebius-test-net
@@ -1768,16 +2402,28 @@ def main():
         else:
             raise ValueError("NODE_ID not found in CONFIG_ENV")
     else:
-        start_docker_services(
-            compose_files=["docker-compose.yml", "docker-compose.mlnode.yml"],
-            additional_args=["-d"]
-        )
+        start_docker_services(additional_args=["-d"])
 
     # Ensure feegrant/authz are in place for warm key tx submission in both modes.
     # On fresh genesis this is required because upgrade-time feegrant migration does not run.
     rpc_url_for_grant = CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
-    wait_for_rpc_ready(rpc_url_for_grant)
+    rpc_timeout = 900 if not is_genesis else 180
+    if not is_genesis:
+        republish_node_rpc_if_needed()
+    wait_for_rpc_ready(rpc_url_for_grant, timeout_seconds=rpc_timeout)
+    if not is_genesis:
+        wait_for_rpc_synced(rpc_url_for_grant, timeout_seconds=rpc_timeout)
+        wait_for_auth_account(account_key.address, rpc_url_for_grant, "cold (local RPC)")
+        print(
+            f"Granting ML ops to warm key {warm_key.address} "
+            "(warm auth account is created by grant, not required beforehand)"
+        )
+        wait_for_cold_funding_before_grant(
+            account_key.address, warm_key.address, rpc_url_for_grant
+        )
     grant_key_permissions(warm_key.address)
+    if not is_genesis:
+        print_join_deploy_summary(account_key, warm_key, args.chainid)
 
 if __name__ == "__main__":
     main()
