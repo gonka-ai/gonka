@@ -64,17 +64,38 @@ func canonicalDecimalString(s string) (string, error) {
 // canonicalBridgeDepositEventID identifies one L1 deposit receipt independent of
 // ReceiptsRoot string variants used in the vote-aggregation key.
 func canonicalBridgeDepositEventID(tx *types.BridgeTransaction) string {
+	blockNumber := canonicalDecimalStringOrOriginal(tx.BlockNumber)
+	receiptIndex := canonicalDecimalStringOrOriginal(tx.ReceiptIndex)
+	amount := canonicalDecimalStringOrOriginal(tx.Amount)
+	ownerAddress := canonicalAccAddressOrOriginal(tx.OwnerAddress)
+
 	canon := fmt.Sprintf(
 		"%s|%s|%s|%s|%s|%s",
 		strings.ToLower(tx.ChainId),
-		tx.BlockNumber,
-		tx.ReceiptIndex,
+		blockNumber,
+		receiptIndex,
 		strings.ToLower(tx.ContractAddress),
-		tx.OwnerAddress,
-		tx.Amount,
+		ownerAddress,
+		amount,
 	)
 	hash := sha256.Sum256([]byte(canon))
 	return hex.EncodeToString(hash[:])
+}
+
+func canonicalDecimalStringOrOriginal(s string) string {
+	canonical, err := canonicalDecimalString(s)
+	if err != nil {
+		return s
+	}
+	return canonical
+}
+
+func canonicalAccAddressOrOriginal(s string) string {
+	addr, err := sdk.AccAddressFromBech32(s)
+	if err != nil {
+		return s
+	}
+	return addr.String()
 }
 
 func (k Keeper) isBridgeDepositEventCompleted(ctx context.Context, tx *types.BridgeTransaction) (bool, error) {
