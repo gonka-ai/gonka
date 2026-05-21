@@ -41,9 +41,12 @@ func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be positive")
 	}
 
-	// Validate destination address is not empty (Ethereum address format not validated here)
+	// Validate destination address is not empty
 	if len(msg.DestinationAddress) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination address cannot be empty")
+	}
+	if !isValidEthereumAddress(msg.DestinationAddress) {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "destination address must be a valid Ethereum address")
 	}
 
 	// Validate destination bridge address is not empty
