@@ -1571,6 +1571,31 @@ func TestNormalizeChatRequestDropsOrphanToolMessages(t *testing.T) {
 	})
 }
 
+// Duplicate tool_calls[].id within a single assistant message is rejected — matches the
+// OpenAI Chat Completions spec ([API reference](https://platform.openai.com/docs/api-reference/chat/create))
+// and what every mainstream provider does (OpenAI server: HTTP 400 "Duplicate value for 'tool_call_id'";
+// Anthropic / Bedrock: ValidationException). The duplicates have been observed coming from a model-side
+// emission bug in Kimi-K2.6's vLLM tool parser ([PR #21259 review thread](https://github.com/vllm-project/vllm/pull/21259) —
+// `history_tool_call_cnt` recomputed inside the per-choice loop with n>1 can collide). Moonshot's
+// canonical fix ([tool_call_guidance.md](https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/docs/tool_call_guidance.md))
+// is client-side ID rewrite to the trained-distribution `functions.<name>:<global_idx>` form, not
+// silent gateway-side dedup. Lenient gateway behavior (drop / rename) risks information loss when
+// the agent has multiple real tool results keyed by the duplicated id — verified in captured-requests
+// May 2026 batch (req-1779369319274519506-325651: two distinct tool messages with `tool_call_id =
+// "functions.ReadCommandOutput:2"`).
+func TestNormalizeChatRequestRejectsDuplicateToolCallIDs(t *testing.T) {
+	body := []byte(`{"messages":[
+		{"role":"user","content":"q"},
+		{"role":"assistant","content":null,"tool_calls":[
+			{"id":"functions.X:2","type":"function","function":{"name":"X","arguments":"{\"a\":1}"}},
+			{"id":"functions.X:2","type":"function","function":{"name":"X","arguments":"{\"a\":2}"}}
+		]}
+	]}`)
+	_, _, err := normalizeChatRequest(body)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool_calls[1].id is duplicated")
+}
+
 // Empty assistant turns — placeholders left by session-resume frameworks when the prose
 // response between a tool result and the next user turn gets lost — are silently dropped.
 // The literal `{"role":"assistant"}` carries no information for the model.
@@ -2158,6 +2183,7 @@ func TestNormalizeChatRequestStripsSilentDropFields(t *testing.T) {
 		{name: "provider object", body: `{"messages":[{"role":"user","content":"hi"}],"provider":{"order":["openai","anthropic"]}}`, field: "provider"},
 		{name: "plugins array", body: `{"messages":[{"role":"user","content":"hi"}],"plugins":[{"id":"web","max_results":5}]}`, field: "plugins"},
 		{name: "prompt_cache_key", body: `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"session-42"}`, field: "prompt_cache_key"},
+		{name: "cache_key (Moonshot Kimi context-cache hint)", body: `{"messages":[{"role":"user","content":"hi"}],"cache_key":"kimi-cli_f1c55293"}`, field: "cache_key"},
 		{name: "extra_headers object", body: `{"messages":[{"role":"user","content":"hi"}],"extra_headers":{"x-trace-id":"abc"}}`, field: "extra_headers"},
 		{name: "thinking_config object", body: `{"messages":[{"role":"user","content":"hi"}],"thinking_config":{"thinkingBudget":1000}}`, field: "thinking_config"},
 	}
@@ -2183,6 +2209,7 @@ func TestNormalizeChatRequestUnwrapsExtraBodyThinkingForKimi(t *testing.T) {
 	kwargs, ok := raw["chat_template_kwargs"].(map[string]any)
 	require.True(t, ok, "thinking must mirror to chat_template_kwargs for Kimi")
 	require.Equal(t, false, kwargs["thinking"])
+	require.NotContains(t, raw, "thinking", "top-level thinking dropped after mirror — vLLM chat template only consumes chat_template_kwargs")
 }
 
 func TestNormalizeChatRequestUnwrapsExtraBodyThinkingForNonKimi(t *testing.T) {
