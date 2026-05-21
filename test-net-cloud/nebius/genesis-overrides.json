@@ -74,7 +74,7 @@
           "confirmation_poc_safety_window": "10",
           "epoch_length": "360",
           "epoch_multiplier": "1",
-          "epoch_shift": "300",
+          "epoch_shift": "100",
           "poc_stage_duration": "60",
           "poc_exchange_duration": "10",
           "poc_validation_delay": "2",
