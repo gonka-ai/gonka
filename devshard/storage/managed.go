@@ -36,7 +36,7 @@ type ManagedStorage struct {
 
 	maxObservedEpoch atomic.Uint64
 
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	prunedUpTo uint64 // exclusive: every epoch < prunedUpTo has been pruned
 
 	lifecycleMu sync.Mutex
@@ -175,16 +175,14 @@ func (m *ManagedStorage) Close() error {
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {
-	m.mu.Lock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if params.EpochID < m.prunedUpTo {
-		m.mu.Unlock()
 		return fmt.Errorf("%w: epoch %d below prune cursor %d", ErrEpochPruned, params.EpochID, m.prunedUpTo)
 	}
 	if err := m.inner.CreateSession(params); err != nil {
-		m.mu.Unlock()
 		return err
 	}
-	m.mu.Unlock()
 	m.observe(params.EpochID)
 	return nil
 }
