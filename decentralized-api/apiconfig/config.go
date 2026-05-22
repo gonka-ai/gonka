@@ -48,6 +48,11 @@ const (
 	DefaultAgentEnvelopeMaxTTLSeconds       int64 = 3600
 	DefaultAgentEnvelopeMaxBodySize         int64 = 10 * 1024 * 1024
 	DefaultAgentEnvelopeAttributionQueueCap       = 1024
+	// MaxAgentEnvelopeBodySize is the hard upper bound for max_body_size. A
+	// configured value outside (0, MaxAgentEnvelopeBodySize] falls back to the
+	// default. The bound keeps the signed-payload length prefixes well within
+	// uint32 range.
+	MaxAgentEnvelopeBodySize int64 = 1 << 30
 )
 
 type NatsServerConfig struct {

@@ -93,9 +93,15 @@ func TestMiddleware_MalformedEnvelope(t *testing.T) {
 
 func TestMiddleware_VerificationFailureMapsStatus(t *testing.T) {
 	e, ran := testServer(t, true)
-	// A well-formed envelope with an unknown version maps to 401.
+	// A complete envelope (all required fields present) with an unknown
+	// schema version reaches the version check and maps to 401.
+	envelope := `{"v":"aps-agent-envelope-v999","audience":"gonka","chain_id":"gonka-test",` +
+		`"agent_id":"urn:aps:agent:t","agent_pubkey":{"type":"ed25519","public_key":"AA=="},` +
+		`"principal_address":"gonka1test","principal_pubkey":{"type":"secp256k1","public_key":"AA=="},` +
+		`"scope":{"allowed_models":["m"],"expires_at":"2099-01-01T00:00:00Z"},` +
+		`"beneficiary":"urn:c","issued_at":"2026-01-01T00:00:00Z","principal_sig":"AA=="}`
 	rec := do(e, map[string]string{
-		headerPassport: base64.StdEncoding.EncodeToString([]byte(`{"v":"wrong-version"}`)),
+		headerPassport: base64.StdEncoding.EncodeToString([]byte(envelope)),
 		headerAgentSig: base64.StdEncoding.EncodeToString(make([]byte, 64)),
 	})
 	if rec.Code != http.StatusUnauthorized {

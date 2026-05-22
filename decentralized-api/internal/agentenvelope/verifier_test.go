@@ -149,6 +149,12 @@ func TestVerify_FieldErrors(t *testing.T) {
 		want   *EnvelopeError
 	}{
 		{"version", func(e *EnvelopeV1, h *harness) { e.Version = "aps-agent-envelope-v2" }, ErrVersionUnknown},
+		{"missing agent_id", func(e *EnvelopeV1, h *harness) { e.AgentID = "" }, ErrEnvelopeMalformed},
+		{"zero issued_at", func(e *EnvelopeV1, h *harness) { e.IssuedAt = time.Time{} }, ErrEnvelopeMalformed},
+		{"future issued_at", func(e *EnvelopeV1, h *harness) {
+			e.IssuedAt = h.now.Add(time.Hour)
+			e.Scope.ExpiresAt = h.now.Add(90 * time.Minute)
+		}, ErrEnvelopeNotYetValid},
 		{"audience", func(e *EnvelopeV1, h *harness) { e.Audience = "not-gonka" }, ErrAudienceMismatch},
 		{"chain id", func(e *EnvelopeV1, h *harness) { e.ChainID = "other-chain" }, ErrChainIDMismatch},
 		{"ttl too long", func(e *EnvelopeV1, h *harness) { e.Scope.ExpiresAt = h.now.Add(2 * time.Hour) }, ErrTTLTooLong},

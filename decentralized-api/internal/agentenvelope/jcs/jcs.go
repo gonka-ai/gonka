@@ -1,4 +1,7 @@
-// Package jcs implements the RFC 8785 JSON Canonicalization Scheme.
+// Package jcs implements RFC 8785 JSON Canonicalization (JCS) as used by the
+// agent envelope: object key ordering, minimal string escaping, and UTF-8
+// output. It is scoped to the envelope schema rather than offered as a
+// general-purpose RFC 8785 library; see the number and Unicode notes below.
 //
 // JCS produces a deterministic, byte-stable serialization of a JSON value so
 // that a signature produced over one serialization verifies against an
@@ -19,6 +22,11 @@
 // emitted with Go shortest round-trip formatting, which matches the ECMAScript
 // algorithm for common cases. Callers that canonicalize arbitrary non-integer
 // numbers should verify the result against RFC 8785 Appendix B.
+//
+// Unicode handling: input is expected to be valid UTF-8. The envelope's only
+// free-text field, beneficiary, is UTF-8 validated and control-character
+// rejected before canonicalization, so lone surrogates do not reach this path
+// from a valid envelope. This package does not separately reject them.
 package jcs
 
 import (

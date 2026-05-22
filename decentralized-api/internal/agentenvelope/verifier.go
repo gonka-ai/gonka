@@ -35,11 +35,39 @@ type Config struct {
 // On success the returned Context has RequestBound set to false. The handler
 // sets it to true only after it confirms the envelope principal matches the
 // request's requester address, directly or through an authz grant.
+// clockSkewTolerance bounds how far an envelope's issued_at may sit in the
+// future relative to verification time. It absorbs benign client clock skew
+// while rejecting a future-dated issued_at that would otherwise let the TTL
+// bound stay small while the real validity window is arbitrarily long.
+const clockSkewTolerance = 30 * time.Second
+
+// validateEnvelopeRequired rejects an envelope missing a field the later
+// verification steps assume is present. Without it a missing field surfaces
+// as an unrelated downstream error: a missing principal_sig as an invalid
+// signature, a missing scope as a TTL violation. A missing field is a
+// malformed envelope.
+func validateEnvelopeRequired(env *EnvelopeV1) error {
+	switch {
+	case env.AgentID == "",
+		env.PrincipalAddress == "",
+		env.PrincipalSig == "",
+		env.AgentPubkey.PublicKey == "",
+		env.PrincipalPubkey.PublicKey == "",
+		env.IssuedAt.IsZero(),
+		env.Scope.ExpiresAt.IsZero():
+		return ErrEnvelopeMalformed
+	}
+	return nil
+}
+
 func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, body []byte, requestedModel string, now time.Time) (*Context, error) {
 	// Step 3: envelope parse.
 	var env EnvelopeV1
 	if err := json.Unmarshal(rawEnvelope, &env); err != nil {
 		return nil, ErrEnvelopeMalformed
+	}
+	if err := validateEnvelopeRequired(&env); err != nil {
+		return nil, err
 	}
 
 	// Step 4: schema version.
@@ -58,7 +86,12 @@ func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, b
 	if env.Scope.ExpiresAt.Sub(env.IssuedAt) > cfg.MaxTTL {
 		return nil, ErrTTLTooLong
 	}
-	// Step 8: time window.
+	// Step 8: time window. issued_at must not be meaningfully in the future:
+	// a future-dated issued_at keeps the TTL bound small while the real
+	// wall-clock validity window is arbitrarily long.
+	if env.IssuedAt.After(now.Add(clockSkewTolerance)) {
+		return nil, ErrEnvelopeNotYetValid
+	}
 	if env.Scope.NotBefore != nil && now.Before(*env.Scope.NotBefore) {
 		return nil, ErrEnvelopeNotYetValid
 	}
