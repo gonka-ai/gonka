@@ -166,6 +166,9 @@ func TestVerify_FieldErrors(t *testing.T) {
 			e.IssuedAt = h.now.Add(-10 * time.Minute)
 			e.Scope.ExpiresAt = h.now.Add(-time.Minute)
 		}, ErrEnvelopeExpired},
+		{"expires before issued", func(e *EnvelopeV1, h *harness) {
+			e.Scope.ExpiresAt = h.now.Add(-time.Minute)
+		}, ErrEnvelopeMalformed},
 		{"principal pubkey type", func(e *EnvelopeV1, h *harness) { e.PrincipalPubkey.Type = KeyTypeEd25519 }, ErrPrincipalPubkeyTypeInvalid},
 		{"principal pubkey multisig", func(e *EnvelopeV1, h *harness) {
 			e.PrincipalPubkey.Type = "tendermint/PubKeyMultisigThreshold"
@@ -225,6 +228,25 @@ func TestVerify_DuplicateKeyRejected(t *testing.T) {
 	raw, sig := h.sign(h.validEnvelope())
 	// Inject a duplicate "audience" member into the signed envelope JSON.
 	tampered := append([]byte(`{"audience":"injected",`), raw[1:]...)
+	if _, err := h.verify(tampered, sig); err != ErrEnvelopeMalformed {
+		t.Errorf("got %v, want ErrEnvelopeMalformed", err)
+	}
+}
+
+func TestVerify_UnknownFieldRejected(t *testing.T) {
+	h := newHarness(t)
+	raw, sig := h.sign(h.validEnvelope())
+	// Inject an unknown field into the signed envelope JSON.
+	tampered := append([]byte(`{"unknown_field":1,`), raw[1:]...)
+	if _, err := h.verify(tampered, sig); err != ErrEnvelopeMalformed {
+		t.Errorf("got %v, want ErrEnvelopeMalformed", err)
+	}
+}
+
+func TestVerify_TrailingContentRejected(t *testing.T) {
+	h := newHarness(t)
+	raw, sig := h.sign(h.validEnvelope())
+	tampered := []byte(string(raw) + " {}")
 	if _, err := h.verify(tampered, sig); err != ErrEnvelopeMalformed {
 		t.Errorf("got %v, want ErrEnvelopeMalformed", err)
 	}

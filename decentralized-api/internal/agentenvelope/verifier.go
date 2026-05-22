@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"time"
 )
 
@@ -112,12 +113,20 @@ func hasDuplicateKeys(raw []byte) bool {
 // On success the returned Context has RequestBound set to false. The handler
 // sets it to true only after it confirms the envelope principal matches the
 // request's requester address, directly or through an authz grant.
-func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, body []byte, requestedModel string, now time.Time) (*Context, error) {
-	// Step 3: envelope parse. Duplicate JSON member names are rejected: they
-	// are an I-JSON and RFC 8785 violation and are ambiguous at a signature
-	// boundary.
+func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, requestURI string, body []byte, requestedModel string, now time.Time) (*Context, error) {
+	// Step 3: strict envelope parse. A v1 envelope carries only the v1 schema,
+	// so unknown fields are rejected: nothing outside the schema can enter the
+	// signed canonical form. Trailing content after the envelope object and
+	// duplicate member names are rejected too. A duplicate name is an I-JSON
+	// and RFC 8785 violation and is ambiguous at a signature boundary.
+	dec := json.NewDecoder(bytes.NewReader(rawEnvelope))
+	dec.DisallowUnknownFields()
 	var env EnvelopeV1
-	if err := json.Unmarshal(rawEnvelope, &env); err != nil {
+	if err := dec.Decode(&env); err != nil {
+		return nil, ErrEnvelopeMalformed
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
 		return nil, ErrEnvelopeMalformed
 	}
 	if hasDuplicateKeys(rawEnvelope) {
@@ -139,7 +148,11 @@ func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, b
 	if env.ChainID != cfg.ChainID {
 		return nil, ErrChainIDMismatch
 	}
-	// Step 7: TTL bound. issued_at is the lifetime anchor.
+	// Step 7: TTL bound. issued_at is the lifetime anchor; expires_at must be
+	// strictly after it, and the lifetime must not exceed the configured cap.
+	if !env.Scope.ExpiresAt.After(env.IssuedAt) {
+		return nil, ErrEnvelopeMalformed
+	}
 	if env.Scope.ExpiresAt.Sub(env.IssuedAt) > cfg.MaxTTL {
 		return nil, ErrTTLTooLong
 	}
@@ -179,7 +192,7 @@ func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, b
 		return nil, err
 	}
 	// Steps 18 and 19: per-request agent signature.
-	if err := VerifyAgentSig(agentPub, cfg.ChainID, method, path, rawEnvelope, body, agentSigB64); err != nil {
+	if err := VerifyAgentSig(agentPub, cfg.ChainID, method, requestURI, rawEnvelope, body, agentSigB64); err != nil {
 		return nil, err
 	}
 	// Step 20: model scope.
