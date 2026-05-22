@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -2124,6 +2125,41 @@ func TestNormalizeChatRequestThinkingTokenBudgetStrippedForOtherModelsEvenIfClie
 	)
 	require.NoError(t, err)
 	require.NotContains(t, string(body), `thinking_token_budget`)
+}
+
+func TestNormalizeChatRequestKimiMaxTokensClampedBelow(t *testing.T) {
+	for _, c := range []struct {
+		in, want uint64
+	}{
+		{1, 16}, {8, 16}, {16, 16}, {100, 100},
+	} {
+		body := fmt.Sprintf(`{"messages":[{"role":"user","content":"x"}],"max_tokens":%d,"thinking_token_budget":0}`, c.in)
+		out, req, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
+		require.NoError(t, err)
+		require.Contains(t, string(out), fmt.Sprintf(`"max_tokens":%d`, c.want))
+		require.Contains(t, string(out), `"thinking_token_budget":0`)
+		require.EqualValues(t, c.want, req.MaxTokens)
+	}
+}
+
+func TestNormalizeChatRequestKimiMaxCompletionTokensClampedBelow(t *testing.T) {
+	body, req, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_completion_tokens":1}`),
+		kimiK26ModelID,
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"max_completion_tokens":16`)
+	require.EqualValues(t, 16, req.MaxTokens)
+}
+
+func TestNormalizeChatRequestMaxTokensNotClampedForOtherModels(t *testing.T) {
+	body, req, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":1}`),
+		"some/other-model",
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"max_tokens":1`)
+	require.EqualValues(t, 1, req.MaxTokens)
 }
 
 // safety_identifier is forwarded to Kimi K2.6 (Moonshot consumes it for abuse tracking)

@@ -232,6 +232,23 @@ func (h ClampUintToFieldParameterHandler) Apply(ctx *RequestFilterContext, param
 	return nil
 }
 
+// MinUintParameterHandler clamps a uint parameter UP to Min when the value is present
+// and below the floor. Pass-through when the field is absent or already >= Min.
+type MinUintParameterHandler struct {
+	Min uint64
+}
+
+func (h MinUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
+	value, ok := numericJSONValueAsUint64FromDocument(&ctx.Document, parameter.Name)
+	if !ok {
+		return nil
+	}
+	if value < h.Min {
+		ctx.Document.Set(parameter.Name, h.Min)
+	}
+	return nil
+}
+
 // ValidateUintParameterHandler rejects the request if the field is present but its value
 // cannot be parsed as a non-negative integer that fits in uint64. Pass-through when the
 // field is absent. Used for fields like `seed` where vLLM expects a uint64 and we want to
@@ -745,11 +762,23 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					UnmatchedHandler: StripParameterHandler{},
 				}),
 		},
+		[]VLLMParameter{
+			// PreValidation so the floor lands before applyOutputTokenLimits (caps down) and the
+			// thinking_token_budget defaulter (derives ttb from max_tokens).
+			newParameter("max_tokens").
+				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
+					Models:  []string{kimiK26ModelID},
+					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
+				}),
+			newParameter("max_completion_tokens").
+				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
+					Models:  []string{kimiK26ModelID},
+					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
+				}),
+		},
 		newParameters([]string{
 			"model",
 			"stream",
-			"max_tokens",
-			"max_completion_tokens",
 			"skip_special_tokens",
 			"detokenize",
 			"parallel_tool_calls",
