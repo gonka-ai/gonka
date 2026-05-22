@@ -142,6 +142,24 @@ func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	return cm.currentConfig.Api
 }
 
+// GetAgentEnvelopeConfig returns the agent-envelope settings with defaults
+// applied for any field left at its zero value.
+func (cm *ConfigManager) GetAgentEnvelopeConfig() AgentEnvelopeConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cfg := cm.currentConfig.AgentEnvelope
+	if cfg.MaxTTLSeconds == 0 {
+		cfg.MaxTTLSeconds = DefaultAgentEnvelopeMaxTTLSeconds
+	}
+	if cfg.MaxBodySize == 0 {
+		cfg.MaxBodySize = DefaultAgentEnvelopeMaxBodySize
+	}
+	if cfg.AttributionQueueCap == 0 {
+		cfg.AttributionQueueCap = DefaultAgentEnvelopeAttributionQueueCap
+	}
+	return cfg
+}
+
 func (cm *ConfigManager) GetNatsConfig() NatsServerConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()

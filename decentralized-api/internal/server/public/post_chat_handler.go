@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
+	"decentralized-api/internal/agentenvelope"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -307,6 +308,17 @@ func (s *Server) enforceTransferAgentAccess(taAddress string) error {
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
 	logging.Debug("GET inference requester for transfer", types.Inferences, "address", request.RequesterAddress)
 
+	// Agent-envelope step 22: bind the verified envelope to this request by
+	// confirming the envelope principal matches the requester, or resolves to
+	// it through an authz grant. apsCtx is nil when the request carried no
+	// envelope, in which case the existing flow runs unchanged.
+	apsCtx := agentenvelope.FromEchoContext(ctx)
+	if apsCtx != nil {
+		if err := s.bindAgentEnvelope(ctx.Request().Context(), apsCtx, request.RequesterAddress); err != nil {
+			return err
+		}
+	}
+
 	queryClient := s.recorder.NewInferenceQueryClient()
 	requester, err := queryClient.AccountByAddress(ctx.Request().Context(), &types.QueryAccountByAddressRequest{Address: request.RequesterAddress})
 	if err != nil {
@@ -389,6 +401,11 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 			logging.Error("Failed to submit MsgStartInference", types.Inferences, "id", inferenceRequest.InferenceId, "error", err)
 		} else {
 			logging.Debug("Submitted MsgStartInference", types.Inferences, "id", inferenceRequest.InferenceId)
+			// Agent-envelope step 23: emit attribution for a request-bound
+			// envelope after the inference is submitted to chain.
+			if apsCtx != nil && apsCtx.RequestBound {
+				s.emitAgentAttribution(apsCtx, inferenceRequest.InferenceId, request.OpenAiRequest.Model)
+			}
 		}
 	}()
 

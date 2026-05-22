@@ -27,8 +27,28 @@ type Config struct {
 	BandwidthParams          BandwidthParamsCache     `koanf:"bandwidth_params" json:"bandwidth_params"`
 	PoCParams                PoCParamsCache           `koanf:"poc_params" json:"poc_params"`
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
-	DevshardVersionsCache      DevshardVersionsCache      `koanf:"-" json:"-"` // not persisted, synced from chain
+	DevshardVersionsCache    DevshardVersionsCache    `koanf:"-" json:"-"` // not persisted, synced from chain
+	AgentEnvelope            AgentEnvelopeConfig      `koanf:"agent_envelope" json:"agent_envelope"`
 }
+
+// AgentEnvelopeConfig configures the optional signed agent request envelope
+// verifier. The envelope layer is off unless Enabled is set. ChainID must be
+// set to this network's chain ID when the layer is enabled.
+type AgentEnvelopeConfig struct {
+	Enabled             bool   `koanf:"enabled" json:"enabled"`
+	ChainID             string `koanf:"chain_id" json:"chain_id"`
+	MaxTTLSeconds       int64  `koanf:"max_ttl_seconds" json:"max_ttl_seconds"`
+	MaxBodySize         int64  `koanf:"max_body_size" json:"max_body_size"`
+	AttributionQueueCap int    `koanf:"attribution_queue_cap" json:"attribution_queue_cap"`
+}
+
+// Default agent-envelope settings, applied by GetAgentEnvelopeConfig when a
+// field is left at its zero value.
+const (
+	DefaultAgentEnvelopeMaxTTLSeconds       int64 = 3600
+	DefaultAgentEnvelopeMaxBodySize         int64 = 10 * 1024 * 1024
+	DefaultAgentEnvelopeAttributionQueueCap       = 1024
+)
 
 type NatsServerConfig struct {
 	Host                  string `koanf:"host" json:"host"`

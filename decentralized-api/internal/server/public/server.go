@@ -6,6 +6,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal"
+	"decentralized-api/internal/agentenvelope"
 	"decentralized-api/internal/authzcache"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/payloadstorage"
@@ -38,6 +39,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	apsEmitter          *agentenvelope.AttributionEmitter
 }
 
 // ServerOption configures optional Server dependencies.
@@ -90,6 +92,20 @@ func NewServer(
 
 	s.bandwidthLimiter = internal.NewBandwidthLimiterFromConfig(configManager, recorder, phaseTracker)
 
+	// Optional signed agent request envelope. Disabled by config default; when
+	// enabled, the middleware verifies the envelope on the completion
+	// endpoints and the handler emits attribution through this emitter.
+	aeConfig := configManager.GetAgentEnvelopeConfig()
+	s.apsEmitter = agentenvelope.NewAttributionEmitter(aeConfig.AttributionQueueCap, apsAttributionSink{})
+	apsMiddleware := middleware.AgentEnvelopeMiddleware(
+		aeConfig.Enabled,
+		agentenvelope.Config{
+			ChainID: aeConfig.ChainID,
+			MaxTTL:  time.Duration(aeConfig.MaxTTLSeconds) * time.Second,
+		},
+		aeConfig.MaxBodySize,
+	)
+
 	e.Use(middleware.LoggingMiddleware)
 	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
@@ -97,8 +113,8 @@ func NewServer(
 	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
-	g.POST("chat/completions", s.postChat)
-	g.POST("completions", s.postCompletions)
+	g.POST("chat/completions", s.postChat, apsMiddleware)
+	g.POST("completions", s.postCompletions, apsMiddleware)
 	g.GET("chat/completions", s.getChatById)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
