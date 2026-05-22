@@ -1,6 +1,7 @@
 package event_listener
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -10,7 +11,6 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"

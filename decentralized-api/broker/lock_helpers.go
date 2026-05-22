@@ -1,7 +1,7 @@
 package broker
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"errors"
 	"fmt"
 	"net/http"

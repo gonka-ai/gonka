@@ -1,8 +1,8 @@
 package event_listener
 
 import (
+	"common/logging"
 	"context"
-	"decentralized-api/logging"
 	"fmt"
 	"math/rand"
 	"runtime"

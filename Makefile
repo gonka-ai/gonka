@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker versiond-router-build-docker testapp-server-build-docker
 
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= dev
@@ -18,7 +18,7 @@ endif
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker versiond-router-build-docker testapp-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
@@ -45,11 +45,14 @@ versiond-build-docker:
 	@echo "Building versiond docker image..."
 	@docker build -t versiond:latest -f versioned/Dockerfile versioned
 
+versiond-router-build-docker:
+	@make -C versiond-router build-docker SET_LATEST=1
+
 testapp-server-build-docker:
 	@echo "Building testapp-server docker image..."
 	@docker build -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
-release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -85,6 +88,10 @@ versiond-release:
 	@echo "Releasing versiond..."
 	@make -C versioned release
 	@make -C versioned docker-push
+
+versiond-router-release:
+	@echo "Releasing versiond-router..."
+	@make -C versiond-router release
 
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
@@ -125,13 +132,13 @@ devshardd-build:
 		--build-arg GOARCH=amd64 \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
-		-f decentralized-api/Dockerfile . \
-		-t devshardd-builder:latest -q >/dev/null
-	@CID=$$(docker create devshardd-builder:latest) && \
-		docker cp $$CID:/app/decentralized-api/build/devshardd build/devshardd && \
+		-f devshard/Dockerfile . \
+		-t devshardd:latest -q >/dev/null
+	@CID=$$(docker create devshardd:latest) && \
+		docker cp $$CID:/usr/local/bin/devshardd build/devshardd && \
 		docker rm $$CID >/dev/null
 	@chmod +x build/devshardd
-	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
+	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked\|arm64\|x86-64'))"
 
 node-local-build:
 	@echo "Building inference-chain locally..."

@@ -99,24 +99,6 @@ func (s *Server) Host() *host.Host { return s.host }
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 
-// Register mounts all devshard routes on the given echo group.
-// The caller typically mounts this under /v1/devshard.
-func (s *Server) Register(g *echo.Group) {
-	g.Use(s.AuthMiddleware)
-	if s.rateLimit != nil {
-		g.Use(rateLimitMiddleware(s.rateLimit))
-	}
-	g.POST("/sessions/:id/chat/completions", s.HandleInference)
-	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
-	g.POST("/sessions/:id/challenge-receipt", s.HandleChallengeReceipt)
-	g.POST("/sessions/:id/gossip/nonce", s.HandleGossipNonce)
-	g.POST("/sessions/:id/gossip/txs", s.HandleGossipTxs)
-	// TODO: GET endpoints are intentionally unauthenticated for now.
-	// Before production, restrict these to group members or add read-only auth.
-	g.GET("/sessions/:id/diffs", s.HandleGetDiffs)
-	g.GET("/sessions/:id/mempool", s.HandleGetMempool)
-	g.GET("/sessions/:id/signatures", s.HandleGetSignatures)
-}
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances

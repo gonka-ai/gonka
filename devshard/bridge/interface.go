@@ -5,21 +5,21 @@ package bridge
 type MainnetBridge interface {
 	// Notifications: mainnet -> devshard
 	OnEscrowCreated(escrow EscrowInfo) error
-	OnSettlementProposed(escrowID string, stateRoot []byte, nonce uint64) error
-	OnSettlementFinalized(escrowID string) error
+	OnSettlementProposed(escrowID uint64, stateRoot []byte, nonce uint64) error
+	OnSettlementFinalized(escrowID uint64) error
 
 	// Queries: devshard -> mainnet
-	GetEscrow(escrowID string) (*EscrowInfo, error)
+	GetEscrow(escrowID uint64) (*EscrowInfo, error)
 	GetHostInfo(address string) (*HostInfo, error)
 	GetValidationThreshold(epochID uint64, modelID string) (*Decimal, error)
 	VerifyWarmKey(warmAddress, validatorAddress string) (bool, error)
 
 	// Actions: devshard -> mainnet
-	SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
+	SubmitDisputeState(escrowID uint64, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
 }
 
 type EscrowInfo struct {
-	EscrowID       string
+	EscrowID       uint64
 	Amount         uint64
 	CreatorAddress string
 	AppHash        []byte

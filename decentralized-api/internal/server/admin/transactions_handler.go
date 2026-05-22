@@ -1,14 +1,15 @@
 package admin
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"fmt"
+	"io"
+	"net/http"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"net/http"
 )
 
 func (s *Server) sendTransaction(ctx echo.Context) error {

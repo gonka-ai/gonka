@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1023,9 +1024,10 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 
 // trackingValidationEngine records Validate calls for test assertions.
 type trackingValidationEngine struct {
-	mu    sync.Mutex
-	calls []devshard.ValidateRequest
-	valid bool
+	mu                   sync.Mutex
+	calls                []devshard.ValidateRequest
+	submittedValidations []uint64
+	valid                bool
 }
 
 func (e *trackingValidationEngine) Validate(_ context.Context, req devshard.ValidateRequest) (*devshard.ValidateResult, error) {
@@ -1074,6 +1076,19 @@ func (e *blockingValidationEngine) Validate(ctx context.Context, _ devshard.Vali
 	}
 }
 
+func (e *trackingValidationEngine) MarkValidationSubmitted(_ context.Context, _ string, inferenceID uint64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.submittedValidations = append(e.submittedValidations, inferenceID)
+	return nil
+}
+
+func (e *trackingValidationEngine) getSubmittedValidations() []uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]uint64(nil), e.submittedValidations...)
+}
+
 func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	// 2 hosts. Host 0 is the validator, host 1 is executor for inference 1.
 	// With 2 hosts and 100% ValidationRate, probability = 1/(2-1) = 1.0 (guaranteed).
@@ -1095,7 +1110,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	valEngine := &trackingValidationEngine{valid: true}
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
-		WithGrace(10), WithValidator(valEngine), WithEpochID(42))
+		WithGrace(10), WithValidator(valEngine), WithEpochID(42), WithValidationCompletionRecorder(valEngine))
 	require.NoError(t, err)
 
 	// Nonce 1: StartInference (executor = slot 1, not host 0).
@@ -1153,6 +1168,10 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 		}
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "MsgValidation should be in mempool")
+
+	require.Eventually(t, func() bool {
+		return slices.Contains(valEngine.getSubmittedValidations(), uint64(1))
+	}, 2*time.Second, 10*time.Millisecond, "validation lease should be completed after MsgValidation is queued")
 
 	// Next HandleRequest should return mempool with validation.
 	diff4 := testutil.SignDiff(t, user, "escrow-1", 4, nil)

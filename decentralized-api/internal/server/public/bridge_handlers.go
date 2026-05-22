@@ -1,8 +1,8 @@
 package public
 
 import (
+	"common/utils"
 	"decentralized-api/cosmosclient"
-	cosmos_client "decentralized-api/cosmosclient"
 
 	"fmt"
 	"io"
@@ -225,7 +225,7 @@ func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) {
 		"receiptIndex", receipt.ReceiptIndex)
 
 	// Derive Cosmos address from public key
-	cosmosAddress, err := cosmos_client.PubKeyToAddress(receipt.OwnerPubKey)
+	cosmosAddress, err := utils.PubKeyToAddress(receipt.OwnerPubKey)
 	if err != nil {
 		slog.Error("Failed to derive Cosmos address from public key",
 			"error", err,

@@ -16,7 +16,7 @@ type mockBridge struct {
 	hostErr   error
 }
 
-func (m *mockBridge) GetEscrow(_ string) (*EscrowInfo, error) {
+func (m *mockBridge) GetEscrow(_ uint64) (*EscrowInfo, error) {
 	return m.escrow, m.escrowErr
 }
 func (m *mockBridge) GetHostInfo(addr string) (*HostInfo, error) {
@@ -36,23 +36,23 @@ func (m *mockBridge) VerifyWarmKey(_, _ string) (bool, error) {
 	return false, ErrNotImplemented
 }
 func (m *mockBridge) OnEscrowCreated(_ EscrowInfo) error { return ErrNotImplemented }
-func (m *mockBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error {
+func (m *mockBridge) OnSettlementProposed(_ uint64, _ []byte, _ uint64) error {
 	return ErrNotImplemented
 }
-func (m *mockBridge) OnSettlementFinalized(_ string) error { return ErrNotImplemented }
-func (m *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint32][]byte) error {
+func (m *mockBridge) OnSettlementFinalized(_ uint64) error { return ErrNotImplemented }
+func (m *mockBridge) SubmitDisputeState(_ uint64, _ []byte, _ uint64, _ map[uint32][]byte) error {
 	return ErrNotImplemented
 }
 
 func TestBuildGroup_HappyPath(t *testing.T) {
 	b := &mockBridge{
 		escrow: &EscrowInfo{
-			EscrowID: "1",
+			EscrowID: 1,
 			Slots:    []string{"valA", "valB", "valC"},
 		},
 	}
 
-	group, err := BuildGroup("1", b)
+	group, err := BuildGroup(1, b)
 	require.NoError(t, err)
 	require.Len(t, group, 3)
 
@@ -66,13 +66,13 @@ func TestBuildGroup_HappyPath(t *testing.T) {
 func TestBuildGroup_DuplicateAddresses(t *testing.T) {
 	b := &mockBridge{
 		escrow: &EscrowInfo{
-			EscrowID: "1",
+			EscrowID: 1,
 			// valA appears in slots 0, 1, and 3
 			Slots: []string{"valA", "valA", "valB", "valA"},
 		},
 	}
 
-	group, err := BuildGroup("1", b)
+	group, err := BuildGroup(1, b)
 	require.NoError(t, err)
 	require.Len(t, group, 4)
 
@@ -89,19 +89,19 @@ func TestBuildGroup_DuplicateAddresses(t *testing.T) {
 
 func TestBuildGroup_EscrowError(t *testing.T) {
 	b := &mockBridge{escrowErr: ErrEscrowNotFound}
-	_, err := BuildGroup("1", b)
+	_, err := BuildGroup(1, b)
 	assert.ErrorIs(t, err, ErrEscrowNotFound)
 }
 
 func TestBuildGroup_ValidateGroupPasses(t *testing.T) {
 	b := &mockBridge{
 		escrow: &EscrowInfo{
-			EscrowID: "1",
+			EscrowID: 1,
 			Slots:    []string{"valA"},
 		},
 	}
 
-	group, err := BuildGroup("1", b)
+	group, err := BuildGroup(1, b)
 	require.NoError(t, err)
 	// ValidateGroup is called inside BuildGroup, but verify directly too
 	assert.NoError(t, types.ValidateGroup(group))

@@ -29,10 +29,10 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	b := NewRESTBridge(srv.URL)
-	info, err := b.GetEscrow("42")
+	info, err := b.GetEscrow(42)
 	require.NoError(t, err)
 
-	assert.Equal(t, "42", info.EscrowID)
+	assert.Equal(t, uint64(42), info.EscrowID)
 	assert.Equal(t, uint64(5_000_000_000), info.Amount)
 	assert.Equal(t, "inference1abc", info.CreatorAddress)
 	assert.Equal(t, []byte{0xde, 0xad, 0xbe, 0xef}, info.AppHash)
@@ -49,7 +49,7 @@ func TestGetEscrow_NotFound(t *testing.T) {
 	defer srv.Close()
 
 	b := NewRESTBridge(srv.URL)
-	_, err := b.GetEscrow("999")
+	_, err := b.GetEscrow(999)
 	assert.ErrorIs(t, err, ErrEscrowNotFound)
 }
 
@@ -201,7 +201,7 @@ func TestStubMethods_ReturnNotImplemented(t *testing.T) {
 	b := NewRESTBridge("http://unused")
 
 	assert.ErrorIs(t, b.OnEscrowCreated(EscrowInfo{}), ErrNotImplemented)
-	assert.ErrorIs(t, b.OnSettlementProposed("", nil, 0), ErrNotImplemented)
-	assert.ErrorIs(t, b.OnSettlementFinalized(""), ErrNotImplemented)
-	assert.ErrorIs(t, b.SubmitDisputeState("", nil, 0, nil), ErrNotImplemented)
+	assert.ErrorIs(t, b.OnSettlementProposed(0, nil, 0), ErrNotImplemented)
+	assert.ErrorIs(t, b.OnSettlementFinalized(0), ErrNotImplemented)
+	assert.ErrorIs(t, b.SubmitDisputeState(0, nil, 0, nil), ErrNotImplemented)
 }

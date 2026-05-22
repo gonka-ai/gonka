@@ -1,9 +1,10 @@
 package cosmosclient
 
 import (
+	"common/logging"
 	"context"
-	"decentralized-api/logging"
 	"fmt"
+
 	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	"github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"

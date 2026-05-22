@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"decentralized-api/utils"
+	"common/utils"
 
 	"github.com/labstack/echo/v4"
 )

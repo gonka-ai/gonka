@@ -1,8 +1,8 @@
 package tx_manager
 
 import (
+	"common/logging"
 	"decentralized-api/internal/nats/server"
-	"decentralized-api/logging"
 	"sync"
 	"time"
 

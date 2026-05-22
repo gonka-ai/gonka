@@ -17,6 +17,12 @@ export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
 export VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-versiond}
 export VERSIOND_PORT=${VERSIOND_PORT:-8080}
 export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
+export PUBLIC_DEVSHARD_VERSION=${PUBLIC_DEVSHARD_VERSION:-v0.2.12}
+PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT=''
+if [ -z "${PUBLIC_DEVSHARD_ROUTE_PATHS:-}" ]; then
+    PUBLIC_DEVSHARD_ROUTE_PATHS=$PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT
+fi
+export PUBLIC_DEVSHARD_ROUTE_PATHS=${PUBLIC_DEVSHARD_ROUTE_PATHS:-""}
 
 if [ -n "${KEY_NAME}" ] && [ "${KEY_NAME}" != "" ]; then
     export KEY_NAME_PREFIX="${KEY_NAME}-"
@@ -642,6 +648,83 @@ append_exempt_location() {
     done
 }
 
+append_public_devshard_route_locations() {
+    # Usage: append_public_devshard_route_locations "/v1/foo /v1/foo/{id}"
+    # Paths mirror common/queryapi/openapi.yaml and are emitted before generic
+    # /v1/ API locations, so selected public query routes can move to devshardd
+    # without moving the entire API namespace.
+    local routes="$1"
+
+    if [ "${DISABLE_DEVSHARD_PROXY}" = "true" ]; then
+        return
+    fi
+
+    for route in $routes; do
+        route_without_version=$(echo "$route" | sed 's|^/||; s|^[^/]*/||')
+        route_is_blocked="false"
+        for blocked_route in $GONKA_API_BLOCKED_ROUTES; do
+            clean_blocked_route=$(echo "$blocked_route" | sed 's|^/||')
+            case "$route_without_version" in
+                "$clean_blocked_route"|"$clean_blocked_route"/*)
+                    route_is_blocked="true"
+                    ;;
+            esac
+        done
+        if [ "$route_is_blocked" = "true" ]; then
+            continue
+        fi
+
+        if echo "$route" | grep -q '{'; then
+            route_regex=$(echo "$route" | sed 's|/|\\/|g; s|{[^/}][^/}]*}|[^/]+|g')
+            API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
+        # Public devshard query route ${route}
+        location ~ ^${route_regex}$ {
+            set \$limit_zone_name \"GNKAPI\";
+            ${LIMIT_REQ_RULE_GONKA_API}
+            ${LIMIT_CONN_RULE_GONKA_API}
+            rewrite ^ /${PUBLIC_DEVSHARD_VERSION}\$uri break;
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+    "
+        else
+            API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
+        # Public devshard query route ${route}
+        location = ${route} {
+            set \$limit_zone_name \"GNKAPI\";
+            ${LIMIT_REQ_RULE_GONKA_API}
+            ${LIMIT_CONN_RULE_GONKA_API}
+            rewrite ^ /${PUBLIC_DEVSHARD_VERSION}\$uri break;
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+    "
+        fi
+    done
+}
+
 # --------------------------------------------------------------------------------
 # Generate Blocked Routes Configuration
 # --------------------------------------------------------------------------------
@@ -652,6 +735,8 @@ API_VERSIONS=${API_VERSIONS:-"v1 v2"}
 API_VERSION_LOCATIONS=""
 BLOCKED_ROUTES_CONFIG=""
 EXEMPT_ROUTES_CONFIG=""
+
+append_public_devshard_route_locations "$PUBLIC_DEVSHARD_ROUTE_PATHS"
 
 # 1. Gonka API dynamic generation
 APP_BLOCKED_PREFIXES=""

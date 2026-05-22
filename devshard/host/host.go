@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -65,21 +66,22 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
-	validator    devshard.ValidationEngine // optional, nil = no validation
-	escrowID     string
-	epochID      uint64
-	slotIDs      map[uint32]bool
-	group        []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
+	validator          devshard.ValidationEngine // optional, nil = no validation
+	validationRecorder devshard.ValidationCompletionRecorder
+	escrowID           string
+	epochID            uint64
+	slotIDs            map[uint32]bool
+	group              []types.SlotAssignment
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
 
@@ -220,6 +222,12 @@ func WithValidator(v devshard.ValidationEngine) HostOption {
 
 func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
 	return func(h *Host) { h.availability = p }
+}
+
+// WithValidationCompletionRecorder sets the recorder called after MsgValidation
+// is successfully queued by the async validation path.
+func WithValidationCompletionRecorder(r devshard.ValidationCompletionRecorder) HostOption {
+	return func(h *Host) { h.validationRecorder = r }
 }
 
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
@@ -881,7 +889,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
-		logging.Error("validate failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+			logging.Error("validate failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+		}
 		return
 	}
 
@@ -934,6 +944,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		ProposedAt: h.sm.LatestNonce(),
 	})
 	h.mu.Unlock()
+
+	if h.validationRecorder != nil {
+		if err := h.validationRecorder.MarkValidationSubmitted(ctx, h.escrowID, job.inferenceID); err != nil {
+			logging.Error("mark validation submitted failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+		}
+	}
 }
 
 // AccumulateGossipSig verifies and stores a signature received via gossip.

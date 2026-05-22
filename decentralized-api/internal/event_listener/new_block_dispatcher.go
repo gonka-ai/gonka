@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -18,7 +19,6 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 
 	devshardpkg "devshard"
 

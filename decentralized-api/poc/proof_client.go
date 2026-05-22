@@ -15,10 +15,10 @@ import (
 	"net/url"
 	"time"
 
+	"common/logging"
+	"common/utils"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/poc/artifacts"
-	"decentralized-api/utils"
 
 	"github.com/productscience/inference/x/inference/types"
 )

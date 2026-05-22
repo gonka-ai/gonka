@@ -1,8 +1,8 @@
 package public
 
 import (
+	"common/completionapi"
 	"crypto/sha256"
-	"decentralized-api/completionapi"
 	"io"
 	"net/http"
 	"net/http/httptest"

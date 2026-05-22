@@ -2,7 +2,6 @@ package cosmosclient
 
 import (
 	"context"
-	"decentralized-api/utils"
 	"fmt"
 	"testing"
 
@@ -57,7 +56,7 @@ func TestGetPartialUpgrades_SinglePage(t *testing.T) {
 	}, nil)
 
 	// Test the pagination wrapper logic directly
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := mockQueryClient.PartialUpgradeAll(client.ctx, &types.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err
@@ -130,7 +129,7 @@ func TestGetPartialUpgrades_MultiplePages(t *testing.T) {
 	}, nil)
 
 	// Test the pagination wrapper logic
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := mockQueryClient.PartialUpgradeAll(client.ctx, &types.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err
@@ -162,7 +161,7 @@ func TestGetPartialUpgrades_ErrorHandling(t *testing.T) {
 		(*types.QueryAllPartialUpgradeResponse)(nil), fmt.Errorf("query failed"))
 
 	// Test the pagination wrapper logic
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := mockQueryClient.PartialUpgradeAll(client.ctx, &types.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err
@@ -204,7 +203,7 @@ func TestGetPartialUpgrades_ErrorOnSecondPage(t *testing.T) {
 	})).Return((*types.QueryAllPartialUpgradeResponse)(nil), fmt.Errorf("second page failed"))
 
 	// Test the pagination wrapper logic
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := mockQueryClient.PartialUpgradeAll(client.ctx, &types.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err
@@ -237,7 +236,7 @@ func TestGetPartialUpgrades_EmptyResult(t *testing.T) {
 	}, nil)
 
 	// Test the pagination wrapper logic
-	allUpgrades, err := utils.GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
+	allUpgrades, err := GetAllWithPagination(func(pageReq *query.PageRequest) ([]types.PartialUpgrade, *query.PageResponse, error) {
 		resp, err := mockQueryClient.PartialUpgradeAll(client.ctx, &types.QueryAllPartialUpgradeRequest{Pagination: pageReq})
 		if err != nil {
 			return nil, nil, err

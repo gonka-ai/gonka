@@ -34,6 +34,23 @@ type serverTestEnv struct {
 	config     types.SessionConfig
 }
 
+// registerServer wires srv's handlers onto g exactly as the old Server.Register
+// method did. Kept in tests; production wiring uses server/routes.go RegisterLazySessionRoutes.
+func registerServer(g *echo.Group, srv *Server) {
+	g.Use(srv.AuthMiddleware)
+	if srv.rateLimit != nil {
+		g.Use(rateLimitMiddleware(srv.rateLimit))
+	}
+	g.POST("/sessions/:id/chat/completions", srv.HandleInference)
+	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
+	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
+	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
+	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
+	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+}
+
 func setupServerEnv(t *testing.T) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
@@ -56,7 +73,7 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 
 	e := echo.New()
 	g := e.Group("/v1/devshard")
-	srv.Register(g)
+	registerServer(g, srv)
 
 	return &serverTestEnv{
 		server:     srv,
@@ -243,7 +260,7 @@ func TestServer_RateLimit(t *testing.T) {
 
 	e := echo.New()
 	g := e.Group("/v1/devshard")
-	srv.Register(g)
+	registerServer(g, srv)
 
 	body := []byte(`{}`)
 	doReq := func() int {
@@ -314,7 +331,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 
 	e := echo.New()
 	g := e.Group("/v1/devshard")
-	srv.Register(g)
+	registerServer(g, srv)
 
 	// Apply diffs through the host to populate storage.
 	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{diff1, diff2}})
@@ -477,7 +494,7 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 
 	e := echo.New()
 	g := e.Group("/v1/devshard")
-	srv.Register(g)
+	registerServer(g, srv)
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	dj, err := DiffToJSON(diff)
