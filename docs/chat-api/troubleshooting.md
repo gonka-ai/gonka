@@ -200,6 +200,48 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ---
 
+### #strip-thinking-minimax
+
+**What**: top-level `thinking: {...}` (Anthropic-style wrapper) silent-stripped on the MiniMax-M2.7 route before `ThinkingValidator` runs.
+
+**Why**: MiniMax-M2.7 has no `chat_template_kwargs` switch for thinking — interleaved reasoning is structural to the chat template and always-on. The model emits `<think>...</think>` blocks inline in `content` by design ([[MiniMax-2]](references.md#minimax)). Mirroring `thinking` into template kwargs (as on Kimi-K2.6) or normalizing it (as on Qwen-style routes) is a no-op on this route. Silent-strip is the closest behavior to the model's actual contract.
+
+**When to restore**: when MiniMax adds a documented per-request thinking toggle.
+
+**Fix (client-side)**: stop sending `thinking`; for clients that need to suppress the visible thinking display, parse + filter `<think>...</think>` blocks client-side from the response content.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #strip-enable_thinking-minimax
+
+**What**: top-level `enable_thinking: bool` silent-stripped on the MiniMax-M2.7 route before `EnableThinkingValidator` runs (which would otherwise translate it into `chat_template_kwargs.enable_thinking`).
+
+**Why**: vLLM Issue [vLLM-25](references.md#vllm) ([#36778](https://github.com/vllm-project/vllm/issues/36778)) confirms `chat_template_kwargs.enable_thinking=false` does NOT disable thinking on M2.5+. Forwarding the translated kwarg would silently mislead clients into believing they'd disabled reasoning when in fact the model still emits `<think>` blocks. Strip avoids the misleading appearance of effect.
+
+**When to restore**: when the upstream Issue is fixed and the kwarg is honored on the M2 line.
+
+**Fix (client-side)**: stop sending `enable_thinking` on this route — see [strip-thinking-minimax](#strip-thinking-minimax) for the broader story.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #strip-tool_call_id-minimax
+
+**What**: `tool_call_id` on `role:"tool"` messages silent-stripped on the MiniMax-M2.7 route during message normalization.
+
+**Why**: MiniMax-M2.7 tool messages correlate by `name` + positional order within a tool-result block, not by `tool_call_id` ([[MiniMax-4]](references.md#minimax)). Clients porting OpenAI code may dual-emit the field. Forwarding it is harmless (vLLM ignores) but rejecting it would force every OpenAI-compat client to fork their tool-message serializer per route. Silent-strip preserves compat without implying semantics we don't honor.
+
+**When to restore**: never — the field has no consumer on this route.
+
+**Fix (client-side)**: omit `tool_call_id` for cleanest payloads. If you must dual-emit (e.g. shared serializer across routes), it's a free pass-through to silent-strip.
+
+**Captured-requests**: n/a — anticipated dual-emission from porting clients.
+
+---
+
 ## Validates-then-strips
 
 ### #strip-reasoning_effort
@@ -411,9 +453,45 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Captured-requests**: n/a — no captures observed.
 
+---
+
+### #reject-structured_outputs-minimax
+
+**What**: HTTP 400 on `structured_outputs` when the route resolves to `MiniMaxAI/MiniMax-M2.7`.
+
+**Why**: Same pattern as Kimi. The MiniMax OpenAI-Compatible API ([[MiniMax-5]](references.md#minimax)) does not declare `structured_outputs` in its surface; forwarding the field would lean on the upstream vLLM `minimax_m2` path which has known parser fragility ([[vLLM-28]](references.md#vllm), [[SGLang-2]](references.md#sglang)). Mirrors the Kimi policy.
+
+**When to restore**: when MiniMax adds `structured_outputs` to their declared API contract.
+
+**Fix (client-side)**: use `response_format` with `type: "json_schema"` for M2.7 (xgrammar-based, supported on this route via the universal contract).
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #accept-tool-message-minimax-shape
+
+**What**: On the MiniMaxAI/MiniMax-M2.7 route, `role:"tool"` messages MUST carry `content` as an array of `{name, type:"text", text}` objects (the MiniMax-native shape per [[MiniMax-4]](references.md#minimax)) — not the OpenAI string + `tool_call_id` shape. Bare-string content is rejected with HTTP 400.
+
+**Why**: MiniMax's tool-calling contract correlates tool results by per-entry `name` + positional order inside a tool-result block; there is no `tool_call_id`. The MinimaxToolMessage content validator (registered in the per-model role policy override) enforces the entry shape and caps (≤16 entries, name ≤64 B, text ≤64 KiB, closed allow-list of keys to defend against [[SGLang-2]](references.md#sglang) union-with-null crash class). `tool_call_id`, if dual-emitted by a client porting from OpenAI, is silently stripped — see [strip-tool_call_id-minimax](#strip-tool_call_id-minimax).
+
+**When to restore**: when MiniMax adds OpenAI-compat tool-message handling to their parser.
+
+**Fix (client-side)**: emit the M2.7 shape:
+```json
+{"role": "tool",
+ "content": [
+    {"name": "<function_name>", "type": "text", "text": "<json-stringified result>"}
+ ]}
+```
+Multiple parallel tool results in one block: one array entry per call.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
 ## Per-model gotchas
 
 Brief pointers to deeper notes in per-model docs:
 
 - **Kimi-K2.6**: [Known model-side bugs we work around](kimi-k2.6.md#known-model-side-bugs-we-work-around)
 - **Qwen3-235B-A22B-Instruct-2507**: [Known model-side bugs we work around](qwen3-235b-a22b-instruct-2507.md#known-model-side-bugs-we-work-around)
+- **MiniMaxAI/MiniMax-M2.7**: [Known model-side bugs we work around](minimax-m2.7.md#known-model-side-bugs-we-work-around)
