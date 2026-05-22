@@ -16,26 +16,6 @@ type Config struct {
 	MaxTTL time.Duration
 }
 
-// Verify runs the envelope verification flow over already-extracted request
-// inputs and returns a verified Context on success.
-//
-// It covers steps 3 through 21 of the documented verification sequence:
-// envelope parse, version, audience, chain_id, TTL, time window, principal and
-// agent key decoding, address derivation, beneficiary validation, the ADR-036
-// principal signature, the per-request agent signature, and the model scope
-// check. Any failure stops the flow and returns the mapped EnvelopeError.
-//
-// Header presence and base64 decoding (steps 1 and 2), the bounded body read
-// (steps 16 and 17), and model extraction are the middleware's responsibility.
-// Verify is transport-agnostic so it can be unit tested without an HTTP stack.
-//
-// rawEnvelope is the base64-decoded X-Agent-Passport JSON. agentSigB64 is the
-// X-Agent-Sig header value. body is the bounded request body. requestedModel
-// is the model named in that body. now is the verification time.
-//
-// On success the returned Context has RequestBound set to false. The handler
-// sets it to true only after it confirms the envelope principal matches the
-// request's requester address, directly or through an authz grant.
 // clockSkewTolerance bounds how far an envelope's issued_at may sit in the
 // future relative to verification time. It absorbs benign client clock skew
 // while rejecting a future-dated issued_at that would otherwise let the TTL
@@ -112,6 +92,26 @@ func hasDuplicateKeys(raw []byte) bool {
 	}
 }
 
+// Verify runs the envelope verification flow over already-extracted request
+// inputs and returns a verified Context on success.
+//
+// It covers steps 3 through 21 of the documented verification sequence:
+// envelope parse, version, audience, chain_id, TTL, time window, principal and
+// agent key decoding, address derivation, beneficiary validation, the ADR-036
+// principal signature, the per-request agent signature, and the model scope
+// check. Any failure stops the flow and returns the mapped EnvelopeError.
+//
+// Header presence and base64 decoding (steps 1 and 2), the bounded body read
+// (steps 16 and 17), and model extraction are the middleware's responsibility.
+// Verify is transport-agnostic so it can be unit tested without an HTTP stack.
+//
+// rawEnvelope is the base64-decoded X-Agent-Passport JSON. agentSigB64 is the
+// X-Agent-Sig header value. body is the bounded request body. requestedModel
+// is the model named in that body. now is the verification time.
+//
+// On success the returned Context has RequestBound set to false. The handler
+// sets it to true only after it confirms the envelope principal matches the
+// request's requester address, directly or through an authz grant.
 func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, body []byte, requestedModel string, now time.Time) (*Context, error) {
 	// Step 3: envelope parse. Duplicate JSON member names are rejected: they
 	// are an I-JSON and RFC 8785 violation and are ambiguous at a signature
