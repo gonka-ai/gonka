@@ -1,6 +1,7 @@
 package agentenvelope
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -60,10 +61,66 @@ func validateEnvelopeRequired(env *EnvelopeV1) error {
 	return nil
 }
 
+// hasDuplicateKeys reports whether any JSON object in raw has a repeated member
+// name. encoding/json silently keeps the last value for a duplicate name; a
+// different implementation may keep the first or reject the input. At a
+// signature boundary that ambiguity is unacceptable, so the verifier rejects
+// an envelope that has it.
+func hasDuplicateKeys(raw []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	type frame struct {
+		object    bool
+		expectKey bool
+		keys      map[string]struct{}
+	}
+	var stack []*frame
+	afterValue := func() {
+		if n := len(stack); n > 0 && stack[n-1].object {
+			stack[n-1].expectKey = true
+		}
+	}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false // EOF or malformed: the struct parse reports malformed
+		}
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{':
+				stack = append(stack, &frame{object: true, expectKey: true, keys: map[string]struct{}{}})
+			case '[':
+				stack = append(stack, &frame{})
+			case '}', ']':
+				stack = stack[:len(stack)-1]
+				afterValue()
+			}
+			continue
+		}
+		if n := len(stack); n > 0 && stack[n-1].object && stack[n-1].expectKey {
+			key, ok := tok.(string)
+			if !ok {
+				return false // a non-string key is malformed
+			}
+			if _, dup := stack[n-1].keys[key]; dup {
+				return true
+			}
+			stack[n-1].keys[key] = struct{}{}
+			stack[n-1].expectKey = false
+			continue
+		}
+		afterValue()
+	}
+}
+
 func (cfg Config) Verify(rawEnvelope []byte, agentSigB64, method, path string, body []byte, requestedModel string, now time.Time) (*Context, error) {
-	// Step 3: envelope parse.
+	// Step 3: envelope parse. Duplicate JSON member names are rejected: they
+	// are an I-JSON and RFC 8785 violation and are ambiguous at a signature
+	// boundary.
 	var env EnvelopeV1
 	if err := json.Unmarshal(rawEnvelope, &env); err != nil {
+		return nil, ErrEnvelopeMalformed
+	}
+	if hasDuplicateKeys(rawEnvelope) {
 		return nil, ErrEnvelopeMalformed
 	}
 	if err := validateEnvelopeRequired(&env); err != nil {
