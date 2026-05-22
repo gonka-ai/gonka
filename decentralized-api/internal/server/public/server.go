@@ -96,11 +96,13 @@ func NewServer(
 	// enabled, the middleware verifies the envelope on the completion
 	// endpoints and the handler emits attribution through this emitter.
 	aeConfig := validateAgentEnvelopeConfig(configManager.GetAgentEnvelopeConfig())
-	// The attribution emitter runs for the lifetime of the process. The
-	// decentralized-api Server has no graceful-shutdown path, so there is no
-	// Close call site, matching the other long-lived goroutines the server
-	// starts.
-	s.apsEmitter = agentenvelope.NewAttributionEmitter(aeConfig.AttributionQueueCap, apsAttributionSink{})
+	// The attribution emitter is created only when the layer is enabled, so a
+	// node with the feature off (the default) starts no extra goroutine. When
+	// created it runs for the process lifetime: decentralized-api's Server has
+	// no graceful-shutdown path, matching its other long-lived goroutines.
+	if aeConfig.Enabled {
+		s.apsEmitter = agentenvelope.NewAttributionEmitter(aeConfig.AttributionQueueCap, apsAttributionSink{})
+	}
 	apsMiddleware := middleware.AgentEnvelopeMiddleware(
 		aeConfig.Enabled,
 		agentenvelope.Config{

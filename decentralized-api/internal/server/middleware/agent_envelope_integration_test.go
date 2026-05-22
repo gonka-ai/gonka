@@ -231,6 +231,15 @@ func TestIntegration_MalformedBody(t *testing.T) {
 	}
 }
 
+func TestIntegration_BodyMissingModel(t *testing.T) {
+	e, _ := itServer(t, 10<<20)
+	sr := buildSignedRequest(t, nil)
+	// Valid JSON, but no model field: malformed request, not a scope failure.
+	if rec := sendIT(e, sr, []byte(`{"messages":[]}`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("body with no model: code %d, want 400", rec.Code)
+	}
+}
+
 func BenchmarkMiddleware_AbsentHeader(b *testing.B) {
 	e, _ := itServer(b, 10<<20)
 	b.ResetTimer()

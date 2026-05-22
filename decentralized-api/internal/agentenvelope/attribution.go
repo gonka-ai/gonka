@@ -50,8 +50,16 @@ func NewAttributionEmitter(capacity int, sink AttributionSink) *AttributionEmitt
 func (e *AttributionEmitter) drain() {
 	defer e.wg.Done()
 	for ev := range e.ch {
-		e.sink.Emit(ev)
+		e.emitOne(ev)
 	}
+}
+
+// emitOne forwards one event to the sink. The call is recovered so a panicking
+// sink drops a single event rather than crashing the drain goroutine, which in
+// Go would terminate the whole process.
+func (e *AttributionEmitter) emitOne(ev AttributionEvent) {
+	defer func() { _ = recover() }()
+	e.sink.Emit(ev)
 }
 
 // Enqueue submits an event for asynchronous emission. It never blocks. If the

@@ -118,3 +118,26 @@ func TestAttributionEmitter_CloseIdempotent(t *testing.T) {
 	e.Close()
 	e.Close()
 }
+
+// panicSink panics on its first Emit. An unrecovered panic in the drain
+// goroutine would terminate the process, so the emitter must isolate it.
+type panicSink struct{ calls int }
+
+func (s *panicSink) Emit(ev AttributionEvent) {
+	s.calls++
+	if s.calls == 1 {
+		panic("sink failure")
+	}
+}
+
+func TestAttributionEmitter_SinkPanicDoesNotKillDrain(t *testing.T) {
+	sink := &panicSink{}
+	e := NewAttributionEmitter(8, sink)
+	for i := 0; i < 3; i++ {
+		e.Enqueue(AttributionEvent{InferenceID: "x"})
+	}
+	e.Close()
+	if sink.calls != 3 {
+		t.Errorf("sink Emit called %d times, want 3 (drain survived the panic)", sink.calls)
+	}
+}

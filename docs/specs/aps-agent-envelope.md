@@ -61,6 +61,12 @@ that does not run the middleware.
 allowed, present and empty means no model is allowed, present and non-empty
 restricts to the listed models.
 
+A v1 envelope carries only the fields above. Any additional field is still
+covered by the principal signature and the canonical form, so clients must not
+add extension fields in v1: the JCS canonicalizer is scoped to the string,
+object, and array shapes this schema uses and does not implement full RFC 8785
+number canonicalization. Extension fields are a v2 concern.
+
 ## Signing model
 
 The principal signature covers the envelope with `principal_sig` set to the
@@ -105,11 +111,13 @@ HTTP status mapping:
 
 ## Attribution event
 
-After a verified, request-bound inference is submitted to chain, a structured
-event is emitted through an asynchronous bounded-queue emitter. The event
-carries the agent id, principal address, beneficiary, model, inference id, and
-content hashes. The emitter drops on a full queue and counts the drops, so
-logging backpressure never stalls a response. v1 attribution is observability
+After a verified, request-bound inference request is submitted to chain
+(MsgStartInference), a structured inference-start attribution event is emitted
+through an asynchronous bounded-queue emitter. This is start-of-request
+attribution, not execution or settlement attribution. The event carries the
+agent id, principal address, beneficiary, model, inference id, and content
+hashes. The emitter drops on a full queue and counts the drops, so logging
+backpressure never stalls a response. v1 attribution is observability
 data, not an on-chain record.
 
 ## Configuration
@@ -118,6 +126,15 @@ The `agent_envelope` config block: `enabled` (default false), `chain_id`,
 `max_ttl_seconds` (default 3600), `max_body_size` (default 10 MiB), and
 `attribution_queue_cap` (default 1024). The layer is off unless `enabled` is
 set.
+
+`chain_id` must match this network's chain id; an envelope carrying a
+different chain id is rejected. If the layer is enabled with an empty
+`chain_id`, the node logs an error at startup and the layer stays off, rather
+than rejecting every request or refusing to start: the envelope is opt-in
+metadata and a misconfiguration of it should not take a host down.
+`max_ttl_seconds`, `max_body_size`, and `attribution_queue_cap` are each
+bounded to a sane range; a value outside its range falls back to the default.
+Deriving `chain_id` from the chain node automatically is deferred future work.
 
 ## Backward compatibility
 
