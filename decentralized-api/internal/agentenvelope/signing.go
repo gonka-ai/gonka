@@ -72,6 +72,20 @@ func adr036SignBytes(signer string, data []byte) ([]byte, error) {
 	return jcs.Canonicalize(raw)
 }
 
+// PrincipalSignBytes returns the ADR-036 bytes the principal signs to
+// authorize an envelope. A client computes these bytes, signs them with the
+// principal's secp256k1 key, and places the standard-base64 signature in the
+// envelope's principal_sig field. The principal_sig field is emptied before
+// canonicalization, so the caller may pass the envelope JSON with that field
+// absent, empty, or already populated.
+func PrincipalSignBytes(principalAddress string, rawEnvelope []byte) ([]byte, error) {
+	canon, err := principalCanonicalJSON(rawEnvelope)
+	if err != nil {
+		return nil, err
+	}
+	return adr036SignBytes(principalAddress, canon)
+}
+
 // VerifyPrincipalSig verifies the ADR-036 principal signature over the
 // envelope. pk is the secp256k1 key embedded in the envelope. principalAddress
 // is bound into the ADR-036 message, so a signature is valid only for the
@@ -86,13 +100,9 @@ func VerifyPrincipalSig(pk *secp256k1.PubKey, principalAddress string, rawEnvelo
 	if err != nil {
 		return ErrPrincipalSigInvalid
 	}
-	canon, err := principalCanonicalJSON(rawEnvelope)
+	signBytes, err := PrincipalSignBytes(principalAddress, rawEnvelope)
 	if err != nil {
 		return err
-	}
-	signBytes, err := adr036SignBytes(principalAddress, canon)
-	if err != nil {
-		return ErrPrincipalSigInvalid
 	}
 	if !pk.VerifySignature(signBytes, sig) {
 		return ErrPrincipalSigInvalid
