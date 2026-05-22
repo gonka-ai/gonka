@@ -56,6 +56,14 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgRevalidateInference int = 100
 
+	opWeightMsgRevalidationVote = "op_weight_msg_revalidation_vote"
+	// Skewed above the uniform Phase 2 default of 100 so revalidation votes
+	// reliably coincide, within a block, with the failing MsgValidation that
+	// opened the proposals — the 4-minute group voting window closes before the
+	// next block. Provisional; this plan's Phase 3 weight-tuning chunk
+	// recalibrates from observed hit ratios.
+	defaultWeightMsgRevalidationVote int = 200
+
 	opWeightMsgClaimRewards = "op_weight_msg_claim_rewards"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgClaimRewards int = 100
@@ -63,6 +71,18 @@ const (
 	opWeightMsgSubmitPocBatch = "op_weight_msg_submit_poc_batch"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgSubmitPocBatch int = 100
+
+	opWeightMsgPoCV2StoreCommit = "op_weight_msg_poc_v2_store_commit"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgPoCV2StoreCommit int = 100
+
+	opWeightMsgMLNodeWeightDistribution = "op_weight_msg_ml_node_weight_distribution"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgMLNodeWeightDistribution int = 100
+
+	opWeightMsgSubmitPocValidationsV2 = "op_weight_msg_submit_poc_validations_v2"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSubmitPocValidationsV2 int = 100
 
 	opWeightMsgSubmitSeed = "op_weight_msg_submit_seed"
 	// TODO: Determine the simulation weight value
@@ -91,7 +111,7 @@ const (
 //
 //   - ParticipantList is pre-seeded so the four ActiveParticipant-gated ops
 //     (Start/Finish/Validation/ClaimRewards) have someone to promote via
-//     EnsureActiveParticipantsSeeded (x/inference/simulation/bootstrap.go).
+//     BuildEpochSubstrate (x/inference/simulation/substrate.go).
 //   - ModelList is pre-seeded with Qwen + Kimi (mainnet-realistic values)
 //     so MsgStartInference's RecordInferencePrice has a
 //     governance-registered model to look up. EnsureModelsInEpochGroup
@@ -100,7 +120,7 @@ const (
 //     state BeginBlocker / UpdateDynamicPricing iterate.
 func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
 	inferenceGenesis := types.GenesisState{
-		Params:            types.DefaultParams(),
+		Params:            inferencesimulation.BuildSimGenesisParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 		ParticipantList:   inferencesimulation.BuildSimGenesisParticipants(simState),
 		ModelList:         inferencesimulation.BuildSimGenesisModels(),
@@ -432,6 +452,16 @@ func (am AppModule) WeightedOperationsX(weights simsx.WeightSource, reg simsx.Re
 		inferencesimulation.MsgFinishInferenceFactory(am.keeper))
 	reg.Add(weights.Get(opWeightMsgValidation, uint32(defaultWeightMsgValidation)),
 		inferencesimulation.MsgValidationFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgRevalidationVote, uint32(defaultWeightMsgRevalidationVote)),
+		inferencesimulation.MsgRevalidationVoteFactory(am.keeper, am.groupMsgServer))
 	reg.Add(weights.Get(opWeightMsgClaimRewards, uint32(defaultWeightMsgClaimRewards)),
 		inferencesimulation.MsgClaimRewardsFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgPoCV2StoreCommit, uint32(defaultWeightMsgPoCV2StoreCommit)),
+		inferencesimulation.MsgPoCV2StoreCommitFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgMLNodeWeightDistribution, uint32(defaultWeightMsgMLNodeWeightDistribution)),
+		inferencesimulation.MsgMLNodeWeightDistributionFactory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgSubmitPocValidationsV2, uint32(defaultWeightMsgSubmitPocValidationsV2)),
+		inferencesimulation.MsgSubmitPocValidationsV2Factory(am.keeper))
+	reg.Add(weights.Get(opWeightMsgSubmitSeed, uint32(defaultWeightMsgSubmitSeed)),
+		inferencesimulation.MsgSubmitSeedFactory(am.keeper))
 }

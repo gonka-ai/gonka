@@ -333,9 +333,9 @@ sim-smoke-test:
 		-v -timeout 30m
 
 sim-full-test:
-	@echo "--> Running full simulation: 500 blocks x 200 ops/block (~35 s)"
+	@echo "--> Running full simulation: 500 blocks x 200 ops/block"
 	@go test -mod=readonly -tags "sims muslc" $(SIM_PKG) \
-		-run TestFullAppSimulation \
+		-run 'TestFullAppSimulation|TestFullSimulation_x_Inference_Integrated' \
 		-Enabled=true -Commit=true \
 		-NumBlocks=500 -BlockSize=200 -Seed=99 -GenesisTime=$(SIM_GENESIS_TIME) \
 		-v -timeout 180m

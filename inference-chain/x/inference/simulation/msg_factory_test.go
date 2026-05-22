@@ -174,7 +174,7 @@ func TestMsgValidationFactory_PicksExistingInference(t *testing.T) {
 	accs := newSimAccounts(t, 41, factoryAccountCount)
 	regAddrs := registerAsParticipants(t, kk, sdkCtx, accs)
 	require.NoError(t, kk.SetEffectiveEpochIndex(sdkCtx, 0))
-	require.NoError(t, simulation.EnsureActiveParticipantsSeeded(sdkCtx, kk))
+	seedActiveParticipantsForTest(t, sdkCtx, kk, accs, 0)
 	const seededID = "sim-inference-001"
 	executor := regAddrs[0]
 	putFinishedInference(t, kk, sdkCtx, seededID, executor)
@@ -182,7 +182,7 @@ func TestMsgValidationFactory_PicksExistingInference(t *testing.T) {
 		nil, nil, gonkaBech32Codec(), accs...)
 	reporter := simsx.NewBasicSimulationReporter()
 
-	signers, msg := simulation.MsgValidationFactory(kk)(sdkCtx, cds, reporter)
+	signers, msg := simulation.MsgValidationFactory(kk).SimMsgFactoryFn(sdkCtx, cds, reporter)
 	require.False(t, reporter.IsSkipped(), "factory skipped unexpectedly")
 	require.NotNil(t, msg)
 	require.Len(t, signers, 1)
@@ -211,7 +211,7 @@ func TestMsgValidationFactory_EmptyFinishedInferences_Skips(t *testing.T) {
 		nil, nil, gonkaBech32Codec(), accs...)
 	reporter := simsx.NewBasicSimulationReporter()
 
-	_, msg := simulation.MsgValidationFactory(kk)(sdkCtx, cds, reporter)
+	_, msg := simulation.MsgValidationFactory(kk).SimMsgFactoryFn(sdkCtx, cds, reporter)
 	require.Nil(t, msg)
 	require.True(t, reporter.IsSkipped(), "expected Skip on empty Inferences")
 }

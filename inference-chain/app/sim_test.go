@@ -17,6 +17,8 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	"github.com/cosmos/cosmos-sdk/testutil/simsx"
@@ -78,6 +80,7 @@ func setupStateFactory(bApp *app.App) simsx.SimStateFactory {
 			bApp.SimulationManager(),
 			bApp.DefaultGenesis(),
 			func(rawState map[string]json.RawMessage) {
+				shrinkUpstreamStakingValidators(bApp, rawState)
 				fixBankGenesisState(bApp, rawState)
 			},
 		),
@@ -164,6 +167,112 @@ func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
 // above the per-inference escrow (~6.3 × 10^5 ngonka in current sim) even
 // at the make sim-full-test scale of 500 blocks × 200 ops/block.
 var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
+
+// shrinkUpstreamStakingValidators reduces every upstream-generated staking
+// validator's Tokens and matching DelegatorShares/Delegation.Shares to 1
+// (in BondDenom), so that EpochGroup.ValidationWeights[].Weight (sourced
+// from Tokens via epochgroup.NewEpochMemberFromStakingValidator,
+// epoch_group.go:103) does not dominate over sim genesis participants
+// (each at simValidatorPower=1_000_000 from x/inference/simulation/
+// bootstrap.go).
+//
+// Background: cosmos-sdk's RandomizedGenState (x/staking/simulation/
+// genesis.go) generates 1-299 random Unbonded validators with Tokens=
+// InitialStake ≈ 10^12 each. x/inference's InitGenesisEpoch
+// (module/genesis.go:186) iterates ALL staking validators via
+// GetAllValidators and adds them to EpochGroup.ValidationWeights with
+// Weight=Tokens. Without this shrink:
+//   - totalNetworkWeight ≈ N × 10^12 (often ~10^13–10^14)
+//   - validWeight max = NumSimGenesisParticipants × simValidatorPower
+//     = 5 × 10^6
+//   - Calculate's 2/3-of-total threshold (chainvalidation.go:327) is
+//     unreachable → ComputeNewWeights yields nil active set → no
+//     SetComputeValidators → cometbft set drains → SKIP "empty
+//     validator set" (cosmos-sdk x/simulation/simulate.go:266).
+//
+// All validators are retained (so staking.InitGenesis still bonds ≥1 and
+// InitChain doesn't panic on empty validator set per
+// cosmos-sdk types/module/module.go:524) but their Tokens shrink to 1.
+// NotBondedPool balance is adjusted to mirror the new sum, preserving
+// the upstream invariant (state_helpers.go:132-139) that
+// NotBondedPool == sum(Status==Unbonded).Tokens.
+func shrinkUpstreamStakingValidators(bApp *app.App, rawState map[string]json.RawMessage) {
+	stakingBz, ok := rawState[stakingtypes.ModuleName]
+	if !ok {
+		panic("staking genesis state missing from randomized state")
+	}
+	var stakingState stakingtypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(stakingBz, &stakingState)
+
+	originalNotBonded := sdkmath.ZeroInt()
+	for _, v := range stakingState.Validators {
+		if v.Status == stakingtypes.Unbonded {
+			originalNotBonded = originalNotBonded.Add(v.Tokens)
+		}
+	}
+
+	oneToken := sdkmath.OneInt()
+	oneShares := sdkmath.LegacyOneDec()
+	for i := range stakingState.Validators {
+		operAddr := stakingState.Validators[i].OperatorAddress
+		valAddr, err := sdk.ValAddressFromBech32(operAddr)
+		if err != nil {
+			panic(err)
+		}
+		accAddr := sdk.AccAddress(valAddr).String()
+		// Derivation mirrors x/inference/simulation.SimValidatorKey
+		// (genesis.go:17) so sim genesis EpochMember.Pubkey ==
+		// staking.Validator.ConsensusPubkey for the same account. Without
+		// this alignment, the GON-191 stale-consensus-key filter in our
+		// cosmos-sdk fork (x/staking/keeper/compute.go:358) removes sim
+		// genesis validators from the bonded set on the first
+		// SetComputeValidators call from EnsureSimActiveParticipantsSeeded.
+		pubKey := ed25519.GenPrivKeyFromSecret([]byte("gonka-sim-validator:" + accAddr)).PubKey()
+		pkAny, err := codectypes.NewAnyWithValue(pubKey)
+		if err != nil {
+			panic(err)
+		}
+		stakingState.Validators[i].ConsensusPubkey = pkAny
+		stakingState.Validators[i].Tokens = oneToken
+		stakingState.Validators[i].DelegatorShares = oneShares
+	}
+	for i := range stakingState.Delegations {
+		stakingState.Delegations[i].Shares = oneShares
+	}
+	for i := range stakingState.LastValidatorPowers {
+		stakingState.LastValidatorPowers[i].Power = 1
+	}
+	rawState[stakingtypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&stakingState)
+
+	numUnbonded := sdkmath.ZeroInt()
+	for _, v := range stakingState.Validators {
+		if v.Status == stakingtypes.Unbonded {
+			numUnbonded = numUnbonded.AddRaw(1)
+		}
+	}
+	delta := originalNotBonded.Sub(numUnbonded)
+	if delta.IsZero() || delta.IsNegative() {
+		return
+	}
+
+	bankBz, ok := rawState[banktypes.ModuleName]
+	if !ok {
+		panic("bank genesis state missing from randomized state")
+	}
+	var bankState banktypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(bankBz, &bankState)
+
+	notBondedAddr := authtypes.NewModuleAddress(stakingtypes.NotBondedPoolName).String()
+	bondDenom := stakingState.Params.BondDenom
+	for i := range bankState.Balances {
+		if bankState.Balances[i].Address == notBondedAddr {
+			bankState.Balances[i].Coins = bankState.Balances[i].Coins.Sub(
+				sdk.NewCoin(bondDenom, delta))
+			break
+		}
+	}
+	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
+}
 
 // TestFullAppSimulation is the simsx entry point for `make sim-smoke-test`
 // and `make sim-full-test`. CLI flags (-NumBlocks, -BlockSize, -Seed,

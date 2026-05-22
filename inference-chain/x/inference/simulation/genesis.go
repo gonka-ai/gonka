@@ -1,10 +1,23 @@
 package simulation
 
 import (
+	"encoding/base64"
+
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// SimValidatorKey derives a deterministic base64-encoded ed25519 validator
+// public key for a sim participant from its account address. Shared by
+// BuildSimGenesisParticipants and MsgSubmitNewParticipantFactory so the same
+// address always maps to the same key — keeping the epoch-group x/group member
+// Metadata consistent and MsgSubmitNewParticipant re-submission idempotent.
+func SimValidatorKey(addr string) string {
+	pubKey := ed25519.GenPrivKeyFromSecret([]byte("gonka-sim-validator:" + addr)).PubKey()
+	return base64.StdEncoding.EncodeToString(pubKey.Bytes())
+}
 
 // SimModelIDs is the canonical ordered list of model IDs registered at
 // sim genesis. Tests assert exact membership; factories pick from it.
@@ -60,6 +73,24 @@ func BuildSimGenesisModels() []types.Model {
 	}
 }
 
+// BuildSimGenesisParams returns DefaultParams with sim-only overrides
+// applied: PocV2Enabled=true so the V2 PoC msg handlers
+// (PoCV2StoreCommit, MLNodeWeightDistribution, SubmitPocValidationsV2)
+// accept submissions. Without this the handlers reject with
+// ErrNotSupported (msg_server_poc_v2_commit.go:43).
+//
+// Mainnet uses PocV2Enabled=true via the v0.2.x upgrade chain;
+// DefaultParams() leaves it at the Go zero value (false) which is the
+// pre-upgrade legacy. Sim is meant to mirror current mainnet behaviour,
+// so we flip it here.
+func BuildSimGenesisParams() types.Params {
+	params := types.DefaultParams()
+	if params.PocParams != nil {
+		params.PocParams.PocV2Enabled = true
+	}
+	return params
+}
+
 // NumSimGenesisParticipants is the count of sim accounts pre-registered as
 // Participants at sim genesis. The bootstrap helper (bootstrap.go) promotes
 // them into ActiveParticipantsSet[currentEpoch] on first call from any
@@ -73,7 +104,8 @@ const NumSimGenesisParticipants = 5
 // (calculations/status.go) and assigns ACTIVE.
 //
 // Sim-only — no production code change. ActiveParticipantsSet promotion is
-// done lazily by EnsureActiveParticipantsSeeded (bootstrap.go).
+// done lazily by BuildEpochSubstrate (substrate.go) on the first factory
+// call per epoch.
 //
 // Determinism: simState.Accounts is generated from r *rand.Rand by simsx,
 // so the same seed yields the same prefix selection.
@@ -86,8 +118,9 @@ func BuildSimGenesisParticipants(simState *module.SimulationState) []types.Parti
 	for i := 0; i < n; i++ {
 		addr := simState.Accounts[i].Address.String()
 		out = append(out, types.Participant{
-			Index:   addr,
-			Address: addr,
+			Index:        addr,
+			Address:      addr,
+			ValidatorKey: SimValidatorKey(addr),
 		})
 	}
 	return out

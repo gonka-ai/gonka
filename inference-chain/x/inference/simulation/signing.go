@@ -10,7 +10,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// Sim-only signing helpers for Phase 2 first-wave factories.
+// Sim-only signing helpers for the x/inference message factories.
 //
 // The on-chain signature scheme used by `verifyStartFirstMessageKeys`
 // (msg_server_start_inference.go) and `verifyFinishKeys`

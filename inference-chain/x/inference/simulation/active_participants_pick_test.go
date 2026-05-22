@@ -19,7 +19,7 @@ func TestPickRandomActiveSimAccount_PicksFromCurrentEpoch(t *testing.T) {
 	accs := newSimAccounts(t, 4, 5)
 	registerAsParticipants(t, k, ctx, accs)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 0))
-	require.NoError(t, simulation.EnsureActiveParticipantsSeeded(ctx, k))
+	seedActiveParticipantsForTest(t, ctx, k, accs, 0)
 
 	cds := simsx.NewChainDataSource(ctx, rand.New(rand.NewSource(99)),
 		nil, nil, gonkaBech32Codec(), accs...)
@@ -65,8 +65,8 @@ func TestPickRandomActiveSimAccount_DeterministicWithSeed(t *testing.T) {
 	registerAsParticipants(t, k2, ctx2, accs)
 	require.NoError(t, k1.SetEffectiveEpochIndex(ctx1, 0))
 	require.NoError(t, k2.SetEffectiveEpochIndex(ctx2, 0))
-	require.NoError(t, simulation.EnsureActiveParticipantsSeeded(ctx1, k1))
-	require.NoError(t, simulation.EnsureActiveParticipantsSeeded(ctx2, k2))
+	seedActiveParticipantsForTest(t, ctx1, k1, accs, 0)
+	seedActiveParticipantsForTest(t, ctx2, k2, accs, 0)
 
 	const seed = int64(123)
 	cds1 := simsx.NewChainDataSource(ctx1, rand.New(rand.NewSource(seed)),

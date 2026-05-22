@@ -31,6 +31,7 @@ func TestBuildSimGenesisParticipants_PicksN(t *testing.T) {
 	for i, p := range got {
 		require.Equal(t, accs[i].Address.String(), p.Index)
 		require.Equal(t, accs[i].Address.String(), p.Address)
+		require.NotEmpty(t, p.ValidatorKey)
 	}
 }
 

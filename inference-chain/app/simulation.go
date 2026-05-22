@@ -19,6 +19,12 @@ import (
 //   - wasmd v0.54.2: BuildOperationInput uses a failingAddressCodec
 //     rather than the app codec, so all wasm sim ops fail. Fixed in
 //     v0.60.0+ (CosmWasm/wasmd#2250).
+//   - group: x/group's sim ops (SimulateMsgUpdateGroupMembers etc.) pick a
+//     random group and remove/replace members. They cannot tell gonka's
+//     epoch-group x/group groups apart from their own, so they corrupt the
+//     validation groups gonka's epoch flow owns — desyncing them from
+//     EpochGroupData.ValidationWeights. gonka exercises x/group through its
+//     own ops (MsgValidation / revalidation votes), not x/group's stock ops.
 //
 // Originally proposed by hleb-albau in gonka-ai/gonka#995.
 type disabledOpsSimModule struct {

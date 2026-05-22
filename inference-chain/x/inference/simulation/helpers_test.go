@@ -97,6 +97,23 @@ func putStartedInference(t *testing.T, k keeper.Keeper, ctx context.Context, id,
 	}))
 }
 
+// seedActiveParticipantsForTest directly writes ActiveParticipants[epoch]
+// from the given sim accounts, bypassing BuildEpochSubstrate. Used by
+// picker tests that exercise pure read-side picker logic and do not need
+// the substrate's validator-side machinery (real x/staking validators,
+// SetComputeValidators call, etc. — these need a full app sim setup).
+func seedActiveParticipantsForTest(t *testing.T, ctx context.Context, k keeper.Keeper, accs []simtypes.Account, epoch uint64) {
+	t.Helper()
+	aps := make([]*types.ActiveParticipant, 0, len(accs))
+	for _, a := range accs {
+		aps = append(aps, &types.ActiveParticipant{Index: a.Address.String()})
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		Participants: aps,
+	}))
+}
+
 // collectActiveAddrs returns the bech32 addresses in ActiveParticipantsSet
 // for the given epoch, in iteration (collections-sorted) order.
 func collectActiveAddrs(t *testing.T, ctx context.Context, k keeper.Keeper, epoch uint64) []string {

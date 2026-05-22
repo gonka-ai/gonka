@@ -32,6 +32,15 @@ import (
 //     types/inference.go).
 //   - MsgValidation   -> inferences in VALIDATED status, set only by the
 //     passing branch at msg_server_validation.go.
+//   - MsgValidation (failing branch) -> inferences with ProposalDetails
+//     set, populated only by startValidationVoteWithPolicy after a
+//     sub-threshold value drives the inference to VOTING and the two
+//     x/group proposals are submitted (proves the F-1 group-membership
+//     fix in bootstrap.go).
+//   - MsgValidation (revalidation vote) -> inferences in INVALIDATED status,
+//     reachable only when MsgRevalidationVoteFactory drives an x/group
+//     invalidate proposal to quorum and the group module executes the inner
+//     MsgInvalidateInference (msg_server_invalidate_inference.go).
 //
 // Not asserted, by design:
 //   - MsgSubmitNewParticipant is idempotent; sim accounts are already
@@ -44,8 +53,9 @@ import (
 // Both ops are still exercised by the run — they have no state
 // fingerprint to assert on.
 //
-// Seed dispatch mirrors TestFullAppSimulation. Run via `make sim-smoke-test`,
-// which pins -Seed and -GenesisTime (see docs/simulation.md §Reproducibility).
+// Seed dispatch mirrors TestFullAppSimulation. Run via `make sim-smoke-test`
+// or `make sim-full-test`, which pin -Seed and -GenesisTime (see
+// docs/simulation.md §Reproducibility).
 func TestFullSimulation_x_Inference_Integrated(t *testing.T) {
 	if !simcli.FlagEnabledValue {
 		t.Skip("pass -Enabled=true to run this; e.g. via make sim-smoke-test")
@@ -61,7 +71,7 @@ func TestFullSimulation_x_Inference_Integrated(t *testing.T) {
 		infs, err := bApp.InferenceKeeper.GetAllInference(ctx)
 		require.NoError(tb, err)
 
-		var startProcessed, finishProcessed, validated int
+		var startProcessed, finishProcessed, validated, proposed, invalidated int
 		for _, inf := range infs {
 			if inf.AssignedTo != "" {
 				startProcessed++
@@ -72,9 +82,15 @@ func TestFullSimulation_x_Inference_Integrated(t *testing.T) {
 			if inf.Status == inferencetypes.InferenceStatus_VALIDATED {
 				validated++
 			}
+			if inf.ProposalDetails != nil {
+				proposed++
+			}
+			if inf.Status == inferencetypes.InferenceStatus_INVALIDATED {
+				invalidated++
+			}
 		}
-		tb.Logf("x/inference lifecycle: total=%d startProcessed=%d finishProcessed=%d validated=%d",
-			len(infs), startProcessed, finishProcessed, validated)
+		tb.Logf("x/inference lifecycle: total=%d startProcessed=%d finishProcessed=%d validated=%d proposed=%d invalidated=%d",
+			len(infs), startProcessed, finishProcessed, validated, proposed, invalidated)
 
 		require.Positivef(tb, startProcessed,
 			"MsgStartInference never reached SetInference (no inference has AssignedTo set)")
@@ -82,6 +98,32 @@ func TestFullSimulation_x_Inference_Integrated(t *testing.T) {
 			"MsgFinishInference never reached state mutation (no inference has ExecutedBy set)")
 		require.Positivef(tb, validated,
 			"MsgValidation never reached its passing-branch state mutation (no VALIDATED inference)")
+		// proposed > 0 is the real-x/group verification of the failing
+		// MsgValidation path: ProposalDetails is set only after both
+		// group.SubmitProposal calls succeed. It holds for both the smoke
+		// (50x20) and full (500x200) seed-99 configs this test runs under.
+		// testkeeper cannot substitute: its x/group keeper is a gomock mock,
+		// so the real SubmitProposal only runs under the full sim app.
+		require.Positivef(tb, proposed,
+			"failing MsgValidation never created x/group proposals (no inference has ProposalDetails) — "+
+				"the failing-validation factory split or the F-1 group-membership fix is not working")
+		// invalidated > 0 is the x/group *execution* check for the
+		// revalidation path: INVALIDATED is reachable only by the inner
+		// MsgInvalidateInference the group module dispatches once a
+		// revalidation vote drives an invalidate proposal past the 50%
+		// PercentageDecisionPolicy. That quorum must be reached within the
+		// proposal's creation block — the sim's 5000-10000 s/block time step
+		// closes the 4-minute group voting window before the next block. The
+		// smoke config (50x20) delivers too few revalidation votes per block
+		// to reach a 3-of-5 same-block quorum; only the full config
+		// (500x200, make sim-full-test) does. So the assertion is gated on
+		// the full config; the smoke run logs `invalidated` for visibility
+		// but does not require it.
+		if cfg.NumBlocks >= 500 && cfg.BlockSize >= 200 {
+			require.Positivef(tb, invalidated,
+				"no inference reached INVALIDATED — the revalidation-vote factory never drove an "+
+					"x/group invalidate proposal to quorum/execution")
+		}
 	}
 
 	if cfg.Seed != simcli.DefaultSeedValue {

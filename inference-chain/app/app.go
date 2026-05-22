@@ -58,6 +58,7 @@ import (
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	group "github.com/cosmos/cosmos-sdk/x/group"
 	groupkeeper "github.com/cosmos/cosmos-sdk/x/group/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
 	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
@@ -324,8 +325,9 @@ func New(
 	//
 	// NOTE: this is not required apps that don't use the simulator for fuzz testing transactions
 	//
-	// staking/distribution/wasmd weighted ops are disabled - see app/simulation.go
-	// for rationale. Genesis state generation is preserved via Go embedding.
+	// staking/distribution/wasmd/group weighted ops are disabled - see
+	// app/simulation.go for rationale. Genesis state generation is preserved
+	// via Go embedding.
 	mustSimMod := func(name string) module.AppModuleSimulation {
 		sm, ok := app.ModuleManager.Modules[name].(module.AppModuleSimulation)
 		if !ok {
@@ -336,11 +338,13 @@ func New(
 	stakingSimMod := mustSimMod(stakingtypes.ModuleName)
 	distrSimMod := mustSimMod(distrtypes.ModuleName)
 	wasmSimMod := mustSimMod(wasmtypes.ModuleName)
+	groupSimMod := mustSimMod(group.ModuleName)
 	overrideModules := map[string]module.AppModuleSimulation{
 		authtypes.ModuleName:    auth.NewAppModule(app.appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, app.GetSubspace(authtypes.ModuleName)),
 		stakingtypes.ModuleName: disabledOpsSimModule{stakingSimMod},
 		distrtypes.ModuleName:   disabledOpsSimModule{distrSimMod},
 		wasmtypes.ModuleName:    disabledOpsSimModule{wasmSimMod},
+		group.ModuleName:        disabledOpsSimModule{groupSimMod},
 	}
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
