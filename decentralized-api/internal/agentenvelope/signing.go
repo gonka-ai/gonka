@@ -116,21 +116,23 @@ func VerifyPrincipalSig(pk *secp256k1.PubKey, principalAddress string, rawEnvelo
 //	"APS-AGENT-SIG-V1\n" ||
 //	u32_be(len(chain_id))     || chain_id ||
 //	u32_be(len(method))       || method   ||
-//	u32_be(len(path))         || path     ||
+//	u32_be(len(request_uri))  || request_uri ||
 //	u32_be(len(envelope_jcs)) || envelope_jcs ||
 //	u32_be(len(body))         || body
 //
+// request_uri is the full request target, the path together with any query
+// string, so the signature binds the exact endpoint a request was made to.
 // Length prefixes make field boundaries unambiguous: no two distinct field
 // tuples can serialize to the same byte string, which a plain separator could
 // allow. This is the TLS 1.3 transcript and Noise protocol pattern. The body
 // is bounded well below 4 GiB by the body-size limit, so the uint32 length is
 // always exact.
-func AgentSigPayload(chainID, method, path string, envelopeJCS, body []byte) []byte {
+func AgentSigPayload(chainID, method, requestURI string, envelopeJCS, body []byte) []byte {
 	var buf bytes.Buffer
 	buf.WriteString(agentSigDomain)
 	writeLengthPrefixed(&buf, []byte(chainID))
 	writeLengthPrefixed(&buf, []byte(method))
-	writeLengthPrefixed(&buf, []byte(path))
+	writeLengthPrefixed(&buf, []byte(requestURI))
 	writeLengthPrefixed(&buf, envelopeJCS)
 	writeLengthPrefixed(&buf, body)
 	return buf.Bytes()
@@ -147,7 +149,7 @@ func writeLengthPrefixed(buf *bytes.Buffer, b []byte) {
 // length-prefixed payload. The agent key signs the payload directly with pure
 // Ed25519 (RFC 8032), with no SHA-256 prehash: a prehash would be a
 // non-standard construction.
-func VerifyAgentSig(pub ed25519.PublicKey, chainID, method, path string, rawEnvelope, body []byte, sigB64 string) error {
+func VerifyAgentSig(pub ed25519.PublicKey, chainID, method, requestURI string, rawEnvelope, body []byte, sigB64 string) error {
 	sig, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return ErrAgentSigInvalid
@@ -156,7 +158,7 @@ func VerifyAgentSig(pub ed25519.PublicKey, chainID, method, path string, rawEnve
 	if err != nil {
 		return ErrEnvelopeMalformed
 	}
-	payload := AgentSigPayload(chainID, method, path, envelopeJCS, body)
+	payload := AgentSigPayload(chainID, method, requestURI, envelopeJCS, body)
 	if !ed25519.Verify(pub, payload, sig) {
 		return ErrAgentSigInvalid
 	}

@@ -75,7 +75,7 @@ func AgentEnvelopeMiddleware(enabled bool, cfg agentenvelope.Config, maxBodyByte
 			if merr != nil {
 				return mapEnvelopeError(merr)
 			}
-			apsCtx, verr := cfg.Verify(envelopeJSON, sigHdr, req.Method, req.URL.Path, body, model, time.Now().UTC())
+			apsCtx, verr := cfg.Verify(envelopeJSON, sigHdr, req.Method, req.URL.RequestURI(), body, model, time.Now().UTC())
 			if verr != nil {
 				return mapEnvelopeError(verr)
 			}

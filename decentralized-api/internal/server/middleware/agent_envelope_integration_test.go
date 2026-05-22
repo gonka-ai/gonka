@@ -240,6 +240,21 @@ func TestIntegration_BodyMissingModel(t *testing.T) {
 	}
 }
 
+func TestIntegration_QueryStringIsBound(t *testing.T) {
+	e, _ := itServer(t, 10<<20)
+	sr := buildSignedRequest(t, nil) // signs the request URI with no query string
+	// Send the same request to a URL with an extra query string. The agent
+	// signature binds the full request URI, so it must no longer verify.
+	req := httptest.NewRequest(http.MethodPost, itPath+"?injected=1", bytes.NewReader(sr.body))
+	req.Header.Set(headerPassport, sr.passportHeader)
+	req.Header.Set(headerAgentSig, sr.agentSigHeader)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("an unsigned query string should fail verification: code %d, want 401", rec.Code)
+	}
+}
+
 func BenchmarkMiddleware_AbsentHeader(b *testing.B) {
 	e, _ := itServer(b, 10<<20)
 	b.ResetTimer()

@@ -61,11 +61,10 @@ that does not run the middleware.
 allowed, present and empty means no model is allowed, present and non-empty
 restricts to the listed models.
 
-A v1 envelope carries only the fields above. Any additional field is still
-covered by the principal signature and the canonical form, so clients must not
-add extension fields in v1: the JCS canonicalizer is scoped to the string,
-object, and array shapes this schema uses and does not implement full RFC 8785
-number canonicalization. Extension fields are a v2 concern.
+A v1 envelope carries only the fields above. The verifier parses it strictly:
+an envelope with an unknown field, a duplicate member name, or trailing
+content after the envelope object is rejected as malformed. Extension fields
+are a v2 concern.
 
 ## Signing model
 
@@ -81,22 +80,25 @@ payload:
 "APS-AGENT-SIG-V1\n" ||
 u32_be(len(chain_id))     || chain_id ||
 u32_be(len(method))       || method   ||
-u32_be(len(path))         || path     ||
+u32_be(len(request_uri)) || request_uri ||
 u32_be(len(envelope_jcs)) || envelope_jcs ||
 u32_be(len(body))         || body
 ```
 
-The length prefixes make field boundaries unambiguous. The construction
-follows the TLS 1.3 transcript pattern (RFC 8446 section 4.4.1). The agent key
-signs the payload directly with no SHA-256 prehash.
+request_uri is the full request target, the path with any query string, so
+the signature binds the exact endpoint. The length prefixes make field
+boundaries unambiguous. The construction follows the TLS 1.3 transcript
+pattern (RFC 8446 section 4.4.1). The agent key signs the payload directly
+with no SHA-256 prehash.
 
 ## Verification flow
 
-The middleware runs, in order: header presence and base64 decode, envelope
-parse, version, audience, chain id, TTL bound, time window, principal pubkey
-type and decode, address derivation check, agent pubkey type and decode,
-beneficiary validation, ADR-036 principal signature, bounded body read, agent
-signature, model scope. Any failure stops the flow and returns the mapped HTTP
+The middleware runs, in order: header presence and base64 decode, strict
+envelope parse (unknown fields, duplicate member names, and trailing content
+rejected), version, audience, chain id, TTL bound, time window, principal
+pubkey type and decode, address derivation check, agent pubkey type and
+decode, beneficiary validation, ADR-036 principal signature, bounded body
+read, agent signature, model scope. Any failure stops the flow and returns the mapped HTTP
 status. The handler then performs the principal-to-requester binding.
 
 This binding, and the attribution that follows it, happen on the client-facing
