@@ -148,13 +148,13 @@ func (cm *ConfigManager) GetAgentEnvelopeConfig() AgentEnvelopeConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cfg := cm.currentConfig.AgentEnvelope
-	if cfg.MaxTTLSeconds == 0 {
+	if cfg.MaxTTLSeconds <= 0 || cfg.MaxTTLSeconds > MaxAgentEnvelopeTTLSeconds {
 		cfg.MaxTTLSeconds = DefaultAgentEnvelopeMaxTTLSeconds
 	}
 	if cfg.MaxBodySize <= 0 || cfg.MaxBodySize > MaxAgentEnvelopeBodySize {
 		cfg.MaxBodySize = DefaultAgentEnvelopeMaxBodySize
 	}
-	if cfg.AttributionQueueCap == 0 {
+	if cfg.AttributionQueueCap <= 0 || cfg.AttributionQueueCap > MaxAgentEnvelopeQueueCap {
 		cfg.AttributionQueueCap = DefaultAgentEnvelopeAttributionQueueCap
 	}
 	return cfg

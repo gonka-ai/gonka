@@ -105,14 +105,18 @@ func readBoundedBody(c echo.Context, maxBytes int64) ([]byte, error) {
 }
 
 // extractModel pulls the model field from an OpenAI-style request body. The
-// body is part of the signed request, so a body that does not parse is a
-// malformed request, not a scope failure: it returns ErrEnvelopeMalformed
-// rather than an empty model that the scope check would later read as a 403.
+// body is part of the signed request, so a body that does not parse, or that
+// carries no model, is a malformed request rather than a scope failure: it
+// returns ErrEnvelopeMalformed (400) instead of an empty model that the scope
+// check would later read as a 403.
 func extractModel(body []byte) (string, error) {
 	var parsed struct {
 		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", agentenvelope.ErrEnvelopeMalformed
+	}
+	if parsed.Model == "" {
 		return "", agentenvelope.ErrEnvelopeMalformed
 	}
 	return parsed.Model, nil

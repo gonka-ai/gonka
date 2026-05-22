@@ -53,6 +53,14 @@ const (
 	// default. The bound keeps the signed-payload length prefixes well within
 	// uint32 range.
 	MaxAgentEnvelopeBodySize int64 = 1 << 30
+	// MaxAgentEnvelopeTTLSeconds is the hard upper bound for max_ttl_seconds.
+	// A value outside (0, MaxAgentEnvelopeTTLSeconds] falls back to the
+	// default. The bound prevents a negative or overflowing time.Duration.
+	MaxAgentEnvelopeTTLSeconds int64 = 7 * 24 * 3600
+	// MaxAgentEnvelopeQueueCap is the hard upper bound for
+	// attribution_queue_cap. A value outside (0, MaxAgentEnvelopeQueueCap]
+	// falls back to the default, bounding the buffered-channel allocation.
+	MaxAgentEnvelopeQueueCap = 1 << 20
 )
 
 type NatsServerConfig struct {

@@ -33,7 +33,7 @@ func validateAgentEnvelopeConfig(cfg apiconfig.AgentEnvelopeConfig) apiconfig.Ag
 type apsAttributionSink struct{}
 
 func (apsAttributionSink) Emit(ev agentenvelope.AttributionEvent) {
-	logging.Info("APS attribution", types.Inferences,
+	logging.Info("APS inference-start attribution", types.Inferences,
 		"v", ev.Version,
 		"inference_id", ev.InferenceID,
 		"chain_id", ev.ChainID,
@@ -59,15 +59,19 @@ func (apsAttributionSink) Emit(ev agentenvelope.AttributionEvent) {
 func (s *Server) bindAgentEnvelope(reqCtx context.Context, apsCtx *agentenvelope.Context, requesterAddress string) error {
 	principal := apsCtx.Envelope.PrincipalAddress
 	if principal != requesterAddress {
-		// The requester is not the principal. Accept the request only if the
-		// principal granted the requester authz authority on MsgStartInference.
-		pubkey, err := s.authzCache.GetPubKeyForSigner(reqCtx, principal, requesterAddress, apsMsgTypeStartInference)
+		// The requester is not the principal. Accept only if the principal
+		// granted the requester authz authority on MsgStartInference.
+		// GetPubKeyForSigner returns the grantee key when an active grant
+		// exists and an empty string otherwise; only grant existence is used
+		// here. The requester's own signature on the request is validated by
+		// Gonka's existing request-auth path, not by APS.
+		granteePubkey, err := s.authzCache.GetPubKeyForSigner(reqCtx, principal, requesterAddress, apsMsgTypeStartInference)
 		if err != nil {
 			logging.Error("APS authz grantee resolution failed", types.Inferences,
 				"principal", principal, "requester", requesterAddress, "error", err)
 			return echo.NewHTTPError(agentenvelope.ErrChainQueryFailed.HTTPStatus(), agentenvelope.ErrChainQueryFailed.Code())
 		}
-		if pubkey == "" {
+		if granteePubkey == "" {
 			return echo.NewHTTPError(agentenvelope.ErrPrincipalMismatch.HTTPStatus(), agentenvelope.ErrPrincipalMismatch.Code())
 		}
 	}
@@ -79,6 +83,9 @@ func (s *Server) bindAgentEnvelope(reqCtx context.Context, apsCtx *agentenvelope
 // request-bound inference. The emitter is asynchronous and drops on
 // backpressure, so this never blocks the request path.
 func (s *Server) emitAgentAttribution(apsCtx *agentenvelope.Context, inferenceID, model string) {
+	if s.apsEmitter == nil {
+		return
+	}
 	env := apsCtx.Envelope
 	s.apsEmitter.Enqueue(agentenvelope.AttributionEvent{
 		Version:           "aps-attribution-v1",
