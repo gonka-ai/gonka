@@ -223,6 +223,14 @@ func TestIntegration_BodyTooLarge(t *testing.T) {
 	}
 }
 
+func TestIntegration_MalformedBody(t *testing.T) {
+	e, _ := itServer(t, 10<<20)
+	sr := buildSignedRequest(t, nil)
+	if rec := sendIT(e, sr, []byte("{not valid json")); rec.Code != http.StatusBadRequest {
+		t.Errorf("malformed body with an envelope present: code %d, want 400", rec.Code)
+	}
+}
+
 func BenchmarkMiddleware_AbsentHeader(b *testing.B) {
 	e, _ := itServer(b, 10<<20)
 	b.ResetTimer()

@@ -151,7 +151,7 @@ func (cm *ConfigManager) GetAgentEnvelopeConfig() AgentEnvelopeConfig {
 	if cfg.MaxTTLSeconds == 0 {
 		cfg.MaxTTLSeconds = DefaultAgentEnvelopeMaxTTLSeconds
 	}
-	if cfg.MaxBodySize == 0 {
+	if cfg.MaxBodySize <= 0 || cfg.MaxBodySize > MaxAgentEnvelopeBodySize {
 		cfg.MaxBodySize = DefaultAgentEnvelopeMaxBodySize
 	}
 	if cfg.AttributionQueueCap == 0 {

@@ -71,7 +71,11 @@ func AgentEnvelopeMiddleware(enabled bool, cfg agentenvelope.Config, maxBodyByte
 				return err
 			}
 
-			apsCtx, verr := cfg.Verify(envelopeJSON, sigHdr, req.Method, req.URL.Path, body, extractModel(body), time.Now().UTC())
+			model, merr := extractModel(body)
+			if merr != nil {
+				return mapEnvelopeError(merr)
+			}
+			apsCtx, verr := cfg.Verify(envelopeJSON, sigHdr, req.Method, req.URL.Path, body, model, time.Now().UTC())
 			if verr != nil {
 				return mapEnvelopeError(verr)
 			}
@@ -100,15 +104,18 @@ func readBoundedBody(c echo.Context, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
-// extractModel pulls the model field from an OpenAI-style request body. A body
-// that does not parse yields an empty model, which the scope check treats as
-// a model outside any non-empty allowlist.
-func extractModel(body []byte) string {
+// extractModel pulls the model field from an OpenAI-style request body. The
+// body is part of the signed request, so a body that does not parse is a
+// malformed request, not a scope failure: it returns ErrEnvelopeMalformed
+// rather than an empty model that the scope check would later read as a 403.
+func extractModel(body []byte) (string, error) {
 	var parsed struct {
 		Model string `json:"model"`
 	}
-	_ = json.Unmarshal(body, &parsed)
-	return parsed.Model
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", agentenvelope.ErrEnvelopeMalformed
+	}
+	return parsed.Model, nil
 }
 
 // mapEnvelopeError converts a verifier error into an Echo HTTP error. Verify

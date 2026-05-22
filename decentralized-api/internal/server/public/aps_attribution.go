@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 
+	"decentralized-api/apiconfig"
 	"decentralized-api/internal/agentenvelope"
 	"decentralized-api/logging"
 
@@ -13,6 +14,19 @@ import (
 // apsMsgTypeStartInference is the message type an authz grant must cover for a
 // warm-key grantee to act for a developer principal.
 const apsMsgTypeStartInference = "/inference.inference.MsgStartInference"
+
+// validateAgentEnvelopeConfig guards against a misconfigured envelope layer. A
+// verifier enabled with an empty chain_id would reject every envelope with a
+// chain mismatch, so the layer is logged and disabled rather than started in
+// that state. This surfaces the most common operator error at startup instead
+// of at request time.
+func validateAgentEnvelopeConfig(cfg apiconfig.AgentEnvelopeConfig) apiconfig.AgentEnvelopeConfig {
+	if cfg.Enabled && cfg.ChainID == "" {
+		logging.Error("agent_envelope is enabled but chain_id is empty; disabling the envelope layer until it is configured", types.Config)
+		cfg.Enabled = false
+	}
+	return cfg
+}
 
 // apsAttributionSink adapts the agent-envelope attribution emitter to Gonka's
 // structured logging. It is the one place that knows the log field layout.
