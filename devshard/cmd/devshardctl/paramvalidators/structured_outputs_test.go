@@ -77,6 +77,7 @@ func TestStructuredOutputsValidatorEnforcesExactlyOne(t *testing.T) {
 		name string
 		body string
 	}{
+		{name: "empty envelope", body: `{"structured_outputs":{}}`},
 		{name: "zero constraints", body: `{"structured_outputs":{"disable_any_whitespace":true}}`},
 		{name: "two constraints", body: `{"structured_outputs":{"json":{"type":"string"},"regex":"\\d+"}}`},
 		{name: "all six constraints", body: `{"structured_outputs":{"json":{"type":"string"},"regex":"x","choice":["a"],"grammar":"r:a","json_object":true,"structural_tag":"<x/>"}}`},

@@ -95,6 +95,11 @@ func (v StructuredOutputsValidator) Validate(vctx ValidatorContext) error {
 	if !ok {
 		return fmt.Errorf("%w: must be an object", ErrStructuredOutputsShape)
 	}
+	// vLLM merges `response_format` into `structured_outputs` via `dataclasses.replace()`
+	// in chat_completion/protocol.py — the merged dataclass then trips
+	// `StructuredOutputsParams.__post_init__`'s exactly-one rule and surfaces as a 400 with
+	// a leaky pydantic dump that exposes private internal fields (`_backend`, etc.).
+	// Gateway 400 pre-empts the broker round-trip and returns a clean targeted error.
 	if _, conflicts := vctx.Document["response_format"]; conflicts {
 		return fmt.Errorf("%w", ErrStructuredOutputsResponseFormatConflict)
 	}
@@ -112,7 +117,7 @@ func (v StructuredOutputsValidator) Validate(vctx ValidatorContext) error {
 	set := 0
 	setNames := make([]string, 0, len(structuredOutputsConstraintFields))
 	for _, f := range structuredOutputsConstraintFields {
-		if v, ok := obj[f]; ok && v != nil {
+		if value, ok := obj[f]; ok && value != nil {
 			set++
 			setNames = append(setNames, f)
 		}
@@ -196,6 +201,10 @@ func (v StructuredOutputsValidator) validateJSON(value any) error {
 	return nil
 }
 
+// validateRegexString probes the pattern with Go's `regexp.Compile`. This catches
+// malformed patterns and bounds the length, but does NOT detect catastrophic-backtracking
+// shapes that only Python `re` is vulnerable to. Defense-in-depth only — full
+// linear-time guarantee relies on xgrammar's Rust regex on the vLLM side.
 func (v StructuredOutputsValidator) validateRegexString(value any, shapeErr, lenErr, compileErr error) error {
 	s, ok := value.(string)
 	if !ok {
@@ -238,6 +247,10 @@ func (v StructuredOutputsValidator) validateChoice(value any) error {
 // validateGrammar tracks active bracket depth ('(', '[', '{' open; matching close decrements).
 // CVE-2026-25048 PoC is `'(' × 30000` — unmatched opens. Matching closes do not increase risk.
 // Bracket literals inside quoted strings are also counted (false-positive defense-in-depth).
+//
+// MaxGrammarNesting is set defensively at 200 — well below xgrammar's internal 1000 cap
+// (post-CVE-2026-25048 fix in 0.1.32+). Revisit if production traffic legitimately requires
+// deeper EBNF; raising it does not re-introduce the CVE class as long as xgrammar is ≥ 0.1.32.
 func (v StructuredOutputsValidator) validateGrammar(value any) error {
 	s, ok := value.(string)
 	if !ok {
