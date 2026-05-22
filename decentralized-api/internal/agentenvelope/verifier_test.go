@@ -201,6 +201,35 @@ func TestVerify_FieldErrors(t *testing.T) {
 	}
 }
 
+func TestHasDuplicateKeys(t *testing.T) {
+	cases := map[string]struct {
+		json string
+		want bool
+	}{
+		"clean object":          {`{"a":1,"b":2}`, false},
+		"nested clean":          {`{"a":{"x":1},"b":{"x":2}}`, false},
+		"array of objects":      {`[{"a":1},{"a":2}]`, false},
+		"top-level duplicate":   {`{"a":1,"a":2}`, true},
+		"nested duplicate":      {`{"x":{"y":1,"y":2}}`, true},
+		"duplicate after value": {`{"x":{"y":1},"x":2}`, true},
+	}
+	for name, tc := range cases {
+		if got := hasDuplicateKeys([]byte(tc.json)); got != tc.want {
+			t.Errorf("%s: hasDuplicateKeys(%s) = %v, want %v", name, tc.json, got, tc.want)
+		}
+	}
+}
+
+func TestVerify_DuplicateKeyRejected(t *testing.T) {
+	h := newHarness(t)
+	raw, sig := h.sign(h.validEnvelope())
+	// Inject a duplicate "audience" member into the signed envelope JSON.
+	tampered := append([]byte(`{"audience":"injected",`), raw[1:]...)
+	if _, err := h.verify(tampered, sig); err != ErrEnvelopeMalformed {
+		t.Errorf("got %v, want ErrEnvelopeMalformed", err)
+	}
+}
+
 func TestVerify_EnvelopeMalformed(t *testing.T) {
 	h := newHarness(t)
 	if _, err := h.verify([]byte("{not valid json"), ""); err != ErrEnvelopeMalformed {

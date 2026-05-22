@@ -70,7 +70,8 @@ number canonicalization. Extension fields are a v2 concern.
 ## Signing model
 
 The principal signature covers the envelope with `principal_sig` set to the
-empty string, canonicalized with RFC 8785 JCS, wrapped in an ADR-036
+empty string, canonicalized with a JCS canonicalizer (RFC 8785, scoped to the
+string, object, and array shapes this schema uses), wrapped in an ADR-036
 `MsgSignData` document, and signed with the principal's secp256k1 key.
 
 The agent signature is `Ed25519.Sign` over a domain-separated, length-prefixed
@@ -97,6 +98,13 @@ type and decode, address derivation check, agent pubkey type and decode,
 beneficiary validation, ADR-036 principal signature, bounded body read, agent
 signature, model scope. Any failure stops the flow and returns the mapped HTTP
 status. The handler then performs the principal-to-requester binding.
+
+This binding, and the attribution that follows it, happen on the client-facing
+transfer-request path only. A Transfer Agent forwards work to an executor with
+a fixed header set that does not include the APS headers, so executor-hop
+requests carry no envelope and do not participate in APS v1. The verifier also
+rejects an envelope whose JSON contains duplicate member names, since a
+duplicate name is ambiguous at a signature boundary.
 
 HTTP status mapping:
 
@@ -129,12 +137,13 @@ set.
 
 `chain_id` must match this network's chain id; an envelope carrying a
 different chain id is rejected. If the layer is enabled with an empty
-`chain_id`, the node logs an error at startup and the layer stays off, rather
-than rejecting every request or refusing to start: the envelope is opt-in
-metadata and a misconfiguration of it should not take a host down.
-`max_ttl_seconds`, `max_body_size`, and `attribution_queue_cap` are each
-bounded to a sane range; a value outside its range falls back to the default.
-Deriving `chain_id` from the chain node automatically is deferred future work.
+`chain_id` the node refuses to start: a verifier with no chain id would reject
+every envelope, and a misconfigured security and attribution feature should
+fail loudly at startup rather than run silently degraded. `max_ttl_seconds`,
+`max_body_size`, and `attribution_queue_cap` are each bounded to a sane range;
+a value outside its range falls back to the default, since each has a safe
+default whereas `chain_id` has none. Deriving `chain_id` from the chain node
+automatically is deferred future work.
 
 ## Backward compatibility
 

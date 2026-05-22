@@ -15,15 +15,16 @@ import (
 // warm-key grantee to act for a developer principal.
 const apsMsgTypeStartInference = "/inference.inference.MsgStartInference"
 
-// validateAgentEnvelopeConfig guards against a misconfigured envelope layer. A
-// verifier enabled with an empty chain_id would reject every envelope with a
-// chain mismatch, so the layer is logged and disabled rather than started in
-// that state. This surfaces the most common operator error at startup instead
-// of at request time.
+// validateAgentEnvelopeConfig enforces that an enabled envelope layer is
+// configured. A verifier enabled with an empty chain_id would reject every
+// envelope, so an empty chain_id with the layer enabled is a startup
+// misconfiguration: the node refuses to start rather than running with a
+// security and attribution feature that the operator believes is on while it
+// is silently degraded.
 func validateAgentEnvelopeConfig(cfg apiconfig.AgentEnvelopeConfig) apiconfig.AgentEnvelopeConfig {
 	if cfg.Enabled && cfg.ChainID == "" {
-		logging.Error("agent_envelope is enabled but chain_id is empty; disabling the envelope layer until it is configured", types.Config)
-		cfg.Enabled = false
+		logging.Error("agent_envelope.enabled is set but agent_envelope.chain_id is empty", types.Config)
+		panic("agent_envelope: enabled requires a non-empty chain_id (set agent_envelope.chain_id)")
 	}
 	return cfg
 }
