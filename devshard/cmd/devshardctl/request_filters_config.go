@@ -65,6 +65,18 @@ const (
 
 	UserMaxLen             = 512
 	SafetyIdentifierMaxLen = 512
+	
+	StructuredOutputsMaxDepth            = 16
+	StructuredOutputsMaxSize             = 16 * 1024
+	StructuredOutputsMaxNodes            = 128
+	StructuredOutputsMaxBranch           = 16
+	StructuredOutputsMaxEnum             = 256
+	StructuredOutputsMaxPatternLen       = 512
+	StructuredOutputsMaxChoiceEntries    = 256
+	StructuredOutputsMaxChoiceEntryLen   = 1024
+	StructuredOutputsMaxGrammarLen       = 8 * 1024
+	StructuredOutputsMaxGrammarNesting   = 200
+	StructuredOutputsMaxStructuralTagLen = 4 * 1024
 
 	kimiThinkingTokenBudgetDefaultDivisor uint64 = 2
 	kimiThinkingTokenBudgetMax            uint64 = 96_000

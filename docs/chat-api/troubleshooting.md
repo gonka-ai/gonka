@@ -385,6 +385,20 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ---
 
+### #reject-structured_outputs-with-response_format
+
+**What**: HTTP 400 on requests that set BOTH `structured_outputs` and `response_format` — error message `structured_outputs: cannot be combined with response_format`.
+
+**Why**: vLLM 0.20.0 merges `response_format` into `structured_outputs` via `dataclasses.replace()` ([vllm/entrypoints/openai/chat_completion/protocol.py:455-487](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/chat_completion/protocol.py)). The merged dataclass then trips `StructuredOutputsParams.__post_init__`'s exactly-one rule and surfaces as a 400 with a leaky pydantic dump that exposes private internal fields (`_backend`, `_backend_was_auto`, `disable_fallback`). Gateway 400 pre-empts the broker round-trip (no node lock, no quota burn) and returns a clean targeted error. Forward-compat: contract stays stable if vLLM changes merge semantics in a future release.
+
+**When to restore**: never as-is — the conflict is fundamental to vLLM's merge logic. If vLLM ever defines explicit precedence and exposes it as a documented field, the gateway could honor it instead of rejecting.
+
+**Fix (client-side)**: send only one of the two. `response_format` is the OpenAI-standard route for JSON / json_schema outputs; `structured_outputs` is the vLLM-extension route for regex / grammar / choice / structural_tag. If you need both styles, pick the one the rest of your client toolchain understands.
+
+**Captured-requests**: n/a — no captures observed.
+
+---
+
 ### #reject-structured_outputs-kimi
 
 **What**: HTTP 400 on `structured_outputs` when the route resolves to `moonshotai/Kimi-K2.6`. (Other routes accept `structured_outputs` normally.)

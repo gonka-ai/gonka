@@ -901,11 +901,6 @@ func TestNormalizeChatRequestRejectsUnsupportedFields(t *testing.T) {
 			want: "guided_choice",
 		},
 		{
-			name: "structured outputs",
-			body: `{"structured_outputs":{"regex":"[a-z]+"},"messages":[{"role":"user","content":"hello"}]}`,
-			want: "structured_outputs",
-		},
-		{
 			name: "prompt logprobs",
 			body: `{"prompt_logprobs":20,"messages":[{"role":"user","content":"hello"}]}`,
 			want: "prompt_logprobs",
@@ -2510,4 +2505,81 @@ type parameterHandlerFunc func(*RequestFilterContext, VLLMParameter) error
 
 func (f parameterHandlerFunc) Apply(ctx *RequestFilterContext, p VLLMParameter) error {
 	return f(ctx, p)
+}
+
+func TestNormalizeChatRequestRejectsStructuredOutputsForKimi(t *testing.T) {
+	body := `{"model":"moonshotai/Kimi-K2.6","messages":[{"role":"user","content":"hi"}],"structured_outputs":{"json_object":true}}`
+	_, _, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "structured_outputs")
+}
+
+func TestNormalizeChatRequestAcceptsStructuredOutputsForOtherModels(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"structured_outputs":{"json":{"type":"object","properties":{"x":{"type":"string"}}}}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), "Qwen/Test")
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	so, ok := raw["structured_outputs"].(map[string]any)
+	require.True(t, ok, "field must reach the upstream after validation passes")
+	require.Contains(t, so, "json")
+}
+
+func TestNormalizeChatRequestRejectsStructuredOutputsResponseFormatConflict(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"},"structured_outputs":{"json_object":true}}`
+	_, _, err := normalizeChatRequest([]byte(body))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "response_format")
+}
+
+func TestNormalizeChatRequestRejectsStructuredOutputsExactlyOneViolation(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{name: "zero constraints", body: `{"messages":[{"role":"user","content":"hi"}],"structured_outputs":{"disable_any_whitespace":true}}`},
+		{name: "two constraints", body: `{"messages":[{"role":"user","content":"hi"}],"structured_outputs":{"json":{"type":"string"},"regex":"\\d+"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := normalizeChatRequest([]byte(tc.body))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "structured_outputs")
+		})
+	}
+}
+
+func TestNormalizeChatRequestRejectsStructuredOutputsDangerousGrammar(t *testing.T) {
+	bombs := strings.Repeat("(", 201)
+	body := `{"messages":[{"role":"user","content":"hi"}],"structured_outputs":{"grammar":"` + bombs + `"}}`
+	_, _, err := normalizeChatRequest([]byte(body))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "structured_outputs.grammar")
+}
+
+func TestNormalizeChatRequestStructuredOutputsStripsPrivateFields(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"structured_outputs":{"json_object":true,"_backend":"xgrammar","_backend_was_auto":true}}`
+	out, _, err := normalizeChatRequest([]byte(body))
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	so, _ := raw["structured_outputs"].(map[string]any)
+	require.NotContains(t, so, "_backend")
+	require.NotContains(t, so, "_backend_was_auto")
+}
+
+// Locks in that structured_outputs is validated in PreValidation. PostLimits would put
+// validation after max_tokens defaulting / n greedy-sampling rewrite, surfacing schema
+// errors only after irrelevant rewrites have already mutated the request.
+func TestStructuredOutputsCatalogEntryRunsInPreValidationStage(t *testing.T) {
+	var found bool
+	for _, p := range defaultParameterCatalog.parameters {
+		if p.Name != "structured_outputs" {
+			continue
+		}
+		found = true
+		require.NotEmpty(t, p.Rules, "structured_outputs must declare at least one rule")
+		for _, r := range p.Rules {
+			require.Equalf(t, RequestFilterStagePreValidation, r.Stage,
+				"structured_outputs rule must run in PreValidation, got stage %d", r.Stage)
+		}
+	}
+	require.True(t, found, "structured_outputs catalog entry missing")
 }

@@ -750,6 +750,23 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						MaxPatternLen: ResponseFormatMaxPatternLen,
 					},
 				}),
+			newParameter("structured_outputs").
+				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
+					Validator: paramvalidators.StructuredOutputsValidator{
+						RejectedModels:       []string{kimiK26ModelID},
+						MaxDepth:             StructuredOutputsMaxDepth,
+						MaxSize:              StructuredOutputsMaxSize,
+						MaxNodes:             StructuredOutputsMaxNodes,
+						MaxBranch:            StructuredOutputsMaxBranch,
+						MaxEnum:              StructuredOutputsMaxEnum,
+						MaxPatternLen:        StructuredOutputsMaxPatternLen,
+						MaxChoiceEntries:     StructuredOutputsMaxChoiceEntries,
+						MaxChoiceEntryLen:    StructuredOutputsMaxChoiceEntryLen,
+						MaxGrammarLen:        StructuredOutputsMaxGrammarLen,
+						MaxGrammarNesting:    StructuredOutputsMaxGrammarNesting,
+						MaxStructuralTagLen:  StructuredOutputsMaxStructuralTagLen,
+					},
+				}),
 			newParameter("safety_identifier").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models: []string{kimiK26ModelID},
