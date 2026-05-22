@@ -130,6 +130,13 @@ hashes. The emitter drops on a full queue and counts the drops, so logging
 backpressure never stalls a response. v1 attribution is observability
 data, not an on-chain record.
 
+The two content hashes, `request_body_sha256` and `envelope_sha256`, are taken
+over the request as it was received at this node. The inbound body is not the
+body Gonka submits on chain: the inference path rewrites it before computing
+the `MsgStartInference` prompt hash. `request_body_sha256` is therefore an
+ingress integrity reference, not the on-chain prompt hash, and the two are not
+expected to be equal.
+
 ## Configuration
 
 The `agent_envelope` config block: `enabled` (default false), `chain_id`,
@@ -156,6 +163,9 @@ behavior is byte-identical to baseline. The middleware is a passthrough.
 
 - No revocation. A bounded maximum TTL limits the lifetime of a stolen
   envelope; there is no revocation list.
+- Warm-key authz resolution reuses Gonka's existing authz cache. A revoked
+  `x/authz` grant can still resolve for that cache's TTL window. APS inherits
+  this staleness from the shared cache and adds none of its own.
 - The envelope is not bound to a specific host. A passport plus signature pair
   is an agent capability, not a single-host token. The agent signature is per
   request, so a captured request cannot be replayed against a different body,
