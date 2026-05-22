@@ -760,7 +760,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				Handler: SanitizeFloatParameterHandler{StripNonFinite: true},
 			},
 		),
-		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "extra_headers", "thinking_config", "think"},
+		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "cache_key", "extra_headers", "thinking_config", "think"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: StripParameterHandler{}},
 		),
 		// frequency_penalty / presence_penalty share identical rules: catalog clamp
