@@ -56,6 +56,10 @@ Key runtime environment variables:
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
 | `EXPLORER_SERVICE_NAME` | explorer | Service name for explorer upstream |
 | `KEY_NAME` | - | Optional stack key; when set, service names are prefixed as `<KEY_NAME>-*` |
+| `VERSIOND_SERVICE_NAME` | versiond | Service name for devshard/versiond upstream used by `/devshard/*` |
+| `ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES` | false | Set to `true` to serve selected public `/v1/*` query routes from devshard/versiond instead of `decentralized-api`. Defaults to `false` so query routes keep working without standalone devshard. |
+| `PUBLIC_DEVSHARD_ROUTE_PATHS` | built-in list when enabled | Optional space-separated route list used only when `ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES=true`. If unset in that mode, the built-in query route list is used. |
+| `PUBLIC_DEVSHARD_VERSION` | v0.2.12 | Version path prepended when public query routes are served by devshard/versiond |
 | `RESOLVER` | 127.0.0.11 | DNS resolver for dynamic upstream resolution (override if needed) |
 | `PROXY_REAL_IP_FROM` | - | Space-separated trusted proxy CIDRs/IPs for nginx `set_real_ip_from` (for example `172.18.0.1/32`). Empty by default (real IP parsing disabled). |
 | `PROXY_REAL_IP_HEADER` | `X-Forwarded-For` | Header used by nginx `real_ip_header` when trusted proxies are configured. |

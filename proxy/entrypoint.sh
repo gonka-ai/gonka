@@ -17,10 +17,38 @@ export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
 export VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-versiond}
 export VERSIOND_PORT=${VERSIOND_PORT:-8080}
 export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
+export ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES=${ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES:-false}
 export PUBLIC_DEVSHARD_VERSION=${PUBLIC_DEVSHARD_VERSION:-v0.2.12}
-PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT=''
-if [ -z "${PUBLIC_DEVSHARD_ROUTE_PATHS:-}" ]; then
-    PUBLIC_DEVSHARD_ROUTE_PATHS=$PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT
+PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT='
+/v1/status
+/v1/models
+/v1/governance/models
+/v1/governance/models-legacy
+/v1/participants
+/v1/participants/{address}
+/v1/epochs/{epoch}
+/v1/epochs/{epoch}/participants
+/v1/pricing
+/v1/restrictions/status
+/v1/restrictions/exemptions
+/v1/restrictions/exemptions/{id}/usage/{account}
+/v1/versions
+/v1/bls/epoch/{id}
+/v1/bls/epochs/{id}
+/v1/bls/signatures/{request_id}
+/v1/bridge/addresses
+/v1/poc-batches/{epoch}
+/v1/verify-proof
+/v1/verify-block
+/v1/debug/pubkey-to-addr/{pubkey}
+/v1/debug/verify/{height}
+'
+if [ "${ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES}" = "true" ]; then
+    if [ -z "${PUBLIC_DEVSHARD_ROUTE_PATHS:-}" ]; then
+        PUBLIC_DEVSHARD_ROUTE_PATHS=$PUBLIC_DEVSHARD_ROUTE_PATHS_DEFAULT
+    fi
+else
+    PUBLIC_DEVSHARD_ROUTE_PATHS=''
 fi
 export PUBLIC_DEVSHARD_ROUTE_PATHS=${PUBLIC_DEVSHARD_ROUTE_PATHS:-""}
 
@@ -130,6 +158,7 @@ fi
 # streaming, conn-limit, CORS and timeout vars are set).
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     echo "   Versiond Service: $FINAL_VERSIOND_SERVICE:$VERSIOND_PORT"
+    echo "   Public devshard query routes: $ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES"
     export VERSIOND_UPSTREAM="upstream versiond_backend {
         zone versiond_backend 64k;
         server ${FINAL_VERSIOND_SERVICE}:${VERSIOND_PORT} resolve;

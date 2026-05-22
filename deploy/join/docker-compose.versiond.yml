@@ -77,8 +77,10 @@ services:
 
   # Override proxy env so /devshard/* upstream resolves to the sticky router
   # instead of the single canonical versiond. Uses the proxy image from base.
+  # Public /v1 query routes stay on decentralized-api unless explicitly opted in.
   proxy:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+      - ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES=${ENABLE_PUBLIC_DEVSHARD_QUERY_ROUTES:-false}
       - PUBLIC_DEVSHARD_VERSION=${PUBLIC_DEVSHARD_VERSION:-v0.2.12}
