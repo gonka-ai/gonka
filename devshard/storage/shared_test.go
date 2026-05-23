@@ -69,7 +69,7 @@ func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
 	require.Equal(t, uint64(7), meta.EpochID)
 	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
 	require.Equal(t, types.DefaultSealGraceNonces(len(meta.Group)), meta.Config.SealGraceNonces)
-	require.Equal(t, types.DefaultInferenceClearGraceSeconds, meta.Config.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(types.DefaultInferenceClearGraceSeconds), meta.Config.InferenceClearGraceSeconds)
 	require.Equal(t, "creator", meta.CreatorAddr)
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 	require.Len(t, meta.Group, 2)
