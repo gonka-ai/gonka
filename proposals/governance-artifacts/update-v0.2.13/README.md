@@ -6,6 +6,9 @@ The release fixes confirmation PoC reward accounting, devshard escrow params,
 complaint-response authz grants, upstream response parsing, participant
 reactivation, node-manager gRPC defaults, and devshard storage growth.
 
+It also adds a guardian-controlled emergency switch for disabling devshard
+inference requests.
+
 The upgrade also disables confirmation PoC for the rest of the upgrade epoch
 so the new snapshot logic starts cleanly from the next epoch.
 
@@ -33,6 +36,8 @@ Migrations:
 - Sets `DevshardEscrowParams.MaxEscrowsPerEpoch` to `500_000`.
 - Sets `DevshardEscrowParams.MaxNonce` to `1_000_000`. The previous settlement
   path used a hardcoded `20_000` nonce limit.
+- Adds addresses of several early miners and known brokers to
+  `DevshardEscrowParams.AllowedCreatorAddresses`.
 - Sets `GenesisOnlyParams.GenesisGuardianMultiplier` to `0.33334`, reducing
   genesis guardian power from about 34% to about 25% of adjusted voting power
   while early-network protection applies.
@@ -47,10 +52,10 @@ Migrations:
   migrate existing grants, so DAPIs that joined before v0.2.12 could not respond
   to dealer complaints.
 - Disables confirmation PoC triggers for the rest of the upgrade epoch via a
-  grace-epoch `UpgradeProtectionWindow` of 3000 blocks. The new snapshot logic
+  grace-epoch `UpgradeProtectionWindow` of 10000 blocks. The new snapshot logic
   starts from the next epoch.
 - Adds MiniMax-M2.7 (`MiniMaxAI/MiniMax-M2.7`) as a governance model and PoC
-  model config with `PenaltyStartEpoch = 271` (bootstrap activation epoch).
+  model config with `PenaltyStartEpoch = 278` (bootstrap activation epoch).
 - Updates `PocParams.Models[*].WeightScaleFactor` to recalibrate against the
   Qwen-on-B200 reference after the vLLM 0.20.1 release. Kimi was too high on
   B* GPUs. Kimi = Qwen-on-B200 + 10% (top-tier premium), MiniMax = Qwen-on-B200:
@@ -78,12 +83,16 @@ Migrations:
   promotion.
 - Devshard settlement now reads the nonce limit from
   `DevshardEscrowParams.MaxNonce` instead of a hardcoded constant.
+- The upgrade adds addresses of several early miners and known brokers to the
+  devshard creator allowlist without removing existing allowed creator addresses.
 - Genesis guardians held about 34% of adjusted voting power, which made quorum
   hard to reach when they did not vote. The upgrade reduces guardian power to
   about 25% via `GenesisOnlyParams.GenesisGuardianMultiplier = 0.33334` and
   sets the chain-wide governance quorum to `0.25`. Quorum is computed against
   total bonded power; with guardians not voting, this gives an effective 1/3
   quorum among the remaining 75% of voting power (`0.25 / 0.75 = 0.334`).
+- Adds `MsgSetDevshardRequestsEnabled`, a guardian-signed transaction for
+  emergency disabling and re-enabling devshard inference requests.
 
 ### decentralized-api
 

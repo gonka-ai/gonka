@@ -100,6 +100,7 @@ const (
 	DefaultDevshardGroupSize          uint32 = 16
 	DefaultDevshardTokenPrice         uint64 = 1
 	DefaultDevshardMaxNonce           uint32 = 20_000
+	DefaultDevshardRequestsEnabled    bool   = true
 )
 
 // DevshardSealGraceFloor is the floor applied when computing the chain-wide
@@ -343,14 +344,15 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 
 func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	return &DevshardEscrowParams{
-		MinAmount:               DefaultDevshardEscrowMinAmount,
-		MaxAmount:               DefaultDevshardEscrowMaxAmount,
-		MaxEscrowsPerEpoch:      DefaultDevshardMaxEscrowsPerEpoch,
-		GroupSize:               DefaultDevshardGroupSize,
-		AllowedCreatorAddresses: nil,
-		TokenPrice:              DefaultDevshardTokenPrice,
-		MaxNonce:                DefaultDevshardMaxNonce,
-		DefaultSealGraceNonces:              DefaultDevshardSealGraceNonces(DefaultDevshardGroupSize),
+		MinAmount:                         DefaultDevshardEscrowMinAmount,
+		MaxAmount:                         DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:                DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:                         DefaultDevshardGroupSize,
+		AllowedCreatorAddresses:           nil,
+		TokenPrice:                        DefaultDevshardTokenPrice,
+		MaxNonce:                          DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled:           DefaultDevshardRequestsEnabled,
+		DefaultSealGraceNonces:            DefaultDevshardSealGraceNonces(DefaultDevshardGroupSize),
 		DefaultInferenceClearGraceSeconds: DefaultDevshardInferenceClearGraceSeconds,
 	}
 }

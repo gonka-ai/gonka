@@ -14,6 +14,90 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.13", UpgradeName)
 }
 
+func TestSetDevshardApprovedVersionsReplacesV1(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{
+		{
+			Name:   DevshardV1Name,
+			Binary: "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.12/devshardd.zip",
+			Sha256: "15f722444e6545bc787f1ef6d1011557d25a8b05cb9f6aaf1a514349d36d4715",
+		},
+		{
+			Name:   "v2",
+			Binary: "https://example.com/devshardd-v2.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardApprovedVersions(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.DevshardEscrowParams.ApprovedVersions, 2)
+	require.Equal(t, &inferencetypes.DevshardApprovedVersion{
+		Name:   DevshardV1Name,
+		Binary: DevshardV1Binary,
+		Sha256: DevshardV1Sha256,
+	}, got.DevshardEscrowParams.ApprovedVersions[0])
+	require.Equal(t, "v2", got.DevshardEscrowParams.ApprovedVersions[1].Name)
+
+	require.NoError(t, setDevshardApprovedVersions(ctx, k))
+	got, err = k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.DevshardEscrowParams.ApprovedVersions, 2)
+}
+
+func TestSetDevshardApprovedVersionsAppendsV1WhenMissing(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{
+		{
+			Name:   "v2",
+			Binary: "https://example.com/devshardd-v2.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardApprovedVersions(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.DevshardEscrowParams.ApprovedVersions, 2)
+	require.Equal(t, "v2", got.DevshardEscrowParams.ApprovedVersions[0].Name)
+	require.Equal(t, &inferencetypes.DevshardApprovedVersion{
+		Name:   DevshardV1Name,
+		Binary: DevshardV1Binary,
+		Sha256: DevshardV1Sha256,
+	}, got.DevshardEscrowParams.ApprovedVersions[1])
+}
+
+func TestSetDevshardEscrowParamsEnablesRequests(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.DevshardRequestsEnabled = false
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardEscrowParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, MaxEscrowsPerEpoch, got.DevshardEscrowParams.MaxEscrowsPerEpoch)
+	require.Equal(t, MaxNonce, got.DevshardEscrowParams.MaxNonce)
+	require.True(t, got.DevshardEscrowParams.DevshardRequestsEnabled)
+}
+
 func TestSetDevshardEscrowParams_BackfillsDefaultSealGraceNonces(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
@@ -67,6 +151,35 @@ func TestSetDevshardEscrowParams_PreservesExistingDefaultSealGraceNonces(t *test
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Equal(t, customGrace, got.DevshardEscrowParams.DefaultSealGraceNonces)
+}
+
+func TestAddDevshardAllowedCreatorAddressesAppendsOnlyNewAddresses(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	existingAddress := sample.AccAddress()
+	newAddresses := []string{
+		sample.AccAddress(),
+		sample.AccAddress(),
+	}
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.AllowedCreatorAddresses = []string{
+		existingAddress,
+		newAddresses[0],
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, addDevshardAllowedCreatorAddresses(ctx, k, newAddresses))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, append([]string{existingAddress}, newAddresses...), got.DevshardEscrowParams.AllowedCreatorAddresses)
+
+	require.NoError(t, addDevshardAllowedCreatorAddresses(ctx, k, newAddresses))
+	got, err = k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, append([]string{existingAddress}, newAddresses...), got.DevshardEscrowParams.AllowedCreatorAddresses)
 }
 
 func TestBackfillConfirmationWeightScales(t *testing.T) {
@@ -214,7 +327,7 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: -1}, minimax.StatTest.PMismatch)
 	require.Equal(t, &inferencetypes.Decimal{Value: 5, Exponent: -2}, minimax.StatTest.PValueThreshold)
 	require.Equal(t, &inferencetypes.Decimal{Value: 3024, Exponent: -4}, minimax.WeightScaleFactor)
-	require.Equal(t, uint64(271), minimax.PenaltyStartEpoch)
+	require.Equal(t, uint64(278), minimax.PenaltyStartEpoch)
 
 	model, found := k.GetGovernanceModel(ctx, minimaxModelID)
 	require.True(t, found)
@@ -225,6 +338,7 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	require.Equal(t, &inferencetypes.Decimal{Value: 922, Exponent: -3}, model.ValidationThreshold)
 	require.Equal(t, []string{
 		"--enable-auto-tool-choice",
+		"--max-model-len", "180000",
 		"--kv-cache-dtype", "fp8",
 		"--tool-call-parser", "minimax_m2",
 		"--reasoning-parser", "minimax_m2_append_think",

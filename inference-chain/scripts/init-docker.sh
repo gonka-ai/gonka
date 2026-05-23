@@ -226,10 +226,8 @@ kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
 # Disable IAVL fast node: cause failed state sync
 kv app iavl-disable-fastnode true
 
-# Query gas limits (protects from expensive read queries)
+# Query gas limit (protects from expensive read queries)
 kv app query-gas-limit "${QUERY_GAS_LIMIT:-10000000}"
-kv app wasm.query_gas_limit "${WASM_QUERY_GAS_LIMIT:-300000}"
-
 
 # CONFIG_* environment overrides ----------------------------------------------
 (
