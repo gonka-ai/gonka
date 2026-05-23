@@ -37,14 +37,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("resolve route version: %w", err)
 	}
 
-	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
-	if err != nil {
-		return nil, nil, fmt.Errorf("build group: %w", err)
-	}
-
 	escrow, err := cfg.Bridge.GetEscrow(cfg.EscrowID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get escrow: %w", err)
+	}
+
+	group, err := bridge.BuildGroupFromEscrow(escrow)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build group: %w", err)
 	}
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)

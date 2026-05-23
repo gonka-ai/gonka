@@ -771,12 +771,13 @@ data class LocalInferencePair(
                     summary = "some inferences are taking a very long time to respond to, we need a longer expiration",
                     expedited = false,
                     messages = listOf(
-                        proposal
-                    )
-                )
+                        proposal,
+                    ),
+                ),
             ).also {
-                if (it.code != 0)
+                if (it.code != 0) {
                     throw RuntimeException("Transaction failed: code=${it.code}, txhash=${it.txhash}, rawLog=${it.rawLog}")
+                }
             }.getProposalId()!!
             val response = this.makeGovernanceDeposit(proposalId, minDeposit)
             require(response.code == 0) { "Deposit failed: ${response.rawLog}" }
@@ -887,17 +888,43 @@ data class LocalInferencePair(
         return result.joinToString("")
     }
 
+    data class DevshardChatCompletionResult(val httpCode: Int, val body: String)
+
     fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
+        val result = sendChatCompletionWithStatus(proxyUrl, model, prompt, stream)
+        if (result.httpCode !in 200..299) {
+            error("chat completion failed with HTTP ${result.httpCode}: ${result.body}")
+        }
+        return result.body
+    }
+
+    /** Like [sendChatCompletion] but returns the HTTP status (for availability / outage tests). */
+    fun sendChatCompletionWithStatus(
+        proxyUrl: String,
+        model: String,
+        prompt: String,
+        stream: Boolean = false,
+        maxTimeSeconds: Int? = null,
+    ): DevshardChatCompletionResult {
         val body = """{"model":"$model","messages":[{"role":"user","content":"$prompt"}],"max_tokens":100,"stream":$stream}"""
-        val maxTimeSeconds = if (stream) 55 else 30
-        val result = api.executor.exec(listOf(
+        val effectiveMaxTimeSeconds = maxTimeSeconds ?: if (stream) 55 else 30
+        val bodyFile = "/tmp/devshard-chat-${System.nanoTime()}.out"
+        val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl --silent --show-error --fail --connect-timeout 5 --max-time $maxTimeSeconds " +
+            "curl --silent --show-error --connect-timeout 5 --max-time $effectiveMaxTimeSeconds " +
+                "-o $bodyFile -w '%{http_code}' " +
                 "-X POST $proxyUrl/v1/chat/completions " +
                 "-H 'Content-Type: application/json' " +
                 "-d '${body.replace("'", "'\\''")}'"
-        ), null)
-        return result.joinToString("")
+        ), null).joinToString("").trim()
+        val httpCode = raw.toIntOrNull()
+            ?: error("curl did not return an HTTP status code (got ${raw.take(80)})")
+        val responseBody = try {
+            api.executor.exec(listOf("cat", bodyFile), null).joinToString("")
+        } catch (_: Exception) {
+            ""
+        }
+        return DevshardChatCompletionResult(httpCode, responseBody)
     }
 
     fun getDevshardProxyStatus(proxyUrl: String): DevshardProxyStatus {

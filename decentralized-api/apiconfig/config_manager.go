@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cometbft/cometbft/crypto/ed25519"
@@ -30,7 +31,11 @@ type ConfigManager struct {
 	KoanProvider   koanf.Provider
 	WriterProvider WriteCloserProvider
 	sqlDb          SqlDatabase
-	mutex          sync.RWMutex
+	mutex                    sync.RWMutex
+	runtimePublishMu         sync.Mutex
+	runtimePublished         runtimePublishedMarker
+	runtimeParamsBlockHeight atomic.Int64
+	runtimeConfigNotifier    *RuntimeConfigNotifier
 	configDumpPath string
 	sqlitePath     string
 }
@@ -58,12 +63,13 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 	}
 
 	manager := ConfigManager{
-		KoanProvider:   file.Provider(configPath),
-		WriterProvider: NewFileWriteCloserProvider(configPath),
-		sqlDb:          db,
-		mutex:          sync.RWMutex{},
-		configDumpPath: filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
-		sqlitePath:     sqlitePath,
+		KoanProvider:            file.Provider(configPath),
+		WriterProvider:          NewFileWriteCloserProvider(configPath),
+		sqlDb:                   db,
+		mutex:                   sync.RWMutex{},
+		runtimeConfigNotifier:   NewRuntimeConfigNotifier(),
+		configDumpPath:          filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
+		sqlitePath:              sqlitePath,
 	}
 	err := manager.Load()
 	if err != nil {
@@ -288,6 +294,61 @@ type CosmosQueryClient interface {
 	MLNodeVersion(ctx context.Context, req *types.QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*types.QueryGetMLNodeVersionResponse, error)
 }
 
+// SetRuntimeParamsBlockHeight sets params_block_height without notifying (tests only).
+// Production code must use ApplyRuntimeConfigBlockIfChanged.
+func (cm *ConfigManager) SetRuntimeParamsBlockHeight(height int64) {
+	for {
+		cur := cm.runtimeParamsBlockHeight.Load()
+		if height <= cur {
+			return
+		}
+		if cm.runtimeParamsBlockHeight.CompareAndSwap(cur, height) {
+			return
+		}
+	}
+}
+
+func (cm *ConfigManager) RuntimeParamsBlockHeight() int64 {
+	return cm.runtimeParamsBlockHeight.Load()
+}
+
+// RuntimeConfigNotifier returns the broadcast primitive used by GetRuntimeConfig
+// long-poll waiters. Nil only on zero-value ConfigManager used in isolated tests.
+func (cm *ConfigManager) RuntimeConfigNotifier() *RuntimeConfigNotifier {
+	return cm.runtimeConfigNotifier
+}
+
+// EnsureRuntimeConfigNotifier initializes the notifier on zero-value managers (tests).
+func (cm *ConfigManager) EnsureRuntimeConfigNotifier() {
+	if cm.runtimeConfigNotifier == nil {
+		cm.runtimeConfigNotifier = NewRuntimeConfigNotifier()
+	}
+}
+
+// RuntimeConfigSnapshot returns a point-in-time view of all chain-driven runtime
+// params. currentEpochID comes from ChainPhaseTracker (not ConfigManager).
+func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeConfigSnapshot {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	vp := cm.currentConfig.ValidationParams
+	dv := cm.currentConfig.DevshardVersionsCache
+	versions := make([]DevshardVersion, len(dv.Versions))
+	copy(versions, dv.Versions)
+
+	return RuntimeConfigSnapshot{
+		ParamsBlockHeight:                 cm.runtimeParamsBlockHeight.Load(),
+		CurrentEpochID:                    currentEpochID,
+		LogprobsMode:                      vp.LogprobsMode,
+		DevshardRequestsEnabled:           dv.DevshardRequestsEnabled,
+		DefaultSealGraceNonces:            dv.DefaultSealGraceNonces,
+		DefaultInferenceClearGraceSeconds: dv.DefaultInferenceClearGraceSeconds,
+		MaxNonce:                          dv.MaxNonce,
+		ApprovedVersions:                  versions,
+		ServedAt:                          time.Now(),
+	}
+}
+
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
@@ -345,7 +406,20 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 func (cm *ConfigManager) SetDevshardVersions(cache DevshardVersionsCache) {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
+	prev := cm.currentConfig.DevshardVersionsCache.DevshardRequestsEnabled
 	cm.currentConfig.DevshardVersionsCache = cache
+	if prev != cache.DevshardRequestsEnabled {
+		logging.Info("runtime_config: devshard_requests_enabled updated from chain", types.Config,
+			"previous", prev,
+			"current", cache.DevshardRequestsEnabled,
+		)
+	} else {
+		logging.Debug("runtime_config: devshard escrow cache refreshed", types.Config,
+			"devshardRequestsEnabled", cache.DevshardRequestsEnabled,
+			"maxNonce", cache.MaxNonce,
+			"approvedVersions", len(cache.Versions),
+		)
+	}
 }
 
 func (cm *ConfigManager) GetDevshardVersions() DevshardVersionsCache {

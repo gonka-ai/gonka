@@ -2,7 +2,6 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.Consumer.Companion.create
 import com.productscience.data.AppState
 import com.productscience.data.Spec
 import com.productscience.data.UnfundedInferenceParticipant
@@ -22,6 +21,12 @@ import kotlin.io.path.deleteRecursively
 import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
+
+private const val VERSIOND_COMPOSE_FILE = "docker-compose.versiond.yml"
+
+/** True when this pair's compose stack includes the versiond overlay (devshardd / VersiondTests). */
+private fun DockerGroup.usesVersiondOverlay(): Boolean =
+    composeFiles.any { it.endsWith(VERSIOND_COMPOSE_FILE) }
 
 /**
  * Retry container lookup with exponential backoff.
@@ -187,17 +192,29 @@ data class DockerGroup(
             composeArgs.addAll(listOf("-f", file))
         }
         composeArgs.addAll(listOf("--project-directory", workingDirectory))
-        composeArgs.addAll(listOf("up", "-d"))
         val baseArgs = composeArgs.toImmutableList()
-        if (!isGenesis) {
-            // This will allow us to get our consensus key and add the participant BEFORE we launch the API
-            composeArgs.add("chain-node")
+        if (isGenesis && usesVersiondOverlay()) {
+            // versiond stacks start api with chain-node in one `up -d`; api init-docker.sh
+            // often exits before genesis creates the cold key. Boot chain-node first, then
+            // the rest. Default genesis tests (no versiond overlay) keep the original path.
+            Logger.info("Genesis + versiond overlay: starting chain-node before full stack", "")
+            dockerProcess(*(baseArgs + listOf("up", "-d", "chain-node")).toTypedArray()).start().waitFor()
+            waitForColdKeyInNodeContainer()
+            coldAccountPubkey = extractColdPubkeyFromNodeContainer()
+            Logger.info("Genesis cold ACCOUNT_PUBKEY extracted for api startup", "")
+            dockerProcess(*(baseArgs + listOf("up", "-d")).toTypedArray()).start().waitFor()
+        } else {
+            composeArgs.addAll(listOf("up", "-d"))
+            if (!isGenesis) {
+                // This will allow us to get our consensus key and add the participant BEFORE we launch the API
+                composeArgs.add("chain-node")
+            }
+            val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
+            val process = dockerProcess.start()
+            process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
+            process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
+            process.waitFor()
         }
-        val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
-        val process = dockerProcess.start()
-        process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
-        process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
-        process.waitFor()
         if (!isGenesis) {
             Thread.sleep(Duration.ofSeconds(10))
 
@@ -236,8 +253,14 @@ data class DockerGroup(
             dockerProcess(*startRemainingArgs.toTypedArray()).start().waitFor()
             Thread.sleep(Duration.ofSeconds(10))
         }
-        // Just register the log events
-        getLocalInferencePairs(config)
+        if (isGenesis && usesVersiondOverlay()) {
+            ensureGenesisApiRunning()
+        }
+        // Just register the log events. Skip while versiond genesis is still settling —
+        // initializeCluster will discover pairs after RPC readiness.
+        if (!(isGenesis && usesVersiondOverlay())) {
+            getLocalInferencePairs(config)
+        }
         print(
             "Genesis overrides file: $genesisOverridesFile | content: ${
                 Files.readString(
@@ -248,6 +271,78 @@ data class DockerGroup(
                 )
             }"
         )
+    }
+
+    private fun waitForColdKeyInNodeContainer(timeout: Duration = Duration.ofMinutes(3)) {
+        val nodeContainer = "$pairName-node"
+        val keyringBackend = if (isGenesis) "test" else "file"
+        val deadline = System.nanoTime() + timeout.toNanos()
+        while (System.nanoTime() < deadline) {
+            val check = ProcessBuilder(
+                "docker", "exec", nodeContainer,
+                "inferenced", "keys", "show", coldKeyName,
+                "--keyring-backend", keyringBackend,
+                "--keyring-dir", "/root/.inference",
+            ).redirectErrorStream(true).start()
+            if (check.waitFor() == 0) {
+                Logger.info("Cold key '{}' available in {}", coldKeyName, nodeContainer)
+                return
+            }
+            Thread.sleep(Duration.ofSeconds(2))
+        }
+        error("Cold key '$coldKeyName' not found in $nodeContainer within ${timeout.seconds}s")
+    }
+
+    /** Reads the genesis cold pubkey from chain-node for ACCOUNT_PUBKEY (api init-docker.sh). */
+    private fun extractColdPubkeyFromNodeContainer(): String {
+        val nodeContainer = "$pairName-node"
+        val keyringBackend = if (isGenesis) "test" else "file"
+        val proc = ProcessBuilder(
+            "docker", "exec", nodeContainer,
+            "sh", "-c",
+            "inferenced keys show \"$coldKeyName\" --pubkey --keyring-backend $keyringBackend " +
+                "--keyring-dir /root/.inference | jq -r '.key'",
+        ).redirectErrorStream(true).start()
+        val pubkey = proc.inputStream.bufferedReader().readText().trim()
+        if (proc.waitFor() != 0 || pubkey.isEmpty()) {
+            error("Failed to read cold pubkey from $nodeContainer (exit=${proc.exitValue()}, out=$pubkey)")
+        }
+        return pubkey
+    }
+
+    /** Restart genesis-api if init-docker.sh exited before the shared key existed. */
+    internal fun ensureGenesisApiRunning() {
+        val apiContainer = "$pairName-api"
+        if (dockerContainerRunning(apiContainer)) {
+            return
+        }
+        if (coldAccountPubkey == null) {
+            coldAccountPubkey = extractColdPubkeyFromNodeContainer()
+        }
+        Logger.warn("API container {} not running; recreating with ACCOUNT_PUBKEY", apiContainer)
+        val composeArgs = mutableListOf("compose", "-p", pairName)
+        composeFiles.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d", "--force-recreate", "api"))
+        dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
+        val deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos()
+        while (System.nanoTime() < deadline) {
+            if (dockerContainerRunning(apiContainer)) {
+                return
+            }
+            Thread.sleep(Duration.ofSeconds(2))
+        }
+        error("$apiContainer did not stay running (check: docker logs $apiContainer)")
+    }
+
+    private fun dockerContainerRunning(containerName: String): Boolean {
+        val proc = ProcessBuilder("docker", "inspect", "-f", "{{.State.Running}}", containerName)
+            .redirectErrorStream(true)
+            .start()
+        val out = proc.inputStream.bufferedReader().readText().trim()
+        proc.waitFor()
+        return proc.exitValue() == 0 && out == "true"
     }
 
     fun tearDownExisting() {
@@ -338,7 +433,7 @@ data class DockerGroup(
 
             // Test-supplied extras applied last so they override defaults.
             // DevshardStandaloneTests uses this to set VERSIOND_BINARY_NAME,
-            // VERSIOND_FORCE, VERSIOND_OVERRIDE_v0_2_11, VERSIOND_SERVICE_NAME.
+            // VERSIOND_FORCE, VERSIOND_OVERRIDE_dev, VERSIOND_SERVICE_NAME (override tests).
             putAll(config.additionalEnvVars)
         }
     }
@@ -521,6 +616,9 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
             }
             Thread.sleep(1000)
         }
+        if (genesisGroup.usesVersiondOverlay()) {
+            genesisGroup.ensureGenesisApiRunning()
+        }
         val genesisPair = getLocalInferencePairs(config)
             .firstOrNull { it.name == genesisGroup.pairName || it.name == "/${genesisGroup.pairName}" }
             ?: error("Could not find local inference pair for keyName=${genesisGroup.pairName}")
@@ -617,6 +715,7 @@ data class LocalCluster(
     val joinPairs: List<LocalInferencePair>,
 ) {
     val allPairs = listOf(genesis) + joinPairs
+
     fun withAdditionalJoin(joinCount: Int = 1): LocalCluster {
         val currentMaxJoin = this.joinPairs.size
         val newMaxJoin = currentMaxJoin + joinCount
@@ -627,7 +726,7 @@ data class LocalCluster(
                     iteration = it * 10,
                     genesisUrls = GenesisUrls(this.genesis.name.trimStart('/')),
                     config = this.genesis.config,
-                    useSnapshots = true
+                    useSnapshots = true,
                 )
             }
         newJoinGroups.forEach { it.tearDownExisting() }
@@ -636,7 +735,7 @@ data class LocalCluster(
     }
 
     fun withConsumer(name: String, action: (Consumer) -> Unit) {
-        val consumer = create(this, name)
+        val consumer = Consumer.create(this, name)
         try {
             action(consumer)
         } finally {
@@ -647,14 +746,12 @@ data class LocalCluster(
     fun waitForMlNodesToLoad() {
         Logger.info("Waiting for ML nodes to load", "")
         allPairs.forEach { pair -> pair.waitForMlNodesToLoad() }
-        error("Timeout waiting for ML nodes to load")
     }
 }
 
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
     companion object {
         fun create(localCluster: LocalCluster, name: String): Consumer {
-            // TODO: Add Kube creation
             val newConfig = localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName)
             val dockerExec = DockerExecutor(
                 name,
@@ -664,10 +761,9 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
                 newConfig,
                 LogOutput(name, "consumer"),
                 dockerExec,
-                listOf()
+                listOf(),
             )
             cli.createContainer(doNotStartChain = true)
-            // PRTODO: This needs to use the file? Or override the test
             val newKey = cli.createKey(name)
             localCluster.genesis.api.addUnfundedInferenceParticipant(
                 UnfundedInferenceParticipant(
@@ -675,10 +771,9 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
                     listOf(),
                     "",
                     newKey.pubkey.key,
-                    newKey.address
-                )
+                    newKey.address,
+                ),
             )
-            // Need time to make sure consumer is added
             localCluster.genesis.node.waitForNextBlock(2)
             return Consumer(
                 name = name,

@@ -9,10 +9,7 @@
 // block queue, no config sync, no NodeManager gRPC server, no NATS, and no
 // transaction manager. devshardd never writes to mainnet.
 //
-// TODO(devshard): when devshardd moves under the devshard/ module, replace the
-// dapi-owned chainParamsProvider/AvailabilityTracker wiring with a devshard-owned
-// mainnet params snapshot. The current shape is temporary while devshardd reuses
-// dapi internals.
+// Runtime params come from dapi NodeManager long-poll (runtimeconfig) only.
 //
 // Versiond's process manager invokes this binary with `--port <N>` and
 // `--data-dir <PATH>` as its contract (see versioned/internal/process/manager.go).
@@ -32,7 +29,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -43,7 +39,6 @@ import (
 
 	igniteclient "github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/labstack/echo/v4"
-	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -115,8 +110,6 @@ func main() {
 		log.Fatalf("devshard signer: %v", err)
 	}
 
-	br := internaldevshard.NewChainBridge(recorder)
-
 	nmAddr := envOr("NODE_MANAGER_ADDR", "localhost:9400")
 	slog.Info("nodemanager", "addr", nmAddr)
 	mlClient, err := mlnodeclient.NewClient(nmAddr)
@@ -138,7 +131,16 @@ func main() {
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
-	chainParams := newChainParamsProvider(ctx, recorder, availabilityTracker)
+	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker)
+	if err != nil {
+		log.Fatalf("runtime params provider: %v", err)
+	}
+	chainParams := paramsSetup.Provider
+
+	br := internaldevshard.NewChainBridgeWithDefaults(
+		recorder,
+		internaldevshard.NewRuntimeConfigDefaults(chainParams),
+	)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
@@ -165,6 +167,10 @@ func main() {
 	}
 	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainParams)
 	defer store.Close()
+	if paramsSetup.RegisterEpochPrune != nil {
+		cancelEpochPrune := paramsSetup.RegisterEpochPrune(store)
+		defer cancelEpochPrune()
+	}
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeVersion(runtimeVersion), br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
@@ -320,91 +326,6 @@ func newIgniteClient(ctx context.Context, nodeConfig apiconfig.ChainNodeConfig) 
 	}
 
 	return &c, nil
-}
-
-// chainParamsProvider implements internaldevshard.ChainParamsProvider and
-// devshardstorage.EpochProvider for the standalone devshardd binary. It
-// queries chain params + the latest epoch on construction and refreshes in
-// the background every 60s so long-lived processes pick up governance changes
-// (and so the storage pruner advances even when the host is quiet) without a
-// restart.
-type chainParamsProvider struct {
-	mu           sync.Mutex
-	logprobsMode string
-	currentEpoch uint64
-	availability *devshardpkg.AvailabilityTracker
-}
-
-func newChainParamsProvider(ctx context.Context, recorder internaldevshard.PayloadAuthClient, availability *devshardpkg.AvailabilityTracker) *chainParamsProvider {
-	p := &chainParamsProvider{logprobsMode: chaintypes.DefaultLogprobsMode, availability: availability}
-
-	refresh := func() {
-		qc := recorder.NewInferenceQueryClient()
-		var requestsEnabled *bool
-		resp, err := qc.Params(ctx, &chaintypes.QueryParamsRequest{})
-		if err != nil {
-			slog.Warn("failed to query chain params, keeping current values", "error", err)
-		} else {
-			mode := resp.Params.ValidationParams.GetLogprobsMode()
-			if mode == "" {
-				mode = chaintypes.DefaultLogprobsMode
-			}
-			if resp.Params.DevshardEscrowParams != nil {
-				enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
-				requestsEnabled = &enabled
-			}
-			p.mu.Lock()
-			if mode != p.logprobsMode {
-				slog.Info("logprobs_mode updated from chain", "old", p.logprobsMode, "new", mode)
-				p.logprobsMode = mode
-			}
-			p.mu.Unlock()
-		}
-
-		epochResp, eErr := qc.EpochInfo(ctx, &chaintypes.QueryEpochInfoRequest{})
-		if eErr != nil {
-			slog.Warn("failed to query current epoch", "error", eErr)
-			return
-		}
-		idx := epochResp.LatestEpoch.Index
-		p.mu.Lock()
-		if idx != p.currentEpoch {
-			p.currentEpoch = idx
-		}
-		p.mu.Unlock()
-		if requestsEnabled != nil && p.availability != nil {
-			p.availability.Record(*requestsEnabled, time.Now().Unix(), idx)
-		}
-	}
-
-	refresh()
-
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refresh()
-			}
-		}
-	}()
-
-	return p
-}
-
-func (p *chainParamsProvider) LogprobsMode() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.logprobsMode
-}
-
-func (p *chainParamsProvider) CurrentEpochID() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentEpoch
 }
 
 func envOr(key, fallback string) string {

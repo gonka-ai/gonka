@@ -60,6 +60,37 @@ func (b *mockBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byt
 
 var _ bridge.MainnetBridge = (*mockBridge)(nil)
 
+type countingBridge struct {
+	escrow         *bridge.EscrowInfo
+	getEscrowCalls int
+}
+
+func (b *countingBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	b.getEscrowCalls++
+	return b.escrow, nil
+}
+
+func (b *countingBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	return &bridge.HostInfo{Address: address, URL: "http://localhost"}, nil
+}
+
+func (b *countingBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, bridge.ErrNotImplemented
+}
+
+func (b *countingBridge) VerifyWarmKey(string, string) (bool, error) { return false, nil }
+
+func (b *countingBridge) OnEscrowCreated(bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
+func (b *countingBridge) OnSettlementProposed(string, []byte, uint64) error {
+	return bridge.ErrNotImplemented
+}
+func (b *countingBridge) OnSettlementFinalized(string) error { return bridge.ErrNotImplemented }
+func (b *countingBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
+	return bridge.ErrNotImplemented
+}
+
+var _ bridge.MainnetBridge = (*countingBridge)(nil)
+
 type payloadEntry struct {
 	prompt   []byte
 	response []byte
@@ -623,6 +654,38 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 	srv2, err := mgr.getOrCreate("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, srv, srv2)
+}
+
+func TestHostManager_CreateCallsGetEscrowOnce(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, s := range hosts {
+		addresses[i] = s.Address()
+	}
+
+	br := &countingBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-new",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), types.DefaultStateRootVersion, br, nil, nil)
+	mgr.SetReady()
+
+	srv, err := mgr.getOrCreate("escrow-new")
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	require.Equal(t, 1, br.getEscrowCalls, "host bind must query escrow once per create")
+	require.Len(t, srv.Host().Group(), 3)
 }
 
 func TestGetOrCreate_RecoversExistingStoredSession(t *testing.T) {

@@ -3,9 +3,10 @@
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= $(VERSION)
-BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 
@@ -36,6 +37,7 @@ define DOCKER_BUILD
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
@@ -53,6 +55,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \

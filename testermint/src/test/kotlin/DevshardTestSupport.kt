@@ -44,6 +44,42 @@ fun LocalInferencePair.waitForDevshardProxyWarmup(delay: Duration = devshardProx
     Thread.sleep(delay.toMillis())
 }
 
+/**
+ * Poll chat completions until versiond returns HTTP 503 (devshard requests disabled on chain).
+ * Use after a governance proposal that sets devshard_requests_enabled=false.
+ */
+fun LocalInferencePair.waitForDevshardCompletionRejected(
+    escrowModelId: String,
+    proxyUrl: String,
+    timeoutMs: Long = 60_000L,
+    pollIntervalMs: Long = 2_000L,
+    requestTimeoutSeconds: Int = 8,
+): Boolean {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val resp = try {
+            sendChatCompletionWithStatus(
+                proxyUrl,
+                escrowModelId,
+                "devshard-rejected-poll",
+                maxTimeSeconds = requestTimeoutSeconds,
+            )
+        } catch (e: IllegalStateException) {
+            // PoC / ML backlog can hang completions; connection errors after dapi restart — retry.
+            if (e.message?.contains("curl") == true) {
+                null
+            } else {
+                throw e
+            }
+        }
+        if (resp?.httpCode == 503) {
+            return true
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    return false
+}
+
 fun LocalInferencePair.waitForDevshardPreFinalize(delay: Duration = devshardPreFinalizeDelay) {
     logSection("Waiting before finalization")
     Thread.sleep(delay.toMillis())
@@ -102,10 +138,37 @@ fun LocalCluster.stubDevshardChatResponse(
     }
 }
 
+/**
+ * Genesis cold wallet starts with little liquid ngonka; rewards arrive at [EpochStage.CLAIM_REWARDS].
+ * [waitForNextInferenceWindow] often skips that stage mid-epoch, so fund users only after balance is sufficient.
+ */
+fun LocalInferencePair.ensureGenesisSpendableForDevshard(
+    minBalance: Long,
+    maxAttempts: Int = 4,
+) {
+    repeat(maxAttempts) { attempt ->
+        val balance = node.getSelfBalance(config.denom)
+        if (balance >= minBalance) {
+            return
+        }
+        logSection(
+            "Genesis balance $balance < $minBalance; waiting for CLAIM_REWARDS " +
+                "(attempt ${attempt + 1}/$maxAttempts)",
+        )
+        waitForStage(EpochStage.CLAIM_REWARDS)
+        Thread.sleep(2_000)
+    }
+    val balance = node.getSelfBalance(config.denom)
+    check(balance >= minBalance) {
+        "Genesis cold account needs at least $minBalance${config.denom} for bank send; balance=$balance"
+    }
+}
+
 fun LocalInferencePair.createFundedDevshardUser(
     userKeyName: String,
     fundAmount: Long = 10_000_000_000L,
 ): DevshardTestUser {
+    ensureGenesisSpendableForDevshard(fundAmount)
     logSection("Creating separate user account")
     val userKey = node.createKey(userKeyName)
     val transferResp = submitTransaction(
