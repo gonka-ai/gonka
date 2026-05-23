@@ -79,10 +79,12 @@ func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epo
 	}
 
 	var reason string
+	var oldEpoch uint64
 	switch {
 	case !cm.runtimePublished.initialized:
 		reason = "initial_publish"
 	case cm.runtimePublished.epochID != epochID:
+		oldEpoch = cm.runtimePublished.epochID
 		reason = "epoch_change"
 	default:
 		reason = "param_change"
@@ -105,6 +107,9 @@ func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epo
 	}
 	if cm.runtimeConfigNotifier != nil {
 		cm.runtimeConfigNotifier.Notify()
+	}
+	if reason == "epoch_change" {
+		cm.notifyEpochChange(oldEpoch, epochID)
 	}
 	logging.Debug("runtime_config: published revision", types.Config,
 		"blockHeight", blockHeight,

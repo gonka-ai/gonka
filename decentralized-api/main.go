@@ -258,8 +258,12 @@ func main() {
 		if storeErr != nil {
 			logging.Error("devshard storage init failed", types.System, "error", storeErr)
 		} else {
-			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, 30*time.Second, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
+			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
 			defer devshardStore.Close()
+
+			configManager.SetEpochChangeHandler(func(_, _ uint64) {
+				go devshardStore.PruneOnce(ctx)
+			})
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))

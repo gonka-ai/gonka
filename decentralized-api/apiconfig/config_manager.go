@@ -27,17 +27,19 @@ import (
 )
 
 type ConfigManager struct {
-	currentConfig  Config
-	KoanProvider   koanf.Provider
-	WriterProvider WriteCloserProvider
-	sqlDb          SqlDatabase
+	currentConfig            Config
+	KoanProvider             koanf.Provider
+	WriterProvider           WriteCloserProvider
+	sqlDb                    SqlDatabase
 	mutex                    sync.RWMutex
 	runtimePublishMu         sync.Mutex
 	runtimePublished         runtimePublishedMarker
 	runtimeParamsBlockHeight atomic.Int64
 	runtimeConfigNotifier    *RuntimeConfigNotifier
-	configDumpPath string
-	sqlitePath     string
+	epochOnChangeMu          sync.Mutex
+	epochOnChange            EpochChangeListener // optional; set once at process startup
+	configDumpPath           string
+	sqlitePath               string
 }
 
 type WriteCloserProvider interface {
@@ -63,13 +65,13 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 	}
 
 	manager := ConfigManager{
-		KoanProvider:            file.Provider(configPath),
-		WriterProvider:          NewFileWriteCloserProvider(configPath),
-		sqlDb:                   db,
-		mutex:                   sync.RWMutex{},
-		runtimeConfigNotifier:   NewRuntimeConfigNotifier(),
-		configDumpPath:          filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
-		sqlitePath:              sqlitePath,
+		KoanProvider:          file.Provider(configPath),
+		WriterProvider:        NewFileWriteCloserProvider(configPath),
+		sqlDb:                 db,
+		mutex:                 sync.RWMutex{},
+		runtimeConfigNotifier: NewRuntimeConfigNotifier(),
+		configDumpPath:        filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
+		sqlitePath:            sqlitePath,
 	}
 	err := manager.Load()
 	if err != nil {

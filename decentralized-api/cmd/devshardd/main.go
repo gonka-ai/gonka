@@ -165,7 +165,7 @@ func main() {
 	} else if migrated > 0 {
 		slog.Info("devshardd legacy migration complete", "sessions_migrated", migrated)
 	}
-	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainParams)
+	store := devshardstorage.NewManagedStorage(inner, 3, chainParams)
 	defer store.Close()
 	if paramsSetup.RegisterEpochPrune != nil {
 		cancelEpochPrune := paramsSetup.RegisterEpochPrune(store)

@@ -53,9 +53,9 @@ devshardd:
 
 **`RuntimeConfig` snapshot fields:** `params_block_height`, `current_epoch_id`, `logprobs_mode`, `devshard_requests_enabled`, seal/clear grace defaults, `max_nonce`, `approved_versions`, `served_at_unix`.
 
-**Consumers:** standalone **devshardd** (`runtimeconfig` provider); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no gRPC loop). **Epoch change** on devshardd triggers `store.PruneOnce` via `OnEpochChange`.
+**Consumers:** standalone **devshardd** (`runtimeconfig` provider); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no gRPC loop). **Epoch change** triggers `ManagedStorage.PruneOnce` (devshardd via `runtimeconfig.OnEpochChange`; embedded dapi via `ConfigManager.SetEpochChangeHandler` on the same publish path). No 30s storage prune ticker.
 
-**Idle cost:** when the chain is quiet, devshardd gets at most one RPC per `max_wait` (~1/min with a 60s cap) — not a repeating `QueryParams` interval on the devshard side.
+**Idle cost:** when the chain is quiet, devshardd gets at most one RPC per `max_wait` (~1/min with a 60s cap) — not a repeating `QueryParams` or epoch-db poll on the devshard side.
 
 ---
 
