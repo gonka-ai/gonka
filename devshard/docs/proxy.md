@@ -64,10 +64,28 @@ No request body needed. Response is the settlement payload ready for `inferenced
 Returns current session state.
 
 ```json
-{"escrow_id":"42","nonce":15,"phase":"active","balance":5000000000}
+{
+  "escrow_id": "42",
+  "nonce": 15,
+  "phase": "active",
+  "balance": 5000000000,
+  "config": {
+    "refusal_timeout": 60,
+    "execution_timeout": 1200,
+    "token_price": 1,
+    "create_devshard_fee": 10000,
+    "fee_per_nonce": 1000,
+    "vote_threshold": 8,
+    "validation_rate": 5000,
+    "seal_grace_nonces": 160,
+    "inference_clear_grace_seconds": 120
+  }
+}
 ```
 
 Phase values: `active`, `finalizing`, `settlement`.
+
+`config` mirrors the session's frozen `SessionConfig`, including the paired seal-grace gates (`seal_grace_nonces`, `inference_clear_grace_seconds`).
 
 ## OpenAI Python SDK
 

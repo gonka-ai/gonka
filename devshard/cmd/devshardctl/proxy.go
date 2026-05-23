@@ -527,8 +527,9 @@ type statusSessionConfig struct {
 	CreateDevshardFee uint64 `json:"create_devshard_fee"`
 	FeePerNonce       uint64 `json:"fee_per_nonce"`
 	VoteThreshold     uint32 `json:"vote_threshold"`
-	ValidationRate    uint32 `json:"validation_rate"`
-	SealGraceNonces   uint32 `json:"seal_grace_nonces"`
+	ValidationRate             uint32 `json:"validation_rate"`
+	SealGraceNonces            uint32 `json:"seal_grace_nonces"`
+	InferenceClearGraceSeconds uint32 `json:"inference_clear_grace_seconds"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -645,8 +646,9 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 			CreateDevshardFee: cfg.CreateDevshardFee,
 			FeePerNonce:       cfg.FeePerNonce,
 			VoteThreshold:     cfg.VoteThreshold,
-			ValidationRate:    cfg.ValidationRate,
-			SealGraceNonces:   cfg.SealGraceNonces,
+			ValidationRate:             cfg.ValidationRate,
+			SealGraceNonces:            cfg.SealGraceNonces,
+			InferenceClearGraceSeconds: cfg.InferenceClearGraceSeconds,
 		},
 	}
 

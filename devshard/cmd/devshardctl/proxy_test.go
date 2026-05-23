@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -63,6 +65,18 @@ func TestStreamRegistry_ForwardAndReset(t *testing.T) {
 	before := buf.String()
 	reg.callback(nonce, "data: ignored")
 	require.Equal(t, before, buf.String())
+}
+
+func TestHandleStatus_ExposesSealGraceConfig(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	rec := httptest.NewRecorder()
+	env.proxy.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp statusResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, uint32(types.DefaultSealGraceNonces(3)), resp.Config.SealGraceNonces)
+	require.Equal(t, uint32(types.DefaultInferenceClearGraceSeconds), resp.Config.InferenceClearGraceSeconds)
 }
 
 func TestHasMsgFinish(t *testing.T) {

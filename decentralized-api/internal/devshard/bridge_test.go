@@ -72,7 +72,8 @@ func TestChainBridge_GetEscrow_SealGraceFromParams(t *testing.T) {
 	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
 		Params: inferenceTypes.Params{
 			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
-				DefaultSealGraceNonces: 88,
+				DefaultSealGraceNonces:            88,
+				DefaultInferenceClearGraceSeconds: 99,
 			},
 		},
 	}, nil)
@@ -81,6 +82,7 @@ func TestChainBridge_GetEscrow_SealGraceFromParams(t *testing.T) {
 	info, err := cb.GetEscrow("42")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(88), info.SealGraceNonces)
+	assert.Equal(t, uint32(99), info.InferenceClearGraceSeconds)
 }
 
 func TestChainBridge_GetEscrow_ParamsError_LeavesSealGraceZero(t *testing.T) {
@@ -103,6 +105,7 @@ func TestChainBridge_GetEscrow_ParamsError_LeavesSealGraceZero(t *testing.T) {
 	info, err := cb.GetEscrow("1")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), info.SealGraceNonces)
+	assert.Equal(t, uint32(0), info.InferenceClearGraceSeconds)
 }
 
 func TestChainBridge_GetEscrow_DefaultSealGraceZero_UsesGroupFallback(t *testing.T) {
@@ -131,4 +134,5 @@ func TestChainBridge_GetEscrow_DefaultSealGraceZero_UsesGroupFallback(t *testing
 	info, err := cb.GetEscrow("1")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(30), info.SealGraceNonces)
+	assert.Equal(t, inferenceTypes.DefaultDevshardInferenceClearGraceSeconds, info.InferenceClearGraceSeconds)
 }
