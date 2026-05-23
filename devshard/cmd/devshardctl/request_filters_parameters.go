@@ -661,21 +661,23 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						MaxNodes: ChatTemplateKwargsMaxNodes,
 					},
 				}),
+			// thinking_token_budget: strip for non-Kimi at PreValidation, then a
+			// single Kimi-aware validator at PostLimits handles defaulter,
+			// absolute cap, content headroom and force-zero in one pass.
 			newParameter("thinking_token_budget").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models:           []string{kimiK26ModelID},
 					UnmatchedHandler: StripParameterHandler{},
 				}).
-				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
-					Models: []string{kimiK26ModelID},
-					Handler: DocumentValidatorHandler{
-						Validator: paramvalidators.ThinkingTokenBudgetDefaultsValidator{
-							DefaultDivisor: kimiThinkingTokenBudgetDefaultDivisor,
-						},
+				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
+					Validator: paramvalidators.KimiThinkingTokenBudgetValidator{
+						Model:                   kimiK26ModelID,
+						DefaultDivisor:          kimiThinkingTokenBudgetDefaultDivisor,
+						AbsoluteMax:             kimiThinkingTokenBudgetMax,
+						ContentHeadroom:         kimiContentHeadroomMin,
+						ForceZeroBelowMaxTokens: kimiSmallMaxTokensForceNoThinking,
 					},
-				}).
-				withRule(RequestFilterStagePostLimits, CapUintParameterHandler{Max: kimiThinkingTokenBudgetMax}).
-				withRule(RequestFilterStagePostLimits, ClampUintToFieldParameterHandler{MaxField: "max_tokens"}),
+				}),
 			newParameter("tools").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolsValidator{
@@ -783,17 +785,14 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				}),
 		},
 		[]VLLMParameter{
-			// PreValidation so the floor lands before applyOutputTokenLimits (caps down) and the
-			// thinking_token_budget defaulter (derives ttb from max_tokens).
+			// PreValidation so the floor lands before applyOutputTokenLimits caps down.
+			// One validator covers both max_tokens and max_completion_tokens.
 			newParameter("max_tokens").
-				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
-					Models:  []string{kimiK26ModelID},
-					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
-				}),
-			newParameter("max_completion_tokens").
-				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
-					Models:  []string{kimiK26ModelID},
-					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
+				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
+					Validator: paramvalidators.KimiMaxTokensFloorValidator{
+						Model: kimiK26ModelID,
+						Min:   kimiMaxTokensMin,
+					},
 				}),
 		},
 		newParameters([]string{
@@ -802,6 +801,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			"skip_special_tokens",
 			"detokenize",
 			"parallel_tool_calls",
+			"max_completion_tokens",
 		}),
 		newParameters([]string{"top_p", "top_k", "min_p"},
 			ParameterRule{

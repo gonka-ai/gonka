@@ -69,6 +69,41 @@ func sseChunkHasContent(p []byte) bool {
 	return ok
 }
 
+var sseUsageKeyMarker = []byte(`"usage"`)
+
+// sseChunkUsageCompletionTokens reads usage.completion_tokens from an SSE
+// data event. Includes tokens vLLM stripped from `content` (e.g. </think>).
+// Fast-skips chunks that do not contain the `"usage"` key — vLLM emits the
+// usage object only in the final chunk of a stream, so 99%+ of chunks avoid
+// the json.Unmarshal cost entirely.
+func sseChunkUsageCompletionTokens(p []byte) (int64, bool) {
+	if len(p) == 0 || !bytes.Contains(p, sseUsageKeyMarker) {
+		return 0, false
+	}
+	for _, line := range bytes.Split(p, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		var evt struct {
+			Usage *struct {
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(payload, &evt); err != nil {
+			continue
+		}
+		if evt.Usage != nil && evt.Usage.CompletionTokens > 0 {
+			return evt.Usage.CompletionTokens, true
+		}
+	}
+	return 0, false
+}
+
 // sseChunkContentSource is the classifying variant of sseChunkHasContent: when
 // content is present it returns a short label identifying the field that
 // carried it. The second return value is false when no accepted content was
@@ -851,6 +886,7 @@ type inflight struct {
 	contentChunks               atomic.Int64
 	outputBytes                 atomic.Int64
 	lastChunkAt                 atomic.Int64
+	usageComplTokens            atomic.Int64
 	stallMu                     sync.Mutex
 	stallActive                 bool
 	stalls                      []attemptStall
@@ -1285,6 +1321,11 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 				rw.inf.errorMessage = details.Message
 				rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
 			}
+		}
+		// Track completion_tokens so isModelBurnEmpty can tell stripped-
+		// content empties from no-tokens-generated empties.
+		if tokens, ok := sseChunkUsageCompletionTokens(p); ok {
+			rw.inf.usageComplTokens.Store(tokens)
 		}
 	}
 	if chunkHasContent || chunkHasError {
@@ -2893,6 +2934,16 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	return inf.contentChunks.Load() == 0
 }
 
+// isModelBurnEmpty: empty stream where the model generated tokens that vLLM
+// stripped (e.g. </think> at small max_tokens). Documented OpenAI/Anthropic
+// reasoning outcome, not a host fault — must not penalize.
+func isModelBurnEmpty(inf *inflight) bool {
+	if !isEmptyStreamAttempt(inf) {
+		return false
+	}
+	return inf.usageComplTokens.Load() > 0
+}
+
 func inflightByNonce(attempts []*inflight, nonce uint64) *inflight {
 	for _, inf := range attempts {
 		if inf.nonce == nonce {
@@ -3539,7 +3590,13 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
 	if emptyStream && !longNonStreamEmptyExempt && e.participantLimiter != nil {
-		e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+		if isModelBurnEmpty(inf) {
+			// Reasoning-burn outcome: the model emitted completion tokens but
+			// no content. Telemetry-only — not a host fault, no quarantine.
+			e.participantLimiter.ObserveModelBurnEmpty(participantKey)
+		} else {
+			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+		}
 	}
 	if !requestSucceeded && emptyStream {
 		return

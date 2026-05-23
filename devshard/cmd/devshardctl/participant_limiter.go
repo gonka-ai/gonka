@@ -628,6 +628,15 @@ func truncateError(err error) string {
 	return s
 }
 
+// ObserveModelBurnEmpty: empty stream caused by model behavior, not host
+// fault. Telemetry-only — no streak, no quarantine.
+func (l *ParticipantRequestLimiter) ObserveModelBurnEmpty(participantKey string) {
+	if participantKey == "" {
+		return
+	}
+	log.Printf("participant_limit_model_burn_empty participant_key=%s", participantKey)
+}
+
 // ObserveEmptyStream increments the unified failure-strike counter for a
 // participant. On the threshold strike, the participant enters shadow
 // quarantine.

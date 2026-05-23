@@ -81,8 +81,16 @@ const (
 	kimiThinkingTokenBudgetDefaultDivisor uint64 = 2
 	kimiThinkingTokenBudgetMax            uint64 = 96_000
 
-	// Below this floor Kimi-K2.6 emits only </think> (special token vLLM drops from content).
+	// Below this floor Kimi-K2.6 emits only </think> (vLLM strips it).
 	kimiMaxTokensMin uint64 = 16
+
+	// Below this max_tokens, force thinking_token_budget=0 — any thinking
+	// phase starves visible content at this budget.
+	kimiSmallMaxTokensForceNoThinking uint64 = 256
+
+	// Tokens reserved for visible content after </think>. ttb is clamped
+	// to (max_tokens - this).
+	kimiContentHeadroomMin uint64 = 64
 )
 
 // Routed model identifiers. The catalog wires per-model behavior keyed on these strings.
