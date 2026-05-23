@@ -381,9 +381,9 @@ message DevshardEscrowParams {
   uint64 token_price = 6;
   repeated DevshardApprovedVersion approved_versions = 7;
   uint32 max_nonce = 8;
-  uint32 default_seal_grace_nonces = 9;
-  // Wall-clock grace before sealing stale-finished or post-terminal inferences (seconds).
-  uint32 default_inference_clear_grace_seconds = 10;
+  bool devshard_requests_enabled = 9;
+  uint32 default_seal_grace_nonces = 10;
+  uint32 default_inference_clear_grace_seconds = 11;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/authz"
@@ -20,13 +22,72 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
+const BountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
+
+// Replacement approved devshard binary registered by the v0.2.13 upgrade.
+// The name stays v1 because the replacement binary is fully compatible with
+// the existing devshard v1 interface.
+const (
+	DevshardV1Name   = "v1"
+	DevshardV1Binary = "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v1/devshardd.zip"
+	DevshardV1Sha256 = "dad6f1b97843816c0a33874b89ac403e48b54fe3aa1a0fdccb228d89d2a5594c"
+)
+
+func USDT(amount int64) int64 {
+	return amount * 1_000_000
+}
+
+type BountyReward struct {
+	Address string
+	Amount  int64
+}
+
+var bountyRewards = []BountyReward{
+	// Prompt of death:
+	// report and investigation of prompts causing vLLM crashes around
+	// structured outputs / tool handling.
+	// Public name: @blizko
+	{Address: "gonka12jaf7m4eysyqt32mrgarum6z96vt55tckvcleq", Amount: USDT(8000)},
+
+	// Kimi experiments:
+	// report is available at
+	// https://github.com/kaitakuai/experiments/blob/main/reports/2026-04-kimi-qwen-experiments.md
+	// Public name: kaitaku.ai
+	{Address: "gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp", Amount: USDT(10000)},
+
+	// PR #826:
+	// Partial Payment on Claim Failure Causes Permanent Reward Loss.
+	// Public name: @ouicate
+	{Address: "gonka1f0elpwnx7ezytdlck35003nz6qk8kzvurvnj4a", Amount: USDT(500)},
+
+	// PR #826:
+	// Underfunded Work Payout Still Removes Settle Amount.
+	// Public name: @ouicate
+	{Address: "gonka1f0elpwnx7ezytdlck35003nz6qk8kzvurvnj4a", Amount: USDT(375)},
+}
+
+var devshardAllowedCreatorAddressesToAdd = []string{
+	// Gonka Labs
+	"gonka1r2s0rwgskp6y4ed7qr7d25qdwjwlvpp6demv90",
+
+	// Hyperfusion
+	"gonka1ls8wqecwj369du8s2t9a223xu9sgvmzlw2ye9c",
+
+	// 6Blocks
+	"gonka10wmset95nhgfjt4wklsyjqpx55m40zy3gha2pn",
+
+	//  https://gonkabroker.com/,
+	"gonka17ld2g62230w0erzexefzw03sw0adtuchr425rp",
+}
+
 const (
 	MaxEscrowsPerEpoch uint32 = 500_000
 	MaxNonce           uint32 = 1_000_000
 
 	// Block window after the upgrade in which confirmation PoC is skipped.
 	// Same value as v0.2.10; covers the rest of the upgrade epoch on mainnet.
-	GraceUpgradeProtectionWindow int64 = 3000
+	GraceUpgradeProtectionWindow int64 = 10000
 
 	// EthereumChainName is the chain identifier used in bridge registration state.
 	EthereumChainName = "ethereum"
@@ -40,7 +101,7 @@ const (
 	kimiModelID        = "moonshotai/Kimi-K2.6"
 	minimaxModelID     = "MiniMaxAI/MiniMax-M2.7"
 	minimaxModelCommit = "d494266a4affc0d2995ba1fa35c8481cbd84294b"
-	minimaxStartEpoch  = uint64(271)
+	minimaxStartEpoch  = uint64(278)
 
 	governanceQuorum = "0.25"
 )
@@ -78,6 +139,12 @@ func CreateUpgradeHandler(
 		if err := setDevshardEscrowParams(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setDevshardApprovedVersions(ctx, k); err != nil {
+			return nil, err
+		}
 		if err := setDevshardApprovedV2Version(ctx, k); err != nil {
 			return nil, err
 		}
@@ -101,6 +168,10 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 		if err := disableConfirmationPocForUpgradeEpoch(ctx, k); err != nil {
+			return nil, err
+		}
+
+		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -172,6 +243,7 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	}
 	params.DevshardEscrowParams.MaxEscrowsPerEpoch = MaxEscrowsPerEpoch
 	params.DevshardEscrowParams.MaxNonce = MaxNonce
+	params.DevshardEscrowParams.DevshardRequestsEnabled = types.DefaultDevshardRequestsEnabled
 
 	// Initialize DefaultSealGraceNonces for existing chains. The field is new
 	// in v0.2.13: a fresh-genesis chain seeds it from
@@ -191,12 +263,14 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	if params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds == 0 {
 		params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
 	}
+	
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("set devshard escrow params", types.Upgrades,
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
 		"max_nonce", MaxNonce,
+		"devshard_requests_enabled", params.DevshardEscrowParams.DevshardRequestsEnabled,
 		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
 		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
 	return nil
@@ -213,6 +287,82 @@ func setDevshardApprovedV2Version(ctx context.Context, k keeper.Keeper) error {
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
+	return nil
+}
+
+func setDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper) error {
+	return addDevshardAllowedCreatorAddresses(ctx, k, devshardAllowedCreatorAddressesToAdd)
+}
+
+func addDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper, addresses []string) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+
+	seen := make(map[string]struct{}, len(params.DevshardEscrowParams.AllowedCreatorAddresses)+len(addresses))
+	for _, address := range params.DevshardEscrowParams.AllowedCreatorAddresses {
+		seen[address] = struct{}{}
+	}
+
+	added := 0
+	for _, address := range addresses {
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		params.DevshardEscrowParams.AllowedCreatorAddresses = append(params.DevshardEscrowParams.AllowedCreatorAddresses, address)
+		seen[address] = struct{}{}
+		added++
+	}
+
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set devshard allowed creator addresses", types.Upgrades,
+		"total", len(params.DevshardEscrowParams.AllowedCreatorAddresses),
+		"added", added)
+	return nil
+}
+
+func setDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+
+	version := &types.DevshardApprovedVersion{
+		Name:   DevshardV1Name,
+		Binary: DevshardV1Binary,
+		Sha256: DevshardV1Sha256,
+	}
+
+	replaced := false
+	for i, existing := range params.DevshardEscrowParams.ApprovedVersions {
+		if existing != nil && existing.Name == DevshardV1Name {
+			params.DevshardEscrowParams.ApprovedVersions[i] = version
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		params.DevshardEscrowParams.ApprovedVersions = append(params.DevshardEscrowParams.ApprovedVersions, version)
+	}
+
+	if err := k.SetParams(ctx, params); err != nil {
+		k.LogError("failed to set devshard approved versions during upgrade", types.Upgrades, "error", err)
+		return err
+	}
+	k.LogInfo("set devshard approved version", types.Upgrades,
+		"name", DevshardV1Name,
+		"binary", DevshardV1Binary,
+		"sha256", DevshardV1Sha256,
+		"replaced", replaced)
 	return nil
 }
 
@@ -341,6 +491,7 @@ func minimaxGovernanceModel(authority string) *types.Model {
 		HfCommit:               minimaxModelCommit,
 		ModelArgs: []string{
 			"--enable-auto-tool-choice",
+			"--max-model-len", "180000",
 			"--kv-cache-dtype", "fp8",
 			"--tool-call-parser", "minimax_m2",
 			"--reasoning-parser", "minimax_m2_append_think",
@@ -642,5 +793,71 @@ func registerWrappedTokenCodeID(ctx sdk.Context, k keeper.Keeper, codeID uint64)
 
 	k.LogInfo("registered wrapped token code ID", types.Upgrades,
 		"code_id", codeID)
+	return nil
+}
+
+func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
+	if len(bountyRewards) == 0 {
+		k.Logger().Info("No bounty rewards to distribute")
+		return nil
+	}
+
+	communitySaleAddr, err := sdk.AccAddressFromBech32(BountyCommunitySaleContractAddress)
+	if err != nil {
+		k.Logger().Error("invalid hardcoded community sale contract address", "address", BountyCommunitySaleContractAddress, "error", err)
+		return nil
+	}
+	authorityAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.Logger().Error("invalid authority address", "authority", k.GetAuthority(), "error", err)
+		return nil
+	}
+
+	var totalRequired int64
+	for _, bounty := range bountyRewards {
+		totalRequired += bounty.Amount
+	}
+
+	available := k.BankView.SpendableCoin(ctx, communitySaleAddr, BountyIbcUsdtDenom).Amount.Int64()
+	if available < totalRequired {
+		k.Logger().Warn("insufficient community sale balance, skipping bounty distribution",
+			"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+		return nil
+	}
+
+	k.Logger().Info("community sale balance sufficient for bounty distribution",
+		"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+
+	permissionedKeeper := wasmkeeper.NewGovPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, bounty := range bountyRewards {
+		recipient, err := sdk.AccAddressFromBech32(bounty.Address)
+		if err != nil {
+			k.Logger().Error("invalid bounty address", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		msgBz, err := json.Marshal(map[string]any{
+			"withdraw_ibc": map[string]string{
+				"denom":     BountyIbcUsdtDenom,
+				"amount":    strconv.FormatInt(bounty.Amount, 10),
+				"recipient": recipient.String(),
+			},
+		})
+		if err != nil {
+			k.Logger().Error("failed to marshal community sale withdraw message", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		if _, err := permissionedKeeper.Execute(sdkCtx, communitySaleAddr, authorityAddr, msgBz, sdk.NewCoins()); err != nil {
+			k.Logger().Error("failed to distribute bounty from community sale contract",
+				"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom, "error", err)
+			continue
+		}
+
+		k.Logger().Info("bounty distributed from community sale contract",
+			"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom)
+	}
+
 	return nil
 }

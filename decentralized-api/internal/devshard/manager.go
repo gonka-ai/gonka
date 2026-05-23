@@ -53,6 +53,7 @@ type HostManager struct {
 	verifier     signing.Verifier
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
+	availability devshardpkg.AvailabilityProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
@@ -172,6 +173,10 @@ func (m *HostManager) SetUnavailable(err error) {
 	defer m.readyMu.Unlock()
 	m.initializing = true
 	m.initErr = err
+}
+
+func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
+	m.availability = p
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
@@ -485,6 +490,7 @@ func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(epochID),
+		host.WithAvailabilityProvider(m.availability),
 	}
 	if m.pruneSink != nil {
 		opts = append(opts, host.WithPruneSink(m.pruneSink))
