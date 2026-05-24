@@ -870,6 +870,15 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
+	// classifyPartial holds bytes after the last '\n' from prior Write calls.
+	// SSE classifiers (sseChunkContentSource/ErrorDetails/UsageCompletionTokens)
+	// require complete data:-prefixed lines in a single call to parse; when
+	// transport delivers SSE events fragmented across Writes (TLS small frames,
+	// proxy flush mid-event, slow connections), naive per-Write classification
+	// silently misses content. This buffer reassembles events for classification
+	// only — forwarding to the client still uses raw Write bytes unchanged.
+	classifyPartial []byte
+
 	// contentSource labels the field that produced the first content event
 	// ("delta.content", "delta.reasoning_content", "delta.tool_calls", or the
 	// streaming-only convertible shape "message.content"). Set exactly once
@@ -1239,6 +1248,70 @@ type raceWriter struct {
 	inf   *inflight
 }
 
+// maxClassifyPartial caps the SSE-reassembly buffer to defend against
+// malformed transports that stream indefinitely without newlines. If we
+// hit this cap the accumulated partial is dropped and classification falls
+// back to processing only the current Write.
+const maxClassifyPartial = 256 * 1024
+
+// takeParseable returns bytes safe for SSE classification — the prefix of
+// (prior partial + p) up to and including the final '\n'. Trailing bytes
+// after the last newline are stashed in inf.classifyPartial for the next
+// Write. When no newline is present yet, returns nil and stashes everything.
+// Required because sseChunkContentSource etc. only parse complete data:-
+// prefixed lines; without reassembly a small-chunked transport (TLS
+// fragmentation, slow connections) silently strips classification of any
+// event split across Writes.
+func (rw *raceWriter) takeParseable(p []byte) []byte {
+	if len(rw.inf.classifyPartial) == 0 {
+		// Fast path: no prior partial, only inspect p itself.
+		lastNL := bytes.LastIndexByte(p, '\n')
+		if lastNL == -1 {
+			if len(p) > 0 {
+				rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p...)
+			}
+			return nil
+		}
+		if lastNL+1 < len(p) {
+			rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNL+1:]...)
+		} else {
+			rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
+		}
+		return p[: lastNL+1]
+	}
+
+	// Defensive: malformed stream growing without newlines — drop partial.
+	if len(rw.inf.classifyPartial)+len(p) > maxClassifyPartial {
+		rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
+		lastNL := bytes.LastIndexByte(p, '\n')
+		if lastNL == -1 {
+			return nil
+		}
+		if lastNL+1 < len(p) {
+			rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNL+1:]...)
+		}
+		return p[: lastNL+1]
+	}
+
+	// Combine prior partial with new bytes; classify whole view.
+	combined := append(rw.inf.classifyPartial, p...)
+	lastNL := bytes.LastIndexByte(combined, '\n')
+	if lastNL == -1 {
+		rw.inf.classifyPartial = combined
+		return nil
+	}
+	// Copy out the trailing partial — combined shares backing with the prior
+	// classifyPartial, which we're about to replace.
+	if lastNL+1 < len(combined) {
+		tail := make([]byte, len(combined)-lastNL-1)
+		copy(tail, combined[lastNL+1:])
+		rw.inf.classifyPartial = tail
+	} else {
+		rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
+	}
+	return combined[: lastNL+1]
+}
+
 func (rw *raceWriter) ctxErr() error {
 	if rw.group == nil || rw.group.writeCtx == nil {
 		return nil
@@ -1267,23 +1340,27 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
-		if src, ok := sseChunkContentSource(p); ok {
-			chunkHasContent = true
-			if rw.inf.contentSource == "" {
-				rw.inf.contentSource = src
-			}
-		} else if details, ok := sseChunkErrorDetails(p); ok {
-			src := "error"
-			if details.Type != "" {
-				src = "error." + details.Type
-			}
-			chunkHasError = !isRetriableCapabilityErrorMessage(details.Message)
-			if rw.inf.errorSource == "" {
-				rw.inf.errorSource = src
-				rw.inf.errorCode = details.Code
-				rw.inf.errorType = details.Type
-				rw.inf.errorMessage = details.Message
-				rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
+		// Reassemble across Writes: SSE events are only parseable when whole.
+		parseable := rw.takeParseable(p)
+		if len(parseable) > 0 {
+			if src, ok := sseChunkContentSource(parseable); ok {
+				chunkHasContent = true
+				if rw.inf.contentSource == "" {
+					rw.inf.contentSource = src
+				}
+			} else if details, ok := sseChunkErrorDetails(parseable); ok {
+				src := "error"
+				if details.Type != "" {
+					src = "error." + details.Type
+				}
+				chunkHasError = !isRetriableCapabilityErrorMessage(details.Message)
+				if rw.inf.errorSource == "" {
+					rw.inf.errorSource = src
+					rw.inf.errorCode = details.Code
+					rw.inf.errorType = details.Type
+					rw.inf.errorMessage = details.Message
+					rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
+				}
 			}
 		}
 	}
