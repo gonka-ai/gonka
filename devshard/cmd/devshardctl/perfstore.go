@@ -80,6 +80,15 @@ func NewPerfStore(dbPath string) (*PerfStore, error) {
 		created_at      TEXT NOT NULL,
 		PRIMARY KEY (request_id, escrow_id, nonce)
 	);
+	CREATE TABLE IF NOT EXISTS host_score_state (
+		model          TEXT NOT NULL,
+		host           TEXT NOT NULL,
+		bucket         TEXT NOT NULL,
+		elo_rating     REAL NOT NULL DEFAULT 1500,
+		samples_json   TEXT NOT NULL DEFAULT '[]',
+		updated_at_utc TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (model, host, bucket)
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -371,6 +380,76 @@ func (s *PerfStore) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath string,
 		return nil, err
 	}
 	return inserted, nil
+}
+
+// SaveHostScores upserts the full snapshot of HostScoreTracker state in one
+// transaction. Designed for periodic flush (every few minutes) + shutdown,
+// not per-request — caller responsibility to throttle.
+func (s *PerfStore) SaveHostScores(states []HostScoreState) error {
+	if s == nil || s.db == nil || len(states) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT INTO host_score_state (model, host, bucket, elo_rating, samples_json, updated_at_utc)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(model, host, bucket) DO UPDATE SET
+			elo_rating=excluded.elo_rating,
+			samples_json=excluded.samples_json,
+			updated_at_utc=excluded.updated_at_utc`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, st := range states {
+		samplesJSON, err := json.Marshal(st.Samples)
+		if err != nil {
+			return fmt.Errorf("marshal samples for %s/%s/%s: %w", st.Model, st.Host, st.Bucket, err)
+		}
+		if _, err := stmt.Exec(st.Model, st.Host, st.Bucket, st.Elo, string(samplesJSON), timeToStr(st.UpdatedAt)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadHostScores returns all persisted host-score rows for restore at startup.
+func (s *PerfStore) LoadHostScores() ([]HostScoreState, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT model, host, bucket, elo_rating, samples_json, updated_at_utc FROM host_score_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HostScoreState
+	for rows.Next() {
+		var (
+			model, host, bucket, samplesJSON, updatedAt string
+			elo                                         float64
+		)
+		if err := rows.Scan(&model, &host, &bucket, &elo, &samplesJSON, &updatedAt); err != nil {
+			return nil, err
+		}
+		state := HostScoreState{
+			Model:     model,
+			Host:      host,
+			Bucket:    bucket,
+			Elo:       elo,
+			UpdatedAt: strToTime(updatedAt),
+		}
+		if samplesJSON != "" {
+			if err := json.Unmarshal([]byte(samplesJSON), &state.Samples); err != nil {
+				return nil, fmt.Errorf("unmarshal samples for %s/%s/%s: %w", model, host, bucket, err)
+			}
+		}
+		out = append(out, state)
+	}
+	return out, rows.Err()
 }
 
 func boolToInt(b bool) int {

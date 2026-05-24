@@ -8,7 +8,8 @@ Provider: Alibaba (Qwen). This doc documents how Qwen3-235B-A22B-Instruct-2507 d
 |----------|-------|--------|
 | Provider | Alibaba (Qwen) | [[Qwen-1]](references.md#qwen) |
 | vLLM route id | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | — |
-| Context window | 128K tokens | [[Qwen-1]](references.md#qwen) |
+| Native context window | 128K tokens | [[Qwen-1]](references.md#qwen) |
+| **Deployed context limit** | **240,000 tokens** (via `--max-model-len`) | on-chain `Model.ModelArgs` ([v0_2_10/upgrades.go:241](../../inference-chain/app/upgrades/v0_2_10/upgrades.go#L241)) |
 | Tool-call parser (vLLM) | `hermes` | [[vLLM-1]](references.md#vllm) |
 | Native thinking | no (Instruct variant; thinking-capable Qwen3-Thinking variant uses `chat_template_kwargs.enable_thinking`) | [[Qwen-3]](references.md#qwen) |
 

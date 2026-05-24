@@ -586,7 +586,7 @@ func (p *Proxy) handleDebugPairwise(w http.ResponseWriter, r *http.Request) {
 		"winner_hold_min_samples":         PairwiseWinnerHoldMinSamples,
 		"request_shape_buckets":           []string{"lt_1k", "1k_5k", "5k_15k", "15k_30k", "30k_100k", "gte_100k"},
 		"comparisons":                     p.perf.PairwiseSummaries(),
-		"legacy_secondary_faster_enabled": RedundancySpeedPolicy != RedundancySpeedPolicyPairwise,
+		"legacy_secondary_faster_enabled": RedundancySpeedPolicy == RedundancySpeedPolicyLegacy || RedundancySpeedPolicy == RedundancySpeedPolicyHybrid,
 	})
 }
 

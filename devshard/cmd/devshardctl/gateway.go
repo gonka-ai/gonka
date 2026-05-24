@@ -496,6 +496,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	}
 	g.startEscrowRotatorIfEnabled()
 	go g.balanceCheckLoop()
+	go g.hostScoreFlushLoop()
 	return g
 }
 
@@ -585,6 +586,24 @@ func (g *Gateway) balanceCheckLoop() {
 	defer ticker.Stop()
 	for range ticker.C {
 		g.checkBalances()
+	}
+}
+
+const hostScoreFlushInterval = 2 * time.Minute
+
+// hostScoreFlushLoop periodically upserts the HostScoreTracker state to
+// SQLite so a restart doesn't lose the sliding window + Elo ratings. Flush
+// is best-effort — errors are logged, the in-memory state remains intact.
+func (g *Gateway) hostScoreFlushLoop() {
+	if g == nil || g.perf == nil || g.perf.hostScores == nil || g.perfStore == nil {
+		return
+	}
+	ticker := time.NewTicker(hostScoreFlushInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if err := g.perfStore.SaveHostScores(g.perf.hostScores.PersistState()); err != nil {
+			log.Printf("perf: flush host scores: %v", err)
+		}
 	}
 }
 
@@ -972,6 +991,11 @@ func (g *Gateway) Close() error {
 		}
 	}
 	if g.perfStore != nil {
+		if g.perf != nil && g.perf.hostScores != nil {
+			if err := g.perfStore.SaveHostScores(g.perf.hostScores.PersistState()); err != nil {
+				log.Printf("perf: final host-scores flush at shutdown: %v", err)
+			}
+		}
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -991,6 +1015,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/devshards/", g.handleAdminDevshardAction)
 	mux.HandleFunc("/v1/admin/escrows", g.handleAdminEscrows)
 	mux.HandleFunc("/v1/admin/participants/unquarantine", g.handleAdminUnquarantine)
+	mux.HandleFunc("/v1/admin/host_scores", g.handleAdminHostScores)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/finalize", g.handleSingleOnly)
 	mux.HandleFunc("/v1/state", g.handleSingleOnly)
@@ -2211,8 +2236,9 @@ func validateGatewaySettings(settings GatewaySettings) error {
 		return fmt.Errorf("redundancy.unresponsive_threshold must be > 0 and <= 1")
 	case normalizeRedundancySpeedPolicy(r.SpeedPolicy) != RedundancySpeedPolicyLegacy &&
 		normalizeRedundancySpeedPolicy(r.SpeedPolicy) != RedundancySpeedPolicyHybrid &&
-		normalizeRedundancySpeedPolicy(r.SpeedPolicy) != RedundancySpeedPolicyPairwise:
-		return fmt.Errorf("redundancy.speed_policy must be one of legacy, hybrid, pairwise")
+		normalizeRedundancySpeedPolicy(r.SpeedPolicy) != RedundancySpeedPolicyPairwise &&
+		normalizeRedundancySpeedPolicy(r.SpeedPolicy) != RedundancySpeedPolicyHostScore:
+		return fmt.Errorf("redundancy.speed_policy must be one of legacy, hybrid, pairwise, host_score")
 	case r.PairwiseBudgetPercentile <= 0 || r.PairwiseBudgetPercentile >= 1:
 		return fmt.Errorf("redundancy.pairwise_budget_percentile must be > 0 and < 1")
 	case r.PairwiseMaxProactiveAttempts <= 0:
@@ -2970,6 +2996,51 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{
 		"participant_key": req.ParticipantKey,
 		"cleared":         cleared,
+	})
+}
+
+// handleAdminHostScores returns the current HostScoreTracker snapshot, with
+// optional `?model=` and `?bucket=` query filters. Read-only; the response
+// includes the active tuning settings so operators can verify the formula
+// configuration without consulting the server binary.
+func (g *Gateway) handleAdminHostScores(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if g.perf == nil || g.perf.hostScores == nil {
+		http.Error(w, `{"error":{"message":"host scores tracker unavailable"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	modelFilter := strings.TrimSpace(r.URL.Query().Get("model"))
+	bucketFilter := strings.TrimSpace(r.URL.Query().Get("bucket"))
+	all := g.perf.hostScores.Snapshot()
+	filtered := all[:0:len(all)]
+	for _, s := range all {
+		if modelFilter != "" && s.Model != modelFilter {
+			continue
+		}
+		if bucketFilter != "" && s.Bucket != bucketFilter {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	writeJSON(w, map[string]any{
+		"snapshots":    filtered,
+		"generated_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"settings": map[string]any{
+			"window_size":           HostScoreWindowSize,
+			"min_samples":           HostScoreMinSamples,
+			"elo_k":                 HostScoreEloK,
+			"elo_default":           HostScoreEloDefault,
+			"elo_alpha":             HostScoreEloAlpha,
+			"stream_gamma":          HostScoreStreamGamma,
+			"non_stream_gamma":      HostScoreNonStreamGamma,
+			"ucb_coefficient_ms":    HostScoreUCBCoefficient,
+			"elo_half_life_seconds": HostScoreEloHalfLife.Seconds(),
+			"exploration_epsilon":   HostScoreExplorationEpsilon,
+			"speed_policy":          RedundancySpeedPolicy,
+		},
 	})
 }
 

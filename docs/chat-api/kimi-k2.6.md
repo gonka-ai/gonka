@@ -8,7 +8,8 @@ Provider: Moonshot AI. This doc documents how Kimi-K2.6 deviates from the [unive
 |----------|-------|--------|
 | Provider | Moonshot AI | [[Moonshot-1]](references.md#moonshot) |
 | vLLM route id | `moonshotai/Kimi-K2.6` | — |
-| Context window | 256K tokens | [[Moonshot-2]](references.md#moonshot) |
+| Native context window | 256K tokens | [[Moonshot-2]](references.md#moonshot) |
+| **Deployed context limit** | **240,000 tokens** (via `--max-model-len`) | on-chain `Model.ModelArgs` ([v0_2_12/upgrades.go:686](../../inference-chain/app/upgrades/v0_2_12/upgrades.go#L686)) |
 | Tool-call parser (vLLM) | `kimi_k2` | [[vLLM-1]](references.md#vllm) |
 | Native thinking | yes (via `chat_template_kwargs.thinking`) | [[Moonshot-3]](references.md#moonshot) |
 

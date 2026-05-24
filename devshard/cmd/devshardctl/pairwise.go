@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	RedundancySpeedPolicyLegacy   = "legacy"
-	RedundancySpeedPolicyHybrid   = "hybrid"
-	RedundancySpeedPolicyPairwise = "pairwise"
+	RedundancySpeedPolicyLegacy    = "legacy"
+	RedundancySpeedPolicyHybrid    = "hybrid"
+	RedundancySpeedPolicyPairwise  = "pairwise"
+	RedundancySpeedPolicyHostScore = "host_score"
 )
 
 var (
-	RedundancySpeedPolicy           = RedundancySpeedPolicyHybrid
+	RedundancySpeedPolicy           = RedundancySpeedPolicyHostScore
 	PairwiseBudgetPercentile        = 0.90
 	PairwiseMaxProactiveAttempts    = 3
 	PairwiseMinDirectComparisons    = 4
@@ -351,6 +352,30 @@ func (t *PairwiseTracker) directRatio(model, bucket, a, b string) (float64, floa
 	}
 	s := summarizePairwise(key, ring.ordered())
 	return s.AvgRatioAToB, s.Confidence, s.SampleCount, s.AvgRatioAToB > 0
+}
+
+// H2HWinRate returns A's fraction of total-time wins against B in the given
+// (model, bucket). rate is in [0,1] from A's perspective. ok=false when no
+// direct comparisons exist yet. Used by HostScoreTracker for layer-1
+// scoring when ≥MinSamples direct comparisons are available.
+func (t *PairwiseTracker) H2HWinRate(model, bucket, a, b string) (rate float64, n int, ok bool) {
+	if t == nil || a == "" || b == "" || a == b {
+		return 0, 0, false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	ring := t.pairs[pairwiseKey{model: model, a: a, b: b, bucket: bucket}]
+	if ring == nil || len(ring.comparisons) == 0 {
+		return 0, 0, false
+	}
+	wins := 0
+	for _, c := range ring.comparisons {
+		if c.ATotalMs > 0 && c.BTotalMs > 0 && c.ATotalMs < c.BTotalMs {
+			wins++
+		}
+	}
+	n = len(ring.comparisons)
+	return float64(wins) / float64(n), n, true
 }
 
 func (t *PairwiseTracker) DirectSampleCount(model string, inputTokens uint64, a, b string) int {

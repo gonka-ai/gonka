@@ -395,7 +395,7 @@ func DefaultRedundancySettings() RedundancySettings {
 		SecondaryWaitAfterWinnerMS:   300000,
 		ParallelAdvantageThreshold:   0.5,
 		UnresponsiveThreshold:        1.0,
-		SpeedPolicy:                  RedundancySpeedPolicyHybrid,
+		SpeedPolicy:                  RedundancySpeedPolicyHostScore,
 		PairwiseBudgetPercentile:     0.90,
 		PairwiseMaxProactiveAttempts: 3,
 		PairwiseMinDirectComparisons: 4,
@@ -476,7 +476,9 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 
 func normalizeRedundancySpeedPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case "", RedundancySpeedPolicyHybrid:
+	case "", RedundancySpeedPolicyHostScore:
+		return RedundancySpeedPolicyHostScore
+	case RedundancySpeedPolicyHybrid:
 		return RedundancySpeedPolicyHybrid
 	case RedundancySpeedPolicyLegacy:
 		return RedundancySpeedPolicyLegacy
@@ -587,16 +589,89 @@ func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
 		return Decision{RunSecondary: true, Delay: 0, Reason: "primary_unresponsive", ImmediateAttempts: 1}
 	}
 
-	if RedundancySpeedPolicy != RedundancySpeedPolicyLegacy {
+	// Per-policy branches — no cascade. See docs/host-scoring.md.
+	switch RedundancySpeedPolicy {
+	case RedundancySpeedPolicyHostScore:
+		return e.decideHostScoreSpeedup(primaryHostIdx, inputTokens)
+	case RedundancySpeedPolicyPairwise:
 		if decision, ok := e.decidePairwiseSpeedup(primaryHostIdx, inputTokens); ok {
 			return decision
 		}
-		if RedundancySpeedPolicy == RedundancySpeedPolicyPairwise {
-			return Decision{RunSecondary: true, Delay: receiptTimeoutForInput(inputTokens), Reason: "pairwise_insufficient_data"}
+		// pairwise opts into always-on secondary; on miss we still fire, just delayed.
+		return Decision{RunSecondary: true, Delay: receiptTimeoutForInput(inputTokens), Reason: "pairwise_insufficient_data"}
+	case RedundancySpeedPolicyHybrid:
+		if decision, ok := e.decidePairwiseSpeedup(primaryHostIdx, inputTokens); ok {
+			return decision
+		}
+		return e.decideLegacySecondaryFaster(primaryParticipant, secondaryParticipant, inputTokens)
+	}
+	return e.decideLegacySecondaryFaster(primaryParticipant, secondaryParticipant, inputTokens)
+}
+
+// decideHostScoreSpeedup is the host_score policy's decision maker. Reason
+// codes: host_scores, host_scores_exploration, host_scores_no_candidate,
+// host_scores_no_data. Details in docs/host-scoring.md.
+func (e *Redundancy) decideHostScoreSpeedup(primaryHostIdx int, inputTokens uint64) Decision {
+	if e == nil || e.perf == nil || e.perf.hostScores == nil || e.perf.pairwise == nil || e.groupSize <= 1 {
+		return Decision{Reason: "host_scores_no_data"}
+	}
+	primary := e.participantKeyForHost(primaryHostIdx)
+	if !e.pairwiseParticipantAvailable(primary) {
+		return Decision{Reason: "host_scores_no_data"}
+	}
+	bucket := requestShapeBucket(inputTokens)
+	candidates := e.pairwiseCandidateParticipants(primaryHostIdx, primary)
+	if len(candidates) == 0 {
+		return Decision{Reason: "host_scores_no_data"}
+	}
+
+	primScore, primOK := e.perf.hostScores.ScoreHost(e.model, primary, bucket, false, "")
+	accepted := 0
+	hadData := false // gates no_candidate (saw real signal) vs no_data (didn't)
+	for _, candidate := range candidates {
+		if accepted >= PairwiseMaxProactiveAttempts {
+			break
+		}
+		if rate, n, ok := e.perf.pairwise.H2HWinRate(e.model, bucket, candidate, primary); ok && n >= HostScoreMinSamples {
+			hadData = true
+			if rate >= 0.5+HostScoreH2HMargin {
+				accepted++
+			}
+			continue
+		}
+		if !primOK {
+			continue
+		}
+		candScore, candOK := e.perf.hostScores.ScoreHost(e.model, candidate, bucket, false, "")
+		if !candOK {
+			continue
+		}
+		hadData = true
+		if candScore < primScore*(1-HostScoreSpeedupMargin) {
+			accepted++
 		}
 	}
 
-	return e.decideLegacySecondaryFaster(primaryParticipant, secondaryParticipant, inputTokens)
+	if accepted > 0 {
+		return Decision{
+			RunSecondary:      true,
+			Delay:             0,
+			Reason:            "host_scores",
+			ImmediateAttempts: accepted,
+		}
+	}
+	if HostScoreExplorationEpsilon > 0 && hostScoreRandom() < HostScoreExplorationEpsilon {
+		return Decision{
+			RunSecondary:      true,
+			Delay:             0,
+			Reason:            "host_scores_exploration",
+			ImmediateAttempts: 1,
+		}
+	}
+	if hadData {
+		return Decision{Reason: "host_scores_no_candidate"}
+	}
+	return Decision{Reason: "host_scores_no_data"}
 }
 
 func (e *Redundancy) decidePairwiseSpeedup(primaryHostIdx int, inputTokens uint64) (Decision, bool) {
@@ -841,6 +916,44 @@ type inflight struct {
 	// after the winner has settled, so their transport goroutines return
 	// promptly and HandleTimeout can run against the abandoned nonce.
 	cancel context.CancelFunc
+}
+
+// receiptArrived reports whether the receiptCh close has propagated to this
+// goroutine. After it returns true, inf.receiptTime is safe to read — the
+// channel close inside receiptOnce.Do is the happens-before edge that
+// publishes the write done immediately before the close.
+func (inf *inflight) receiptArrived() bool {
+	select {
+	case <-inf.receiptCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// receiptTimeOrZero returns the recorded receipt time when it has arrived,
+// or the zero time otherwise. Use at sites that need the time value rather
+// than the boolean presence check.
+func (inf *inflight) receiptTimeOrZero() time.Time {
+	if inf.receiptArrived() {
+		return inf.receiptTime
+	}
+	return time.Time{}
+}
+
+// firstTokenArrived is the firstTokenCh equivalent of receiptArrived. Same
+// happens-before guarantee: the close inside tokenOnce.Do publishes the
+// preceding firstToken write to any goroutine that observes the close.
+func (inf *inflight) firstTokenArrived() bool {
+	if inf.firstTokenCh == nil {
+		return !inf.firstToken.IsZero()
+	}
+	select {
+	case <-inf.firstTokenCh:
+		return true
+	default:
+		return false
+	}
 }
 
 // raceGroup arbitrates which inflight's stream is forwarded to the client.
@@ -1587,7 +1700,7 @@ func winnerInterChunkDeadline(inf *inflight) (time.Time, bool) {
 }
 
 func waitForFirstTokenUntil(ctx context.Context, inf *inflight, deadline time.Time) bool {
-	if !inf.firstToken.IsZero() {
+	if inf.firstTokenArrived() {
 		return true
 	}
 	d := time.Until(deadline)
@@ -1988,7 +2101,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	if inf.sendTime.IsZero() {
 		return escalationTrigger{}, false
 	}
-	if inf.receiptTime.IsZero() {
+	if !inf.receiptArrived() {
 		return escalationTrigger{
 			inf:      inf,
 			deadline: inf.sendTime.Add(receiptTimeoutForInput(params.InputLength)),
@@ -1999,7 +2112,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	if !params.Stream {
 		return escalationTrigger{}, false
 	}
-	if !inf.firstToken.IsZero() {
+	if inf.firstTokenArrived() {
 		return escalationTrigger{}, false
 	}
 	return escalationTrigger{
@@ -2043,11 +2156,11 @@ func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *r
 				"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
 				"output_chunks", inf.outputChunks.Load(),
 			}
-			if !inf.receiptTime.IsZero() {
+			if inf.receiptArrived() {
 				stage = "waiting_for_first_token"
 				fields = append(fields, "since_receipt_ms", time.Since(inf.receiptTime).Milliseconds())
 			}
-			if !inf.firstToken.IsZero() {
+			if inf.firstTokenArrived() {
 				stage = "streaming_inflight"
 				fields = append(fields, "since_first_token_ms", time.Since(inf.firstToken).Milliseconds())
 				if lastChunkAt := inf.lastChunkAt.Load(); lastChunkAt > 0 {
@@ -2957,7 +3070,16 @@ func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params 
 		if !inf.firstToken.IsZero() {
 			hi.FirstTokenMs = float64(inf.firstToken.Sub(inf.sendTime).Milliseconds())
 		}
-		hi.TotalTimeMs = float64(time.Since(inf.sendTime).Milliseconds())
+		// Per-host completion time when chunks were streamed; fallback to
+		// request lifecycle for empty/timeout responses where lastChunkAt
+		// is unset. See docs/host-scoring.md#per-host-total-time.
+		if lastChunk := inf.lastChunkAt.Load(); lastChunk > 0 {
+			if lastChunkT := time.Unix(0, lastChunk); lastChunkT.After(inf.sendTime) {
+				hi.TotalTimeMs = float64(lastChunkT.Sub(inf.sendTime).Milliseconds())
+			}
+		} else {
+			hi.TotalTimeMs = float64(time.Since(inf.sendTime).Milliseconds())
+		}
 	}
 	return hi
 }

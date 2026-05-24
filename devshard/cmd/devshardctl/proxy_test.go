@@ -913,6 +913,31 @@ func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) 
 	require.GreaterOrEqual(t, involvement.TotalTimeMs, float64(longResponseFailureExemption.Milliseconds()))
 }
 
+func TestBuildInvolvement_TotalTimeFromLastChunk(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	params := defaultParams()
+	now := time.Now()
+
+	infA := &inflight{hostIdx: 0, nonce: 1, sendTime: now.Add(-5 * time.Second)}
+	infA.lastChunkAt.Store(now.Add(-4 * time.Second).UnixNano())
+	infB := &inflight{hostIdx: 1, nonce: 2, sendTime: now.Add(-5 * time.Second)}
+	infB.lastChunkAt.Store(now.Add(-1 * time.Second).UnixNano())
+
+	a := env.proxy.redundancy.buildInvolvement(infA, 0, params)
+	b := env.proxy.redundancy.buildInvolvement(infB, 0, params)
+	require.InDelta(t, 1000.0, a.TotalTimeMs, 50, "A: lastChunk at -4s, send at -5s → ~1000ms")
+	require.InDelta(t, 4000.0, b.TotalTimeMs, 50, "B: lastChunk at -1s, send at -5s → ~4000ms")
+	require.NotEqual(t, a.TotalTimeMs, b.TotalTimeMs, "same race, different per-host completion → different Total")
+}
+
+func TestBuildInvolvement_TotalTimeFallbackWhenNoChunks(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	params := defaultParams()
+	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-2 * time.Second)}
+	hi := env.proxy.redundancy.buildInvolvement(inf, 0, params)
+	require.GreaterOrEqual(t, hi.TotalTimeMs, 1900.0, "no chunks → fallback to time.Since(sendTime)")
+}
+
 func TestFastNonStreamEmptyResponseRecordsParticipantFailure(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)

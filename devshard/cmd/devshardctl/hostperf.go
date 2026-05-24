@@ -259,15 +259,18 @@ type PerfTracker struct {
 	firstTokenBuckets map[string]*firstTokenBucketRing
 	contextLimits     map[string]uint64 // participant_key -> observed max context length
 	pairwise          *PairwiseTracker
+	hostScores        *HostScoreTracker
 	store             *PerfStore
 }
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
+	pairwise := NewPairwiseTracker()
 	pt := &PerfTracker{
 		hosts:             make(map[string]*hostRing),
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
 		contextLimits:     make(map[string]uint64),
-		pairwise:          NewPairwiseTracker(),
+		pairwise:          pairwise,
+		hostScores:        NewHostScoreTracker(pairwise),
 		store:             store,
 	}
 	if store != nil {
@@ -300,16 +303,35 @@ func (t *PerfTracker) loadFromStore() {
 		log.Printf("perf: failed to load requests: %v", err)
 		return
 	}
+
+	// host-score snapshot first: if it loaded, skip replay (Restore would wipe it).
+	scoreCount := 0
+	skipHostScoreReplay := false
+	if t.hostScores != nil {
+		states, err := t.store.LoadHostScores()
+		if err != nil {
+			log.Printf("perf: failed to load host scores: %v", err)
+		} else if len(states) > 0 {
+			t.hostScores.Restore(states)
+			scoreCount = len(states)
+			skipHostScoreReplay = true
+		}
+	}
+
 	for _, r := range records {
 		t.requests.add(r)
 		t.recordFirstTokenSampleLocked(r)
 		if t.pairwise != nil {
 			t.pairwise.RecordRequest(r)
 		}
+		if t.hostScores != nil && !skipHostScoreReplay {
+			t.hostScores.RecordRequest(r)
+		}
 	}
 
-	if len(samples) > 0 || len(records) > 0 {
-		log.Printf("perf: restored %d host samples, %d request records from disk", len(samples), len(records))
+	if len(samples) > 0 || len(records) > 0 || scoreCount > 0 {
+		log.Printf("perf: restored %d host samples, %d request records, %d host-score keys from disk",
+			len(samples), len(records), scoreCount)
 	}
 }
 
@@ -450,6 +472,9 @@ func (t *PerfTracker) RecordRequest(rec RequestRecord) {
 	t.mu.Unlock()
 	if t.pairwise != nil {
 		t.pairwise.RecordRequest(rec)
+	}
+	if t.hostScores != nil {
+		t.hostScores.RecordRequest(rec)
 	}
 
 	if t.store != nil {
