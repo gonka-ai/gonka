@@ -35,6 +35,7 @@ import "inference/inference/poc_validation_snapshot.proto";
 import "inference/inference/devshard_escrow.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/tee_attestation.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -146,6 +147,26 @@ service Query {
   rpc AllMLNodeWeightDistributionsForStage (QueryAllMLNodeWeightDistributionsForStageRequest) returns (QueryAllMLNodeWeightDistributionsForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/all_mlnode_weight_distributions/{poc_stage_start_block_height}";
 
+  }
+
+  rpc TeeAttestation (QueryTeeAttestationRequest) returns (QueryTeeAttestationResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/tee_attestation/{participant_address}/{node_id}";
+  }
+
+  rpc TeeAttestationsByParticipant (QueryTeeAttestationsByParticipantRequest) returns (QueryTeeAttestationsByParticipantResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/tee_attestations/{participant_address}";
+  }
+
+  rpc TeeAttestationsActive (QueryTeeAttestationsActiveRequest) returns (QueryTeeAttestationsActiveResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/tee_attestations_active";
+  }
+
+  rpc TeeAttestationsVerified (QueryTeeAttestationsVerifiedRequest) returns (QueryTeeAttestationsVerifiedResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/tee_attestations_verified";
+  }
+
+  rpc PendingTeeAttestationsForStage (QueryPendingTeeAttestationsForStageRequest) returns (QueryPendingTeeAttestationsForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/pending_tee_attestations/{poc_stage_start_block_height}";
   }
 
   // Queries a list of GetCurrentEpoch items.
@@ -1186,4 +1207,56 @@ message QueryGetDevshardHostEpochStatsRequest {
 message QueryGetDevshardHostEpochStatsResponse {
   DevshardHostEpochStats stats = 1;
   bool found = 2;
+}
+
+message QueryTeeAttestationRequest {
+  string participant_address = 1;
+  string node_id             = 2;
+}
+
+message QueryTeeAttestationResponse {
+  TeeAttestation attestation = 1;
+  bool           found       = 2;
+}
+
+message QueryTeeAttestationsByParticipantRequest {
+  string participant_address = 1;
+}
+
+message QueryTeeAttestationsByParticipantResponse {
+  repeated TeeAttestation attestations = 1;
+}
+
+// QueryTeeAttestationsActiveRequest returns active attestations
+message QueryTeeAttestationsActiveRequest {
+  string provider                            = 1;  // empty = any
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+message QueryTeeAttestationsActiveResponse {
+  repeated TeeAttestation                attestations = 1;
+  cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+  int64                                  block_height = 3;
+}
+
+// QueryTeeAttestationsVerifiedRequest returns VERIFIED active attestations
+message QueryTeeAttestationsVerifiedRequest {
+  string provider                            = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+message QueryTeeAttestationsVerifiedResponse {
+  repeated TeeAttestation                attestations = 1;
+  cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+  int64                                  block_height = 3;
+}
+
+// QueryPendingTeeAttestationsForStageRequest returns PENDING attestations for a stage
+message QueryPendingTeeAttestationsForStageRequest {
+  int64 poc_stage_start_block_height = 1;
+}
+
+message QueryPendingTeeAttestationsForStageResponse {
+  repeated TeeAttestation attestations = 1;
+  int64                   block_height = 2;
 }

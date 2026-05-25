@@ -20,6 +20,58 @@ func TestGetParams(t *testing.T) {
 	require.Equal(t, params, outParams)
 }
 
+// Round-trip TeeAttestationParams through SetParams/GetParams
+func TestTeeAttestationParamsRoundTrip(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params := types.DefaultParams()
+
+	params.TeeAttestationParams.AllowedProviders = []string{"intel-tdx-lite", "intel-tdx"}
+	params.TeeAttestationParams.AllowedEnvelopeVersions = []string{"v1"}
+	params.TeeAttestationParams.AttestationTtlEpochs = 3
+	params.TeeAttestationParams.MaxEntriesPerMessage = 17
+	params.TeeAttestationParams.AllowedMeasurements = []string{"deadbeef", "cafebabe"}
+
+	require.NoError(t, k.SetParams(ctx, params))
+	out, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, params.TeeAttestationParams, out.TeeAttestationParams)
+}
+
+// Defaults must pass Validate for fresh genesis
+func TestTeeAttestationParamsDefaultsValid(t *testing.T) {
+	require.NoError(t, types.DefaultTeeAttestationParams().Validate())
+	require.NoError(t, types.DefaultParams().Validate())
+}
+
+// Reject non-canonical measurements at Validate time
+func TestTeeAttestationParamsValidateRejectsBadMeasurement(t *testing.T) {
+	params := types.DefaultTeeAttestationParams()
+	params.AllowedMeasurements = []string{"DEADBEEF"} // upper -> reject
+	err := params.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "lowercase hex")
+
+	params.AllowedMeasurements = []string{""}
+	err = params.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty string")
+}
+
+func TestTeeAttestationParamsValidateRejectsDuplicateMeasurements(t *testing.T) {
+	params := types.DefaultTeeAttestationParams()
+	params.AllowedMeasurements = []string{"deadbeef", "deadbeef"}
+	err := params.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duplicate entry")
+}
+
+func TestTeeAttestationParamsValidateCanonicalizesProviders(t *testing.T) {
+	params := types.DefaultTeeAttestationParams()
+	params.AllowedProviders = []string{" Intel-TDX ", "AMD-SEV-SNP"}
+	require.NoError(t, params.Validate())
+	require.Equal(t, []string{"intel-tdx", "amd-sev-snp"}, params.AllowedProviders)
+}
+
 func TestTokenomicsParamsGovernance(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	wctx := sdk.UnwrapSDKContext(ctx)

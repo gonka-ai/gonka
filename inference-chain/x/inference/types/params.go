@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strings"
 
 	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -162,6 +163,30 @@ func DefaultParams() Params {
 		},
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
 		DelegationParams:     DefaultDelegationParams(),
+		TeeAttestationParams: DefaultTeeAttestationParams(),
+	}
+}
+
+// Default when MaxEntriesPerMessage is zero
+const DefaultMaxEntriesPerTeeAttestationMessage uint32 = 256
+
+// Defaults for distributed validation when stored value is zero
+const (
+	DefaultTeeValidationThresholdBps         uint32 = 6500 // 65%
+	DefaultMaxTeeValidationEntriesPerMessage uint32 = 256
+	TeeEnvelopeVersionV1                            = "v1"
+)
+
+// DefaultTeeAttestationParams keeps measurement allowlist empty by default
+func DefaultTeeAttestationParams() *TeeAttestationParams {
+	return &TeeAttestationParams{
+		AllowedProviders:               []string{"intel-tdx-lite"},
+		AllowedEnvelopeVersions:        []string{TeeEnvelopeVersionV1},
+		AttestationTtlEpochs:           1,
+		MaxEntriesPerMessage:           DefaultMaxEntriesPerTeeAttestationMessage,
+		AllowedMeasurements:            nil,
+		ValidationThresholdBps:         DefaultTeeValidationThresholdBps,
+		MaxValidationEntriesPerMessage: DefaultMaxTeeValidationEntriesPerMessage,
 	}
 }
 
@@ -621,6 +646,53 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.TeeAttestationParams != nil {
+		if err := p.TeeAttestationParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Validate checks TeeAttestationParams field formatting
+func (p *TeeAttestationParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	seenProviders := make(map[string]struct{}, len(p.AllowedProviders))
+	for i, provider := range p.AllowedProviders {
+		normalized := strings.ToLower(strings.TrimSpace(provider))
+		if normalized == "" {
+			return fmt.Errorf("tee_attestation_params.allowed_providers contains an empty string")
+		}
+		if _, exists := seenProviders[normalized]; exists {
+			return fmt.Errorf("tee_attestation_params.allowed_providers contains duplicate provider %q", normalized)
+		}
+		seenProviders[normalized] = struct{}{}
+		p.AllowedProviders[i] = normalized
+	}
+	for _, v := range p.AllowedEnvelopeVersions {
+		if v == "" {
+			return fmt.Errorf("tee_attestation_params.allowed_envelope_versions contains an empty string")
+		}
+	}
+	seenMeasurements := make(map[string]struct{}, len(p.AllowedMeasurements))
+	for _, m := range p.AllowedMeasurements {
+		if m == "" {
+			return fmt.Errorf("tee_attestation_params.allowed_measurements contains an empty string")
+		}
+		if !IsCanonicalMeasurement(m) {
+			return fmt.Errorf("tee_attestation_params.allowed_measurements entry %q must be lowercase hex with no separators", m)
+		}
+		if _, dup := seenMeasurements[m]; dup {
+			return fmt.Errorf("tee_attestation_params.allowed_measurements contains duplicate entry %q", m)
+		}
+		seenMeasurements[m] = struct{}{}
+	}
+	if p.ValidationThresholdBps > 10000 {
+		return fmt.Errorf("tee_attestation_params.validation_threshold_bps must be in [0, 10000]")
+	}
 	return nil
 }
 

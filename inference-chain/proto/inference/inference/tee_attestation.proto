@@ -1,0 +1,80 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+
+
+
+
+message TeeAttestation {
+  string participant_address = 1;
+  string node_id             = 2;  
+  bytes  public_key          = 3;  
+  string provider            = 4;  
+  string measurement         = 5;  
+  bytes  quote_hash          = 6;  
+  int64  attested_at_height  = 7;  
+  int64  expires_at_height   = 8;  
+  string envelope_version    = 9;  
+
+  TeeVerificationStatus verification_status   = 10;
+  int64                 verified_at_height    = 11;
+  uint32                ok_voting_power_bps   = 12;
+  uint32                reject_voting_power_bps = 13;
+  
+  
+  bytes  quote                               = 14;
+  uint32 pending_epochs                      = 15;
+}
+
+
+
+
+enum TeeVerificationStatus {
+  TEE_VERIFICATION_PENDING  = 0;
+  TEE_VERIFICATION_VERIFIED = 1;
+  TEE_VERIFICATION_REJECTED = 2;
+}
+
+
+
+
+message TeeAttestationEntry {
+  string node_id          = 1;
+  bytes  public_key       = 2;
+  string provider         = 3;
+  string measurement      = 4;
+  bytes  quote_hash       = 5;
+  string envelope_version = 6;
+  bytes  quote            = 7;
+}
+
+
+enum TeeVerdict {
+  TEE_VERDICT_UNSPECIFIED = 0;
+  TEE_VERDICT_OK          = 1;
+  TEE_VERDICT_REJECT      = 2;
+}
+
+
+message TeeValidationEntry {
+  string     subject_address    = 1;
+  string     node_id            = 2;
+  string     measurement_seen   = 3;
+  TeeVerdict verdict            = 4;
+  string     reason             = 5;
+}
+
+
+
+message TeeValidation {
+  int64      poc_stage_start_block_height = 1;
+  string     subject_address              = 2;
+  string     node_id                      = 3;
+  string     validator_address            = 4;
+  string     measurement_seen             = 5;
+  TeeVerdict verdict                      = 6;
+  string     reason                       = 7;
+  int64      submitted_at_height          = 8;
+}

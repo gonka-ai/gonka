@@ -39,6 +39,11 @@ const (
 	Query_MLNodeWeightDistribution_FullMethodName                  = "/inference.inference.Query/MLNodeWeightDistribution"
 	Query_AllPoCV2StoreCommitsForStage_FullMethodName              = "/inference.inference.Query/AllPoCV2StoreCommitsForStage"
 	Query_AllMLNodeWeightDistributionsForStage_FullMethodName      = "/inference.inference.Query/AllMLNodeWeightDistributionsForStage"
+	Query_TeeAttestation_FullMethodName                            = "/inference.inference.Query/TeeAttestation"
+	Query_TeeAttestationsByParticipant_FullMethodName              = "/inference.inference.Query/TeeAttestationsByParticipant"
+	Query_TeeAttestationsActive_FullMethodName                     = "/inference.inference.Query/TeeAttestationsActive"
+	Query_TeeAttestationsVerified_FullMethodName                   = "/inference.inference.Query/TeeAttestationsVerified"
+	Query_PendingTeeAttestationsForStage_FullMethodName            = "/inference.inference.Query/PendingTeeAttestationsForStage"
 	Query_GetCurrentEpoch_FullMethodName                           = "/inference.inference.Query/GetCurrentEpoch"
 	Query_TokenomicsData_FullMethodName                            = "/inference.inference.Query/TokenomicsData"
 	Query_GetUnitOfComputePriceProposal_FullMethodName             = "/inference.inference.Query/GetUnitOfComputePriceProposal"
@@ -133,6 +138,11 @@ type QueryClient interface {
 	MLNodeWeightDistribution(ctx context.Context, in *QueryMLNodeWeightDistributionRequest, opts ...grpc.CallOption) (*QueryMLNodeWeightDistributionResponse, error)
 	AllPoCV2StoreCommitsForStage(ctx context.Context, in *QueryAllPoCV2StoreCommitsForStageRequest, opts ...grpc.CallOption) (*QueryAllPoCV2StoreCommitsForStageResponse, error)
 	AllMLNodeWeightDistributionsForStage(ctx context.Context, in *QueryAllMLNodeWeightDistributionsForStageRequest, opts ...grpc.CallOption) (*QueryAllMLNodeWeightDistributionsForStageResponse, error)
+	TeeAttestation(ctx context.Context, in *QueryTeeAttestationRequest, opts ...grpc.CallOption) (*QueryTeeAttestationResponse, error)
+	TeeAttestationsByParticipant(ctx context.Context, in *QueryTeeAttestationsByParticipantRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsByParticipantResponse, error)
+	TeeAttestationsActive(ctx context.Context, in *QueryTeeAttestationsActiveRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsActiveResponse, error)
+	TeeAttestationsVerified(ctx context.Context, in *QueryTeeAttestationsVerifiedRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsVerifiedResponse, error)
+	PendingTeeAttestationsForStage(ctx context.Context, in *QueryPendingTeeAttestationsForStageRequest, opts ...grpc.CallOption) (*QueryPendingTeeAttestationsForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
@@ -412,6 +422,51 @@ func (c *queryClient) AllPoCV2StoreCommitsForStage(ctx context.Context, in *Quer
 func (c *queryClient) AllMLNodeWeightDistributionsForStage(ctx context.Context, in *QueryAllMLNodeWeightDistributionsForStageRequest, opts ...grpc.CallOption) (*QueryAllMLNodeWeightDistributionsForStageResponse, error) {
 	out := new(QueryAllMLNodeWeightDistributionsForStageResponse)
 	err := c.cc.Invoke(ctx, Query_AllMLNodeWeightDistributionsForStage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TeeAttestation(ctx context.Context, in *QueryTeeAttestationRequest, opts ...grpc.CallOption) (*QueryTeeAttestationResponse, error) {
+	out := new(QueryTeeAttestationResponse)
+	err := c.cc.Invoke(ctx, Query_TeeAttestation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TeeAttestationsByParticipant(ctx context.Context, in *QueryTeeAttestationsByParticipantRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsByParticipantResponse, error) {
+	out := new(QueryTeeAttestationsByParticipantResponse)
+	err := c.cc.Invoke(ctx, Query_TeeAttestationsByParticipant_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TeeAttestationsActive(ctx context.Context, in *QueryTeeAttestationsActiveRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsActiveResponse, error) {
+	out := new(QueryTeeAttestationsActiveResponse)
+	err := c.cc.Invoke(ctx, Query_TeeAttestationsActive_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TeeAttestationsVerified(ctx context.Context, in *QueryTeeAttestationsVerifiedRequest, opts ...grpc.CallOption) (*QueryTeeAttestationsVerifiedResponse, error) {
+	out := new(QueryTeeAttestationsVerifiedResponse)
+	err := c.cc.Invoke(ctx, Query_TeeAttestationsVerified_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PendingTeeAttestationsForStage(ctx context.Context, in *QueryPendingTeeAttestationsForStageRequest, opts ...grpc.CallOption) (*QueryPendingTeeAttestationsForStageResponse, error) {
+	out := new(QueryPendingTeeAttestationsForStageResponse)
+	err := c.cc.Invoke(ctx, Query_PendingTeeAttestationsForStage_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -958,6 +1013,11 @@ type QueryServer interface {
 	MLNodeWeightDistribution(context.Context, *QueryMLNodeWeightDistributionRequest) (*QueryMLNodeWeightDistributionResponse, error)
 	AllPoCV2StoreCommitsForStage(context.Context, *QueryAllPoCV2StoreCommitsForStageRequest) (*QueryAllPoCV2StoreCommitsForStageResponse, error)
 	AllMLNodeWeightDistributionsForStage(context.Context, *QueryAllMLNodeWeightDistributionsForStageRequest) (*QueryAllMLNodeWeightDistributionsForStageResponse, error)
+	TeeAttestation(context.Context, *QueryTeeAttestationRequest) (*QueryTeeAttestationResponse, error)
+	TeeAttestationsByParticipant(context.Context, *QueryTeeAttestationsByParticipantRequest) (*QueryTeeAttestationsByParticipantResponse, error)
+	TeeAttestationsActive(context.Context, *QueryTeeAttestationsActiveRequest) (*QueryTeeAttestationsActiveResponse, error)
+	TeeAttestationsVerified(context.Context, *QueryTeeAttestationsVerifiedRequest) (*QueryTeeAttestationsVerifiedResponse, error)
+	PendingTeeAttestationsForStage(context.Context, *QueryPendingTeeAttestationsForStageRequest) (*QueryPendingTeeAttestationsForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
@@ -1119,6 +1179,21 @@ func (UnimplementedQueryServer) AllPoCV2StoreCommitsForStage(context.Context, *Q
 }
 func (UnimplementedQueryServer) AllMLNodeWeightDistributionsForStage(context.Context, *QueryAllMLNodeWeightDistributionsForStageRequest) (*QueryAllMLNodeWeightDistributionsForStageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AllMLNodeWeightDistributionsForStage not implemented")
+}
+func (UnimplementedQueryServer) TeeAttestation(context.Context, *QueryTeeAttestationRequest) (*QueryTeeAttestationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TeeAttestation not implemented")
+}
+func (UnimplementedQueryServer) TeeAttestationsByParticipant(context.Context, *QueryTeeAttestationsByParticipantRequest) (*QueryTeeAttestationsByParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TeeAttestationsByParticipant not implemented")
+}
+func (UnimplementedQueryServer) TeeAttestationsActive(context.Context, *QueryTeeAttestationsActiveRequest) (*QueryTeeAttestationsActiveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TeeAttestationsActive not implemented")
+}
+func (UnimplementedQueryServer) TeeAttestationsVerified(context.Context, *QueryTeeAttestationsVerifiedRequest) (*QueryTeeAttestationsVerifiedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TeeAttestationsVerified not implemented")
+}
+func (UnimplementedQueryServer) PendingTeeAttestationsForStage(context.Context, *QueryPendingTeeAttestationsForStageRequest) (*QueryPendingTeeAttestationsForStageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PendingTeeAttestationsForStage not implemented")
 }
 func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
@@ -1657,6 +1732,96 @@ func _Query_AllMLNodeWeightDistributionsForStage_Handler(srv interface{}, ctx co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).AllMLNodeWeightDistributionsForStage(ctx, req.(*QueryAllMLNodeWeightDistributionsForStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TeeAttestation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTeeAttestationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TeeAttestation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TeeAttestation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TeeAttestation(ctx, req.(*QueryTeeAttestationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TeeAttestationsByParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTeeAttestationsByParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TeeAttestationsByParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TeeAttestationsByParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TeeAttestationsByParticipant(ctx, req.(*QueryTeeAttestationsByParticipantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TeeAttestationsActive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTeeAttestationsActiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TeeAttestationsActive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TeeAttestationsActive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TeeAttestationsActive(ctx, req.(*QueryTeeAttestationsActiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TeeAttestationsVerified_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTeeAttestationsVerifiedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TeeAttestationsVerified(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TeeAttestationsVerified_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TeeAttestationsVerified(ctx, req.(*QueryTeeAttestationsVerifiedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PendingTeeAttestationsForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPendingTeeAttestationsForStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PendingTeeAttestationsForStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PendingTeeAttestationsForStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PendingTeeAttestationsForStage(ctx, req.(*QueryPendingTeeAttestationsForStageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2755,6 +2920,26 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AllMLNodeWeightDistributionsForStage",
 			Handler:    _Query_AllMLNodeWeightDistributionsForStage_Handler,
+		},
+		{
+			MethodName: "TeeAttestation",
+			Handler:    _Query_TeeAttestation_Handler,
+		},
+		{
+			MethodName: "TeeAttestationsByParticipant",
+			Handler:    _Query_TeeAttestationsByParticipant_Handler,
+		},
+		{
+			MethodName: "TeeAttestationsActive",
+			Handler:    _Query_TeeAttestationsActive_Handler,
+		},
+		{
+			MethodName: "TeeAttestationsVerified",
+			Handler:    _Query_TeeAttestationsVerified_Handler,
+		},
+		{
+			MethodName: "PendingTeeAttestationsForStage",
+			Handler:    _Query_PendingTeeAttestationsForStage_Handler,
 		},
 		{
 			MethodName: "GetCurrentEpoch",
