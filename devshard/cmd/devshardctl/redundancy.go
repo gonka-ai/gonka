@@ -1254,62 +1254,41 @@ type raceWriter struct {
 // back to processing only the current Write.
 const maxClassifyPartial = 256 * 1024
 
-// takeParseable returns bytes safe for SSE classification — the prefix of
-// (prior partial + p) up to and including the final '\n'. Trailing bytes
-// after the last newline are stashed in inf.classifyPartial for the next
-// Write. When no newline is present yet, returns nil and stashes everything.
-// Required because sseChunkContentSource etc. only parse complete data:-
-// prefixed lines; without reassembly a small-chunked transport (TLS
-// fragmentation, slow connections) silently strips classification of any
-// event split across Writes.
+// takeParseable returns the prefix of (buffered partial + p) ending on '\n',
+// safe to feed to the SSE classifier. Trailing bytes after the last '\n'
+// are stashed in inf.classifyPartial for the next Write. Returns nil when
+// no '\n' has been seen yet.
+//
+// Invariant: classifyPartial never contains '\n' — by construction it is
+// the tail kept after the last '\n' on a prior call. So new '\n's can only
+// appear inside p, and we only need to scan p (not the combined buffer).
 func (rw *raceWriter) takeParseable(p []byte) []byte {
-	if len(rw.inf.classifyPartial) == 0 {
-		// Fast path: no prior partial, only inspect p itself.
-		lastNL := bytes.LastIndexByte(p, '\n')
-		if lastNL == -1 {
-			if len(p) > 0 {
-				rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p...)
-			}
-			return nil
-		}
-		if lastNL+1 < len(p) {
-			rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNL+1:]...)
-		} else {
+	lastNLinP := bytes.LastIndexByte(p, '\n')
+
+	if lastNLinP == -1 {
+		// No newline in p — buffer it, unless adding p would exceed the cap.
+		if len(rw.inf.classifyPartial)+len(p) > maxClassifyPartial {
 			rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
-		}
-		return p[: lastNL+1]
-	}
-
-	// Defensive: malformed stream growing without newlines — drop partial.
-	if len(rw.inf.classifyPartial)+len(p) > maxClassifyPartial {
-		rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
-		lastNL := bytes.LastIndexByte(p, '\n')
-		if lastNL == -1 {
 			return nil
 		}
-		if lastNL+1 < len(p) {
-			rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNL+1:]...)
-		}
-		return p[: lastNL+1]
-	}
-
-	// Combine prior partial with new bytes; classify whole view.
-	combined := append(rw.inf.classifyPartial, p...)
-	lastNL := bytes.LastIndexByte(combined, '\n')
-	if lastNL == -1 {
-		rw.inf.classifyPartial = combined
+		rw.inf.classifyPartial = append(rw.inf.classifyPartial, p...)
 		return nil
 	}
-	// Copy out the trailing partial — combined shares backing with the prior
-	// classifyPartial, which we're about to replace.
-	if lastNL+1 < len(combined) {
-		tail := make([]byte, len(combined)-lastNL-1)
-		copy(tail, combined[lastNL+1:])
-		rw.inf.classifyPartial = tail
+
+	// p has '\n'. Build parseable = classifyPartial + p[:lastNLinP+1].
+	var parseable []byte
+	if len(rw.inf.classifyPartial) == 0 {
+		parseable = p[:lastNLinP+1]
 	} else {
-		rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
+		buf := make([]byte, 0, len(rw.inf.classifyPartial)+lastNLinP+1)
+		buf = append(buf, rw.inf.classifyPartial...)
+		buf = append(buf, p[:lastNLinP+1]...)
+		parseable = buf
 	}
-	return combined[: lastNL+1]
+
+	// Stash the trailing fragment. Empty trailing → append is a no-op.
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNLinP+1:]...)
+	return parseable
 }
 
 func (rw *raceWriter) ctxErr() error {
