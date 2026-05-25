@@ -266,6 +266,9 @@ type CosmosMessageClient interface {
 	SubmitPocValidationsV2(transaction *inferencetypes.MsgSubmitPocValidationsV2) error
 	SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error
 	SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error
+	SubmitTeeAttestation(transaction *inferencetypes.MsgSubmitTeeAttestation) error
+	RevokeTeeAttestation(transaction *inferencetypes.MsgRevokeTeeAttestation) error
+	SubmitTeeValidations(transaction *inferencetypes.MsgSubmitTeeValidations) error
 	SubmitSeed(transaction *inferenceapi.MsgSubmitSeed) error
 	ClaimRewards(transaction *inferenceapi.MsgClaimRewards) error
 	SubmitUnitOfComputePriceProposal(transaction *inferenceapi.MsgSubmitUnitOfComputePriceProposal) error
@@ -449,6 +452,27 @@ func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommit(transaction *inferencet
 func (icc *InferenceCosmosClient) SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error {
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
+// SubmitTeeAttestation uses no-retry path during the PoC window
+func (icc *InferenceCosmosClient) SubmitTeeAttestation(transaction *inferencetypes.MsgSubmitTeeAttestation) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	return err
+}
+
+// RevokeTeeAttestation uses retry path because it is not window-gated
+func (icc *InferenceCosmosClient) RevokeTeeAttestation(transaction *inferencetypes.MsgRevokeTeeAttestation) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
+// SubmitTeeValidations uses no-retry path during the PoC window
+func (icc *InferenceCosmosClient) SubmitTeeValidations(transaction *inferencetypes.MsgSubmitTeeValidations) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
 	return err
 }
 

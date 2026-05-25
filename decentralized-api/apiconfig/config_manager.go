@@ -525,6 +525,7 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err != nil {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
+	applyApiConfigDefaults(&config.Api, k.Exists)
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
 		config.ChainNode.SignerKeyName = keyName
 		log.Printf("Loaded KEY_NAME: %+v", keyName)

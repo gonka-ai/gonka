@@ -15,6 +15,8 @@ type LockAvailableNode struct {
 	Model       string
 	Response    chan *Node
 	SkipNodeIDs []string
+	// Restrict selection to a matching recipient key id
+	RecipientKeyID string
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {

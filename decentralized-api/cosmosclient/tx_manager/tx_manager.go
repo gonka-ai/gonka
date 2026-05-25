@@ -335,7 +335,25 @@ func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, e
 		return nil, err
 	}
 	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
-	return resp, broadcastErr
+	if broadcastErr != nil {
+		return resp, broadcastErr
+	}
+	if err := validateNoRetryTxResponse(resp); err != nil {
+		code, codespace, rawLog := uint32(0), "", ""
+		if resp != nil {
+			code = resp.Code
+			codespace = resp.Codespace
+			rawLog = resp.RawLog
+		}
+		logging.Warn("SendTransactionAsyncNoRetry: non-observable broadcast response", types.Messages,
+			"tx_id", id,
+			"code", code,
+			"codespace", codespace,
+			"rawLog", rawLog,
+			"error", err)
+		return resp, err
+	}
+	return resp, nil
 }
 
 func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
@@ -347,6 +365,21 @@ func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultT
 	}
 	resp, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateNoRetryTxResponse(resp); err != nil {
+		code, codespace, rawLog := uint32(0), "", ""
+		if resp != nil {
+			code = resp.Code
+			codespace = resp.Codespace
+			rawLog = resp.RawLog
+		}
+		logging.Warn("SendTransactionSyncNoRetry: non-observable broadcast response", types.Messages,
+			"tx_id", id,
+			"code", code,
+			"codespace", codespace,
+			"rawLog", rawLog,
+			"error", err)
 		return nil, err
 	}
 

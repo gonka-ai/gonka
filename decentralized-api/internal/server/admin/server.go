@@ -8,6 +8,8 @@ import (
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
 	"decentralized-api/payloadstorage"
+	"decentralized-api/poc"
+	"decentralized-api/teeverify"
 
 	"cosmossdk.io/x/feegrant"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -34,6 +36,11 @@ type Server struct {
 	cdc            *codec.ProtoCodec
 	blockQueue     *pserver.BridgeQueue
 	payloadStorage payloadstorage.PayloadStorage
+
+	// Optional deps for /admin/v1/tee-status
+	teeWorker           *poc.TeeAttestationWorker
+	teeValidationWorker *poc.TeeValidationWorker
+	teeVerifiers        *teeverify.Registry
 }
 
 func NewServer(
@@ -42,20 +49,27 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	validator *validation.InferenceValidator,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	teeWorker *poc.TeeAttestationWorker,
+	teeValidationWorker *poc.TeeValidationWorker,
+	teeVerifiers *teeverify.Registry,
+) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		validator:      validator,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:                   e,
+		nodeBroker:          nodeBroker,
+		configManager:       configManager,
+		recorder:            recorder,
+		validator:           validator,
+		cdc:                 cdc,
+		blockQueue:          blockQueue,
+		payloadStorage:      payloadStorage,
+		teeWorker:           teeWorker,
+		teeValidationWorker: teeValidationWorker,
+		teeVerifiers:        teeVerifiers,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -97,6 +111,8 @@ func NewServer(
 
 	// Payload storage for testing (allows testermint to store payloads directly)
 	g.POST("payloads", s.storePayload)
+
+	g.GET("tee-status", s.getTeeStatus)
 
 	return s
 }

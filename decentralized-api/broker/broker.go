@@ -219,6 +219,9 @@ type NodeState struct {
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion string `json:"ml_node_version"`
 
+	// recipient_key_id from /encrypted/identity for encrypted routing
+	RecipientKeyID string `json:"recipient_key_id,omitempty"`
+
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
 	// EpochMLNodes stores this node's own MLNodeInfo, not all epoch ML nodes.
@@ -492,6 +495,9 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 			logging.Info("Node skipped by LockAvailableNode skip list", types.Nodes, "node_id", node.Node.Id)
 			continue
 		}
+		if command.RecipientKeyID != "" && node.State.RecipientKeyID != command.RecipientKeyID {
+			continue
+		}
 		// TODO: log some kind of a reason as to why the node is not available
 		if available, reason := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
@@ -534,6 +540,10 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 	}
 	logging.Info("nodeAvailable. Node is not administratively enabled", types.Nodes, "nodeId", node.Node.Id, "adminState", node.State.AdminState)
 
+	// Empty model means AcquireMLNodeByKey path
+	if neededModel == "" {
+		return true, ""
+	}
 	_, found := node.State.EpochModels[neededModel]
 	if !found {
 		logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
@@ -1331,13 +1341,15 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 
 			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus ||
-				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion {
+				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion ||
+				nodeResp.State.RecipientKeyID != queryStatusResult.RecipientKeyID {
 				statusUpdates = append(statusUpdates, StatusUpdate{
-					NodeId:        nodeResp.Node.Id,
-					PrevStatus:    queryStatusResult.PrevStatus,
-					NewStatus:     queryStatusResult.CurrentStatus,
-					Timestamp:     timestamp,
-					MlNodeVersion: queryStatusResult.MlNodeVersion,
+					NodeId:         nodeResp.Node.Id,
+					PrevStatus:     queryStatusResult.PrevStatus,
+					NewStatus:      queryStatusResult.CurrentStatus,
+					Timestamp:      timestamp,
+					MlNodeVersion:  queryStatusResult.MlNodeVersion,
+					RecipientKeyID: queryStatusResult.RecipientKeyID,
 				})
 			}
 		}
@@ -1355,9 +1367,10 @@ func nodeStatusQueryWorker(broker *Broker) {
 }
 
 type statusQueryResult struct {
-	PrevStatus    types.HardwareNodeStatus
-	CurrentStatus types.HardwareNodeStatus
-	MlNodeVersion string
+	PrevStatus     types.HardwareNodeStatus
+	CurrentStatus  types.HardwareNodeStatus
+	MlNodeVersion  string
+	RecipientKeyID string
 }
 
 // Pass by value, because this is supposed to be a readonly function
@@ -1421,10 +1434,31 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		}
 	}
 
+	recipientKeyID := state.RecipientKeyID
+	if currentStatus == types.HardwareNodeStatus_INFERENCE {
+		ictx, icancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
+		defer icancel()
+		if identity, err := client.GetEncryptedIdentity(ictx); err != nil {
+			if errors.Is(err, mlnodeclient.ErrEncryptedIdentityDisabled) {
+				recipientKeyID = ""
+			} else {
+				logging.Debug("queryNodeStatus. GetEncryptedIdentity failed; keeping previous key id",
+					types.Nodes, "nodeId", nodeId, "prev_key_id", recipientKeyID, "error", err)
+			}
+		} else if identity != nil && identity.KeyID != "" {
+			if recipientKeyID != "" && recipientKeyID != identity.KeyID {
+				logging.Info("queryNodeStatus. Node recipient_key_id rotated", types.Nodes,
+					"nodeId", nodeId, "prev_key_id", recipientKeyID, "new_key_id", identity.KeyID)
+			}
+			recipientKeyID = identity.KeyID
+		}
+	}
+
 	return &statusQueryResult{
-		PrevStatus:    prevStatus,
-		CurrentStatus: currentStatus,
-		MlNodeVersion: mlNodeVersion,
+		PrevStatus:     prevStatus,
+		CurrentStatus:  currentStatus,
+		MlNodeVersion:  mlNodeVersion,
+		RecipientKeyID: recipientKeyID,
 	}, nil
 }
 
