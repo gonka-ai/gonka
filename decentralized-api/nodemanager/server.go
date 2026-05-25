@@ -18,6 +18,7 @@ import (
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
 	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
+	AcquireMLNodeByKey(ctx context.Context, recipientKeyID string) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
 	TriggerStatusQuery(bypassDebounce bool)
 }
@@ -34,9 +35,22 @@ func NewServer(b brokerAcquirer) *Server {
 }
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
+	var (
+		lockID, endpoint, nodeID string
+		err                      error
+	)
+	if req.RecipientKeyId != "" {
+		lockID, endpoint, nodeID, err = s.broker.AcquireMLNodeByKey(ctx, req.RecipientKeyId)
+	} else {
+		lockID, endpoint, nodeID, err = s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
+	}
 	if err == nil {
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
+	}
+	if errors.Is(err, broker.ErrRecipientKeyUnknown) {
+		logging.Info("[NodeManager] Recipient key unknown on this host", types.Nodes,
+			"recipient_key_id", req.RecipientKeyId)
+		return nil, status.Error(codes.NotFound, broker.ErrRecipientKeyUnknown.Error())
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
 		logging.Error("[NodeManager] No nodes available", types.Nodes)

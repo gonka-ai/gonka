@@ -2,6 +2,7 @@ package mlnode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"devshard/mlnode/gen"
@@ -11,6 +12,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+// ErrRecipientKeyUnknown means remote node-manager has no matching recipient key
+var ErrRecipientKeyUnknown = errors.New("nodemanager: recipient key id unknown on this host")
 
 // Client is a gRPC client for the node-manager NodeManager service.
 type Client struct {
@@ -45,6 +49,26 @@ func (c *Client) Acquire(ctx context.Context, model string, excludedNodeIDs []st
 			return nil, fmt.Errorf("nodemanager: no nodes available for model %q", model)
 		}
 		return nil, fmt.Errorf("nodemanager: acquire: %w", err)
+	}
+	return resp, nil
+}
+
+// AcquireByKey reserves the ML node advertising recipientKeyID
+func (c *Client) AcquireByKey(ctx context.Context, recipientKeyID string) (*gen.AcquireMLNodeResponse, error) {
+	if recipientKeyID == "" {
+		return nil, errors.New("nodemanager: acquire by key: empty recipient key id")
+	}
+	resp, err := c.client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{
+		RecipientKeyId: recipientKeyID,
+	})
+	if err != nil {
+		switch status.Code(err) {
+		case codes.NotFound:
+			return nil, ErrRecipientKeyUnknown
+		case codes.ResourceExhausted:
+			return nil, fmt.Errorf("nodemanager: no capacity for recipient_key_id %q", recipientKeyID)
+		}
+		return nil, fmt.Errorf("nodemanager: acquire by key: %w", err)
 	}
 	return resp, nil
 }

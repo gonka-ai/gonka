@@ -33,11 +33,12 @@ type Server struct {
 	store       storage.Storage
 	gossip      *gossip.Gossip // nil until gossip is wired
 	verifier    signing.Verifier
-	userAddr    string               // session user address, allowed alongside group members
-	peerClients map[int]*HTTPClient  // slot index -> client, for timeout verification
-	rateLimit   *rateLimiter         // nil = no limiting
-	maxBodySize int64                // max request body bytes, 0 = no limit
-	bridge      bridge.MainnetBridge // optional, for warm key verification
+	userAddr    string                   // session user address, allowed alongside group members
+	peerClients map[int]*HTTPClient      // slot index -> client, for timeout verification
+	rateLimit   *rateLimiter             // nil = no limiting
+	maxBodySize int64                    // max request body bytes, 0 = no limit
+	bridge      bridge.MainnetBridge     // optional, for warm key verification
+	encEngine   devshard.EncryptedEngine // optional, for /encrypted/* routes
 }
 
 // ServerOption configures the Server.
@@ -70,6 +71,11 @@ func WithServerPeerClients(peers map[int]*HTTPClient) ServerOption {
 // WithBridge sets the bridge for warm key verification in transport auth.
 func WithBridge(b bridge.MainnetBridge) ServerOption {
 	return func(s *Server) { s.bridge = b }
+}
+
+// WithEncryptedEngine enables encrypted forwarding for /sessions/:id/encrypted/chat/completions
+func WithEncryptedEngine(e devshard.EncryptedEngine) ServerOption {
+	return func(s *Server) { s.encEngine = e }
 }
 
 // NewServer creates an HTTP server wrapping the given host.
@@ -107,6 +113,9 @@ func (s *Server) Register(g *echo.Group) {
 		g.Use(rateLimitMiddleware(s.rateLimit))
 	}
 	g.POST("/sessions/:id/chat/completions", s.HandleInference)
+	if s.encEngine != nil {
+		g.POST("/sessions/:id/encrypted/chat/completions", s.HandleEncryptedInference)
+	}
 	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
 	g.POST("/sessions/:id/challenge-receipt", s.HandleChallengeReceipt)
 	g.POST("/sessions/:id/gossip/nonce", s.HandleGossipNonce)
@@ -335,6 +344,94 @@ func (s *Server) HandleInference(c echo.Context) error {
 	}
 
 	return nil
+}
+
+// envelopeHead is the subset read by the host for auth and logging
+type envelopeHead struct {
+	Version   int    `json:"version"`
+	SessionID string `json:"session_id"`
+	Nonce     uint64 `json:"nonce"`
+}
+
+const supportedEnvelopeVersion = 1
+
+// HandleEncryptedInference forwards an opaque HPKE envelope
+// Host never decrypts and returns EncryptedResponse verbatim
+func (s *Server) HandleEncryptedInference(c echo.Context) error {
+	if s.encEngine == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "encrypted inference disabled on this host")
+	}
+
+	sender, err := getSender(c)
+	if err != nil {
+		logging.Error("HandleEncryptedInference", "error", err)
+		return echo.NewHTTPError(http.StatusUnauthorized, "missing sender")
+	}
+	if !s.isOwner(sender) {
+		logging.Error("HandleEncryptedInference", "error", "restricted to escrow owner")
+		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+
+	body, err := getBody(c)
+	if err != nil {
+		logging.Error("HandleEncryptedInference", "error", err)
+		return err
+	}
+
+	// Parse head for host-side checks and logging
+	var head envelopeHead
+	if err := json.Unmarshal(body, &head); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid encrypted envelope head: "+err.Error())
+	}
+	if head.SessionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "envelope missing session_id")
+	}
+	if head.Version != supportedEnvelopeVersion {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			fmt.Sprintf("unsupported envelope version %d (host supports %d)", head.Version, supportedEnvelopeVersion))
+	}
+	if head.SessionID != s.host.EscrowID() {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			fmt.Sprintf("envelope session_id %q does not match escrow %q", head.SessionID, s.host.EscrowID()),
+		)
+	}
+
+	logging.Debug("encrypted inference forwarding",
+		"escrow_id", s.host.EscrowID(),
+		"sender", sender,
+		"session_id", head.SessionID,
+		"nonce", head.Nonce,
+		"envelope_version", head.Version,
+		"body_bytes", len(body),
+	)
+
+	respBytes, err := s.encEngine.ForwardEncrypted(c.Request().Context(), body)
+	if err != nil {
+		logging.Error("encrypted inference forward failed",
+			"error", err,
+			"escrow_id", s.host.EscrowID(),
+			"session_id", head.SessionID,
+			"nonce", head.Nonce,
+		)
+		return echo.NewHTTPError(encryptedErrorStatus(err), "encrypted forward failed: "+err.Error())
+	}
+
+	// respBytes IS the EncryptedResponse JSON; return verbatim
+	return c.Blob(http.StatusOK, echo.MIMEApplicationJSON, respBytes)
+}
+
+func encryptedErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, devshard.EncryptedBadEnvelope):
+		return http.StatusBadRequest
+	case errors.Is(err, devshard.EncryptedKeyUnknown):
+		return http.StatusMisdirectedRequest
+	case errors.Is(err, devshard.EncryptedNoCapacity):
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 // replaySSEBody writes cached ML response bytes as SSE data lines.

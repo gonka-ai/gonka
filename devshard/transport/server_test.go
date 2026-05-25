@@ -34,7 +34,7 @@ type serverTestEnv struct {
 	config     types.SessionConfig
 }
 
-func setupServerEnv(t *testing.T) *serverTestEnv {
+func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -51,7 +51,7 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
 	require.NoError(t, err)
 
-	srv, err := NewServer(h, store, verifier, userSigner.Address())
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), opts...)
 	require.NoError(t, err)
 
 	e := echo.New()

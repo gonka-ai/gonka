@@ -61,14 +61,19 @@ type MockClient struct {
 	// PoC v2 state
 	PowStatusV2 string // "IDLE", "GENERATING", etc.
 
+	// Encrypted identity stub state
+	EncryptedIdentity          *EncryptedIdentity
+	EncryptedIdentityError     error
+	GetEncryptedIdentityCalled int
+
 	// Capture parameters
 	LastInferenceModel    string
 	LastInferenceArgs     []string
 	LastInitGenerateV2Req *PoCInitGenerateRequestV2
 	LastGenerateV2Req     *PoCGenerateRequestV2
-	LastModelStatusCheck *Model
-	LastModelDownload    *Model
-	LastModelDelete      *Model
+	LastModelStatusCheck  *Model
+	LastModelDownload     *Model
+	LastModelDelete       *Model
 }
 
 // NewMockClient creates a new mock client with default values
@@ -474,6 +479,21 @@ func (m *MockClient) SetV2Status(status string) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.PowStatusV2 = status
+}
+
+// GetEncryptedIdentity returns configured identity unless EncryptedIdentityError is set
+func (m *MockClient) GetEncryptedIdentity(ctx context.Context) (*EncryptedIdentity, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.GetEncryptedIdentityCalled++
+	if m.EncryptedIdentityError != nil {
+		return nil, m.EncryptedIdentityError
+	}
+	if m.EncryptedIdentity == nil {
+		return nil, ErrEncryptedIdentityDisabled
+	}
+	clone := *m.EncryptedIdentity
+	return &clone, nil
 }
 
 // Ensure MockClient implements MLNodeClient

@@ -12,6 +12,7 @@ service NodeManager {
 message AcquireMLNodeRequest {
   string model                   = 1;
   repeated string excluded_nodes = 2;
+  string recipient_key_id        = 3;
 }
 
 message AcquireMLNodeResponse {

@@ -92,6 +92,57 @@ func TestClient_Acquire_ServerError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestClient_AcquireByKey_Success(t *testing.T) {
+	srv := &mockServer{
+		acquireFunc: func(_ context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+			assert.Equal(t, "abcd0123abcd0123", req.RecipientKeyId)
+			assert.Empty(t, req.Model)
+			assert.Empty(t, req.ExcludedNodes)
+			return &gen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: "http://node1:8080", NodeId: "node-1"}, nil
+		},
+	}
+
+	c := startMockServer(t, srv)
+	resp, err := c.AcquireByKey(context.Background(), "abcd0123abcd0123")
+
+	require.NoError(t, err)
+	assert.Equal(t, "node-1", resp.NodeId)
+}
+
+func TestClient_AcquireByKey_KeyUnknown(t *testing.T) {
+	srv := &mockServer{
+		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.NotFound, "key unknown")
+		},
+	}
+
+	c := startMockServer(t, srv)
+	_, err := c.AcquireByKey(context.Background(), "ffffffffffffffff")
+
+	require.ErrorIs(t, err, ErrRecipientKeyUnknown)
+}
+
+func TestClient_AcquireByKey_NoCapacity(t *testing.T) {
+	srv := &mockServer{
+		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.ResourceExhausted, "busy")
+		},
+	}
+
+	c := startMockServer(t, srv)
+	_, err := c.AcquireByKey(context.Background(), "ffffffffffffffff")
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrRecipientKeyUnknown)
+}
+
+func TestClient_AcquireByKey_EmptyKey(t *testing.T) {
+	c := &Client{}
+	_, err := c.AcquireByKey(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty recipient key id")
+}
+
 func TestClient_Release_AllOutcomes(t *testing.T) {
 	outcomes := []gen.ReleaseOutcome{
 		gen.ReleaseOutcome_SUCCESS,

@@ -141,6 +141,7 @@ func main() {
 	chainParams := newChainParamsProvider(ctx, recorder, availabilityTracker)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
+	encEngine := internaldevshard.NewEncryptedEngine(mlClient, httpClient)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
 
 	storeDir := filepath.Join(*dataDir, "devshardd")
@@ -168,6 +169,8 @@ func main() {
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeSessionVersion(runtimeVersion), br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
+	// Must run before RecoverSessions so existing sessions get the engine
+	manager.SetEncryptedEngine(encEngine)
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}

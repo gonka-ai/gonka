@@ -23,11 +23,31 @@ type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
 }
 
+// LazyRoutesOption configures RegisterLazySessionRoutes
+type LazyRoutesOption func(*lazyRoutesConfig)
+
+type lazyRoutesConfig struct {
+	encryptedEnabled bool
+}
+
+// WithEncryptedRoute mounts /sessions/:id/encrypted/chat/completions
+func WithEncryptedRoute() LazyRoutesOption {
+	return func(c *lazyRoutesConfig) { c.encryptedEnabled = true }
+}
+
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
 // Session servers are resolved lazily per request via SessionResolver.
-func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadHandler PayloadHandler) {
+func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadHandler PayloadHandler, opts ...LazyRoutesOption) {
+	cfg := lazyRoutesConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	g.POST("/sessions/:id/chat/completions", withSessionAuth(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
+	if cfg.encryptedEnabled {
+		g.POST("/sessions/:id/encrypted/chat/completions", withSessionAuth(resolver,
+			func(srv *transport.Server) echo.HandlerFunc { return srv.HandleEncryptedInference }))
+	}
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver,
