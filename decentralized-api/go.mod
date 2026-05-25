@@ -9,6 +9,7 @@ require (
 	cosmossdk.io/x/feegrant v0.1.1
 	cosmossdk.io/x/upgrade v0.1.4
 	devshard v0.0.0-00010101000000-000000000000
+	github.com/cloudflare/circl v1.6.3
 	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.18.1
 	github.com/cosmos/btcutil v1.0.5
@@ -17,6 +18,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/golang/protobuf v1.5.4
+	github.com/google/go-tdx-guest v0.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/ignite/cli/v28 v28.11.0
@@ -158,6 +160,7 @@ require (
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/logger v1.1.1 // indirect
 	github.com/google/orderedcode v0.0.1 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
