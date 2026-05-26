@@ -588,8 +588,38 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochIndex := uint64(0)
+	if found {
+		previousEpochIndex = previousEpoch.Index
+	}
+
+	// SettleAccounts must run before the collateral module's AdvanceEpoch.
+	// Settlement evaluates participant performance for the just-completed epoch
+	// and can transition a participant to INACTIVE/INVALID, which slashes both
+	// active and unbonding collateral via SetParticipant -> UpdateParticipantStatus.
+	// AdvanceEpoch processes the unbonding queue and releases any entries whose
+	// completion_epoch equals the completed epoch back to the participant. If
+	// the release ran first, those entries would be paid out and removed before
+	// slashing could reach them, allowing a participant to time their unbonding
+	// to mature exactly at the slash epoch and shield that collateral from the
+	// slash.
+	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
+	}
+
 	// Signal to the collateral module that the epoch has advanced.
-	// This will trigger its internal unbonding queue processing.
+	// This will trigger its internal unbonding queue processing. It runs after
+	// SettleAccounts so any slashing applied during settlement can still reach
+	// unbonding entries that mature at this epoch (see comment above).
 	if am.keeper.GetCollateralKeeper() != nil {
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
 		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
@@ -612,24 +642,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		if err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
 		}
-	}
-
-	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
-	previousEpochIndex := uint64(0)
-	if found {
-		previousEpochIndex = previousEpoch.Index
-	}
-
-	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"epoch_error",
-			sdk.NewAttribute("stage", "settle_accounts"),
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
-			sdk.NewAttribute("error_category", "settlement"),
-		))
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
