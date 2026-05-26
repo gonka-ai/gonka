@@ -86,7 +86,7 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
 		EpochID:        7,
-		Version:        types.DefaultStateRootVersion,
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -403,7 +403,7 @@ func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-		EscrowID: "escrow-1", EpochID: 7, Version: types.DefaultStateRootVersion,
+		EscrowID: "escrow-1", EpochID: 7, Version: testutil.RuntimeTestVersion,
 		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 1_000_000,
 	}))
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,

@@ -223,7 +223,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	acc := sealedAccBytes32(state.SealedAcc)
 	restHash, err := ComputeRestHashV2(state.Balance, acc, state.Inferences, state.WarmKeys)
 	require.NoError(t, err)
-	recomputedRoot := ComputeStateRootFromRestHash(hostStatsHash, restHash, state.Fees, state.Phase, state.Version)
+	recomputedRoot := ComputeStateRootFromRestHash(hostStatsHash, restHash, state.Fees, state.Phase, state.StateRootAndProtocolVersion)
 	require.Equal(t, finalStateRoot, recomputedRoot)
 
 	// Settlement payload verification: mainnet would verify

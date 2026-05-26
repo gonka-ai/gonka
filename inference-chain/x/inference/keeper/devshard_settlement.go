@@ -89,18 +89,18 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	if msg.Settler != escrow.Creator {
 		return fmt.Errorf("settler %s is not the escrow creator %s", msg.Settler, escrow.Creator)
 	}
-	if msg.Version == "" {
+	if msg.StateRootAndProtocolVersion == "" {
 		return fmt.Errorf("version is required")
 	}
 	if msg.Nonce > uint64(params.MaxNonce) {
 		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, params.MaxNonce)
 	}
 	const maxVersionLength = 128
-	if len(msg.Version) > maxVersionLength {
+	if len(msg.StateRootAndProtocolVersion) > maxVersionLength {
 		return fmt.Errorf("version exceeds maximum length of %d", maxVersionLength)
 	}
 
-	if err := validateDevshardSettlementVersionApproved(params.ApprovedVersions, msg.Version); err != nil {
+	if err := validateDevshardSettlementVersionApproved(params.ApprovedVersions, msg.StateRootAndProtocolVersion); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	// Verify state_root = sha256(host_stats_hash || fees_be || rest_hash || version_hash || 0x02)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, msg.Fees)
-	versionHash := sha256.Sum256([]byte(msg.Version))
+	versionHash := sha256.Sum256([]byte(msg.StateRootAndProtocolVersion))
 	rootInput := make([]byte, 0, len(hostStatsHash)+len(feesBytes)+len(msg.RestHash)+len(versionHash)+1)
 	rootInput = append(rootInput, hostStatsHash...)
 	rootInput = append(rootInput, feesBytes...)

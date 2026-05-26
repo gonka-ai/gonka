@@ -19,7 +19,7 @@ import (
 
 type SettlementJSON struct {
 	EscrowID  string `json:"escrow_id"`
-	Version   string `json:"version"`
+	StateRootAndProtocolVersion string `json:"state_root_and_protocol_version"`
 	StateRoot string `json:"state_root"`
 	Nonce     uint64 `json:"nonce"`
 	// Fees is the total fee amount deducted during session execution.
@@ -157,7 +157,7 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
+	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
@@ -174,7 +174,7 @@ func marshalSettlement(p *state.SettlementPayload) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(SettlementJSON{
-		EscrowID: p.EscrowID, Version: p.Version, StateRoot: base64.StdEncoding.EncodeToString(root),
+		EscrowID: p.EscrowID, StateRootAndProtocolVersion: p.StateRootAndProtocolVersion, StateRoot: base64.StdEncoding.EncodeToString(root),
 		Nonce: p.Nonce, Fees: p.Fees, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
 		HostStats: stats, Signatures: sigs,
 	}, "", "  ")

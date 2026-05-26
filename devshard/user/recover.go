@@ -43,7 +43,10 @@ func RecoverSession(
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
-		recoveredVersion = types.NormalizeVersion(boundVersion)
+		recoveredVersion = boundVersion
+	}
+	if recoveredVersion == "" {
+		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
 	sm, err := state.NewStateMachine(

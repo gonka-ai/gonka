@@ -43,12 +43,12 @@ func TestUnmarshalStateSnapshot_LegacyRevealedSeedsIgnored(t *testing.T) {
 
 func TestMarshalStateSnapshotWithCommitted_RoundTrip(t *testing.T) {
 	state := &types.EscrowState{
-		EscrowID:    "escrow-1",
-		Version:     "v1",
-		LatestNonce: 42,
-		Inferences:  map[uint64]*types.InferenceRecord{},
-		HostStats:   map[uint32]*types.HostStats{0: {}},
-		WarmKeys:    map[uint32]string{0: "warm-0"},
+		EscrowID:                    "escrow-1",
+		StateRootAndProtocolVersion: "v1",
+		LatestNonce:                 42,
+		Inferences:                  map[uint64]*types.InferenceRecord{},
+		HostStats:                   map[uint32]*types.HostStats{0: {}},
+		WarmKeys:                    map[uint32]string{0: "warm-0"},
 	}
 	committed := map[uint64][]byte{
 		1: []byte("entry-one"),

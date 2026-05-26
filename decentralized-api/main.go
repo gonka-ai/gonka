@@ -31,7 +31,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/participant"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -265,7 +264,7 @@ func main() {
 				devshardStore.PruneOnceAsync(ctx)
 			})
 
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)
+			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, "v1", devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
 			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
 			hostManager.Register(publicServer.DevshardGroup())

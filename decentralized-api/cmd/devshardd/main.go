@@ -50,7 +50,6 @@ import (
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
 )
 
 // Version is the devshardd version. Set via ldflags
@@ -63,19 +62,19 @@ func main() {
 	dataDir := flag.String("data-dir", "/var/lib/devshardd", "data directory for sqlite/payloads (set by versiond)")
 	flag.Parse()
 
-	prefix := os.Getenv("DEVSHARD_LOG_PREFIX")
-	runtimeVersion, err := resolveRuntimeVersion(prefix, Version)
+	oracleVersion := os.Getenv("DEVSHARD_BINARY_VERSION")
+	runtimeVersion, err := resolveRuntimeVersion(oracleVersion, Version)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("devshardd starting",
 		"build_version", Version,
-		"selected_version", prefix,
+		"oracle_version", oracleVersion,
 		"runtime_version", runtimeVersion,
 		"port", *port,
 		"data-dir", *dataDir)
 	if err != nil {
 		slog.Error("devshardd version mismatch",
 			"build_version", Version,
-			"selected_version", prefix,
+			"oracle_version", oracleVersion,
 			"runtime_version", runtimeVersion)
 		log.Fatalf("resolve runtime version: %v", err)
 	}
@@ -172,7 +171,7 @@ func main() {
 		defer cancelEpochPrune()
 	}
 
-	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeVersion(runtimeVersion), br, payloadStore, recorder)
+	manager := internaldevshard.NewHostManager(store, signer, engine, validator, runtimeVersion, br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
 
@@ -265,20 +264,20 @@ func buildApiAccount(ignite *igniteclient.Client, keyName string) (apiconfig.Api
 	}, nil
 }
 
-func resolveRuntimeVersion(selectedVersion, buildVersion string) (string, error) {
-	if selectedVersion == "" {
+func resolveRuntimeVersion(oracleVersion, buildVersion string) (string, error) {
+	if oracleVersion == "" {
 		if buildVersion == "" {
 			return "", fmt.Errorf("empty build version")
 		}
 		return buildVersion, nil
 	}
 	if buildVersion == "" {
-		return "", fmt.Errorf("selected version %q provided but build version is empty", selectedVersion)
+		return "", fmt.Errorf("oracle version %q provided but build version is empty", oracleVersion)
 	}
-	if selectedVersion != buildVersion {
-		return selectedVersion, fmt.Errorf("selected version %q does not match build version %q", selectedVersion, buildVersion)
+	if oracleVersion != buildVersion {
+		return oracleVersion, fmt.Errorf("oracle version %q does not match build version %q", oracleVersion, buildVersion)
 	}
-	return selectedVersion, nil
+	return oracleVersion, nil
 }
 
 // newIgniteClient builds an ignite cosmosclient.Client with the same options

@@ -295,7 +295,10 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeVersion(params.Version)
+	requestedVersion, err := requireSessionVersion(params.Version)
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	if err := s.ensurePartition(ctx, params.EpochID); err != nil {
@@ -359,13 +362,16 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	).Scan(&storedVersion); err != nil {
 		return fmt.Errorf("read session version: %w", err)
 	}
-	normalizedStoredVersion := types.DefaultStateRootVersion
+	stored := ""
 	if storedVersion != nil {
-		normalizedStoredVersion = types.NormalizeVersion(*storedVersion)
+		stored = *storedVersion
 	}
-	if normalizedStoredVersion != requestedVersion {
+	if strings.TrimSpace(stored) == "" {
+		return fmt.Errorf("%w: %s", ErrSessionVersionRequired, params.EscrowID)
+	}
+	if stored != requestedVersion {
 		return fmt.Errorf("%w: escrow %s exists with version %s, requested %s",
-			ErrSessionVersionConflict, params.EscrowID, normalizedStoredVersion, requestedVersion)
+			ErrSessionVersionConflict, params.EscrowID, stored, requestedVersion)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -552,6 +558,9 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.Version = *version
 	}
 	meta.EpochID = epochID
+	if err := finalizeSessionMeta(&meta); err != nil {
+		return nil, err
+	}
 	return &meta, nil
 }
 

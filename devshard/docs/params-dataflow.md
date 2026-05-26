@@ -26,6 +26,8 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** (once per
 
 **Not** from chain at bind: governance flags that affect **runtime** (`logprobs_mode`, `devshard_requests_enabled`, `max_nonce`, `approved_versions`) — those come via long-poll (below). **Open sessions do not** hot-reload grace or timeouts after governance changes.
 
+**Protocol version** (`StateRootAndProtocolVersion` / `types.DevshardStateRootAndProtocolVersion`) is **not** `approved_versions`: it tags state-root and settlement hashing and is fixed per binary build. See [protocol-version.md](./protocol-version.md).
+
 **Still per-escrow / per-address chain queries** (not on long-poll today): participant URL, epoch-group validation threshold, warm-key grants, account pubkeys.
 
 ---

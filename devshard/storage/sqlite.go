@@ -433,7 +433,10 @@ func (s *SQLite) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeVersion(params.Version)
+	requestedVersion, err := requireSessionVersion(params.Version)
+	if err != nil {
+		return err
+	}
 
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
@@ -509,10 +512,10 @@ func (s *SQLite) sessionVersion(p *epochPool, escrowID string) (string, error) {
 		}
 		return "", err
 	}
-	if version.Valid {
-		return types.NormalizeVersion(version.String), nil
+	if !version.Valid || strings.TrimSpace(version.String) == "" {
+		return "", fmt.Errorf("%w: %s", ErrSessionVersionRequired, escrowID)
 	}
-	return types.DefaultStateRootVersion, nil
+	return version.String, nil
 }
 
 func (s *SQLite) findSessionEpoch(escrowID string) (uint64, bool, error) {
@@ -756,6 +759,9 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.Version = version.String
 	}
 	meta.EpochID = epochID
+	if err := finalizeSessionMeta(&meta); err != nil {
+		return nil, err
+	}
 
 	return &meta, nil
 }

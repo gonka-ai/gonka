@@ -46,7 +46,13 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
 
 	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
 	require.NoError(t, err)
@@ -300,7 +306,13 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
 
 	// Rebuild SM from scratch for host (host needs nonce 0 start).
 	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
@@ -467,7 +479,13 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
 
 	h, err := host.NewHost(sm, hostSigners[0], engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
 	require.NoError(t, err)

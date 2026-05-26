@@ -63,7 +63,13 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		store := storage.NewMemory()
-		require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: balance}))
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       "escrow-1",
+			Version:        testutil.RuntimeTestVersion,
+			Config:         config,
+			Group:          group,
+			InitialBalance: balance,
+		}))
 		stores[i] = store
 
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,

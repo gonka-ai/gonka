@@ -73,7 +73,10 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	defer m.mu.Unlock()
 
 	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
-	requestedVersion := types.NormalizeVersion(params.Version)
+	requestedVersion, err := requireSessionVersion(params.Version)
+	if err != nil {
+		return err
+	}
 	if existing, exists := m.sessions[params.EscrowID]; exists {
 		if existing.epochID != params.EpochID {
 			return fmt.Errorf("%w: escrow %s exists in epoch %d, requested epoch %d",
@@ -194,6 +197,9 @@ func (m *Memory) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.LatestNonce = s.diffs[len(s.diffs)-1].Nonce
 	}
 
+	if err := finalizeSessionMeta(meta); err != nil {
+		return nil, err
+	}
 	return meta, nil
 }
 

@@ -23,7 +23,7 @@ import (
 const settlementVersion = "dev"
 
 // devshardSettlementRootTagV2 matches devshard's v2 state-root tag
-// (types.DefaultStateRootVersion when built with v2 composition). Used only
+// (devshard v2 state-root tag). Used only
 // in tests that exercise ApprovedVersions + version-hash preimage behavior.
 const devshardSettlementRootTagV2 = "v2"
 
@@ -124,7 +124,7 @@ func buildSettlementTestDataWithNonce(
 	return &types.MsgSettleDevshardEscrow{
 		Settler:    escrow.Creator,
 		EscrowId:   escrow.Id,
-		Version:    settlementVersion,
+		StateRootAndProtocolVersion: settlementVersion,
 		StateRoot:  stateRoot[:],
 		Nonce:      nonce,
 		Fees:       fees,
@@ -201,7 +201,7 @@ func buildSettlementTestDataWithVersion(
 	return &types.MsgSettleDevshardEscrow{
 		Settler:    escrow.Creator,
 		EscrowId:   escrow.Id,
-		Version:    version,
+		StateRootAndProtocolVersion: version,
 		StateRoot:  stateRoot[:],
 		Nonce:      nonce,
 		Fees:       fees,
@@ -269,7 +269,7 @@ func TestVerifyDevshardSettlement_WrongSettler(t *testing.T) {
 
 func TestVerifyDevshardSettlement_VersionTooLong(t *testing.T) {
 	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator"}
-	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1, Version: string(make([]byte, 129))}
+	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1, StateRootAndProtocolVersion: string(make([]byte, 129))}
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "version exceeds maximum length")
@@ -653,7 +653,7 @@ func TestVerifyDevshardSettlement_WrongPhaseRejected(t *testing.T) {
 	require.NoError(t, err)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, msg.Fees)
-	versionHash := sha256.Sum256([]byte(msg.Version))
+	versionHash := sha256.Sum256([]byte(msg.StateRootAndProtocolVersion))
 
 	rootInput := make([]byte, 0, 105)
 	rootInput = append(rootInput, hostStatsHash...)
@@ -692,7 +692,7 @@ func TestVerifyDevshardSettlement_WrongPhaseRejected(t *testing.T) {
 
 func TestVerifyDevshardSettlement_NilParams(t *testing.T) {
 	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator"}
-	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1, Version: settlementVersion}
+	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1, StateRootAndProtocolVersion: settlementVersion}
 	err := keeper.VerifyDevshardSettlement(escrow, msg, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "params is required")
@@ -761,7 +761,7 @@ func TestVerifyDevshardSettlement_VersionTagBoundByStateRoot(t *testing.T) {
 	}
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
-	msg.Version = devshardSettlementRootTagV2
+	msg.StateRootAndProtocolVersion = devshardSettlementRootTagV2
 
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
 	require.Error(t, err)

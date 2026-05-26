@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/internal/testutil"
 	"devshard/types"
 )
 
@@ -31,23 +32,12 @@ func defaultParams() CreateSessionParams {
 	return CreateSessionParams{
 		EscrowID:       "escrow-1",
 		EpochID:        7,
-		Version:        types.DefaultStateRootVersion,
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          defaultGroup(),
 		InitialBalance: 1000,
 	}
-}
-
-// defaultLegacyParams returns CreateSessionParams whose Version is empty,
-// simulating a row written by a pre-DefaultStateRootVersion binary (no
-// explicit version stamp). Storage backends must normalize this to
-// types.DefaultStateRootVersion via types.NormalizeVersion so legacy data
-// surfaces under the current binary's composition tag.
-func defaultLegacyParams() CreateSessionParams {
-	p := defaultParams()
-	p.Version = ""
-	return p
 }
 
 func paramsForEpoch(escrowID string, epochID uint64) CreateSessionParams {
@@ -67,7 +57,7 @@ func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
 	require.Equal(t, types.DefaultSealGraceNonces(len(meta.Group)), meta.Config.SealGraceNonces)
 	require.Equal(t, uint32(types.DefaultInferenceClearGraceSeconds), meta.Config.InferenceClearGraceSeconds)
 	require.Equal(t, "creator", meta.CreatorAddr)
@@ -92,7 +82,7 @@ func runCreateSession_Idempotent(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 }
 
@@ -113,39 +103,24 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 
 	require.NoError(t, store.CreateSession(defaultParams()))
 	p := defaultParams()
-	p.Version = "v1"
+	p.Version = types.DevshardStateRootAndProtocolVersion
 	err := store.CreateSession(p)
 	require.ErrorIs(t, err, ErrSessionVersionConflict)
 
 	meta, metaErr := store.GetSessionMeta("escrow-1")
 	require.NoError(t, metaErr)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
 }
 
-// runCreateSession_LegacyEmptyVersionNormalizes pins the storage-boundary
-// contract: a row written with an empty Version (pre-DefaultStateRootVersion
-// binary) must surface through GetSessionMeta as DefaultStateRootVersion, and
-// re-creating the same escrow with the explicit current default must be
-// idempotent (no ErrSessionVersionConflict). This exercises
-// types.NormalizeVersion at every backend and the related branch in
-// RecoverSession that bridges meta.Version == "" to the caller's bound value.
-func runCreateSession_LegacyEmptyVersionNormalizes(t *testing.T, store Storage) {
+// runCreateSession_EmptyVersionRejected pins the storage-boundary contract:
+// CreateSession must reject an empty Version tag.
+func runCreateSession_EmptyVersionRejected(t *testing.T, store Storage) {
 	t.Helper()
 
-	require.NoError(t, store.CreateSession(defaultLegacyParams()))
-
-	meta, err := store.GetSessionMeta("escrow-1")
-	require.NoError(t, err)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version,
-		"empty input Version must be normalized to DefaultStateRootVersion")
-
-	// Recreating with the explicit current default tag is a no-op, not a
-	// version conflict: legacy and current rows are the same composition.
-	require.NoError(t, store.CreateSession(defaultParams()))
-
-	meta, err = store.GetSessionMeta("escrow-1")
-	require.NoError(t, err)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version)
+	p := defaultParams()
+	p.Version = ""
+	err := store.CreateSession(p)
+	require.ErrorIs(t, err, ErrSessionVersionRequired)
 }
 
 func runAppendDiff_GetDiffs(t *testing.T, store Storage) {

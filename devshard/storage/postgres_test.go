@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"devshard/types"
+	"devshard/internal/testutil"
 )
 
 // setupPostgresContainer spins a fresh PG container per test and points the
@@ -119,8 +119,8 @@ func TestPostgres_CreateSession_ConflictingEpoch(t *testing.T) {
 func TestPostgres_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestPostgres(t))
 }
-func TestPostgres_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
-	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestPostgres(t))
+func TestPostgres_CreateSession_EmptyVersionRejected(t *testing.T) {
+	runCreateSession_EmptyVersionRejected(t, newTestPostgres(t))
 }
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestPostgres(t))
@@ -370,8 +370,8 @@ func TestHybrid_ListActiveSessionsSkipsDuplicateEscrow(t *testing.T) {
 
 	duplicateLog := requireStorageLogEntry(t, readStorageLogEntries(t, logs),
 		"devshard storage: duplicate active session in sqlite and postgres, using sqlite copy")
-	require.Equal(t, types.DefaultStateRootVersion, duplicateLog["sqlite_version"])
-	require.Equal(t, types.DefaultStateRootVersion, duplicateLog["postgres_version"])
+	require.Equal(t, testutil.RuntimeTestVersion, duplicateLog["sqlite_version"])
+	require.Equal(t, testutil.RuntimeTestVersion, duplicateLog["postgres_version"])
 }
 
 func TestHybrid_PruneEpochPrunesBothBackendsAndRoutes(t *testing.T) {

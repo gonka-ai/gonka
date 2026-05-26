@@ -13,7 +13,7 @@ import (
 
 func newSealTestSM(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
 	t.Helper()
-	return newSealTestSMVersion(t, escrowID, hosts, withStore, types.DefaultStateRootVersion)
+	return newSealTestSMVersion(t, escrowID, hosts, withStore, types.DevshardStateRootAndProtocolVersion)
 }
 
 func newSealTestSMVersion(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool, sessionVersion string) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
@@ -163,12 +163,12 @@ func TestSeal_BuildSettlement_RestHashMatchesAfterSeal(t *testing.T) {
 
 	hostStatsHash, err := ComputeHostStatsHash(st.HostStats)
 	require.NoError(t, err)
-	rootFromPayload := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, st.Fees, types.PhaseSettlement, st.Version)
+	rootFromPayload := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, st.Fees, types.PhaseSettlement, st.StateRootAndProtocolVersion)
 	rootFromSM, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
 	hostStatsHashActive, err := ComputeHostStatsHash(st.HostStats)
 	require.NoError(t, err)
-	rootActivePhase := ComputeStateRootFromRestHash(hostStatsHashActive, restFromState, st.Fees, st.Phase, st.Version)
+	rootActivePhase := ComputeStateRootFromRestHash(hostStatsHashActive, restFromState, st.Fees, st.Phase, st.StateRootAndProtocolVersion)
 	require.Equal(t, rootActivePhase, rootFromSM, "intra-session root uses active phase")
 	require.NotEqual(t, rootFromPayload, rootFromSM, "settlement phase byte differs from active")
 }

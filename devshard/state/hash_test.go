@@ -20,9 +20,9 @@ func TestComputeStateRoot_Deterministic(t *testing.T) {
 		2: {Status: types.StatusFinished, ExecutorSlot: 1, ActualCost: 200},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root2, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }
@@ -35,9 +35,9 @@ func TestComputeStateRoot_DifferentState(t *testing.T) {
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
 
-	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99)
+	root1, err := ComputeStateRoot(500, hostStats, inferences, types.PhaseActive, nil, 99, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil, 99)
+	root2, err := ComputeStateRoot(600, hostStats, inferences, types.PhaseActive, nil, 99, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
 	require.NotEqual(t, root1, root2)
 }
@@ -92,9 +92,9 @@ func TestStateRoot_SortedKeys(t *testing.T) {
 
 	inferences := map[uint64]*types.InferenceRecord{}
 
-	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil, 0)
+	root1, err := ComputeStateRoot(1000, stats1, inferences, types.PhaseActive, nil, 0, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
-	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil, 0)
+	root2, err := ComputeStateRoot(1000, stats2, inferences, types.PhaseActive, nil, 0, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
 	require.Equal(t, root1, root2)
 }

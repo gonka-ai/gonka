@@ -77,7 +77,7 @@ func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 		return nil, err
 	}
 
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.Version), nil
+	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
 }
 
 func (sm *StateMachine) ExportCommittedEntries() map[uint64][]byte {

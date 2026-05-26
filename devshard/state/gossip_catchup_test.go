@@ -73,7 +73,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	require.NoError(t, leaderStore.CreateSession(storage.CreateSessionParams{
 		EscrowID:       escrowID,
 		EpochID:        1,
-		Version:        types.DefaultStateRootVersion,
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -130,7 +130,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	require.NoError(t, followerStore.CreateSession(storage.CreateSessionParams{
 		EscrowID:       escrowID,
 		EpochID:        1,
-		Version:        types.DefaultStateRootVersion,
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
