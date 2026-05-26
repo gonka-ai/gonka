@@ -3,6 +3,7 @@ package apiconfig_test
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"decentralized-api/apiconfig"
 
@@ -29,4 +30,25 @@ func TestConfigManager_SetEpochChangeHandler_FiresOnEpochTransition(t *testing.T
 
 	require.False(t, cm.ApplyRuntimeConfigBlockIfChanged(102, 4))
 	require.Equal(t, int32(1), fires.Load(), "param-only publish must not fire handler")
+}
+
+func TestApplyRuntimeConfigBlockIfChanged_EpochHandlerMayReadSnapshot(t *testing.T) {
+	cm := newTestConfigManager()
+	require.NoError(t, cm.SetValidationParams(apiconfig.ValidationParamsCache{LogprobsMode: "raw"}))
+
+	done := make(chan struct{})
+	cm.SetEpochChangeHandler(func(_, newEpoch uint64) {
+		snap := cm.RuntimeConfigSnapshot(newEpoch)
+		require.Equal(t, newEpoch, snap.CurrentEpochID)
+		close(done)
+	})
+
+	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(100, 1))
+	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(101, 2))
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("epoch handler blocked: likely deadlock reading RuntimeConfigSnapshot under publish lock")
+	}
 }

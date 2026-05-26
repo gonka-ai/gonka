@@ -68,12 +68,11 @@ type runtimePublishedMarker struct {
 func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epochID uint64) bool {
 	content := cm.liveRuntimeConfigContent()
 
-	cm.runtimePublishMu.Lock() // writers: publish and test reset
-	defer cm.runtimePublishMu.Unlock()
-
+	cm.runtimePublishMu.Lock()
 	if cm.runtimePublished.initialized &&
 		cm.runtimePublished.epochID == epochID &&
 		cm.runtimePublished.content.equal(content) {
+		cm.runtimePublishMu.Unlock()
 		logging.Debug("runtime_config: publish skipped (content unchanged)", types.Config,
 			"blockHeight", blockHeight,
 			"epochID", epochID,
@@ -104,11 +103,17 @@ func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epo
 		epochID:     epochID,
 		content:     copyRuntimeConfigContent(content),
 	}
+	fireEpochChange := reason == "epoch_change"
+	epochChangeOld, epochChangeNew := oldEpoch, epochID
+	cm.runtimePublishMu.Unlock()
+
+	// Wake long-poll waiters and epoch hooks without holding runtimePublishMu so
+	// callbacks may call RuntimeConfigSnapshot without self-deadlock on RWMutex.
 	if cm.runtimeConfigNotifier != nil {
 		cm.runtimeConfigNotifier.Notify()
 	}
-	if reason == "epoch_change" {
-		cm.notifyEpochChange(oldEpoch, epochID)
+	if fireEpochChange {
+		cm.notifyEpochChange(epochChangeOld, epochChangeNew)
 	}
 	logging.Debug("runtime_config: published revision", types.Config,
 		"blockHeight", blockHeight,
