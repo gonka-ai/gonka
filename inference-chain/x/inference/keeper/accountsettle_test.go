@@ -60,6 +60,9 @@ func TestActualSettle(t *testing.T) {
 	keeper.SetParticipant(ctx, participant2)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 10,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model1", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress:      participant1.Address,
@@ -83,12 +86,14 @@ func TestActualSettle(t *testing.T) {
 				Weight:             1000,
 				Reputation:         100,
 				ConfirmationWeight: 1000,
+				MlNodes:            []*types.MLNodeInfo{{PocWeight: 1000}},
 			},
 			{
 				MemberAddress:      participant2.Address,
 				Weight:             1000,
 				Reputation:         100,
 				ConfirmationWeight: 1000,
+				MlNodes:            []*types.MLNodeInfo{{PocWeight: 1000}},
 			},
 		},
 
@@ -197,11 +202,20 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 			Weight:             1000,
 			Reputation:         100,
 			ConfirmationWeight: 1000,
+			MlNodes:            []*types.MLNodeInfo{{PocWeight: 1000}},
 		}
 	}
 
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 10,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: weights,
+	})
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex:        10,
+		ModelId:           "model-a",
 		ValidationWeights: weights,
 	})
 	// Set active participants for the epoch
@@ -281,20 +295,34 @@ func TestSettleWithGraceEpoch(t *testing.T) {
 		CoinBalance: 1000,
 		Status:      types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{
-			InferenceCount: 50,  // 50 successful
-			MissedRequests: 50,  // 50 missed = 50% miss rate
+			InferenceCount: 50, // 50 successful
+			MissedRequests: 50, // 50 missed = 50% miss rate
 		},
 	}
 
 	keeper.SetParticipant(ctx, participantHighMiss)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: epochIndex,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress:      participantHighMiss.Address,
 				Weight:             1000,
 				Reputation:         100,
 				ConfirmationWeight: 1000,
+			},
+		},
+	})
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: epochIndex,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: participantHighMiss.Address,
+				Weight:        1000,
+				MlNodes:       []*types.MLNodeInfo{{PocWeight: 1000}},
 			},
 		},
 	})
@@ -349,20 +377,34 @@ func TestSettleWithoutGraceEpoch(t *testing.T) {
 		CoinBalance: 1000,
 		Status:      types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{
-			InferenceCount: 50,  // 50 successful
-			MissedRequests: 50,  // 50 missed = 50% miss rate
+			InferenceCount: 50, // 50 successful
+			MissedRequests: 50, // 50 missed = 50% miss rate
 		},
 	}
 
 	keeper.SetParticipant(ctx, participantHighMiss)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: epochIndex,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
 		ValidationWeights: []*types.ValidationWeight{
 			{
 				MemberAddress:      participantHighMiss.Address,
 				Weight:             1000,
 				Reputation:         100,
 				ConfirmationWeight: 1000,
+			},
+		},
+	})
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: epochIndex,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: participantHighMiss.Address,
+				Weight:        1000,
+				MlNodes:       []*types.MLNodeInfo{{PocWeight: 1000}},
 			},
 		},
 	})

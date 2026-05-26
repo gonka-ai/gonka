@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	mathsdk "cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -30,7 +29,7 @@ type EpochMember struct {
 	ConfirmationWeight int64 // Minimum confirmation weight from confirmation PoC events
 }
 
-func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64, coefficients map[string]mathsdk.LegacyDec) EpochMember {
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64, confirmationWeight int64) EpochMember {
 	seedSignature := ""
 	if p.Seed != nil {
 		seedSignature = p.Seed.Signature
@@ -47,36 +46,6 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		VotingPowers:       p.VotingPowers,
 		ConfirmationWeight: confirmationWeight,
 	}
-}
-
-func CalculateMLNodesTotalWeight(models []string, mlNodes []*types.ModelMLNodes, coefficients map[string]mathsdk.LegacyDec) int64 {
-	totalWeight := int64(0)
-
-	for i, modelNodes := range mlNodes {
-		if modelNodes == nil {
-			continue
-		}
-
-		if i >= len(models) || models[i] == "" {
-			continue
-		}
-		modelId := models[i]
-		coeff, ok := coefficients[modelId]
-		if !ok {
-			coeff = mathsdk.LegacyOneDec()
-		}
-
-		rawModel := int64(0)
-		for _, node := range modelNodes.MlNodes {
-			if node == nil {
-				continue
-			}
-			rawModel += node.PocWeight
-		}
-		totalWeight += coeff.MulInt64(rawModel).TruncateInt64()
-	}
-
-	return totalWeight
 }
 
 func NewEpochMemberFromStakingValidator(

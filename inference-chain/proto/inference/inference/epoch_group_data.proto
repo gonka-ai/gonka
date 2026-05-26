@@ -36,6 +36,12 @@ message EpochGroupData {
   uint64 epoch_index = 16;
   Model model_snapshot = 17;
   int64 total_throughput = 18;
+  repeated ConfirmationWeightScale confirmation_weight_scales = 19;
+}
+
+message ConfirmationWeightScale {
+  string model_id = 1;
+  Decimal weight_scale_factor = 2;
 }
 
 message ValidationWeight {

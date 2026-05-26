@@ -64,71 +64,6 @@ func (m *mockGroupKeeper) ProposalsByGroupPolicy(ctx context.Context, req *group
 	return nil, nil
 }
 
-func TestCalculateMLNodesTotalWeight_SingleModel(t *testing.T) {
-	models := []string{"model-a"}
-	mlNodes := []*types.ModelMLNodes{
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{NodeId: "node1", PocWeight: 100},
-				{NodeId: "node2", PocWeight: 200},
-			},
-		},
-	}
-
-	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
-	require.Equal(t, int64(300), weight)
-}
-
-func TestCalculateMLNodesTotalWeight_SumsAllNodes(t *testing.T) {
-	models := []string{"model-a"}
-	mlNodes := []*types.ModelMLNodes{
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{NodeId: "node1", PocWeight: 100},
-				{NodeId: "node2", PocWeight: 200},
-				{NodeId: "node3", PocWeight: 300},
-				{NodeId: "node4", PocWeight: 400},
-			},
-		},
-	}
-
-	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
-	require.Equal(t, int64(1000), weight)
-}
-
-func TestCalculateMLNodesTotalWeight_IgnoresTimeslotShape(t *testing.T) {
-	models := []string{"model-a"}
-	mlNodes := []*types.ModelMLNodes{
-		{
-			MlNodes: []*types.MLNodeInfo{
-				{NodeId: "node1", PocWeight: 100, TimeslotAllocation: []bool{}},
-				{NodeId: "node2", PocWeight: 200, TimeslotAllocation: []bool{true}},
-				{NodeId: "node3", PocWeight: 300, TimeslotAllocation: []bool{true, false}},
-			},
-		},
-	}
-
-	// TimeslotAllocation is deprecated for scheduling; the helper sums all non-nil nodes.
-	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
-	require.Equal(t, int64(600), weight)
-}
-
-func TestCalculateMLNodesTotalWeight_NilNodes(t *testing.T) {
-	models := []string{"model-a", "model-b"}
-	mlNodes := []*types.ModelMLNodes{
-		nil, // Nil model nodes
-		{
-			MlNodes: []*types.MLNodeInfo{
-				nil, // Nil node
-				{NodeId: "node1", PocWeight: 100},
-			},
-		},
-	}
-
-	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
-	require.Equal(t, int64(100), weight)
-}
-
 func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
 	members := []*group.GroupMember{
 		nil,
@@ -142,21 +77,9 @@ func TestSanitizeMembers_FiltersNilMembers(t *testing.T) {
 	require.Equal(t, "addr1", filtered[0].Member.Address)
 }
 
-func TestCalculateMLNodesTotalWeight_MultipleModelArrays(t *testing.T) {
-	models := []string{"model-a", "model-b"}
-	mlNodes := []*types.ModelMLNodes{
-		{MlNodes: []*types.MLNodeInfo{{NodeId: "node1", PocWeight: 100}}},
-		{MlNodes: []*types.MLNodeInfo{{NodeId: "node2", PocWeight: 200}}},
-	}
-
-	// Sum across all model arrays (coeff=1.0 for each when nil).
-	weight := CalculateMLNodesTotalWeight(models, mlNodes, nil)
-	require.Equal(t, int64(300), weight)
-}
-
 // NewEpochMemberFromActiveParticipant now always stores the confirmationWeight the
 // caller passes; the old "if 0 then derive" sentinel is gone. Callers at epoch
-// formation precompute the initial reading via CalculateMLNodesTotalWeight.
+// formation precompute the initial reading from ConfirmationWeightScales.
 func TestNewEpochMemberFromActiveParticipant_UsesProvidedConfirmationWeight(t *testing.T) {
 	p := &types.ActiveParticipant{
 		Index:        "test-participant",
@@ -173,7 +96,7 @@ func TestNewEpochMemberFromActiveParticipant_UsesProvidedConfirmationWeight(t *t
 		},
 	}
 
-	member := NewEpochMemberFromActiveParticipant(p, 1, 250, nil)
+	member := NewEpochMemberFromActiveParticipant(p, 1, 250)
 	require.Equal(t, int64(250), member.ConfirmationWeight)
 	require.Equal(t, int64(450), member.Weight)
 }

@@ -297,6 +297,7 @@ func New(
 
 	// register legacy modules
 	nodeConfig := app.registerLegacyModules(appOpts, wasmOpts)
+	app.InferenceKeeper.SetWasmKeeperGetter(app.GetWasmKeeper)
 
 	// register streaming services
 	if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {

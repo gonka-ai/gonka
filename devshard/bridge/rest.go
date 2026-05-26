@@ -74,6 +74,14 @@ type granteesResponse struct {
 	} `json:"grantees"`
 }
 
+type epochGroupDataResponse struct {
+	EpochGroupData struct {
+		ModelSnapshot *struct {
+			ValidationThreshold *Decimal `json:"validation_threshold"`
+		} `json:"model_snapshot"`
+	} `json:"epoch_group_data"`
+}
+
 // -- helper --
 
 func doGet[T any](client *http.Client, rawURL string) (*T, error) {
@@ -123,6 +131,7 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		AppHash:        appHash,
 		Slots:          resp.Escrow.Slots,
 		TokenPrice:     resp.Escrow.TokenPrice,
+		EpochID:        resp.Escrow.EpochIndex,
 	}, nil
 }
 
@@ -141,6 +150,21 @@ func (b *RESTBridge) GetHostInfo(address string) (*HostInfo, error) {
 		Address: resp.Participant.Address,
 		URL:     resp.Participant.InferenceURL,
 	}, nil
+}
+
+func (b *RESTBridge) GetValidationThreshold(epochID uint64, modelID string) (*Decimal, error) {
+	u := fmt.Sprintf("%s/productscience/inference/inference/epoch_group_data/%d?model_id=%s",
+		b.baseURL, epochID, url.QueryEscape(modelID))
+
+	resp, err := doGet[epochGroupDataResponse](b.client, u)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || resp.EpochGroupData.ModelSnapshot == nil || resp.EpochGroupData.ModelSnapshot.ValidationThreshold == nil {
+		return nil, fmt.Errorf("validation threshold not found for epoch %d model %s", epochID, modelID)
+	}
+	threshold := *resp.EpochGroupData.ModelSnapshot.ValidationThreshold
+	return &threshold, nil
 }
 
 const warmKeyMsgType = "/inference.inference.MsgStartInference"

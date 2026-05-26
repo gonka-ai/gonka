@@ -1,29 +1,111 @@
 // BLS Utility Functions for Bridge Contract
 // Handles BLS public key and signature format conversions
 
-/**
- * Convert base64-encoded BLS public key to hex format for contract submission
- * @param {string} base64Key - Base64-encoded BLS public key (256 bytes, padded)
- * @returns {string} Hex-encoded key with 0x prefix
- * @throws {Error} If key length is not 256 bytes
- */
-function base64ToHex(base64Key) {
-    // Remove any whitespace
-    const cleanKey = base64Key.trim();
-    
-    // Decode base64 to Buffer
-    const buffer = Buffer.from(cleanKey, 'base64');
-    
-    // Verify it's exactly 256 bytes (Padded G2 public key for EIP-2537)
-    if (buffer.length !== 256) {
-        throw new Error(
-            `Invalid BLS public key length: expected 256 bytes, got ${buffer.length} bytes. ` +
-            `Base64 input: "${cleanKey}"`
-        );
+import { bls12_381 } from "@noble/curves/bls12-381.js";
+
+function stripHexPrefix(input) {
+    return input.startsWith("0x") ? input.slice(2) : input;
+}
+
+function isHexInput(input) {
+    const value = input.trim();
+    const hex = stripHexPrefix(value);
+    if (value.startsWith("0x")) {
+        return hex.length % 2 === 0 && /^[0-9a-fA-F]*$/.test(hex);
     }
-    
-    // Convert to hex with 0x prefix
-    return '0x' + buffer.toString('hex');
+
+    const byteLength = hex.length / 2;
+    return hex.length % 2 === 0 &&
+        [48, 96, 128, 192, 256].includes(byteLength) &&
+        /^[0-9a-fA-F]+$/.test(hex);
+}
+
+function decodeBytes(input, label) {
+    if (typeof input !== "string" || input.trim() === "") {
+        throw new Error(`${label} is empty`);
+    }
+
+    const value = input.trim();
+    if (isHexInput(value)) {
+        return Buffer.from(stripHexPrefix(value), "hex");
+    }
+
+    const bytes = Buffer.from(value, "base64");
+    if (bytes.length === 0) {
+        throw new Error(`${label} is not valid hex or base64`);
+    }
+    return bytes;
+}
+
+function g1ToEip2537(bytes, label) {
+    if (bytes.length === 128) {
+        return Buffer.from(bytes);
+    }
+
+    let raw;
+    if (bytes.length === 48) {
+        const point = bls12_381.G1.Point.fromBytes(bytes);
+        raw = Buffer.from(point.toBytes(false));
+    } else if (bytes.length === 96) {
+        raw = Buffer.from(bytes);
+    } else {
+        throw new Error(`${label} must be 48 compressed bytes, 96 raw uncompressed bytes, or 128 EIP-2537 bytes, got ${bytes.length}`);
+    }
+
+    if (raw.length !== 96) {
+        throw new Error(`unexpected uncompressed G1 length from BLS library: ${raw.length}`);
+    }
+
+    const out = Buffer.alloc(128);
+    raw.copy(out, 16, 0, 48);
+    raw.copy(out, 64 + 16, 48, 96);
+    return out;
+}
+
+function g2ToEip2537(bytes, label) {
+    if (bytes.length === 256) {
+        return Buffer.from(bytes);
+    }
+
+    let raw;
+    if (bytes.length === 96) {
+        const point = bls12_381.G2.Point.fromBytes(bytes);
+        raw = Buffer.from(point.toBytes(false));
+    } else if (bytes.length === 192) {
+        raw = Buffer.from(bytes);
+    } else {
+        throw new Error(`${label} must be 96 compressed bytes, 192 raw uncompressed bytes, or 256 EIP-2537 bytes, got ${bytes.length}`);
+    }
+
+    if (raw.length !== 192) {
+        throw new Error(`unexpected uncompressed G2 length from BLS library: ${raw.length}`);
+    }
+
+    const out = Buffer.alloc(256);
+    // Noble returns [X.c1, X.c0, Y.c1, Y.c0], 48 bytes each.
+    // BridgeContract expects [X.c0, X.c1, Y.c0, Y.c1], each left-padded to 64 bytes.
+    raw.copy(out, 0 * 64 + 16, 48, 96);
+    raw.copy(out, 1 * 64 + 16, 0, 48);
+    raw.copy(out, 2 * 64 + 16, 144, 192);
+    raw.copy(out, 3 * 64 + 16, 96, 144);
+    return out;
+}
+
+/**
+ * Convert a BLS public key to EIP-2537 hex format for contract submission.
+ * Accepts Gonka's 96-byte compressed G2 key or the contract's 256-byte key.
+ * @param {string} publicKey - Base64 or hex-encoded BLS public key
+ * @returns {string} Hex-encoded key with 0x prefix
+ * @throws {Error} If key length is unsupported
+ */
+function publicKeyToEip2537Hex(publicKey) {
+    const buffer = decodeBytes(publicKey, "BLS public key");
+    return "0x" + g2ToEip2537(buffer, "BLS public key").toString("hex");
+}
+
+// Backwards-compatible name used by existing scripts.
+function base64ToHex(publicKey) {
+    return publicKeyToEip2537Hex(publicKey);
 }
 
 /**
@@ -34,7 +116,7 @@ function base64ToHex(base64Key) {
  */
 function hexToBase64(hexKey) {
     // Remove 0x prefix if present
-    const cleanHex = hexKey.startsWith('0x') ? hexKey.slice(2) : hexKey;
+    const cleanHex = stripHexPrefix(hexKey.trim());
     
     // Verify hex length (256 bytes = 512 hex characters)
     if (cleanHex.length !== 512) {
@@ -51,28 +133,20 @@ function hexToBase64(hexKey) {
 }
 
 /**
- * Convert base64-encoded BLS signature to hex format
- * @param {string} base64Sig - Base64-encoded BLS signature (128 bytes, padded G1 point)
+ * Convert a BLS signature to EIP-2537 hex format.
+ * Accepts Gonka's 48-byte compressed G1 signature or the contract's 128-byte signature.
+ * @param {string} signature - Base64 or hex-encoded BLS signature
  * @returns {string} Hex-encoded signature with 0x prefix
- * @throws {Error} If signature length is not 128 bytes
+ * @throws {Error} If signature length is unsupported
  */
-function base64SignatureToHex(base64Sig) {
-    // Remove any whitespace
-    const cleanSig = base64Sig.trim();
-    
-    // Decode base64 to Buffer
-    const buffer = Buffer.from(cleanSig, 'base64');
-    
-    // Verify it's exactly 128 bytes (Padded G1 signature for EIP-2537)
-    if (buffer.length !== 128) {
-        throw new Error(
-            `Invalid BLS signature length: expected 128 bytes, got ${buffer.length} bytes. ` +
-            `Base64 input: "${cleanSig}"`
-        );
-    }
-    
-    // Convert to hex with 0x prefix
-    return '0x' + buffer.toString('hex');
+function signatureToEip2537Hex(signature) {
+    const buffer = decodeBytes(signature, "BLS signature");
+    return "0x" + g1ToEip2537(buffer, "BLS signature").toString("hex");
+}
+
+// Backwards-compatible name used by existing scripts.
+function base64SignatureToHex(signature) {
+    return signatureToEip2537Hex(signature);
 }
 
 /**
@@ -82,7 +156,7 @@ function base64SignatureToHex(base64Sig) {
  */
 function isValidBLSPublicKey(hexKey) {
     try {
-        const cleanHex = hexKey.startsWith('0x') ? hexKey.slice(2) : hexKey;
+        const cleanHex = stripHexPrefix(hexKey.trim());
         return cleanHex.length === 512 && /^[0-9a-fA-F]+$/.test(cleanHex);
     } catch {
         return false;
@@ -96,7 +170,7 @@ function isValidBLSPublicKey(hexKey) {
  */
 function isValidBLSSignature(hexSig) {
     try {
-        const cleanHex = hexKey.startsWith('0x') ? hexKey.slice(2) : hexKey;
+        const cleanHex = stripHexPrefix(hexSig.trim());
         return cleanHex.length === 256 && /^[0-9a-fA-F]+$/.test(cleanHex);
     } catch {
         return false;
@@ -125,29 +199,18 @@ function emptyPublicKey() {
  * @returns {object} Object with key information
  */
 function inspectBLSKey(input) {
-    const isHex = input.startsWith('0x') || /^[0-9a-fA-F]+$/.test(input);
-    
     try {
-        if (isHex) {
-            const cleanHex = input.startsWith('0x') ? input.slice(2) : input;
-            const buffer = Buffer.from(cleanHex, 'hex');
-            return {
-                format: 'hex',
-                length: buffer.length,
-                valid: buffer.length === 256,
-                hex: '0x' + cleanHex,
-                base64: buffer.toString('base64')
-            };
-        } else {
-            const buffer = Buffer.from(input, 'base64');
-            return {
-                format: 'base64',
-                length: buffer.length,
-                valid: buffer.length === 256,
-                hex: '0x' + buffer.toString('hex'),
-                base64: input
-            };
-        }
+        const format = isHexInput(input) ? "hex" : "base64";
+        const buffer = decodeBytes(input, "BLS public key");
+        const converted = g2ToEip2537(buffer, "BLS public key");
+        return {
+            format,
+            length: buffer.length,
+            convertedLength: converted.length,
+            valid: converted.length === 256,
+            hex: "0x" + converted.toString("hex"),
+            base64: buffer.toString("base64")
+        };
     } catch (error) {
         return {
             format: 'unknown',
@@ -162,6 +225,8 @@ export {
     base64ToHex,
     hexToBase64,
     base64SignatureToHex,
+    publicKeyToEip2537Hex,
+    signatureToEip2537Hex,
     isValidBLSPublicKey,
     isValidBLSSignature,
     emptySignature,
@@ -206,7 +271,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log("\nUsage in code:");
     console.log("import { base64ToHex } from './bls.js';");
     console.log("const hexKey = base64ToHex(yourBase64Key);");
-    console.log("await bridge.submitGroupKey(1, hexKey, '0x');");
+    console.log("await bridge.setGroupKey(1, hexKey);");
 }
-
-

@@ -3,6 +3,8 @@ set -e
 
 # bridge-utils.sh
 # Shared utilities and environment setup for Gonka testnet bridge operations.
+# NOTE: You MUST use COLD KEYS (the validator operator keys) for registration,
+# as they are the ones that hold the funds required for governance deposits.
 
 # Resolve Base Directory (Logic matches launch.py)
 export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
@@ -14,9 +16,12 @@ else
     export APP_NAME="inferenced"
 fi
 
-export KEY_DIR="$BASE_DIR/.inference"
+export KEY_DIR="${KEY_DIR:-$BASE_DIR/.inference}"
 export CHAIN_ID="gonka-testnet"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
+
+export CHAIN_NAME_ID="${CHAIN_NAME_ID:-ethereum}"
+
 
 # Port 26657 is closed on host; node is running in Docker, protecting its RPC endpoint behind proxy on port 8000.
 export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
@@ -33,15 +38,17 @@ get_keyring_backend() {
     export KEYRING_BACKEND=""
     
     # Try 'file' backend first
-    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "file" --keyring-dir "$KEY_DIR" >/dev/null 2>&1; then
+    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "file" --home "$KEY_DIR" >/dev/null 2>&1; then
         export KEYRING_BACKEND="file"
+
         echo "Found key '$KEY_NAME' in 'file' backend."
         return 0
     fi
     
     # Try 'test' backend second
-    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "test" --keyring-dir "$KEY_DIR" >/dev/null 2>&1; then
+    if printf "%s\n" "$pass" | $APP_NAME keys show "$KEY_NAME" --keyring-backend "test" --home "$KEY_DIR" >/dev/null 2>&1; then
         export KEYRING_BACKEND="test"
+
         echo "Found key '$KEY_NAME' in 'test' backend."
         return 0
     fi
@@ -60,6 +67,7 @@ echo "Key Dir: $KEY_DIR"
 PASSWORD="12345678"
 BRIDGE_ADDRESS=""
 PROPOSAL_ID_ARG=""
+BRIDGE_ONLY=false
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -76,9 +84,19 @@ while [[ $# -gt 0 ]]; do
       PROPOSAL_ID_ARG="$2"
       shift 2
       ;;
+    --chain-name)
+      CHAIN_NAME_ID="$2"
+      shift 2
+      ;;
+    --bridge-only)
+      BRIDGE_ONLY=true
+      shift
+      ;;
     *)
+
       echo "Error: Unknown option $1"
-      echo "Usage: ssh user@host \"bash -s\" -- < script.sh --address 0xYOUR_ADDRESS [--password PASS] [--proposal ID]"
+    echo "Usage: ssh user@host \"bash -s\" -- < script.sh --address 0xYOUR_ADDRESS [--chain-name NAME] [--bridge-only] [--password PASS] [--proposal ID]"
+
       exit 1
       ;;
   esac
@@ -87,7 +105,7 @@ done
 # Validation: Address is required ONLY if we are creating a proposal (no PROPOSAL_ID provided)
 if [ -z "$PROPOSAL_ID_ARG" ] && [ -z "$BRIDGE_ADDRESS" ]; then
     echo "Error: --address is required for new proposals."
-    echo "Usage: ssh user@host \"bash -s\" -- < script.sh --address 0xYOUR_ADDRESS [--password PASS] [--proposal ID]"
+    echo "Usage: ssh user@host \"bash -s\" -- < script.sh --address 0xYOUR_ADDRESS [--chain-name NAME] [--bridge-only] [--password PASS] [--proposal ID]"
     exit 1
 fi
 
@@ -97,6 +115,12 @@ fi
 
 if [ -n "$PROPOSAL_ID_ARG" ]; then
     echo "Resuming with Proposal ID: $PROPOSAL_ID_ARG"
+fi
+
+if [ "$BRIDGE_ONLY" = true ]; then
+    echo "Mode: Bridge address registration only"
+else
+    echo "Mode: Bridge address + USDC metadata + trading approval"
 fi
 
 # Function to run keys command safely (piping input to avoid reading script stdin)
@@ -113,7 +137,8 @@ echo "Checking for key '$KEY_NAME'..."
 get_keyring_backend "$PASSWORD" || exit 1
 
 # Get Key Address
-MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" 2>/dev/null)
+MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" 2>/dev/null)
+
 
 if [ -z "$MY_ADDR" ]; then
     echo "Error: Could not retrieve address for key '$KEY_NAME'"
@@ -142,48 +167,70 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
     PROPOSAL_FILE="/tmp/proposal_register_bridge.json"
     USDC_ADDRESS="0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
 
-    jq -n \
-      --arg auth "$AUTHORITY_ADDRESS" \
-      --arg chain "$CHAIN_NAME_ID" \
-      --arg bridge "$BRIDGE_ADDRESS" \
-      --arg usdc "$USDC_ADDRESS" \
-      '{
-        messages: [
-          {
-            "@type": "/inference.inference.MsgRegisterBridgeAddresses",
-            authority: $auth,
-            chainName: $chain,
-            addresses: [$bridge]
-          },
-          {
-            "@type": "/inference.inference.MsgRegisterTokenMetadata",
-            authority: $auth,
-            chainId: $chain,
-            contractAddress: $usdc,
-            name: "USD Coin (Sepolia)",
-            symbol: "USDC",
-            decimals: 6,
-            overwrite: false
-          },
-          {
-            "@type": "/inference.inference.MsgApproveBridgeTokenForTrading",
-            authority: $auth,
-            chainId: $chain,
-            contractAddress: $usdc
-          }
-        ],
-        deposit: "25000000ngonka",
-        title: "Register Sepolia Bridge & USDC",
-        summary: "Registering the new bridge contract deployed on Sepolia and the USDC token metadata/approval",
-        metadata: "https://github.com/gonka-ai/gonka"
-      }' > "$PROPOSAL_FILE"
+    if [ "$BRIDGE_ONLY" = true ]; then
+        jq -n \
+          --arg auth "$AUTHORITY_ADDRESS" \
+          --arg chain "$CHAIN_NAME_ID" \
+          --arg bridge "$BRIDGE_ADDRESS" \
+          '{
+            messages: [
+              {
+                "@type": "/inference.inference.MsgRegisterBridgeAddresses",
+                authority: $auth,
+                chainName: $chain,
+                addresses: [$bridge]
+              }
+            ],
+            deposit: "25000000ngonka",
+            title: "Register Sepolia Bridge",
+            summary: "Registering the new bridge contract deployed on Sepolia",
+            metadata: "https://github.com/gonka-ai/gonka"
+          }' > "$PROPOSAL_FILE"
+    else
+        jq -n \
+          --arg auth "$AUTHORITY_ADDRESS" \
+          --arg chain "$CHAIN_NAME_ID" \
+          --arg bridge "$BRIDGE_ADDRESS" \
+          --arg usdc "$USDC_ADDRESS" \
+          '{
+            messages: [
+              {
+                "@type": "/inference.inference.MsgRegisterBridgeAddresses",
+                authority: $auth,
+                chainName: $chain,
+                addresses: [$bridge]
+              },
+              {
+                "@type": "/inference.inference.MsgRegisterTokenMetadata",
+                authority: $auth,
+                chainId: $chain,
+                contractAddress: $usdc,
+                name: "USD Coin (Sepolia)",
+                symbol: "USDC",
+                decimals: 6,
+                overwrite: false
+              },
+              {
+                "@type": "/inference.inference.MsgApproveBridgeTokenForTrading",
+                authority: $auth,
+                chainId: $chain,
+                contractAddress: $usdc
+              }
+            ],
+            deposit: "25000000ngonka",
+            title: "Register Sepolia Bridge & USDC",
+            summary: "Registering the new bridge contract deployed on Sepolia and the USDC token metadata/approval",
+            metadata: "https://github.com/gonka-ai/gonka"
+          }' > "$PROPOSAL_FILE"
+    fi
 
     # 4. Submit Proposal
     echo "Submitting Proposal..."
     # Capture raw output
     RAW_SUBMIT_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | $APP_NAME tx gov submit-proposal "$PROPOSAL_FILE" \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" $NODE_OPTS 2>&1)
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+
     
     # Try to extract JSON part if there's noise
     SUBMIT_OUT=$(echo "$RAW_SUBMIT_OUT" | sed -n '/{/,$p')
@@ -237,7 +284,8 @@ VOTE_SUCCESS=false
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     VOTE_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | $APP_NAME tx gov vote "$PROPOSAL_ID" yes \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" $NODE_OPTS 2>&1)
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+
     
     if echo "$VOTE_OUT" | grep -q '"code":0' || echo "$VOTE_OUT" | grep -q "txhash"; then
         echo "$VOTE_OUT"

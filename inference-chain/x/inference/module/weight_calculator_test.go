@@ -197,17 +197,19 @@ func TestPoCWeightCalculator_CalculateParticipantWeight_ProducesRawWeights(t *te
 	require.Equal(t, int64(10), modelANodes[0].weight)
 	require.Equal(t, int64(10), modelBNodes[0].weight)
 
-	// Coefficients are applied at aggregation
-	coefficients := ModelCoefficients(wc.PocParams)
-	consensusWeight := AggregateConsensusWeight(
-		[]ModelWeight{
-			{ModelID: "model-a", RawWeight: modelAWeight},
-			{ModelID: "model-b", RawWeight: modelBWeight},
+	// Coefficients are applied by the caller that owns the target weight scale.
+	confirmationWeight := types.ConfirmationWeightOfModelNodes(
+		map[string][]*types.MLNodeInfo{
+			"model-a": {{PocWeight: modelAWeight}},
+			"model-b": {{PocWeight: modelBWeight}},
 		},
-		coefficients,
+		[]*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1.0)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(2.0)},
+		},
 	)
 	// 1.0*10 + 2.0*10 = 30
-	require.Equal(t, int64(30), consensusWeight)
+	require.Equal(t, int64(30), confirmationWeight)
 }
 
 func TestPoCWeightCalculator_Calculate_RejectsWhenVotingPowerIsInsufficient(t *testing.T) {
@@ -394,7 +396,10 @@ func TestUpdateConfirmationWeightsV2_UsesPerModelWeightScaleFactor(t *testing.T)
 		TotalNetworkWeight: 100,
 	}))
 
-	result := am.updateConfirmationWeightsV2(ctx, event)
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, event.TriggerHeight)
+	require.NoError(t, err)
+	require.True(t, found)
+	result := am.updateConfirmationWeightsV2(ctx, event, snapshot)
 
 	require.Len(t, result, 1)
 	require.Equal(t, testutil.Executor, result[0].Index)
@@ -404,10 +409,11 @@ func TestUpdateConfirmationWeightsV2_UsesPerModelWeightScaleFactor(t *testing.T)
 	require.Equal(t, []string{"model-a", "model-b"}, result[0].Models)
 	require.Len(t, result[0].MlNodes, 2)
 
-	// Aggregation with coefficients produces consensus weight
-	coefficients := ModelCoefficients(params.PocParams)
-	consensusWeight := AggregateConsensusWeight(ExtractModelWeights(result[0]), coefficients)
-	require.Equal(t, int64(30), consensusWeight, "1.0*10 + 2.0*10 = 30")
+	confirmationWeight := types.ConfirmationWeightOfParticipant(result[0], []*types.ConfirmationWeightScale{
+		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1.0)},
+		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(2.0)},
+	})
+	require.Equal(t, int64(30), confirmationWeight, "1.0*10 + 2.0*10 = 30")
 }
 
 // --- ComputeGroupCap tests ---
@@ -835,7 +841,7 @@ func TestComputeGroupVotingPowers_NewcomerDelegationFlows(t *testing.T) {
 				ConsensusKoeff: mathsdk.LegacyOneDec(),
 			},
 		},
-		ConsensusWeights:     map[string]int64{"target": 100},
+		ConsensusWeights:           map[string]int64{"target": 100},
 		UpcomingActiveParticipants: map[string]bool{"target": true, "newcomer": true},
 		Delegations: map[string]map[string]string{
 			"model-a": {"newcomer": "target"},
@@ -858,7 +864,7 @@ func TestResolveGroupParticipation_NewcomerRefusal(t *testing.T) {
 				ConsensusKoeff: mathsdk.LegacyOneDec(),
 			},
 		},
-		ConsensusWeights:     map[string]int64{"target": 100},
+		ConsensusWeights:           map[string]int64{"target": 100},
 		UpcomingActiveParticipants: map[string]bool{"target": true, "newcomer": true},
 		Refusals: map[string]map[string]bool{
 			"model-a": {"newcomer": true},

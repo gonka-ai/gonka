@@ -87,7 +87,7 @@ func (am AppModule) prepareEpochParticipationState(
 	params types.Params,
 	pocStageStartHeight int64,
 ) (*epochParticipationState, error) {
-	coefficients := ModelCoefficients(params.PocParams)
+	coefficients := modelCoefficients(params.PocParams)
 	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
@@ -146,7 +146,7 @@ func buildGroupData(
 			}
 			g.Members = append(g.Members, p.Index)
 			if i < len(p.MlNodes) && p.MlNodes[i] != nil {
-				g.MemberPocWeights[p.Index] = SumNodeWeights(p.MlNodes[i].MlNodes)
+				g.MemberPocWeights[p.Index] = sumNodeWeights(p.MlNodes[i].MlNodes)
 			} else if logger != nil {
 				logger.LogWarn("buildGroupData: Models/MlNodes parallel array mismatch", types.PoC,
 					"participant", p.Index, "modelIndex", i, "modelsLen", len(p.Models), "mlNodesLen", len(p.MlNodes))
@@ -155,6 +155,16 @@ func buildGroupData(
 	}
 
 	return groups
+}
+
+func sumNodeWeights(nodes []*types.MLNodeInfo) int64 {
+	total := int64(0)
+	for _, node := range nodes {
+		if node != nil {
+			total += node.PocWeight
+		}
+	}
+	return total
 }
 
 func parseRegularDelegationSnapshot(snapshot types.DelegationSnapshot) (
@@ -541,7 +551,7 @@ func buildBootstrapPreEligibilityCalculator(
 	bootstrapIntents map[string]map[string]bool,
 	params types.Params,
 ) *DelegationWeightCalculator {
-	coefficients := ModelCoefficients(params.PocParams)
+	coefficients := modelCoefficients(params.PocParams)
 	groups := make(map[string]*GroupData, len(bootstrapModelIDs))
 	for _, modelID := range bootstrapModelIDs {
 		memberSet := bootstrapIntents[modelID]

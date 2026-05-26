@@ -39,6 +39,7 @@ docker compose -p genesis \
   -f docker-compose.explorer.yml \
   -f docker-compose.proxy.yml \
   -f docker-compose.bridge.yml \
+  -f docker-compose.postgres.yml \
   up -d
 sleep 40
 

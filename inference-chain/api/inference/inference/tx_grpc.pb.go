@@ -55,6 +55,7 @@ const (
 	Msg_RegisterIbcTokenMetadata_FullMethodName         = "/inference.inference.Msg/RegisterIbcTokenMetadata"
 	Msg_CreateDevshardEscrow_FullMethodName             = "/inference.inference.Msg/CreateDevshardEscrow"
 	Msg_SettleDevshardEscrow_FullMethodName             = "/inference.inference.Msg/SettleDevshardEscrow"
+	Msg_SetDevshardRequestsEnabled_FullMethodName       = "/inference.inference.Msg/SetDevshardRequestsEnabled"
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
@@ -104,6 +105,7 @@ type MsgClient interface {
 	RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegisterIbcTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterIbcTokenMetadataResponse, error)
 	CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error)
+	SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDevshardRequestsEnabled, opts ...grpc.CallOption) (*MsgSetDevshardRequestsEnabledResponse, error)
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
@@ -441,6 +443,15 @@ func (c *msgClient) SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevsh
 	return out, nil
 }
 
+func (c *msgClient) SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDevshardRequestsEnabled, opts ...grpc.CallOption) (*MsgSetDevshardRequestsEnabledResponse, error) {
+	out := new(MsgSetDevshardRequestsEnabledResponse)
+	err := c.cc.Invoke(ctx, Msg_SetDevshardRequestsEnabled_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error) {
 	out := new(MsgSetPoCDelegationResponse)
 	err := c.cc.Invoke(ctx, Msg_SetPoCDelegation_FullMethodName, in, out, opts...)
@@ -512,6 +523,7 @@ type MsgServer interface {
 	RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error)
 	CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error)
+	SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error)
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
@@ -629,6 +641,9 @@ func (UnimplementedMsgServer) CreateDevshardEscrow(context.Context, *MsgCreateDe
 }
 func (UnimplementedMsgServer) SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleDevshardEscrow not implemented")
+}
+func (UnimplementedMsgServer) SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetDevshardRequestsEnabled not implemented")
 }
 func (UnimplementedMsgServer) SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetPoCDelegation not implemented")
@@ -1300,6 +1315,24 @@ func _Msg_SettleDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SetDevshardRequestsEnabled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetDevshardRequestsEnabled)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetDevshardRequestsEnabled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetDevshardRequestsEnabled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetDevshardRequestsEnabled(ctx, req.(*MsgSetDevshardRequestsEnabled))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_SetPoCDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSetPoCDelegation)
 	if err := dec(in); err != nil {
@@ -1504,6 +1537,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleDevshardEscrow",
 			Handler:    _Msg_SettleDevshardEscrow_Handler,
+		},
+		{
+			MethodName: "SetDevshardRequestsEnabled",
+			Handler:    _Msg_SetDevshardRequestsEnabled_Handler,
 		},
 		{
 			MethodName: "SetPoCDelegation",

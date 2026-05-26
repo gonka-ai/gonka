@@ -1,12 +1,17 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 
+	"devshard/storage"
 	"devshard/transport"
 )
+
+// ErrInitializing means devshard storage is not ready to serve session state yet.
+var ErrInitializing = errors.New("devshard initializing")
 
 // SessionResolver resolves a lazy per-escrow transport server.
 type SessionResolver interface {
@@ -43,7 +48,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadH
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
 			srv, err := resolver.SessionServer(c.Param("id"))
 			if err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+				return sessionHTTPError(err)
 			}
 			return payloadHandler.HandlePayloads(c, srv)
 		})
@@ -57,7 +62,7 @@ func withSession(
 	return func(c echo.Context) error {
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return sessionHTTPError(err)
 		}
 		return pick(srv)(c)
 	}
@@ -70,8 +75,18 @@ func withSessionAuth(
 	return func(c echo.Context) error {
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return sessionHTTPError(err)
 		}
 		return srv.AuthMiddleware(pick(srv))(c)
 	}
+}
+
+func sessionHTTPError(err error) error {
+	if errors.Is(err, ErrInitializing) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 }

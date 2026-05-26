@@ -17,7 +17,7 @@ import (
 // devshardd binary. Same shape as dapi's in-process ValidationAdapter; the
 // only structural differences are:
 //   - node acquisition uses NodeManager gRPC (no broker)
-//   - the payload-store epoch is fixed to 0 (devshardd has no phase tracker)
+//   - the payload-store epoch comes from the mainnet-pinned escrow epoch
 type devshardValidator struct {
 	mlClient    *mlnodeclient.Client
 	httpClient  *http.Client
@@ -25,6 +25,7 @@ type devshardValidator struct {
 	recorder    internaldevshard.PayloadAuthClient
 	engine      *devshardEngine // reused for doWithLockedNode retry loop
 	chainParams internaldevshard.ChainParamsProvider
+	thresholds  *internaldevshard.ValidationThresholdResolver
 }
 
 func newDevshardValidator(
@@ -42,6 +43,7 @@ func newDevshardValidator(
 		recorder:    recorder,
 		engine:      engine,
 		chainParams: chainParams,
+		thresholds:  internaldevshard.NewValidationThresholdResolver(br, internaldevshard.ValidationThresholdCacheTTL),
 	}
 }
 
@@ -52,11 +54,12 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 		v.httpClient,
 		v.bridge,
 		v.recorder,
-		0,
+		req.EpochID,
 		devshardpkg.VersionedSessionPayloadPath(Version, req.EscrowID),
 		v.executeMLRequest,
 		"devshardd",
 		v.chainParams,
+		v.thresholds,
 	)
 }
 

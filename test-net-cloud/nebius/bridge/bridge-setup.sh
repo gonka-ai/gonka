@@ -4,7 +4,7 @@ set -e
 # Default Genesis Host
 GENESIS_HOST="${GENESIS_HOST:-89.169.111.79}"
 # Relative path to the bridge contract directory
-BRIDGE_DIR="../../proposals/ethereum-bridge-contact"
+BRIDGE_DIR="../../../proposals/ethereum-bridge-contact"
 ENV_FILE="$BRIDGE_DIR/.env"
 EXAMPLE_FILE="$BRIDGE_DIR/.env.example"
 
@@ -73,6 +73,20 @@ else
     echo "GENESIS_HOST=$GENESIS_HOST" >> "$ENV_FILE"
 fi
 
+if grep -q "GONKA_CHAIN_ID=" "$ENV_FILE"; then
+    sed -i.bak "s|GONKA_CHAIN_ID=.*|GONKA_CHAIN_ID=gonka-testnet|" "$ENV_FILE"
+    rm "$ENV_FILE.bak"
+else
+    echo "GONKA_CHAIN_ID=gonka-testnet" >> "$ENV_FILE"
+fi
+
+if grep -q "ETHEREUM_CHAIN_ID=" "$ENV_FILE"; then
+    sed -i.bak "s|ETHEREUM_CHAIN_ID=.*|ETHEREUM_CHAIN_ID=1|" "$ENV_FILE"
+    rm "$ENV_FILE.bak"
+else
+    echo "ETHEREUM_CHAIN_ID=1" >> "$ENV_FILE"
+fi
+
 # Set SEPOLIA_RPC_URL for testnet setup
 SEPOLIA_RPC="https://ethereum-sepolia-rpc.publicnode.com"
 if grep -q "SEPOLIA_RPC_URL=" "$ENV_FILE"; then
@@ -134,20 +148,55 @@ if [ $EXIT_CODE -eq 0 ]; then
 
     # Extract Bridge Contract Address from output
     BRIDGE_ADDRESS=$(echo "$OUTPUT" | grep "BridgeContract deployed to:" | awk '{print $NF}')
-    
+
     if [ -n "$BRIDGE_ADDRESS" ]; then
         echo "=================================================="
         echo "BRIDGE CONTRACT ADDRESS: $BRIDGE_ADDRESS"
         echo "=================================================="
-        # Optional: Save address to a file since .env is being deleted
+        # Save the deployed address separately until bootstrap completes.
+        echo "$BRIDGE_ADDRESS" > "bridge_address.pending.txt"
+        echo "Pending address saved to: ${BRIDGE_DIR}/bridge_address.pending.txt"
+
+        # 2. Bootstrap Step: Submit the group key for the current epoch
+        echo ""
+        echo "Bootstrap Step 1: Submitting Group Public Key for Epoch $EPOCH..."
+        # We use submit-epoch.js which handles uncompression via bls.js
+        # Pass the B64 key directly as it's cleaner for the JS script
+        if HARDHAT_NETWORK=sepolia node submit-epoch.js "$BRIDGE_ADDRESS" "$EPOCH" "$GROUP_KEY_B64" "0x"
+        then
+            echo "✓ Epoch $EPOCH group key submitted successfully."
+        else
+            echo "❌ Failed to submit epoch $EPOCH group key."
+            exit 1
+        fi
+
+        # 3. Bootstrap Step: Enable Normal Operation
+        echo ""
+        echo "Bootstrap Step 2: Enabling Normal Operation..."
+        if HARDHAT_NETWORK=sepolia node enable-normal-operation.js "$BRIDGE_ADDRESS"
+        then
+            echo "✓ Bridge contract is now in NORMAL_OPERATION mode."
+        else
+            echo "❌ Failed to enable normal operation."
+            exit 1
+        fi
+
         echo "$BRIDGE_ADDRESS" > "bridge_address.txt"
-        echo "Address saved to: ${BRIDGE_DIR}/bridge_address.txt"
+        rm -f "bridge_address.pending.txt"
+        echo "Operational address saved to: ${BRIDGE_DIR}/bridge_address.txt"
+
+        echo ""
+        echo "=================================================="
+        echo "BRIDGE SETUP COMPLETE AND OPERATIONAL!"
+        echo "Target Address: $BRIDGE_ADDRESS"
+        echo "Target Epoch:   $EPOCH"
+        echo "=================================================="
     else
          echo "WARNING: Could not parse Bridge Contract Address from output."
     fi
 
     echo "Security: Removing .env file..."
-    rm "$ENV_FILE"
+    rm ".env"
     echo ".env file removed."
 else
     echo "Deployment Failed."

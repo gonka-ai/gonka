@@ -408,7 +408,7 @@ type nodeWeight struct {
 // Total weight comes from StoreCommit.Count (scaled by weightScaleFactor and timeNormalizationFactor).
 // Per-node weights come from MLNodeWeightDistribution.
 // PocWeight is raw proven compute (timeNormalizationFactor only, no model coefficient).
-// Model coefficients are applied at the aggregation step in AggregateConsensusWeight.
+// Model coefficients are applied by the caller after raw per-model PoC weights are known.
 func (wc *PoCWeightCalculator) calculateParticipantWeight(key types.PoCParticipantModelKey) ([]nodeWeight, int64) {
 	commit, hasCommit := wc.StoreCommits[key]
 	if !hasCommit || commit.Count == 0 {

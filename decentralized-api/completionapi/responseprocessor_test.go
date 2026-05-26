@@ -74,6 +74,25 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	require.NotEmpty(t, hash, "expected hash to be not empty")
 }
 
+func TestCompletionTokenCountForPartialStreamUsesLogprobEntries(t *testing.T) {
+	processor := NewExecutorResponseProcessor("partial-id")
+	events := []string{
+		`data: {"id":"upstream","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"content":"ab"},"logprobs":{"content":[{"token":"a","logprob":-0.1,"top_logprobs":[{"token":"a","logprob":-0.1},{"token":"x","logprob":-1.1},{"token":"y","logprob":-2.1}]},{"token":"b","logprob":-0.2,"top_logprobs":[{"token":"b","logprob":-0.2},{"token":"m","logprob":-1.2},{"token":"n","logprob":-2.2}]}]},"finish_reason":null}]}`,
+		`data: {"id":"upstream","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"content":"c"},"logprobs":{"content":[{"token":"c","logprob":-0.3,"top_logprobs":[{"token":"c","logprob":-0.3},{"token":"q","logprob":-1.3},{"token":"r","logprob":-2.3},{"token":"s","logprob":-3.3}]}]},"finish_reason":null}]}`,
+	}
+	for _, event := range events {
+		_, err := processor.ProcessStreamedResponse(event)
+		require.NoError(t, err)
+	}
+
+	response, err := processor.GetResponse()
+	require.NoError(t, err)
+	usage, err := response.GetUsage()
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.PromptTokens)
+	require.Equal(t, uint64(3), usage.CompletionTokens)
+}
+
 func TestCompletionTokenCountForStreamedResponseWithTokenIds(t *testing.T) {
 	dummyId := "dummy-inference-id"
 	processor := NewExecutorResponseProcessor(dummyId)

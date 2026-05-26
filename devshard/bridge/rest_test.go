@@ -87,6 +87,44 @@ func TestGetHostInfo_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrParticipantNotFound)
 }
 
+func TestGetValidationThreshold_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/productscience/inference/inference/epoch_group_data/257", r.URL.Path)
+		assert.Equal(t, "Qwen/Qwen3", r.URL.Query().Get("model_id"))
+		json.NewEncoder(w).Encode(map[string]any{
+			"epoch_group_data": map[string]any{
+				"model_snapshot": map[string]any{
+					"validation_threshold": map[string]any{
+						"value":    "958",
+						"exponent": -3,
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	threshold, err := b.GetValidationThreshold(257, "Qwen/Qwen3")
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(958), threshold.Value)
+	assert.Equal(t, int32(-3), threshold.Exponent)
+}
+
+func TestGetValidationThreshold_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"epoch_group_data": map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	b := NewRESTBridge(srv.URL)
+	_, err := b.GetValidationThreshold(257, "missing")
+	require.Error(t, err)
+}
+
 func TestVerifyWarmKey_Authorized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{

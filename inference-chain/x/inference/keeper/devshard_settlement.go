@@ -20,7 +20,6 @@ import (
 const (
 	DevshardGroupSize   = 16
 	DevshardQuorumSlots = 2*DevshardGroupSize/3 + 1
-	DevshardMaxNonce    = 20_000
 	// DevshardSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized devshard states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -64,7 +63,7 @@ type WarmKeyChecker func(granter, grantee string) bool
 
 // VerifyDevshardSettlement verifies settlement proof: state root, signatures, quorum, cost.
 // If isWarmKey is non-nil, mismatched signatures are checked against authz grants.
-func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, isWarmKey WarmKeyChecker) error {
+func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, maxNonce uint32, isWarmKey WarmKeyChecker) error {
 	if escrow.Settled {
 		return fmt.Errorf("escrow %d already settled", escrow.Id)
 	}
@@ -74,8 +73,8 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	if msg.Version == "" {
 		return fmt.Errorf("version is required")
 	}
-	if msg.Nonce > DevshardMaxNonce {
-		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, DevshardMaxNonce)
+	if msg.Nonce > uint64(maxNonce) {
+		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, maxNonce)
 	}
 	const maxVersionLength = 128
 	if len(msg.Version) > maxVersionLength {

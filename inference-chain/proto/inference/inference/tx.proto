@@ -58,8 +58,9 @@ service Msg {
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
   rpc ApproveIbcTokenForTrading        (MsgApproveIbcTokenForTrading) returns (MsgApproveIbcTokenForTradingResponse);
   rpc RegisterIbcTokenMetadata         (MsgRegisterIbcTokenMetadata) returns (MsgRegisterIbcTokenMetadataResponse);
-  rpc CreateDevshardEscrow               (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
-  rpc SettleDevshardEscrow               (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
+  rpc CreateDevshardEscrow             (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
+  rpc SettleDevshardEscrow             (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
+  rpc SetDevshardRequestsEnabled       (MsgSetDevshardRequestsEnabled) returns (MsgSetDevshardRequestsEnabledResponse);
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
@@ -505,3 +506,11 @@ message MsgSettleDevshardEscrow {
 }
 
 message MsgSettleDevshardEscrowResponse {}
+
+message MsgSetDevshardRequestsEnabled {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  bool enabled = 2;
+}
+
+message MsgSetDevshardRequestsEnabledResponse {}

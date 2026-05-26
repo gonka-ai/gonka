@@ -7,6 +7,7 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 type Permission string
@@ -45,6 +46,9 @@ var permissionCheckers = map[Permission]permissionChecker{
 	EscrowAllowListPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return k.checkEscrowAllowListPermission(ctx, signer)
 	},
+	GuardianPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
+		return k.checkGuardianPermission(ctx, signer)
+	},
 	NoPermission: func(k msgServer, ctx context.Context, signer sdk.AccAddress) error {
 		return nil
 	},
@@ -71,6 +75,8 @@ const (
 	OpenRegistrationPermission Permission = "open_registration"
 	// Escrow allow list only
 	EscrowAllowListPermission Permission = "escrow_allow_list"
+	// GuardianPermission allows operational genesis guardian validator operators.
+	GuardianPermission Permission = "guardian"
 )
 
 // This is no longer "operational" at runtime, but it is still used in the unit test, allowing us to trust
@@ -119,8 +125,9 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgFinishInference)(nil)): {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgValidation)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 
-	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)): {EscrowAllowListPermission},
-	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)): {EscrowAllowListPermission},
+	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)):       {EscrowAllowListPermission},
+	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)):       {EscrowAllowListPermission},
+	reflect.TypeOf((*types.MsgSetDevshardRequestsEnabled)(nil)): {GuardianPermission},
 
 	reflect.TypeOf((*types.MsgSetPoCDelegation)(nil)):    {ParticipantPermission},
 	reflect.TypeOf((*types.MsgRefusePoCDelegation)(nil)): {ParticipantPermission},
@@ -232,11 +239,21 @@ func (k msgServer) checkGovernancePermission(ctx context.Context, signer sdk.Acc
 	return nil
 }
 
-func (k msgServer) checkContractPermission(ctx context.Context, signer sdk.AccAddress) error {
-	if k.wasmKeeper == nil {
-		return types.ErrNotSupported
+func (k msgServer) checkContractPermission(ctx context.Context, signer sdk.AccAddress) (err error) {
+	// Safety net: catch any nil-dereference panics from an uninitialised Wasm keeper.
+	// This must be installed before any Wasm keeper access so the recover covers
+	// both the getter resolution and the actual GetContractInfo call.
+	defer func() {
+		if recover() != nil {
+			err = types.ErrNotSupported
+		}
+	}()
+	lookup := k.contractInfoLookup
+	if lookup == nil {
+		wasmKeeper := k.GetWasmKeeper()
+		lookup = wasmKeeper.GetContractInfo
 	}
-	contractInfo := k.wasmKeeper.GetContractInfo(ctx, signer)
+	contractInfo := lookup(ctx, signer)
 	if contractInfo == nil {
 		return types.ErrNotAContractAddress
 	}
@@ -249,4 +266,17 @@ func (k msgServer) checkEscrowAllowListPermission(ctx context.Context, signer sd
 		return types.ErrNotAllowedEscrowCreator
 	}
 	return nil
+}
+
+func (k msgServer) checkGuardianPermission(ctx context.Context, signer sdk.AccAddress) error {
+	for _, operatorAddress := range k.GetGenesisGuardianAddresses(ctx) {
+		accAddr, err := utils.OperatorAddressToAccAddress(operatorAddress)
+		if err != nil {
+			continue
+		}
+		if accAddr == signer.String() {
+			return nil
+		}
+	}
+	return types.ErrInvalidSigner
 }

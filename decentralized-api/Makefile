@@ -38,6 +38,7 @@ define DOCKER_BUILD
 	@echo "    	GOARCH: $(GOARCH)"
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
+		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
@@ -54,6 +55,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	GOARCH: $(GOARCH)"
 	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
+		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \

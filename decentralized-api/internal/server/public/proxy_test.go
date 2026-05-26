@@ -31,7 +31,8 @@ func TestProxyResponse_HashConsistency(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(sseBody)),
 	}
 	recorder := httptest.NewRecorder()
-	ProxyResponse(proxyResp, recorder, true, proxyProcessor, inferenceId)
+	err := ProxyResponse(proxyResp, recorder, true, proxyProcessor, inferenceId)
+	require.NoError(t, err)
 
 	proxyCompletion, err := proxyProcessor.GetResponse()
 	require.NoError(t, err)

@@ -29,6 +29,9 @@ func (m *mockBridge) GetHostInfo(addr string) (*HostInfo, error) {
 	}
 	return info, nil
 }
+func (m *mockBridge) GetValidationThreshold(uint64, string) (*Decimal, error) {
+	return nil, ErrNotImplemented
+}
 func (m *mockBridge) VerifyWarmKey(_, _ string) (bool, error) {
 	return false, ErrNotImplemented
 }

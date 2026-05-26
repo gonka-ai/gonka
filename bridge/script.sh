@@ -41,6 +41,16 @@ mkdir -p /var/log/geth /var/log/prysm
 PRYSM_RAW_LOG=/var/log/prysm/beacon.raw.log
 PRYSM_FORMATTED_LOG=/var/log/prysm/beacon.log
 
+# Determine network flags
+NETWORK_FLAGS=""
+if [ "$ETHEREUM_NETWORK" = "sepolia" ] || [ "$ETHEREUM_NETWORK" = "testnet" ]; then
+    echo "Running on Sepolia testnet"
+    NETWORK_FLAGS="--sepolia"
+else
+    echo "Running on Mainnet (default)"
+    # Geth defaults to mainnet, no flag needed
+fi
+
 echo "Initializing Ethereum Bridge Service Version 0.1.0"
 
 # Generate JWT secret if it doesn't exist
@@ -170,7 +180,7 @@ wait_until_alive() {
 
 start_geth() {
     echo "Starting Geth..."
-    geth --datadir $GETH_DATA_DIR \
+    geth $NETWORK_FLAGS --datadir $GETH_DATA_DIR \
          --http \
          --http.addr 0.0.0.0 \
          --http.port $GETH_HTTP_PORT \
@@ -197,7 +207,7 @@ start_geth() {
             rm -f "$LOCK_FILE" || true
             sleep 1
             # Retry once
-            geth --datadir $GETH_DATA_DIR \
+            geth $NETWORK_FLAGS --datadir $GETH_DATA_DIR \
                  --http \
                  --http.addr 0.0.0.0 \
                  --http.port $GETH_HTTP_PORT \
@@ -238,6 +248,7 @@ start_prysm() {
         beacon-chain \
             --accept-terms-of-use \
             $FORCE_CLEAR \
+            $NETWORK_FLAGS \
             --checkpoint-sync-url=$BEACON_STATE_URL \
             --execution-endpoint=http://127.0.0.1:$GETH_AUTHRPC_PORT \
             --datadir $PRYSM_DATA_DIR \
@@ -248,6 +259,7 @@ start_prysm() {
         beacon-chain \
             --accept-terms-of-use \
             $FORCE_CLEAR \
+            $NETWORK_FLAGS \
             --checkpoint-sync-url=$BEACON_STATE_URL \
             --execution-endpoint=http://127.0.0.1:$GETH_AUTHRPC_PORT \
             --datadir $PRYSM_DATA_DIR \

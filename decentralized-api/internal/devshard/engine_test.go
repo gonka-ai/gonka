@@ -2,18 +2,39 @@ package devshard
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"decentralized-api/completionapi"
 	"decentralized-api/utils"
 
+	devshardpkg "devshard"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type interruptedBody struct {
+	data []byte
+	read bool
+}
+
+func (b *interruptedBody) Read(p []byte) (int, error) {
+	if b.read {
+		return 0, errors.New("stream interrupted")
+	}
+	b.read = true
+	return copy(p, b.data), nil
+}
+
+func (b *interruptedBody) Close() error { return nil }
 
 func TestProcessHTTPResponse_SSE(t *testing.T) {
 	body := "data: {\"id\":\"1\",\"choices\":[]}\n\ndata: [DONE]\n"
@@ -93,6 +114,49 @@ func TestResponseHashComputation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(10), usage.PromptTokens)
 	assert.Equal(t, uint64(5), usage.CompletionTokens)
+}
+
+func TestProcessExecutionHTTPResponse_PartialSSEAfterInterruption(t *testing.T) {
+	inferenceID := "devshard-escrow-1-7"
+	body := []byte(`data: {"id":"upstream","model":"llama","choices":[{"delta":{"content":"hello"},"logprobs":{"content":[{"token":"hello","logprob":-0.1,"top_logprobs":[{"token":"hello","logprob":-0.1}]}]}}],"usage":{"prompt_tokens":12,"completion_tokens":1}}` + "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       &interruptedBody{data: body},
+	}
+
+	processed, err := ProcessExecutionHTTPResponse(devshardpkg.ExecuteRequest{}, resp, inferenceID)
+	require.NoError(t, err)
+	require.NotNil(t, processed)
+	require.Equal(t, uint64(12), processed.InputTokens)
+	require.Equal(t, uint64(1), processed.OutputTokens)
+	require.Contains(t, string(processed.ResponseBody), inferenceID)
+
+	expectedHash := sha256.Sum256(processed.ResponseBody)
+	require.Equal(t, expectedHash[:], processed.ResponseHash)
+}
+
+func TestFetchPayloadsHTTPWithTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: time.Minute}
+	start := time.Now()
+	_, err := fetchPayloadsHTTPWithTimeout(
+		context.Background(),
+		client,
+		20*time.Millisecond,
+		server.URL,
+		"validator",
+		time.Now().UnixNano(),
+		1,
+		"signature",
+	)
+	require.Error(t, err)
+	require.Less(t, time.Since(start), 500*time.Millisecond)
 }
 
 func TestCanonicalizePrompt(t *testing.T) {

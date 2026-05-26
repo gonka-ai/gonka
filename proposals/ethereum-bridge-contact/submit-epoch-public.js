@@ -18,17 +18,7 @@ function isHexString(str) {
 
 // Helper function to convert public key (base64 or hex) to hex
 function convertPublicKeyToHex(input) {
-    if (isHexString(input)) {
-        // Already hex - validate length (256 bytes = 512 hex chars + "0x" prefix)
-        const hexLength = (input.length - 2) / 2;
-        if (hexLength !== 256) {
-            throw new Error(`Invalid hex public key length: ${hexLength} bytes. Expected 256 bytes.`);
-        }
-        return input;
-    } else {
-        // Assume base64
-        return base64ToHex(input);
-    }
+    return base64ToHex(input);
 }
 
 // Helper function to convert signature (base64 or hex) to hex
@@ -38,12 +28,7 @@ function convertSignatureToHex(input) {
     }
     
     if (isHexString(input)) {
-        // Already hex - validate length (128 bytes = 256 hex chars + "0x" prefix)
-        const hexLength = (input.length - 2) / 2;
-        if (hexLength !== 128) {
-            throw new Error(`Invalid hex signature length: ${hexLength} bytes. Expected 128 bytes.`);
-        }
-        return input;
+        return base64SignatureToHex(input);
     } else {
         // Assume base64
         return base64SignatureToHex(input);
@@ -111,14 +96,15 @@ async function submitEpochPublic(contractAddress, epochId, groupPublicKey, valid
     const isHexKey = isHexString(groupPublicKey);
     console.log("- Input Format:", isHexKey ? "hex" : "base64");
     
-    if (!isHexKey) {
-        const keyInfo = inspectBLSKey(groupPublicKey);
-        console.log("- Length:", keyInfo.length, "bytes");
-        console.log("- Valid:", keyInfo.valid ? "✓" : "✗");
-        
-        if (!keyInfo.valid) {
-            throw new Error("Invalid BLS public key. Expected 256 bytes.");
-        }
+    const keyInfo = inspectBLSKey(groupPublicKey);
+    console.log("- Input Length:", keyInfo.length, "bytes");
+    if (keyInfo.convertedLength) {
+        console.log("- Contract Length:", keyInfo.convertedLength, "bytes");
+    }
+    console.log("- Valid:", keyInfo.valid ? "✓" : "✗");
+
+    if (!keyInfo.valid) {
+        throw new Error("Invalid BLS public key. Expected 96-byte compressed or 256-byte EIP-2537 key.");
     }
     
     const hexPublicKey = convertPublicKeyToHex(groupPublicKey);
@@ -272,9 +258,9 @@ function parseArgs() {
         console.error("\nArguments:");
         console.error("  contractAddress       - Deployed BridgeContract address");
         console.error("  epochId              - Epoch ID (must be sequential: latestEpoch + 1)");
-        console.error("  groupPublicKey       - BLS public key (256 bytes)");
+        console.error("  groupPublicKey       - BLS public key (96-byte compressed or 256-byte EIP-2537)");
         console.error("                          Format: base64-encoded OR hex (0x-prefixed)");
-        console.error("  validationSignature  - BLS signature (128 bytes) from previous epoch");
+        console.error("  validationSignature  - BLS signature (48-byte compressed or 128-byte EIP-2537) from previous epoch");
         console.error("                          Format: base64-encoded OR hex (0x-prefixed)");
         console.error("\nRequirements:");
         console.error("  - Contract must be in NORMAL_OPERATION mode");
@@ -324,4 +310,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 export {
     submitEpochPublic
 };
-

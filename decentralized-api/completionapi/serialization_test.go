@@ -2,8 +2,9 @@ package completionapi
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -571,8 +572,36 @@ func TestNoLogprobsAnswer(t *testing.T) {
 		t.Fatalf("Expected nil logprobs, got %v", r.Choices[0].Logprobs.Content)
 	}
 
-	if r.Choices[0].StopReason != "" {
-		t.Fatalf("Expected stop reason to be nil got %s", r.Choices[0].StopReason)
+	if r.Choices[0].StopReason != nil {
+		t.Fatalf("Expected stop reason to be nil got %v", r.Choices[0].StopReason)
+	}
+}
+
+func TestNumericStopReasonAnswer(t *testing.T) {
+	response := `{
+		"id": "devshard-402-1",
+		"object": "chat.completion",
+		"created": 1778003290,
+		"model": "moonshotai/Kimi-K2.6",
+		"choices": [
+			{
+				"index": 0,
+				"message": {"role": "assistant", "content": " ok"},
+				"logprobs": null,
+				"finish_reason": "stop",
+				"stop_reason": 163586
+			}
+		],
+		"usage": {"prompt_tokens": 14, "completion_tokens": 2}
+	}`
+
+	var r Response
+	if err := json.Unmarshal([]byte(response), &r); err != nil {
+		t.Fatalf("Failed to unmarshal response with numeric stop_reason: %v", err)
+	}
+
+	if r.Choices[0].StopReason != float64(163586) {
+		t.Fatalf("Expected numeric stop reason, got %v", r.Choices[0].StopReason)
 	}
 }
 

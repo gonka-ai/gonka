@@ -112,6 +112,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		// First run: create the session row so AppendDiff works later.
 		if createErr := sqlStore.CreateSession(storage.CreateSessionParams{
 			EscrowID:       cfg.EscrowID,
+			EpochID:        escrow.EpochID,
 			Version:        version,
 			CreatorAddr:    escrow.CreatorAddress,
 			Config:         config,

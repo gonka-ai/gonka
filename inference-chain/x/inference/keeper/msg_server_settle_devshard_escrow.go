@@ -27,7 +27,15 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	warmKeyChecker := func(granter, grantee string) bool {
 		return k.HasWarmKeyGrant(goCtx, granter, grantee)
 	}
-	if err := VerifyDevshardSettlement(escrow, msg, warmKeyChecker); err != nil {
+	params, err := k.GetParams(goCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get params: %w", err)
+	}
+	devshardParams := params.DevshardEscrowParams
+	if devshardParams == nil {
+		return nil, fmt.Errorf("devshard escrow params not configured")
+	}
+	if err := VerifyDevshardSettlement(escrow, msg, devshardParams.MaxNonce, warmKeyChecker); err != nil {
 		return nil, err
 	}
 

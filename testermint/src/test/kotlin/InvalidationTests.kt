@@ -70,6 +70,42 @@ class InvalidationTests : TestermintTest() {
         assertThat(newParticipants.excludedParticipants).isEmpty()
         val removedRestored = newParticipants.activeParticipants.getParticipant(genesis)
         assertNotNull(removedRestored, "Excluded participant was not restored")
+
+        logSection("Verifying restored participant stays active after serving fresh inference traffic")
+        val restoredAddress = genesis.node.getColdAddress()
+        val maxAttempts = 20
+        var restoredExecutorResult: InferenceResult? = null
+        for (attempt in 1..maxAttempts) {
+            genesis.waitForNextInferenceWindow()
+            val result = getInferenceResult(genesis)
+            Logger.info(
+                "Post-restore probe $attempt/$maxAttempts: executor=${result.executorBefore.id} status=${result.inference.statusEnum}"
+            )
+            if (result.executorBefore.id == restoredAddress) {
+                restoredExecutorResult = result
+                break
+            }
+        }
+
+        assertNotNull(
+            restoredExecutorResult,
+            "Restored participant never received a post-restore inference within $maxAttempts attempts"
+        )
+
+        genesis.node.waitForNextBlock(2)
+        val rawParticipantAfterRestoreInference = genesis.node.getRawParticipants().getParticipant(genesis)
+        assertNotNull(rawParticipantAfterRestoreInference, "Unable to fetch restored participant after fresh inference")
+        assertThat(rawParticipantAfterRestoreInference.status).isEqualTo("ACTIVE")
+
+        val activeParticipantsAfterRestoreInference = genesis.api.getActiveParticipants()
+        assertThat(activeParticipantsAfterRestoreInference.excludedParticipants.none { it.address == restoredAddress })
+            .describedAs("Restored participant should not be re-excluded after serving fresh inference traffic")
+            .isTrue()
+        assertNotNull(
+            activeParticipantsAfterRestoreInference.activeParticipants.getParticipant(genesis),
+            "Restored participant disappeared from active set after serving fresh inference traffic"
+        )
+
     }
 
     @Test

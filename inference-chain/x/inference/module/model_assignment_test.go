@@ -6,11 +6,31 @@ import (
 	"slices"
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/utils"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
+
+// collectPreservedParticipants returns the set of participant Indexes that appear
+// in the preserved snapshot (for any model). Used by tests that only care
+// whether a participant was preserved at all, not which specific nodes.
+func collectPreservedParticipants(snapshot types.PreservedNodesSnapshot) map[string]bool {
+	preserved := make(map[string]bool)
+	for _, mp := range snapshot.ModelPreservedNodes {
+		if mp == nil {
+			continue
+		}
+		for _, pp := range mp.Participants {
+			if pp != nil && len(pp.NodeIds) > 0 {
+				preserved[pp.ParticipantId] = true
+			}
+		}
+	}
+	return preserved
+}
 
 // Mock Keeper
 type mockKeeperForModelAssigner struct {
@@ -21,6 +41,17 @@ type mockKeeperForModelAssigner struct {
 	// counts as eligible-by-history for that epoch in SamplePreservedForEpisode.
 	perfSummaries map[string]map[uint64]types.EpochPerformanceSummary
 	params        *types.Params
+	// liveSubGroupOverrides[modelId] = explicit live member set for that subgroup.
+	// When unset for a model, the mock falls back to "all members in
+	// epochGroupData[modelId][latest].ValidationWeights are live".
+	liveSubGroupOverrides map[string]map[string]bool
+	liveRootOverrides     map[string]bool // member set override for GetRootGroupDataWithLiveMembers
+	liveSubGroupsErr      error
+	// guardianAddresses is what the mock returns from GetGenesisGuardianAddresses.
+	// Test bodies should populate this with valoper-bech32 strings; the production
+	// code converts them to acc-bech32 before checking membership against subgroup
+	// member addresses.
+	guardianAddresses []string
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -63,6 +94,78 @@ func (m *mockKeeperForModelAssigner) GetParams(ctx context.Context) (types.Param
 		return *m.params, nil
 	}
 	return types.DefaultParams(), nil
+}
+
+func (m *mockKeeperForModelAssigner) GetGenesisGuardianAddresses(ctx context.Context) []string {
+	return m.guardianAddresses
+}
+
+func (m *mockKeeperForModelAssigner) GetRootGroupDataWithLiveMembers(ctx context.Context) (types.EpochGroupData, map[string]bool, error) {
+	var data types.EpochGroupData
+	found := false
+	if epochMap, ok := m.epochGroupData[""]; ok {
+		for _, d := range epochMap {
+			data = d
+			found = true
+		}
+	}
+	if !found {
+		return types.EpochGroupData{}, nil, nil
+	}
+	if m.liveRootOverrides != nil {
+		return data, m.liveRootOverrides, nil
+	}
+	liveSet := make(map[string]bool, len(data.ValidationWeights))
+	for _, vw := range data.ValidationWeights {
+		if vw != nil {
+			liveSet[vw.MemberAddress] = true
+		}
+	}
+	return data, liveSet, nil
+}
+
+func (m *mockKeeperForModelAssigner) GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (
+	map[string]types.EpochGroupData,
+	map[string]map[string]bool,
+	error,
+) {
+	if m.liveSubGroupsErr != nil {
+		return nil, nil, m.liveSubGroupsErr
+	}
+	subGroupData := make(map[string]types.EpochGroupData, len(m.epochGroupData))
+	liveSets := make(map[string]map[string]bool, len(m.epochGroupData))
+	for modelId, byEpoch := range m.epochGroupData {
+		if modelId == "" {
+			continue
+		}
+		// Use the latest epoch entry for this model as the "current" subgroup data.
+		var data types.EpochGroupData
+		var latestEpoch uint64
+		first := true
+		for epochIdx, d := range byEpoch {
+			if first || epochIdx > latestEpoch {
+				latestEpoch = epochIdx
+				data = d
+				first = false
+			}
+		}
+		if first {
+			continue
+		}
+		// Live member set: override if present, otherwise every member in the subgroup data.
+		var liveSet map[string]bool
+		if override, ok := m.liveSubGroupOverrides[modelId]; ok {
+			liveSet = override
+		} else {
+			liveSet = make(map[string]bool, len(data.ValidationWeights))
+			for _, vw := range data.ValidationWeights {
+				liveSet[vw.MemberAddress] = true
+			}
+		}
+		subGroupData[modelId] = data
+		liveSets[modelId] = liveSet
+	}
+	return subGroupData, liveSets, nil
 }
 
 // populateSubgroupsFromParticipants writes root and per-model subgroup data at epochIdx
@@ -378,6 +481,186 @@ func TestSamplePreservedForEpisode_MatchesSubgroupData(t *testing.T) {
 	modelGroup := participants[0].MlNodes[0]
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 2)
 	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 0)
+}
+
+func TestSumLiveRootTotalWeight_ExcludesRemovedMembers(t *testing.T) {
+	rootData := types.EpochGroupData{
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "live", Weight: 40},
+			{MemberAddress: "removed", Weight: 60},
+		},
+	}
+	liveSet := map[string]bool{"live": true}
+	require.Equal(t, int64(40), sumLiveRootTotalWeight(rootData, liveSet))
+}
+
+func TestCalculateParticipantWeightThreshold75Percent_UsesLiveRootTotal(t *testing.T) {
+	// Model VP 80+10=90; model-local 75% target would be 67 and keep both.
+	// Live root total 100 -> network 75% target keeps only the 80 VP participant.
+	threshold := calculateParticipantWeightThreshold75Percent([]int64{80, 10}, 100)
+	require.Equal(t, int64(79), threshold)
+	require.True(t, 80 > threshold)
+	require.False(t, 10 > threshold)
+}
+
+func TestCanAllocateParticipantNode_UsesVotingPowerCap(t *testing.T) {
+	canAllocate, updatedVP := canAllocateParticipantNode(10, 10, 0, 40, 34)
+	require.False(t, canAllocate)
+	require.Equal(t, int64(0), updatedVP)
+
+	canAllocate, updatedVP = canAllocateParticipantNode(10, 10, 0, 30, 34)
+	require.True(t, canAllocate)
+	require.Equal(t, int64(30), updatedVP)
+
+	canAllocate, updatedVP = canAllocateParticipantNode(5, 10, 0, 40, 34)
+	require.True(t, canAllocate)
+	require.Equal(t, int64(0), updatedVP)
+}
+
+// TestSamplePreservedForEpisode_ExcludesGuardians covers the guardian-exclusion
+// path in filterEligibleMLNodes: a participant whose acc-bech32 address matches
+// the converted operator address from GetGenesisGuardianAddresses must not have
+// any of their nodes returned by the preserved-snapshot sampler. The intent is
+// that guardians always remain in the voting set, never moved to the preserved
+// (non-voting) bucket.
+func TestSamplePreservedForEpisode_ExcludesGuardians(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-guardian-test"
+
+	// Set bech32 prefixes so utils.OperatorAddressToAccAddress can decode the
+	// gonkavaloper... fixture below. Safe to call repeatedly across tests in
+	// this package (no Seal()).
+	cfg := sdk.GetConfig()
+	cfg.SetBech32PrefixForAccount("gonka", "gonkapub")
+	cfg.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+
+	// A pre-known valid gonkavaloper bech32 used in other tests in this package.
+	guardianOperator := "gonkavaloper1gcrlrhvw8kd7zr6pl92rxnc6j20chatkcx6w4t"
+	guardianAccAddr, err := utils.OperatorAddressToAccAddress(guardianOperator)
+	require.NoError(t, err, "guardian operator bech32 must convert cleanly with prefixes set")
+
+	// 4 total participants so the N/2+1 sampler (= 3) still picks survivors
+	// after the guardian is excluded.
+	otherAddrs := []string{
+		"gonka1nonguardian00000000000000000000000000000000",
+		"gonka1nonguardian11111111111111111111111111111111",
+		"gonka1nonguardian22222222222222222222222222222222",
+	}
+	addrs := append([]string{guardianAccAddr}, otherAddrs...)
+
+	participants := make([]*types.ActiveParticipant, 0, len(addrs))
+	subgroupWeights := make([]*types.ValidationWeight, 0, len(addrs))
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, len(addrs))
+	for _, addr := range addrs {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-n1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n2", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n3", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{
+			MemberAddress: addr,
+			MlNodes:       nodes,
+		})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
+	}
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels:  []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData:    map[string]map[uint64]types.EpochGroupData{modelID: {0: {ValidationWeights: subgroupWeights}}},
+		perfSummaries:     perfSummaries,
+		params:            &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+		guardianAddresses: []string{guardianOperator},
+	}
+
+	assigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, 1234)
+	require.NoError(t, err)
+
+	preserved := collectPreservedParticipants(snapshot)
+	require.False(t, preserved[guardianAccAddr], "guardian must not appear in preserved snapshot")
+	// At least one non-guardian survives sampling; otherwise the test setup is
+	// pre-filtering everything and the assertion above is vacuous.
+	survived := 0
+	for _, addr := range otherAddrs {
+		if preserved[addr] {
+			survived++
+		}
+	}
+	require.Greater(t, survived, 0, "at least one non-guardian participant must be preserved")
+}
+
+// TestSamplePreservedForEpisode_FiltersDeadSubGroupMembers covers the
+// liveSubSet filter in SamplePreservedForEpisode: a participant present in the
+// epoch group's recorded ValidationWeights but absent from the SDK group's
+// live member list (e.g., removed mid-epoch) must not contribute nodes to the
+// preserved snapshot. Symmetric with getEffectiveValidationBaseState.
+func TestSamplePreservedForEpisode_FiltersDeadSubGroupMembers(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-livefilter-test"
+
+	addrs := []string{
+		"participant-live-0",
+		"participant-live-1",
+		"participant-dead",
+	}
+
+	participants := make([]*types.ActiveParticipant, 0, len(addrs))
+	subgroupWeights := make([]*types.ValidationWeight, 0, len(addrs))
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, len(addrs))
+	for _, addr := range addrs {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-n1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n2", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n3", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{
+			MemberAddress: addr,
+			MlNodes:       nodes,
+		})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
+	}
+
+	// The dead member is in ValidationWeights but not in the live override.
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData:   map[string]map[uint64]types.EpochGroupData{modelID: {0: {ValidationWeights: subgroupWeights}}},
+		perfSummaries:    perfSummaries,
+		params:           &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+		liveSubGroupOverrides: map[string]map[string]bool{
+			modelID: {
+				"participant-live-0": true,
+				"participant-live-1": true,
+				// "participant-dead" is intentionally absent.
+			},
+		},
+	}
+
+	assigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, 4321)
+	require.NoError(t, err)
+
+	preserved := collectPreservedParticipants(snapshot)
+	require.False(t, preserved["participant-dead"], "dead subgroup member must be filtered out before sampling")
 }
 
 func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {

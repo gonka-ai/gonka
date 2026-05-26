@@ -450,7 +450,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	logging.Info("Proxying response from executor", types.Inferences,
 		"inferenceId", inferenceUUID,
 		"executor", executor.Address)
-	ProxyResponse(resp, ctx.Response().Writer, false, nil, inferenceUUID)
+	_ = ProxyResponse(resp, ctx.Response().Writer, false, nil, inferenceUUID)
 	return nil
 }
 
@@ -660,14 +660,26 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	logging.Debug("Proxying response from inference node", types.Inferences, "inferenceId", request.InferenceId)
-	ProxyResponse(resp, w, true, responseProcessor, inferenceId)
+	proxyErr := ProxyResponse(resp, w, true, responseProcessor, inferenceId)
 
 	logging.Debug("Processing response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	completionResponse, err := responseProcessor.GetResponse()
 
-	if err != nil || completionResponse == nil {
+	if completionResponse == nil && err == nil {
+		err = errors.New("completion response is nil")
+	}
+	if err != nil {
+		if proxyErr != nil {
+			logging.Error("Failed to proxy response before a parseable completion was available", types.Inferences,
+				"inferenceId", inferenceId, "proxyError", proxyErr, "parseError", err)
+			return fmt.Errorf("proxy response failed before parseable completion: %w", proxyErr)
+		}
 		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
-		return err
+		return fmt.Errorf("parse completion response: %w", err)
+	}
+	if proxyErr != nil {
+		logging.Warn("Recording FinishInference from partial proxied response", types.Inferences,
+			"inferenceId", inferenceId, "error", proxyErr)
 	}
 
 	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload)

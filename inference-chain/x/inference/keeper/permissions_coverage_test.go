@@ -200,6 +200,8 @@ func permissionIdentToValue(name string) string {
 		return string(keeper.OpenRegistrationPermission)
 	case "EscrowAllowListPermission":
 		return string(keeper.EscrowAllowListPermission)
+	case "GuardianPermission":
+		return string(keeper.GuardianPermission)
 	default:
 		return name
 	}

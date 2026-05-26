@@ -48,6 +48,9 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 		precomputed,
 	)
 	participant.CurrentEpochStats = &newStats
+	if reason == calculations.ConsecutiveFailures {
+		participant.ConsecutiveInvalidInferences = 0
+	}
 
 	k.LogInfo("Participant status updated", types.Validation, "address", participant.Address, "original", originalStatus, "new", newStatus, "reason", reason, "stats", participant.CurrentEpochStats)
 

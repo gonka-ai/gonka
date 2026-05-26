@@ -20,6 +20,8 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 
+	devshardpkg "devshard"
+
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
@@ -72,6 +74,7 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
 	epochGroupDataCache  *internal.EpochGroupDataCache
+	availability         *devshardpkg.AvailabilityTracker
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -163,6 +166,10 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	return dispatcher
 }
 
+func (d *OnNewBlockDispatcher) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
+	d.availability = tracker
+}
+
 // ProcessNewBlock is the main entry point for processing new block events
 func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainphase.BlockInfo) error {
 	logging.Debug("Processing new block", types.Stages,
@@ -252,6 +259,13 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 					}
 				}
 				d.configManager.SetDevshardVersions(apiconfig.DevshardVersionsCache{Versions: versions})
+				if d.availability != nil {
+					d.availability.Record(
+						params.Params.DevshardEscrowParams.DevshardRequestsEnabled,
+						time.Now().Unix(),
+						networkInfo.LatestEpoch.Index,
+					)
+				}
 			}
 		}
 	}

@@ -27,6 +27,13 @@ services:
       KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
       KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
       KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+      # Postgres for devshard storage (devshardd reads same env as dapi).
+      # Empty PGHOST -> SQLite fallback. Set by LOCAL_TESTNET_POSTGRES=1.
+      PGHOST: ${PGHOST:-}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-payloads}
+      PGUSER: ${PGUSER:-payloads}
+      PGPASSWORD: ${PGPASSWORD:-}
     volumes:
       # Locally-built devshardd binary, served as version "v0.2.11" via the
       # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if
