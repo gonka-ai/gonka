@@ -37,7 +37,44 @@ var (
 	// Decision margins
 	HostScoreSpeedupMargin      = 0.10 // candidate score must be ≤primary·(1-margin)
 	HostScoreExplorationEpsilon = 0.05 // 5% forced-exploration when score is ambivalent
+
+	// Per-bucket calibration overrides. See
+	// docs/host-scoring.md#per-bucket-calibration for the rationale.
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"lt_1k":    {HalfLife: 3 * time.Hour},  // high traffic → fast adaptation
+		"1k_5k":    {HalfLife: 3 * time.Hour},  // high traffic → fast adaptation
+		"5k_15k":   {HalfLife: 6 * time.Hour},  // medium traffic
+		"15k_30k":  {HalfLife: 6 * time.Hour},  // medium traffic
+		"30k_100k": {HalfLife: 9 * time.Hour},  // low traffic → preserve signal across gaps
+		"gte_100k": {HalfLife: 12 * time.Hour}, // very low traffic
+	}
 )
+
+// HostScoreBucketOverride lets a bucket adopt non-default K and half-life.
+// K=0 inherits HostScoreEloK. HalfLife<0 inherits HostScoreEloHalfLife;
+// HalfLife=0 explicitly disables decay for that bucket.
+type HostScoreBucketOverride struct {
+	K        float64
+	HalfLife time.Duration
+}
+
+// hostScoreKForBucket returns the K-factor in effect for a bucket.
+func hostScoreKForBucket(bucket string) float64 {
+	if o, ok := HostScoreBucketOverrides[bucket]; ok && o.K > 0 {
+		return o.K
+	}
+	return HostScoreEloK
+}
+
+// hostScoreHalfLifeForBucket returns the decay half-life in effect for a
+// bucket. Negative override means inherit; zero (explicit or inherited)
+// disables decay.
+func hostScoreHalfLifeForBucket(bucket string) time.Duration {
+	if o, ok := HostScoreBucketOverrides[bucket]; ok && o.HalfLife >= 0 {
+		return o.HalfLife
+	}
+	return HostScoreEloHalfLife
+}
 
 // hostScoreRandom drives the ε-greedy floor; tests swap it for determinism.
 var hostScoreRandom = rand.Float64
@@ -171,14 +208,15 @@ func NewHostScoreTracker(pairwise *PairwiseTracker) *HostScoreTracker {
 	}
 }
 
-// decayedEloLocked pulls Elo toward default by HostScoreEloHalfLife exponential
-// decay since last update; 0 half-life disables.
+// decayedEloLocked pulls Elo toward default by the bucket's half-life
+// exponential decay since last update; 0 disables.
 func (t *HostScoreTracker) decayedEloLocked(key hostScoreKey, now time.Time) float64 {
 	raw := t.elo[key]
 	if raw == 0 { // map zero-value = never K-updated, treat as default
 		return HostScoreEloDefault
 	}
-	if HostScoreEloHalfLife <= 0 {
+	halfLife := hostScoreHalfLifeForBucket(key.bucket)
+	if halfLife <= 0 {
 		return raw
 	}
 	lastUpdate, ok := t.eloUpdatedAt[key]
@@ -189,7 +227,7 @@ func (t *HostScoreTracker) decayedEloLocked(key hostScoreKey, now time.Time) flo
 	if age <= 0 {
 		return raw
 	}
-	multiplier := math.Exp(-math.Ln2 * float64(age) / float64(HostScoreEloHalfLife))
+	multiplier := math.Exp(-math.Ln2 * float64(age) / float64(halfLife))
 	return HostScoreEloDefault + (raw-HostScoreEloDefault)*multiplier
 }
 
@@ -231,7 +269,7 @@ func (t *HostScoreTracker) RecordRequest(rec RequestRecord) {
 		ring.add(hostScoreSample{Timestamp: now, TtftMs: h.FirstTokenMs, TotalMs: h.TotalTimeMs})
 	}
 
-	halfK := HostScoreEloK / 2
+	halfK := hostScoreKForBucket(bucket) / 2
 	for i := 0; i < len(eligible); i++ {
 		for j := i + 1; j < len(eligible); j++ {
 			a, b := eligible[i], eligible[j]

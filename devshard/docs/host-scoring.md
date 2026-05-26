@@ -271,7 +271,7 @@ times). Defaults chosen to match the empirical scale we measured:
 |---|---:|---|
 | `HostScoreWindowSize` | 50 | sliding ring per (model, host, bucket) — older samples roll off |
 | `HostScoreMinSamples` | 3 | both layers gate on this; below it ScoreHost returns `(0, false)` |
-| `HostScoreEloK` | 16 | classic chess K-factor; bigger = faster convergence + more noise |
+| `HostScoreEloK` | 16 | classic chess K-factor; bigger = faster convergence + more noise. Override per-bucket via `HostScoreBucketOverrides` (see [Per-bucket calibration](#per-bucket-calibration)) |
 | `HostScoreEloDefault` | 1500 | starting rating for unknown hosts |
 | `HostScoreEloAlpha` | 10 | ms credit per Elo-point deviation from 1500 |
 | `HostScoreStreamGamma` | 0.3 | TTFT vs Total weight for streaming requests |
@@ -279,9 +279,64 @@ times). Defaults chosen to match the empirical scale we measured:
 | `HostScoreUCBCoefficient` | 300 | exploration bonus scale, ms; 0 disables |
 | `HostScoreH2HMargin` | 0.10 | Layer 1 trigger: candidate must win ≥ 50% + this |
 | `HostScoreSpeedupMargin` | 0.10 | Layer 2 trigger: candidate score must be ≤ primary · (1 − this) |
-| `HostScoreEloHalfLife` | 12 h | half-life for stale-Elo decay; 0 disables (see Regime change) |
+| `HostScoreEloHalfLife` | 12 h | half-life for stale-Elo decay; 0 disables (see Regime change). Override per-bucket via `HostScoreBucketOverrides` (see [Per-bucket calibration](#per-bucket-calibration)) |
 | `HostScoreExplorationEpsilon` | 0.05 | ε-greedy probability of launching a random secondary when the score-based path is ambivalent |
 | `RedundancySpeedPolicy` | `host_score` | which decision maker `Decide()` selects (see When this is consulted) |
+
+## Per-bucket calibration
+
+`HostScoreEloK` and `HostScoreEloHalfLife` are the only two hyperparameters
+that should differ across input-size buckets, because the buckets have
+very different sample density and traffic shape. The same K that gives a
+tight, fast-converging rating in `lt_1k` (hundreds of samples per host
+per hour) overshoots in `gte_100k` (handfuls per day) — and vice versa.
+
+The mechanism is one map declared at the top of [`host_scores.go`](../cmd/devshardctl/host_scores.go):
+
+```go
+HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+    "lt_1k":    {HalfLife: 3 * time.Hour},
+    "1k_5k":    {HalfLife: 3 * time.Hour},
+    "5k_15k":   {HalfLife: 6 * time.Hour},
+    "15k_30k":  {HalfLife: 6 * time.Hour},
+    "30k_100k": {HalfLife: 9 * time.Hour},
+    "gte_100k": {HalfLife: 12 * time.Hour},
+}
+```
+
+Fields on `HostScoreBucketOverride`:
+
+| Field | Meaning |
+|---|---|
+| `K` | overrides `HostScoreEloK` for this bucket. `0` inherits global. |
+| `HalfLife` | overrides `HostScoreEloHalfLife`. **Negative inherits global**; `0` explicitly disables decay for this bucket. |
+
+Read paths use `hostScoreKForBucket(bucket)` and
+`hostScoreHalfLifeForBucket(bucket)` rather than the global constants
+directly.
+
+### Why these values
+
+Rating-system literature (FIDE Handbook §B.02.10.6, Glickman 1995 on
+adaptive ratings) consistently recommends scaling decay/learning rates
+with *sample reliability*: faster decay when ratings refresh often
+(dense bucket); slower decay when re-sampling is rare (sparse bucket).
+The committed defaults match observed traffic density per bucket:
+
+| Bucket | HalfLife | Rationale |
+|---|---:|---|
+| `lt_1k` | 3 h | high traffic (hundreds/host/hour) — fast adaptation |
+| `1k_5k` | 3 h | high traffic — same |
+| `5k_15k` | 6 h | medium traffic |
+| `15k_30k` | 6 h | medium traffic |
+| `30k_100k` | 9 h | low traffic (tens/host/day) — preserve signal across gaps |
+| `gte_100k` | 12 h | very low traffic (single-digits/day) — matches the legacy global default |
+
+`K` is left to inherit the global default (16) until per-bucket
+calibration of K has been measured against a replay loop. Operators
+adjusting these values should re-run the cache-busted c=10 ×5-iter
+replay loop and compare bucket-level pick% / latency distributions
+against the merged baseline in the host_score rollout PR.
 
 ## Decision: when host scoring launches a secondary
 
@@ -347,7 +402,9 @@ half-life decay:
 decayed(R, age) = 1500 + (R − 1500) · 2^(−age / HostScoreEloHalfLife)
 ```
 
-With `HostScoreEloHalfLife = 12h`:
+With `HostScoreEloHalfLife = 12h` (table uses the global default for
+illustration; **per-bucket overrides apply in practice — see
+[Per-bucket calibration](#per-bucket-calibration)**):
 
 | Age since last update | Gap multiplier | 1800 → | 1200 → |
 |---|---:|---:|---:|
@@ -358,12 +415,17 @@ With `HostScoreEloHalfLife = 12h`:
 | 48 h | 0.063 | 1519 | 1481 |
 | 96 h | 0.004 | 1501 | 1499 |
 
+For a bucket with a shorter half-life the same multipliers fire at
+proportionally earlier ages: with `lt_1k`'s 3 h, 6 h elapsed already
+halves the gap; with `gte_100k`'s 12 h it matches the table exactly.
+
 This applies on every read (`ScoreHost`, `Snapshot`) *and* before every
 write in `updateEloLocked` — so the K-update is applied to the
 *time-adjusted* rating, not the stale one. Persisted state carries
 `UpdatedAt` per row so decay survives restart.
 
-Set `HostScoreEloHalfLife = 0` to disable entirely.
+Set `HostScoreEloHalfLife = 0` (or the bucket's override to `0`) to
+disable decay entirely.
 
 ### ε-greedy exploration floor
 
@@ -393,18 +455,23 @@ Elo within hours instead of days.
 
 A host that was slow for 10 days, then becomes fastest:
 
+Timing below is illustrative against the **legacy 12 h** half-life;
+substitute the bucket's actual half-life for real numbers (e.g. 3 h for
+`lt_1k`, in which case "Hours 12+" really means "Hours 3+", and full
+recovery compresses by roughly 4×):
+
 1. **Hour 0** of regime change: Elo ≈ 1200, ring full of slow samples.
    Decay hasn't kicked in (last race was minutes ago).
-2. **Hours 0-12**: ε-greedy occasionally routes to it. Each win is a real
-   K-update on its decayed (still 1200-ish) Elo: `K · (1 − E)` where
-   `E ≈ 0.15` → ≈ +13.6 per win. Slow but steady climb.
-3. **Hours 12+ without traffic** (between rare ε-greedy races): decay
-   half-life kicks in. After 24 hours of low traffic, the 300-point gap
+2. **Hours 0–HL**: ε-greedy occasionally routes to it. Each win is a
+   real K-update on its decayed (still 1200-ish) Elo: `K · (1 − E)`
+   where `E ≈ 0.15` → ≈ +13.6 per win. Slow but steady climb.
+3. **Hours HL+ without traffic** (between rare ε-greedy races): decay
+   half-life kicks in. After 2× HL of low traffic, the 300-point gap
    has halved to 150. Now ε-greedy wins yield larger Elo updates
    (`E ≈ 0.30` → +11.2 per win, but starting from 1350 instead of 1200).
-4. **Within 1-3 days**: enough wins accumulated for the ring to refresh
-   too, and the host promotes back to score-based routing without ε-greedy
-   help.
+4. **Within 2–6× HL**: enough wins accumulated for the ring to refresh
+   too, and the host promotes back to score-based routing without
+   ε-greedy help.
 
 Decay alone protects against complete exile; ε-greedy alone keeps races
 flowing; both together compress recovery from days to hours.
@@ -462,7 +529,8 @@ timestamp marking when that rating was last K-updated.
 `updated_at_utc` is what makes time-decay survive restart: on `Restore`
 we seed `eloUpdatedAt[key]` from this column, so the decay clock keeps
 ticking across shutdowns rather than resetting to "now". A node that
-sleeps for 24 h boots up with already-half-decayed ratings on first read.
+sleeps long enough to clear one or more bucket-specific half-lives boots
+up with already-half-decayed ratings on first read.
 
 Flush schedule:
 - Periodic every `hostScoreFlushInterval = 2 min` (background goroutine

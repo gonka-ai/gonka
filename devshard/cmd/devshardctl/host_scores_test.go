@@ -364,6 +364,10 @@ func TestScoreHost_UCBHelpsColdHostBeatEloFavorite(t *testing.T) {
 }
 
 func TestEloDecay_StaleRatingPullsTowardDefault(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{}
+
 	tr := NewHostScoreTracker(nil)
 	key := hostScoreKey{model: "m", host: "stale", bucket: "lt_1k"}
 	tr.elo[key] = 1800.0
@@ -384,9 +388,14 @@ func TestEloDecay_StaleRatingPullsTowardDefault(t *testing.T) {
 }
 
 func TestEloDecay_DisabledByZeroHalfLife(t *testing.T) {
-	saved := HostScoreEloHalfLife
-	t.Cleanup(func() { HostScoreEloHalfLife = saved })
+	savedHL := HostScoreEloHalfLife
+	savedOv := HostScoreBucketOverrides
+	t.Cleanup(func() {
+		HostScoreEloHalfLife = savedHL
+		HostScoreBucketOverrides = savedOv
+	})
 	HostScoreEloHalfLife = 0
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{}
 
 	tr := NewHostScoreTracker(nil)
 	key := hostScoreKey{model: "m", host: "frozen", bucket: "lt_1k"}
@@ -404,7 +413,124 @@ func TestEloDecay_NoUpdatedAtSkipsDecay(t *testing.T) {
 	require.Equal(t, 1800.0, tr.decayedEloLocked(key, time.Now()))
 }
 
+func TestBucketOverrides_HelpersFallBackToGlobals(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{}
+
+	require.Equal(t, HostScoreEloK, hostScoreKForBucket("any"))
+	require.Equal(t, HostScoreEloHalfLife, hostScoreHalfLifeForBucket("any"))
+}
+
+func TestBucketOverrides_KAppliesPerBucket(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"gte_100k": {K: 32, HalfLife: -1},
+	}
+
+	require.Equal(t, 32.0, hostScoreKForBucket("gte_100k"))
+	require.Equal(t, HostScoreEloK, hostScoreKForBucket("lt_1k"), "non-overridden bucket inherits global")
+}
+
+func TestBucketOverrides_KZeroInheritsGlobal(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"lt_1k": {K: 0, HalfLife: -1},
+	}
+	require.Equal(t, HostScoreEloK, hostScoreKForBucket("lt_1k"))
+}
+
+func TestBucketOverrides_HalfLifeAppliesPerBucket(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"slow_decay": {HalfLife: 48 * time.Hour},
+		"fast_decay": {HalfLife: 1 * time.Hour},
+	}
+
+	tr := NewHostScoreTracker(nil)
+	slow := hostScoreKey{model: "m", host: "h", bucket: "slow_decay"}
+	fast := hostScoreKey{model: "m", host: "h", bucket: "fast_decay"}
+	t0 := time.Now()
+	tr.elo[slow] = 1800.0
+	tr.elo[fast] = 1800.0
+	tr.eloUpdatedAt[slow] = t0
+	tr.eloUpdatedAt[fast] = t0
+
+	// 1h elapsed: fast bucket = 1 half-life (gap halves to 150 → 1650);
+	// slow bucket = 1/48 half-life (gap barely moves).
+	at := t0.Add(time.Hour)
+	require.InDelta(t, 1650.0, tr.decayedEloLocked(fast, at), 0.5)
+	require.Greater(t, tr.decayedEloLocked(slow, at), 1790.0,
+		"48h half-life should barely move after 1h")
+}
+
+func TestBucketOverrides_HalfLifeZeroDisablesPerBucket(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"frozen_bucket": {HalfLife: 0},
+	}
+
+	tr := NewHostScoreTracker(nil)
+	frozen := hostScoreKey{model: "m", host: "h", bucket: "frozen_bucket"}
+	tr.elo[frozen] = 1800.0
+	tr.eloUpdatedAt[frozen] = time.Now().Add(-100 * time.Hour)
+
+	require.Equal(t, 1800.0, tr.decayedEloLocked(frozen, time.Now()),
+		"explicit HalfLife=0 must disable decay for this bucket")
+}
+
+func TestBucketOverrides_NegativeHalfLifeInheritsGlobal(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"inherit_decay": {K: 20, HalfLife: -1},
+	}
+	require.Equal(t, HostScoreEloHalfLife, hostScoreHalfLifeForBucket("inherit_decay"))
+}
+
+func TestBucketOverrides_RecordRequestUsesPerBucketK(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	// requestShapeBucket(100) → "lt_1k"; double K for that bucket.
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
+		"lt_1k": {K: HostScoreEloK * 2, HalfLife: -1},
+	}
+
+	tr := NewHostScoreTracker(nil)
+	keyA := hostScoreKey{model: "m", host: "A", bucket: "lt_1k"}
+
+	// Same identical race A>B fed twice: once with default K (baseline tr2), once with 2x K.
+	tr.RecordRequest(mkRequest("m", 100,
+		mkInvolvement("A", 100, 1000),
+		mkInvolvement("B", 200, 2000),
+	))
+	gainOverridden := tr.elo[keyA] - HostScoreEloDefault
+
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{}
+	tr2 := NewHostScoreTracker(nil)
+	tr2.RecordRequest(mkRequest("m", 100,
+		mkInvolvement("A", 100, 1000),
+		mkInvolvement("B", 200, 2000),
+	))
+	gainBaseline := tr2.elo[keyA] - HostScoreEloDefault
+
+	// Per RecordRequest two updates (TTFT + Total) at halfK each. The
+	// second update's Ea shifts with Ra moved by the first, so the
+	// K→gain relationship is approximately, not exactly, linear.
+	ratio := gainOverridden / gainBaseline
+	require.Greater(t, ratio, 1.8, "doubling K should roughly double gain")
+	require.Less(t, ratio, 2.2, "doubling K should not far overshoot 2x")
+}
+
 func TestUpdateElo_DecayAppliedBeforeKUpdate(t *testing.T) {
+	saved := HostScoreBucketOverrides
+	t.Cleanup(func() { HostScoreBucketOverrides = saved })
+	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{}
+
 	tr := NewHostScoreTracker(nil)
 	keyA := hostScoreKey{model: "m", host: "stale_fav", bucket: "lt_1k"}
 	keyB := hostScoreKey{model: "m", host: "fresh_und", bucket: "lt_1k"}
