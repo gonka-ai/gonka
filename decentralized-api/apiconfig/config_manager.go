@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cometbft/cometbft/crypto/ed25519"
@@ -32,9 +31,9 @@ type ConfigManager struct {
 	WriterProvider           WriteCloserProvider
 	sqlDb                    SqlDatabase
 	mutex                    sync.RWMutex
-	runtimePublishMu         sync.Mutex
+	runtimePublishMu         sync.RWMutex
 	runtimePublished         runtimePublishedMarker
-	runtimeParamsBlockHeight atomic.Int64
+	runtimeParamsBlockHeight int64 // last published revision height; guarded by runtimePublishMu
 	runtimeConfigNotifier    *RuntimeConfigNotifier
 	epochOnChangeMu          sync.Mutex
 	epochOnChange            EpochChangeListener // optional; set once at process startup
@@ -299,19 +298,17 @@ type CosmosQueryClient interface {
 // SetRuntimeParamsBlockHeight sets params_block_height without notifying (tests only).
 // Production code must use ApplyRuntimeConfigBlockIfChanged.
 func (cm *ConfigManager) SetRuntimeParamsBlockHeight(height int64) {
-	for {
-		cur := cm.runtimeParamsBlockHeight.Load()
-		if height <= cur {
-			return
-		}
-		if cm.runtimeParamsBlockHeight.CompareAndSwap(cur, height) {
-			return
-		}
+	cm.runtimePublishMu.Lock()
+	defer cm.runtimePublishMu.Unlock()
+	if height > cm.runtimeParamsBlockHeight {
+		cm.runtimeParamsBlockHeight = height
 	}
 }
 
 func (cm *ConfigManager) RuntimeParamsBlockHeight() int64 {
-	return cm.runtimeParamsBlockHeight.Load()
+	cm.runtimePublishMu.RLock()
+	defer cm.runtimePublishMu.RUnlock()
+	return cm.runtimeParamsBlockHeight
 }
 
 // RuntimeConfigNotifier returns the broadcast primitive used by GetRuntimeConfig
@@ -327,9 +324,9 @@ func (cm *ConfigManager) EnsureRuntimeConfigNotifier() {
 	}
 }
 
-// RuntimeConfigSnapshot returns a point-in-time view of all chain-driven runtime
-// params. currentEpochID comes from ChainPhaseTracker (not ConfigManager).
-func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeConfigSnapshot {
+// liveRuntimeConfigContent reads the in-memory caches (not yet published). Used only
+// by ApplyRuntimeConfigBlockIfChanged to detect whether a new revision is needed.
+func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
@@ -337,18 +334,31 @@ func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeCon
 	dv := cm.currentConfig.DevshardVersionsCache
 	versions := make([]DevshardVersion, len(dv.Versions))
 	copy(versions, dv.Versions)
-
-	return RuntimeConfigSnapshot{
-		ParamsBlockHeight:                 cm.runtimeParamsBlockHeight.Load(),
-		CurrentEpochID:                    currentEpochID,
+	return runtimeConfigContent{
 		LogprobsMode:                      vp.LogprobsMode,
 		DevshardRequestsEnabled:           dv.DevshardRequestsEnabled,
 		DefaultSealGraceNonces:            dv.DefaultSealGraceNonces,
 		DefaultInferenceClearGraceSeconds: dv.DefaultInferenceClearGraceSeconds,
 		MaxNonce:                          dv.MaxNonce,
 		ApprovedVersions:                  versions,
-		ServedAt:                          time.Now(),
 	}
+}
+
+// RuntimeConfigSnapshot returns the last published runtime revision (content and
+// params_block_height updated together in ApplyRuntimeConfigBlockIfChanged). Until
+// the first publish, it reflects the live caches. currentEpochID comes from
+// ChainPhaseTracker (not ConfigManager).
+func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeConfigSnapshot {
+	cm.runtimePublishMu.RLock()
+	published := cm.runtimePublished
+	height := cm.runtimeParamsBlockHeight
+	cm.runtimePublishMu.RUnlock()
+
+	if published.initialized {
+		return runtimeConfigSnapshotFromContent(height, currentEpochID, published.content)
+	}
+
+	return runtimeConfigSnapshotFromContent(height, currentEpochID, cm.liveRuntimeConfigContent())
 }
 
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {

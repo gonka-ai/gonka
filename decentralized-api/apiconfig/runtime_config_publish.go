@@ -1,6 +1,8 @@
 package apiconfig
 
 import (
+	"time"
+
 	"decentralized-api/logging"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -16,16 +18,19 @@ type runtimeConfigContent struct {
 	ApprovedVersions                  []DevshardVersion
 }
 
-func runtimeConfigContentFromSnapshot(s RuntimeConfigSnapshot) runtimeConfigContent {
-	versions := make([]DevshardVersion, len(s.ApprovedVersions))
-	copy(versions, s.ApprovedVersions)
-	return runtimeConfigContent{
-		LogprobsMode:                      s.LogprobsMode,
-		DevshardRequestsEnabled:           s.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            s.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: s.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          s.MaxNonce,
+func runtimeConfigSnapshotFromContent(height int64, epochID uint64, c runtimeConfigContent) RuntimeConfigSnapshot {
+	versions := make([]DevshardVersion, len(c.ApprovedVersions))
+	copy(versions, c.ApprovedVersions)
+	return RuntimeConfigSnapshot{
+		ParamsBlockHeight:                 height,
+		CurrentEpochID:                    epochID,
+		LogprobsMode:                      c.LogprobsMode,
+		DevshardRequestsEnabled:           c.DevshardRequestsEnabled,
+		DefaultSealGraceNonces:            c.DefaultSealGraceNonces,
+		DefaultInferenceClearGraceSeconds: c.DefaultInferenceClearGraceSeconds,
+		MaxNonce:                          c.MaxNonce,
 		ApprovedVersions:                  versions,
+		ServedAt:                          time.Now(),
 	}
 }
 
@@ -61,9 +66,9 @@ type runtimePublishedMarker struct {
 // blockHeight is the chain height at which the change was observed.
 // Returns true when a new revision was published.
 func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epochID uint64) bool {
-	content := runtimeConfigContentFromSnapshot(cm.RuntimeConfigSnapshot(epochID))
+	content := cm.liveRuntimeConfigContent()
 
-	cm.runtimePublishMu.Lock()
+	cm.runtimePublishMu.Lock() // writers: publish and test reset
 	defer cm.runtimePublishMu.Unlock()
 
 	if cm.runtimePublished.initialized &&
@@ -90,14 +95,8 @@ func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epo
 		reason = "param_change"
 	}
 
-	for {
-		cur := cm.runtimeParamsBlockHeight.Load()
-		if blockHeight <= cur {
-			break
-		}
-		if cm.runtimeParamsBlockHeight.CompareAndSwap(cur, blockHeight) {
-			break
-		}
+	if blockHeight > cm.runtimeParamsBlockHeight {
+		cm.runtimeParamsBlockHeight = blockHeight
 	}
 
 	cm.runtimePublished = runtimePublishedMarker{
@@ -130,8 +129,8 @@ func copyRuntimeConfigContent(c runtimeConfigContent) runtimeConfigContent {
 
 // ResetRuntimePublishedState clears the last-published marker (tests only).
 func (cm *ConfigManager) ResetRuntimePublishedState() {
-	cm.runtimePublishMu.Lock()
+	cm.runtimePublishMu.Lock() // writers: publish and test reset
 	defer cm.runtimePublishMu.Unlock()
 	cm.runtimePublished = runtimePublishedMarker{}
-	cm.runtimeParamsBlockHeight.Store(0)
+	cm.runtimeParamsBlockHeight = 0
 }

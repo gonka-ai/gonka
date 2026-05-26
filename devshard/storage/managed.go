@@ -90,6 +90,19 @@ func (m *ManagedStorage) Start() {
 	m.PruneOnce(context.Background())
 }
 
+// PruneOnceAsync runs PruneOnce in a background goroutine. Panics are recovered
+// and logged so a storage-driver fault cannot permanently stop epoch pruning.
+func (m *ManagedStorage) PruneOnceAsync(ctx context.Context) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("devshard epoch prune panicked", "panic", r)
+			}
+		}()
+		m.PruneOnce(ctx)
+	}()
+}
+
 // PruneOnce runs a single retention pass. Exported so tests and epoch hooks can
 // drive pruning without a background loop.
 func (m *ManagedStorage) PruneOnce(_ context.Context) {

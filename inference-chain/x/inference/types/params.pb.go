@@ -2166,17 +2166,20 @@ func (m *DevshardApprovedVersion) GetSha256() string {
 
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.
 type DevshardEscrowParams struct {
-	MinAmount                         uint64                     `protobuf:"varint,1,opt,name=min_amount,json=minAmount,proto3" json:"min_amount,omitempty"`
-	MaxAmount                         uint64                     `protobuf:"varint,2,opt,name=max_amount,json=maxAmount,proto3" json:"max_amount,omitempty"`
-	MaxEscrowsPerEpoch                uint32                     `protobuf:"varint,3,opt,name=max_escrows_per_epoch,json=maxEscrowsPerEpoch,proto3" json:"max_escrows_per_epoch,omitempty"`
-	GroupSize                         uint32                     `protobuf:"varint,4,opt,name=group_size,json=groupSize,proto3" json:"group_size,omitempty"`
-	AllowedCreatorAddresses           []string                   `protobuf:"bytes,5,rep,name=allowed_creator_addresses,json=allowedCreatorAddresses,proto3" json:"allowed_creator_addresses,omitempty"`
-	TokenPrice                        uint64                     `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
-	ApprovedVersions                  []*DevshardApprovedVersion `protobuf:"bytes,7,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
-	MaxNonce                          uint32                     `protobuf:"varint,8,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
-	DevshardRequestsEnabled           bool                       `protobuf:"varint,9,opt,name=devshard_requests_enabled,json=devshardRequestsEnabled,proto3" json:"devshard_requests_enabled,omitempty"`
-	DefaultSealGraceNonces            uint32                     `protobuf:"varint,10,opt,name=default_seal_grace_nonces,json=defaultSealGraceNonces,proto3" json:"default_seal_grace_nonces,omitempty"`
-	DefaultInferenceClearGraceSeconds uint32                     `protobuf:"varint,11,opt,name=default_inference_clear_grace_seconds,json=defaultInferenceClearGraceSeconds,proto3" json:"default_inference_clear_grace_seconds,omitempty"`
+	MinAmount               uint64                     `protobuf:"varint,1,opt,name=min_amount,json=minAmount,proto3" json:"min_amount,omitempty"`
+	MaxAmount               uint64                     `protobuf:"varint,2,opt,name=max_amount,json=maxAmount,proto3" json:"max_amount,omitempty"`
+	MaxEscrowsPerEpoch      uint32                     `protobuf:"varint,3,opt,name=max_escrows_per_epoch,json=maxEscrowsPerEpoch,proto3" json:"max_escrows_per_epoch,omitempty"`
+	GroupSize               uint32                     `protobuf:"varint,4,opt,name=group_size,json=groupSize,proto3" json:"group_size,omitempty"`
+	AllowedCreatorAddresses []string                   `protobuf:"bytes,5,rep,name=allowed_creator_addresses,json=allowedCreatorAddresses,proto3" json:"allowed_creator_addresses,omitempty"`
+	TokenPrice              uint64                     `protobuf:"varint,6,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	ApprovedVersions        []*DevshardApprovedVersion `protobuf:"bytes,7,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
+	MaxNonce                uint32                     `protobuf:"varint,8,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
+	// Field 9 is published on gm/microrelease (bool). Do not renumber.
+	DevshardRequestsEnabled bool `protobuf:"varint,9,opt,name=devshard_requests_enabled,json=devshardRequestsEnabled,proto3" json:"devshard_requests_enabled,omitempty"`
+	// Grace defaults for devshard-0.2.13-v2 (not on gm/microrelease). Devshard RC
+	// testnets briefly used wire tags 9/10 for these uint32s before the merge fix.
+	DefaultSealGraceNonces            uint32 `protobuf:"varint,10,opt,name=default_seal_grace_nonces,json=defaultSealGraceNonces,proto3" json:"default_seal_grace_nonces,omitempty"`
+	DefaultInferenceClearGraceSeconds uint32 `protobuf:"varint,11,opt,name=default_inference_clear_grace_seconds,json=defaultInferenceClearGraceSeconds,proto3" json:"default_inference_clear_grace_seconds,omitempty"`
 }
 
 func (m *DevshardEscrowParams) Reset()         { *m = DevshardEscrowParams{} }

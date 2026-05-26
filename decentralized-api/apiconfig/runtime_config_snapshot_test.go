@@ -38,6 +38,26 @@ func TestConfigManager_RuntimeConfigSnapshot_FieldsPopulated(t *testing.T) {
 	require.False(t, snap.ServedAt.IsZero())
 }
 
+func TestConfigManager_RuntimeConfigSnapshot_StaleUntilPublish(t *testing.T) {
+	cm := newTestConfigManager()
+	require.NoError(t, cm.SetValidationParams(apiconfig.ValidationParamsCache{LogprobsMode: "raw"}))
+	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(100, 0))
+
+	snapPublished := cm.RuntimeConfigSnapshot(0)
+	require.Equal(t, "raw", snapPublished.LogprobsMode)
+	require.Equal(t, int64(100), snapPublished.ParamsBlockHeight)
+
+	require.NoError(t, cm.SetValidationParams(apiconfig.ValidationParamsCache{LogprobsMode: "full"}))
+	snapBeforePublish := cm.RuntimeConfigSnapshot(0)
+	require.Equal(t, "raw", snapBeforePublish.LogprobsMode, "snapshot must not expose cache ahead of publish")
+	require.Equal(t, int64(100), snapBeforePublish.ParamsBlockHeight)
+
+	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(101, 0))
+	snapAfterPublish := cm.RuntimeConfigSnapshot(0)
+	require.Equal(t, "full", snapAfterPublish.LogprobsMode)
+	require.Equal(t, int64(101), snapAfterPublish.ParamsBlockHeight)
+}
+
 func TestConfigManager_RuntimeConfigSnapshot_ParamsBlockHeightMonotonic(t *testing.T) {
 	cm := newTestConfigManager()
 

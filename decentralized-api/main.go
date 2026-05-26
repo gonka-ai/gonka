@@ -262,7 +262,7 @@ func main() {
 			defer devshardStore.Close()
 
 			configManager.SetEpochChangeHandler(func(_, _ uint64) {
-				go devshardStore.PruneOnce(ctx)
+				devshardStore.PruneOnceAsync(ctx)
 			})
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)

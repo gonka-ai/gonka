@@ -74,7 +74,7 @@ func newParamsProvider(
 		Provider: rc,
 		RegisterEpochPrune: func(store *devshardstorage.ManagedStorage) (cancel func()) {
 			return rc.OnEpochChange(func(_, _ uint64) {
-				go store.PruneOnce(ctx)
+				store.PruneOnceAsync(ctx)
 			})
 		},
 	}, nil
