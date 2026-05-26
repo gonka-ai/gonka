@@ -348,6 +348,12 @@ func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
 	return store.DeleteSealedInferences(escrowID)
 }
 
+// joinBackendErrors returns both sqlite and postgres errors when present so
+// neither backend failure is dropped when the other also fails.
+func joinBackendErrors(sqliteErr, pgErr error) error {
+	return errors.Join(sqliteErr, pgErr)
+}
+
 func (h *HybridStorage) PruneEpoch(epochID uint64) error {
 	sqliteErr := h.sqlite.PruneEpoch(epochID)
 	var pgErr error
@@ -357,10 +363,7 @@ func (h *HybridStorage) PruneEpoch(epochID uint64) error {
 		pgErr = fmt.Errorf("postgres backend unavailable for prune")
 	}
 	h.forgetPruned(func(ep uint64) bool { return ep == epochID })
-	if pgErr != nil {
-		return pgErr
-	}
-	return sqliteErr
+	return joinBackendErrors(sqliteErr, pgErr)
 }
 
 func (h *HybridStorage) pruneBefore(cutoff uint64) error {
@@ -372,10 +375,7 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 		pgErr = fmt.Errorf("postgres backend unavailable for prune")
 	}
 	h.forgetPruned(func(ep uint64) bool { return ep < cutoff })
-	if pgErr != nil {
-		return pgErr
-	}
-	return sqliteErr
+	return joinBackendErrors(sqliteErr, pgErr)
 }
 
 func (h *HybridStorage) forgetPruned(match func(uint64) bool) {
@@ -394,10 +394,7 @@ func (h *HybridStorage) Close() error {
 	if pg := h.currentPostgres(); pg != nil {
 		pgErr = pg.Close()
 	}
-	if pgErr != nil {
-		return pgErr
-	}
-	return sqliteErr
+	return joinBackendErrors(sqliteErr, pgErr)
 }
 
 var _ Storage = (*HybridStorage)(nil)

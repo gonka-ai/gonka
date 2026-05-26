@@ -54,6 +54,7 @@ type HostManager struct {
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
 	availability devshardpkg.AvailabilityProvider
+	maxNonce     devshardpkg.MaxNonceProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
@@ -177,6 +178,11 @@ func (m *HostManager) SetUnavailable(err error) {
 
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
+}
+
+// SetMaxNonceProvider enforces chain max_nonce on every host (with finalization reserve).
+func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
+	m.maxNonce = p
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
@@ -494,6 +500,9 @@ func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
 	}
 	if m.pruneSink != nil {
 		opts = append(opts, host.WithPruneSink(m.pruneSink))
+	}
+	if m.maxNonce != nil {
+		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
 	}
 	return opts
 }

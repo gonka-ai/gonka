@@ -267,6 +267,7 @@ func main() {
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
+			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {

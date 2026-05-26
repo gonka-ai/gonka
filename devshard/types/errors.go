@@ -41,4 +41,5 @@ var (
 	ErrSessionSettlement     = errors.New("session is in settlement: seeds are final")
 	ErrInvalidGroup          = errors.New("invalid group")
 	ErrEscrowIDMismatch      = errors.New("escrow_id does not match session")
+	ErrNonceLimitExceeded    = errors.New("nonce exceeds chain max_nonce limit")
 )

@@ -174,6 +174,7 @@ func main() {
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeVersion(runtimeVersion), br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
+	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
