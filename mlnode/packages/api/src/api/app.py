@@ -30,8 +30,16 @@ from api.routes import router as api_router
 from api.watcher import watch_managers
 from api.proxy import ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
 
+from api.crypto.key_provider import build_key_provider
+from api.crypto.session_store import SessionNonceStore
+from api.encrypted.routes import router as encrypted_router
+
+from common.logger import create_logger
+
 
 WATCH_INTERVAL = 2
+
+_app_logger = create_logger(__name__)
 
 
 @asynccontextmanager
@@ -42,6 +50,18 @@ async def lifespan(app: FastAPI):
     app.state.train_manager = TrainManager()
     app.state.model_manager = ModelManager()
     app.state.gpu_manager = GPUManager()
+
+    # Opt-in via MLNODE_KEY_PROVIDER; route returns 503 when disabled
+    key_provider = build_key_provider()
+    app.state.key_provider = key_provider
+    app.state.session_nonce_store = SessionNonceStore()
+    if key_provider is None:
+        _app_logger.info("Encrypted inference disabled (MLNODE_KEY_PROVIDER unset)")
+    else:
+        _app_logger.info(
+            "Encrypted inference enabled with provider=%s",
+            key_provider.identity().provider,
+        )
 
     await start_vllm_proxy()
 
@@ -129,4 +149,11 @@ app.include_router(
     gpu_router,
     prefix=API_PREFIX + "/gpu",
     tags=["GPU"],
+)
+
+# Mount under /api/v1/encrypted so ProxyMiddleware skips it
+app.include_router(
+    encrypted_router,
+    prefix=API_PREFIX + "/encrypted",
+    tags=["Encrypted"],
 )

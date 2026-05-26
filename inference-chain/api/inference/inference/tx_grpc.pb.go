@@ -59,6 +59,9 @@ const (
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
+	Msg_SubmitTeeAttestation_FullMethodName             = "/inference.inference.Msg/SubmitTeeAttestation"
+	Msg_RevokeTeeAttestation_FullMethodName             = "/inference.inference.Msg/RevokeTeeAttestation"
+	Msg_SubmitTeeValidations_FullMethodName             = "/inference.inference.Msg/SubmitTeeValidations"
 )
 
 // MsgClient is the client API for Msg service.
@@ -109,6 +112,10 @@ type MsgClient interface {
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
+	// TEE attestation messages
+	SubmitTeeAttestation(ctx context.Context, in *MsgSubmitTeeAttestation, opts ...grpc.CallOption) (*MsgSubmitTeeAttestationResponse, error)
+	RevokeTeeAttestation(ctx context.Context, in *MsgRevokeTeeAttestation, opts ...grpc.CallOption) (*MsgRevokeTeeAttestationResponse, error)
+	SubmitTeeValidations(ctx context.Context, in *MsgSubmitTeeValidations, opts ...grpc.CallOption) (*MsgSubmitTeeValidationsResponse, error)
 }
 
 type msgClient struct {
@@ -479,6 +486,33 @@ func (c *msgClient) DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCInten
 	return out, nil
 }
 
+func (c *msgClient) SubmitTeeAttestation(ctx context.Context, in *MsgSubmitTeeAttestation, opts ...grpc.CallOption) (*MsgSubmitTeeAttestationResponse, error) {
+	out := new(MsgSubmitTeeAttestationResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitTeeAttestation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RevokeTeeAttestation(ctx context.Context, in *MsgRevokeTeeAttestation, opts ...grpc.CallOption) (*MsgRevokeTeeAttestationResponse, error) {
+	out := new(MsgRevokeTeeAttestationResponse)
+	err := c.cc.Invoke(ctx, Msg_RevokeTeeAttestation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SubmitTeeValidations(ctx context.Context, in *MsgSubmitTeeValidations, opts ...grpc.CallOption) (*MsgSubmitTeeValidationsResponse, error) {
+	out := new(MsgSubmitTeeValidationsResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitTeeValidations_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -527,6 +561,10 @@ type MsgServer interface {
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
+	// TEE attestation messages
+	SubmitTeeAttestation(context.Context, *MsgSubmitTeeAttestation) (*MsgSubmitTeeAttestationResponse, error)
+	RevokeTeeAttestation(context.Context, *MsgRevokeTeeAttestation) (*MsgRevokeTeeAttestationResponse, error)
+	SubmitTeeValidations(context.Context, *MsgSubmitTeeValidations) (*MsgSubmitTeeValidationsResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -653,6 +691,15 @@ func (UnimplementedMsgServer) RefusePoCDelegation(context.Context, *MsgRefusePoC
 }
 func (UnimplementedMsgServer) DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeclarePoCIntent not implemented")
+}
+func (UnimplementedMsgServer) SubmitTeeAttestation(context.Context, *MsgSubmitTeeAttestation) (*MsgSubmitTeeAttestationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitTeeAttestation not implemented")
+}
+func (UnimplementedMsgServer) RevokeTeeAttestation(context.Context, *MsgRevokeTeeAttestation) (*MsgRevokeTeeAttestationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeTeeAttestation not implemented")
+}
+func (UnimplementedMsgServer) SubmitTeeValidations(context.Context, *MsgSubmitTeeValidations) (*MsgSubmitTeeValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitTeeValidations not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1387,6 +1434,60 @@ func _Msg_DeclarePoCIntent_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitTeeAttestation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitTeeAttestation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitTeeAttestation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitTeeAttestation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitTeeAttestation(ctx, req.(*MsgSubmitTeeAttestation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RevokeTeeAttestation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRevokeTeeAttestation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RevokeTeeAttestation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RevokeTeeAttestation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RevokeTeeAttestation(ctx, req.(*MsgRevokeTeeAttestation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SubmitTeeValidations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitTeeValidations)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitTeeValidations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitTeeValidations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitTeeValidations(ctx, req.(*MsgSubmitTeeValidations))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1553,6 +1654,18 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeclarePoCIntent",
 			Handler:    _Msg_DeclarePoCIntent_Handler,
+		},
+		{
+			MethodName: "SubmitTeeAttestation",
+			Handler:    _Msg_SubmitTeeAttestation_Handler,
+		},
+		{
+			MethodName: "RevokeTeeAttestation",
+			Handler:    _Msg_RevokeTeeAttestation_Handler,
+		},
+		{
+			MethodName: "SubmitTeeValidations",
+			Handler:    _Msg_SubmitTeeValidations_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

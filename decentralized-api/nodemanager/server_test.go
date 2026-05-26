@@ -15,12 +15,16 @@ import (
 
 // mockBroker implements brokerAcquirer for testing.
 type mockBroker struct {
-	acquireFunc func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
-	releaseFunc func(lockID string, outcome broker.InferenceResult) error
+	acquireFunc      func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
+	acquireByKeyFunc func(ctx context.Context, recipientKeyID string) (string, string, string, error)
+	releaseFunc      func(lockID string, outcome broker.InferenceResult) error
 }
 
 func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error) {
 	return m.acquireFunc(ctx, model, skipNodeIDs)
+}
+func (m *mockBroker) AcquireMLNodeByKey(ctx context.Context, recipientKeyID string) (string, string, string, error) {
+	return m.acquireByKeyFunc(ctx, recipientKeyID)
 }
 func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) error {
 	return m.releaseFunc(lockID, outcome)
@@ -58,6 +62,39 @@ func TestAcquireMLNode_QueueFull(t *testing.T) {
 	})
 	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
 	require.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestAcquireMLNode_ByKeyDispatched(t *testing.T) {
+	var gotKey string
+	var acquireCalled bool
+	srv := NewServer(&mockBroker{
+		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
+			acquireCalled = true
+			return "", "", "", nil
+		},
+		acquireByKeyFunc: func(_ context.Context, key string) (string, string, string, error) {
+			gotKey = key
+			return "lock", "http://host:8080/v1", "node-1", nil
+		},
+	})
+	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{
+		RecipientKeyId: "abcd0123abcd0123",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "abcd0123abcd0123", gotKey)
+	require.False(t, acquireCalled, "AcquireMLNode must not be called when recipient_key_id is set")
+}
+
+func TestAcquireMLNode_ByKeyUnknownReturnsNotFound(t *testing.T) {
+	srv := NewServer(&mockBroker{
+		acquireByKeyFunc: func(_ context.Context, _ string) (string, string, string, error) {
+			return "", "", "", broker.ErrRecipientKeyUnknown
+		},
+	})
+	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{
+		RecipientKeyId: "0123456789abcdef",
+	})
+	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestReleaseMLNode_Success(t *testing.T) {

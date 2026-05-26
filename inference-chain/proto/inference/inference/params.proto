@@ -28,6 +28,7 @@ message Params {
   reserved "subnet_escrow_params";
   FeeParams fee_params = 15;
   DelegationParams delegation_params = 16;
+  TeeAttestationParams tee_attestation_params = 17;
 }
 
 message GenesisOnlyParams {
@@ -342,6 +343,20 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+}
+
+// TeeAttestationParams controls accepted TEE attestation submissions
+message TeeAttestationParams {
+  option (gogoproto.equal) = true;
+  reserved 3, 7;
+  reserved "require_quote", "validation_enabled";
+  repeated string allowed_providers = 1;
+  repeated string allowed_envelope_versions = 2;
+  uint64 attestation_ttl_epochs = 4;
+  uint32 max_entries_per_message = 5;
+  repeated string allowed_measurements = 6;
+  uint32 validation_threshold_bps = 8;
+  uint32 max_validation_entries_per_message = 9;
 }
 
 // DelegationParams defines parameters for PoC delegation in the multi-model system.

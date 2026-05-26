@@ -119,6 +119,13 @@ type (
 		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
 		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		// TEE attestations and expiry index
+		TeeAttestations         collections.Map[collections.Pair[sdk.AccAddress, string], types.TeeAttestation]
+		TeeAttestationsByExpiry collections.KeySet[collections.Triple[int64, sdk.AccAddress, string]]
+		// Pending attestations keyed by (attested_at_height, participant, node_id)
+		TeePendingAttestationsByStage collections.KeySet[collections.Triple[int64, sdk.AccAddress, string]]
+		// Distributed TEE validation votes keyed by (stage, subject, node, validator)
+		TeeValidations collections.Map[collections.Quad[int64, sdk.AccAddress, string, sdk.AccAddress], types.TeeValidation]
 	}
 )
 
@@ -593,6 +600,32 @@ func NewKeeper(
 			types.BootstrapDelegationSnapshotPrefix,
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
+		),
+		TeeAttestations: collections.NewMap(
+			sb,
+			types.TeeAttestationsPrefix,
+			"tee_attestations",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.StringKey),
+			codec.CollValue[types.TeeAttestation](cdc),
+		),
+		TeeAttestationsByExpiry: collections.NewKeySet(
+			sb,
+			types.TeeAttestationsByExpiryPrefix,
+			"tee_attestations_by_expiry",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
+		),
+		TeePendingAttestationsByStage: collections.NewKeySet(
+			sb,
+			types.TeePendingAttestationsByStagePrefix,
+			"tee_pending_attestations_by_stage",
+			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey),
+		),
+		TeeValidations: collections.NewMap(
+			sb,
+			types.TeeValidationsPrefix,
+			"tee_validations",
+			collections.QuadKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
+			codec.CollValue[types.TeeValidation](cdc),
 		),
 	}
 	// Build the collections schema

@@ -18,6 +18,7 @@ import (
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
+	"decentralized-api/teeverify"
 	"net"
 
 	"decentralized-api/nodemanager"
@@ -31,6 +32,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/participant"
 	devshardpkg "devshard"
+	devshardmlnode "devshard/mlnode"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 	"encoding/json"
@@ -225,9 +227,42 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
+	// TEE attestation workers are enabled by default, opt out via api.tee_attestation_enabled
+	apiCfg := configManager.GetApiConfig()
+	var (
+		teeWorker           *poc.TeeAttestationWorker
+		teeValidationWorker *poc.TeeValidationWorker
+		teeVerifiers        *teeverify.Registry
+	)
+	if apiCfg.TeeAttestationEnabled {
+		teeInterval := time.Duration(apiCfg.TeeAttestationIntervalSeconds) * time.Second
+		if teeInterval <= 0 {
+			teeInterval = 5 * time.Second
+		}
+		teeVerifiers = teeverify.NewDefaultRegistry()
+		chainParams := poc.NewRecorderTeeChainParams(recorder)
+		teeWorker = poc.NewTeeAttestationWorker(
+			recorder, nodeBroker, chainPhaseTracker,
+			chainParams, teeInterval,
+		)
+		defer teeWorker.Close()
+		teeValidationWorker = poc.NewTeeValidationWorker(
+			recorder, chainPhaseTracker, teeVerifiers,
+			chainParams, recorder.NewInferenceQueryClient(),
+			participantInfo.GetAddress(), teeInterval,
+		)
+		defer teeValidationWorker.Close()
+	} else {
+		logging.Info("TEE attestation worker disabled (api.tee_attestation_enabled=false)", types.PoC)
+	}
+
 	devshardSigner, devshardSignerErr := internaldevshard.NewSignerFromKeyring(*recorder.GetKeyring(), recorder.GetApiAccount().SignerAccount.Name)
 	if devshardSignerErr != nil {
 		logging.Error("devshard signer init failed", types.System, "error", devshardSignerErr)
+	}
+	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
+	if nmGrpcPort == 0 {
+		nmGrpcPort = 9400
 	}
 
 	publicServer := pserver.NewServer(
@@ -247,6 +282,21 @@ func main() {
 		chainParams := &configParamsProvider{cm: configManager}
 		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
 		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
+		var encryptedEngine devshardpkg.EncryptedEngine
+		if nmGrpcPort > 0 {
+			nodeManagerAddr := fmt.Sprintf("localhost:%v", nmGrpcPort)
+			encryptedMLClient, clientErr := devshardmlnode.NewClient(nodeManagerAddr)
+			if clientErr != nil {
+				logging.Error("failed to init encrypted engine nodemanager client", types.System,
+					"nodeManagerAddr", nodeManagerAddr, "error", clientErr)
+			} else {
+				defer encryptedMLClient.Close()
+				encryptedEngine = internaldevshard.NewEncryptedEngine(encryptedMLClient, httpClient)
+			}
+		} else {
+			logging.Warn("encrypted devshard route disabled: node manager gRPC disabled", types.System,
+				"nodeManagerPort", nmGrpcPort)
+		}
 
 		// Per-epoch SQLite under /root/.dapi/data/devshard/, or shared Postgres
 		// (same PG vars as payloadstorage) when PGHOST is set. ManagedStorage
@@ -263,6 +313,9 @@ func main() {
 
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.LegacySessionVersion, devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(availabilityTracker)
+			if encryptedEngine != nil {
+				hostManager.SetEncryptedEngine(encryptedEngine)
+			}
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
@@ -301,13 +354,9 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, teeWorker, teeValidationWorker, teeVerifiers)
 	adminServer.Start(addr)
 
-	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
-	if nmGrpcPort == 0 {
-		nmGrpcPort = 9400
-	}
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()

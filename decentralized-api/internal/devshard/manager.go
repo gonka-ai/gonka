@@ -53,6 +53,7 @@ type HostManager struct {
 	verifier     signing.Verifier
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
+	encEngine    devshardpkg.EncryptedEngine
 	availability devshardpkg.AvailabilityProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
@@ -68,6 +69,7 @@ type HostManager struct {
 const (
 	recoverSessionsConcurrency = 8
 	statsCacheTTL              = 60 * time.Second
+	defaultSessionMaxBodySize  = 256 * 1024
 )
 
 type statsShardDetailCache struct {
@@ -161,6 +163,11 @@ func (m *HostManager) SetUnavailable(err error) {
 
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
+}
+
+// SetEncryptedEngine must be set before session creation/recovery
+func (m *HostManager) SetEncryptedEngine(e devshardpkg.EncryptedEngine) {
+	m.encEngine = e
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
@@ -277,9 +284,14 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
+	opts := []transport.ServerOption{
 		transport.WithBridge(m.bridge),
-	)
+		transport.WithMaxBodySize(defaultSessionMaxBodySize),
+	}
+	if m.encEngine != nil {
+		opts = append(opts, transport.WithEncryptedEngine(m.encEngine))
+	}
+	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create server: %w", err)
 	}
@@ -448,9 +460,14 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		return nil, fmt.Errorf("create host: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr,
+	opts := []transport.ServerOption{
 		transport.WithBridge(m.bridge),
-	)
+		transport.WithMaxBodySize(defaultSessionMaxBodySize),
+	}
+	if m.encEngine != nil {
+		opts = append(opts, transport.WithEncryptedEngine(m.encEngine))
+	}
+	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create server: %w", err)
 	}
@@ -469,11 +486,16 @@ func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID st
 	return nil
 }
 
-// Register mounts devshard session routes on the given echo group.
+// Register mounts devshard session routes on the given echo group
+// Encrypted route is mounted only when EncryptedEngine is configured
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
-	devshardserver.RegisterLazySessionRoutes(g, m, m)
+	var opts []devshardserver.LazyRoutesOption
+	if m.encEngine != nil {
+		opts = append(opts, devshardserver.WithEncryptedRoute())
+	}
+	devshardserver.RegisterLazySessionRoutes(g, m, m, opts...)
 }
 
 func (m *HostManager) handleStatsShards(c echo.Context) error {

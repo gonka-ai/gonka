@@ -394,6 +394,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
+	// Prune expired TEE attestations in bounded batches
+	const teeAttestationPruneBatch = 256
+	if _, pruneErr := am.keeper.PruneExpiredTeeAttestations(ctx, blockHeight, teeAttestationPruneBatch); pruneErr != nil {
+		am.LogError("Error pruning expired TEE attestations", types.Pruning, "error", pruneErr.Error())
+	}
+
 	// Track full chain upgrades from UpgradeKeeper
 	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
 	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
@@ -440,6 +446,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
 		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
+		am.onSettleTeeAttestations(ctx, blockHeight)
 	}
 
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
@@ -794,6 +801,19 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 	if err := am.keeper.DeleteAllPoCDirectIntents(ctx); err != nil {
 		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC direct intents", types.PoC, "error", err)
+	}
+}
+
+// onSettleTeeAttestations settles attestations for the upcoming epoch stage
+func (am AppModule) onSettleTeeAttestations(ctx context.Context, blockHeight int64) {
+	upcoming, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcoming == nil {
+		am.LogWarn("onSettleTeeAttestations: no upcoming epoch", types.PoC, "blockHeight", blockHeight)
+		return
+	}
+	if err := am.keeper.SettleTeeAttestations(ctx, upcoming.PocStartBlockHeight); err != nil {
+		am.LogError("onSettleTeeAttestations failed", types.PoC,
+			"stage", upcoming.PocStartBlockHeight, "err", err)
 	}
 }
 

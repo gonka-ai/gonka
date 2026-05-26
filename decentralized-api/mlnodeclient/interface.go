@@ -29,6 +29,8 @@ type MLNodeClient interface {
 	DeleteModel(ctx context.Context, model Model) (*DeleteResponse, error)
 	ListModels(ctx context.Context) (*ModelListResponse, error)
 	GetDiskSpace(ctx context.Context) (*DiskSpaceInfo, error)
+
+	GetEncryptedIdentity(ctx context.Context) (*EncryptedIdentity, error)
 }
 
 // Ensure Client implements MLNodeClient

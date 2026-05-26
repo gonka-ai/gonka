@@ -114,6 +114,82 @@ func TestClassifyBroadcastResponse(t *testing.T) {
 	}
 }
 
+func TestValidateNoRetryTxResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		resp     *sdk.TxResponse
+		wantErr  bool
+		wantCode uint32
+	}{
+		{
+			name: "success response accepted",
+			resp: &sdk.TxResponse{
+				Code:   0,
+				TxHash: "ok-hash",
+			},
+			wantErr: false,
+		},
+		{
+			name: "already-in-mempool response accepted",
+			resp: &sdk.TxResponse{
+				Code:   19,
+				TxHash: "cached-hash",
+				RawLog: "tx already in mempool",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mempool-full response rejected",
+			resp: &sdk.TxResponse{
+				Code:      20,
+				Codespace: "sdk",
+				RawLog:    "mempool is full",
+			},
+			wantErr:  true,
+			wantCode: 20,
+		},
+		{
+			name: "business failure response rejected",
+			resp: &sdk.TxResponse{
+				Code:      1143,
+				Codespace: "inference",
+				RawLog:    "participant has already validated this inference",
+			},
+			wantErr:  true,
+			wantCode: 1143,
+		},
+		{
+			name:    "nil response rejected",
+			resp:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateNoRetryTxResponse(tt.resp)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateNoRetryTxResponse() expected error, got nil")
+				}
+				if tt.wantCode != 0 {
+					var txErr *TransactionError
+					if !errors.As(err, &txErr) {
+						t.Fatalf("validateNoRetryTxResponse() expected TransactionError, got %T (%v)", err, err)
+					}
+					if txErr.Code != tt.wantCode {
+						t.Fatalf("validateNoRetryTxResponse() code = %d, want %d", txErr.Code, tt.wantCode)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateNoRetryTxResponse() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestIsRetryableRawLog(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -277,4 +353,3 @@ func TestIsTxErrorCritical(t *testing.T) {
 		})
 	}
 }
-

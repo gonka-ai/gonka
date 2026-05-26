@@ -10,7 +10,10 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-var ErrLockNotFound = errors.New("lock not found")
+var (
+	ErrLockNotFound        = errors.New("lock not found")
+	ErrRecipientKeyUnknown = errors.New("recipient key id not advertised by any node on this host")
+)
 
 func (b *Broker) queueReleaseNode(nodeId string, outcome InferenceResult) {
 	queueErr := b.QueueMessage(ReleaseNode{
@@ -27,13 +30,22 @@ func (b *Broker) queueReleaseNode(nodeId string, outcome InferenceResult) {
 // AcquireMLNode queues a LockAvailableNode command, waits for a node,
 // records it in the lock map, and returns (lockID, inferenceURL, nodeID).
 func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error) {
+	return b.acquireMLNode(ctx, LockAvailableNode{Model: model, SkipNodeIDs: skipNodeIDs})
+}
+
+// AcquireMLNodeByKey reserves the node advertising recipientKeyID
+// Returns ErrRecipientKeyUnknown if this host has no matching key
+func (b *Broker) AcquireMLNodeByKey(ctx context.Context, recipientKeyID string) (lockID, endpoint, nodeID string, err error) {
+	if recipientKeyID == "" {
+		return "", "", "", errors.New("AcquireMLNodeByKey: empty recipientKeyID")
+	}
+	return b.acquireMLNode(ctx, LockAvailableNode{RecipientKeyID: recipientKeyID})
+}
+
+func (b *Broker) acquireMLNode(ctx context.Context, cmd LockAvailableNode) (lockID, endpoint, nodeID string, err error) {
 	ch := make(chan *Node, 2)
-	err = b.QueueMessage(LockAvailableNode{
-		Model:       model,
-		SkipNodeIDs: skipNodeIDs,
-		Response:    ch,
-	})
-	if err != nil {
+	cmd.Response = ch
+	if err = b.QueueMessage(cmd); err != nil {
 		return
 	}
 
@@ -47,6 +59,9 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 		return "", "", "", ctx.Err()
 	case node := <-ch:
 		if node == nil {
+			if cmd.RecipientKeyID != "" && !b.hasRecipientKey(cmd.RecipientKeyID) {
+				return "", "", "", ErrRecipientKeyUnknown
+			}
 			return "", "", "", ErrNoNodesAvailable
 		}
 		lockID := uuid.New().String()
@@ -56,6 +71,17 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 		version := b.configManager.GetCurrentNodeVersion()
 		return lockID, node.InferenceUrlWithVersion(version), node.Id, nil
 	}
+}
+
+func (b *Broker) hasRecipientKey(recipientKeyID string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, n := range b.nodes {
+		if n.State.RecipientKeyID == recipientKeyID {
+			return true
+		}
+	}
+	return false
 }
 
 // ReleaseMLNode removes the lock from the map and queues a ReleaseNode command.

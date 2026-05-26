@@ -71,6 +71,17 @@ type ApiConfig struct {
 	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
 	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
 	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+	// Enable TEE attestation worker
+	TeeAttestationEnabled bool `koanf:"tee_attestation_enabled" json:"tee_attestation_enabled"`
+	// Worker tick interval during PoC window, defaults to 5s
+	TeeAttestationIntervalSeconds int `koanf:"tee_attestation_interval_seconds" json:"tee_attestation_interval_seconds"`
+}
+
+// applyApiConfigDefaults sets non-zero-value defaults unless key is present
+func applyApiConfigDefaults(api *ApiConfig, keyPresent func(string) bool) {
+	if !keyPresent("api.tee_attestation_enabled") {
+		api.TeeAttestationEnabled = true
+	}
 }
 
 type ChainNodeConfig struct {

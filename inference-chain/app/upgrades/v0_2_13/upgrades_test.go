@@ -98,6 +98,39 @@ func TestSetDevshardEscrowParamsEnablesRequests(t *testing.T) {
 	require.True(t, got.DevshardEscrowParams.DevshardRequestsEnabled)
 }
 
+func TestSetTeeAttestationParamsInitializesWhenNil(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.TeeAttestationParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setTeeAttestationParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.TeeAttestationParams)
+	require.Equal(t, inferencetypes.DefaultTeeAttestationParams(), got.TeeAttestationParams)
+}
+
+func TestSetTeeAttestationParamsKeepsExisting(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.TeeAttestationParams = inferencetypes.DefaultTeeAttestationParams()
+	params.TeeAttestationParams.ValidationThresholdBps = 7000
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setTeeAttestationParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.TeeAttestationParams)
+	require.Equal(t, uint32(7000), got.TeeAttestationParams.ValidationThresholdBps)
+}
+
 func TestAddDevshardAllowedCreatorAddressesAppendsOnlyNewAddresses(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

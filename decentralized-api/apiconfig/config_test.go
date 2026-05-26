@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/knadh/koanf/providers/rawbytes"
@@ -27,6 +28,33 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "join1", testManager.GetChainNodeConfig().SignerKeyName)
 	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
+	require.True(t, testManager.GetApiConfig().TeeAttestationEnabled,
+		"tee_attestation_enabled must default to true when omitted from YAML")
+}
+
+func TestConfigLoad_TeeAttestationExplicitDisable(t *testing.T) {
+	yaml := strings.Replace(testYaml,
+		"api:\n    port: 8080",
+		"api:\n    port: 8080\n    tee_attestation_enabled: false",
+		1)
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(yaml)),
+	}
+	require.NoError(t, testManager.Load())
+	require.False(t, testManager.GetApiConfig().TeeAttestationEnabled,
+		"explicit tee_attestation_enabled=false must be honored")
+}
+
+func TestConfigLoad_TeeAttestationExplicitEnable(t *testing.T) {
+	yaml := strings.Replace(testYaml,
+		"api:\n    port: 8080",
+		"api:\n    port: 8080\n    tee_attestation_enabled: true",
+		1)
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(yaml)),
+	}
+	require.NoError(t, testManager.Load())
+	require.True(t, testManager.GetApiConfig().TeeAttestationEnabled)
 }
 
 func TestNewPoCParamsCache(t *testing.T) {

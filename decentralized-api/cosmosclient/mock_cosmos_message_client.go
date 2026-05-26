@@ -138,6 +138,21 @@ func (m *MockCosmosMessageClient) SubmitMLNodeWeightDistribution(transaction *in
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) SubmitTeeAttestation(transaction *inferencetypes.MsgSubmitTeeAttestation) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) SubmitTeeValidations(transaction *inferencetypes.MsgSubmitTeeValidations) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) RevokeTeeAttestation(transaction *inferencetypes.MsgRevokeTeeAttestation) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
 func (m *MockCosmosMessageClient) SubmitSeed(transaction *inferenceapi.MsgSubmitSeed) error {
 	args := m.Called(transaction)
 	return args.Error(0)

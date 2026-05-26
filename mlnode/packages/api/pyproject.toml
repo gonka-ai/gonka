@@ -25,6 +25,10 @@ httpx = ">=0.27.0"
 huggingface-hub = ">=0.20.0"
 tenacity = ">=8.0.0"
 nvidia-ml-py = ">=12.0.0"
+pyhpke = ">=0.6.4"
+cryptography = ">=42.0.0"
+dstack-sdk = ">=0.5.0"
+dcap-qvl = ">=0.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2"

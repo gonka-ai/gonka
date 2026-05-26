@@ -138,6 +138,9 @@ func CreateUpgradeHandler(
 		if err := setDevshardEscrowParams(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := setTeeAttestationParams(ctx, k); err != nil {
+			return nil, err
+		}
 		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
 			return nil, err
 		}
@@ -247,6 +250,22 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 		"max_escrows_per_epoch", MaxEscrowsPerEpoch,
 		"max_nonce", MaxNonce,
 		"devshard_requests_enabled", types.DefaultDevshardRequestsEnabled)
+	return nil
+}
+
+func setTeeAttestationParams(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.TeeAttestationParams != nil {
+		return nil
+	}
+	params.TeeAttestationParams = types.DefaultTeeAttestationParams()
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set default tee attestation params", types.Upgrades)
 	return nil
 }
 

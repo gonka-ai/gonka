@@ -294,6 +294,23 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query PoC delegation state for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "model_id", Optional: true}},
 				},
+				{
+					RpcMethod:      "TeeAttestation",
+					Use:            "tee-attestation [participant-address] [node-id]",
+					Short:          "Query the TEE attestation for a (participant, node) pair",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant_address"}, {ProtoField: "node_id"}},
+				},
+				{
+					RpcMethod:      "TeeAttestationsByParticipant",
+					Use:            "tee-attestations-by-participant [participant-address]",
+					Short:          "Query all TEE attestations owned by a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant_address"}},
+				},
+				{
+					RpcMethod:      "TeeAttestationsActive",
+					Use:            "tee-attestations-active",
+					Short:          "Query active (non-expired) TEE attestations, optionally filtered by provider",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -436,6 +453,16 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "declare-poc-intent [model-id]",
 					Short:          "Declare intent to deploy for a model",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
+				},
+				{
+					RpcMethod: "SubmitTeeAttestation",
+					Skip:      true, // dapi worker authors these; no manual CLI
+				},
+				{
+					RpcMethod:      "RevokeTeeAttestation",
+					Use:            "revoke-tee-attestation [node-ids]",
+					Short:          "Revoke one or more TEE attestations by node id",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "node_ids"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

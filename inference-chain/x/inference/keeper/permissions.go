@@ -132,6 +132,10 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgSetPoCDelegation)(nil)):    {ParticipantPermission},
 	reflect.TypeOf((*types.MsgRefusePoCDelegation)(nil)): {ParticipantPermission},
 	reflect.TypeOf((*types.MsgDeclarePoCIntent)(nil)):    {ParticipantPermission},
+
+	reflect.TypeOf((*types.MsgSubmitTeeAttestation)(nil)): {ParticipantPermission},
+	reflect.TypeOf((*types.MsgRevokeTeeAttestation)(nil)): {ParticipantPermission},
+	reflect.TypeOf((*types.MsgSubmitTeeValidations)(nil)): {ParticipantPermission},
 }
 
 type HasSigners interface {

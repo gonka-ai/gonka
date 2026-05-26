@@ -2,6 +2,7 @@ package tx_manager
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -112,6 +113,24 @@ func classifyBroadcastResponse(resp *sdk.TxResponse) TxResponseAction {
 			return TxActionRetry
 		}
 		return TxActionFail
+	}
+}
+
+// validateNoRetryTxResponse treats retry/fail classes as errors
+func validateNoRetryTxResponse(resp *sdk.TxResponse) error {
+	action := classifyBroadcastResponse(resp)
+	switch action {
+	case TxActionObserve:
+		return nil
+	case TxActionRetry:
+		if resp == nil {
+			return errors.New("retryable broadcast response in no-retry path: nil tx response")
+		}
+		return fmt.Errorf("retryable broadcast response in no-retry path: %w", NewTransactionErrorFromResponse(resp))
+	case TxActionFail:
+		return NewTransactionErrorFromResponse(resp)
+	default:
+		return fmt.Errorf("unknown tx response action in no-retry path: %d", action)
 	}
 }
 

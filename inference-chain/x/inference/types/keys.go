@@ -103,7 +103,14 @@ var (
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
-	ParamsKey                         = []byte("p_inference")
+	// TEE attestations and expiry index
+	TeeAttestationsPrefix         = collections.NewPrefix(66)
+	TeeAttestationsByExpiryPrefix = collections.NewPrefix(67)
+	// Distributed TEE validation votes keyed by (stage, subject, node, validator)
+	TeeValidationsPrefix = collections.NewPrefix(68)
+	// Pending TEE attestations indexed by stage
+	TeePendingAttestationsByStagePrefix = collections.NewPrefix(69)
+	ParamsKey                           = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

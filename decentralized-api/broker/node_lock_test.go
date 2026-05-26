@@ -7,6 +7,7 @@ import (
 
 	"decentralized-api/apiconfig"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,6 +91,76 @@ func TestReleaseMLNode_UnknownLockID(t *testing.T) {
 	err := b.ReleaseMLNode("does-not-exist", InferenceSuccess{})
 
 	require.ErrorIs(t, err, ErrLockNotFound)
+}
+
+func TestAcquireMLNode_RecipientKeyFilter(t *testing.T) {
+	b := NewTestBroker()
+	nodeA := apiconfig.InferenceNodeConfig{
+		Id: "nodeA", Host: "hostA", InferencePort: 8080,
+		InferenceSegment: "/v1", PoCPort: 8081,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		MaxConcurrent: 4,
+	}
+	nodeB := apiconfig.InferenceNodeConfig{
+		Id: "nodeB", Host: "hostB", InferencePort: 8082,
+		InferenceSegment: "/v1", PoCPort: 8083,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		MaxConcurrent: 4,
+	}
+	registerNodeAndSetInferenceStatus(t, b, nodeA)
+	registerNodeAndSetInferenceStatus(t, b, nodeB)
+
+	queueMessage(t, b, NewSetNodesActualStatusCommand([]StatusUpdate{
+		{NodeId: "nodeA", PrevStatus: types.HardwareNodeStatus_INFERENCE, NewStatus: types.HardwareNodeStatus_INFERENCE, Timestamp: time.Now(), RecipientKeyID: "aaaaaaaaaaaaaaaa"},
+		{NodeId: "nodeB", PrevStatus: types.HardwareNodeStatus_INFERENCE, NewStatus: types.HardwareNodeStatus_INFERENCE, Timestamp: time.Now(), RecipientKeyID: "bbbbbbbbbbbbbbbb"},
+	}))
+
+	lockID, _, nodeID, err := b.AcquireMLNodeByKey(context.Background(), "bbbbbbbbbbbbbbbb")
+	require.NoError(t, err)
+	require.Equal(t, "nodeB", nodeID)
+	require.NoError(t, b.ReleaseMLNode(lockID, InferenceSuccess{}))
+}
+
+func TestAcquireMLNodeByKey_IgnoresModel(t *testing.T) {
+	b := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Id: "nodeA", Host: "hostA", InferencePort: 8080,
+		InferenceSegment: "/v1", PoCPort: 8081,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		MaxConcurrent: 4,
+	}
+	registerNodeAndSetInferenceStatus(t, b, node)
+	queueMessage(t, b, NewSetNodesActualStatusCommand([]StatusUpdate{
+		{NodeId: "nodeA", PrevStatus: types.HardwareNodeStatus_INFERENCE, NewStatus: types.HardwareNodeStatus_INFERENCE, Timestamp: time.Now(), RecipientKeyID: "0123456789abcdef"},
+	}))
+
+	lockID, _, nodeID, err := b.AcquireMLNodeByKey(context.Background(), "0123456789abcdef")
+	require.NoError(t, err)
+	require.Equal(t, "nodeA", nodeID)
+	require.NoError(t, b.ReleaseMLNode(lockID, InferenceSuccess{}))
+}
+
+func TestAcquireMLNodeByKey_UnknownKey(t *testing.T) {
+	b := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Id: "nodeA", Host: "hostA", InferencePort: 8080,
+		InferenceSegment: "/v1", PoCPort: 8081,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		MaxConcurrent: 4,
+	}
+	registerNodeAndSetInferenceStatus(t, b, node)
+	queueMessage(t, b, NewSetNodesActualStatusCommand([]StatusUpdate{
+		{NodeId: "nodeA", PrevStatus: types.HardwareNodeStatus_INFERENCE, NewStatus: types.HardwareNodeStatus_INFERENCE, Timestamp: time.Now(), RecipientKeyID: "aaaaaaaaaaaaaaaa"},
+	}))
+
+	_, _, _, err := b.AcquireMLNodeByKey(context.Background(), "ffffffffffffffff")
+	require.ErrorIs(t, err, ErrRecipientKeyUnknown)
+}
+
+func TestAcquireMLNodeByKey_EmptyKey(t *testing.T) {
+	b := NewTestBroker()
+	_, _, _, err := b.AcquireMLNodeByKey(context.Background(), "")
+	require.Error(t, err)
 }
 
 func TestEvictExpiredLocks(t *testing.T) {
