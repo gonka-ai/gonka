@@ -144,10 +144,13 @@ func CreateUpgradeHandler(
 		if err := setDevshardApprovedVersions(ctx, k); err != nil {
 			return nil, err
 		}
-		if err := backfillConfirmationWeightScales(ctx, k); err != nil {
+		if err := updateModelParams(ctx, k); err != nil {
 			return nil, err
 		}
-		if err := updateModelParams(ctx, k); err != nil {
+		// Keep confirmation scales consistent with the upgraded PoC model params.
+		// Running backfill before updateModelParams can leave epoch-group scales
+		// stale for the entire upgrade epoch.
+		if err := backfillConfirmationWeightScales(ctx, k); err != nil {
 			return nil, err
 		}
 		// Reduce genesis guardian adjusted voting power to 25% and set the
@@ -592,6 +595,11 @@ func grantRespondDealerComplaintsAuthz(ctx context.Context, authzKeeper authzkee
 // disableConfirmationPocForUpgradeEpoch skips confirmation PoC triggers for
 // the rest of the upgrade epoch via the v0.2.10 grace-epoch primitive.
 func disableConfirmationPocForUpgradeEpoch(ctx context.Context, k keeper.Keeper) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	if err := k.SetLastUpgradeHeight(ctx, sdkCtx.BlockHeight()); err != nil {
+		return err
+	}
+
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
 		k.LogWarn("confirmation PoC grace-epoch skipped: no effective epoch", types.Upgrades)

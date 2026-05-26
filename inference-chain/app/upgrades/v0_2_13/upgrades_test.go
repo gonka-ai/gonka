@@ -303,6 +303,79 @@ func TestUpdateModelParamsSetsKimiAndAddsMiniMax(t *testing.T) {
 	}, kimiModel.ModelArgs)
 }
 
+func TestBackfillConfirmationWeightScales_UsesUpdatedModelParamsOrder(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
+		{
+			ModelId:           kimiModelID,
+			WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
+		},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 21))
+
+	alice := sample.AccAddress()
+	require.NoError(t, k.SetActiveParticipants(ctx, inferencetypes.ActiveParticipants{
+		EpochId: 21,
+		Participants: []*inferencetypes.ActiveParticipant{
+			{
+				Index:  alice,
+				Models: []string{kimiModelID},
+				MlNodes: []*inferencetypes.ModelMLNodes{
+					{MlNodes: []*inferencetypes.MLNodeInfo{{PocWeight: 100}}},
+				},
+			},
+		},
+	}))
+
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{
+		EpochIndex: 21,
+		ValidationWeights: []*inferencetypes.ValidationWeight{
+			{MemberAddress: alice, Weight: 100, ConfirmationWeight: 100},
+		},
+	})
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{
+		EpochIndex: 21,
+		ModelId:    kimiModelID,
+		ValidationWeights: []*inferencetypes.ValidationWeight{
+			{MemberAddress: alice, VotingPower: 1},
+		},
+	})
+
+	// Keep the execution order aligned with CreateUpgradeHandler:
+	// first updateModelParams, then backfillConfirmationWeightScales.
+	require.NoError(t, updateModelParams(ctx, k))
+	require.NoError(t, backfillConfirmationWeightScales(ctx, k))
+
+	root, found := k.GetEpochGroupData(ctx, 21, "")
+	require.True(t, found)
+	require.Len(t, root.ConfirmationWeightScales, 1)
+	require.Equal(t, kimiModelID, root.ConfirmationWeightScales[0].ModelId)
+	require.True(t, root.ConfirmationWeightScales[0].WeightScaleFactor.ToDecimal().Equal(kimiWeightScaleFactor().ToDecimal()))
+	require.Equal(t, int64(78), root.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDisableConfirmationPocForUpgradeEpoch_SetsLastUpgradeHeightAndGraceWindow(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	ctx = ctx.WithBlockHeight(4267300)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 276))
+	require.NoError(t, disableConfirmationPocForUpgradeEpoch(ctx, k))
+
+	lastUpgradeHeight, found := k.GetLastUpgradeHeight(ctx)
+	require.True(t, found)
+	require.Equal(t, int64(4267300), lastUpgradeHeight)
+
+	grace, found := k.GetPunishmentGraceEpoch(ctx, 276)
+	require.True(t, found)
+	require.Equal(t, GraceUpgradeProtectionWindow, grace.UpgradeProtectionWindow)
+	require.NotNil(t, grace.BinomTestP0)
+	require.True(t, grace.BinomTestP0.ToDecimal().Equal(inferencetypes.DecimalFromFloat(0.5).ToDecimal()))
+}
+
 func TestSetGenesisGuardianMultiplier(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
