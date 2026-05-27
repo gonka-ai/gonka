@@ -10,7 +10,7 @@
         "args": [
           "--moe-backend", "marlin",
           "--tensor-parallel-size", "4",
-          "--gpu-memory-utilization", "0.92",
+          "--gpu-memory-utilization", "0.95",
           "--max-num-seqs", "128",
           "--enable-auto-tool-choice",
           "--max-model-len",
