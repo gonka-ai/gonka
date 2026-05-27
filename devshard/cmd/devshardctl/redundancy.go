@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"devshard"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/transport"
@@ -1498,7 +1499,7 @@ func rewritePromptMaxTokens(prompt []byte, maxTokens uint64) ([]byte, bool) {
 	if hasMaxTokens || !hasMaxCompletionTokens {
 		raw["max_tokens"] = maxTokens
 	}
-	if minTokens, ok := numericJSONValueAsUint64(raw["min_tokens"]); ok && minTokens > maxTokens {
+	if minTokens, ok := devshard.JSONNumericUint64(raw["min_tokens"]); ok && minTokens > maxTokens {
 		raw["min_tokens"] = maxTokens
 	}
 	updated, err := json.Marshal(raw)

@@ -50,8 +50,8 @@ type rewriteLogprob struct {
 // only in that streaming rewrite.
 func rewriteStreamingPayload(p []byte) []byte {
 	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
-	needsLogprobFilter := bytes.Contains(p, []byte(`"logprob`))
-	if !needsCompletionRewrite && !needsLogprobFilter {
+	needsInternalFieldsFilter := containsAnyInternalField(p)
+	if !needsCompletionRewrite && !needsInternalFieldsFilter {
 		return p
 	}
 
@@ -73,7 +73,7 @@ func rewriteStreamingPayload(p []byte) []byte {
 		payload := bytes.TrimSpace(event[len("data: "):])
 		rewritten, ok := rewriteStreamingDataEvent(payload)
 		if !ok {
-			filtered := filterClientLogprobs(payload)
+			filtered := filterClientInternalFields(payload)
 			if !bytes.Equal(filtered, payload) {
 				fmt.Fprintf(&out, "data: %s\n\n", filtered)
 				changed = true
@@ -190,12 +190,28 @@ func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, i
 	fmt.Fprintf(out, "data: %s\n\n", b)
 }
 
-func filterClientLogprobs(payload []byte) []byte {
+var clientStrippedFields = []string{
+	"logprob",
+	"logprobs",
+	"top_logprobs",
+	"token_ids",
+	"prompt_token_ids",
+	"prompt_logprobs",
+}
+
+func containsAnyInternalField(p []byte) bool {
+	return bytes.Contains(p, []byte(`"logprob`)) ||
+		bytes.Contains(p, []byte(`"token_ids"`)) ||
+		bytes.Contains(p, []byte(`"prompt_logprobs"`)) ||
+		bytes.Contains(p, []byte(`"prompt_token_ids"`))
+}
+
+func filterClientInternalFields(payload []byte) []byte {
 	var v any
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return payload
 	}
-	if !stripLogprobFields(v) {
+	if !stripClientInternalFields(v) {
 		return payload
 	}
 	out, err := json.Marshal(v)
@@ -205,18 +221,18 @@ func filterClientLogprobs(payload []byte) []byte {
 	return out
 }
 
-func stripLogprobFields(v any) bool {
+func stripClientInternalFields(v any) bool {
 	switch typed := v.(type) {
 	case map[string]any:
 		changed := false
-		for _, key := range []string{"logprob", "logprobs", "top_logprobs"} {
+		for _, key := range clientStrippedFields {
 			if _, ok := typed[key]; ok {
 				delete(typed, key)
 				changed = true
 			}
 		}
 		for _, child := range typed {
-			if stripLogprobFields(child) {
+			if stripClientInternalFields(child) {
 				changed = true
 			}
 		}
@@ -224,7 +240,7 @@ func stripLogprobFields(v any) bool {
 	case []any:
 		changed := false
 		for _, child := range typed {
-			if stripLogprobFields(child) {
+			if stripClientInternalFields(child) {
 				changed = true
 			}
 		}
