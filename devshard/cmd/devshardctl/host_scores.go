@@ -36,39 +36,25 @@ var (
 
 	// Decision margins
 	HostScoreSpeedupMargin      = 0.10 // candidate score must be ≤primary·(1-margin)
-	HostScoreExplorationEpsilon = 0.05 // 5% forced-exploration when score is ambivalent
+	HostScoreExplorationEpsilon = 0.02 // 2% forced-exploration when score is ambivalent
 
 	// Per-bucket calibration overrides. See
 	// docs/host-scoring.md#per-bucket-calibration for the rationale.
 	HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
-		"lt_1k":    {HalfLife: 3 * time.Hour},  // high traffic → fast adaptation
-		"1k_5k":    {HalfLife: 3 * time.Hour},  // high traffic → fast adaptation
-		"5k_15k":   {HalfLife: 6 * time.Hour},  // medium traffic
-		"15k_30k":  {HalfLife: 6 * time.Hour},  // medium traffic
-		"30k_100k": {HalfLife: 9 * time.Hour},  // low traffic → preserve signal across gaps
-		"gte_100k": {HalfLife: 12 * time.Hour}, // very low traffic
+		"lt_1k": {HalfLife: 6 * time.Hour}, // high traffic → faster decay
+		"1k_5k": {HalfLife: 6 * time.Hour},
+		// Other buckets inherit HostScoreEloHalfLife (12h) — replay-loop
+		// data did not show benefit from compressing further.
 	}
 )
 
-// HostScoreBucketOverride lets a bucket adopt non-default K and half-life.
-// K=0 inherits HostScoreEloK. HalfLife<0 inherits HostScoreEloHalfLife;
-// HalfLife=0 explicitly disables decay for that bucket.
+// HostScoreBucketOverride overrides the Elo decay half-life for one bucket.
+// HalfLife < 0 inherits HostScoreEloHalfLife; HalfLife = 0 disables decay.
 type HostScoreBucketOverride struct {
-	K        float64
 	HalfLife time.Duration
 }
 
-// hostScoreKForBucket returns the K-factor in effect for a bucket.
-func hostScoreKForBucket(bucket string) float64 {
-	if o, ok := HostScoreBucketOverrides[bucket]; ok && o.K > 0 {
-		return o.K
-	}
-	return HostScoreEloK
-}
-
-// hostScoreHalfLifeForBucket returns the decay half-life in effect for a
-// bucket. Negative override means inherit; zero (explicit or inherited)
-// disables decay.
+// hostScoreHalfLifeForBucket returns the decay half-life in effect for a bucket.
 func hostScoreHalfLifeForBucket(bucket string) time.Duration {
 	if o, ok := HostScoreBucketOverrides[bucket]; ok && o.HalfLife >= 0 {
 		return o.HalfLife
@@ -171,7 +157,7 @@ type HostScoreSnapshot struct {
 	TotalP50Ms     float64 `json:"total_p50_ms"`
 	TotalP90Ms     float64 `json:"total_p90_ms"`
 	Elo            float64 `json:"elo"`
-	UCBBonus       float64 `json:"ucb_bonus_ms"` // exploration credit subtracted from score
+	UCBBonus       float64 `json:"ucb_bonus_ms"` // subtracted from score
 	ScoreStream    float64 `json:"score_stream"`
 	ScoreNonStream float64 `json:"score_non_stream"`
 }
@@ -190,12 +176,12 @@ type HostScoreState struct {
 // HostScoreTracker holds per-(model,host,bucket) sliding sample rings + Elo.
 // Formula and rationale: docs/host-scoring.md.
 type HostScoreTracker struct {
-	mu            sync.RWMutex
-	hosts         map[hostScoreKey]*hostScoreRing
-	elo           map[hostScoreKey]float64
-	eloUpdatedAt  map[hostScoreKey]time.Time
-	pairwise      *PairwiseTracker // optional H2H source; may be nil in tests
-	now           func() time.Time // injectable clock for tests
+	mu           sync.RWMutex
+	hosts        map[hostScoreKey]*hostScoreRing
+	elo          map[hostScoreKey]float64
+	eloUpdatedAt map[hostScoreKey]time.Time
+	pairwise     *PairwiseTracker // optional H2H source; may be nil in tests
+	now          func() time.Time // injectable clock for tests
 }
 
 func NewHostScoreTracker(pairwise *PairwiseTracker) *HostScoreTracker {
@@ -269,7 +255,7 @@ func (t *HostScoreTracker) RecordRequest(rec RequestRecord) {
 		ring.add(hostScoreSample{Timestamp: now, TtftMs: h.FirstTokenMs, TotalMs: h.TotalTimeMs})
 	}
 
-	halfK := hostScoreKForBucket(bucket) / 2
+	halfK := HostScoreEloK / 2
 	for i := 0; i < len(eligible); i++ {
 		for j := i + 1; j < len(eligible); j++ {
 			a, b := eligible[i], eligible[j]
@@ -369,11 +355,12 @@ func (t *HostScoreTracker) ScoreHost(model, host, bucket string, stream bool, op
 	if stream {
 		gamma = HostScoreStreamGamma
 	}
-	ttft, total := ring.percentile(0.50)
-	base := (1-gamma)*ttft + gamma*total
-	elo := t.decayedEloLocked(key, t.now())
-	ucb := t.ucbBonusLocked(model, bucket, len(ring.samples))
-	return base - HostScoreEloAlpha*(elo-HostScoreEloDefault) - ucb, true
+	// score = base − Elo − UCB  (docs/host-scoring.md#layer-2)
+	ttftP50, totalP50 := ring.percentile(0.50)
+	base := (1-gamma)*ttftP50 + gamma*totalP50
+	eloCredit := HostScoreEloAlpha * (t.decayedEloLocked(key, t.now()) - HostScoreEloDefault)
+	ucbBonus := t.ucbBonusLocked(model, bucket, len(ring.samples))
+	return base - eloCredit - ucbBonus, true
 }
 
 // ucbBonusLocked computes c·√(ln N_bucket / n_host); caller holds mu.
@@ -423,23 +410,22 @@ func (t *HostScoreTracker) Snapshot() []HostScoreSnapshot {
 		ttftP50, totalP50 := ring.percentile(0.50)
 		ttftP90, totalP90 := ring.percentile(0.90)
 		elo := t.decayedEloLocked(key, now)
-		eloBonus := HostScoreEloAlpha * (elo - HostScoreEloDefault)
-		bucketN := totalFor(key.model, key.bucket)
-		ucb := t.ucbBonusLocked(key.model, key.bucket, len(ring.samples))
+		eloCredit := HostScoreEloAlpha * (elo - HostScoreEloDefault)
+		ucbBonus := t.ucbBonusLocked(key.model, key.bucket, len(ring.samples))
 		out = append(out, HostScoreSnapshot{
 			Model:          key.model,
 			Host:           key.host,
 			Bucket:         key.bucket,
 			Samples:        len(ring.samples),
-			BucketTotalN:   bucketN,
+			BucketTotalN:   totalFor(key.model, key.bucket),
 			TtftP50Ms:      ttftP50,
 			TtftP90Ms:      ttftP90,
 			TotalP50Ms:     totalP50,
 			TotalP90Ms:     totalP90,
 			Elo:            elo,
-			UCBBonus:       ucb,
-			ScoreStream:    (1-HostScoreStreamGamma)*ttftP50 + HostScoreStreamGamma*totalP50 - eloBonus - ucb,
-			ScoreNonStream: (1-HostScoreNonStreamGamma)*ttftP50 + HostScoreNonStreamGamma*totalP50 - eloBonus - ucb,
+			UCBBonus:       ucbBonus,
+			ScoreStream:    (1-HostScoreStreamGamma)*ttftP50 + HostScoreStreamGamma*totalP50 - eloCredit - ucbBonus,
+			ScoreNonStream: (1-HostScoreNonStreamGamma)*ttftP50 + HostScoreNonStreamGamma*totalP50 - eloCredit - ucbBonus,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

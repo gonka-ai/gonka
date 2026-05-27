@@ -475,6 +475,9 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	if len(perfArgs) > 0 && perfArgs[0] != nil {
 		g.perf = perfArgs[0]
 	}
+	if g.perf != nil && g.participantLimiter != nil {
+		g.perf.SetParticipantLimiter(g.participantLimiter)
+	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil {
 		g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)

@@ -8,7 +8,10 @@ known.
 
 This doc is the ground truth for the formula. The implementation lives in
 [`host_scores.go`](../cmd/devshardctl/host_scores.go) and the wiring lives
-in [`redundancy.go`](../cmd/devshardctl/redundancy.go).
+in [`redundancy.go`](../cmd/devshardctl/redundancy.go). For an end-to-end
+visual walkthrough of every behavioral scenario (H2H, score path,
+ε-greedy, unresponsive primary, Layer 3 quarantine and backoff,
+regime-change recovery) see [host-scoring-schemes.md](host-scoring-schemes.md).
 
 ## Problem
 
@@ -88,7 +91,14 @@ margin check in `decideHostScoreSpeedup` is "rate ≥ 0.5 + HostScoreH2HMargin"
 ## Layer 2: Elo + timing + UCB
 
 When direct H2H data is absent, we fall back to a synthesis of the host's
-own recent samples plus a global Elo rating.
+own recent samples plus a global Elo rating. The final score is:
+
+```
+score = base − Elo_credit − UCB_bonus
+```
+
+Each term contributes on the same ms scale; sections below explain how
+each component is computed.
 
 ### Per-host Total time
 
@@ -234,9 +244,32 @@ In numbers, for `N_bucket = 200` total samples in a bucket:
 The `n < MinSamples` zone is filtered out earlier in `ScoreHost` (no score
 returned), so UCB never produces a degenerate value at the very low end.
 
+### Architecture: host_score / picker separation of concerns
+
+The session picker is responsible solely for **nonce-bound dispatch**: it
+matches each newly available nonce to a queued request whose
+`excludeParticipants` set permits the binding host. It does not know
+about Elo, host scoring, or routing preference.
+
+host_score lives **above** the picker. `decideHostScoreSpeedup` decides
+only **how many** speculative secondaries to launch — based on whether
+any candidate beats primary on H2H win-rate or Elo+timing score. Which
+host receives each secondary is determined entirely by nonce arrival
+order, exactly the same path used by primary attempts and every other
+escalation/retry path.
+
+This separation matters: the picker's branch logic is hot-path,
+historically stable, and serializes nonce dispatch across all attempts.
+Pulling host_score knowledge into the picker would couple two systems
+that evolve at very different rates. If a future requirement needs to
+bias dispatch toward specific hosts, the right shape is to express it
+as *additional* exclude entries on the secondary's pickerRequest — the
+picker's existing exclude/ghost-burn machinery already enforces "no
+dispatch on these hosts" semantics without modification.
+
 ### Putting it together
 
-Four representative scenarios, all with `base = 5000 ms`, `N_bucket = 100`,
+Five representative scenarios, all with `base = 5000 ms`, `N_bucket = 100`,
 in non-streaming mode (`γ = 1.0`):
 
 | scenario | Elo | n | − Elo credit | − UCB bonus | final score |
@@ -246,20 +279,19 @@ in non-streaming mode (`γ = 1.0`):
 | cold newcomer | 1500 | 3 | 0 | ≈ −372 | **4628** |
 | cold underdog | 1400 | 3 | +1000 | ≈ −372 | **5628** |
 
-(`−` means subtracted from base; sign of the column reflects whether the
-adjustment helps or hurts the score.)
+(`−` / `+` reflect whether the adjustment helps or hurts the score.)
 
 Reading the table:
 
-- **established fast** wins outright — strong Elo credit dominates.
+- **established fast** wins outright — Elo credit dominates.
 - **cold newcomer** beats **established slow** purely thanks to UCB,
   which is the entire point of adding exploration.
 - **cold underdog** is helped by UCB but not enough to overcome its
   negative Elo — converges toward demotion as samples accumulate.
 
-The takeaway: **cold hosts get a fair chance** thanks to the UCB term,
-while **proven-fast hosts dominate** thanks to Elo credit — both effects
-on the same ms scale so they can be compared.
+The takeaway: **cold hosts get a fair chance** thanks to the UCB term and
+**proven-fast hosts dominate** thanks to Elo credit, both on the same ms
+scale so they can be compared.
 
 ## Hyperparameters
 
@@ -271,7 +303,7 @@ times). Defaults chosen to match the empirical scale we measured:
 |---|---:|---|
 | `HostScoreWindowSize` | 50 | sliding ring per (model, host, bucket) — older samples roll off |
 | `HostScoreMinSamples` | 3 | both layers gate on this; below it ScoreHost returns `(0, false)` |
-| `HostScoreEloK` | 16 | classic chess K-factor; bigger = faster convergence + more noise. Override per-bucket via `HostScoreBucketOverrides` (see [Per-bucket calibration](#per-bucket-calibration)) |
+| `HostScoreEloK` | 16 | classic chess K-factor; bigger = faster convergence + more noise. Global only — not per-bucket. |
 | `HostScoreEloDefault` | 1500 | starting rating for unknown hosts |
 | `HostScoreEloAlpha` | 10 | ms credit per Elo-point deviation from 1500 |
 | `HostScoreStreamGamma` | 0.3 | TTFT vs Total weight for streaming requests |
@@ -280,63 +312,47 @@ times). Defaults chosen to match the empirical scale we measured:
 | `HostScoreH2HMargin` | 0.10 | Layer 1 trigger: candidate must win ≥ 50% + this |
 | `HostScoreSpeedupMargin` | 0.10 | Layer 2 trigger: candidate score must be ≤ primary · (1 − this) |
 | `HostScoreEloHalfLife` | 12 h | half-life for stale-Elo decay; 0 disables (see Regime change). Override per-bucket via `HostScoreBucketOverrides` (see [Per-bucket calibration](#per-bucket-calibration)) |
-| `HostScoreExplorationEpsilon` | 0.05 | ε-greedy probability of launching a random secondary when the score-based path is ambivalent |
+| `HostScoreExplorationEpsilon` | 0.02 | ε-greedy probability of launching a random secondary when the score-based path is ambivalent |
 | `RedundancySpeedPolicy` | `host_score` | which decision maker `Decide()` selects (see When this is consulted) |
 
 ## Per-bucket calibration
 
-`HostScoreEloK` and `HostScoreEloHalfLife` are the only two hyperparameters
-that should differ across input-size buckets, because the buckets have
-very different sample density and traffic shape. The same K that gives a
-tight, fast-converging rating in `lt_1k` (hundreds of samples per host
-per hour) overshoots in `gte_100k` (handfuls per day) — and vice versa.
+`HostScoreEloHalfLife` benefits from per-bucket tuning: high-traffic
+buckets receive many fresh samples per hour and can afford to forget
+older ratings quickly, while sparse buckets need a longer half-life to
+keep any signal at all.
 
 The mechanism is one map declared at the top of [`host_scores.go`](../cmd/devshardctl/host_scores.go):
 
 ```go
 HostScoreBucketOverrides = map[string]HostScoreBucketOverride{
-    "lt_1k":    {HalfLife: 3 * time.Hour},
-    "1k_5k":    {HalfLife: 3 * time.Hour},
-    "5k_15k":   {HalfLife: 6 * time.Hour},
-    "15k_30k":  {HalfLife: 6 * time.Hour},
-    "30k_100k": {HalfLife: 9 * time.Hour},
-    "gte_100k": {HalfLife: 12 * time.Hour},
+    "lt_1k": {HalfLife: 6 * time.Hour},
+    "1k_5k": {HalfLife: 6 * time.Hour},
+    // Other buckets inherit HostScoreEloHalfLife (12h).
 }
 ```
 
-Fields on `HostScoreBucketOverride`:
-
-| Field | Meaning |
-|---|---|
-| `K` | overrides `HostScoreEloK` for this bucket. `0` inherits global. |
-| `HalfLife` | overrides `HostScoreEloHalfLife`. **Negative inherits global**; `0` explicitly disables decay for this bucket. |
-
-Read paths use `hostScoreKForBucket(bucket)` and
-`hostScoreHalfLifeForBucket(bucket)` rather than the global constants
-directly.
+`HostScoreBucketOverride` has one field, `HalfLife`. Negative inherits
+the global `HostScoreEloHalfLife`; zero explicitly disables decay for
+that bucket. Read path is `hostScoreHalfLifeForBucket(bucket)`.
 
 ### Why these values
 
 Rating-system literature (FIDE Handbook §B.02.10.6, Glickman 1995 on
-adaptive ratings) consistently recommends scaling decay/learning rates
-with *sample reliability*: faster decay when ratings refresh often
-(dense bucket); slower decay when re-sampling is rare (sparse bucket).
-The committed defaults match observed traffic density per bucket:
+adaptive ratings) consistently recommends faster decay where ratings
+refresh often. The two committed overrides target precisely the
+high-traffic buckets where 12 h would be unnecessarily slow:
 
 | Bucket | HalfLife | Rationale |
 |---|---:|---|
-| `lt_1k` | 3 h | high traffic (hundreds/host/hour) — fast adaptation |
-| `1k_5k` | 3 h | high traffic — same |
-| `5k_15k` | 6 h | medium traffic |
-| `15k_30k` | 6 h | medium traffic |
-| `30k_100k` | 9 h | low traffic (tens/host/day) — preserve signal across gaps |
-| `gte_100k` | 12 h | very low traffic (single-digits/day) — matches the legacy global default |
+| `lt_1k` | 6 h | high traffic (hundreds/host/hour) — afford faster adaptation |
+| `1k_5k` | 6 h | high traffic — same |
+| `5k_15k` and above | 12 h (inherit) | replay-loop data did not justify compressing further |
 
-`K` is left to inherit the global default (16) until per-bucket
-calibration of K has been measured against a replay loop. Operators
-adjusting these values should re-run the cache-busted c=10 ×5-iter
-replay loop and compare bucket-level pick% / latency distributions
-against the merged baseline in the host_score rollout PR.
+K-factor is not per-bucket — `HostScoreEloK = 16` is global. If
+calibrating K per bucket ever becomes worthwhile, the `HostScoreBucketOverride`
+struct can be extended; the corresponding helper would follow the same
+pattern as `hostScoreHalfLifeForBucket`.
 
 ## Decision: when host scoring launches a secondary
 
@@ -444,34 +460,31 @@ anyway, tagged `reason="host_scores_exploration"`.
 | Setting | Behavior |
 |---|---|
 | ε = 0 | exploration disabled; pure score-based routing |
-| ε = 0.05 (default) | ≈ 1 in 20 ambivalent decisions becomes a forced race; Elo evolves |
+| ε = 0.02 (default) | ≈ 1 in 50 ambivalent decisions becomes a forced race; Elo evolves |
 | ε = 1.0 | always race when score is ambivalent (useful for tests) |
 
-The cost is one extra inference per 20 ambivalent decisions. The benefit
+The cost is one extra inference per 50 ambivalent decisions. The benefit
 is that recently-improved hosts get races, win them, and climb out of low
 Elo within hours instead of days.
 
 ### Putting both together
 
-A host that was slow for 10 days, then becomes fastest:
-
-Timing below is illustrative against the **legacy 12 h** half-life;
-substitute the bucket's actual half-life for real numbers (e.g. 3 h for
-`lt_1k`, in which case "Hours 12+" really means "Hours 3+", and full
-recovery compresses by roughly 4×):
+A host that was slow for 10 days, then becomes fastest. Timing below
+uses the **global 12 h** half-life; for `lt_1k`/`1k_5k` (6 h override)
+the same milestones land at roughly half the elapsed time.
 
 1. **Hour 0** of regime change: Elo ≈ 1200, ring full of slow samples.
    Decay hasn't kicked in (last race was minutes ago).
-2. **Hours 0–HL**: ε-greedy occasionally routes to it. Each win is a
+2. **Hours 0–12**: ε-greedy occasionally routes to it. Each win is a
    real K-update on its decayed (still 1200-ish) Elo: `K · (1 − E)`
    where `E ≈ 0.15` → ≈ +13.6 per win. Slow but steady climb.
-3. **Hours HL+ without traffic** (between rare ε-greedy races): decay
-   half-life kicks in. After 2× HL of low traffic, the 300-point gap
-   has halved to 150. Now ε-greedy wins yield larger Elo updates
+3. **Hours 12+ without traffic** (between rare ε-greedy races): decay
+   half-life kicks in. After 24 hours of low traffic, the 300-point
+   gap has halved to 150. Now ε-greedy wins yield larger Elo updates
    (`E ≈ 0.30` → +11.2 per win, but starting from 1350 instead of 1200).
-4. **Within 2–6× HL**: enough wins accumulated for the ring to refresh
-   too, and the host promotes back to score-based routing without
-   ε-greedy help.
+4. **Within 1–3 days**: enough wins accumulated for the ring to
+   refresh too, and the host promotes back to score-based routing
+   without ε-greedy help.
 
 Decay alone protects against complete exile; ε-greedy alone keeps races
 flowing; both together compress recovery from days to hours.
@@ -494,8 +507,8 @@ flowing; both together compress recovery from days to hours.
       "total_p50_ms": 8203, "total_p90_ms": 14500,
       "elo": 1628.4,
       "ucb_bonus_ms": 117.6,
-      "score_stream": 5921.2,
-      "score_non_stream": 7967.8
+      "score_stream": 5347.2,
+      "score_non_stream": 7393.8
     }, ...
   ],
   "generated_at": "2026-05-24T...",
@@ -517,6 +530,127 @@ What to look at on a live node:
   when TTFT and Total differ greatly. If they're identical → γ is doing
   nothing on this workload (legitimate; just means TTFT and Total are
   proportional).
+## Performance quarantine
+
+Layers 2.1–2.3 demote slow hosts in the *secondary-selection* path: a
+candidate with bad scoring never wins the speedup race. They do nothing
+to stop a slow host from being assigned the **primary** attempt — the
+session picker is nonce-driven and policy-agnostic, so a host with
+p50 TTFT = 70 s still takes its turn at primary slots. To stop
+persistently slow hosts from soaking primary nonces, the host_score
+policy adds a fifth quarantine channel alongside the existing four
+(HTTP 429/503, transport failure, empty stream, stalled winner).
+
+### Algorithm
+
+For every observed responsive TTFT sample, the limiter performs:
+
+1. **Update per-host ring.** Each (host, bucket) keeps a rolling window
+   of the last `hostScoreSampleRingCapacity` (= 20) TTFTs. The new
+   sample is appended.
+
+2. **Compute bucket threshold (excluding self).** The threshold is the
+   p90 of all TTFTs from *other* qualifying hosts in the bucket — every
+   host except the one being evaluated, restricted to those with at
+   least `HostScoreQuarantineMinSamplesPerHost` (= 3) samples in their
+   ring. The bucket must have at least
+   `HostScoreQuarantineMinQualifyingHosts` (= 3) such hosts. Otherwise
+   no threshold is defined and the sample is ignored. Excluding the
+   candidate's own samples prevents a slow host's bad samples from
+   raising the threshold against which the same host is judged
+   (self-pollution).
+
+3. **Sliding-window strike.** Each (host, bucket) keeps a ring of the
+   last `hostScoreSlidingWindow` (= 5) outcomes (bad/good). The new
+   sample is recorded as `bad` iff `TTFT > threshold`. When the
+   window holds at least `hostScoreBadInWindow` (= 3) bad outcomes,
+   the host enters quarantine *in this bucket*. The window is cleared
+   on entry so a fresh accumulation can start after release.
+
+4. **Exponential backoff.** Each bucket also remembers its recent
+   quarantine entry timestamps within the last
+   `hostScoreQuarantineHistoryWindow` (= 4 h). The duration of the new
+   quarantine is `hostScoreQuarantineBaseDuration · 2^(recent_count)`,
+   capped at `hostScoreQuarantineMaxDuration`. With the defaults: 1st
+   strike → 30 min, 2nd within 4 h → 60 min, 3rd → 120 min (cap).
+   After 4 h with no entry, the count resets to zero.
+
+5. **Picker integration.** `ParticipantRequestLimiter.IsRecentlyQuarantined`
+   returns true if **any** bucket holds an active Layer 3 quarantine
+   for the host. The picker treats this identically to the four other
+   quarantine channels — host is removed from both primary picker
+   rotation and secondary candidate scans.
+
+### Why sliding window, not consecutive strikes
+
+Bimodal hosts ("90% fast, 10% catastrophic") emit pattern
+`slow, slow, fast, slow, ...` — a consecutive-strike counter resets on
+every fast sample and never reaches 3-in-a-row despite 60%+ bad rate.
+The sliding "≥3 of last 5" counter captures these without false
+positives on hosts with single transient slow bursts.
+
+### Why exclude self from threshold
+
+When a slow host adds enough slow samples to the bucket pool, those
+samples shift the pool's own p90 toward "slow". The bad host stops
+crossing its own threshold and escapes detection. Excluding the
+evaluated host's own samples from the threshold pool makes the test
+"this host vs. the rest of the cohort" rather than "this host vs.
+a cohort that includes itself".
+
+### Policy gate
+
+The whole channel is **gated on `RedundancySpeedPolicy ==
+"host_score"`**. Under any other policy the limiter's
+`RecordHostScoreSample` and `isQuarantined` early-return without
+acquiring locks or mutating state. The gate is checked on every call,
+so flipping the runtime policy instantly disarms the channel without
+needing a separate feature flag.
+
+### Validation (replay-loop, 1,580 minutes, 12 hosts, 6 buckets)
+
+| Metric | Value |
+|---|---:|
+| Truly bad responsive (host, bucket) pairs | 23 |
+| True positives | 20 |
+| False positives | 7 (all borderline 7–20 % bad rate) |
+| Precision | 74 % |
+| Recall | 87 % |
+| Bimodal hosts caught (vs consecutive strike variant) | yes |
+
+All FPs sit between 7 % and 20 % bad rate — i.e. just below the 20 %
+threshold used to define "truly bad" in the ground truth. Tightening
+the analytical threshold to 15 % moves every FP into TP and yields
+near-100 % precision.
+
+### Hyperparameters
+
+| Var | Default | Meaning |
+|---|---:|---|
+| `HostScoreQuarantineMinSamplesPerHost` | 3 | each host needs ≥ this many TTFTs to enter the threshold pool |
+| `HostScoreQuarantineMinQualifyingHosts` | 3 | bucket needs ≥ this many qualifying hosts before any threshold is defined |
+| `hostScoreSampleRingCapacity` | 20 | per-(host, bucket) recent-TTFT ring |
+| `hostScoreSlidingWindow` | 5 | bad/good outcome window per (host, bucket) |
+| `hostScoreBadInWindow` | 3 | ≥ this many bad outcomes in window → quarantine |
+| `hostScoreQuarantineBaseDuration` | 30 min | first quarantine duration |
+| `hostScoreQuarantineMaxDuration` | 120 min | cap for exponential backoff |
+| `hostScoreQuarantineHistoryWindow` | 4 h | sliding window over which recent quarantines accumulate backoff |
+
+### Known limitations (v1)
+
+- **No persistence.** Layer 3 state lives only in memory; a gateway
+  restart releases every active quarantine. The other quarantine
+  channels persist via `ParticipantThrottleStore`. Adding persistence
+  for Layer 3 is a planned follow-up.
+- **No metrics counter.** `log.Printf` lines tag entries (`host_score_quarantine_entered`)
+  and expirations (`host_score_quarantine_expired`) but there is no
+  Prometheus counter yet. Operators can grep logs for now.
+- **isQuarantined is host-level.** Internal state is per (host,
+  bucket), but the public check `IsRecentlyQuarantined(host)` returns
+  true if *any* bucket is active. The picker has no bucket context at
+  nonce-binding time, so a host bad in `lt_1k` is removed from
+  primary rotation for `gte_100k` traffic too. Plumbing bucket through
+  the picker is a separate, larger refactor.
 
 ## Persistence and restart
 

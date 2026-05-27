@@ -261,6 +261,15 @@ type PerfTracker struct {
 	pairwise          *PairwiseTracker
 	hostScores        *HostScoreTracker
 	store             *PerfStore
+	limiter           *ParticipantRequestLimiter // optional; receives Layer 3 quarantine samples
+}
+
+// SetParticipantLimiter wires the limiter so RecordRequest forwards per-sample
+// TTFTs to the Layer 3 host_score performance quarantine.
+func (t *PerfTracker) SetParticipantLimiter(l *ParticipantRequestLimiter) {
+	t.mu.Lock()
+	t.limiter = l
+	t.mu.Unlock()
 }
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
@@ -469,12 +478,19 @@ func (t *PerfTracker) RecordRequest(rec RequestRecord) {
 	t.mu.Lock()
 	t.requests.add(rec)
 	t.recordFirstTokenSampleLocked(rec)
+	limiter := t.limiter
 	t.mu.Unlock()
 	if t.pairwise != nil {
 		t.pairwise.RecordRequest(rec)
 	}
 	if t.hostScores != nil {
 		t.hostScores.RecordRequest(rec)
+	}
+	if limiter != nil {
+		bucket := requestShapeBucket(rec.InputTokens)
+		for _, h := range rec.Hosts {
+			limiter.RecordHostScoreSample(h.ParticipantKey, bucket, h.FirstTokenMs, h.Responsive)
+		}
 	}
 
 	if t.store != nil {

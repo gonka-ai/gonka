@@ -119,6 +119,7 @@ type ParticipantRequestLimiter struct {
 	participants                   map[string]*participantRequestState
 	metrics                        *DevshardMetrics
 	store                          ParticipantThrottleStore
+	hostScoreQuar                  *hostScoreQuarantine // Layer 3 performance quarantine
 }
 
 type participantRequestState struct {
@@ -153,7 +154,15 @@ func NewParticipantRequestLimiter(burst int, recoveryPerMinute int) *Participant
 		settings.RecoveryPerMinute = recoveryPerMinute
 	}
 	l := &ParticipantRequestLimiter{
-		participants: make(map[string]*participantRequestState),
+		participants:  make(map[string]*participantRequestState),
+		hostScoreQuar: newHostScoreQuarantine(),
+	}
+	l.hostScoreQuar.onEnter = func(host, bucket string, until time.Time) {
+		log.Printf("host_score_quarantine_entered participant_key=%s bucket=%s until=%s",
+			host, bucket, until.UTC().Format(time.RFC3339))
+	}
+	l.hostScoreQuar.onExpire = func(host, bucket string) {
+		log.Printf("host_score_quarantine_expired participant_key=%s bucket=%s", host, bucket)
 	}
 	l.applySettingsLocked(settings)
 	return l
@@ -561,19 +570,29 @@ func (l *ParticipantRequestLimiter) ObserveSuccessfulInference(participantKey st
 	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
 }
 
+// RecordHostScoreSample forwards one TTFT into Layer 3 (host-scoring.md#performance-quarantine).
+func (l *ParticipantRequestLimiter) RecordHostScoreSample(host, bucket string, ttftMs float64, responsive bool) {
+	l.hostScoreQuar.recordSample(host, bucket, ttftMs, responsive)
+}
+
 // ClearQuarantine removes quarantine and resets the token bucket for the
-// given participant, making it immediately available for requests while
-// keeping it on the same post-quarantine probation path as natural expiry.
-// Returns true if the participant had state to clear.
+// given participant across every channel — HTTP, transport, empty stream,
+// stalled winner, and the Layer 3 host_score performance quarantine.
+// Returns true if any channel had state to clear.
 func (l *ParticipantRequestLimiter) ClearQuarantine(participantKey string) bool {
 	if participantKey == "" {
 		return false
 	}
+	clearedL3 := l.hostScoreQuar.clearAll(participantKey)
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	state, ok := l.participants[participantKey]
 	if !ok {
-		return false
+		if clearedL3 {
+			log.Printf("participant_quarantine_cleared participant_key=%s channel=host_score", participantKey)
+		}
+		return clearedL3
 	}
 	now := time.Now()
 	state.tokens = l.burst
@@ -815,6 +834,9 @@ func (l *ParticipantRequestLimiter) TrackedCount() int {
 func (l *ParticipantRequestLimiter) IsRecentlyQuarantined(participantKey string) bool {
 	if participantKey == "" {
 		return false
+	}
+	if l.hostScoreQuar.isQuarantined(participantKey) {
+		return true
 	}
 	now := time.Now()
 	l.mu.Lock()
