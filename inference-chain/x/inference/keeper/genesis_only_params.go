@@ -40,7 +40,7 @@ func (k Keeper) GetGenesisGuardianMultiplier(ctx context.Context) *types.Decimal
 	params, found := k.GetGenesisOnlyParams(ctx)
 	if !found {
 		// Return default value if not found
-		return types.DecimalFromFloat(0.52)
+		return types.DecimalFromFloat(0.33334)
 	}
 	return params.GenesisGuardianMultiplier
 }

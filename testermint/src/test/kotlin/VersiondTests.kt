@@ -194,6 +194,7 @@ class VersiondTests : TestermintTest() {
             maxEscrowsPerEpoch = 100,
             groupSize = 16,
             tokenPrice = 1,
+            maxNonce = 20_000,
         )
         return this.copy(
             devshardEscrowParams = escrow.copy(approvedVersions = versions)

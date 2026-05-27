@@ -46,7 +46,7 @@ func (k msgServer) RegisterLiquidityPool(goCtx context.Context, msg *types.MsgRe
 	}
 
 	// Get WASM keeper for contract instantiation
-	wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.getWasmKeeper())
+	wasmKeeper := wasmkeeper.NewDefaultPermissionKeeper(k.GetWasmKeeper())
 
 	authorityAddr, err := sdk.AccAddressFromBech32(msg.Authority)
 	if err != nil {

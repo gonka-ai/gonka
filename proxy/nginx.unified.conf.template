@@ -173,6 +173,7 @@ http {
 
         # Generic API routes
         location /api/ {
+            set $$limit_zone_name "GNKAPI";
             ${LIMIT_REQ_RULE_GONKA_API}
             ${LIMIT_CONN_RULE_GONKA_API}
             ${API_STATUS}
@@ -194,6 +195,7 @@ http {
 
         # Chain RPC endpoint
         location /chain-rpc/ {
+            set $$limit_zone_name "CHAINRPC";
             mirror /__rpc_method_log;
             mirror_request_body on;
             ${LIMIT_REQ_RULE_CHAIN_RPC}
@@ -230,6 +232,7 @@ http {
 
         # Chain API endpoint (REST API)
         location /chain-api/ {
+            set $$limit_zone_name "CHAINAPI";
             ${LIMIT_REQ_RULE_CHAIN_API}
             ${LIMIT_CONN_RULE_CHAIN_API}
             ${CHAIN_API_STATUS}
@@ -250,6 +253,7 @@ http {
 
         # Chain gRPC endpoint (if needed)
         location /chain-grpc/ {
+            set $$limit_zone_name "CHAINGRPC";
             ${LIMIT_REQ_RULE_CHAIN_GRPC}
             ${LIMIT_CONN_RULE_CHAIN_GRPC}
             ${CHAIN_GRPC_STATUS}
