@@ -887,7 +887,7 @@ func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 		require.NoError(t, destPerf.Close())
 	})
 
-	storagePath := filepath.Join(t.TempDir(), "escrow-44", "state.db")
+	storagePath := filepath.Join(t.TempDir(), "escrow-44")
 	previousBuilder := gatewayRuntimeBuilder
 	t.Cleanup(func() {
 		gatewayRuntimeBuilder = previousBuilder
@@ -2092,8 +2092,20 @@ func TestFinalizeRuntimeConfigsUsesPerEscrowStorageDirectories(t *testing.T) {
 	}}, "Qwen/Test", baseDir)
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
-	require.Equal(t, filepath.Join(baseDir, "escrow-12", "state.db"), runtimes[0].StoragePath)
+	require.Equal(t, filepath.Join(baseDir, "escrow-12"), runtimes[0].StoragePath)
 	require.Equal(t, "Qwen/Test", runtimes[0].Model)
+}
+
+func TestFinalizeRuntimeConfigsNormalizesLegacyStateDBPath(t *testing.T) {
+	baseDir := "/tmp/devshardctl"
+	legacyPath := filepath.Join(baseDir, "escrow-12", "state.db")
+	runtimes, err := finalizeRuntimeConfigs([]RuntimeConfig{{
+		ID:          "12",
+		StoragePath: legacyPath,
+	}}, "Qwen/Test", baseDir)
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	require.Equal(t, filepath.Dir(legacyPath), runtimes[0].StoragePath)
 }
 
 func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {

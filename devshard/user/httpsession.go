@@ -18,7 +18,7 @@ type HTTPSessionConfig struct {
 	PrivateKeyHex    string
 	EscrowID         string
 	Bridge           bridge.MainnetBridge
-	StoragePath      string                          // optional: path to SQLite DB for session persistence
+	StoragePath      string                          // optional: directory for SQLite session persistence
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
 	RequestAdmission transport.RequestAdmissionController

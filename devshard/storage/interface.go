@@ -52,9 +52,6 @@ type Storage interface {
 	Close() error
 }
 
-// ErrSnapshotNotFound is returned when no snapshot exists for a session.
-var ErrSnapshotNotFound = errors.New("snapshot not found")
-
 // CreateSessionParams holds all parameters for creating a new session.
 type CreateSessionParams struct {
 	EscrowID       string
