@@ -135,7 +135,12 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			result.Succeeded = false
 			result.Error = "No epoch models available for this node"
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+			// Info, not Error: this state is normal when the participant
+			// has not yet joined the active set for the current epoch.
+			// A genuine misconfiguration shows up downstream as a
+			// FAILED node status; logging at Error here only spams
+			// healthy onboarding flows.
+			logging.Info(result.Error+" (participant may not be active in current epoch)", types.Nodes, "node_id", worker.nodeId)
 			return result
 		}
 

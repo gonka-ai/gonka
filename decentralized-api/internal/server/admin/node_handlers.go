@@ -3,6 +3,7 @@ package admin
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/logging"
 	"fmt"
 	"net/http"
@@ -11,13 +12,98 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// NodeWithOnboarding is the admin GET /nodes response item. It wraps
+// the broker's view of a node with onboarding UX fields that are
+// derived at the handler layer (not stored on broker state).
+type NodeWithOnboarding struct {
+	broker.NodeResponse
+	Onboarding *OnboardingStatus `json:"onboarding,omitempty"`
+}
+
+// OnboardingStatus aggregates everything the admin UI needs to show
+// human-friendly setup state without inspecting raw broker internals.
+type OnboardingStatus struct {
+	ParticipantState string                `json:"participant_state"`
+	MLNodeState      MLNodeOnboardingState `json:"mlnode_state"`
+	Timing           *TimingInfo           `json:"timing,omitempty"`
+	UserMessage      string                `json:"user_message,omitempty"`
+	Guidance         string                `json:"guidance,omitempty"`
+}
+
 func (s *Server) getNodes(ctx echo.Context) error {
 	nodes, err := s.nodeBroker.GetNodes()
 	if err != nil {
 		logging.Error("Error getting nodes", types.Nodes, "error", err)
 		return err
 	}
-	return ctx.JSON(http.StatusOK, nodes)
+
+	enriched := make([]NodeWithOnboarding, len(nodes))
+	for i, n := range nodes {
+		enriched[i] = NodeWithOnboarding{
+			NodeResponse: n,
+			Onboarding:   s.computeOnboarding(n),
+		}
+	}
+	return ctx.JSON(http.StatusOK, enriched)
+}
+
+// computeOnboarding derives onboarding UX fields for one node from
+// the broker's NodeResponse + cached participant activity + the
+// chain phase tracker. It performs no chain RPC calls and does not
+// mutate broker state. Returns nil if neither timing nor activity
+// is known yet (e.g. chain not yet synced and tracker not started).
+func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
+	var epochState *chainphase.EpochState
+	if s.phaseTracker != nil {
+		epochState = s.phaseTracker.GetCurrentEpochState()
+	}
+	timing := ComputeTiming(epochState)
+	if timing == nil && s.activityTracker == nil {
+		return nil
+	}
+
+	active := false
+	if s.activityTracker != nil {
+		active = s.activityTracker.IsActive()
+	}
+	// EpochMLNodes already-populated also implies activity for this
+	// participant in the current epoch; treat as a secondary signal.
+	if !active && len(n.State.EpochMLNodes) > 0 {
+		active = true
+	}
+
+	participantState := DeriveParticipantState(active)
+
+	var seconds int64
+	if timing != nil {
+		seconds = timing.SecondsUntilNextPoC
+	}
+
+	testFailed := n.State.FailureReason != "" &&
+		n.State.CurrentStatus == types.HardwareNodeStatus_FAILED
+	mlState, _ := DeriveMLNodeState(OnboardingStateInputs{
+		ParticipantActive:   active,
+		IsTesting:           false,
+		TestFailed:          testFailed,
+		SecondsUntilNextPoC: seconds,
+	})
+
+	var userMsg, guidance string
+	if active {
+		userMsg = BuildMLNodeMessage(mlState, seconds, "")
+		guidance = BuildParticipantMessage(participantState)
+	} else {
+		userMsg = BuildParticipantMessage(participantState)
+		guidance = BuildInactiveGuidance(seconds)
+	}
+
+	return &OnboardingStatus{
+		ParticipantState: string(participantState),
+		MLNodeState:      mlState,
+		Timing:           timing,
+		UserMessage:      userMsg,
+		Guidance:         guidance,
+	}
 }
 
 func (s *Server) deleteNode(ctx echo.Context) error {

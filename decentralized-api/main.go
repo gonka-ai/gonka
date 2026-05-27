@@ -103,6 +103,11 @@ func main() {
 		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
+	// Background tracker for "is this participant in the current
+	// active set?" — admin handlers read its cached answer so they
+	// don't trigger N+1 chain RPCs per request. Started below once
+	// the cancellable context is available.
+	activityTracker := participant.NewActivityTracker(recorder, participantInfo.GetAddress(), 30*time.Second)
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, configManager.GetChainNodeConfig().Url)
 	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{}, configManager)
 
@@ -149,6 +154,10 @@ func main() {
 
 	// Start periodic config auto-flush of dynamic data to DB
 	configManager.StartAutoFlush(ctx, 60*time.Second)
+
+	// Start the participant activity tracker so admin handlers can
+	// answer "is this participant active?" without a per-request RPC.
+	activityTracker.Start(ctx)
 
 	// Optional off-chain inference stats storage (PostgreSQL-backed when PGHOST is configured).
 	statsStore, err := statsstorage.NewStatsStorage(ctx)
@@ -260,7 +269,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, chainPhaseTracker, activityTracker)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
