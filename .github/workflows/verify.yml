@@ -9,6 +9,19 @@ on:
       - main
 
 jobs:
+  check-storage-ddl:
+    runs-on: ubuntu-latest
+    name: Storage schema DDL guard
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Check storage DDL placement
+        run: bash scripts/check-storage-ddl.sh
+
   build-and-test:
     runs-on: ubuntu-latest
     name: Build and Test chain
