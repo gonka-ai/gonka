@@ -870,13 +870,8 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
-	// classifyPartial holds bytes after the last '\n' from prior Write calls.
-	// SSE classifiers (sseChunkContentSource/ErrorDetails/UsageCompletionTokens)
-	// require complete data:-prefixed lines in a single call to parse; when
-	// transport delivers SSE events fragmented across Writes (TLS small frames,
-	// proxy flush mid-event, slow connections), naive per-Write classification
-	// silently misses content. This buffer reassembles events for classification
-	// only — forwarding to the client still uses raw Write bytes unchanged.
+	// classifyPartial keeps the tail after the last '\n' from prior Writes;
+	// used to reassemble fragmented SSE events for the classifier.
 	classifyPartial []byte
 
 	// contentSource labels the field that produced the first content event
@@ -1248,47 +1243,79 @@ type raceWriter struct {
 	inf   *inflight
 }
 
-// maxClassifyPartial caps the SSE-reassembly buffer to defend against
-// malformed transports that stream indefinitely without newlines. If we
-// hit this cap the accumulated partial is dropped and classification falls
-// back to processing only the current Write.
-const maxClassifyPartial = 256 * 1024
+const (
+	// maxClassifyPartial is the per-attempt soft cap; any plausible single SSE
+	// event is orders of magnitude smaller.
+	maxClassifyPartial = 1 << 20 // 1 MiB
+	// maxClassifyPartialGlobal is the hard cap across all live attempts.
+	maxClassifyPartialGlobal int64 = 100 << 20 // 100 MiB
+)
 
-// takeParseable returns the prefix of (buffered partial + p) ending on '\n',
-// safe to feed to the SSE classifier. Trailing bytes after the last '\n'
-// are stashed in inf.classifyPartial for the next Write. Returns nil when
-// no '\n' has been seen yet.
-//
-// Invariant: classifyPartial never contains '\n' — by construction it is
-// the tail kept after the last '\n' on a prior call. So new '\n's can only
-// appear inside p, and we only need to scan p (not the combined buffer).
+// classifyPartialBytes is the live total of every inflight's classifyPartial.
+var classifyPartialBytes atomic.Int64
+
+// takeParseable returns the prefix of (classifyPartial + p) ending at the last
+// '\n'; the trailing fragment is stashed for the next call.
 func (rw *raceWriter) takeParseable(p []byte) []byte {
-	lastNLinP := bytes.LastIndexByte(p, '\n')
-
-	if lastNLinP == -1 {
-		// No newline in p — buffer it, unless adding p would exceed the cap.
-		if len(rw.inf.classifyPartial)+len(p) > maxClassifyPartial {
-			rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
-			return nil
+	lastNL := bytes.LastIndexByte(p, '\n')
+	if lastNL == -1 {
+		if !rw.growClassify(p) {
+			rw.dropClassify()
 		}
-		rw.inf.classifyPartial = append(rw.inf.classifyPartial, p...)
 		return nil
 	}
 
-	// p has '\n'. Build parseable = classifyPartial + p[:lastNLinP+1].
 	var parseable []byte
 	if len(rw.inf.classifyPartial) == 0 {
-		parseable = p[:lastNLinP+1]
+		parseable = p[:lastNL+1]
 	} else {
-		buf := make([]byte, 0, len(rw.inf.classifyPartial)+lastNLinP+1)
+		buf := make([]byte, 0, len(rw.inf.classifyPartial)+lastNL+1)
 		buf = append(buf, rw.inf.classifyPartial...)
-		buf = append(buf, p[:lastNLinP+1]...)
+		buf = append(buf, p[:lastNL+1]...)
 		parseable = buf
 	}
-
-	// Stash the trailing fragment. Empty trailing → append is a no-op.
-	rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], p[lastNLinP+1:]...)
+	if !rw.replaceClassify(p[lastNL+1:]) {
+		rw.dropClassify()
+	}
 	return parseable
+}
+
+// growClassify appends tail to classifyPartial if both caps still fit.
+func (rw *raceWriter) growClassify(tail []byte) bool {
+	if len(rw.inf.classifyPartial)+len(tail) > maxClassifyPartial {
+		return false
+	}
+	if classifyPartialBytes.Add(int64(len(tail))) > maxClassifyPartialGlobal {
+		classifyPartialBytes.Add(-int64(len(tail)))
+		return false
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial, tail...)
+	return true
+}
+
+// replaceClassify swaps classifyPartial for buf, adjusting global accounting.
+func (rw *raceWriter) replaceClassify(buf []byte) bool {
+	if len(buf) > maxClassifyPartial {
+		return false
+	}
+	delta := int64(len(buf) - len(rw.inf.classifyPartial))
+	if delta > 0 && classifyPartialBytes.Add(delta) > maxClassifyPartialGlobal {
+		classifyPartialBytes.Add(-delta)
+		return false
+	}
+	if delta < 0 {
+		classifyPartialBytes.Add(delta)
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], buf...)
+	return true
+}
+
+// dropClassify zeroes the per-attempt buffer and releases its bytes globally.
+func (rw *raceWriter) dropClassify() {
+	if n := len(rw.inf.classifyPartial); n > 0 {
+		classifyPartialBytes.Add(-int64(n))
+	}
+	rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
 }
 
 func (rw *raceWriter) ctxErr() error {
@@ -1319,7 +1346,6 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
-		// Reassemble across Writes: SSE events are only parseable when whole.
 		parseable := rw.takeParseable(p)
 		if len(parseable) > 0 {
 			if src, ok := sseChunkContentSource(parseable); ok {
@@ -2484,6 +2510,12 @@ func (e *Redundancy) escalationDelay(stage string, params user.InferenceParams) 
 }
 
 func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *raceGroup) {
+	defer func() {
+		if n := len(inf.classifyPartial); n > 0 {
+			classifyPartialBytes.Add(-int64(n))
+			inf.classifyPartial = nil
+		}
+	}()
 	ticker := time.NewTicker(LogHeartbeatInterval)
 	defer ticker.Stop()
 

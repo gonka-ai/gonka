@@ -9,11 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Embedded SSE responses that mirror vLLM's chat.completion.chunk shape.
-// Trimmed of logprobs/token-id noise — the classifier only inspects
-// choices[].delta.{content,reasoning,reasoning_content,tool_calls} and
-// the message.* variants, so we keep just those fields.
-
+// Minimal vLLM-shaped SSE fixtures for raceWriter classification tests.
 const sseContentStream = "" +
 	`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}` + "\n\n" +
 	`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n" +
@@ -38,9 +34,6 @@ var sseEmbeddedFixtures = []struct {
 	{"delta.tool_calls", sseToolCallsStream, "delta.tool_calls"},
 }
 
-// TestSseBlobClassifierNotEmpty feeds the whole body to sseChunkContentSource
-// as a single blob — the simplest sanity check that fixtures match real
-// vLLM shape and that the classifier labels the expected source.
 func TestSseBlobClassifierNotEmpty(t *testing.T) {
 	for _, fx := range sseEmbeddedFixtures {
 		t.Run(fx.name, func(t *testing.T) {
@@ -51,11 +44,7 @@ func TestSseBlobClassifierNotEmpty(t *testing.T) {
 	}
 }
 
-// TestSseRaceWriterAllChunkSizes is the regression test for the
-// SSE-reassembly fix. Without buffering across Writes, small chunk sizes
-// (sub-event) cause the classifier to miss content entirely. With the
-// takeParseable buffering in raceWriter, every chunk size from 1 byte
-// upward must classify correctly.
+// Regression: classifier must work for any chunk size, including sub-event.
 func TestSseRaceWriterAllChunkSizes(t *testing.T) {
 	chunkSizes := []int{1, 64, 256, 1024, 4096, 8192}
 	for _, fx := range sseEmbeddedFixtures {
@@ -81,8 +70,18 @@ func TestSseRaceWriterAllChunkSizes(t *testing.T) {
 	}
 }
 
-// TestSseRaceWriterRandomChunking covers the realistic transport shape
-// where chunk boundaries are arbitrary (TLS frames, proxy flushes).
+// Per-attempt cap: oversized newline-less stream is dropped, global counter balanced.
+func TestSseRaceWriterClassifyCapDrops(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	_, err := rw.Write(bytes.Repeat([]byte("x"), maxClassifyPartial+1))
+	require.NoError(t, err)
+	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
+// Realistic transport shape: arbitrary chunk boundaries from TLS/proxy flushes.
 func TestSseRaceWriterRandomChunking(t *testing.T) {
 	rng := pseudoRandSeed(42)
 	for _, fx := range sseEmbeddedFixtures {
@@ -108,8 +107,7 @@ func TestSseRaceWriterRandomChunking(t *testing.T) {
 	}
 }
 
-// pseudoRandSeed is a deterministic xorshift32 — keeps fuzz coverage
-// reproducible across runs without seed-state coupling.
+// pseudoRandSeed is a deterministic xorshift32.
 func pseudoRandSeed(seed int64) func() int {
 	state := uint32(seed)
 	if state == 0 {
