@@ -19,11 +19,14 @@ and the operational consequence.
 ```
 HostManager
   -> ManagedStorage
-       -> SQLite
-       -> HybridStorage when PGHOST is set
-            -> Postgres
-            -> SQLite fallback
+       -> HybridStorage (thin wrapper)
+            -> exactly one backend chosen at boot:
+                 SQLite  OR  Postgres
 ```
+
+`NewStorage` in `devshard/storage/factory.go` picks the backend once per process.
+See [Storage mode selection](#storage-mode-selection) and
+[storage-modes-plan.md](./storage-modes-plan.md).
 
 The storage interface lives in `devshard/storage/interface.go`. `CreateSession`
 is the only method that introduces an `EpochID`; all later calls use `escrow_id`
@@ -108,34 +111,28 @@ Consequence: SQLite startup is not fully lazy. It opens epoch files during
 reconciliation. With N=3 retention this is bounded by the intended operating
 window; if old files accumulate, startup work grows until pruning catches up.
 
-### Hybrid Routing Is Sticky
+### Storage Mode Selection
 
-Decision: When `PGHOST` is set, `HybridStorage` checks Postgres first when it is
-available, then SQLite. Once an escrow is found or created in one backend, every
-future session-keyed operation for that escrow uses the same backend.
+Decision: At boot, `NewStorage` selects **one** backend for the entire process.
+There is no per-request routing and no mid-run fallback between SQLite and
+Postgres.
 
-Why: Devshard state is mutable append-log state. Falling back for an existing
-Postgres-backed escrow would fork diffs, signatures, and finalized nonce.
+| Condition | Backend |
+| --- | --- |
+| `escrow_epoch` has rows in `_meta.db` | SQLite (drain transition if `PGHOST` set) |
+| `PGHOST` set and meta empty | Postgres (boot fails if PG unreachable) |
+| `PGHOST` unset | SQLite |
+| `.pg-bound` present, no `_meta.db`, `PGHOST` unset | Boot fails |
 
-Consequence:
+Postgres-mode boot writes `<storeDir>/.pg-bound`. While SQLite is draining,
+boot logs a WARN when `PGHOST` is set and `escrow_epoch` still has rows.
 
-- Existing Postgres-backed escrow + Postgres unavailable: fail the operation.
-- Existing SQLite-backed escrow + Postgres reconnects: continue using SQLite.
-- Same active escrow in both backends during startup scan: log a warning, keep
-  the SQLite-routed copy, and continue recovering other sessions.
+Why: Dual-backend hybrid routing lost the in-memory route table on reboot and
+could fork append logs when Postgres was briefly down.
 
-### SQLite Fallback Is Local-Only
-
-Decision: If Postgres is unreachable and a new escrow is created in SQLite, that
-escrow is local-only. It is not migrated or merged into Postgres later.
-
-Why: When Postgres cannot be checked, storage cannot prove the escrow is absent
-there. The fallback is an availability tradeoff for new sessions, not a
-replication scheme.
-
-Consequence: Operators must not assume SQLite fallback data will appear in
-Postgres after reconnect. The session remains SQLite-routed until it settles or
-is pruned.
+Consequence: Postgres outage after boot fails operations on that store; it does
+not silently create sessions in SQLite. SQLite → Postgres promotion happens when
+`escrow_epoch` empties after settle/prune and the process restarts.
 
 ### Managed Pruning Starts After Recovery
 
@@ -164,10 +161,8 @@ returns success.
 
 Why: A failed backend must remain retryable.
 
-Consequence: In hybrid mode, if Postgres is unavailable during prune, SQLite may
-delete local old files but the prune returns an error. The managed cursor does
-not advance. When Postgres reconnects, a later range prune drops all partitions
-older than the current cutoff.
+Consequence: A failed prune leaves `prunedUpTo` unchanged so a later
+`PruneOnce` can retry.
 
 ### Legacy Migration Is Resumable
 
@@ -310,15 +305,20 @@ single-file SQLite store:
   detection, and bounded retention.
 
 So SQLite is not the target for the largest sustained deployment, but it is no
-longer an unbounded local database. For local mode and Postgres outage fallback,
-it is more ready for high load than the main-branch implementation because data
-growth is bounded by retained epochs and pruning is file-level.
+longer an unbounded local database. For local development and draining legacy
+SQLite state during a Postgres transition, it remains supported. Data growth is
+bounded by retained epochs and pruning is file-level.
+
+Production deployments target Postgres-only mode (`PGHOST` set, empty
+`escrow_epoch`). SQLite is not used as a runtime fallback when Postgres goes
+down after boot.
 
 ## Operational Notes
 
 - Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
-- Hybrid retry knobs: `PG_RETRY_INTERVAL` default `240s`,
-  `PG_CONNECT_TIMEOUT` default `2s`.
+- Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Storage mode helpers and `.pg-bound`: `devshard/storage/storage_mode.go`.
+- Drain check: `HasSQLiteSessions(storeDir)` or presence of rows in `_meta.db` `escrow_epoch`.
 - Production retention is `retain=3`: current epoch plus two previous epochs.
 - No SQLite VACUUM is used for pruning.
 
@@ -336,6 +336,6 @@ growth is bounded by retained epochs and pruning is file-level.
 | Hybrid backend | `devshard/storage/hybrid.go` |
 | Managed pruning | `devshard/storage/managed.go` |
 | Legacy data copy | `devshard/storage/migrate.go` |
-| Factory | `devshard/storage/factory.go` |
+| Factory / mode selection | `devshard/storage/factory.go`, `storage_mode.go` |
 | dapi wiring | `decentralized-api/main.go` |
 | devshardd wiring | `decentralized-api/cmd/devshardd/main.go` |

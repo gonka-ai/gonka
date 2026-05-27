@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -21,9 +22,13 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 	if testing.Short() {
 		t.Skip("skipping postgres migration tests in -short mode (requires Docker)")
 	}
-	if os.Getenv("TEST_PG_DSN") == "" && os.Getenv("PGHOST") == "" {
-		// Spin up testcontainers when no external Postgres is configured.
-		ctx := context.Background()
+
+	ctx := context.Background()
+	dsn := os.Getenv("TEST_PG_DSN")
+	if dsn == "" {
+		// Always use an isolated container. Do not honor shell PGHOST/PGPORT —
+		// a developer's local devshard DB leaves schema_migrations rows that
+		// break these unit tests.
 		container, err := postgres.Run(ctx,
 			"postgres:18.1-bookworm",
 			postgres.WithDatabase("testdb"),
@@ -43,15 +48,10 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 		port, err := container.MappedPort(ctx, "5432")
 		require.NoError(t, err)
 
-		t.Setenv("PGHOST", host)
-		t.Setenv("PGPORT", port.Port())
-		t.Setenv("PGDATABASE", "testdb")
-		t.Setenv("PGUSER", "testuser")
-		t.Setenv("PGPASSWORD", "testpass")
+		dsn = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 	}
 
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, "")
+	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	require.NoError(t, pool.Ping(ctx))
 	t.Cleanup(pool.Close)
