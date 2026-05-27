@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
+	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"decentralized-api/payloadstorage"
 
@@ -38,6 +39,7 @@ type Server struct {
 	payloadStorage  payloadstorage.PayloadStorage
 	phaseTracker    *chainphase.ChainPhaseTracker
 	activityTracker *participant.ActivityTracker
+	tester          *MLNodeTester
 }
 
 func NewServer(
@@ -48,7 +50,8 @@ func NewServer(
 	blockQueue *pserver.BridgeQueue,
 	payloadStorage payloadstorage.PayloadStorage,
 	phaseTracker *chainphase.ChainPhaseTracker,
-	activityTracker *participant.ActivityTracker) *Server {
+	activityTracker *participant.ActivityTracker,
+	mlnodeFactory mlnodeclient.ClientFactory) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
@@ -64,6 +67,7 @@ func NewServer(
 		payloadStorage:  payloadStorage,
 		phaseTracker:    phaseTracker,
 		activityTracker: activityTracker,
+		tester:          NewMLNodeTester(configManager, mlnodeFactory),
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -75,6 +79,7 @@ func NewServer(
 	g.PUT("nodes/:id", s.createNewNode)
 	g.GET("nodes/upgrade-status", s.getUpgradeStatus)
 	g.POST("nodes/version-status", s.postVersionStatus)
+	g.POST("nodes/:id/test", s.postNodeTest)
 	g.GET("nodes", s.getNodes)
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)

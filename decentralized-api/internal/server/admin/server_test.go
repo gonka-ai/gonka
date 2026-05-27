@@ -137,7 +137,8 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 
 	// 5. Server — phaseTracker is the real instance the broker uses;
 	// activityTracker left nil so tests don't depend on chain queries.
-	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil, nil, phaseTracker, nil)
+	// Reuse the broker's mock factory so tester tests can stub clients.
+	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil, nil, phaseTracker, nil, mockClientFactory)
 
 	return s, configManager, mockClientFactory
 }

@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/selfcheck"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -59,6 +60,10 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "selfcheck" {
+		runSelfcheck()
+		return
 	}
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
@@ -269,7 +274,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, chainPhaseTracker, activityTracker)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, chainPhaseTracker, activityTracker, &mlnodeclient.HttpClientFactory{})
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
@@ -306,6 +311,26 @@ func main() {
 	}
 
 	os.Exit(1) // Exit with an error for cosmovisor to restart the process
+}
+
+// runSelfcheck drives a one-shot PoC-wiring assertion suite against a
+// fresh broker backed by a mocked chain. Prints the report to stderr
+// and exits 0 on PASS, 1 on FAIL. Intended for operator confidence
+// before joining the network: "does my participant binary react to
+// epoch events as expected?"
+func runSelfcheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := selfcheck.Run(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "selfcheck: setup error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprint(os.Stderr, report.String())
+	if !report.Pass {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func returnStatus(configManager *apiconfig.ConfigManager) {
