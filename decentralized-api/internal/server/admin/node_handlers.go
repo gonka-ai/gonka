@@ -1,12 +1,15 @@
 package admin
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/logging"
+	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
@@ -271,6 +274,41 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 	}
 
 	return *node, nil
+}
+
+// postNodeTest handles POST /admin/v1/nodes/:id/test by running a
+// synchronous one-shot validation against the configured MLnode.
+// Does not mutate broker state — the response carries the result
+// for the caller to display.
+//
+// Status codes:
+//   200 — test completed (body contains TestResult, possibly with status=FAILED)
+//   404 — node id not in configManager
+//   409 — a test is already running for this node
+func (s *Server) postNodeTest(c echo.Context) error {
+	nodeId := c.Param("id")
+	if nodeId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "node id is required"})
+	}
+	if s.tester == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "tester not initialized"})
+	}
+
+	// Per-call timeout: model load + health probe is expected to
+	// complete well under this. Clients can retry on timeout.
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Minute)
+	defer cancel()
+
+	result, err := s.tester.Run(ctx, nodeId)
+	switch {
+	case errors.Is(err, ErrNodeNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error(), "node_id": nodeId})
+	case errors.Is(err, ErrTestInProgress):
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error(), "node_id": nodeId})
+	case err != nil:
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // enableNode handles POST /admin/v1/nodes/:id/enable
