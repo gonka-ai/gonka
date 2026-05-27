@@ -232,10 +232,18 @@ func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T)
 	require.Contains(t, string(rewritten), `"content":"Hi"`)
 }
 
-func TestFilterClientLogprobs_RemovesNestedLogprobPayloads(t *testing.T) {
+func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]}}]}`)
 
-	filtered := filterClientLogprobs(payload)
+	filtered := filterClientInternalFields(payload)
+
+	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
+}
+
+func TestFilterClientInternalFields_RemovesTokenIDsAndPromptTokenIDs(t *testing.T) {
+	payload := []byte(`{"prompt_token_ids":[1,2,3],"choices":[{"message":{"content":"Hi"},"token_ids":[4,5,6]}]}`)
+
+	filtered := filterClientInternalFields(payload)
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }

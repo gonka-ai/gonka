@@ -178,6 +178,17 @@ func ProcessExecutionHTTPResponse(
 	}, nil
 }
 
+func rewriteRequest(requestMap map[string]interface{}, enforcedTokens completionapi.EnforcedTokens) {
+	minMaxTokens := uint64(len(enforcedTokens.Tokens) * 2)
+	if maxTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_tokens"]); ok && minMaxTokens > maxTokens {
+		requestMap["max_tokens"] = minMaxTokens
+	}
+
+	if maxCompletionTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_completion_tokens"]); ok && minMaxTokens > maxCompletionTokens {
+		requestMap["max_completion_tokens"] = minMaxTokens
+	}
+}
+
 func BuildValidationBody(
 	promptPayload []byte,
 	responsePayload []byte,
@@ -208,6 +219,7 @@ func BuildValidationBody(
 	requestMap["enforced_tokens"] = enforcedTokens
 	requestMap["stream"] = false
 	delete(requestMap, "stream_options")
+	rewriteRequest(requestMap, enforcedTokens)
 
 	validationBody, err := json.Marshal(requestMap)
 	if err != nil {

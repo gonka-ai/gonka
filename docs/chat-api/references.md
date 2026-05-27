@@ -46,6 +46,8 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-16]** [sampling_params.py source](https://github.com/vllm-project/vllm/blob/main/vllm/sampling_params.py) — `structured_outputs` envelope definition and exactly-one-of constraint at lines 59–80.
 - **[vLLM-17]** [Security advisories index](https://github.com/vllm-project/vllm/security/advisories) — aggregate page; review on engine upgrades.
 - **[vLLM-18]** [Structured outputs feature docs](https://docs.vllm.ai/en/latest/features/structured_outputs.html) — `structured_outputs` supersedes `guided_json`/`guided_regex`/`guided_grammar`/`guided_choice`.
+- **[vLLM-19]** [PR #29074 — kimi_k2 reasoning parser: emit DeltaMessage when return_token_ids=true](https://github.com/vllm-project/vllm/pull/29074) — changes `extract_reasoning_streaming` to emit an empty `DeltaMessage()` (with the token id attached) instead of `None` for single-token deltas carrying `<think>`/`</think>`. Without `return_token_ids=true`, those tokens are silently dropped from the SSE stream while still counted in `usage.completion_tokens`, producing a hidden-token gap that breaks stream-derived `enforced_tokens` reconstruction.
+- **[vLLM-20]** [kimi_k2_reasoning_parser.py source](https://github.com/vllm-project/vllm/blob/main/vllm/reasoning/kimi_k2_reasoning_parser.py) — the parser whose `extract_reasoning_streaming` returns `None` (= suppresses event) when a delta is exactly `<think>` or `</think>`. Tokens still counted in usage; vLLM-19 added the `return_token_ids` escape valve.
 
 ## Moonshot
 
