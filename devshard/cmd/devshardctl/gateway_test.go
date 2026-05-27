@@ -2108,6 +2108,13 @@ func TestFinalizeRuntimeConfigsNormalizesLegacyStateDBPath(t *testing.T) {
 	require.Equal(t, filepath.Dir(legacyPath), runtimes[0].StoragePath)
 }
 
+func TestResolveBaseStorageDirNormalizesLegacyStateDBPath(t *testing.T) {
+	baseDir := "/tmp/devshardctl"
+	legacyPath := filepath.Join(baseDir, "escrow-12", "state.db")
+	require.Equal(t, baseDir, resolveBaseStorageDir("", legacyPath))
+	require.Equal(t, baseDir, resolveBaseStorageDir("", filepath.Dir(legacyPath)))
+}
+
 func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

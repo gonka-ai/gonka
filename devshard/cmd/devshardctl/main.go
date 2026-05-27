@@ -230,7 +230,7 @@ func resolveBaseStorageDir(flagStorageDir, storagePath string) string {
 	baseStorageDir := firstNonEmpty(flagStorageDir, os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if baseStorageDir == "" {
 		if storagePath != "" {
-			baseStorageDir = filepath.Dir(storagePath)
+			baseStorageDir = filepath.Dir(normalizeStorageDir(storagePath))
 		} else {
 			home, err := os.UserHomeDir()
 			if err != nil {
