@@ -1,0 +1,28 @@
+[
+  {
+    "id": "node1",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "MiniMaxAI/MiniMax-M2.7": {
+        "args": [
+          "--tensor-parallel-size", "4",
+          "--attention-backend", "FLASHINFER",
+          "--gpu-memory-utilization", "0.92",
+          "--max-num-seqs", "128",
+          "--enable-auto-tool-choice",
+          "--max-model-len",
+          "180000",
+          "--kv-cache-dtype",
+          "fp8",
+          "--tool-call-parser",
+          "minimax_m2",
+          "--reasoning-parser",
+          "minimax_m2_append_think"
+        ]
+      }
+    }
+  }
+]
