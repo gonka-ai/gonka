@@ -95,6 +95,7 @@ def safe_http_get(url: str, timeout: int = 5) -> Dict[str, Any]:
 
 
 def probe_server(base_url: str) -> Dict[str, Any]:
+    """Probes server endpoints for basic health, model, and version information."""
     base = base_url.rstrip("/")
     return {
         "base_url": base,
@@ -108,6 +109,7 @@ def probe_server(base_url: str) -> Dict[str, Any]:
 
 
 def decode_vector(b64: str) -> np.ndarray:
+    """Decodes the base64 string into a numpy array of float32."""
     data = base64.b64decode(b64)
     f16 = np.frombuffer(data, dtype="<f2")
     return f16.astype(np.float32)
@@ -115,6 +117,7 @@ def decode_vector(b64: str) -> np.ndarray:
 
 class BatchReceiver:
     def __init__(self, port: int):
+        """Initializes the HTTP batch receiver to capture incoming data batches."""
         self.port = port
         self._proof_batches: List[dict] = []
         self._server: Optional[ThreadingHTTPServer] = None
@@ -144,6 +147,7 @@ class BatchReceiver:
                 return 0
 
             def do_GET(self):
+                """Handles GET requests for server health and statistics."""
                 if self.path == "/health":
                     self._send_json({"status": "OK"})
                     return
@@ -169,6 +173,7 @@ class BatchReceiver:
                 self._send_json({"error": "Not found"}, 404)
 
             def do_POST(self):
+                """Handles POST requests to receive generated data or clear data."""
                 content_length = int(self.headers.get("Content-Length", 0))
                 try:
                     body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -195,6 +200,7 @@ class BatchReceiver:
         return Handler
 
     def start(self) -> None:
+        """Starts the batch receiver server in a separate thread."""
         if self._server is not None:
             return
         self._server = ThreadingHTTPServer(("0.0.0.0", self.port), self._make_handler())
@@ -202,6 +208,7 @@ class BatchReceiver:
         self._thread.start()
 
     def wait_until_ready(self, timeout_s: int = 30) -> bool:
+        """Waits for the server to be ready and returns True if successful within the timeout."""
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             try:
@@ -214,6 +221,7 @@ class BatchReceiver:
         return False
 
     def stop(self) -> None:
+        """Stops the batch receiver server if it is running."""
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -223,10 +231,12 @@ class BatchReceiver:
             self._thread = None
 
     def clear(self) -> None:
+        """Clears the collected batch data."""
         with self._lock:
             self._proof_batches.clear()
 
     def stats(self) -> Dict[str, Any]:
+        """Returns statistics on collected batches such as total number of nonces and average batch size."""
         with self._lock:
             batch_sizes = [len(batch.get("artifacts", [])) for batch in self._proof_batches]
         total_nonces = sum(batch_sizes)
@@ -239,6 +249,7 @@ class BatchReceiver:
         }
 
     def collected_artifacts(self) -> List[dict]:
+        """Returns all collected artifacts from the batches."""
         with self._lock:
             batches = list(self._proof_batches)
         artifacts: List[dict] = []
@@ -270,6 +281,7 @@ class SSHTunnel:
         self._proc: Optional[subprocess.Popen] = None
 
     def start(self, timeout: int = 15) -> None:
+        """Starts the SSH tunnel as a subprocess."""
         cmd = [
             "ssh",
             "-i", self.ssh_key,
@@ -297,6 +309,7 @@ class SSHTunnel:
         atexit.register(self.stop)
 
     def stop(self) -> None:
+        """Stops the SSH tunnel if it is running."""
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
             try:
@@ -307,6 +320,7 @@ class SSHTunnel:
 
     @property
     def alive(self) -> bool:
+        """Returns True if the SSH tunnel is currently running."""
         return self._proc is not None and self._proc.poll() is None
 
 
@@ -382,6 +396,7 @@ def collect_from_server(
     measurement_seconds: int,
     progress_interval_seconds: int,
 ) -> dict:
+    """Collects data from the server for a specified duration and returns collected results."""
     stop_generation(server_url)
     receiver.clear()
 

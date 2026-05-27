@@ -120,13 +120,8 @@ def validate_host(
         if slot not in validator_votes:
             validator_votes[slot] = get_vote_from(slot)
 
-    voted_yes = 0
-    voted_no = 0
-    for validator in slots:
-        if validator_votes[validator]:
-            voted_yes += 1
-        else:
-            voted_no += 1
+    voted_yes = sum(1 for validator in slots if validator_votes[validator])
+    voted_no = len(slots) - voted_yes
     if voted_yes > N_SLOTS / 2:
         return True
     elif voted_no > N_SLOTS / 2:

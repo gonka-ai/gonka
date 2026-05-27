@@ -53,9 +53,9 @@ Optional:
                  deploy params; layered on top of artifact.additional_args.
 
 Usage:
-  python validate.py --mlnode-url http://host:8080 \\
+  python validate.py --mlnode-url http://host:8080 \
                      --model Qwen/Qwen3-235B-A22B-Instruct-2507-FP8
-  python validate.py --mlnode-url http://host:8080 --model <id> \\
+  python validate.py --mlnode-url http://host:8080 --model <id> \
                      --tp-size 4 --max-model-len 240000 --threshold 0.2
   python validate.py --mlnode-url http://host:8080 --model <id> --skip-deploy
 """
@@ -112,7 +112,7 @@ def model_to_safe_id(model: str) -> str:
     default experiment-name prefix. Never a path the caller controls.
     """
     safe = model.strip().lower()
-    for ch in ("/", "\\", ":", " "):
+    for ch in ("/", "\", ":", " "):
         safe = safe.replace(ch, "-")
     while "--" in safe:
         safe = safe.replace("--", "-")
@@ -120,10 +120,12 @@ def model_to_safe_id(model: str) -> str:
 
 
 def model_to_artifact_filename(model: str) -> str:
+    """Generate filename for the model by transforming it to safe id."""
     return f"{model_to_safe_id(model)}.json"
 
 
 def resolve_reference_path(model: str) -> Path:
+    """Resolve the path to the reference artifact for a given model."""
     return REFERENCES_DIR / model_to_artifact_filename(model)
 
 
@@ -133,6 +135,7 @@ def resolve_reference_path(model: str) -> Path:
 
 
 def _get(url: str, timeout: float = 10.0) -> Tuple[int, Any]:
+    """Perform an HTTP GET request and return the status code and JSON body."""
     r = requests.get(url, timeout=timeout)
     try:
         body = r.json()
@@ -142,6 +145,7 @@ def _get(url: str, timeout: float = 10.0) -> Tuple[int, Any]:
 
 
 def _post(url: str, payload: Dict[str, Any], timeout: float = 60.0) -> Tuple[int, Any]:
+    """Perform an HTTP POST request and return the status code and JSON body."""
     r = requests.post(url, json=payload, timeout=timeout)
     try:
         body = r.json()
@@ -156,7 +160,10 @@ def _post(url: str, payload: Dict[str, Any], timeout: float = 60.0) -> Tuple[int
 
 
 def get_model_status(base_url: str, hf_repo: str) -> Dict[str, Any]:
-    """POST /api/v1/models/status -> {status: NOT_FOUND|PARTIAL|DOWNLOADING|DOWNLOADED, progress, error_message}."""
+    """Fetch the status of the model on the MLNode.
+
+    Returns a dictionary with status keys like 'status', 'progress', and 'error_message'.
+    """
     code, body = _post(f"{base_url}{API}/models/status", {"hf_repo": hf_repo, "hf_commit": None})
     if code != 200 or not isinstance(body, dict):
         raise RuntimeError(f"POST /models/status failed: {code} {body}")
@@ -164,7 +171,10 @@ def get_model_status(base_url: str, hf_repo: str) -> Dict[str, Any]:
 
 
 def start_model_download(base_url: str, hf_repo: str) -> Dict[str, Any]:
-    """POST /api/v1/models/download. Idempotent: returns DOWNLOADED inline if already cached."""
+    """Initiate model download on the MLNode.
+
+    This is idempotent: if the model is already cached, it returns DOWNLOADED.
+    """
     code, body = _post(f"{base_url}{API}/models/download", {"hf_repo": hf_repo, "hf_commit": None})
     # 202 = accepted (download started), 200 = already there in some builds
     if code not in (200, 202) or not isinstance(body, dict):
@@ -178,15 +188,9 @@ def ensure_model_downloaded(
     download_timeout_s: float,
     poll_interval_s: float = 10.0,
 ) -> Dict[str, Any]:
-    """Make sure the requested HF repo is fully cached on the MLNode.
+    """Ensure the specified model is downloaded and cached.
 
-    Returns a dict describing what happened:
-      {action: "already_downloaded"|"downloaded"|"verified",
-       elapsed_s: float, last_status: <body of /models/status>}
-
-    The progress this prints is download elapsed time only -- the API does
-    not expose byte-level progress. We rely on the server's own status
-    transition (PARTIAL/NOT_FOUND/DOWNLOADING -> DOWNLOADED).
+    Polls the status periodically to confirm the model's availability.
     """
     initial = get_model_status(base_url, hf_repo)
     initial_status = initial.get("status")
@@ -225,6 +229,7 @@ def ensure_model_downloaded(
 
 
 def get_inference_status(base_url: str) -> Dict[str, Any]:
+    """Fetch the current status of the inference service on the MLNode."""
     code, body = _get(f"{base_url}{API}/inference/up/status")
     if code != 200 or not isinstance(body, dict):
         raise RuntimeError(f"GET /inference/up/status failed: {code} {body}")
@@ -238,7 +243,10 @@ def deploy_model(
     additional_args: List[str],
     deploy_timeout_s: float,
 ) -> Dict[str, Any]:
-    """Start vLLM if it's not already running and wait until it is."""
+    """Deploy the model on the MLNode ensuring it starts successfully.
+
+    Starts the inference service if it's not already running, waits until deployment is complete.
+    """
     status = get_inference_status(base_url)
 
     if status.get("is_running"):
@@ -276,6 +284,7 @@ def deploy_model(
 
 
 def get_pow_status(base_url: str) -> Dict[str, Any]:
+    """Retrieve status of the proof-of-concept generation process."""
     code, body = _get(f"{base_url}{API}/inference/pow/status")
     if code != 200 or not isinstance(body, dict):
         raise RuntimeError(f"GET /inference/pow/status failed: {code} {body}")
@@ -289,13 +298,9 @@ def init_generate(
     max_retries: int = 12,
     retry_delay: int = 5,
 ) -> Dict[str, Any]:
-    """Start PoC generation across all healthy vLLM backends.
+    """Initiate PoC generation across vLLM backends.
 
-    No callback `url` is sent: throughput is measured from server-side counters
-    via /pow/status, so we don't need to receive batches locally.
-
-    `batch_size=None` means: do not include batch_size in the payload, so the
-    server uses its POC_BATCH_SIZE_DEFAULT.
+    This begins nonce processing across server replicas.
     """
     payload = {
         "block_hash": artifact["block_hash"],
@@ -327,6 +332,7 @@ def init_generate(
 
 
 def stop_generation(base_url: str) -> None:
+    """Stop the ongoing nonce generation process."""
     try:
         requests.post(f"{base_url}{API}/inference/pow/stop", json={}, timeout=60)
     except Exception:
@@ -339,10 +345,9 @@ def measure_throughput(
     measure_s: int,
     sample_interval_s: int = 10,
 ) -> Dict[str, Any]:
-    """Sample /pow/status and report sum-of-backends nonces_per_second.
+    """Measure throughput of vLLM nonces processing.
 
-    Each backend is a vLLM replica processing a different group of nonces, so
-    the system-level rate for the model is the sum across replicas.
+    Samples are taken post warmup to estimate processing rate across the system.
     """
     if warmup_s > 0:
         print(f"  warmup: {warmup_s}s")
@@ -375,7 +380,7 @@ def measure_throughput(
         print(
             f"  [{elapsed:>3d}s] backends={len(backends)} "
             f"sum_rate={sum_rate:.2f} n/s ({sum_rate * 60:.0f} n/min) "
-            f"per_backend={['%.2f' % x for x in per_backend_rate]}"
+            f"per_backend={[f'{x:.2f}' for x in per_backend_rate]}"
         )
 
     if not samples:
@@ -404,17 +409,9 @@ def validate_vectors(
     batch_size: Optional[int],
     timeout_s: float,
 ) -> Dict[str, Any]:
-    """Send pre-computed vectors for validation and return the server result.
+    """Send vectors for validation and confirm results.
 
-    `stat_test` is the full block sent to the server: {dist_threshold,
-    p_mismatch, fraud_threshold}. The server recomputes vectors for the
-    same nonces, compares each pair with L2 distance under
-    `dist_threshold`, then runs a binomial fraud test using `p_mismatch`
-    (per-nonce probability of a benign mismatch) and `fraud_threshold`
-    (probability_honest cutoff at which to flag fraud).
-
-    Response: {status, n_total, n_mismatch, mismatch_nonces, p_value,
-    fraud_detected}.
+    Sends nonce and vector pairs to the server to check them against stored results.
     """
     pieces = artifact["artifacts"]
     nonces = [int(a["nonce"]) for a in pieces]
@@ -455,7 +452,7 @@ REQUIRED_ARTIFACT_FIELDS = ("model", "seq_len", "k_dim", "block_hash", "public_k
 
 
 def format_stat_test(stat_test: Dict[str, float], source: Optional[Dict[str, str]] = None) -> str:
-    """Render the stat_test block as 'k1=v1, k2=v2' (with provenance if given)."""
+    """Format the stat_test dictionary for display or logs."""
     if not stat_test:
         return "(empty; server fills all defaults)"
     if source:
@@ -464,6 +461,10 @@ def format_stat_test(stat_test: Dict[str, float], source: Optional[Dict[str, str
 
 
 def load_artifact(path: Path) -> Dict[str, Any]:
+    """Load artifact data from a JSON file.
+
+    Ensures the presence of required fields and validity of data structure.
+    """
     if not path.exists():
         raise FileNotFoundError(f"artifact not found: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -496,11 +497,9 @@ def write_report(
     stat_test_source: Dict[str, str],
     effective_additional_args: List[str],
 ) -> Path:
-    """Write `validate_config.json`, `validate_report.json`, and `validate_report.txt`
-    into the experiment directory; return the JSON report path.
+    """Generate detailed validation reports.
 
-    Layout matches `mlnode/packages/benchmarks/scripts/README.md`:
-    one experiment = one server + one model deployment = one folder.
+    Creates JSON and text reports based on inputs, system status, and validation results.
     """
     exp_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().isoformat()
@@ -688,6 +687,7 @@ def write_report(
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse command-line arguments for the script execution."""
     p = argparse.ArgumentParser(
         description="End-to-end MLNode PoC v2 validation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -754,7 +754,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def _drop_flag(args: List[str], flag: str) -> List[str]:
-    """Remove every occurrence of `flag <value>` from a vLLM arg list."""
+    """Remove a flag and its value from a list of arguments."""
     out: List[str] = []
     i = 0
     while i < len(args):
@@ -767,18 +767,10 @@ def _drop_flag(args: List[str], flag: str) -> List[str]:
 
 
 def build_additional_args(artifact: Dict[str, Any], args: argparse.Namespace) -> List[str]:
-    """Compose effective vLLM additional_args.
+    """Build the effective additional arguments for vLLM deployment.
 
-    The artifact stores the consensus-default deploy args for this model
-    (canonical precision, attention backend, tp-size, etc.). They are
-    used as-is unless the caller explicitly asks for an override:
-
-    - `--tp-size N` and `--max-model-len N` are add-or-update: if the
-      flag is already in the artifact, its value is replaced; if not,
-      the flag is appended.
-    - `--extra-arg <token>` always appends unstructured tokens; the
-      caller is responsible for not re-introducing flags that conflict
-      with the artifact.
+    These arguments control deployment configuration and are layered
+    on top of artifact-provided defaults.
     """
     base: List[str] = list(artifact.get("additional_args") or [])
     if args.tp_size is not None:
@@ -792,6 +784,10 @@ def build_additional_args(artifact: Dict[str, Any], args: argparse.Namespace) ->
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Main entry point for the vLLM validation script.
+
+    Parses arguments, conducts validation steps, and generates a report.
+    """
     args = parse_args(argv)
 
     if args.reference:
