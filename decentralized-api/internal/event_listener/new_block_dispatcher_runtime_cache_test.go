@@ -82,6 +82,15 @@ func devshardParamsResponse(
 	enabled bool,
 	sealGrace, clearGrace, maxNonce uint32,
 ) *types.QueryParamsResponse {
+	return devshardParamsResponseFull(enabled, sealGrace, clearGrace, maxNonce, 60, 1200, 5000, 50)
+}
+
+func devshardParamsResponseFull(
+	enabled bool,
+	sealGrace, clearGrace, maxNonce uint32,
+	refusalTimeout, executionTimeout int64,
+	validationRate, voteThresholdFactor uint32,
+) *types.QueryParamsResponse {
 	return &types.QueryParamsResponse{
 		Params: types.Params{
 			ValidationParams: &types.ValidationParams{
@@ -95,6 +104,10 @@ func devshardParamsResponse(
 				DefaultSealGraceNonces:            sealGrace,
 				DefaultInferenceClearGraceSeconds: clearGrace,
 				MaxNonce:                          maxNonce,
+				RefusalTimeout:                    refusalTimeout,
+				ExecutionTimeout:                  executionTimeout,
+				ValidationRate:                    validationRate,
+				VoteThresholdFactor:               voteThresholdFactor,
 				ApprovedVersions: []*types.DevshardApprovedVersion{
 					{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 				},
@@ -121,6 +134,10 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	require.Equal(t, uint32(40), got.DefaultSealGraceNonces)
 	require.Equal(t, uint32(120), got.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(20000), got.MaxNonce)
+	require.Equal(t, int64(60), got.RefusalTimeout)
+	require.Equal(t, int64(1200), got.ExecutionTimeout)
+	require.Equal(t, uint32(5000), got.ValidationRate)
+	require.Equal(t, uint32(50), got.VoteThresholdFactor)
 	require.Len(t, got.Versions, 1)
 	require.Equal(t, "v1", got.Versions[0].Name)
 	require.Equal(t, int64(100), cm.RuntimeParamsBlockHeight())

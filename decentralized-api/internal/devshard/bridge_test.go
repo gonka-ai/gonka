@@ -34,14 +34,6 @@ func (m *testChainQueryClient) Params(ctx context.Context, in *inferenceTypes.Qu
 	return args.Get(0).(*inferenceTypes.QueryParamsResponse), args.Error(1)
 }
 
-type stubDefaults struct {
-	seal  uint32
-	clear uint32
-}
-
-func (s stubDefaults) DefaultSealGraceNonces() uint32              { return s.seal }
-func (s stubDefaults) DefaultInferenceClearGraceSeconds() uint32 { return s.clear }
-
 type stubInferenceQueryProvider struct {
 	qc inferenceTypes.QueryClient
 }
@@ -63,83 +55,33 @@ func TestChainBridgeImplementsInterface(t *testing.T) {
 	var _ bridge.MainnetBridge = (*ChainBridge)(nil)
 }
 
-func TestChainBridge_GetEscrow_SealGraceFromParams(t *testing.T) {
+func TestChainBridge_GetEscrow_FeesFromEscrow(t *testing.T) {
 	qc := &testChainQueryClient{}
 	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
 		Found: true,
 		Escrow: &inferenceTypes.DevshardEscrow{
-			Id:         42,
-			Creator:    "creator",
-			Amount:     100,
-			Slots:      []string{"a", "b", "c"},
-			EpochIndex: 7,
-			AppHash:    "cafe",
-			TokenPrice: 1,
-		},
-	}, nil)
-	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
-		Params: inferenceTypes.Params{
-			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
-				DefaultSealGraceNonces:            88,
-				DefaultInferenceClearGraceSeconds: 99,
-			},
+			Id:                42,
+			Creator:           "creator",
+			Amount:            100,
+			Slots:             []string{"a"},
+			EpochIndex:        1,
+			AppHash:           "cafe",
+			TokenPrice:        2,
+			CreateDevshardFee: 10_000,
+			FeePerNonce:       1_000,
 		},
 	}, nil)
 
 	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
 	info, err := cb.GetEscrow("42")
 	require.NoError(t, err)
-	assert.Equal(t, uint32(88), info.SealGraceNonces)
-	assert.Equal(t, uint32(99), info.InferenceClearGraceSeconds)
-}
-
-func TestChainBridge_GetEscrow_ParamsError_LeavesSealGraceZero(t *testing.T) {
-	qc := &testChainQueryClient{}
-	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
-		Found: true,
-		Escrow: &inferenceTypes.DevshardEscrow{
-			Id:         1,
-			Creator:    "creator",
-			Amount:     1,
-			Slots:      []string{"a", "b", "c"},
-			EpochIndex: 0,
-			AppHash:    "aa",
-			TokenPrice: 1,
-		},
-	}, nil)
-	qc.On("Params", mock.Anything, mock.Anything).Return(nil, assert.AnError)
-
-	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
-	info, err := cb.GetEscrow("1")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(0), info.SealGraceNonces)
-	assert.Equal(t, uint32(0), info.InferenceClearGraceSeconds)
-}
-
-func TestChainBridge_GetEscrow_UsesDefaultsProvider(t *testing.T) {
-	qc := &testChainQueryClient{}
-	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
-		Found: true,
-		Escrow: &inferenceTypes.DevshardEscrow{
-			Id:         42,
-			Creator:    "creator",
-			Amount:     100,
-			Slots:      []string{"a", "b", "c"},
-			EpochIndex: 7,
-			AppHash:    "cafe",
-			TokenPrice: 1,
-		},
-	}, nil)
-
-	cb := NewChainBridgeWithDefaults(&stubInferenceQueryProvider{qc: qc}, stubDefaults{seal: 88, clear: 45})
-	info, err := cb.GetEscrow("42")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(88), info.SealGraceNonces)
-	assert.Equal(t, uint32(45), info.InferenceClearGraceSeconds)
+	assert.Equal(t, uint64(10_000), info.CreateDevshardFee)
+	assert.Equal(t, uint64(1_000), info.FeePerNonce)
+	assert.Equal(t, uint64(2), info.TokenPrice)
 	qc.AssertNotCalled(t, "Params", mock.Anything, mock.Anything)
 }
 
-func TestChainBridge_GetEscrow_NilProvider_StillQueriesParams(t *testing.T) {
+func TestChainBridge_GetEscrow_DoesNotQueryParams(t *testing.T) {
 	qc := &testChainQueryClient{}
 	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
 		Found: true,
@@ -151,73 +93,12 @@ func TestChainBridge_GetEscrow_NilProvider_StillQueriesParams(t *testing.T) {
 			EpochIndex: 0,
 			AppHash:    "aa",
 			TokenPrice: 1,
-		},
-	}, nil)
-	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
-		Params: inferenceTypes.Params{
-			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
-				DefaultSealGraceNonces:              77,
-				DefaultInferenceClearGraceSeconds: 99,
-			},
 		},
 	}, nil)
 
 	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
 	info, err := cb.GetEscrow("1")
 	require.NoError(t, err)
-	assert.Equal(t, uint32(77), info.SealGraceNonces)
-	assert.Equal(t, uint32(99), info.InferenceClearGraceSeconds)
-	qc.AssertExpectations(t)
-}
-
-func TestChainBridge_GetEscrow_ProviderZero_UsesGroupFallback(t *testing.T) {
-	qc := &testChainQueryClient{}
-	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
-		Found: true,
-		Escrow: &inferenceTypes.DevshardEscrow{
-			Id:         1,
-			Creator:    "creator",
-			Amount:     1,
-			Slots:      []string{"a", "b", "c"},
-			EpochIndex: 0,
-			AppHash:    "aa",
-			TokenPrice: 1,
-		},
-	}, nil)
-
-	cb := NewChainBridgeWithDefaults(&stubInferenceQueryProvider{qc: qc}, stubDefaults{})
-	info, err := cb.GetEscrow("1")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(30), info.SealGraceNonces)
-	assert.Equal(t, uint32(120), info.InferenceClearGraceSeconds)
+	require.NotNil(t, info)
 	qc.AssertNotCalled(t, "Params", mock.Anything, mock.Anything)
-}
-
-func TestChainBridge_GetEscrow_DefaultSealGraceZero_UsesGroupFallback(t *testing.T) {
-	qc := &testChainQueryClient{}
-	qc.On("DevshardEscrow", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryGetDevshardEscrowResponse{
-		Found: true,
-		Escrow: &inferenceTypes.DevshardEscrow{
-			Id:         1,
-			Creator:    "creator",
-			Amount:     1,
-			Slots:      []string{"a", "b", "c"},
-			EpochIndex: 0,
-			AppHash:    "aa",
-			TokenPrice: 1,
-		},
-	}, nil)
-	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
-		Params: inferenceTypes.Params{
-			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
-				DefaultSealGraceNonces: 0,
-			},
-		},
-	}, nil)
-
-	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
-	info, err := cb.GetEscrow("1")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(30), info.SealGraceNonces)
-	assert.Equal(t, inferenceTypes.DefaultDevshardInferenceClearGraceSeconds, info.InferenceClearGraceSeconds)
 }

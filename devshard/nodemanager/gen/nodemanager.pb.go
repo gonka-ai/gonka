@@ -396,6 +396,10 @@ type RuntimeConfig struct {
 	MaxNonce                          uint32                 `protobuf:"varint,7,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
 	ApprovedVersions                  []*ApprovedVersion     `protobuf:"bytes,8,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
 	ServedAtUnix                      int64                  `protobuf:"varint,9,opt,name=served_at_unix,json=servedAtUnix,proto3" json:"served_at_unix,omitempty"`
+	RefusalTimeout                    int64                  `protobuf:"varint,10,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout                  int64                  `protobuf:"varint,11,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate                    uint32                 `protobuf:"varint,12,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	VoteThresholdFactor               uint32                 `protobuf:"varint,13,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
 	unknownFields                     protoimpl.UnknownFields
 	sizeCache                         protoimpl.SizeCache
 }
@@ -493,6 +497,34 @@ func (x *RuntimeConfig) GetServedAtUnix() int64 {
 	return 0
 }
 
+func (x *RuntimeConfig) GetRefusalTimeout() int64 {
+	if x != nil {
+		return x.RefusalTimeout
+	}
+	return 0
+}
+
+func (x *RuntimeConfig) GetExecutionTimeout() int64 {
+	if x != nil {
+		return x.ExecutionTimeout
+	}
+	return 0
+}
+
+func (x *RuntimeConfig) GetValidationRate() uint32 {
+	if x != nil {
+		return x.ValidationRate
+	}
+	return 0
+}
+
+func (x *RuntimeConfig) GetVoteThresholdFactor() uint32 {
+	if x != nil {
+		return x.VoteThresholdFactor
+	}
+	return 0
+}
+
 type ApprovedVersion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -574,7 +606,7 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x10max_wait_seconds\x18\x02 \x01(\x05R\x0emaxWaitSeconds\"l\n" +
 	"\x18GetRuntimeConfigResponse\x12\x1c\n" +
 	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x122\n" +
-	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\xe5\x03\n" +
+	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\x98\x05\n" +
 	"\rRuntimeConfig\x12.\n" +
 	"\x13params_block_height\x18\x01 \x01(\x03R\x11paramsBlockHeight\x12(\n" +
 	"\x10current_epoch_id\x18\x02 \x01(\x04R\x0ecurrentEpochId\x12#\n" +
@@ -584,7 +616,12 @@ const file_nodemanager_proto_rawDesc = "" +
 	"%default_inference_clear_grace_seconds\x18\x06 \x01(\rR!defaultInferenceClearGraceSeconds\x12\x1b\n" +
 	"\tmax_nonce\x18\a \x01(\rR\bmaxNonce\x12I\n" +
 	"\x11approved_versions\x18\b \x03(\v2\x1c.nodemanager.ApprovedVersionR\x10approvedVersions\x12$\n" +
-	"\x0eserved_at_unix\x18\t \x01(\x03R\fservedAtUnix\"U\n" +
+	"\x0eserved_at_unix\x18\t \x01(\x03R\fservedAtUnix\x12'\n" +
+	"\x0frefusal_timeout\x18\n" +
+	" \x01(\x03R\x0erefusalTimeout\x12+\n" +
+	"\x11execution_timeout\x18\v \x01(\x03R\x10executionTimeout\x12'\n" +
+	"\x0fvalidation_rate\x18\f \x01(\rR\x0evalidationRate\x122\n" +
+	"\x15vote_threshold_factor\x18\r \x01(\rR\x13voteThresholdFactor\"U\n" +
 	"\x0fApprovedVersion\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06binary\x18\x02 \x01(\tR\x06binary\x12\x16\n" +

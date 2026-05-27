@@ -18304,6 +18304,12 @@ var (
 	fd_DevshardEscrowParams_devshard_requests_enabled             protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_default_seal_grace_nonces             protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_default_inference_clear_grace_seconds protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_create_devshard_fee                   protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_fee_per_nonce                         protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_refusal_timeout                       protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_execution_timeout                     protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_validation_rate                       protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_vote_threshold_factor                 protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -18320,6 +18326,12 @@ func init() {
 	fd_DevshardEscrowParams_devshard_requests_enabled = md_DevshardEscrowParams.Fields().ByName("devshard_requests_enabled")
 	fd_DevshardEscrowParams_default_seal_grace_nonces = md_DevshardEscrowParams.Fields().ByName("default_seal_grace_nonces")
 	fd_DevshardEscrowParams_default_inference_clear_grace_seconds = md_DevshardEscrowParams.Fields().ByName("default_inference_clear_grace_seconds")
+	fd_DevshardEscrowParams_create_devshard_fee = md_DevshardEscrowParams.Fields().ByName("create_devshard_fee")
+	fd_DevshardEscrowParams_fee_per_nonce = md_DevshardEscrowParams.Fields().ByName("fee_per_nonce")
+	fd_DevshardEscrowParams_refusal_timeout = md_DevshardEscrowParams.Fields().ByName("refusal_timeout")
+	fd_DevshardEscrowParams_execution_timeout = md_DevshardEscrowParams.Fields().ByName("execution_timeout")
+	fd_DevshardEscrowParams_validation_rate = md_DevshardEscrowParams.Fields().ByName("validation_rate")
+	fd_DevshardEscrowParams_vote_threshold_factor = md_DevshardEscrowParams.Fields().ByName("vote_threshold_factor")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardEscrowParams)(nil)
@@ -18453,6 +18465,42 @@ func (x *fastReflection_DevshardEscrowParams) Range(f func(protoreflect.FieldDes
 			return
 		}
 	}
+	if x.CreateDevshardFee != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CreateDevshardFee)
+		if !f(fd_DevshardEscrowParams_create_devshard_fee, value) {
+			return
+		}
+	}
+	if x.FeePerNonce != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.FeePerNonce)
+		if !f(fd_DevshardEscrowParams_fee_per_nonce, value) {
+			return
+		}
+	}
+	if x.RefusalTimeout != int64(0) {
+		value := protoreflect.ValueOfInt64(x.RefusalTimeout)
+		if !f(fd_DevshardEscrowParams_refusal_timeout, value) {
+			return
+		}
+	}
+	if x.ExecutionTimeout != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ExecutionTimeout)
+		if !f(fd_DevshardEscrowParams_execution_timeout, value) {
+			return
+		}
+	}
+	if x.ValidationRate != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.ValidationRate)
+		if !f(fd_DevshardEscrowParams_validation_rate, value) {
+			return
+		}
+	}
+	if x.VoteThresholdFactor != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.VoteThresholdFactor)
+		if !f(fd_DevshardEscrowParams_vote_threshold_factor, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -18490,6 +18538,18 @@ func (x *fastReflection_DevshardEscrowParams) Has(fd protoreflect.FieldDescripto
 		return x.DefaultSealGraceNonces != uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
 		return x.DefaultInferenceClearGraceSeconds != uint32(0)
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		return x.CreateDevshardFee != uint64(0)
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		return x.FeePerNonce != uint64(0)
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		return x.RefusalTimeout != int64(0)
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		return x.ExecutionTimeout != int64(0)
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		return x.ValidationRate != uint32(0)
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
+		return x.VoteThresholdFactor != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -18528,6 +18588,18 @@ func (x *fastReflection_DevshardEscrowParams) Clear(fd protoreflect.FieldDescrip
 		x.DefaultSealGraceNonces = uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
 		x.DefaultInferenceClearGraceSeconds = uint32(0)
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		x.CreateDevshardFee = uint64(0)
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		x.FeePerNonce = uint64(0)
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		x.RefusalTimeout = int64(0)
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		x.ExecutionTimeout = int64(0)
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		x.ValidationRate = uint32(0)
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
+		x.VoteThresholdFactor = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -18583,6 +18655,24 @@ func (x *fastReflection_DevshardEscrowParams) Get(descriptor protoreflect.FieldD
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
 		value := x.DefaultInferenceClearGraceSeconds
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		value := x.CreateDevshardFee
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		value := x.FeePerNonce
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		value := x.RefusalTimeout
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		value := x.ExecutionTimeout
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		value := x.ValidationRate
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
+		value := x.VoteThresholdFactor
+		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -18629,6 +18719,18 @@ func (x *fastReflection_DevshardEscrowParams) Set(fd protoreflect.FieldDescripto
 		x.DefaultSealGraceNonces = uint32(value.Uint())
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
 		x.DefaultInferenceClearGraceSeconds = uint32(value.Uint())
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		x.CreateDevshardFee = value.Uint()
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		x.FeePerNonce = value.Uint()
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		x.RefusalTimeout = value.Int()
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		x.ExecutionTimeout = value.Int()
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		x.ValidationRate = uint32(value.Uint())
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
+		x.VoteThresholdFactor = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -18679,6 +18781,18 @@ func (x *fastReflection_DevshardEscrowParams) Mutable(fd protoreflect.FieldDescr
 		panic(fmt.Errorf("field default_seal_grace_nonces of message inference.inference.DevshardEscrowParams is not mutable"))
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
 		panic(fmt.Errorf("field default_inference_clear_grace_seconds of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		panic(fmt.Errorf("field create_devshard_fee of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		panic(fmt.Errorf("field fee_per_nonce of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		panic(fmt.Errorf("field refusal_timeout of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		panic(fmt.Errorf("field execution_timeout of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		panic(fmt.Errorf("field validation_rate of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
+		panic(fmt.Errorf("field vote_threshold_factor of message inference.inference.DevshardEscrowParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -18715,6 +18829,18 @@ func (x *fastReflection_DevshardEscrowParams) NewField(fd protoreflect.FieldDesc
 	case "inference.inference.DevshardEscrowParams.default_seal_grace_nonces":
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardEscrowParams.default_inference_clear_grace_seconds":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardEscrowParams.create_devshard_fee":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.DevshardEscrowParams.fee_per_nonce":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.DevshardEscrowParams.refusal_timeout":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.DevshardEscrowParams.execution_timeout":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.DevshardEscrowParams.validation_rate":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardEscrowParams.vote_threshold_factor":
 		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
@@ -18824,6 +18950,24 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 		if x.DefaultInferenceClearGraceSeconds != 0 {
 			n += 1 + runtime.Sov(uint64(x.DefaultInferenceClearGraceSeconds))
 		}
+		if x.CreateDevshardFee != 0 {
+			n += 1 + runtime.Sov(uint64(x.CreateDevshardFee))
+		}
+		if x.FeePerNonce != 0 {
+			n += 1 + runtime.Sov(uint64(x.FeePerNonce))
+		}
+		if x.RefusalTimeout != 0 {
+			n += 1 + runtime.Sov(uint64(x.RefusalTimeout))
+		}
+		if x.ExecutionTimeout != 0 {
+			n += 1 + runtime.Sov(uint64(x.ExecutionTimeout))
+		}
+		if x.ValidationRate != 0 {
+			n += 2 + runtime.Sov(uint64(x.ValidationRate))
+		}
+		if x.VoteThresholdFactor != 0 {
+			n += 2 + runtime.Sov(uint64(x.VoteThresholdFactor))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -18852,6 +18996,40 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.VoteThresholdFactor != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.VoteThresholdFactor))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x88
+		}
+		if x.ValidationRate != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidationRate))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x80
+		}
+		if x.ExecutionTimeout != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExecutionTimeout))
+			i--
+			dAtA[i] = 0x78
+		}
+		if x.RefusalTimeout != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RefusalTimeout))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.FeePerNonce != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FeePerNonce))
+			i--
+			dAtA[i] = 0x68
+		}
+		if x.CreateDevshardFee != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CreateDevshardFee))
+			i--
+			dAtA[i] = 0x60
 		}
 		if x.DefaultInferenceClearGraceSeconds != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultInferenceClearGraceSeconds))
@@ -19211,6 +19389,120 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.DefaultInferenceClearGraceSeconds |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 12:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CreateDevshardFee", wireType)
+				}
+				x.CreateDevshardFee = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CreateDevshardFee |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FeePerNonce", wireType)
+				}
+				x.FeePerNonce = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.FeePerNonce |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RefusalTimeout", wireType)
+				}
+				x.RefusalTimeout = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.RefusalTimeout |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 15:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExecutionTimeout", wireType)
+				}
+				x.ExecutionTimeout = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ExecutionTimeout |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 16:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidationRate", wireType)
+				}
+				x.ValidationRate = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidationRate |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 17:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field VoteThresholdFactor", wireType)
+				}
+				x.VoteThresholdFactor = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.VoteThresholdFactor |= uint32(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -21736,6 +22028,12 @@ type DevshardEscrowParams struct {
 	DevshardRequestsEnabled           bool                       `protobuf:"varint,9,opt,name=devshard_requests_enabled,json=devshardRequestsEnabled,proto3" json:"devshard_requests_enabled,omitempty"`
 	DefaultSealGraceNonces            uint32                     `protobuf:"varint,10,opt,name=default_seal_grace_nonces,json=defaultSealGraceNonces,proto3" json:"default_seal_grace_nonces,omitempty"`
 	DefaultInferenceClearGraceSeconds uint32                     `protobuf:"varint,11,opt,name=default_inference_clear_grace_seconds,json=defaultInferenceClearGraceSeconds,proto3" json:"default_inference_clear_grace_seconds,omitempty"`
+	CreateDevshardFee                 uint64                     `protobuf:"varint,12,opt,name=create_devshard_fee,json=createDevshardFee,proto3" json:"create_devshard_fee,omitempty"`
+	FeePerNonce                       uint64                     `protobuf:"varint,13,opt,name=fee_per_nonce,json=feePerNonce,proto3" json:"fee_per_nonce,omitempty"`
+	RefusalTimeout                    int64                      `protobuf:"varint,14,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout                  int64                      `protobuf:"varint,15,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate                    uint32                     `protobuf:"varint,16,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	VoteThresholdFactor               uint32                     `protobuf:"varint,17,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"` // percent, e.g. 50 == 50%
 }
 
 func (x *DevshardEscrowParams) Reset() {
@@ -21831,6 +22129,48 @@ func (x *DevshardEscrowParams) GetDefaultSealGraceNonces() uint32 {
 func (x *DevshardEscrowParams) GetDefaultInferenceClearGraceSeconds() uint32 {
 	if x != nil {
 		return x.DefaultInferenceClearGraceSeconds
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetCreateDevshardFee() uint64 {
+	if x != nil {
+		return x.CreateDevshardFee
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetFeePerNonce() uint64 {
+	if x != nil {
+		return x.FeePerNonce
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetRefusalTimeout() int64 {
+	if x != nil {
+		return x.RefusalTimeout
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetExecutionTimeout() int64 {
+	if x != nil {
+		return x.ExecutionTimeout
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetValidationRate() uint32 {
+	if x != nil {
+		return x.ValidationRate
+	}
+	return 0
+}
+
+func (x *DevshardEscrowParams) GetVoteThresholdFactor() uint32 {
+	if x != nil {
+		return x.VoteThresholdFactor
 	}
 	return 0
 }
@@ -22611,7 +22951,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x62,
 	0x69, 0x6e, 0x61, 0x72, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x18,
 	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0xca, 0x04, 0x0a, 0x14, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64,
+	0xa0, 0x1f, 0x01, 0x22, 0xd1, 0x06, 0x0a, 0x14, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64,
 	0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x1d, 0x0a, 0x0a,
 	0x6d, 0x69, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04,
 	0x52, 0x09, 0x6d, 0x69, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x6d,
@@ -22647,30 +22987,46 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x65, 0x61, 0x72, 0x5f, 0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x63, 0x6f, 0x6e, 0x64,
 	0x73, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x21, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74,
 	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x43, 0x6c, 0x65, 0x61, 0x72, 0x47, 0x72,
-	0x61, 0x63, 0x65, 0x53, 0x65, 0x63, 0x6f, 0x6e, 0x64, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01,
-	0x22, 0x9d, 0x01, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2f,
-	0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x5f,
-	0x6e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x6d, 0x69,
-	0x6e, 0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65, 0x4e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x12,
-	0x2e, 0x0a, 0x13, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x62, 0x61,
-	0x73, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x47, 0x61, 0x73, 0x12,
-	0x29, 0x0a, 0x11, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x63,
-	0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x67, 0x61, 0x73, 0x50,
-	0x65, 0x72, 0x50, 0x6f, 0x63, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01,
-	0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61,
-	0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
-	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
-	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x33,
+	0x61, 0x63, 0x65, 0x53, 0x65, 0x63, 0x6f, 0x6e, 0x64, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x72,
+	0x65, 0x61, 0x74, 0x65, 0x5f, 0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x66, 0x65,
+	0x65, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x44,
+	0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x46, 0x65, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x66, 0x65,
+	0x65, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x0d, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0b, 0x66, 0x65, 0x65, 0x50, 0x65, 0x72, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x27,
+	0x0a, 0x0f, 0x72, 0x65, 0x66, 0x75, 0x73, 0x61, 0x6c, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75,
+	0x74, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0e, 0x72, 0x65, 0x66, 0x75, 0x73, 0x61, 0x6c,
+	0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x12, 0x2b, 0x0a, 0x11, 0x65, 0x78, 0x65, 0x63, 0x75,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x18, 0x0f, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d,
+	0x65, 0x6f, 0x75, 0x74, 0x12, 0x27, 0x0a, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18, 0x10, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x76,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x61, 0x74, 0x65, 0x12, 0x32, 0x0a,
+	0x15, 0x76, 0x6f, 0x74, 0x65, 0x5f, 0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x5f,
+	0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x18, 0x11, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13, 0x76, 0x6f,
+	0x74, 0x65, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x46, 0x61, 0x63, 0x74, 0x6f,
+	0x72, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x9d, 0x01, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50,
+	0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2f, 0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73,
+	0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x5f, 0x6e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x11, 0x6d, 0x69, 0x6e, 0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65,
+	0x4e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x12, 0x2e, 0x0a, 0x13, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x76,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x11, 0x62, 0x61, 0x73, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x47, 0x61, 0x73, 0x12, 0x29, 0x0a, 0x11, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65,
+	0x72, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0e, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x50, 0x6f, 0x63, 0x43, 0x6f, 0x75, 0x6e,
+	0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

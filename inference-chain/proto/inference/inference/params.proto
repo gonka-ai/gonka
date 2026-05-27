@@ -384,6 +384,12 @@ message DevshardEscrowParams {
   bool devshard_requests_enabled = 9;
   uint32 default_seal_grace_nonces = 10;
   uint32 default_inference_clear_grace_seconds = 11;
+  uint64 create_devshard_fee = 12;
+  uint64 fee_per_nonce = 13;
+  int64 refusal_timeout = 14;
+  int64 execution_timeout = 15;
+  uint32 validation_rate = 16;
+  uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

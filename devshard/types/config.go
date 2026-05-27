@@ -46,12 +46,86 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 	}, groupSize)
 }
 
-// SessionConfigWithPrice returns a session config with a custom token price.
-// tokenPrice == 0 is treated as 1 for backward compatibility.
-func SessionConfigWithPrice(groupSize int, tokenPrice uint64) SessionConfig {
+// EscrowSessionFields collects the per-escrow fee parameters that are frozen
+// onto DevshardEscrow at create. Every field is "zero means use the compiled
+// default" so callers can populate only what the chain returned.
+type EscrowSessionFields struct {
+	TokenPrice        uint64
+	CreateDevshardFee uint64
+	FeePerNonce       uint64
+}
+
+// LiveSessionBindParams carries governance fields read from the long-poll
+// snapshot once at session bind. Zero means "not provided" for that field.
+type LiveSessionBindParams struct {
+	RefusalTimeout             int64
+	ExecutionTimeout           int64
+	ValidationRate             uint32
+	SealGraceNonces            uint32
+	InferenceClearGraceSeconds uint32
+	VoteThresholdFactor        uint32 // percent, e.g. 50 == 50%
+}
+
+// ComputeVoteThreshold derives the slot-majority vote threshold from group
+// size and governance vote_threshold_factor (percent). factor == 0 uses the
+// legacy groupSize/2 fallback.
+func ComputeVoteThreshold(groupSize int, factor uint32) uint32 {
+	if factor == 0 {
+		return uint32(groupSize) / 2
+	}
+	return uint32(groupSize) * factor / 100
+}
+
+// ApplyLiveSessionParams overlays live governance fields onto cfg and applies
+// NormalizeSessionConfig. Call after SessionConfigFromEscrow at bind time.
+func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
+	if live.ValidationRate > 0 {
+		cfg.ValidationRate = live.ValidationRate
+	}
+	if live.SealGraceNonces > 0 {
+		cfg.SealGraceNonces = live.SealGraceNonces
+	}
+	if live.InferenceClearGraceSeconds > 0 {
+		cfg.InferenceClearGraceSeconds = live.InferenceClearGraceSeconds
+	}
+	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
+	if live.RefusalTimeout > 0 {
+		cfg.RefusalTimeout = live.RefusalTimeout
+	}
+	if live.ExecutionTimeout > 0 {
+		cfg.ExecutionTimeout = live.ExecutionTimeout
+	}
+	return NormalizeSessionConfig(cfg, groupSize)
+}
+
+// SessionConfigFromEscrow builds a SessionConfig by starting from the
+// compiled DefaultSessionConfig and overlaying any non-zero per-escrow fee
+// values. This is the canonical constructor for "bind a session against an
+// on-chain escrow"; live (long-poll) fields are layered on by the caller after
+// this returns, before NormalizeSessionConfig finalizes derived defaults.
+//
+// Zero fields fall through to defaults so legacy escrows (no fee snapshot)
+// keep today's behavior — see devshard/docs/session-config-flow-plan.md.
+func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionConfig {
 	cfg := DefaultSessionConfig(groupSize)
-	if tokenPrice > 0 {
-		cfg.TokenPrice = tokenPrice
+	if fields.TokenPrice > 0 {
+		cfg.TokenPrice = fields.TokenPrice
+	}
+	if fields.CreateDevshardFee > 0 {
+		cfg.CreateDevshardFee = fields.CreateDevshardFee
+	}
+	if fields.FeePerNonce > 0 {
+		cfg.FeePerNonce = fields.FeePerNonce
 	}
 	return cfg
+}
+
+// SessionConfigWithPrice returns a session config with a custom token price.
+// tokenPrice == 0 is treated as 1 for backward compatibility.
+//
+// Deprecated: use SessionConfigFromEscrow with EscrowSessionFields{TokenPrice:
+// tokenPrice}. Kept as a thin wrapper so existing callers (tests, transitional
+// code) keep compiling while phase 1 of session-config-flow-plan.md lands.
+func SessionConfigWithPrice(groupSize int, tokenPrice uint64) SessionConfig {
+	return SessionConfigFromEscrow(groupSize, EscrowSessionFields{TokenPrice: tokenPrice})
 }

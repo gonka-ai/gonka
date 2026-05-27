@@ -13,17 +13,5 @@ func SeedDevshardVersionsCache(cm *apiconfig.ConfigManager, dep *types.DevshardE
 	if cm == nil || dep == nil {
 		return
 	}
-	versions := make([]apiconfig.DevshardVersion, len(dep.ApprovedVersions))
-	for i, v := range dep.ApprovedVersions {
-		versions[i] = apiconfig.DevshardVersion{
-			Name: v.Name, Binary: v.Binary, SHA256: v.Sha256,
-		}
-	}
-	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		Versions:                          versions,
-		DevshardRequestsEnabled:           dep.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            dep.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          dep.MaxNonce,
-	})
+	cm.SetDevshardVersions(apiconfig.DevshardVersionsCacheFromParams(dep))
 }

@@ -74,7 +74,10 @@ type SessionConfig struct {
 	TokenPrice                 uint64 // price per input / output token (flat per session)
 	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
 	FeePerNonce                uint64 // fee charged per applied nonce (diff)
-	VoteThreshold              uint32 // minimum accept votes for timeout (total_slots / 2)
+	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
+	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
+	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
+	VoteThreshold              uint32
 	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
 	SealGraceNonces            uint32
 	InferenceClearGraceSeconds uint32

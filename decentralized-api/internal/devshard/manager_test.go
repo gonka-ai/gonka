@@ -817,7 +817,13 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	require.Equal(t, standaloneVersion, meta.Version)
 }
 
-func TestCreateSession_FreezesSealGraceFromBridge(t *testing.T) {
+type stubRuntimeParams struct {
+	params SessionParams
+}
+
+func (s stubRuntimeParams) SessionParams() SessionParams { return s.params }
+
+func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
 	for i := range hosts {
@@ -832,24 +838,80 @@ func TestCreateSession_FreezesSealGraceFromBridge(t *testing.T) {
 
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:                   "escrow-1",
-			Amount:                     100000,
-			CreatorAddress:             user.Address(),
-			Slots:                      addresses,
-			SealGraceNonces:            123,
-			InferenceClearGraceSeconds: 456,
-			TokenPrice:                 1,
+			EscrowID:       "escrow-1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
 		},
 	}
 
+	live := SessionParams{
+		RefusalTimeout:             90,
+		ExecutionTimeout:           1800,
+		ValidationRate:             6000,
+		SealGraceNonces:            123,
+		InferenceClearGraceSeconds: 99,
+		VoteThresholdFactor:        67,
+	}
+	provider := stubRuntimeParams{params: live}
+
 	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetRuntimeParamsProvider(provider)
 	_, err := mgr.getOrCreate("escrow-1")
 	require.NoError(t, err)
 
 	meta, err := store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
-	require.Equal(t, uint32(456), meta.Config.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(99), meta.Config.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(6000), meta.Config.ValidationRate)
+	require.Equal(t, uint32(2), meta.Config.VoteThreshold) // floor(3 * 67 / 100)
+	require.Equal(t, int64(90), meta.Config.RefusalTimeout)
+	require.Equal(t, int64(1800), meta.Config.ExecutionTimeout)
+
+	live.ValidationRate = 9999
+	live.SealGraceNonces = 1
+	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "frozen session must not hot-reload")
+	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
+}
+
+func TestHostManager_Create_SnapshotsFeesFromEscrow(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	const createFee = uint64(12_345)
+	const perNonce = uint64(678)
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:          "escrow-1",
+			Amount:            100000,
+			CreatorAddress:    user.Address(),
+			Slots:             addresses,
+			TokenPrice:        1,
+			CreateDevshardFee: createFee,
+			FeePerNonce:       perNonce,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	srv, err := mgr.getOrCreate("escrow-1")
+	require.NoError(t, err)
+
+	st := srv.Host().SnapshotState()
+	require.Equal(t, createFee, st.Config.CreateDevshardFee)
+	require.Equal(t, perNonce, st.Config.FeePerNonce)
+	require.Equal(t, createFee, st.Fees)
 }
 
 func TestCreateSession_RejectsExistingDifferentVersion(t *testing.T) {

@@ -905,7 +905,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		rec.VotesInvalid += weight
 	}
 
-	// Check majority using VoteThreshold from config.
+	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
 	threshold := sm.state.Config.VoteThreshold
 	if rec.VotesInvalid > threshold {
 		rec.Status = types.StatusInvalidated
@@ -993,7 +993,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		}
 	}
 
-	// Check threshold using VoteThreshold from config.
+	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
 	threshold := sm.state.Config.VoteThreshold
 	if acceptCount <= threshold {
 		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)

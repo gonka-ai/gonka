@@ -17,4 +17,8 @@ type RuntimeConfigSnapshot struct {
 	MaxNonce                          uint32
 	ApprovedVersions                  []DevshardVersion
 	ServedAt                          time.Time
+	RefusalTimeout                    int64
+	ExecutionTimeout                  int64
+	ValidationRate                    uint32
+	VoteThresholdFactor               uint32
 }

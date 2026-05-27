@@ -52,6 +52,10 @@ func populateRuntimeConfig(t *testing.T, cm *apiconfig.ConfigManager, height int
 		DefaultSealGraceNonces:            40,
 		DefaultInferenceClearGraceSeconds: 120,
 		MaxNonce:                          20000,
+		RefusalTimeout:                    60,
+		ExecutionTimeout:                  1200,
+		ValidationRate:                    5000,
+		VoteThresholdFactor:               50,
 	})
 	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(height, epochID))
 }
@@ -78,6 +82,10 @@ func TestNodeManager_GetRuntimeConfig_FullResponse(t *testing.T) {
 	require.Len(t, resp.Config.ApprovedVersions, 1)
 	require.Equal(t, "v1", resp.Config.ApprovedVersions[0].Name)
 	require.NotZero(t, resp.Config.ServedAtUnix)
+	require.Equal(t, int64(60), resp.Config.RefusalTimeout)
+	require.Equal(t, int64(1200), resp.Config.ExecutionTimeout)
+	require.Equal(t, uint32(5000), resp.Config.ValidationRate)
+	require.Equal(t, uint32(50), resp.Config.VoteThresholdFactor)
 }
 
 func TestNodeManager_GetRuntimeConfig_Unchanged(t *testing.T) {

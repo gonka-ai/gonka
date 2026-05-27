@@ -24,6 +24,10 @@ type Snapshot struct {
 	MaxNonce                          uint32
 	ApprovedVersions                  []ApprovedVersion
 	ServedAt                          time.Time
+	RefusalTimeout                    int64
+	ExecutionTimeout                  int64
+	ValidationRate                    uint32
+	VoteThresholdFactor               uint32
 }
 
 // EpochChangeListener fires once per CurrentEpochID transition observed by the

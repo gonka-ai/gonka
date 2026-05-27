@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -86,6 +88,26 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
+}
+
+func TestHTTPClient_Send_ReturnsHTTPStatusError(t *testing.T) {
+	userSigner := testutil.MustGenerateKey(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad signature", http.StatusForbidden)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1})
+	require.Error(t, err)
+
+	var statusErr *HTTPStatusError
+	require.True(t, errors.As(err, &statusErr))
+	require.Equal(t, http.StatusForbidden, statusErr.StatusCode)
+	require.Equal(t, http.MethodPost, statusErr.Method)
+	require.Contains(t, statusErr.Path, "/sessions/escrow-1/chat/completions")
+	require.Contains(t, statusErr.Body, "bad signature")
+	require.True(t, statusErr.IsFatal())
 }
 
 func TestHTTPClient_GetDiffs(t *testing.T) {

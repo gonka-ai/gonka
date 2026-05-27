@@ -255,6 +255,10 @@ type DevshardVersionsCache struct {
 	DefaultSealGraceNonces            uint32            `json:"default_seal_grace_nonces"`
 	DefaultInferenceClearGraceSeconds uint32            `json:"default_inference_clear_grace_seconds"`
 	MaxNonce                          uint32            `json:"max_nonce"`
+	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	ValidationRate                    uint32            `json:"validation_rate"`
+	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.

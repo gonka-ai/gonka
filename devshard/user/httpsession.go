@@ -47,14 +47,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("build group: %w", err)
 	}
 
-	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
-	if escrow.SealGraceNonces > 0 {
-		config.SealGraceNonces = escrow.SealGraceNonces
-	}
-	if escrow.InferenceClearGraceSeconds > 0 {
-		config.InferenceClearGraceSeconds = escrow.InferenceClearGraceSeconds
-	}
-	config = types.NormalizeSessionConfig(config, len(group))
+	config := types.NormalizeSessionConfig(
+		types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
+			TokenPrice:        escrow.TokenPrice,
+			CreateDevshardFee: escrow.CreateDevshardFee,
+			FeePerNonce:       escrow.FeePerNonce,
+		}),
+		len(group),
+	)
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),

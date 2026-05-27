@@ -136,10 +136,7 @@ func main() {
 	}
 	chainParams := paramsSetup.Provider
 
-	br := internaldevshard.NewChainBridgeWithDefaults(
-		recorder,
-		internaldevshard.NewRuntimeConfigDefaults(chainParams),
-	)
+	br := internaldevshard.NewChainBridge(recorder)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
@@ -174,6 +171,7 @@ func main() {
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, runtimeVersion, br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
+	manager.SetRuntimeParamsProvider(internaldevshard.RuntimeConfigRuntimeParams(chainParams))
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
