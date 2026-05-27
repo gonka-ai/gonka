@@ -3,10 +3,12 @@ package admin
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
+	"decentralized-api/participant"
 	"decentralized-api/payloadstorage"
 
 	"cosmossdk.io/x/feegrant"
@@ -26,14 +28,16 @@ import (
 )
 
 type Server struct {
-	e              *echo.Echo
-	nodeBroker     *broker.Broker
-	configManager  *apiconfig.ConfigManager
-	recorder       cosmos_client.CosmosMessageClient
-	validator      *validation.InferenceValidator
-	cdc            *codec.ProtoCodec
-	blockQueue     *pserver.BridgeQueue
-	payloadStorage payloadstorage.PayloadStorage
+	e               *echo.Echo
+	nodeBroker      *broker.Broker
+	configManager   *apiconfig.ConfigManager
+	recorder        cosmos_client.CosmosMessageClient
+	validator       *validation.InferenceValidator
+	cdc             *codec.ProtoCodec
+	blockQueue      *pserver.BridgeQueue
+	payloadStorage  payloadstorage.PayloadStorage
+	phaseTracker    *chainphase.ChainPhaseTracker
+	activityTracker *participant.ActivityTracker
 }
 
 func NewServer(
@@ -42,20 +46,24 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	validator *validation.InferenceValidator,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	phaseTracker *chainphase.ChainPhaseTracker,
+	activityTracker *participant.ActivityTracker) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		validator:      validator,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:               e,
+		nodeBroker:      nodeBroker,
+		configManager:   configManager,
+		recorder:        recorder,
+		validator:       validator,
+		cdc:             cdc,
+		blockQueue:      blockQueue,
+		payloadStorage:  payloadStorage,
+		phaseTracker:    phaseTracker,
+		activityTracker: activityTracker,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
