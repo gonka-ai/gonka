@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"devshard"
 	"devshard/cmd/devshardctl/paramvalidators"
 )
 
@@ -261,7 +262,7 @@ func (h ValidateUintParameterHandler) Apply(ctx *RequestFilterContext, parameter
 	if !exists || raw == nil {
 		return nil
 	}
-	if _, ok := numericJSONValueAsUint64(raw); !ok {
+	if _, ok := devshard.JSONNumericUint64(raw); !ok {
 		return badChatRequest("%s: must be a non-negative integer", parameter.Name)
 	}
 	return nil
@@ -589,7 +590,7 @@ func readUint64Field(doc *ChatRequestDocument, name string, dst *uint64) error {
 	if !ok || raw == nil {
 		return nil
 	}
-	n, ok := numericJSONValueAsUint64(raw)
+	n, ok := devshard.JSONNumericUint64(raw)
 	if !ok {
 		return badChatRequest("parse request: %s must be a non-negative integer", name)
 	}
@@ -734,6 +735,8 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.StreamOptionsValidator{},
 				}),
+			newParameter("return_token_ids").
+				withRule(RequestFilterStagePostLimits, ForceLiteralParameterHandler{Value: true}),
 			newParameter("logprobs").
 				withRule(RequestFilterStagePostLimits, ForceLiteralParameterHandler{Value: true}),
 			newParameter("top_logprobs").
@@ -954,5 +957,5 @@ func numericJSONValueAsUint64FromDocument(document *ChatRequestDocument, field s
 	if !ok {
 		return 0, false
 	}
-	return numericJSONValueAsUint64(value)
+	return devshard.JSONNumericUint64(value)
 }

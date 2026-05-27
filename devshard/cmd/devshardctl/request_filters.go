@@ -284,32 +284,3 @@ func unsupportedChatParameterMessage(name string) string {
 	return fmt.Sprintf("Chat completions parameter %q is currently rejected by the Gonka network. Some non-standard parameters can crash the vLLM engine on Gonka Host MLNodes, so the network rejects parameters that are not explicitly supported (see: https://github.com/gonka-ai/gonka/blob/dl/devshards-gateway-to-main/devshard/docs/supported-params.md). If you do not need this parameter, remove it from the request; if you need it, file a request at https://github.com/gonka-ai/gonka/issues", name)
 }
 
-func numericJSONValueAsUint64(value any) (uint64, bool) {
-	switch v := value.(type) {
-	case float64:
-		if v < 0 || v != float64(uint64(v)) {
-			return 0, false
-		}
-		return uint64(v), true
-	case uint64:
-		return v, true
-	case int:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case int64:
-		if v < 0 {
-			return 0, false
-		}
-		return uint64(v), true
-	case json.Number:
-		n, err := v.Int64()
-		if err != nil || n < 0 {
-			return 0, false
-		}
-		return uint64(n), true
-	default:
-		return 0, false
-	}
-}
