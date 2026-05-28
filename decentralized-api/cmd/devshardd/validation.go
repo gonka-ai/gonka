@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 
 	internaldevshard "decentralized-api/internal/devshard"
+
+	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -25,6 +28,9 @@ type devshardValidator struct {
 	recorder    internaldevshard.PayloadAuthClient
 	engine      *devshardEngine // reused for doWithLockedNode retry loop
 	chainParams internaldevshard.ChainParamsProvider
+
+	contextMu      sync.Mutex
+	contextWindows map[string]uint64
 }
 
 func newDevshardValidator(
@@ -36,12 +42,13 @@ func newDevshardValidator(
 	chainParams internaldevshard.ChainParamsProvider,
 ) *devshardValidator {
 	return &devshardValidator{
-		mlClient:    mlClient,
-		httpClient:  httpClient,
-		bridge:      br,
-		recorder:    recorder,
-		engine:      engine,
-		chainParams: chainParams,
+		mlClient:       mlClient,
+		httpClient:     httpClient,
+		bridge:         br,
+		recorder:       recorder,
+		engine:         engine,
+		chainParams:    chainParams,
+		contextWindows: map[string]uint64{},
 	}
 }
 
@@ -57,7 +64,34 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 		v.executeMLRequest,
 		"devshardd",
 		v.chainParams,
+		v.modelContextWindow(ctx, req.Model),
 	)
+}
+
+// modelContextWindow returns the chain context_window for the given model id.
+// Known models are cached for the process lifetime; unknown models cause a
+// fresh ModelsAll query so newly-added governance models get picked up
+// without a restart.
+func (v *devshardValidator) modelContextWindow(ctx context.Context, model string) uint64 {
+	v.contextMu.Lock()
+	if cw, ok := v.contextWindows[model]; ok {
+		v.contextMu.Unlock()
+		return cw
+	}
+	v.contextMu.Unlock()
+
+	resp, err := v.recorder.NewInferenceQueryClient().ModelsAll(ctx, &chaintypes.QueryModelsAllRequest{})
+	if err != nil {
+		return 0
+	}
+	v.contextMu.Lock()
+	defer v.contextMu.Unlock()
+	for _, m := range resp.Model {
+		if m.Id != "" {
+			v.contextWindows[m.Id] = m.ContextWindow
+		}
+	}
+	return v.contextWindows[model]
 }
 
 func (v *devshardValidator) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {

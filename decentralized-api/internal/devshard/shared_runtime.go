@@ -91,6 +91,7 @@ func ValidateInferenceWithExecutor(
 	execute MLRequestExecutor,
 	logPrefix string,
 	chainParams ChainParamsProvider,
+	maxModelLen uint64,
 ) (*devshardpkg.ValidateResult, error) {
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
@@ -108,7 +109,7 @@ func ValidateInferenceWithExecutor(
 		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
 	}
 
-	validationBody, err := BuildValidationBody(promptPayload, responsePayload, req.InferenceID, chainParams)
+	validationBody, err := BuildValidationBody(promptPayload, responsePayload, req.InferenceID, req.InputTokens, maxModelLen, chainParams)
 	if err != nil {
 		return nil, err
 	}
@@ -178,14 +179,32 @@ func ProcessExecutionHTTPResponse(
 	}, nil
 }
 
-func rewriteRequest(requestMap map[string]interface{}, enforcedTokens completionapi.EnforcedTokens) {
-	minMaxTokens := uint64(len(enforcedTokens.Tokens) * 2)
-	if maxTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_tokens"]); ok && minMaxTokens > maxTokens {
-		requestMap["max_tokens"] = minMaxTokens
+// contextWindowSafetyMargin reserves a few tokens of headroom so the
+// recomputed max_tokens never lands exactly at the model context limit
+// (vLLM rejects when prompt + max_tokens > max_model_len).
+const contextWindowSafetyMargin uint64 = 8
+
+func rewriteRequest(requestMap map[string]interface{}, enforcedTokens completionapi.EnforcedTokens, contextWindow uint64, inputTokens uint64) {
+	target := uint64(len(enforcedTokens.Tokens) * 2)
+	if target == 0 {
+		return
+	}
+	if contextWindow > 0 {
+		if contextWindow > inputTokens+contextWindowSafetyMargin {
+			if cap := contextWindow - inputTokens - contextWindowSafetyMargin; cap < target {
+				target = cap
+			}
+		} else {
+			return
+		}
 	}
 
-	if maxCompletionTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_completion_tokens"]); ok && minMaxTokens > maxCompletionTokens {
-		requestMap["max_completion_tokens"] = minMaxTokens
+	if maxTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_tokens"]); ok && target > maxTokens {
+		requestMap["max_tokens"] = target
+	}
+
+	if maxCompletionTokens, ok := devshardpkg.JSONNumericUint64(requestMap["max_completion_tokens"]); ok && target > maxCompletionTokens {
+		requestMap["max_completion_tokens"] = target
 	}
 }
 
@@ -193,6 +212,8 @@ func BuildValidationBody(
 	promptPayload []byte,
 	responsePayload []byte,
 	inferenceID uint64,
+	inputTokens uint64,
+	maxModelLen uint64,
 	chainParams ChainParamsProvider,
 ) ([]byte, error) {
 	seed := int32(inferenceID)
@@ -219,7 +240,7 @@ func BuildValidationBody(
 	requestMap["enforced_tokens"] = enforcedTokens
 	requestMap["stream"] = false
 	delete(requestMap, "stream_options")
-	rewriteRequest(requestMap, enforcedTokens)
+	rewriteRequest(requestMap, enforcedTokens, maxModelLen, inputTokens)
 
 	validationBody, err := json.Marshal(requestMap)
 	if err != nil {

@@ -629,6 +629,21 @@ func (b *Broker) GetNodeByNodeNum(nodeNum uint64) (*Node, bool) {
 	return nil, false
 }
 
+// GetModelContextWindow returns the chain-published context_window for the
+// given model id, reading from broker-cached per-node epoch model snapshots
+// (no chain query). Returns 0 when the model is not present.
+func (b *Broker) GetModelContextWindow(model string) uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, nodeWithState := range b.nodes {
+		if m, ok := nodeWithState.State.EpochModels[model]; ok && m.ContextWindow > 0 {
+			return m.ContextWindow
+		}
+	}
+	return 0
+}
+
 func (b *Broker) syncNodes() {
 	resp, err := b.chainBridge.GetHardwareNodes()
 	if err != nil {
