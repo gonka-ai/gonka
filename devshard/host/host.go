@@ -22,6 +22,18 @@ import (
 	"devshard/types"
 )
 
+// finishGossipGraceRotations is the number of full slot rotations to wait
+// before re-broadcasting a locally-proposed MsgFinishInference that the user
+// sequencer has not yet included in a diff. With round-robin host selection
+// (nonce % len(group)), one rotation = len(group) nonces, so the effective
+// grace is finishGossipGraceRotations * len(group) nonces.
+//
+// Two rotations gives the user two natural chances to pick up the Finish
+// from the executor host's devshard_meta tail (once per rotation) before we
+// fall back to peer-to-peer recovery gossip. Increase if direct-contact
+// recovery should be preferred more strongly; decrease for snappier gossip.
+const finishGossipGraceRotations uint64 = 2
+
 // InferencePayload carries the actual request data for the current inference.
 // The host verifies these against the signed MsgStartInference in the diff.
 type InferencePayload struct {
@@ -702,18 +714,6 @@ func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
 	h.gsp.BroadcastTxs(context.Background(), txs)
 }
-
-// finishGossipGraceRotations is the number of full slot rotations to wait
-// before re-broadcasting a locally-proposed MsgFinishInference that the user
-// sequencer has not yet included in a diff. With round-robin host selection
-// (nonce % len(group)), one rotation = len(group) nonces, so the effective
-// grace is finishGossipGraceRotations * len(group) nonces.
-//
-// Two rotations gives the user two natural chances to pick up the Finish
-// from the executor host's devshard_meta tail (once per rotation) before we
-// fall back to peer-to-peer recovery gossip. Increase if direct-contact
-// recovery should be preferred more strongly; decrease for snappier gossip.
-const finishGossipGraceRotations uint64 = 2
 
 // collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
 // that the user sequencer has not yet included in a diff after the grace

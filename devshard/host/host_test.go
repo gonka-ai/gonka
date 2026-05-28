@@ -75,12 +75,19 @@ func awaitTxsCall(t *testing.T, p *recordingPeer, deadline time.Duration) [][]*t
 // one-shot sleep because it continuously checks for asynchronous activity.
 func assertNoTxsCallFor(t *testing.T, p *recordingPeer, quietWindow time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(quietWindow)
-	for time.Now().Before(deadline) {
+	timeout := time.NewTimer(quietWindow)
+	defer timeout.Stop()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
 		if n := p.txsCount.Load(); n > 0 {
 			t.Fatalf("expected no GossipTxs calls for %s, got %d", quietWindow, n)
 		}
-		time.Sleep(5 * time.Millisecond)
+		select {
+		case <-timeout.C:
+			return
+		case <-tick.C:
+		}
 	}
 }
 
