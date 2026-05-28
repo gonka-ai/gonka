@@ -19,6 +19,7 @@ decentralized-api/responses/
 inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api
+/decentralized-api/devshardd
 chain-venv/
 .inference/
 prod-genesis/

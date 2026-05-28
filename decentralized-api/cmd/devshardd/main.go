@@ -50,6 +50,8 @@ import (
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
 	devshardstorage "devshard/storage"
+
+	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
 // Version is the devshardd version. Set via ldflags
@@ -130,6 +132,14 @@ func main() {
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
+	// Seed availability from chain so the host gate honors
+	// devshard_requests_enabled from the very first request instead of starting
+	// in the constructor-optimistic "enabled=true" state and waiting for the
+	// chosen provider's first successful apply (mirrors gm/microrelease seed).
+	// Best-effort: if the chain is unreachable at startup we keep the optimistic
+	// seed and let the provider's background loop correct it.
+	seedAvailabilityFromChain(ctx, recorder, availabilityTracker)
+
 	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker)
 	if err != nil {
 		log.Fatalf("runtime params provider: %v", err)
@@ -324,6 +334,39 @@ func newIgniteClient(ctx context.Context, nodeConfig apiconfig.ChainNodeConfig) 
 	}
 
 	return &c, nil
+}
+
+// availabilitySeedTimeout bounds the synchronous chain query used to seed
+// AvailabilityTracker at startup. Short so a misconfigured / unreachable chain
+// does not delay devshardd boot; the long-lived params provider (grpc or
+// chain) corrects the value afterwards on its normal cadence.
+const availabilitySeedTimeout = 3 * time.Second
+
+// seedAvailabilityFromChain queries chain params once and records
+// DevshardRequestsEnabled into tracker. Errors are logged at warn level; we
+// preserve the constructor seed (Enabled=true) so a temporary chain hiccup
+// does not refuse all requests until the provider catches up.
+func seedAvailabilityFromChain(ctx context.Context, qcp internaldevshard.InferenceQueryClientProvider, tracker *devshardpkg.AvailabilityTracker) {
+	if qcp == nil || tracker == nil {
+		return
+	}
+	seedCtx, cancel := context.WithTimeout(ctx, availabilitySeedTimeout)
+	defer cancel()
+
+	qc := qcp.NewInferenceQueryClient()
+	resp, err := qc.Params(seedCtx, &chaintypes.QueryParamsRequest{})
+	if err != nil {
+		slog.Warn("availability seed: chain Params query failed; keeping optimistic seed",
+			"err", err)
+		return
+	}
+	if resp.Params.DevshardEscrowParams == nil {
+		slog.Warn("availability seed: chain returned no DevshardEscrowParams; keeping optimistic seed")
+		return
+	}
+	enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
+	tracker.Record(enabled, time.Now().Unix(), 0)
+	slog.Info("availability seed: applied from chain", "devshard_requests_enabled", enabled)
 }
 
 func envOr(key, fallback string) string {

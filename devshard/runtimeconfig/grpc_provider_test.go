@@ -282,6 +282,34 @@ func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	assert.Equal(t, uint64(1), p.Snapshot().CurrentEpochID)
 }
 
+func TestGRPCProvider_Unimplemented_ExitsLoop(t *testing.T) {
+	srv := testserver.New()
+	srv.SetHandlers(
+		testserver.Error(status.Error(codes.Unimplemented, "method GetRuntimeConfig not implemented")),
+		// Anything past the first call should never happen — assert via call count below.
+		testserver.FullConfig(TestRuntimeConfigProto(99, 99, "raw")),
+	)
+	client := testserver.Dial(t, srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := New(ctx, testConfig(t, client))
+	require.NoError(t, err)
+
+	// Wait for the loop to observe Unimplemented and exit.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(srv.Calls()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.GreaterOrEqual(t, len(srv.Calls()), 1, "expected at least one probe call")
+
+	// Sleep beyond max backoff to confirm the loop did not retry.
+	time.Sleep(150 * time.Millisecond)
+	assert.Equal(t, 1, len(srv.Calls()),
+		"Unimplemented must be terminal — loop should exit after the first call, not retry")
+}
+
 func TestGRPCProvider_LongPoll_ErrorBackoff(t *testing.T) {
 	srv := testserver.New()
 	srv.SetHandlers(
