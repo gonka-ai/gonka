@@ -13,13 +13,6 @@ class DockerExecutor(val containerId: String, val config: ApplicationConfig) : C
     private val dockerClient = DockerClientBuilder.getInstance().build()
     @Volatile
     private var currentContainerId: String = containerId
-
-    private val candidateNames = setOf(
-        "/${config.pairName}-node",
-        "${config.pairName}-node",
-        "/$containerId",
-        containerId
-    )
         
     override fun exec(args: List<String>, stdin: String?): List<String> {
         try {
@@ -77,6 +70,11 @@ class DockerExecutor(val containerId: String, val config: ApplicationConfig) : C
     }
 
     private fun refreshContainerId(): String? {
+        val candidateNames = setOf(
+            "/${config.pairName}-node",
+            "${config.pairName}-node"
+        )
+
         return dockerClient.listContainersCmd().exec()
             .firstOrNull { container ->
                 container.names.any { it in candidateNames }
