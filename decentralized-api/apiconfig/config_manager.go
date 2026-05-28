@@ -634,6 +634,11 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err != nil {
 		log.Fatalf("error loading env: %v", err)
 	}
+	if !k.Exists("chain_node.query_cache_enabled") {
+		if err := k.Set("chain_node.query_cache_enabled", true); err != nil {
+			log.Fatalf("error setting default chain_node.query_cache_enabled: %v", err)
+		}
+	}
 	// Pre-seed early-share guard defaults so any field absent from yaml/env keeps
 	// its default while explicitly-set values override. koanf unmarshals with
 	// ZeroFields=false, so only keys actually present overwrite these. This is
