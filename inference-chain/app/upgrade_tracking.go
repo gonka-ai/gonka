@@ -4,7 +4,6 @@ import (
 	"context"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 )
 
@@ -15,8 +14,7 @@ func (app *App) withLastUpgradeHeight(next upgradetypes.UpgradeHandler) upgradet
 			return outVM, err
 		}
 
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		if err := app.InferenceKeeper.SetLastUpgradeHeight(sdkCtx, plan.Height); err != nil {
+		if err := app.InferenceKeeper.SetLastUpgradeHeight(ctx, plan.Height); err != nil {
 			app.Logger().Error("Failed to set last upgrade height from upgrade handler",
 				"height", plan.Height,
 				"name", plan.Name,

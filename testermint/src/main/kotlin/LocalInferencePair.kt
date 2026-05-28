@@ -800,7 +800,7 @@ data class LocalInferencePair(
                         ?.status
                     val inactiveProposal = voteResponse.rawLog.contains("inactive proposal")
                     val isTerminalProposalState =
-                        finalizedStatus == ProposalStatus.PASSED || finalizedStatus == ProposalStatus.REJECTED
+                        finalizedStatus in setOf(ProposalStatus.PASSED, ProposalStatus.REJECTED)
                     require(inactiveProposal && isTerminalProposalState) {
                         "Vote failed: ${voteResponse.rawLog}"
                     }

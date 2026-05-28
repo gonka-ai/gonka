@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,8 +13,7 @@ func (k Keeper) LastUpgradeHeight(goCtx context.Context, req *types.QueryGetLast
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	ctx := sdk.UnwrapSDKContext(goCtx)
-	height, found := k.GetLastUpgradeHeight(ctx)
+	height, found := k.GetLastUpgradeHeight(goCtx)
 
 	return &types.QueryGetLastUpgradeHeightResponse{
 		LastUpgradeHeight: height,

@@ -484,8 +484,10 @@ data class ApplicationCLI(
         val response = this.exec(commands, passwordInjection)
         val fullResponse = response.joinToString("\n")
         val alreadyGranted =
-            fullResponse.contains("fee allowance already exists") ||
-            fullResponse.contains("authorization already exists")
+            response.any {
+                it.contains("fee allowance already exists") ||
+                    it.contains("authorization already exists")
+            }
         if (!fullResponse.contains("Transaction confirmed successfully!") && !alreadyGranted) {
             if ((fullResponse.contains(NOT_READY_MESSAGE) || fullResponse.contains("not found: key not found")) && retries > 0) {
                 Thread.sleep(Duration.ofSeconds(5))

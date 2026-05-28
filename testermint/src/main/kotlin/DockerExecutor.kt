@@ -9,10 +9,17 @@ import java.net.URI
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
-data class DockerExecutor(val containerId: String, val config: ApplicationConfig) : CliExecutor {
+class DockerExecutor(val containerId: String, val config: ApplicationConfig) : CliExecutor {
     private val dockerClient = DockerClientBuilder.getInstance().build()
     @Volatile
     private var currentContainerId: String = containerId
+
+    private val candidateNames = setOf(
+        "/${config.pairName}-node",
+        "${config.pairName}-node",
+        "/$containerId",
+        containerId
+    )
         
     override fun exec(args: List<String>, stdin: String?): List<String> {
         try {
@@ -70,13 +77,6 @@ data class DockerExecutor(val containerId: String, val config: ApplicationConfig
     }
 
     private fun refreshContainerId(): String? {
-        val candidateNames = listOf(
-            "/${config.pairName}-node",
-            "${config.pairName}-node",
-            "/$containerId",
-            containerId
-        ).distinct()
-
         return dockerClient.listContainersCmd().exec()
             .firstOrNull { container ->
                 container.names.any { name -> candidateNames.contains(name) }

@@ -40,11 +40,10 @@ class UpgradeTests : TestermintTest() {
             try {
                 return initCluster(config = config, reboot = true)
             } catch (t: Throwable) {
-                val causalChain = generateSequence(t) { it.cause }.toList()
                 val shouldRetry =
                     t.message?.contains("Could not find node container for keyName=genesis") == true ||
                         t.message?.contains("Failed to get validator info within 90 seconds") == true ||
-                        causalChain.any { it is SocketException || it is NotFoundException }
+                        generateSequence(t) { it.cause }.any { it is SocketException || it is NotFoundException }
                 if (!shouldRetry || attempt == 2) {
                     throw t
                 }

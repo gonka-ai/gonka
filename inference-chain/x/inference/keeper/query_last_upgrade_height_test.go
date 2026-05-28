@@ -13,6 +13,8 @@ import (
 )
 
 func TestLastUpgradeHeightQuery(t *testing.T) {
+	t.Parallel()
+
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	require.NoError(t, keeper.SetLastUpgradeHeight(ctx, 1234))
@@ -38,7 +40,10 @@ func TestLastUpgradeHeightQuery(t *testing.T) {
 	}
 
 	for _, tc := range tests {
+		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
+			t.Parallel()
+
 			response, err := keeper.LastUpgradeHeight(ctx, tc.request)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
@@ -52,6 +57,8 @@ func TestLastUpgradeHeightQuery(t *testing.T) {
 }
 
 func TestLastUpgradeHeightQueryNotFound(t *testing.T) {
+	t.Parallel()
+
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	response, err := keeper.LastUpgradeHeight(ctx, &types.QueryGetLastUpgradeHeightRequest{})
