@@ -48,6 +48,7 @@ jobs:
       packages: write
 
     with:
+      caller_job_name: "integration-tests"
       test_name: "Integration Tests"
       test_command: "run-tests"
       is_pr_comment: ${{ github.event_name == 'issue_comment' }}

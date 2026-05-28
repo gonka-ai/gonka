@@ -11,6 +11,10 @@ on:
         required: true
         type: string
         description: 'Make command to run the tests (e.g., "run-tests" or "run-sanity")'
+      caller_job_name:
+        required: true
+        type: string
+        description: 'Caller job id prefix used in GitHub check names (e.g., "integration-tests")'
       pr_number:
         required: false
         type: string
@@ -218,6 +222,7 @@ jobs:
   run-tests:
     needs: [setup-test-matrix, build-images]
     runs-on: ubuntu-latest
+    name: ${{ inputs.test_name }} (${{ matrix.test_group }})
     strategy:
       fail-fast: false
       # Use the dynamically generated matrix from the setup-test-matrix job
@@ -351,15 +356,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
 
       - name: Publish Test Results
-        uses: dorny/test-reporter@v1
+        uses: mikepenz/action-junit-report@v6
         if: always()
         continue-on-error: true
         id: test-reporter
         with:
-          name: ${{ inputs.test_name }} (${{ matrix.test_group }})
-          path: ./testermint/build/test-results/**/*.xml
-          reporter: java-junit
-          fail-on-error: false
+          report_paths: ./testermint/build/test-results/**/*.xml
+          check_name: ${{ inputs.test_name }} (${{ matrix.test_group }})
+          job_name: ${{ inputs.caller_job_name }} / ${{ inputs.test_name }} (${{ matrix.test_group }})
+          update_check: true
+          fail_on_failure: false
 
       - name: Upload Results to BigQuery
         if: always()
@@ -375,7 +381,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           MATRIX_TEST_GROUP: ${{ matrix.test_group }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          TEST_REPORT_URL: ${{ steps.test-reporter.outputs.url_html }}
+          TEST_REPORT_URL: ${{ steps.test-reporter.outputs.report_url }}
           LOGS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.archive-logs.outputs.artifact-id || 'N/A' }}
         run: |
           pip install google-cloud-bigquery
