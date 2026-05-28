@@ -919,11 +919,9 @@ data class LocalInferencePair(
         ), null).joinToString("").trim()
         val httpCode = raw.toIntOrNull()
             ?: error("curl did not return an HTTP status code (got ${raw.take(80)})")
-        val responseBody = try {
+        val responseBody = runCatching {
             api.executor.exec(listOf("cat", bodyFile), null).joinToString("")
-        } catch (_: Exception) {
-            ""
-        }
+        }.getOrDefault("")
         return DevshardChatCompletionResult(httpCode, responseBody)
     }
 

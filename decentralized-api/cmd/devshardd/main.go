@@ -132,12 +132,7 @@ func main() {
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
-	// Seed availability from chain so the host gate honors
-	// devshard_requests_enabled from the very first request instead of starting
-	// in the constructor-optimistic "enabled=true" state and waiting for the
-	// chosen provider's first successful apply (mirrors gm/microrelease seed).
-	// Best-effort: if the chain is unreachable at startup we keep the optimistic
-	// seed and let the provider's background loop correct it.
+
 	seedAvailabilityFromChain(ctx, recorder, availabilityTracker)
 
 	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker)

@@ -242,7 +242,8 @@ jobs:
         run: go mod download
 
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        # Pin the package version for reproducible CI; keep in sync with runner image.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2
 
       - name: Build
         run: go build ./...

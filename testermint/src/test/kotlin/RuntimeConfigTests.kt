@@ -26,6 +26,7 @@ import org.junit.jupiter.api.TestMethodOrder
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 
 /**
@@ -78,38 +79,6 @@ class RuntimeConfigTests : TestermintTest() {
         }
     }
 
-    /**
-     * Avoid starting a long-poll near the next PoC start (epoch transition wakes runtime-config waiters).
-     * Uses [EpochResponse.nextEpochStages.pocStart] like [EpochResponse.safeForInference].
-     */
-    private fun LocalInferencePair.waitForMidEpochWindow(
-        minBlocksIntoEpoch: Long = 3,
-        minBlocksBeforeNextPoc: Long = 4,
-    ) {
-        repeat(60) { attempt ->
-            val epoch = getEpochData()
-            val height = getCurrentBlockHeight()
-            val pocStart = epoch.latestEpoch.pocStartBlockHeight
-            val nextPocStart = epoch.nextEpochStages.pocStart
-            val blocksInto = height - pocStart
-            val blocksUntilNextPoc = nextPocStart - height
-            if (epoch.phase == EpochPhase.Inference &&
-                blocksInto >= minBlocksIntoEpoch &&
-                blocksUntilNextPoc >= minBlocksBeforeNextPoc
-            ) {
-                return
-            }
-            Thread.sleep(2_000)
-            if (attempt == 59) {
-                error(
-                    "timed out waiting for mid-epoch window: height=$height phase=${epoch.phase} " +
-                        "pocStart=$pocStart nextPocStart=$nextPocStart blocksInto=$blocksInto " +
-                        "blocksUntilNextPoc=$blocksUntilNextPoc"
-                )
-            }
-        }
-    }
-
     private fun nodeManagerClient(pair: LocalInferencePair): NodeManagerClient {
         val port = pair.nodeManagerGrpcHostPort
             ?: error("NodeManager gRPC port not available for ${pair.name}")
@@ -118,8 +87,10 @@ class RuntimeConfigTests : TestermintTest() {
 
     private fun waitForSyncedRuntimeConfig(client: NodeManagerClient): NodeManagerProto.RuntimeConfig {
         var clientHeight = 0L
-        repeat(60) { attempt ->
+        var lastResp: NodeManagerProto.GetRuntimeConfigResponse? = null
+        repeat(60) {
             val resp = client.getRuntimeConfig(clientParamsBlockHeight = clientHeight, maxWaitSeconds = 0)
+            lastResp = resp
             if (!resp.unchanged && resp.hasConfig()) {
                 clientHeight = resp.config.paramsBlockHeight
                 if (clientHeight > 0) {
@@ -127,14 +98,12 @@ class RuntimeConfigTests : TestermintTest() {
                 }
             }
             Thread.sleep(5_000)
-            if (attempt == 59) {
-                error(
-                    "dapi runtime config never synced (params_block_height still 0 after 5m): " +
-                        "unchanged=${resp.unchanged} hasConfig=${resp.hasConfig()}"
-                )
-            }
         }
-        error("unreachable")
+        val resp = lastResp
+        error(
+            "dapi runtime config never synced (params_block_height still 0 after 5m): " +
+                "unchanged=${resp?.unchanged} hasConfig=${resp?.hasConfig() == true}",
+        )
     }
 
     /**
@@ -181,17 +150,15 @@ class RuntimeConfigTests : TestermintTest() {
         verifyResponse: (NodeManagerProto.GetRuntimeConfigResponse) -> Unit,
     ) {
         val result = CompletableFuture<NodeManagerProto.GetRuntimeConfigResponse>()
-        val pollThread = Thread {
+        val pollThread = thread(start = true) {
             result.complete(
-                client.getRuntimeConfig(clientParamsBlockHeight = atHeight, maxWaitSeconds = maxWaitSeconds)
+                client.getRuntimeConfig(clientParamsBlockHeight = atHeight, maxWaitSeconds = maxWaitSeconds),
             )
         }
-        pollThread.start()
         Thread.sleep(500)
 
         // Run trigger concurrently — waitForNextEpoch() can exceed maxWaitSeconds.
-        val triggerThread = Thread { trigger() }
-        triggerThread.start()
+        val triggerThread = thread(start = true) { trigger() }
 
         val resultTimeoutSeconds = maxWaitSeconds.toLong() + 15L
         val elapsed = measureTimeMillis {

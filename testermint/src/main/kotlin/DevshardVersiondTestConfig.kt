@@ -29,36 +29,29 @@ private fun resolveDevshardTestVersion(): String {
     return "dev"
 }
 
-private fun readDevshardVersionStamp(): String? =
-    try {
-        val stamp = Path.of(getRepoRoot(), DEVSHARD_VERSION_STAMP)
-        if (!Files.isRegularFile(stamp)) {
-            null
-        } else {
-            Files.readString(stamp).trim().takeIf { it.isNotBlank() }
-        }
-    } catch (_: Exception) {
-        null
+private fun readDevshardVersionStamp(): String? = runCatching {
+    val stamp = Path.of(getRepoRoot(), DEVSHARD_VERSION_STAMP)
+    if (!Files.isRegularFile(stamp)) {
+        return@runCatching null
     }
+    Files.readString(stamp).trim().takeIf { it.isNotBlank() }
+}.getOrNull()
 
-private fun makefileDevshardVersion(): String? =
-    try {
-        val proc =
-            ProcessBuilder(
-                "make",
-                "-s",
-                "--no-print-directory",
-                "-C",
-                getRepoRoot(),
-                "print-devshard-version",
-            )
-                .redirectErrorStream(true)
-                .start()
-        val out = proc.inputStream.bufferedReader().readText().trim()
-        if (proc.waitFor() == 0 && out.isNotBlank()) out else null
-    } catch (_: Exception) {
-        null
-    }
+private fun makefileDevshardVersion(): String? = runCatching {
+    val proc =
+        ProcessBuilder(
+            "make",
+            "-s",
+            "--no-print-directory",
+            "-C",
+            getRepoRoot(),
+            "print-devshard-version",
+        )
+            .redirectErrorStream(true)
+            .start()
+    val out = proc.inputStream.bufferedReader().use { it.readText().trim() }
+    if (proc.waitFor() == 0 && out.isNotBlank()) out else null
+}.getOrNull()
 
 /** Maps version name to VERSIOND_OVERRIDE env suffix (dots -> underscores). */
 fun versiondOverrideEnvKey(version: String): String =

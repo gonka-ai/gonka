@@ -332,10 +332,28 @@ func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
 	createFee := params.DevshardEscrowParams.CreateDevshardFee
 	feePerNonce := params.DevshardEscrowParams.FeePerNonce
 
-	var updates []types.DevshardEscrow
+	// Keep memory bounded during Walk: record only escrow IDs that need a backfill,
+	// then re-read and update each row. This avoids buffering full escrow objects
+	// while still preserving two-phase iteration (no writes during Walk).
+	//
+	// Important: we intentionally do not call SetDevshardEscrow inside Walk.
+	// collections.Map iteration is safest when mutation happens after traversal,
+	// so future SDK/internal iterator changes cannot invalidate traversal state.
+	var updateIDs []uint64
 	if err := k.DevshardEscrows.Walk(ctx, nil, func(_ uint64, escrow types.DevshardEscrow) (bool, error) {
 		if escrow.CreateDevshardFee != 0 && escrow.FeePerNonce != 0 {
 			return false, nil
+		}
+		updateIDs = append(updateIDs, escrow.Id)
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk devshard escrows for fee backfill: %w", err)
+	}
+
+	for _, id := range updateIDs {
+		escrow, found := k.GetDevshardEscrow(ctx, id)
+		if !found {
+			return fmt.Errorf("get devshard escrow %d during fee backfill: not found", id)
 		}
 		if escrow.CreateDevshardFee == 0 {
 			escrow.CreateDevshardFee = createFee
@@ -343,19 +361,12 @@ func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
 		if escrow.FeePerNonce == 0 {
 			escrow.FeePerNonce = feePerNonce
 		}
-		updates = append(updates, escrow)
-		return false, nil
-	}); err != nil {
-		return fmt.Errorf("walk devshard escrows for fee backfill: %w", err)
-	}
-
-	for _, escrow := range updates {
 		if err := k.SetDevshardEscrow(ctx, escrow); err != nil {
 			return fmt.Errorf("set devshard escrow %d during fee backfill: %w", escrow.Id, err)
 		}
 	}
 	k.LogInfo("backfilled devshard escrow fees", types.Upgrades,
-		"updated", len(updates),
+		"updated", len(updateIDs),
 		"create_devshard_fee", createFee,
 		"fee_per_nonce", feePerNonce,
 	)
