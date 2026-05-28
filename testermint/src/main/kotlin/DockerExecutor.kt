@@ -79,7 +79,7 @@ class DockerExecutor(val containerId: String, val config: ApplicationConfig) : C
     private fun refreshContainerId(): String? {
         return dockerClient.listContainersCmd().exec()
             .firstOrNull { container ->
-                container.names.any { name -> candidateNames.contains(name) }
+                container.names.any { it in candidateNames }
             }
             ?.id
     }

@@ -243,6 +243,8 @@ data class LocalInferencePair(
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
+    private val terminalProposalStates = setOf(ProposalStatus.PASSED, ProposalStatus.REJECTED)
+
     /**
      * Gets an alternative API URL using DNS alias (api.{name}.test).
      * This URL:
@@ -799,8 +801,7 @@ data class LocalInferencePair(
                         .firstOrNull { proposal -> proposal.id == proposalId }
                         ?.status
                     val inactiveProposal = voteResponse.rawLog.contains("inactive proposal")
-                    val isTerminalProposalState =
-                        finalizedStatus in setOf(ProposalStatus.PASSED, ProposalStatus.REJECTED)
+                    val isTerminalProposalState = finalizedStatus in terminalProposalStates
                     require(inactiveProposal && isTerminalProposalState) {
                         "Vote failed: ${voteResponse.rawLog}"
                     }
