@@ -55,6 +55,8 @@ func awaitTxsCall(t *testing.T, p *recordingPeer, deadline time.Duration) [][]*t
 	t.Helper()
 	timeout := time.NewTimer(deadline)
 	defer timeout.Stop()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		if p.txsCount.Load() > 0 {
 			return p.Calls()
@@ -63,8 +65,22 @@ func awaitTxsCall(t *testing.T, p *recordingPeer, deadline time.Duration) [][]*t
 		case <-timeout.C:
 			t.Fatalf("expected at least one GossipTxs call within %s, got 0", deadline)
 			return nil
-		case <-time.After(5 * time.Millisecond):
+		case <-tick.C:
 		}
+	}
+}
+
+// assertNoTxsCallFor polls for the full quietWindow and fails immediately if
+// recordingPeer observes any GossipTxs call. This is more deterministic than a
+// one-shot sleep because it continuously checks for asynchronous activity.
+func assertNoTxsCallFor(t *testing.T, p *recordingPeer, quietWindow time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(quietWindow)
+	for time.Now().Before(deadline) {
+		if n := p.txsCount.Load(); n > 0 {
+			t.Fatalf("expected no GossipTxs calls for %s, got %d", quietWindow, n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -1546,9 +1562,7 @@ func TestHost_FinishGossipRecovery_TriggersOnMissedDiff(t *testing.T) {
 		_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
 		require.NoError(t, err)
 	}
-	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, int32(0), peer.txsCount.Load(),
-		"recovery gossip must not fire until ProposedAt + grace < currentNonce")
+	assertNoTxsCallFor(t, peer, 50*time.Millisecond)
 
 	// One more empty diff crosses the threshold: 1 + grace < currentNonce.
 	crossing := testutil.SignDiff(t, user, "escrow-1", 2+grace, nil)
@@ -1598,10 +1612,8 @@ func TestHost_FinishGossipRecovery_NoTriggerWhenIncluded(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
 	require.NoError(t, err)
 
-	// Give a goroutine slot for any spurious broadcast to land.
-	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, int32(0), peer.txsCount.Load(),
-		"no recovery gossip should fire when the user includes Finish in time")
+	// Keep a short quiet window and fail immediately if any spurious broadcast lands.
+	assertNoTxsCallFor(t, peer, 50*time.Millisecond)
 }
 
 // TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified guards the
@@ -1627,7 +1639,5 @@ func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) 
 		require.NoError(t, err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, int32(0), peer.txsCount.Load(),
-		"peer-imported Finish (ProposedAt=0) must not be re-broadcast")
+	assertNoTxsCallFor(t, peer, 50*time.Millisecond)
 }

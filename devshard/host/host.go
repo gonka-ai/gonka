@@ -378,7 +378,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// (d) Collect validation candidates under mutex.
 	validationJobs := h.collectValidationJobs()
 
-	// (f) Collect locally-proposed Finish txs that the user has not yet
+	// (e) Collect locally-proposed Finish txs that the user has not yet
 	// absorbed into a diff. Computed under mutex; broadcast outside it.
 	var staleFinishes []*types.DevshardTx
 	if diffsApplied {
@@ -387,20 +387,20 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	h.mu.Unlock()
 
-	// (g) Execution job for caller to run via RunExecution.
+	// (f) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (h) Validate other hosts' inferences outside mutex.
+	// (g) Validate other hosts' inferences outside mutex.
 	for _, vj := range validationJobs {
 		h.enqueueValidation(vj)
 	}
 
-	// (i) Recovery gossip: re-broadcast locally produced Finish that the
+	// (h) Recovery gossip: re-broadcast locally produced Finish that the
 	// user sequencer skipped. gossip.BroadcastTxs dedups by tx hash so
 	// repeated triggers across diffs are harmless.
 	if len(staleFinishes) > 0 && h.gsp != nil {
-		go h.gsp.BroadcastTxs(context.Background(), staleFinishes)
+		go h.broadcastTxsBestEffort(staleFinishes)
 	}
 
 	return &HostResponse{
@@ -693,8 +693,14 @@ func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Unlock()
 
 	if len(staleFinishes) > 0 && h.gsp != nil {
-		go h.gsp.BroadcastTxs(context.Background(), staleFinishes)
+		go h.broadcastTxsBestEffort(staleFinishes)
 	}
+}
+
+// broadcastTxsBestEffort keeps gossip asynchronous/non-blocking for the host
+// hot path. BroadcastTxs is intentionally fire-and-forget.
+func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
+	h.gsp.BroadcastTxs(context.Background(), txs)
 }
 
 // finishGossipGraceRotations is the number of full slot rotations to wait
