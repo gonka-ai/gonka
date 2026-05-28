@@ -32,7 +32,7 @@ const (
 //   - Postgres when PGHOST is set, escrow_epoch is empty, and Postgres connects
 //     within PG_CONNECT_TIMEOUT.
 //
-// See devshard/docs/storage-modes-plan.md.
+// See devshard/docs/storage-design.md#storage-mode-selection.
 func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 	kind, err := decideStorageBackend(storeDir)
 	if err != nil {

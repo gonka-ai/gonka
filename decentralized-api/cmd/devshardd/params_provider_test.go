@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,7 +185,7 @@ func TestNewParamsProvider_Auto_ProbeSucceeds_PicksGRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, nil, mlClient, nil)
+	res, err := newParamsProvider(ctx, nil, mlClient, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceGRPC, res.Source)
 	require.NotNil(t, res.RegisterEpochPrune)
@@ -203,7 +204,7 @@ func TestNewParamsProvider_Auto_ProbeUnimplemented_PicksChain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, chainFake, mlClient, nil)
+	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceChain, res.Source)
 
@@ -227,7 +228,7 @@ func TestNewParamsProvider_Auto_ProbeTransientError_PicksGRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, chainFake, mlClient, nil)
+	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceGRPC, res.Source, "transient errors must not trigger chain fallback")
 }
@@ -243,7 +244,7 @@ func TestNewParamsProvider_EnvOverride_Chain(t *testing.T) {
 
 	// mlClient is nil to prove the selector never touches NodeManager when
 	// forced to chain.
-	res, err := newParamsProvider(ctx, chainFake, nil, nil)
+	res, err := newParamsProvider(ctx, chainFake, nil, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceChain, res.Source)
 	assert.False(t, res.Provider.Snapshot().DevshardRequestsEnabled)
@@ -261,7 +262,7 @@ func TestNewParamsProvider_EnvOverride_GRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, nil, mlClient, nil)
+	res, err := newParamsProvider(ctx, nil, mlClient, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceGRPC, res.Source)
 	waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 8)
@@ -274,7 +275,7 @@ func TestNewParamsProvider_EnvOverride_Chain_RequiresRecorder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, nil, nil, nil)
+	_, err := newParamsProvider(ctx, nil, nil, nil, slog.Default())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "InferenceQueryClientProvider")
 }
@@ -286,7 +287,7 @@ func TestNewParamsProvider_EnvOverride_GRPC_RequiresMLClient(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, nil, nil, nil)
+	_, err := newParamsProvider(ctx, nil, nil, nil, slog.Default())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "NodeManager")
 }
@@ -310,7 +311,7 @@ func TestNewParamsProvider_GRPC_RecordsAvailabilityOnApply(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, nil, mlClient, tracker)
+	_, err := newParamsProvider(ctx, nil, mlClient, tracker, slog.Default())
 	require.NoError(t, err)
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -335,7 +336,7 @@ func TestNewParamsProvider_Chain_RecordsAvailabilityOnApply(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, chainFake, nil, tracker)
+	_, err := newParamsProvider(ctx, chainFake, nil, tracker, slog.Default())
 	require.NoError(t, err)
 
 	avail := tracker.CurrentAvailability()
@@ -357,7 +358,7 @@ func TestNewParamsProvider_Chain_FetcherErrorNonFatal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, bad, nil, nil)
+	res, err := newParamsProvider(ctx, bad, nil, nil, slog.Default())
 	require.NoError(t, err, "chain provider construction must tolerate initial fetch failure")
 	assert.Equal(t, paramsSourceChain, res.Source)
 	// Defaults snapshot — LogprobsMode is filled by Config.applyDefaults.

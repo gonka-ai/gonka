@@ -162,6 +162,6 @@ func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	require.True(t, ok)
-	// devshard/state/machine_phase7_test.go -> repo root (gonka module).
+	// devshard/state/vote_threshold_freeze_test.go -> repo root (gonka module).
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }

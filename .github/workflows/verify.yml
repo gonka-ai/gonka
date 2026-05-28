@@ -212,7 +212,7 @@ jobs:
           reporter: java-junit
 
   build-and-test-devshard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Build and Test Devshard
     permissions:
       contents: read

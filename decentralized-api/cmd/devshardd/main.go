@@ -135,7 +135,7 @@ func main() {
 
 	seedAvailabilityFromChain(ctx, recorder, availabilityTracker)
 
-	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker)
+	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker, slog.Default())
 	if err != nil {
 		log.Fatalf("runtime params provider: %v", err)
 	}

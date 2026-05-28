@@ -64,17 +64,17 @@ func TestHost_MaxNonce_AllowsFinalizeAfterCap(t *testing.T) {
 	h := newTestHostWithMaxNonce(t, 0, hosts, user, maxNonce)
 
 	ctx := context.Background()
-	cap := types.MaxActiveNonce(maxNonce, len(hosts))
-	for nonce := uint64(1); nonce < cap; nonce++ {
+	activeCap := types.MaxActiveNonce(maxNonce, len(hosts))
+	for nonce := uint64(1); nonce < activeCap; nonce++ {
 		diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
 		_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{diff}})
 		require.NoError(t, err, "nonce %d", nonce)
 	}
-	diff := testutil.SignDiff(t, user, "escrow-1", cap, []*types.DevshardTx{testutil.StartTx(cap)})
+	diff := testutil.SignDiff(t, user, "escrow-1", activeCap, []*types.DevshardTx{testutil.StartTx(activeCap)})
 	_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{diff}})
 	require.NoError(t, err)
 
-	finalizeNonce := cap + 1
+	finalizeNonce := activeCap + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", finalizeNonce, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})

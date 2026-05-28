@@ -37,9 +37,15 @@ type EpochChangeListener func(old, new uint64)
 // Provider is the surface engine/validation/storage code consumes instead of
 // going to chain.
 type Provider interface {
+	// Snapshot returns the latest immutable runtime-config snapshot.
 	Snapshot() Snapshot
+	// LogprobsMode returns the current logprobs mode from Snapshot().
 	LogprobsMode() string
+	// CurrentEpochID returns the latest observed chain epoch id from Snapshot().
 	CurrentEpochID() uint64
+	// Availability derives the current availability state from Snapshot().
 	Availability() devshardpkg.AvailabilityStatus
+	// OnEpochChange registers a listener called once per epoch transition and
+	// returns a cancel function that unregisters it.
 	OnEpochChange(EpochChangeListener) (cancel func())
 }

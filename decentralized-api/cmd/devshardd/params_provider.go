@@ -115,27 +115,29 @@ func newParamsProvider(
 	recorder internaldevshard.InferenceQueryClientProvider,
 	mlClient *mlnodeclient.Client,
 	availability *devshardpkg.AvailabilityTracker,
+	logger *slog.Logger,
 ) (*paramsProviderResult, error) {
+	logger = normalizeLogger(logger)
 	source := paramsSourceFromEnv()
 
 	switch source {
 	case paramsSourceChain:
-		slog.Info("runtime params provider", "source", "chain_poll", "reason", "env_override")
-		return newChainParamsResult(ctx, recorder, availability)
+		logger.Info("runtime params provider", "source", "chain_poll", "reason", "env_override")
+		return newChainParamsResult(ctx, recorder, availability, logger)
 	case paramsSourceGRPC:
-		slog.Info("runtime params provider", "source", "dapi_grpc", "reason", "env_override")
-		return newGRPCParamsResult(ctx, mlClient, availability)
+		logger.Info("runtime params provider", "source", "dapi_grpc", "reason", "env_override")
+		return newGRPCParamsResult(ctx, mlClient, availability, logger)
 	}
 
 	// auto
 	if probeUnimplemented(ctx, mlClient) {
-		slog.Warn("runtime params provider: dapi NodeManager.GetRuntimeConfig unimplemented; "+
+		logger.Warn("runtime params provider: dapi NodeManager.GetRuntimeConfig unimplemented; "+
 			"falling back to direct chain polling",
 			"source", "chain_poll")
-		return newChainParamsResult(ctx, recorder, availability)
+		return newChainParamsResult(ctx, recorder, availability, logger)
 	}
-	slog.Info("runtime params provider", "source", "dapi_grpc", "reason", "probe_ok_or_transient")
-	return newGRPCParamsResult(ctx, mlClient, availability)
+	logger.Info("runtime params provider", "source", "dapi_grpc", "reason", "probe_ok_or_transient")
+	return newGRPCParamsResult(ctx, mlClient, availability, logger)
 }
 
 // probeUnimplemented issues a single non-blocking GetRuntimeConfig
@@ -160,12 +162,14 @@ func newGRPCParamsResult(
 	ctx context.Context,
 	mlClient *mlnodeclient.Client,
 	availability *devshardpkg.AvailabilityTracker,
+	logger *slog.Logger,
 ) (*paramsProviderResult, error) {
+	logger = normalizeLogger(logger)
 	if mlClient == nil {
 		return nil, fmt.Errorf("runtime params provider (grpc): NodeManager client is required")
 	}
 	serverMaxWait, deadlineSlack := runtimeConfigSettingsFromEnv()
-	slog.Info("runtime params provider settings (grpc)",
+	logger.Info("runtime params provider settings (grpc)",
 		"max_wait_seconds", int(serverMaxWait/time.Second),
 		"deadline_slack_seconds", int(deadlineSlack/time.Second),
 	)
@@ -175,7 +179,7 @@ func newGRPCParamsResult(
 		ServerMaxWait:       serverMaxWait,
 		ClientDeadlineSlack: deadlineSlack,
 		Availability:        availability,
-		Log:                 slog.Default(),
+		Log:                 logger,
 	})
 	if err != nil {
 		return nil, err
@@ -196,12 +200,14 @@ func newChainParamsResult(
 	ctx context.Context,
 	recorder internaldevshard.InferenceQueryClientProvider,
 	availability *devshardpkg.AvailabilityTracker,
+	logger *slog.Logger,
 ) (*paramsProviderResult, error) {
+	logger = normalizeLogger(logger)
 	if recorder == nil {
 		return nil, fmt.Errorf("runtime params provider (chain): InferenceQueryClientProvider is required")
 	}
 	refresh, initial := chainParamsSettingsFromEnv()
-	slog.Info("runtime params provider settings (chain)",
+	logger.Info("runtime params provider settings (chain)",
 		"refresh_seconds", int(refresh/time.Second),
 		"initial_timeout_seconds", int(initial/time.Second),
 	)
@@ -211,7 +217,7 @@ func newChainParamsResult(
 		RefreshInterval: refresh,
 		InitialTimeout:  initial,
 		Availability:    availability,
-		Log:             slog.Default(),
+		Log:             logger,
 	})
 	if err != nil {
 		return nil, err
@@ -226,4 +232,11 @@ func newChainParamsResult(
 		},
 		Source: paramsSourceChain,
 	}, nil
+}
+
+func normalizeLogger(logger *slog.Logger) *slog.Logger {
+	if logger != nil {
+		return logger
+	}
+	return slog.Default()
 }
