@@ -1,7 +1,7 @@
 ---
 id: inference-chain-upgrade-handlers
 ai_review: primer
-type: blueprint
+type: implementation
 path_filters:
   - "inference-chain/app/upgrades.go"
   - "inference-chain/app/upgrades_enabled.go"
