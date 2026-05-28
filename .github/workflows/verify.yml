@@ -64,12 +64,13 @@ jobs:
           path: inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
-        uses: dorny/test-reporter@v1
+        uses: mikepenz/action-junit-report@v6
         if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
         with:
-          name: Inferenced Tests
-          path: inference-chain/junit-report.xml
-          reporter: java-junit
+          report_paths: inference-chain/junit-report.xml
+          check_name: Inferenced Tests
+          job_name: Build and Test chain
+          update_check: true
 
   build-and-test-api:
     runs-on: ubuntu-latest
@@ -127,11 +128,12 @@ jobs:
 
       - name: Report Test Results in GitHub
         if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
-        uses: dorny/test-reporter@v1
+        uses: mikepenz/action-junit-report@v6
         with:
-          name: Decentralized-API Tests
-          path: decentralized-api/junit-report.xml
-          reporter: java-junit
+          report_paths: decentralized-api/junit-report.xml
+          check_name: Decentralized-API Tests
+          job_name: Build and Test API Wrapper
+          update_check: true
 
   build-and-test-versioned:
     runs-on: ubuntu-latest
@@ -187,11 +189,12 @@ jobs:
 
       - name: Report Test Results in GitHub
         if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
-        uses: dorny/test-reporter@v1
+        uses: mikepenz/action-junit-report@v6
         with:
-          name: Versioned Tests
-          path: versioned/junit-report.xml
-          reporter: java-junit
+          report_paths: versioned/junit-report.xml
+          check_name: Versioned Tests
+          job_name: Build and Test Versioned
+          update_check: true
 
   build-and-test-devshard:
     runs-on: ubuntu-latest
@@ -247,8 +250,9 @@ jobs:
 
       - name: Report Test Results in GitHub
         if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
-        uses: dorny/test-reporter@v1
+        uses: mikepenz/action-junit-report@v6
         with:
-          name: Devshard Tests
-          path: devshard/junit-report.xml
-          reporter: java-junit
+          report_paths: devshard/junit-report.xml
+          check_name: Devshard Tests
+          job_name: Build and Test Devshard
+          update_check: true
