@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,13 +20,25 @@ import (
 	"devshard/user"
 )
 
-// metaDrainTimeout caps how long the upstream SSE drain may continue after
-// the OpenAI client has disconnected. The drain must run long enough to
-// observe devshard_meta (which the host emits after [DONE]) so that the
-// session can merge mempool txs (e.g. MsgFinishInference) into pending,
-// but a malicious upstream host must not be able to pin the proxy
-// indefinitely once the client is gone.
-const metaDrainTimeout = 5 * time.Second
+const defaultMetaDrainTimeout = 10 * time.Second
+
+// metaDrainTimeout applies only after client disconnect (flag.Done() in
+// sendAndProcess), not during normal connected flows. If devshard_meta /
+// MsgFinishInference is missed due to this cap, proxy continues via
+// handleTimeout (progresses, but may classify as timeout).
+var metaDrainTimeout = metaDrainTimeoutFromEnv()
+
+func metaDrainTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultMetaDrainTimeout
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return defaultMetaDrainTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
 
 // cancelFlag is a one-shot signal used to communicate "client disconnected"
 // from the request handler down into runInference / sendAndProcess. The

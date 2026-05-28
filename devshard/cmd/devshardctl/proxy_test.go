@@ -92,6 +92,24 @@ func TestHasMsgFinish(t *testing.T) {
 	require.False(t, hasMsgFinish(txs, 2))
 }
 
+func TestMetaDrainTimeoutFromEnv_Default(t *testing.T) {
+	t.Setenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS", "")
+	require.Equal(t, defaultMetaDrainTimeout, metaDrainTimeoutFromEnv())
+}
+
+func TestMetaDrainTimeoutFromEnv_Override(t *testing.T) {
+	t.Setenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS", "17")
+	require.Equal(t, 17*time.Second, metaDrainTimeoutFromEnv())
+}
+
+func TestMetaDrainTimeoutFromEnv_InvalidFallsBack(t *testing.T) {
+	t.Setenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS", "nope")
+	require.Equal(t, defaultMetaDrainTimeout, metaDrainTimeoutFromEnv())
+
+	t.Setenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS", "0")
+	require.Equal(t, defaultMetaDrainTimeout, metaDrainTimeoutFromEnv())
+}
+
 // --- Test infrastructure for proxy-level tests ---
 
 // killableClient wraps a HostClient. Kill/Revive toggle availability.
