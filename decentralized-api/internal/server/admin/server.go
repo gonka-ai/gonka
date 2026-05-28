@@ -90,6 +90,8 @@ func NewServer(
 
 	// EXPERIMENTAL: Setup and health report endpoint for participant onboarding
 	g.GET("setup/report", s.getSetupReport)
+	g.GET("cache/stats", s.getQueryCacheStats)
+	g.POST("cache/stats/reset", s.resetQueryCacheStats)
 
 	// Bridge
 	g.POST("bridge/block", s.postBridgeBlock)

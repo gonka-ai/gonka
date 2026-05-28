@@ -226,3 +226,13 @@ func (m *MockCosmosMessageClient) NewRestrictionsQueryClient() restrictionstypes
 	args := m.Called()
 	return args.Get(0).(restrictionstypes.QueryClient)
 }
+
+func (m *MockCosmosMessageClient) SetQueryCacheHeightHint(_ int64) {}
+
+func (m *MockCosmosMessageClient) GetQueryCacheStats() *QueryCacheStats {
+	return nil
+}
+
+func (m *MockCosmosMessageClient) ResetQueryCacheStats() bool {
+	return false
+}
