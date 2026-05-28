@@ -15,21 +15,21 @@ var postgresMigrationSteps = []migrate.Step{
 	{
 		ID:   1,
 		Name: "devshard_session_index",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_session_index (
     escrow_id TEXT   PRIMARY KEY,
     epoch_id  BIGINT NOT NULL
-)`,
+)`},
 	},
 	{
-		ID:   2,
-		Name: "devshard_session_index_by_epoch",
-		SQL:  `CREATE INDEX IF NOT EXISTS devshard_session_index_by_epoch ON devshard_session_index(epoch_id)`,
+		ID:         2,
+		Name:       "devshard_session_index_by_epoch",
+		Statements: []string{`CREATE INDEX IF NOT EXISTS devshard_session_index_by_epoch ON devshard_session_index(epoch_id)`},
 	},
 	{
 		ID:   3,
 		Name: "devshard_sessions_parent",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_sessions (
     epoch_id        BIGINT NOT NULL,
     escrow_id       TEXT   NOT NULL,
@@ -43,12 +43,12 @@ CREATE TABLE IF NOT EXISTS devshard_sessions (
     status          TEXT   NOT NULL DEFAULT 'active',
     settled_at      BIGINT,
     PRIMARY KEY (epoch_id, escrow_id)
-) PARTITION BY RANGE (epoch_id)`,
+) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
 		ID:   4,
 		Name: "devshard_diffs_parent",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_diffs (
     epoch_id        BIGINT NOT NULL,
     escrow_id       TEXT   NOT NULL,
@@ -60,12 +60,12 @@ CREATE TABLE IF NOT EXISTS devshard_diffs (
     warm_keys_json  TEXT,
     created_at      BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id, nonce)
-) PARTITION BY RANGE (epoch_id)`,
+) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
 		ID:   5,
 		Name: "devshard_signatures_parent",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_signatures (
     epoch_id  BIGINT NOT NULL,
     escrow_id TEXT   NOT NULL,
@@ -73,12 +73,12 @@ CREATE TABLE IF NOT EXISTS devshard_signatures (
     slot_id   BIGINT NOT NULL,
     sig       BYTEA  NOT NULL,
     PRIMARY KEY (epoch_id, escrow_id, nonce, slot_id)
-) PARTITION BY RANGE (epoch_id)`,
+) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
 		ID:   6,
 		Name: "devshard_snapshots_parent",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_snapshots (
     epoch_id   BIGINT NOT NULL,
     escrow_id  TEXT   NOT NULL,
@@ -86,24 +86,24 @@ CREATE TABLE IF NOT EXISTS devshard_snapshots (
     state_data BYTEA  NOT NULL,
     created_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id)
-) PARTITION BY RANGE (epoch_id)`,
+) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
 		ID:   7,
 		Name: "devshard_sealed_inferences_parent",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_sealed_inferences (
     epoch_id     BIGINT NOT NULL,
     escrow_id    TEXT   NOT NULL,
     inference_id BIGINT NOT NULL,
     sealed_nonce BIGINT NOT NULL,
     PRIMARY KEY (epoch_id, escrow_id, inference_id)
-) PARTITION BY RANGE (epoch_id)`,
+) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
-		ID:   8,
-		Name: "noop",
-		SQL:  `SELECT 1`,
+		ID:         8,
+		Name:       "noop",
+		Statements: []string{`SELECT 1`},
 	},
 }
 

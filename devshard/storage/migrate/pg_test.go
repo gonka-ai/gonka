@@ -82,8 +82,8 @@ func TestApplyPG_RejectsOutOfOrderIDs(t *testing.T) {
 	ctx := context.Background()
 	pool := testPGPool(t)
 	steps := []migrate.Step{
-		{ID: 2, Name: "second", SQL: `SELECT 1`},
-		{ID: 1, Name: "first", SQL: `SELECT 1`},
+		{ID: 2, Name: "second", Statements: []string{`SELECT 1`}},
+		{ID: 1, Name: "first", Statements: []string{`SELECT 1`}},
 	}
 	err := migrate.ApplyPG(ctx, pool, steps)
 	require.Error(t, err)
@@ -95,9 +95,9 @@ func TestApplyPG_StepWithoutIFNotExists(t *testing.T) {
 	pool := testPGPool(t)
 	steps := []migrate.Step{
 		{
-			ID:   1,
-			Name: "create_strict",
-			SQL:  `CREATE TABLE strict_table (id INT PRIMARY KEY)`,
+			ID:         1,
+			Name:       "create_strict",
+			Statements: []string{`CREATE TABLE strict_table (id INT PRIMARY KEY)`},
 		},
 	}
 	require.NoError(t, migrate.ApplyPG(ctx, pool, steps))
@@ -115,11 +115,11 @@ func TestApplyPG_TransactionRollback(t *testing.T) {
 		{
 			ID:   1,
 			Name: "fail_mid_tx",
-			SQL: `
-CREATE TABLE migrate_rollback_probe (id INT PRIMARY KEY);
-INSERT INTO migrate_rollback_probe (id) VALUES (1);
-INSERT INTO migrate_rollback_probe (id) VALUES (1);
-`,
+			Statements: []string{
+				`CREATE TABLE migrate_rollback_probe (id INT PRIMARY KEY)`,
+				`INSERT INTO migrate_rollback_probe (id) VALUES (1)`,
+				`INSERT INTO migrate_rollback_probe (id) VALUES (1)`,
+			},
 		},
 	}
 	err := migrate.ApplyPG(ctx, pool, steps)

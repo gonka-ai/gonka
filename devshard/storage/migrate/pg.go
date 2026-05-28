@@ -49,7 +49,10 @@ func applyPGStep(ctx context.Context, pool *pgxpool.Pool, step Step) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	for _, stmt := range splitSQL(step.SQL) {
+	if len(step.Statements) == 0 {
+		return fmt.Errorf("migrate: step %d (%s): no statements", step.ID, step.Name)
+	}
+	for _, stmt := range step.Statements {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate: step %d (%s): %w", step.ID, step.Name, err)
 		}

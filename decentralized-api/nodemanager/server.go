@@ -143,7 +143,7 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 		timer := time.NewTimer(maxWait)
 		select {
 		case <-wake:
-			stopAndDrain(timer)
+			timer.Stop()
 			logging.Debug("runtime_config: GetRuntimeConfig long-poll notified, retrying", types.Config,
 				"clientParamsBlockHeight", clientHeight,
 				"serverParamsBlockHeight", s.configManager.RuntimeParamsBlockHeight(),
@@ -159,15 +159,9 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 			)
 			return &gen.GetRuntimeConfigResponse{Unchanged: true}, nil
 		case <-ctx.Done():
-			stopAndDrain(timer)
+			timer.Stop()
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}
-	}
-}
-
-func stopAndDrain(t *time.Timer) {
-	if !t.Stop() {
-		<-t.C
 	}
 }
 

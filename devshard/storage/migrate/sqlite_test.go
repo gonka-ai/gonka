@@ -26,14 +26,14 @@ func openSQLiteTestDB(t *testing.T) *sql.DB {
 func fixtureSteps() []migrate.Step {
 	return []migrate.Step{
 		{
-			ID:   1,
-			Name: "create_widget",
-			SQL:  `CREATE TABLE IF NOT EXISTS widget (id INTEGER PRIMARY KEY, label TEXT NOT NULL)`,
+			ID:         1,
+			Name:       "create_widget",
+			Statements: []string{`CREATE TABLE IF NOT EXISTS widget (id INTEGER PRIMARY KEY, label TEXT NOT NULL)`},
 		},
 		{
-			ID:   2,
-			Name: "add_widget_color",
-			SQL:  `ALTER TABLE widget ADD COLUMN color TEXT NOT NULL DEFAULT ''`,
+			ID:         2,
+			Name:       "add_widget_color",
+			Statements: []string{`ALTER TABLE widget ADD COLUMN color TEXT NOT NULL DEFAULT ''`},
 		},
 	}
 }
@@ -63,8 +63,8 @@ func TestApplySQLite_RejectsOutOfOrderIDs(t *testing.T) {
 	ctx := context.Background()
 	db := openSQLiteTestDB(t)
 	steps := []migrate.Step{
-		{ID: 2, Name: "second", SQL: `SELECT 1`},
-		{ID: 1, Name: "first", SQL: `SELECT 1`},
+		{ID: 2, Name: "second", Statements: []string{`SELECT 1`}},
+		{ID: 1, Name: "first", Statements: []string{`SELECT 1`}},
 	}
 	err := migrate.ApplySQLite(ctx, db, steps)
 	require.Error(t, err)
@@ -76,9 +76,9 @@ func TestApplySQLite_StepWithoutIFNotExists(t *testing.T) {
 	db := openSQLiteTestDB(t)
 	steps := []migrate.Step{
 		{
-			ID:   1,
-			Name: "create_strict",
-			SQL:  `CREATE TABLE strict_table (id INTEGER PRIMARY KEY)`,
+			ID:         1,
+			Name:       "create_strict",
+			Statements: []string{`CREATE TABLE strict_table (id INTEGER PRIMARY KEY)`},
 		},
 	}
 	require.NoError(t, migrate.ApplySQLite(ctx, db, steps))

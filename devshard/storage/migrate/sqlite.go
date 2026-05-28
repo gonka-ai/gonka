@@ -53,11 +53,10 @@ func applySQLiteStep(ctx context.Context, db *sql.DB, step Step) error {
 			return fmt.Errorf("migrate: step %d (%s): %w", step.ID, step.Name, err)
 		}
 	} else {
-		stmts := splitSQL(step.SQL)
-		if len(stmts) == 0 {
-			return fmt.Errorf("migrate: step %d (%s): empty SQL", step.ID, step.Name)
+		if len(step.Statements) == 0 {
+			return fmt.Errorf("migrate: step %d (%s): no statements", step.ID, step.Name)
 		}
-		for _, stmt := range stmts {
+		for _, stmt := range step.Statements {
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return fmt.Errorf("migrate: step %d (%s): %w", step.ID, step.Name, err)
 			}

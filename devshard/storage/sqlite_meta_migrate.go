@@ -12,21 +12,21 @@ var sqliteMetaMigrationSteps = []migrate.Step{
 	{
 		ID:   1,
 		Name: "escrow_epoch",
-		SQL: `
+		Statements: []string{`
 CREATE TABLE IF NOT EXISTS escrow_epoch (
     escrow_id TEXT PRIMARY KEY,
     epoch_id  INTEGER NOT NULL
-)`,
+)`},
 	},
 	{
-		ID:   2,
-		Name: "escrow_epoch_by_epoch",
-		SQL:  `CREATE INDEX IF NOT EXISTS escrow_epoch_by_epoch ON escrow_epoch(epoch_id)`,
+		ID:         2,
+		Name:       "escrow_epoch_by_epoch",
+		Statements: []string{`CREATE INDEX IF NOT EXISTS escrow_epoch_by_epoch ON escrow_epoch(epoch_id)`},
 	},
 	{
-		ID:   3,
-		Name: "noop",
-		SQL:  `SELECT 1`,
+		ID:         3,
+		Name:       "noop",
+		Statements: []string{`SELECT 1`},
 	},
 }
 
