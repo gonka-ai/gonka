@@ -394,17 +394,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
-	// Track full chain upgrades from UpgradeKeeper
-	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
-	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
-		am.LogInfo("FullUpgradeActive - tracking height", types.Upgrades,
-			"upgradeHeight", upgradePlan.Height, "blockHeight", blockHeight, "name", upgradePlan.Name)
-		err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
-		if err != nil {
-			am.LogError("Failed to set last upgrade height for full upgrade", types.Upgrades, "error", err)
-		}
-	}
-
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {

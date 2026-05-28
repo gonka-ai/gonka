@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.github.dockerjava.api.exception.NotFoundException
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.github.dockerjava.okhttp.OkDockerHttpClient
@@ -10,23 +11,44 @@ import java.util.concurrent.TimeUnit
 
 data class DockerExecutor(val containerId: String, val config: ApplicationConfig) : CliExecutor {
     private val dockerClient = DockerClientBuilder.getInstance().build()
+    @Volatile
+    private var currentContainerId: String = containerId
         
     override fun exec(args: List<String>, stdin: String?): List<String> {
+        try {
+            return execWithContainer(currentContainerId, args, stdin)
+        } catch (e: NotFoundException) {
+            val refreshedContainerId = refreshContainerId()
+            if (refreshedContainerId == null || refreshedContainerId == currentContainerId) {
+                throw e
+            }
+            Logger.warn(
+                "Docker exec hit stale container ID {}, retrying with {} for pair {}",
+                currentContainerId,
+                refreshedContainerId,
+                config.pairName
+            )
+            currentContainerId = refreshedContainerId
+            return execWithContainer(currentContainerId, args, stdin)
+        }
+    }
+
+    private fun execWithContainer(targetContainerId: String, args: List<String>, stdin: String?): List<String> {
         val output = ExecCaptureOutput()
         Logger.trace("Executing command: {}", args.joinToString(" "))
-        
+
         val execCmd = if (stdin != null) {
             // Use shell to pass stdin via printf
-            val stdinEscaped = stdin.replace("'", "'\\''")  // Escape single quotes
+            val stdinEscaped = stdin.replace("'", "'\\''")
             val fullCommand = "printf '%s' '$stdinEscaped' | ${args.joinToString(" ")}"
-            dockerClient.execCreateCmd(containerId)
+            dockerClient.execCreateCmd(targetContainerId)
                 .withAttachStdout(true)
                 .withAttachStderr(true)
                 .withAttachStdin(false)
                 .withTty(false)
                 .withCmd("/bin/sh", "-c", fullCommand)
         } else {
-            dockerClient.execCreateCmd(containerId)
+            dockerClient.execCreateCmd(targetContainerId)
                 .withAttachStdout(true)
                 .withAttachStderr(true)
                 .withAttachStdin(false)
@@ -45,6 +67,21 @@ data class DockerExecutor(val containerId: String, val config: ApplicationConfig
         
         Logger.trace("Command complete: output={}", output.output)
         return output.output
+    }
+
+    private fun refreshContainerId(): String? {
+        val candidateNames = listOf(
+            "/${config.pairName}-node",
+            "${config.pairName}-node",
+            "/$containerId",
+            containerId
+        ).distinct()
+
+        return dockerClient.listContainersCmd().exec()
+            .firstOrNull { container ->
+                container.names.any { name -> candidateNames.contains(name) }
+            }
+            ?.id
     }
 
     override fun kill() {

@@ -7,6 +7,7 @@ import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
 import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
+import com.productscience.data.ProposalStatus
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
 import java.io.File
@@ -271,6 +272,15 @@ data class LocalInferencePair(
             ?: error("API container not found for $name")
         DockerClientBuilder.getInstance().build().use { dockerClient ->
             dockerClient.stopContainerCmd(apiContainer.id).exec()
+        }
+    }
+
+    fun restartApiContainer() {
+        val apiContainer = getRawContainers(config).getApi(name)
+            ?: error("API container not found for $name")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            Logger.warn("Restarting API container for {}", name)
+            dockerClient.restartContainerCmd(apiContainer.id).exec()
         }
     }
 
@@ -784,7 +794,22 @@ data class LocalInferencePair(
             logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
             cluster.allPairs.forEach {
                 val voteResponse = it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
-                require(voteResponse.code == 0) { "Vote failed: ${voteResponse.rawLog}" }
+                if (voteResponse.code != 0) {
+                    val finalizedStatus = this.node.getGovernanceProposals().proposals
+                        .firstOrNull { proposal -> proposal.id == proposalId }
+                        ?.status
+                    val inactiveProposal = voteResponse.rawLog.contains("inactive proposal")
+                    val isTerminalProposalState =
+                        finalizedStatus == ProposalStatus.PASSED || finalizedStatus == ProposalStatus.REJECTED
+                    require(inactiveProposal && isTerminalProposalState) {
+                        "Vote failed: ${voteResponse.rawLog}"
+                    }
+                    Logger.info(
+                        "Skipping late vote for finalized proposal {} with status {}",
+                        proposalId,
+                        finalizedStatus
+                    )
+                }
             }
 
             logSection("Waiting for voting period to end")
