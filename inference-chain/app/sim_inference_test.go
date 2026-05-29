@@ -127,8 +127,8 @@ func TestFullSimulation_x_Inference_Integrated(t *testing.T) {
 	}
 
 	if cfg.Seed != simcli.DefaultSeedValue {
-		simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, cfg.Seed, nil, assertInferenceLifecycle)
+		simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, cfg.Seed, nil, assertInferenceLifecycle, checkInferenceInvariants)
 		return
 	}
-	simsx.Run(t, NewSimApp, setupStateFactory, assertInferenceLifecycle)
+	simsx.Run(t, NewSimApp, setupStateFactory, assertInferenceLifecycle, checkInferenceInvariants)
 }

@@ -178,12 +178,16 @@ func TestMsgValidationFactory_PicksExistingInference(t *testing.T) {
 	const seededID = "sim-inference-001"
 	executor := regAddrs[0]
 	putFinishedInference(t, kk, sdkCtx, seededID, executor)
+	// MsgValidationFactory consults the per-model transient weight cache
+	// (GetCachedEpochDataModelWeight) before drawing a validator; seed it
+	// for the active participants so a real validator is eligible.
+	seedModelWeightCacheForTest(t, sdkCtx, kk, regAddrs, 0)
 	cds := simsx.NewChainDataSource(sdkCtx, rand.New(rand.NewSource(42)),
 		nil, nil, gonkaBech32Codec(), accs...)
 	reporter := simsx.NewBasicSimulationReporter()
 
 	signers, msg := simulation.MsgValidationFactory(kk).SimMsgFactoryFn(sdkCtx, cds, reporter)
-	require.False(t, reporter.IsSkipped(), "factory skipped unexpectedly")
+	require.False(t, reporter.IsSkipped(), "factory skipped unexpectedly: %s", reporter.Comment())
 	require.NotNil(t, msg)
 	require.Len(t, signers, 1)
 	require.NoError(t, msg.ValidateBasic())

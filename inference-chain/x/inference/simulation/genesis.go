@@ -83,8 +83,15 @@ func BuildSimGenesisModels() []types.Model {
 // DefaultParams() leaves it at the Go zero value (false) which is the
 // pre-upgrade legacy. Sim is meant to mirror current mainnet behaviour,
 // so we flip it here.
-func BuildSimGenesisParams() types.Params {
+func BuildSimGenesisParams(simState *module.SimulationState) types.Params {
 	params := types.DefaultParams()
+	// Apply parameter fuzzing for multi-seed exploration (#982 Phase 3
+	// bullet 5). simState.Rand is seeded deterministically from
+	// simState.Seed; runs with the same -Seed flag produce the same
+	// mutated params.
+	if simState != nil && simState.Rand != nil {
+		MutateSimParams(simState.Rand, &params)
+	}
 	if params.PocParams != nil {
 		params.PocParams.PocV2Enabled = true
 	}

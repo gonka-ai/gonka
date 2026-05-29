@@ -72,7 +72,12 @@ func putFinishedInference(t *testing.T, k keeper.Keeper, ctx context.Context, id
 		Index:       id,
 		InferenceId: id,
 		ExecutedBy:  executedBy,
-		Status:      types.InferenceStatus_FINISHED,
+		// A real finished inference always carries a model; MsgValidationFactory
+		// resolves the validator's transient weight by (EpochId, Model), so an
+		// empty model would make every validator miss the cache and the factory
+		// skip. Use a genesis-registered sim model.
+		Model:  simulation.SimModelIDs[0],
+		Status: types.InferenceStatus_FINISHED,
 	}))
 }
 
@@ -112,6 +117,41 @@ func seedActiveParticipantsForTest(t *testing.T, ctx context.Context, k keeper.K
 		EpochId:      epoch,
 		Participants: aps,
 	}))
+}
+
+// seedModelWeightCacheForTest populates the transient model-weight cache
+// that MsgValidationFactory consults via GetCachedEpochDataModelWeight
+// before drawing a validator. It writes a root epoch group exposing the
+// first sim model as a sub-group, a model sub-group carrying a
+// ValidationWeight for every given member, then builds the transient cache
+// — the validator-side machinery that seedActiveParticipantsForTest
+// deliberately skips and that EnsureSimActiveParticipantsSeeded performs
+// during a real sim run.
+func seedModelWeightCacheForTest(t *testing.T, ctx context.Context, k keeper.Keeper, members []string, epoch uint64) {
+	t.Helper()
+	model := simulation.SimModelIDs[0]
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		ModelId:        "",
+		SubGroupModels: []string{model},
+	})
+	weights := make([]*types.ValidationWeight, 0, len(members))
+	var total int64
+	for _, addr := range members {
+		weights = append(weights, &types.ValidationWeight{
+			MemberAddress: addr,
+			Weight:        100,
+			Reputation:    50,
+		})
+		total += 100
+	}
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        epoch,
+		ModelId:           model,
+		ValidationWeights: weights,
+		TotalWeight:       total,
+	})
+	require.NoError(t, k.BuildEpochDataTransientCache(ctx))
 }
 
 // collectActiveAddrs returns the bech32 addresses in ActiveParticipantsSet

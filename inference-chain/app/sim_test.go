@@ -3,6 +3,7 @@
 package app_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"strings"
@@ -19,10 +20,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+	"github.com/cosmos/cosmos-sdk/server"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	"github.com/cosmos/cosmos-sdk/testutil/simsx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/kv"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
@@ -33,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app"
+	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -59,6 +63,13 @@ func NewSimApp(
 	appOpts servertypes.AppOptions,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) *app.App {
+	// Force per-block crisis-module invariant checks for sim runs so a
+	// broken invariant halts the sim at the offending block instead of
+	// only surfacing post-run. The simsx runner passes an AppOptionsMap;
+	// inject InvCheckPeriod=1 before app.New consumes it.
+	if m, ok := appOpts.(simtestutil.AppOptionsMap); ok {
+		m[server.FlagInvCheckPeriod] = uint(1)
+	}
 	bApp, err := app.New(logger, db, traceStore, loadLatest, appOpts, []wasmkeeper.Option{}, baseAppOptions...)
 	if err != nil {
 		panic(err)
@@ -90,84 +101,6 @@ func setupStateFactory(bApp *app.App) simsx.SimStateFactory {
 	}
 }
 
-// fixBankGenesisState patches the randomized sim genesis so InitGenesis succeeds:
-//
-//  1. Add Gonka denom metadata, required by inference module init
-//     (app.initializeDenomMetadata reads BankKeeper.GetDenomMetaData(BaseCoin)).
-//  2. Fund every sim account with ngonka: upstream
-//     simsx hardwires simState.BondDenom = sdk.DefaultBondDenom = "stake"
-//     (testutil/simsx/runner.go:286), so the randomized bank GenesisState
-//     funds accounts with `stake` but not the `ngonka` BaseCoin that
-//     StartInference's escrow flow requires (payment_handler.go).
-//     Without this, every StartInference fails at PutPaymentInEscrow with
-//     "insufficient spendable funds" and routes through failedStart — so
-//     no Inferences ever land in keeper and the rest of the first-wave
-//     ops never see paired state. We give each account simAccountNgonka
-//     coins of ngonka (~10^15 ≈ 10^6 GNK), well above the per-inference
-//     escrow even for the full-test 100K-op run.
-//  3. Recompute bank Supply from Balances. The randomized genesis sets
-//     Supply based on NumBonded staking validators, but with staking ops
-//     disabled the bonded pool is never funded, so the default Supply
-//     would fail the supply-vs-balance invariant at InitGenesis. Same
-//     recompute keeps Supply in sync after the ngonka top-up.
-//
-// The denom-metadata + Supply-recompute steps are ported from hleb-albau
-// PR gonka-ai/gonka#995; the ngonka top-up is added on top.
-func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
-	bankStateBz, ok := rawState[banktypes.ModuleName]
-	if !ok {
-		panic("bank genesis state missing from randomized state")
-	}
-	var bankState banktypes.GenesisState
-	bApp.AppCodec().MustUnmarshalJSON(bankStateBz, &bankState)
-
-	bankState.DenomMetadata = append(bankState.DenomMetadata, banktypes.Metadata{
-		Description: "Coins for the Gonka network.",
-		Base:        inferencetypes.BaseCoin,
-		Display:     inferencetypes.NativeCoin,
-		Name:        "Gonka",
-		Symbol:      "GNK",
-		DenomUnits: []*banktypes.DenomUnit{
-			{Denom: inferencetypes.BaseCoin, Exponent: 0, Aliases: []string{"nanogonka"}},
-			{Denom: "ugonka", Exponent: 3, Aliases: []string{"microgonka"}},
-			{Denom: "mgonka", Exponent: 6, Aliases: []string{"milligonka"}},
-			{Denom: inferencetypes.NativeCoin, Exponent: 9},
-		},
-	})
-
-	// Build the set of module-account addresses so we DON'T top them up
-	// with ngonka — staking InitGenesis verifies notBondedPool balance ==
-	// declared NotBondedCoins (stake only); adding ngonka there panics
-	// «not bonded pool balance is different from not bonded coins»
-	// (cosmos-sdk x/staking/keeper/genesis.go:174).
-	moduleAddrs := make(map[string]bool, 16)
-	for name := range app.GetMaccPerms() {
-		moduleAddrs[authtypes.NewModuleAddress(name).String()] = true
-	}
-
-	ngonkaTopUp := sdk.NewCoin(inferencetypes.BaseCoin, simAccountNgonka)
-	for i := range bankState.Balances {
-		if moduleAddrs[bankState.Balances[i].Address] {
-			continue
-		}
-		bankState.Balances[i].Coins = bankState.Balances[i].Coins.Add(ngonkaTopUp)
-	}
-
-	var actualSupply sdk.Coins
-	for _, balance := range bankState.Balances {
-		actualSupply = actualSupply.Add(balance.Coins...)
-	}
-	bankState.Supply = actualSupply
-
-	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
-}
-
-// simAccountNgonka is the per-sim-account ngonka top-up amount applied by
-// fixBankGenesisState. 10^15 ngonka = 10^6 GNK — comfortable buffer
-// above the per-inference escrow (~6.3 × 10^5 ngonka in current sim) even
-// at the make sim-full-test scale of 500 blocks × 200 ops/block.
-var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
-
 // shrinkUpstreamStakingValidators reduces every upstream-generated staking
 // validator's Tokens and matching DelegatorShares/Delegation.Shares to 1
 // (in BondDenom), so that EpochGroup.ValidationWeights[].Weight (sourced
@@ -190,9 +123,9 @@ var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
 //     SetComputeValidators → cometbft set drains → SKIP "empty
 //     validator set" (cosmos-sdk x/simulation/simulate.go:266).
 //
-// All validators are retained (so staking.InitGenesis still bonds ≥1 and
+// We keep all validators (so staking.InitGenesis still bonds ≥1 and
 // InitChain doesn't panic on empty validator set per
-// cosmos-sdk types/module/module.go:524) but their Tokens shrink to 1.
+// cosmos-sdk types/module/module.go:524) but shrink their Tokens.
 // NotBondedPool balance is adjusted to mirror the new sum, preserving
 // the upstream invariant (state_helpers.go:132-139) that
 // NotBondedPool == sum(Status==Unbonded).Tokens.
@@ -274,6 +207,84 @@ func shrinkUpstreamStakingValidators(bApp *app.App, rawState map[string]json.Raw
 	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
 }
 
+// fixBankGenesisState patches the randomized sim genesis so InitGenesis succeeds:
+//
+//  1. Add Gonka denom metadata, required by inference module init
+//     (app.initializeDenomMetadata reads BankKeeper.GetDenomMetaData(BaseCoin)).
+//  2. Fund every sim account with ngonka: upstream
+//     simsx hardwires simState.BondDenom = sdk.DefaultBondDenom = "stake"
+//     (testutil/simsx/runner.go:286), so the randomized bank GenesisState
+//     funds accounts with `stake` but not the `ngonka` BaseCoin that
+//     StartInference's escrow flow requires (payment_handler.go).
+//     Without this, every StartInference fails at PutPaymentInEscrow with
+//     "insufficient spendable funds" and routes through failedStart — so
+//     no Inferences ever land in keeper and the rest of the first-wave
+//     ops never see paired state. We give each account simAccountNgonka
+//     coins of ngonka (~10^15 ≈ 10^6 GNK), well above the per-inference
+//     escrow even for the full-test 100K-op run.
+//  3. Recompute bank Supply from Balances. The randomized genesis sets
+//     Supply based on NumBonded staking validators, but with staking ops
+//     disabled the bonded pool is never funded, so the default Supply
+//     would fail the supply-vs-balance invariant at InitGenesis. Same
+//     recompute keeps Supply in sync after the ngonka top-up.
+//
+// The denom-metadata + Supply-recompute steps are ported from hleb-albau
+// PR gonka-ai/gonka#995; the ngonka top-up is added on top.
+func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
+	bankStateBz, ok := rawState[banktypes.ModuleName]
+	if !ok {
+		panic("bank genesis state missing from randomized state")
+	}
+	var bankState banktypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(bankStateBz, &bankState)
+
+	bankState.DenomMetadata = append(bankState.DenomMetadata, banktypes.Metadata{
+		Description: "Coins for the Gonka network.",
+		Base:        inferencetypes.BaseCoin,
+		Display:     inferencetypes.NativeCoin,
+		Name:        "Gonka",
+		Symbol:      "GNK",
+		DenomUnits: []*banktypes.DenomUnit{
+			{Denom: inferencetypes.BaseCoin, Exponent: 0, Aliases: []string{"nanogonka"}},
+			{Denom: "ugonka", Exponent: 3, Aliases: []string{"microgonka"}},
+			{Denom: "mgonka", Exponent: 6, Aliases: []string{"milligonka"}},
+			{Denom: inferencetypes.NativeCoin, Exponent: 9},
+		},
+	})
+
+	// Build the set of module-account addresses so we DON'T top them up
+	// with ngonka — staking InitGenesis verifies notBondedPool balance ==
+	// declared NotBondedCoins (stake only); adding ngonka there panics
+	// «not bonded pool balance is different from not bonded coins»
+	// (cosmos-sdk x/staking/keeper/genesis.go:174).
+	moduleAddrs := make(map[string]bool, 16)
+	for name := range app.GetMaccPerms() {
+		moduleAddrs[authtypes.NewModuleAddress(name).String()] = true
+	}
+
+	ngonkaTopUp := sdk.NewCoin(inferencetypes.BaseCoin, simAccountNgonka)
+	for i := range bankState.Balances {
+		if moduleAddrs[bankState.Balances[i].Address] {
+			continue
+		}
+		bankState.Balances[i].Coins = bankState.Balances[i].Coins.Add(ngonkaTopUp)
+	}
+
+	var actualSupply sdk.Coins
+	for _, balance := range bankState.Balances {
+		actualSupply = actualSupply.Add(balance.Coins...)
+	}
+	bankState.Supply = actualSupply
+
+	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
+}
+
+// simAccountNgonka is the per-sim-account ngonka top-up amount applied by
+// fixBankGenesisState. 10^15 ngonka = 10^6 GNK — comfortable buffer
+// above the per-inference escrow (~6.3 × 10^5 ngonka in current sim) even
+// at the make sim-full-test scale of 500 blocks × 200 ops/block.
+var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
+
 // TestFullAppSimulation is the simsx entry point for `make sim-smoke-test`
 // and `make sim-full-test`. CLI flags (-NumBlocks, -BlockSize, -Seed,
 // -Enabled) come from simcli.GetSimulatorFlags() in init().
@@ -294,10 +305,25 @@ func TestFullAppSimulation(t *testing.T) {
 	cfg.ChainID = simsx.SimAppChainID
 
 	if cfg.Seed != simcli.DefaultSeedValue {
-		simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, cfg.Seed, nil)
+		simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, cfg.Seed, nil, checkInferenceInvariants)
 		return
 	}
-	simsx.Run(t, NewSimApp, setupStateFactory)
+	simsx.Run(t, NewSimApp, setupStateFactory, checkInferenceInvariants)
+}
+
+// checkInferenceInvariants runs every x/inference invariant against the
+// final sim state and fails the test on any breakage. Used as a post-run
+// callback so a violation prints the specific invariant name +
+// descriptive message even when per-block crisis checks miss the final
+// EndBlocker (e.g. when sim halts mid-tx on an unrelated failure).
+func checkInferenceInvariants(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
+	tb.Helper()
+	bApp := ti.App
+	ctx := bApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
+	msg, broken := inferencekeeper.AllInvariants(bApp.InferenceKeeper)(ctx)
+	if broken {
+		tb.Fatalf("x/inference invariant broken on post-run check: %s", msg)
+	}
 }
 
 // TestAppImportExport_Postrun is t.Skip'd because InitGenesis on the
@@ -463,17 +489,106 @@ func TestAppStateDeterminism(t *testing.T) {
 		// capture synchronously, so hashes[attempt] is populated before the
 		// next iteration.
 		hashes := make([][]byte, attempts)
+		// Snapshot KV state per attempt so a divergence prints decoded
+		// proto state via the modules' RegisterStoreDecoder registry,
+		// instead of an opaque AppHash mismatch.
+		snapshots := make([]storeSnapshot, attempts)
+		var decoders simtypes.StoreDecoderRegistry
 		for attempt := range attempts {
 			capture := func(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
 				hashes[attempt] = ti.App.LastCommitID().Hash
+				snapshots[attempt] = snapshotStores(ti.App)
+				decoders = ti.App.SimulationManager().StoreDecoders
 			}
 			simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, seed, nil, capture)
 			require.NotEmptyf(t, hashes[attempt],
 				"capture callback was not invoked for seed %d attempt %d", seed, attempt)
 		}
 		for i := 1; i < attempts; i++ {
+			if !bytes.Equal(hashes[0], hashes[i]) {
+				dumpKVDivergence(t, seed, i, snapshots[0], snapshots[i], decoders)
+			}
 			require.Equalf(t, hashes[0], hashes[i],
 				"non-determinism in seed %d: attempt 0 vs %d", seed, i)
 		}
 	}
+}
+
+// storeSnapshot is the captured KV state of every IAVL store at the end
+// of one simulation attempt. Used by TestAppStateDeterminism's divergence
+// dump so a regression prints decoded proto state instead of raw hash.
+type storeSnapshot map[string][]kv.Pair
+
+// snapshotStores iterates every IAVL store on the app and returns a deep
+// copy of every (key, value) pair. Run only after a sim completes — uses
+// a legacy context against the last block height.
+func snapshotStores(bApp *app.App) storeSnapshot {
+	snap := make(storeSnapshot)
+	ctx := bApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
+	for _, storeKey := range bApp.GetStoreKeys() {
+		kvKey, ok := storeKey.(*storetypes.KVStoreKey)
+		if !ok {
+			continue
+		}
+		name := kvKey.Name()
+		kvStore := ctx.KVStore(kvKey)
+		iter := kvStore.Iterator(nil, nil)
+		var pairs []kv.Pair
+		for ; iter.Valid(); iter.Next() {
+			pairs = append(pairs, kv.Pair{
+				Key:   append([]byte{}, iter.Key()...),
+				Value: append([]byte{}, iter.Value()...),
+			})
+		}
+		iter.Close()
+		snap[name] = pairs
+	}
+	return snap
+}
+
+// dumpKVDivergence diffs two captured snapshots store-by-store and emits
+// a readable diff via the per-module store decoders. The diff is only
+// emitted for stores whose KV pairs disagree.
+func dumpKVDivergence(t *testing.T, seed int64, attempt int, a, b storeSnapshot, decoders simtypes.StoreDecoderRegistry) {
+	t.Helper()
+	for name, pairsA := range a {
+		pairsB := b[name]
+		failedA, failedB := diffCapturedPairs(pairsA, pairsB)
+		if len(failedA) == 0 {
+			continue
+		}
+		t.Logf("KV divergence in store %q (seed %d, attempt 0 vs %d):\n%s",
+			name, seed, attempt,
+			simtestutil.GetSimulationLog(name, decoders, failedA, failedB))
+	}
+}
+
+// diffCapturedPairs returns aligned slices of pairs that differ between
+// the two captures. Missing keys on one side become nil-value placeholders.
+func diffCapturedPairs(a, b []kv.Pair) (failedA, failedB []kv.Pair) {
+	indexB := make(map[string]int, len(b))
+	for i, p := range b {
+		indexB[string(p.Key)] = i
+	}
+	seenA := make(map[string]struct{}, len(a))
+	for _, pa := range a {
+		seenA[string(pa.Key)] = struct{}{}
+		j, ok := indexB[string(pa.Key)]
+		if !ok {
+			failedA = append(failedA, pa)
+			failedB = append(failedB, kv.Pair{Key: pa.Key, Value: nil})
+			continue
+		}
+		if !bytes.Equal(pa.Value, b[j].Value) {
+			failedA = append(failedA, pa)
+			failedB = append(failedB, b[j])
+		}
+	}
+	for _, pb := range b {
+		if _, ok := seenA[string(pb.Key)]; !ok {
+			failedA = append(failedA, kv.Pair{Key: pb.Key, Value: nil})
+			failedB = append(failedB, pb)
+		}
+	}
+	return
 }
