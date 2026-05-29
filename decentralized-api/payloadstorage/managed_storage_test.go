@@ -401,7 +401,6 @@ func TestManagedStorage_LookbackCapCleansFailedEpochs(t *testing.T) {
 	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
-	// Jump to epoch 100 so threshold = 98, lookback cap sets minPruned = 88
 	ms.Store(ctx, "inf-1", 100, []byte("p"), []byte("r"))
 	ms.cleanup()
 
@@ -414,11 +413,7 @@ func TestManagedStorage_LookbackCapCleansFailedEpochs(t *testing.T) {
 		t.Errorf("minPruned should be 98 after cleanup, got %d", minPruned)
 	}
 
-	// Now jump far ahead so lookback cap would skip past the failed epoch
 	ms.Store(ctx, "inf-2", 120, []byte("p"), []byte("r"))
-	// threshold = 120 - 2 = 118
-	// minPruned(98) + maxPruneLookback(10) = 108 < 118 → minPruned jumps to 118-10 = 108
-	// Epoch 88 is below new minPruned(108) → should be cleaned from failedEpochs
 	ms.cleanup()
 
 	ms.mu.RLock()
@@ -431,5 +426,64 @@ func TestManagedStorage_LookbackCapCleansFailedEpochs(t *testing.T) {
 	}
 	if failedCount != 0 {
 		t.Errorf("failedEpochs should be empty (epoch 88 below minPruned), got %d entries", failedCount)
+	}
+}
+
+func TestManagedStorage_MaxRetriesDropsEpoch(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{1: true})
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	for i := uint64(0); i <= 5; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// First cleanup: main loop fail (attempt 1) + retry fail (attempt 2)
+	ms.cleanup()
+	// Subsequent cleanups: retry only. Need 3 more to reach maxRetryAttempts (5).
+	for i := 0; i < 3; i++ {
+		ms.cleanup()
+	}
+
+	ms.mu.RLock()
+	failedCount := len(ms.failedEpochs)
+	ms.mu.RUnlock()
+
+	if failedCount != 0 {
+		t.Errorf("failedEpochs should be empty after max retries, got %d", failedCount)
+	}
+}
+
+func TestManagedStorage_NoRedundantRetryAfterMainLoopSuccess(t *testing.T) {
+	mock := newFailingMockStorage(map[uint64]bool{2: true})
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ctx := context.Background()
+
+	for i := uint64(0); i <= 5; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	ms.cleanup()
+
+	ms.mu.RLock()
+	if _, ok := ms.failedEpochs[2]; !ok {
+		t.Fatalf("epoch 2 should be in failedEpochs after first cleanup")
+	}
+	ms.mu.RUnlock()
+
+	// Fix the mock and record pruned state after first cleanup
+	mock.failEpochs = nil
+	afterFirst := mock.getPruned()
+
+	ms.cleanup()
+
+	afterSecond := mock.getPruned()
+	newCalls := len(afterSecond) - len(afterFirst)
+
+	if newCalls != 1 {
+		t.Errorf("epoch 2 should be pruned exactly once in second cleanup, got %d new calls: %v", newCalls, afterSecond)
+	}
+	if afterSecond[len(afterSecond)-1] != 2 {
+		t.Errorf("expected epoch 2 as the new prune call, got %v", afterSecond)
 	}
 }
