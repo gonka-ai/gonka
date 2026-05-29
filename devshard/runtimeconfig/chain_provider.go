@@ -94,45 +94,12 @@ func NewChain(ctx context.Context, cfg ChainConfig) (Provider, error) {
 		baseProvider: newBase(cfg.Log, cfg.Availability, cfg.Defaults),
 		cfg:          cfg,
 	}
+	runner := newChainRunner(p.baseProvider, cfg)
 
 	initCtx, cancel := context.WithTimeout(ctx, cfg.InitialTimeout)
-	p.refresh(initCtx)
+	runner.refresh(initCtx)
 	cancel()
 
-	go p.run(ctx)
+	go runner.run(ctx)
 	return p, nil
-}
-
-func (p *chainProvider) refresh(ctx context.Context) {
-	snap, err := p.cfg.Fetcher.FetchSnapshot(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		p.cfg.Log.Warn("chain runtime config: fetch failed; keeping previous snapshot", "err", err)
-		return
-	}
-	if snap.LogprobsMode == "" {
-		snap.LogprobsMode = defaultLogprobsMode
-	}
-	if snap.ServedAt.IsZero() {
-		snap.ServedAt = p.cfg.Clock.Now()
-	}
-	p.cfg.Log.Debug("chain runtime config: snapshot fetched",
-		"paramsBlockHeight", snap.ParamsBlockHeight,
-		"epochID", snap.CurrentEpochID,
-		"devshardRequestsEnabled", snap.DevshardRequestsEnabled,
-	)
-	p.apply(snap)
-}
-
-func (p *chainProvider) run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-p.cfg.Clock.After(p.cfg.RefreshInterval):
-			p.refresh(ctx)
-		}
-	}
 }

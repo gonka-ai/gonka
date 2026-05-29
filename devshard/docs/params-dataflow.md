@@ -2,7 +2,7 @@
 
 **Motivation.** Decentralized API (dapi) already subscribes to chain events and keeps governance params in memory (`ConfigManager`). Devshard processes should not run their own periodic `QueryParams` / epoch polls. Instead, **dapi** is the single source of truth: its event listener refreshes params when blocks arrive, and **devshardd** pulls a snapshot over gRPC with **long-polling** so updates arrive as soon as dapi sees a param or epoch change—not on a fixed 30s (or 60s) timer.
 
-See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implementation phases), [protocol-version.md](./protocol-version.md) (state-root vs runtime version).
+See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implementation phases), [protocol-version.md](./protocol-version.md) (state-root vs runtime version), [params-provider-adaptive-plan.md](./params-provider-adaptive-plan.md) (adaptive gRPC ↔ chain supervisor — implemented).
 
 ---
 
@@ -54,8 +54,8 @@ Read once via `RuntimeParamsProvider` (`ConfigManagerRuntimeParams` embedded, `R
 | `max_nonce` | `MaxNonceProvider` | Host accept/reject gate |
 | `devshard_requests_enabled` | `AvailabilityTracker` | 503 when disabled |
 | `logprobs_mode` | Validation path | |
-| `approved_versions` | versiond / routing | Child process policy |
-| `current_epoch_id` | Prune, availability | Epoch transitions wake long-poll |
+| `approved_versions` | versiond / routing | Child process policy; **only updated while long-poll is active** (see adaptive section) |
+| `current_epoch_id` | Prune, availability | Epoch transitions wake long-poll or chain refresh |
 
 Proxy may still expose bound `RefusalTimeout` / `ExecutionTimeout` on `/status`; live inference uses the provider when configured.
 
@@ -81,19 +81,24 @@ Proxy may still expose bound `RefusalTimeout` / `ExecutionTimeout` on `/status`;
 
 **How dapi gets params (no extra chain poll for clients).** On each relevant block, dapi’s **chain event listener** updates `ConfigManager` and the phase tracker from subscribed events. When governance params or epoch change, dapi bumps `params_block_height` and calls `RuntimeConfigNotifier.Notify()`. The RPC handler reads the **in-memory cache** built by that listener — it does not query the chain per `GetRuntimeConfig` call.
 
-**Client: devshardd.** One in-flight long-poll RPC per process; reconnects after each snapshot.
+**Client: devshardd (adaptive).** By default devshardd runs `runtimeconfig.NewAdaptive`: one active feed at a time — either a single in-flight **long-poll** RPC to dapi, or a **chain** refresh loop (`QueryParams` + `QueryEpochInfo`). The supervisor switches between them without a process restart.
 
 ```
 chain block
     → dapi event listener → ConfigManager (+ phase tracker)
     → param or epoch change → bump params_block_height, Notify()
 
-devshardd:
+devshardd (active_grpc):
     GetRuntimeConfig(client_height=H, max_wait≈60s)  →  dapi (server)
         → server_height > H: return RuntimeConfig from cache
         → else: dapi blocks until Notify() | max_wait | client cancel
-    → apply snapshot locally (runtimeconfig.Provider)
+    → apply snapshot locally (shared runtimeconfig base)
     → re-issue RPC with new H
+
+devshardd (active_chain — fallback):
+    QueryParams + QueryEpochInfo  →  chain (default every 60s)
+    → apply snapshot locally (same base, same OnEpochChange / prune hooks)
+    → periodic GetRuntimeConfig probe (max_wait=0) to detect dapi recovery
 ```
 
 **`RuntimeConfig` snapshot fields (wire / cache):**
@@ -110,9 +115,94 @@ devshardd:
 | `refusal_timeout`, `execution_timeout` | C (live at proxy; also copied at bind for `/status`) |
 | `validation_rate`, `vote_threshold_factor` | B (frozen) |
 
-**Consumers:** standalone **devshardd** (`runtimeconfig.Provider` + `RuntimeParamsProvider`); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no gRPC loop). **Epoch change** triggers `ManagedStorage.PruneOnce` (devshardd via `runtimeconfig.OnEpochChange`; embedded dapi via `ConfigManager.SetEpochChangeHandler` on the same publish path). No 30s storage prune ticker.
+**Consumers:** standalone **devshardd** (`runtimeconfig.NewAdaptive` + `RuntimeParamsProvider`); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no adaptive loop). **Epoch change** triggers `ManagedStorage.PruneOnce` (devshardd via `runtimeconfig.OnEpochChange` on the shared base; embedded dapi via `ConfigManager.SetEpochChangeHandler`). No 30s storage prune ticker.
 
-**Idle cost:** when the chain is quiet, devshardd gets at most one RPC per `max_wait` (~1/min with a 60s cap) — not a repeating `QueryParams` or epoch-db poll on the devshard side.
+**Idle cost (healthy):** when the chain is quiet and dapi is up, devshardd holds `active_grpc` and gets at most one long-poll RPC per `max_wait` (~1/min with a 60s cap). Chain polls run **only** while `active_chain`.
+
+### Adaptive params (default — prefer gRPC, chain fallback)
+
+Policy (no devshardd restart required for failover or failback):
+
+| Event | Supervisor action |
+|-------|-------------------|
+| Boot / reprobe: `GetRuntimeConfig` OK or `unchanged` | Stay on or return to **long-poll** (`active_grpc`) |
+| Boot / long-poll: `Unimplemented` | **Chain** (`active_chain`) |
+| Long-poll errors, no successful apply for **90s** (with ≥1 error in that window) | **Chain** (`stale_window`) |
+| On chain: **2** consecutive healthy probes (`max_wait=0`) | **Long-poll** (`failback`) |
+
+Per-escrow / per-validation queries were always direct chain and are unchanged. NodeManager gRPC for ML nodes (`AcquireMLNode` / `ReleaseMLNode`) stays enabled regardless of params source.
+
+#### `DEVSHARDD_PARAMS_SOURCE`
+
+| Value | Behavior |
+|-------|----------|
+| `auto` or unset (default) | Adaptive supervisor (`source=adaptive` in logs) |
+| `grpc` | **Deprecated** — identical to `auto`; emits a startup warning |
+| `chain` | Chain poll only (debug / forced chain); never calls `GetRuntimeConfig` |
+
+#### Environment variables
+
+Adaptive tuning (optional; defaults work without setting any of these):
+
+| Variable | Default | When it applies |
+|----------|---------|-----------------|
+| `DEVSHARDD_PARAMS_GRPC_STALE_SECONDS` | `90` | Fail over to chain after this long without a successful long-poll **apply**, if at least one poll error occurred in that window |
+| `DEVSHARDD_PARAMS_GRPC_REPROBE_SECONDS` | `300` | While on chain, how often to probe `GetRuntimeConfig` (`max_wait=0`) for failback |
+| `DEVSHARDD_PARAMS_GRPC_FAILBACK_PROBES` | `2` | Consecutive successful probes required before leaving chain |
+| `DEVSHARDD_PARAMS_GRPC_PROBE_TIMEOUT_SECONDS` | `3` | Timeout for boot and reprobe `GetRuntimeConfig` calls |
+
+Long-poll and chain runners (same as before):
+
+| Variable | Default | When it applies |
+|----------|---------|-----------------|
+| `DEVSHARDD_RUNTIME_CONFIG_MAX_WAIT_SECONDS` | `60` | Long-poll `max_wait` (while `active_grpc`) |
+| `DEVSHARDD_RUNTIME_CONFIG_CLIENT_DEADLINE_SLACK_SECONDS` | `5` | gRPC call deadline = max_wait + slack |
+| `DEVSHARDD_PARAMS_CHAIN_REFRESH_SECONDS` | `60` | Chain refresh interval (while `active_chain`) |
+| `DEVSHARDD_PARAMS_CHAIN_INITIAL_TIMEOUT_SECONDS` | `5` | First chain fetch timeout at startup / switch |
+
+#### `approved_versions` and chain fallback
+
+`approved_versions` comes from dapi’s in-memory cache over long-poll only. While **`active_chain`**:
+
+- The snapshot keeps the **last** `approved_versions` from a prior gRPC apply, or **nil** if devshardd never had a successful long-poll apply.
+- Chain fallback still updates governance fields present on chain (`max_nonce`, `devshard_requests_enabled`, `logprobs_mode`, epoch, grace defaults in the snapshot, etc.).
+- After **failback** to `active_grpc`, the next full `RuntimeConfig` from dapi repopulates `approved_versions`.
+
+#### Observability (logs)
+
+Boot:
+
+```text
+runtime params provider source=adaptive policy=prefer_grpc_chain_fallback
+runtime params provider settings (adaptive) max_wait_seconds=… grpc_stale_seconds=… …
+```
+
+Source switch (one line per transition):
+
+| Direction | Level | `reason` values |
+|-----------|-------|-----------------|
+| → chain | `WARN` | `boot_probe_unimplemented`, `unimplemented`, `stale_window` |
+| → gRPC | `INFO` | `boot_probe`, `failback` |
+
+Example:
+
+```text
+runtime params: source switch from=grpc to=chain reason=stale_window
+runtime params: source switch from=chain to=grpc reason=failback
+```
+
+There is **no** separate metrics endpoint for active source in v1; use logs or `paramsSetup.ActiveSource()` in code (`grpc` / `chain`).
+
+#### Operator scenarios
+
+| Situation | What to expect |
+|-----------|----------------|
+| Old dapi at boot (`GetRuntimeConfig` missing) | Starts on chain; upgrades to long-poll automatically after reprobe succeeds — **no devshardd restart** |
+| dapi restarted / temporarily down | Failover to chain within ~stale window; returns to long-poll when dapi answers probes again |
+| Force chain-only debugging | `DEVSHARDD_PARAMS_SOURCE=chain` |
+| Mis-set `DEVSHARDD_PARAMS_SOURCE=grpc` | Same as default; deprecation warning only |
+
+Implementation details: [params-provider-adaptive-plan.md](./params-provider-adaptive-plan.md).
 
 ---
 
@@ -120,7 +210,7 @@ devshardd:
 
 | Param | Status | Consumer |
 |-------|--------|----------|
-| `approved_versions` | On long-poll | dapi cache; **versiond** may still poll `GET /versions` on `:9100` — candidate: versiond uses gRPC long-poll |
+| `approved_versions` | On long-poll only | dapi cache while `active_grpc`; stale or nil on chain fallback; **versiond** may still poll `GET /versions` on `:9100` |
 | `devshard_requests_enabled` | **Moved** | devshardd + `AvailabilityTracker` |
 | `logprobs_mode` | **Moved** | Validation |
 | Seal/clear grace defaults | **Moved** | Frozen at bind (lane B) |

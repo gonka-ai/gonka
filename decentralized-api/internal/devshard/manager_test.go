@@ -587,10 +587,10 @@ func TestRecoverSessions_UsesSnapshotBeforeReplay(t *testing.T) {
 	require.NoError(t, saveHostSnapshot(store, sm, "escrow-1", host.SnapshotInterval))
 	_, snapshotData, err := store.LoadSnapshot("escrow-1")
 	require.NoError(t, err)
-	var snapshotEnvelope host.StateSnapshot
-	require.NoError(t, json.Unmarshal(snapshotData, &snapshotEnvelope))
-	require.NotNil(t, snapshotEnvelope.State)
-	require.Nil(t, snapshotEnvelope.HostSyncNonce)
+	snapshotState, _, _, err := host.UnmarshalStateSnapshotWithCommitted(snapshotData)
+	require.NoError(t, err)
+	require.NotNil(t, snapshotState)
+	require.NotEqual(t, '{', snapshotData[0], "persisted snapshots must be protobuf")
 
 	addresses := make([]string, len(group))
 	for i, s := range group {

@@ -27,10 +27,11 @@ const (
 // NewStorage builds the canonical Storage for a host process.
 //
 // At boot it selects exactly one backend for the process lifetime:
-//   - SQLite when escrow_epoch has rows in _meta.db, or when PGHOST is unset
-//     (fresh local store), subject to the .pg-bound guard.
+//   - SQLite when escrow_epoch has rows in _meta.db, or when PGHOST is unset on a
+//     fresh store (no .pg-bound marker).
 //   - Postgres when PGHOST is set, escrow_epoch is empty, and Postgres connects
 //     within PG_CONNECT_TIMEOUT.
+//   - Boot fails when .pg-bound exists but PGHOST is unset (would orphan PG sessions).
 //
 // See devshard/docs/storage-design.md#storage-mode-selection.
 func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
@@ -91,9 +92,7 @@ func decideStorageBackend(storeDir string) (storageBackendKind, error) {
 		return "", fmt.Errorf("read pg-bound marker: %w", err)
 	}
 	if pgBound {
-		if _, err := os.Stat(MetaDBPath(storeDir)); os.IsNotExist(err) {
-			return "", ErrStoragePGBoundWithoutPostgres
-		}
+		return "", ErrStoragePGBoundWithoutPostgres
 	}
 
 	return storageBackendSQLite, nil

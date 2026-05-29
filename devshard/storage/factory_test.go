@@ -114,12 +114,25 @@ func TestNewStorage_postgresWhenEmptyMetaAndPGHOST(t *testing.T) {
 	require.True(t, pgBound)
 }
 
-func TestNewStorage_failsWhenPGBoundWithoutPGHOSTOrMeta(t *testing.T) {
+func TestNewStorage_failsWhenPGBoundWithoutPGHOST(t *testing.T) {
 	t.Setenv("PGHOST", "")
 	storeDir := t.TempDir()
 	require.NoError(t, WritePGBound(storeDir))
 
 	_, err := NewStorage(context.Background(), storeDir)
+	require.ErrorIs(t, err, ErrStoragePGBoundWithoutPostgres)
+}
+
+func TestNewStorage_PGBoundWithEmptyMetaDB(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	storeDir := t.TempDir()
+	require.NoError(t, WritePGBound(storeDir))
+
+	db, err := openMetaDB(MetaDBPath(storeDir))
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	_, err = NewStorage(context.Background(), storeDir)
 	require.ErrorIs(t, err, ErrStoragePGBoundWithoutPostgres)
 }
 

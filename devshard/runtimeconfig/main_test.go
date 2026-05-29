@@ -7,5 +7,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		// Adaptive tests cancel the supervisor on cleanup; runner goroutines may
+		// still be exiting their last poll/backoff when goleak runs.
+		goleak.IgnoreAnyFunction("devshard/runtimeconfig.(*grpcRunner).run"),
+		goleak.IgnoreAnyFunction("devshard/runtimeconfig.(*chainRunner).run"),
+	)
 }

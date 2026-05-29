@@ -121,8 +121,8 @@ Postgres.
 | --- | --- |
 | `escrow_epoch` has rows in `_meta.db` | SQLite (drain transition if `PGHOST` set) |
 | `PGHOST` set and meta empty | Postgres (boot fails if PG unreachable) |
-| `PGHOST` unset | SQLite |
-| `.pg-bound` present, no `_meta.db`, `PGHOST` unset | Boot fails |
+| `PGHOST` unset, no `.pg-bound` | SQLite (fresh local store) |
+| `.pg-bound` present, `PGHOST` unset | Boot fails (set `PGHOST` or delete `.pg-bound`) |
 
 Postgres-mode boot writes `<storeDir>/.pg-bound`. While SQLite is draining,
 boot logs a WARN when `PGHOST` is set and `escrow_epoch` still has rows.
@@ -258,6 +258,9 @@ We use a small in-repo helper at `devshard/storage/migrate/` (`ApplyPG`,
 `ApplySQLite`, `schema_migrations` table). We do **not** use `golang-migrate`
 or `goose` for these stores — the schema surface is small and the critical
 requirement is a strict forward-only contract across parallel binary versions.
+`ApplySQLite` enables `journal_mode=WAL`; still assume **one devshardd process
+per store directory** — two processes on the same `_meta.db` can race
+`schema_migrations` despite per-step transactions.
 Revisit an external tool only if a single store grows past roughly twenty
 migration steps.
 

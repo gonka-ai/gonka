@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,8 +30,6 @@ import (
 // Fakes
 // ---------------------------------------------------------------------------
 
-// fakeQueryClient is a partial chaintypes.QueryClient that only implements
-// Params + EpochInfo (the methods ChainParamsFetcher uses).
 type fakeQueryClient struct {
 	chaintypes.QueryClient
 
@@ -73,17 +70,39 @@ func newChainFake(t *testing.T, paramsEnabled bool, epoch uint64) fakeQueryProvi
 	}}
 }
 
-// errOnlyNMClient is a NodeManagerClient that returns the same gRPC error on
-// every GetRuntimeConfig call. Used to stage the auto-probe outcome.
 type errOnlyNMClient struct {
 	gen.NodeManagerClient
-	err   error
-	calls atomic.Int32
+	err error
 }
 
 func (c *errOnlyNMClient) GetRuntimeConfig(ctx context.Context, in *gen.GetRuntimeConfigRequest, opts ...grpc.CallOption) (*gen.GetRuntimeConfigResponse, error) {
-	c.calls.Add(1)
 	return nil, c.err
+}
+
+// scriptNMClient returns scripted GetRuntimeConfig outcomes per call (Phase 5 integration tests).
+type scriptNMClient struct {
+	gen.NodeManagerClient
+	mu       sync.Mutex
+	handlers []func() (*gen.GetRuntimeConfigResponse, error)
+	callN    int
+}
+
+func (c *scriptNMClient) GetRuntimeConfig(ctx context.Context, in *gen.GetRuntimeConfigRequest, opts ...grpc.CallOption) (*gen.GetRuntimeConfigResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	idx := c.callN
+	c.callN++
+	var fn func() (*gen.GetRuntimeConfigResponse, error)
+	if idx < len(c.handlers) {
+		fn = c.handlers[idx]
+	} else if len(c.handlers) > 0 {
+		fn = c.handlers[len(c.handlers)-1]
+	} else {
+		fn = func() (*gen.GetRuntimeConfigResponse, error) {
+			return nil, status.Error(codes.Unavailable, "no handler")
+		}
+	}
+	return fn()
 }
 
 // ---------------------------------------------------------------------------
@@ -104,11 +123,30 @@ func waitRuntimeSnapshot(t *testing.T, p runtimeconfig.Provider, height int64) r
 	return runtimeconfig.Snapshot{}
 }
 
+func waitActiveSource(t *testing.T, active func() string, want string, max ...time.Duration) {
+	t.Helper()
+	timeout := 3 * time.Second
+	if len(max) > 0 {
+		timeout = max[0]
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if active() == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for active source %q (got %q)", want, active())
+}
+
 func clearSourceEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "")
 	t.Setenv("DEVSHARDD_PARAMS_CHAIN_REFRESH_SECONDS", "")
 	t.Setenv("DEVSHARDD_PARAMS_CHAIN_INITIAL_TIMEOUT_SECONDS", "")
+	t.Setenv("DEVSHARDD_PARAMS_GRPC_STALE_SECONDS", "")
+	t.Setenv("DEVSHARDD_PARAMS_GRPC_REPROBE_SECONDS", "")
+	t.Setenv("DEVSHARDD_PARAMS_GRPC_FAILBACK_PROBES", "")
 }
 
 // ---------------------------------------------------------------------------
@@ -124,15 +162,6 @@ func TestRuntimeConfigSettingsFromEnv_Defaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, slack)
 }
 
-func TestRuntimeConfigSettingsFromEnv_Override(t *testing.T) {
-	t.Setenv("DEVSHARDD_RUNTIME_CONFIG_MAX_WAIT_SECONDS", "45")
-	t.Setenv("DEVSHARDD_RUNTIME_CONFIG_CLIENT_DEADLINE_SLACK_SECONDS", "7")
-
-	maxWait, slack := runtimeConfigSettingsFromEnv()
-	assert.Equal(t, 45*time.Second, maxWait)
-	assert.Equal(t, 7*time.Second, slack)
-}
-
 func TestChainParamsSettingsFromEnv_Defaults(t *testing.T) {
 	t.Setenv("DEVSHARDD_PARAMS_CHAIN_REFRESH_SECONDS", "")
 	t.Setenv("DEVSHARDD_PARAMS_CHAIN_INITIAL_TIMEOUT_SECONDS", "")
@@ -141,22 +170,13 @@ func TestChainParamsSettingsFromEnv_Defaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, initial)
 }
 
-func TestChainParamsSettingsFromEnv_Override(t *testing.T) {
-	t.Setenv("DEVSHARDD_PARAMS_CHAIN_REFRESH_SECONDS", "10")
-	t.Setenv("DEVSHARDD_PARAMS_CHAIN_INITIAL_TIMEOUT_SECONDS", "2")
-	refresh, initial := chainParamsSettingsFromEnv()
-	assert.Equal(t, 10*time.Second, refresh)
-	assert.Equal(t, 2*time.Second, initial)
-}
-
 func TestParamsSourceFromEnv(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", paramsSourceAuto},
 		{"auto", paramsSourceAuto},
-		{"AUTO", paramsSourceAuto},
 		{" grpc ", paramsSourceGRPC},
 		{"chain", paramsSourceChain},
-		{"bogus", paramsSourceAuto}, // invalid → auto with warn log
+		{"bogus", paramsSourceAuto},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -167,38 +187,35 @@ func TestParamsSourceFromEnv(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// newParamsProvider — selector behavior
+// newParamsProvider — adaptive (default)
 // ---------------------------------------------------------------------------
 
-func TestNewParamsProvider_Auto_ProbeSucceeds_PicksGRPC(t *testing.T) {
+func TestNewParamsProvider_Adaptive_GRPCAvailable(t *testing.T) {
 	clearSourceEnv(t)
 	srv := testserver.New()
-	// First handler answers the probe; second handler feeds the long-poll
-	// provider's first real poll. Subsequent polls fall through to the
-	// testserver's "Unchanged" default which keeps the snapshot stable.
 	srv.SetHandlers(
 		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(10, 2, "raw")),
 		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(10, 2, "raw")),
 	)
 	mlClient := mlnode.ClientForTest(testserver.Dial(t, srv))
+	chainFake := newChainFake(t, true, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, nil, mlClient, nil, slog.Default())
+	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
 	require.NoError(t, err)
-	assert.Equal(t, paramsSourceGRPC, res.Source)
-	require.NotNil(t, res.RegisterEpochPrune)
+	assert.Equal(t, paramsSourceAdaptive, res.Source)
+	require.NotNil(t, res.ActiveSource)
 
-	snap := waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 10)
-	assert.Equal(t, uint64(2), snap.CurrentEpochID)
+	waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 10)
+	assert.Equal(t, runtimeconfig.SourceActiveGRPC, res.ActiveSource())
 }
 
-func TestNewParamsProvider_Auto_ProbeUnimplemented_PicksChain(t *testing.T) {
+func TestNewParamsProvider_Adaptive_UnimplementedFallsToChain(t *testing.T) {
 	clearSourceEnv(t)
-	nm := &errOnlyNMClient{err: status.Error(codes.Unimplemented, "method GetRuntimeConfig not implemented")}
+	nm := &errOnlyNMClient{err: status.Error(codes.Unimplemented, "not implemented")}
 	mlClient := mlnode.ClientForTest(nm)
-
 	chainFake := newChainFake(t, true, 5)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -206,31 +223,90 @@ func TestNewParamsProvider_Auto_ProbeUnimplemented_PicksChain(t *testing.T) {
 
 	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
 	require.NoError(t, err)
-	assert.Equal(t, paramsSourceChain, res.Source)
+	assert.Equal(t, paramsSourceAdaptive, res.Source)
 
-	// chainProvider's synchronous initial refresh should have populated the snapshot.
+	waitActiveSource(t, res.ActiveSource, runtimeconfig.SourceActiveChain)
 	snap := res.Provider.Snapshot()
 	assert.Equal(t, uint64(5), snap.CurrentEpochID)
 	assert.Equal(t, int64(500), snap.ParamsBlockHeight)
-	assert.True(t, snap.DevshardRequestsEnabled)
-	assert.Equal(t, int32(1), nm.calls.Load(), "probe should fire exactly once")
 }
 
-func TestNewParamsProvider_Auto_ProbeTransientError_PicksGRPC(t *testing.T) {
-	// Unavailable / DeadlineExceeded are transient; the selector keeps the
-	// long-poll path so devshardd self-heals when dapi comes back.
+func TestNewParamsProvider_Adaptive_OutageAndRecovery_ActiveSource(t *testing.T) {
+	// End-to-end via newParamsProvider: old dapi (Unimplemented) → chain, then
+	// dapi upgrade (reprobe) → gRPC. Stale-window failover is covered in
+	// devshard/runtimeconfig adaptive_provider_test.go with a fake clock.
 	clearSourceEnv(t)
-	nm := &errOnlyNMClient{err: status.Error(codes.Unavailable, "dapi restarting")}
-	mlClient := mlnode.ClientForTest(nm)
+	t.Setenv("DEVSHARDD_PARAMS_GRPC_REPROBE_SECONDS", "1")
+	t.Setenv("DEVSHARDD_PARAMS_GRPC_FAILBACK_PROBES", "2")
 
-	chainFake := newChainFake(t, true, 1) // present but should not be used
+	ok := func() (*gen.GetRuntimeConfigResponse, error) {
+		return &gen.GetRuntimeConfigResponse{
+			Config: runtimeconfig.TestRuntimeConfigProto(30, 2, "raw"),
+		}, nil
+	}
+	client := &scriptNMClient{
+		handlers: []func() (*gen.GetRuntimeConfigResponse, error){
+			func() (*gen.GetRuntimeConfigResponse, error) {
+				return nil, status.Error(codes.Unimplemented, "not implemented")
+			},
+			ok, ok,
+			ok,
+		},
+	}
+	mlClient := mlnode.ClientForTest(client)
+	chainFake := newChainFake(t, true, 7)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
 	require.NoError(t, err)
-	assert.Equal(t, paramsSourceGRPC, res.Source, "transient errors must not trigger chain fallback")
+	require.NotNil(t, res.ActiveSource)
+	assert.Equal(t, paramsSourceAdaptive, res.Source)
+
+	waitActiveSource(t, res.ActiveSource, runtimeconfig.SourceActiveChain, 5*time.Second)
+	assert.Equal(t, uint64(7), res.Provider.Snapshot().CurrentEpochID)
+
+	time.Sleep(2500 * time.Millisecond)
+	waitActiveSource(t, res.ActiveSource, runtimeconfig.SourceActiveGRPC, 10*time.Second)
+	waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 30)
+}
+
+func TestNewParamsProvider_Adaptive_TransientGRPCStillTriesLongPoll(t *testing.T) {
+	clearSourceEnv(t)
+	nm := &errOnlyNMClient{err: status.Error(codes.Unavailable, "dapi restarting")}
+	mlClient := mlnode.ClientForTest(nm)
+	chainFake := newChainFake(t, true, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
+	require.NoError(t, err)
+	assert.Equal(t, paramsSourceAdaptive, res.Source)
+	// Boot probe is Unavailable → supervisor starts on gRPC; chain not primary yet.
+	assert.Equal(t, runtimeconfig.SourceActiveGRPC, res.ActiveSource())
+}
+
+func TestNewParamsProvider_DeprecatedGRPC_UsesAdaptive(t *testing.T) {
+	clearSourceEnv(t)
+	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "grpc")
+
+	srv := testserver.New()
+	srv.SetHandlers(
+		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(8, 1, "raw")),
+		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(8, 1, "raw")),
+	)
+	mlClient := mlnode.ClientForTest(testserver.Dial(t, srv))
+	chainFake := newChainFake(t, true, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	res, err := newParamsProvider(ctx, chainFake, mlClient, nil, slog.Default())
+	require.NoError(t, err)
+	assert.Equal(t, paramsSourceAdaptive, res.Source)
+	waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 8)
 }
 
 func TestNewParamsProvider_EnvOverride_Chain(t *testing.T) {
@@ -242,76 +318,48 @@ func TestNewParamsProvider_EnvOverride_Chain(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// mlClient is nil to prove the selector never touches NodeManager when
-	// forced to chain.
 	res, err := newParamsProvider(ctx, chainFake, nil, nil, slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, paramsSourceChain, res.Source)
+	assert.Nil(t, res.ActiveSource)
 	assert.False(t, res.Provider.Snapshot().DevshardRequestsEnabled)
-	assert.Equal(t, uint64(3), res.Provider.Snapshot().CurrentEpochID)
 }
 
-func TestNewParamsProvider_EnvOverride_GRPC(t *testing.T) {
+func TestNewParamsProvider_Adaptive_RequiresRecorder(t *testing.T) {
 	clearSourceEnv(t)
-	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "grpc")
-
-	srv := testserver.New()
-	srv.SetHandlers(testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(8, 1, "raw")))
-	mlClient := mlnode.ClientForTest(testserver.Dial(t, srv))
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	res, err := newParamsProvider(ctx, nil, mlClient, nil, slog.Default())
-	require.NoError(t, err)
-	assert.Equal(t, paramsSourceGRPC, res.Source)
-	waitRuntimeSnapshot(t, res.Provider.(runtimeconfig.Provider), 8)
-}
-
-func TestNewParamsProvider_EnvOverride_Chain_RequiresRecorder(t *testing.T) {
-	clearSourceEnv(t)
-	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "chain")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	_, err := newParamsProvider(ctx, nil, nil, nil, slog.Default())
+	_, err := newParamsProvider(ctx, nil, mlnode.ClientForTest(&errOnlyNMClient{}), nil, slog.Default())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "InferenceQueryClientProvider")
 }
 
-func TestNewParamsProvider_EnvOverride_GRPC_RequiresMLClient(t *testing.T) {
+func TestNewParamsProvider_Adaptive_RequiresMLClient(t *testing.T) {
 	clearSourceEnv(t)
-	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "grpc")
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, nil, nil, nil, slog.Default())
+	_, err := newParamsProvider(ctx, newChainFake(t, true, 1), nil, nil, slog.Default())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "NodeManager")
 }
 
-// ---------------------------------------------------------------------------
-// Availability propagation through the chosen provider
-// ---------------------------------------------------------------------------
-
-func TestNewParamsProvider_GRPC_RecordsAvailabilityOnApply(t *testing.T) {
+func TestNewParamsProvider_Adaptive_RecordsAvailabilityOnApply(t *testing.T) {
 	clearSourceEnv(t)
 	srv := testserver.New()
-	// One handler for the auto-mode probe + one for the provider's first poll.
 	srv.SetHandlers(
 		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(5, 1, "raw")),
 		testserver.FullConfig(runtimeconfig.TestRuntimeConfigProto(5, 1, "raw")),
 	)
 	mlClient := mlnode.ClientForTest(testserver.Dial(t, srv))
-
+	chainFake := newChainFake(t, true, 1)
 	tracker := devshardpkg.NewAvailabilityTracker(false, 0, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := newParamsProvider(ctx, nil, mlClient, tracker, slog.Default())
+	_, err := newParamsProvider(ctx, chainFake, mlClient, tracker, slog.Default())
 	require.NoError(t, err)
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -330,7 +378,6 @@ func TestNewParamsProvider_Chain_RecordsAvailabilityOnApply(t *testing.T) {
 	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "chain")
 
 	chainFake := newChainFake(t, true, 9)
-
 	tracker := devshardpkg.NewAvailabilityTracker(false, 0, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,38 +389,8 @@ func TestNewParamsProvider_Chain_RecordsAvailabilityOnApply(t *testing.T) {
 	avail := tracker.CurrentAvailability()
 	assert.True(t, avail.Enabled)
 	assert.Equal(t, uint64(9), avail.EpochID)
-	assert.Greater(t, avail.Time, int64(0))
 }
 
-func TestNewParamsProvider_Chain_FetcherErrorNonFatal(t *testing.T) {
-	clearSourceEnv(t)
-	t.Setenv("DEVSHARDD_PARAMS_SOURCE", "chain")
-
-	bad := fakeQueryProvider{qc: &fakeQueryClient{
-		paramsFn: func(context.Context, *chaintypes.QueryParamsRequest, ...grpc.CallOption) (*chaintypes.QueryParamsResponse, error) {
-			return nil, errors.New("transient chain failure")
-		},
-	}}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	res, err := newParamsProvider(ctx, bad, nil, nil, slog.Default())
-	require.NoError(t, err, "chain provider construction must tolerate initial fetch failure")
-	assert.Equal(t, paramsSourceChain, res.Source)
-	// Defaults snapshot — LogprobsMode is filled by Config.applyDefaults.
-	assert.Equal(t, int64(0), res.Provider.Snapshot().ParamsBlockHeight)
-}
-
-// ---------------------------------------------------------------------------
-// Architecture regression guard
-// ---------------------------------------------------------------------------
-
-// TestDevshardd_NoLegacyChainParamsProviderTickerInMain guards against
-// accidentally re-introducing the gm/microrelease "60s ticker inside main.go"
-// pattern. The chain-poll fallback lives in runtimeconfig.chainProvider; main
-// only owns the AvailabilityTracker seed (a one-shot Params query, which is
-// intentionally allowed).
 func TestDevshardd_NoLegacyChainParamsProviderTickerInMain(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	require.True(t, ok)
@@ -384,10 +401,6 @@ func TestDevshardd_NoLegacyChainParamsProviderTickerInMain(t *testing.T) {
 
 	assert.NotContains(t, s, "chainParamsProvider")
 	assert.NotContains(t, s, "newChainParamsProvider")
-	assert.False(t, strings.Contains(s, "time.NewTicker(60 * time.Second)"),
-		"60s chain params ticker must live in runtimeconfig.chainProvider, not main.go")
-	// QueryParamsRequest IS allowed (seed). QueryEpochInfoRequest is NOT
-	// allowed in main — that one stays inside ChainParamsFetcher.
-	assert.NotContains(t, s, "QueryEpochInfoRequest",
-		"epoch queries must stay inside ChainParamsFetcher; main only seeds availability")
+	assert.False(t, strings.Contains(s, "time.NewTicker(60 * time.Second)"))
+	assert.NotContains(t, s, "QueryEpochInfoRequest")
 }

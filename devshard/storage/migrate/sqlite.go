@@ -15,9 +15,18 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 `
 
 // ApplySQLite runs pending migrations on db in ascending step ID order.
-// Each step runs in its own transaction (BEGIN IMMEDIATE … COMMIT).
+// Each step runs in its own transaction (BEGIN … COMMIT).
+//
+// Devshard assumes one process owns a given SQLite file (meta sidecar or epoch
+// pool). Per-step transactions serialize migrators inside that process only;
+// two devshardd instances must not share the same store directory. WAL mode
+// (set below) improves cross-connection behavior but does not replace that
+// invariant — delete .pg-bound / use one process per data dir.
 func ApplySQLite(ctx context.Context, db *sql.DB, steps []Step) error {
 	if err := validateSteps(steps); err != nil {
+		return err
+	}
+	if err := ensureSQLiteMigratePragmas(ctx, db); err != nil {
 		return err
 	}
 	if _, err := db.ExecContext(ctx, sqliteBootstrapSQL); err != nil {
@@ -37,6 +46,21 @@ func ApplySQLite(ctx context.Context, db *sql.DB, steps []Step) error {
 			return err
 		}
 		maxApplied = step.ID
+	}
+	return nil
+}
+
+// ensureSQLiteMigratePragmas matches devshard/storage/sqlite.go pool setup.
+// Idempotent when callers already enabled WAL; required for safe concurrent
+// readers while a migrator holds the writer lock on the same file.
+func ensureSQLiteMigratePragmas(ctx context.Context, db *sql.DB) error {
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+	} {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("migrate: %s: %w", pragma, err)
+		}
 	}
 	return nil
 }

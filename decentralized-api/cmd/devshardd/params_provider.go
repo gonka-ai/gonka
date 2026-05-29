@@ -13,24 +13,16 @@ import (
 
 	devshardpkg "devshard"
 	mlnodeclient "devshard/mlnode"
-	"devshard/nodemanager/gen"
 	"devshard/runtimeconfig"
 	devshardstorage "devshard/storage"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Source selectors for newParamsProvider.
 const (
-	paramsSourceAuto  = "auto"
-	paramsSourceGRPC  = "grpc"
-	paramsSourceChain = "chain"
-
-	// fallbackProbeTimeout bounds the one-shot GetRuntimeConfig probe used by
-	// the "auto" selector. Short so misconfigured deployments fail fast; long
-	// enough to absorb a single TCP handshake + first byte.
-	fallbackProbeTimeout = 3 * time.Second
+	paramsSourceAuto     = "auto"
+	paramsSourceGRPC     = "grpc" // deprecated alias: same as auto (adaptive)
+	paramsSourceChain    = "chain"
+	paramsSourceAdaptive = "adaptive"
 )
 
 // epochParamsProvider supplies logprobs mode, epoch, and runtime snapshot to
@@ -45,8 +37,10 @@ type epochParamsProvider interface {
 type paramsProviderResult struct {
 	Provider           epochParamsProvider
 	RegisterEpochPrune func(store *devshardstorage.ManagedStorage) (cancel func())
-	// Source is "grpc" or "chain"; surfaced for tests / structured logs.
+	// Source is "adaptive" or "chain"; surfaced for tests / structured logs.
 	Source string
+	// ActiveSource reports grpc|chain when Source is adaptive; nil for chain-only.
+	ActiveSource func() string
 }
 
 func runtimeConfigSettingsFromEnv() (serverMaxWait, deadlineSlack time.Duration) {
@@ -83,6 +77,36 @@ func chainParamsSettingsFromEnv() (refreshInterval, initialTimeout time.Duration
 	return refreshInterval, initialTimeout
 }
 
+func adaptiveSettingsFromEnv() (grpcStale, grpcReprobe, probeTimeout, staleCheck time.Duration, failbackProbes int) {
+	grpcStale = runtimeconfig.DefaultGRPCStaleSeconds()
+	grpcReprobe = runtimeconfig.DefaultGRPCReprobeSeconds()
+	probeTimeout = runtimeconfig.DefaultAdaptiveProbeTimeout()
+	staleCheck = runtimeconfig.DefaultStaleCheckInterval()
+	failbackProbes = runtimeconfig.DefaultFailbackProbes()
+
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_PARAMS_GRPC_STALE_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			grpcStale = time.Duration(n) * time.Second
+		}
+	}
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_PARAMS_GRPC_REPROBE_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			grpcReprobe = time.Duration(n) * time.Second
+		}
+	}
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_PARAMS_GRPC_FAILBACK_PROBES")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			failbackProbes = n
+		}
+	}
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_PARAMS_GRPC_PROBE_TIMEOUT_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			probeTimeout = time.Duration(n) * time.Second
+		}
+	}
+	return grpcStale, grpcReprobe, probeTimeout, staleCheck, failbackProbes
+}
+
 func paramsSourceFromEnv() string {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("DEVSHARDD_PARAMS_SOURCE")))
 	switch v {
@@ -91,25 +115,20 @@ func paramsSourceFromEnv() string {
 	case paramsSourceAuto, paramsSourceGRPC, paramsSourceChain:
 		return v
 	default:
-		// Unknown value: log and fall back to auto so a typo does not pin the
-		// host to one provider silently.
 		slog.Warn("invalid DEVSHARDD_PARAMS_SOURCE; using auto", "got", v)
 		return paramsSourceAuto
 	}
 }
 
-// newParamsProvider selects between the dapi NodeManager long-poll
-// (runtimeconfig.New) and the direct-chain poll fallback
-// (runtimeconfig.NewChain). Selection is controlled by DEVSHARDD_PARAMS_SOURCE:
+// newParamsProvider returns a runtime-params provider for devshardd.
 //
-//	auto (default) — probe NodeManager.GetRuntimeConfig once; on
-//	  codes.Unimplemented use the chain provider, otherwise use the grpc provider.
-//	grpc — always use the dapi long-poll provider.
-//	chain — always use the chain-poll provider.
+// Default (auto) and deprecated grpc: prefer dapi GetRuntimeConfig long-poll;
+// fall back to direct chain polling when gRPC is Unimplemented, unavailable, or
+// stale (runtimeconfig.NewAdaptive).
 //
-// `recorder` is required when the resolved source is "chain" (it provides the
-// inferencetypes.QueryClient). When source is "grpc" `recorder` may be nil
-// (preserves existing test ergonomics).
+// chain: chain poll only (debug / forced chain); no gRPC attempts.
+//
+// `recorder` and `mlClient` are both required except for chain-only override.
 func newParamsProvider(
 	ctx context.Context,
 	recorder internaldevshard.InferenceQueryClientProvider,
@@ -125,61 +144,64 @@ func newParamsProvider(
 		logger.Info("runtime params provider", "source", "chain_poll", "reason", "env_override")
 		return newChainParamsResult(ctx, recorder, availability, logger)
 	case paramsSourceGRPC:
-		logger.Info("runtime params provider", "source", "dapi_grpc", "reason", "env_override")
-		return newGRPCParamsResult(ctx, mlClient, availability, logger)
+		logger.Warn("runtime params provider: DEVSHARDD_PARAMS_SOURCE=grpc is deprecated; " +
+			"using prefer-grpc with chain fallback (same as auto)")
 	}
 
-	// auto
-	if probeUnimplemented(ctx, mlClient) {
-		logger.Warn("runtime params provider: dapi NodeManager.GetRuntimeConfig unimplemented; "+
-			"falling back to direct chain polling",
-			"source", "chain_poll")
-		return newChainParamsResult(ctx, recorder, availability, logger)
-	}
-	logger.Info("runtime params provider", "source", "dapi_grpc", "reason", "probe_ok_or_transient")
-	return newGRPCParamsResult(ctx, mlClient, availability, logger)
+	return newAdaptiveParamsResult(ctx, recorder, mlClient, availability, logger)
 }
 
-// probeUnimplemented issues a single non-blocking GetRuntimeConfig
-// (MaxWaitSeconds=0 ⇒ immediate reply per nodemanager.proto wire contract).
-// Returns true ONLY for codes.Unimplemented; any other error (Unavailable,
-// DeadlineExceeded, …) is treated as transient and we keep the long-poll path
-// so devshardd self-heals once dapi is reachable again.
-func probeUnimplemented(ctx context.Context, mlClient *mlnodeclient.Client) bool {
-	if mlClient == nil {
-		return false
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, fallbackProbeTimeout)
-	defer cancel()
-	_, err := mlClient.NodeManagerClient().GetRuntimeConfig(probeCtx, &gen.GetRuntimeConfigRequest{
-		ClientParamsBlockHeight: 0,
-		MaxWaitSeconds:          0,
-	})
-	return status.Code(err) == codes.Unimplemented
-}
-
-func newGRPCParamsResult(
+func newAdaptiveParamsResult(
 	ctx context.Context,
+	recorder internaldevshard.InferenceQueryClientProvider,
 	mlClient *mlnodeclient.Client,
 	availability *devshardpkg.AvailabilityTracker,
 	logger *slog.Logger,
 ) (*paramsProviderResult, error) {
 	logger = normalizeLogger(logger)
-	if mlClient == nil {
-		return nil, fmt.Errorf("runtime params provider (grpc): NodeManager client is required")
+	if recorder == nil {
+		return nil, fmt.Errorf("runtime params provider (adaptive): InferenceQueryClientProvider is required")
 	}
+	if mlClient == nil {
+		return nil, fmt.Errorf("runtime params provider (adaptive): NodeManager client is required")
+	}
+
 	serverMaxWait, deadlineSlack := runtimeConfigSettingsFromEnv()
-	logger.Info("runtime params provider settings (grpc)",
+	refresh, initial := chainParamsSettingsFromEnv()
+	grpcStale, grpcReprobe, probeTimeout, staleCheck, failbackProbes := adaptiveSettingsFromEnv()
+
+	logger.Info("runtime params provider", "source", "adaptive", "policy", "prefer_grpc_chain_fallback")
+	logger.Info("runtime params provider settings (adaptive)",
 		"max_wait_seconds", int(serverMaxWait/time.Second),
 		"deadline_slack_seconds", int(deadlineSlack/time.Second),
+		"chain_refresh_seconds", int(refresh/time.Second),
+		"grpc_stale_seconds", int(grpcStale/time.Second),
+		"grpc_reprobe_seconds", int(grpcReprobe/time.Second),
+		"failback_probes", failbackProbes,
 	)
 
-	rc, err := runtimeconfig.New(ctx, runtimeconfig.Config{
-		Client:              mlClient.NodeManagerClient(),
-		ServerMaxWait:       serverMaxWait,
-		ClientDeadlineSlack: deadlineSlack,
-		Availability:        availability,
-		Log:                 logger,
+	rc, err := runtimeconfig.NewAdaptive(ctx, runtimeconfig.AdaptiveConfig{
+		GRPC: runtimeconfig.Config{
+			Client:              mlClient.NodeManagerClient(),
+			ServerMaxWait:       serverMaxWait,
+			ClientDeadlineSlack: deadlineSlack,
+			Availability:        availability,
+			Log:                 logger,
+		},
+		Chain: runtimeconfig.ChainConfig{
+			Fetcher:         internaldevshard.NewChainParamsFetcher(recorder),
+			RefreshInterval: refresh,
+			InitialTimeout:  initial,
+			Availability:    availability,
+			Log:             logger,
+		},
+		GRPCStale:          grpcStale,
+		GRPCReprobe:        grpcReprobe,
+		FailbackProbes:     failbackProbes,
+		ProbeTimeout:       probeTimeout,
+		StaleCheckInterval: staleCheck,
+		Availability:       availability,
+		Log:                  logger,
 	})
 	if err != nil {
 		return nil, err
@@ -192,7 +214,10 @@ func newGRPCParamsResult(
 				store.PruneOnceAsync(ctx)
 			})
 		},
-		Source: paramsSourceGRPC,
+		Source: paramsSourceAdaptive,
+		ActiveSource: func() string {
+			return rc.ActiveSource()
+		},
 	}, nil
 }
 
