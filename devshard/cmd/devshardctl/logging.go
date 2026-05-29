@@ -7,7 +7,9 @@ import (
 )
 
 func ensureRequestLogContext(ctx context.Context) (context.Context, string) {
-	return logging.WithRequestID(ctx)
+	ctx = logging.WithRequestID(ctx)
+	id, _ := logging.RequestID(ctx)
+	return ctx, id
 }
 
 func requestLogFromContext(ctx context.Context) (string, bool) {
