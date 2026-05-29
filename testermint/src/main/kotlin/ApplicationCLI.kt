@@ -160,6 +160,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "ml-node-version"))
     }
 
+    fun getLastUpgradeHeight(): LastUpgradeHeightQueryResponse = wrapLog("getLastUpgradeHeight", infoLevel = false) {
+        execAndParse(listOf("query", "inference", "last-upgrade-height"))
+    }
+
     var coldAccountKey: Validator? = null
     var warmAccountKey: Validator? = null
 
@@ -479,7 +483,12 @@ data class ApplicationCLI(
             operationAccountAddress) + getTransactionArgs(coldAccountName)
         val response = this.exec(commands, passwordInjection)
         val fullResponse = response.joinToString("\n")
-        if (!fullResponse.contains("Transaction confirmed successfully!")) {
+        val alreadyGranted =
+            response.any {
+                it.contains("fee allowance already exists") ||
+                    it.contains("authorization already exists")
+            }
+        if (!fullResponse.contains("Transaction confirmed successfully!") && !alreadyGranted) {
             if ((fullResponse.contains(NOT_READY_MESSAGE) || fullResponse.contains("not found: key not found")) && retries > 0) {
                 Thread.sleep(Duration.ofSeconds(5))
                 this.grantMlOpsPermissionsToWarmAccount(retries-1)

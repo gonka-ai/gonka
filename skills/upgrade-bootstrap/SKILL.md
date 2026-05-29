@@ -80,7 +80,8 @@ ask before proceeding.
 
 ### 2. Scaffold the upgrade handler
 
-Create the minimal handler scaffold modeled after the early `v0.2.13` pattern.
+Create the minimal handler scaffold modeled after the current tracked-upgrade
+pattern.
 Touch only the upgrade-registration surface:
 
 - `inference-chain/app/upgrades.go`
@@ -91,7 +92,8 @@ Touch only the upgrade-registration surface:
 Do the following:
 
 - Add the new import in `inference-chain/app/upgrades.go`
-- Register the handler in `setupUpgradeHandlers()`
+- Register the handler in `setupUpgradeHandlers()` using
+  `app.setTrackedUpgradeHandler(...)`, not raw `SetUpgradeHandler(...)`
 - Create `constants.go` with the exact on-chain upgrade name
 - Create `upgrades.go` with a minimal handler that:
   - logs start and success
@@ -109,6 +111,10 @@ The initial scaffold should not:
 - modify join-stack image tags
 
 Those belong to later upgrade work, not to bootstrap.
+
+The registration helper matters: it keeps `LastUpgradeHeight` tracking attached
+to every software upgrade handler automatically. Do not bypass it unless the
+upgrade work is intentionally changing that behavior.
 
 ### 3. Keep the scaffold comments useful
 

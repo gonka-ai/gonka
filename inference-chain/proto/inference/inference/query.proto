@@ -389,6 +389,12 @@ service Query {
 
   }
 
+  // Queries the most recent applied upgrade height.
+  rpc LastUpgradeHeight (QueryGetLastUpgradeHeightRequest) returns (QueryGetLastUpgradeHeightResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/last_upgrade_height";
+
+  }
+
   // Queries the participant allowlist.
   rpc ParticipantAllowList (QueryParticipantAllowListRequest) returns (QueryParticipantAllowListResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant_allow_list";
@@ -1093,6 +1099,13 @@ message QueryGetMLNodeVersionRequest {}
 
 message QueryGetMLNodeVersionResponse {
   MLNodeVersion mlnode_version = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetLastUpgradeHeightRequest {}
+
+message QueryGetLastUpgradeHeightResponse {
+  int64 last_upgrade_height = 1;
+  bool  found               = 2;
 }
 
 // QueryExcludedParticipantsRequest requests excluded participants for an epoch.
