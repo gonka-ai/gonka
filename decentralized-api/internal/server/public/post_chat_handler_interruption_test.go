@@ -533,6 +533,16 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	inferenceUpCmd := broker.NewInferenceUpAllCommand()
 	err = suite.nodeBroker.QueueMessage(inferenceUpCmd)
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		nodes, err := suite.nodeBroker.GetNodes()
+		if err != nil || len(nodes) != 1 {
+			return false
+		}
+		node := nodes[0]
+		return node.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+			node.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+			node.State.ReconcileInfo == nil
+	}, 3*time.Second, 10*time.Millisecond)
 
 	// 7. Create the public server
 	payloadStorage := newMockPayloadStorage()

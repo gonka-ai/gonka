@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync"
 
+	"devshard/observability"
+
 	"github.com/labstack/echo/v4"
 	"golang.org/x/time/rate"
 )
@@ -52,7 +54,10 @@ func (rl *rateLimiter) allow(sender string) bool {
 }
 
 // Must run after auth middleware so contextKeySender is set.
-func rateLimitMiddleware(rl *rateLimiter) echo.MiddlewareFunc {
+// recordChatTerminal=true emits a no_receipt_interrupted terminal event when
+// throttling a /chat/completions request, so the inference dashboard reflects
+// rate-limit drops as terminal outcomes rather than silent failures.
+func rateLimitMiddleware(rl *rateLimiter, recordChatTerminal bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sender, _ := c.Get(contextKeySender).(string)
@@ -60,7 +65,17 @@ func rateLimitMiddleware(rl *rateLimiter) echo.MiddlewareFunc {
 				return next(c)
 			}
 			if !rl.allow(sender) {
-				return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
+				ctx := c.Request().Context()
+				httpErr := echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
+				if recordChatTerminal {
+					return observability.FailNoReceipt(ctx, c.Param("id"),
+						observability.ReasonRateLimited, observability.WhereTransportRateLimit,
+						"rate limit exceeded", httpErr, "sender", sender)
+				}
+				observability.Log(ctx, observability.LevelWarn, "rate limit exceeded",
+					observability.StageReceived, observability.WhereTransportRateLimit,
+					c.Param("id"), observability.ReasonRateLimited, nil, "sender", sender)
+				return httpErr
 			}
 			return next(c)
 		}

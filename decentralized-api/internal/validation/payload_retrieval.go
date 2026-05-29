@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
 	"encoding/json"
@@ -14,6 +15,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	devshardobservability "devshard/observability"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
@@ -54,7 +57,10 @@ func FetchPayloadsHTTP(
 	timestamp int64,
 	epochId uint64,
 	signature string,
-) (*PayloadResponse, error) {
+) (_ *PayloadResponse, retErr error) {
+	ctx, op := observability.Inference.StartPayloadFetch(ctx, requestUrl, validatorAddress, int64(epochId))
+	defer func() { op.FinishErr(&retErr) }()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -64,6 +70,8 @@ func FetchPayloadsHTTP(
 	req.Header.Set(apiutils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
 	req.Header.Set(apiutils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
 	req.Header.Set(apiutils.AuthorizationHeader, signature)
+	observability.Inference.InjectRequestContext(ctx, req.Header)
+	devshardobservability.AttachRequestID(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
