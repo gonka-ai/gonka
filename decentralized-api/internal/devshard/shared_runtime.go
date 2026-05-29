@@ -25,6 +25,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/observability"
 	devshardserver "devshard/server"
 )
 
@@ -48,7 +49,7 @@ func ExecuteInferenceWithExecutor(
 
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
 	if err != nil {
-		return nil, fmt.Errorf("modify request body: %w", err)
+		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
 
 	resp, err := execute(ctx, req.Model, modified.NewBody)
@@ -59,13 +60,15 @@ func ExecuteInferenceWithExecutor(
 
 	processed, err := ProcessExecutionHTTPResponse(req, resp, inferenceID)
 	if err != nil {
-		return nil, err
+		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
+	observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindPrompt, processed.InputTokens)
+	observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindCompletion, processed.OutputTokens)
 
 	// Store the canonicalized ORIGINAL prompt (not the modified one with seed).
 	promptPayload, err := devshardpkg.CanonicalizeJSON(req.Prompt)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize prompt: %w", err)
+		return nil, observability.Classify(observability.ReasonCanonicalizePromptErr, observability.WhereRuntimeExecute, fmt.Errorf("canonicalize prompt: %w", err))
 	}
 
 	if err := payloadStore.Store(
@@ -75,7 +78,7 @@ func ExecuteInferenceWithExecutor(
 		promptPayload,
 		processed.ResponseBody,
 	); err != nil {
-		return nil, fmt.Errorf("store payloads: %w", err)
+		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute, fmt.Errorf("store payloads: %w", err))
 	}
 
 	return &devshardpkg.ExecuteResult{
@@ -124,12 +127,12 @@ func ValidateInferenceWithExecutor(
 			)
 			return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
 		}
-		return nil, fmt.Errorf("fetch payloads from executor: %w", err)
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeValidate, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
 
 	validationBody, err := BuildValidationBody(promptPayload, responsePayload, req.InferenceID, chainParams)
 	if err != nil {
-		return nil, err
+		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate, err)
 	}
 
 	resp, err := execute(ctx, req.Model, validationBody)
@@ -268,17 +271,17 @@ func EvaluateValidationResponse(
 
 	respBytes, err := ReadHTTPBody(resp)
 	if err != nil {
-		return nil, fmt.Errorf("read validation response: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationReadErr, observability.WhereRuntimeValidate, fmt.Errorf("read validation response: %w", err))
 	}
 
 	validationResponse, err := completionapi.NewCompletionResponseFromBytes(respBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse validation response: %w", err)
+		return nil, observability.Classify(observability.ReasonValidationParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse validation response: %w", err))
 	}
 
 	originalResponse, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(originalResponsePayload)
 	if err != nil {
-		return nil, fmt.Errorf("parse original response: %w", err)
+		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
 	if validationUsage, err := validationResponse.GetUsage(); err == nil {
