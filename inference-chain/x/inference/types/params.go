@@ -99,6 +99,8 @@ const (
 	DefaultDevshardMaxEscrowsPerEpoch uint32 = 100
 	DefaultDevshardGroupSize          uint32 = 16
 	DefaultDevshardTokenPrice         uint64 = 1
+	DefaultDevshardMaxNonce           uint32 = 20_000
+	DefaultDevshardRequestsEnabled    bool   = true
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
@@ -326,6 +328,8 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		GroupSize:               DefaultDevshardGroupSize,
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultDevshardTokenPrice,
+		MaxNonce:                DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: DefaultDevshardRequestsEnabled,
 	}
 }
 
@@ -338,6 +342,9 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.GroupSize == 0 {
 		return fmt.Errorf("devshard escrow group_size must be positive")
+	}
+	if p.MaxNonce == 0 {
+		return fmt.Errorf("devshard escrow max_nonce must be positive")
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {
@@ -1143,6 +1150,24 @@ func (d *Decimal) ToFloat() float64 {
 	return d.ToDecimal().InexactFloat64()
 }
 
+func (d *Decimal) CloneOrOne() *Decimal {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return &Decimal{Value: 1, Exponent: 0}
+	}
+	return &Decimal{Value: d.Value, Exponent: d.Exponent}
+}
+
+func (d *Decimal) LegacyDecOrOne() sdkmath.LegacyDec {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return sdkmath.LegacyOneDec()
+	}
+	dec, err := d.ToLegacyDec()
+	if err != nil {
+		return sdkmath.LegacyOneDec()
+	}
+	return dec
+}
+
 func DecimalFromFloat(f float64) *Decimal {
 	d := decimal.NewFromFloat(f)
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
@@ -1192,14 +1217,10 @@ func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 }
 
 func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p == nil || p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
+	if p == nil {
 		return sdkmath.LegacyOneDec()
 	}
-	dec, err := p.WeightScaleFactor.ToLegacyDec()
-	if err != nil {
-		return sdkmath.LegacyOneDec()
-	}
-	return dec
+	return p.WeightScaleFactor.LegacyDecOrOne()
 }
 
 var (

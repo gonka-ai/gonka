@@ -35,8 +35,14 @@ func copyWarmKeyDelta(src map[uint32]string) map[uint32]string {
 	return dst
 }
 
+type snapshotData struct {
+	nonce uint64
+	data  []byte
+}
+
 type sessionData struct {
 	escrowID      string
+	epochID       uint64
 	version       string
 	creatorAddr   string
 	config        types.SessionConfig
@@ -46,6 +52,7 @@ type sessionData struct {
 	nonceToIndex  map[uint64]int
 	lastFinalized uint64
 	status        string // "active", "settled"
+	snapshot      *snapshotData
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -64,13 +71,23 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.sessions[params.EscrowID]; exists {
+	requestedVersion := types.NormalizeSessionVersion(params.Version)
+	if existing, exists := m.sessions[params.EscrowID]; exists {
+		if existing.epochID != params.EpochID {
+			return fmt.Errorf("%w: escrow %s exists in epoch %d, requested epoch %d",
+				ErrSessionEpochConflict, params.EscrowID, existing.epochID, params.EpochID)
+		}
+		if existing.version != requestedVersion {
+			return fmt.Errorf("%w: escrow %s exists with version %s, requested %s",
+				ErrSessionVersionConflict, params.EscrowID, existing.version, requestedVersion)
+		}
 		return nil
 	}
 
 	m.sessions[params.EscrowID] = &sessionData{
 		escrowID:     params.EscrowID,
-		version:      types.NormalizeSessionVersion(params.Version),
+		epochID:      params.EpochID,
+		version:      requestedVersion,
 		creatorAddr:  params.CreatorAddr,
 		config:       params.Config,
 		group:        copyGroup(params.Group),
@@ -93,14 +110,14 @@ func (m *Memory) MarkSettled(escrowID string) error {
 	return nil
 }
 
-func (m *Memory) ListActiveSessions() ([]string, error) {
+func (m *Memory) ListActiveSessions() ([]ActiveSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []string
+	var result []ActiveSession
 	for id, s := range m.sessions {
 		if s.status == "active" {
-			result = append(result, id)
+			result = append(result, ActiveSession{EscrowID: id, EpochID: s.epochID})
 		}
 	}
 	return result, nil
@@ -160,6 +177,7 @@ func (m *Memory) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 
 	meta := &SessionMeta{
 		EscrowID:       s.escrowID,
+		EpochID:        s.epochID,
 		Version:        s.version,
 		CreatorAddr:    s.creatorAddr,
 		Config:         s.config,
@@ -218,6 +236,57 @@ func (m *Memory) LastFinalized(escrowID string) (uint64, error) {
 	}
 
 	return s.lastFinalized, nil
+}
+
+func (m *Memory) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	if s.snapshot != nil && nonce < s.snapshot.nonce {
+		return nil
+	}
+	cp := append([]byte(nil), data...)
+	s.snapshot = &snapshotData{nonce: nonce, data: cp}
+	return nil
+}
+
+func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok || s.snapshot == nil {
+		return 0, nil, ErrSnapshotNotFound
+	}
+	return s.snapshot.nonce, append([]byte(nil), s.snapshot.data...), nil
+}
+
+func (m *Memory) PruneEpoch(epochID uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, s := range m.sessions {
+		if s.epochID == epochID {
+			delete(m.sessions, id)
+		}
+	}
+	return nil
+}
+
+func (m *Memory) pruneBefore(cutoff uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, s := range m.sessions {
+		if s.epochID < cutoff {
+			delete(m.sessions, id)
+		}
+	}
+	return nil
 }
 
 func (m *Memory) Close() error { return nil }

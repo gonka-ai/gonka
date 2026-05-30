@@ -3,8 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -36,10 +39,11 @@ var (
 	KeyPrefix  string // e.g. "active_validators" for logging
 )
 
-// Constants for Fail2Ban
+// Constants for sidecar-managed nginx artifacts
 const (
 	BlacklistConfigPath = "/etc/nginx/conf.d/blacklist_ips.conf"
 	LogFilePath         = "/var/log/nginx/access_json.log"
+	RPCMethodLogSocket  = "/var/log/nginx/rpc_method_log.sock"
 )
 
 // Global Managers
@@ -47,6 +51,8 @@ var (
 	GlobalReloadManager *ReloadManager
 	GlobalBanManager    *BanManager
 )
+
+var rpcMethodLoggingEnabled bool
 
 // --------------------------------------------------------------------------------
 // BanManager (Fail2Ban Logic)
@@ -152,6 +158,453 @@ func (bm *BanManager) ProcessLogLine(line []byte) {
 		return
 	}
 
+	bm.ProcessEntry(entry)
+}
+
+func extractChainRPCMethod(request string) (string, bool) {
+	target, ok := requestTarget(request)
+	if !ok {
+		return "", false
+	}
+
+	u, err := url.ParseRequestURI(target)
+	if err != nil {
+		return "", false
+	}
+
+	const prefix = "/chain-rpc/"
+	if !strings.HasPrefix(u.Path, prefix) {
+		return "", false
+	}
+
+	method := strings.Trim(strings.TrimPrefix(u.Path, prefix), "/")
+	if method == "" {
+		return "-", true
+	}
+
+	if i := strings.IndexByte(method, '/'); i >= 0 {
+		method = method[:i]
+	}
+	return sanitizeRPCMethod(method), true
+}
+
+func requestTarget(request string) (string, bool) {
+	parts := strings.Fields(request)
+	if len(parts) < 2 {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func sanitizeRPCMethod(method string) string {
+	if method == "" {
+		return "-"
+	}
+
+	var b strings.Builder
+	for _, r := range method {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		if b.Len() >= 128 {
+			break
+		}
+	}
+
+	if b.Len() == 0 {
+		return "-"
+	}
+	return b.String()
+}
+
+type jsonRPCRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+type rpcLogItem struct {
+	Method string
+	Params string
+}
+
+func startRPCMethodLogServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rpc-method-log", rpcMethodLogHandler)
+
+	if err := os.RemoveAll(RPCMethodLogSocket); err != nil {
+		logRPC("failed to remove stale RPC method log socket: %v", err)
+		return
+	}
+
+	listener, err := net.Listen("unix", RPCMethodLogSocket)
+	if err != nil {
+		logRPC("failed to listen on RPC method log socket: %v", err)
+		return
+	}
+	defer listener.Close()
+	defer os.Remove(RPCMethodLogSocket)
+
+	if err := os.Chmod(RPCMethodLogSocket, 0666); err != nil {
+		logRPC("failed to chmod RPC method log socket: %v", err)
+		return
+	}
+
+	logRPC("Starting RPC method log server on unix:%s", RPCMethodLogSocket)
+	if err := http.Serve(listener, mux); err != nil {
+		logRPC("RPC method log server stopped: %v", err)
+	}
+}
+
+func rpcMethodLogHandler(w http.ResponseWriter, r *http.Request) {
+	defer w.WriteHeader(http.StatusNoContent)
+	defer r.Body.Close()
+
+	if !rpcMethodLoggingEnabled {
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
+	if err != nil {
+		logRPC("failed to read mirrored RPC request body: %v", err)
+		return
+	}
+
+	items, batchSize, ok := extractJSONRPCLogItems(body)
+	if !ok {
+		if method, found := extractChainRPCMethod(r.Header.Get("X-Original-Request")); found {
+			items = []rpcLogItem{{Method: method, Params: "-"}}
+			batchSize = 0
+			ok = true
+		}
+	}
+	if !ok {
+		return
+	}
+
+	logRPCMirrorLine(r, formatRPCMethods(items), formatRPCParams(items), batchSize)
+}
+
+func extractJSONRPCMethods(body []byte) ([]string, int, bool) {
+	items, batchSize, ok := extractJSONRPCLogItems(body)
+	if !ok {
+		return nil, 0, false
+	}
+
+	methods := make([]string, 0, len(items))
+	for _, item := range items {
+		methods = append(methods, item.Method)
+	}
+	return methods, batchSize, true
+}
+
+func extractJSONRPCLogItems(body []byte) ([]rpcLogItem, int, bool) {
+	body = []byte(strings.TrimSpace(string(body)))
+	if len(body) == 0 {
+		return nil, 0, false
+	}
+
+	if body[0] == '[' {
+		var batch []jsonRPCRequest
+		if err := json.Unmarshal(body, &batch); err != nil {
+			return nil, 0, false
+		}
+
+		items := make([]rpcLogItem, 0, len(batch))
+		for _, req := range batch {
+			method := sanitizeRPCMethod(req.Method)
+			items = append(items, rpcLogItem{
+				Method: method,
+				Params: summarizeRPCParams(method, req.Params),
+			})
+		}
+		return items, len(batch), true
+	}
+
+	var req jsonRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, 0, false
+	}
+	method := sanitizeRPCMethod(req.Method)
+	return []rpcLogItem{{
+		Method: method,
+		Params: summarizeRPCParams(method, req.Params),
+	}}, 1, true
+}
+
+func formatRPCMethods(items []rpcLogItem) string {
+	methods := make([]string, 0, len(items))
+	for _, item := range items {
+		methods = append(methods, item.Method)
+	}
+	return strings.Join(methods, ",")
+}
+
+func formatRPCParams(items []rpcLogItem) string {
+	params := make([]string, 0, len(items))
+	for _, item := range items {
+		params = append(params, item.Params)
+	}
+	return strings.Join(params, ";")
+}
+
+func summarizeRPCParams(method string, raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "-"
+	}
+
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err == nil && object != nil {
+		return summarizeRPCParamObject(method, object)
+	}
+
+	var array []json.RawMessage
+	if err := json.Unmarshal(raw, &array); err == nil {
+		return summarizeRPCParamArray(method, array)
+	}
+
+	return "params_" + summarizeRawJSON(raw)
+}
+
+func summarizeRPCParamObject(method string, params map[string]json.RawMessage) string {
+	switch method {
+	case "abci_query":
+		return joinParamParts(
+			stringParam("path", params["path"]),
+			summarizeOpaqueParam("data", params["data"]),
+			scalarParam("height", params["height"]),
+			scalarParam("prove", params["prove"]),
+		)
+	case "broadcast_tx_async", "broadcast_tx_sync", "broadcast_tx_commit":
+		return joinParamParts(summarizeOpaqueParam("tx", params["tx"]))
+	}
+
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		raw := params[key]
+		if isSensitiveRPCParam(key) {
+			parts = append(parts, summarizeOpaqueParam(key, raw))
+			continue
+		}
+		if value := scalarParam(key, raw); value != "" {
+			parts = append(parts, value)
+		} else {
+			parts = append(parts, key+"_"+summarizeRawJSON(raw))
+		}
+	}
+	return joinParamParts(parts...)
+}
+
+func summarizeRPCParamArray(method string, params []json.RawMessage) string {
+	switch method {
+	case "abci_query":
+		return joinParamParts(
+			positionalStringParam("path", params, 0),
+			positionalOpaqueParam("data", params, 1),
+			positionalScalarParam("height", params, 2),
+			positionalScalarParam("prove", params, 3),
+		)
+	case "broadcast_tx_async", "broadcast_tx_sync", "broadcast_tx_commit":
+		return joinParamParts(positionalOpaqueParam("tx", params, 0))
+	}
+	return fmt.Sprintf("array_len=%d", len(params))
+}
+
+func isSensitiveRPCParam(key string) bool {
+	key = strings.ToLower(key)
+	return strings.Contains(key, "tx") ||
+		strings.Contains(key, "sig") ||
+		strings.Contains(key, "signature") ||
+		strings.Contains(key, "data") ||
+		strings.Contains(key, "bytes") ||
+		strings.Contains(key, "proof")
+}
+
+func stringParam(name string, raw json.RawMessage) string {
+	value, ok := jsonString(raw)
+	if !ok || value == "" {
+		return ""
+	}
+	return name + "=" + sanitizeRPCParamValue(value)
+}
+
+func scalarParam(name string, raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	if value, ok := jsonString(raw); ok {
+		return name + "=" + sanitizeRPCParamValue(value)
+	}
+
+	var boolValue bool
+	if err := json.Unmarshal(raw, &boolValue); err == nil {
+		return fmt.Sprintf("%s=%t", name, boolValue)
+	}
+
+	var number json.Number
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err == nil {
+		return name + "=" + sanitizeRPCParamValue(number.String())
+	}
+
+	return ""
+}
+
+func summarizeOpaqueParam(name string, raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	if value, ok := jsonString(raw); ok {
+		return summarizeOpaqueValue(name, []byte(value))
+	}
+	return summarizeOpaqueValue(name, raw)
+}
+
+func positionalStringParam(name string, params []json.RawMessage, index int) string {
+	if index >= len(params) {
+		return ""
+	}
+	return stringParam(name, params[index])
+}
+
+func positionalScalarParam(name string, params []json.RawMessage, index int) string {
+	if index >= len(params) {
+		return ""
+	}
+	return scalarParam(name, params[index])
+}
+
+func positionalOpaqueParam(name string, params []json.RawMessage, index int) string {
+	if index >= len(params) {
+		return ""
+	}
+	return summarizeOpaqueParam(name, params[index])
+}
+
+func summarizeRawJSON(raw []byte) string {
+	return summarizeOpaqueValue("json", raw)
+}
+
+func summarizeOpaqueValue(name string, value []byte) string {
+	sum := sha256.Sum256(value)
+	return fmt.Sprintf("%s_len=%d %s_sha256=%s", name, len(value), name, hex.EncodeToString(sum[:])[:16])
+}
+
+func jsonString(raw json.RawMessage) (string, bool) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func joinParamParts(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			kept = append(kept, part)
+		}
+	}
+	if len(kept) == 0 {
+		return "-"
+	}
+	return strings.Join(kept, " ")
+}
+
+func sanitizeRPCParamValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case strings.ContainsRune("/._:-=,+", r):
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		if b.Len() >= 256 {
+			break
+		}
+	}
+	if b.Len() == 0 {
+		return "-"
+	}
+	return b.String()
+}
+
+func bytesTrimSpace(value []byte) []byte {
+	return []byte(strings.TrimSpace(string(value)))
+}
+
+func logRPCMirrorLine(r *http.Request, method, params string, batchSize int) {
+	timestamp := r.Header.Get("X-Original-Time")
+	if timestamp == "" {
+		timestamp = time.Now().Format(time.RFC3339)
+	}
+
+	remote := valueOrDash(r.Header.Get("X-Original-Remote-Addr"))
+	whitelist := valueOrDefault(r.Header.Get("X-Original-Whitelist"), "EXT")
+	requestID := valueOrDash(r.Header.Get("X-Request-ID"))
+	originalRequest := valueOrDash(r.Header.Get("X-Original-Request"))
+	referer := valueOrDash(r.Header.Get("X-Original-Referer"))
+	userAgent := valueOrDash(r.Header.Get("X-Original-User-Agent"))
+
+	log.Printf(
+		"[%s]\t%s\t[%s]\t[CHAINRPC]\t[*]\t%q 0 0 %q %q rt=- uct=\"-\" uht=\"-\" urt=\"-\" request_id=%q rpc_method=%q rpc_batch_size=%d rpc_params=%q",
+		timestamp,
+		remote,
+		whitelist,
+		originalRequest,
+		referer,
+		userAgent,
+		requestID,
+		method,
+		batchSize,
+		params,
+	)
+}
+
+func valueOrDash(value string) string {
+	return valueOrDefault(value, "-")
+}
+
+func valueOrDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func (bm *BanManager) ProcessEntry(entry AccessLogLine) {
 	// 1. Check Status Code Scoring
 	weight, defined := bm.scoreWeights[entry.Status]
 	if !defined {
@@ -442,6 +895,14 @@ func main() {
 	// Handles requests from both Whitelist Syncer and Fail2Ban
 	GlobalReloadManager = NewReloadManager(5 * time.Second)
 
+	rpcMethodLoggingEnabled = !strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_RPC_METHOD_LOGGING")), "true")
+	if rpcMethodLoggingEnabled {
+		logRPC("Chain RPC method logging enabled.")
+	} else {
+		logSys("Chain RPC method logging disabled (DISABLE_RPC_METHOD_LOGGING=true).")
+	}
+	go startRPCMethodLogServer()
+
 	// 0b. Initialize Ban Manager (Fail2Ban-style IP bans from nginx JSON access logs)
 	// Same semantics as DISABLE_CHAIN_*: unset or "true" = off; "false" = on.
 	if !proxyFeatureDisabled("DISABLE_FAIL2BAN") {
@@ -471,8 +932,6 @@ func main() {
 
 		logBan("Initializing BanManager (Duration: %v, Threshold: %d pts, Weights: %v)", banDur, maxRetries, weights)
 		GlobalBanManager = NewBanManager(banDur, maxRetries, weights)
-
-		// Start Log Watcher in background
 		go tailLogs()
 	} else {
 		logSys("Fail2Ban-style banning is disabled (unset or DISABLE_FAIL2BAN=true; set DISABLE_FAIL2BAN=false to enable).")
@@ -605,6 +1064,10 @@ func logBan(format string, v ...interface{}) {
 
 func logReload(format string, v ...interface{}) {
 	logTagged("RELOAD", format, v...)
+}
+
+func logRPC(format string, v ...interface{}) {
+	logTagged("RPC", format, v...)
 }
 
 func logSys(format string, v ...interface{}) {
@@ -846,12 +1309,18 @@ func updateNginxConfig(ips []string) error {
 	sb.WriteString("# Automatically generated by gonka-proxy-sidecar\n")
 	sb.WriteString("# Do not edit manually\n\n")
 
-	sb.WriteString("geo $whitelist_limit_key {\n")
-	sb.WriteString("    default $binary_remote_addr;\n")
-
+	// nginx's geo module does NOT expand variables in values.
+	// Use geo for 0/1 classification, then map to expand $binary_remote_addr.
+	sb.WriteString("geo $whitelist_class {\n")
+	sb.WriteString("    default 0;\n")
 	for _, ip := range ips {
-		sb.WriteString(fmt.Sprintf("    %s \"\";\n", ip))
+		sb.WriteString(fmt.Sprintf("    %s 1;\n", ip))
 	}
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("map $whitelist_class $whitelist_limit_key {\n")
+	sb.WriteString("    0 $binary_remote_addr;\n")
+	sb.WriteString("    1 \"\";\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("geo $whitelist_log_type {\n")
@@ -948,17 +1417,17 @@ func proxyFeatureDisabled(key string) bool {
 
 func tailLogs() {
 	for {
-		logBan("Starting log tailer on %s", LogFilePath)
+		logSys("Starting access log tailer on %s", LogFilePath)
 		cmd := exec.Command("tail", "-n", "0", "-F", LogFilePath)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			logBan("tailLogs: stdout pipe error: %v", err)
+			logSys("tailLogs: stdout pipe error: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
 		if err := cmd.Start(); err != nil {
-			logBan("tailLogs: start error: %v", err)
+			logSys("tailLogs: start error: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -977,14 +1446,14 @@ func tailLogs() {
 		}
 
 		if err := scanner.Err(); err != nil {
-			logBan("tailLogs: scanner error: %v", err)
+			logSys("tailLogs: scanner error: %v", err)
 		}
 
 		if err := cmd.Wait(); err != nil {
-			logBan("tailLogs: command exited: %v", err)
+			logSys("tailLogs: command exited: %v", err)
 		}
 
-		logBan("tailLogs: process exited. Restarting in 5 seconds...")
+		logSys("tailLogs: process exited. Restarting in 5 seconds...")
 		time.Sleep(5 * time.Second)
 	}
 }

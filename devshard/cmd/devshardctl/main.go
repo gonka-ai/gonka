@@ -100,10 +100,10 @@ func main() {
 		if err != nil {
 			home = "/tmp"
 		}
-		sp = filepath.Join(home, ".cache", "gonka", fmt.Sprintf("devshard-%s.db", eid))
+		sp = filepath.Join(home, ".cache", "gonka", fmt.Sprintf("devshard-%s", eid))
 	}
 
-	if err := os.MkdirAll(filepath.Dir(sp), 0755); err != nil {
+	if err := os.MkdirAll(sp, 0755); err != nil {
 		log.Fatalf("create storage dir: %v", err)
 	}
 

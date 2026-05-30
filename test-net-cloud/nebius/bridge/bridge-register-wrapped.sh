@@ -3,15 +3,32 @@ set -e
 
 # bridge-utils.sh
 # Shared utilities and environment setup for Gonka testnet bridge operations.
+# NOTE: You MUST use COLD KEYS (the validator operator keys) for registration,
+# as they are the ones that hold the funds required for governance deposits.
 
 # Resolve Base Directory (Logic matches launch.py)
 export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
+export KEY_DIR="$BASE_DIR/.inference"
+export CHAIN_ID="gonka-testnet"
+export KEY_NAME="${KEY_NAME:-gonka-account-key}"
+export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
+
+# Local and key-string support
+LOCAL_MODE=false
+KEY_STRING=""
 
 # Inferenced binary path (try local first, then system)
 if [ -f "$BASE_DIR/inferenced" ]; then
     export APP_NAME="$BASE_DIR/inferenced"
 else
-    export APP_NAME="inferenced"
+    # Try to find it in common local build locations
+    if [ -f "./inference-chain/build/inferenced" ]; then
+        export APP_NAME="./inference-chain/build/inferenced"
+    elif [ -f "./build/inferenced" ]; then
+        export APP_NAME="./build/inferenced"
+    else
+        export APP_NAME="inferenced"
+    fi
 fi
 
 export KEY_DIR="$BASE_DIR/.inference"
@@ -78,23 +95,28 @@ while [[ $# -gt 0 ]]; do
       USE_REPO_WASM=true
       shift
       ;;
-    --password)
-      PASSWORD="$2"
-      shift # past argument
-      shift # past value
-      ;;
-    --proposal)
-      PROPOSAL_ID_ARG="$2"
-      shift # past argument
-      shift # past value
-      ;;
+    --password) PASSWORD="$2"; shift 2 ;;
+    --proposal) PROPOSAL_ID_ARG="$2"; shift 2 ;;
+    --key-string) KEY_STRING="$2"; shift 2 ;;
+    --local) LOCAL_MODE=true; shift ;;
     *)
       echo "Error: Unknown option $1"
-      echo "Usage: ssh user@host \"bash -s\" -- < script.sh [--code-id ID | --wasm PATH] [--password PASS] [--proposal ID]"
+      echo "Usage: ssh user@host \"bash -s\" -- < script.sh [--code-id ID | --wasm PATH] [--password PASS] [--proposal ID] [--key-string STR] [--local]"
       exit 1
       ;;
   esac
 done
+
+if [ "$LOCAL_MODE" = true ]; then
+    export KEY_DIR="${HOME}/.inference"
+    export NODE_OPTS=""
+fi
+
+if [ -n "$KEY_STRING" ]; then
+    echo "Importing key from string..."
+    printf "%s\n%s\n%s\n" "$KEY_STRING" "$PASSWORD" "$PASSWORD" | $APP_NAME keys add "$KEY_NAME" --recover --keyring-backend "test" --home "$KEY_DIR"
+    export KEYRING_BACKEND="test"
+fi
 
 # Validation
 if [ -z "$PROPOSAL_ID_ARG" ] && [ -z "$CODE_ID" ] && [ -z "$WASM_PATH" ] && [ "$USE_REPO_WASM" = false ]; then

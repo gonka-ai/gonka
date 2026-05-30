@@ -3,7 +3,6 @@ package inference
 import (
 	"testing"
 
-	mathsdk "cosmossdk.io/math"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/testutil"
@@ -40,47 +39,50 @@ func TestCaptureGenerationStartTimestampStoresSnapshots(t *testing.T) {
 	require.Equal(t, snapshot, preservedSnapshot)
 }
 
-func TestPartitionWeightByPreservation(t *testing.T) {
-	k, ctx := newMinimalInferenceKeeper(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-
-	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId: 5,
-		Participants: []*types.ActiveParticipant{
-			{
-				Index:  testutil.Executor,
-				Models: []string{"model-a"},
-				MlNodes: []*types.ModelMLNodes{
-					{
-						MlNodes: []*types.MLNodeInfo{
-							{NodeId: "node-1", PocWeight: 10},
-							{NodeId: "node-2", PocWeight: 20},
-						},
+func TestPreservedWeightByParticipantFiltersToConfirmationScales(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  testutil.Executor,
+			Models: []string{"model-a", "model-b"},
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-a-1", PocWeight: 10},
+						{NodeId: "node-a-2", PocWeight: 20},
+					},
+				},
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-b-1", PocWeight: 100},
 					},
 				},
 			},
 		},
-	}))
-
-	preserved, notPreserved, err := am.partitionWeightByPreservation(
-		ctx,
-		5,
-		map[string]mathsdk.LegacyDec{"model-a": mathsdk.LegacyOneDec()},
+	}
+	preserved := preservedWeightByParticipant(
+		participants,
 		&types.PreservedNodesSnapshot{
-			EpisodeAnchorHeight: 321,
 			ModelPreservedNodes: []*types.ModelPreservedNodes{
 				{
 					ModelId: "model-a",
 					Participants: []*types.ParticipantPreservedNodes{
-						{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+						{ParticipantId: testutil.Executor, NodeIds: []string{"node-a-1"}},
+					},
+				},
+				{
+					ModelId: "model-b",
+					Participants: []*types.ParticipantPreservedNodes{
+						{ParticipantId: testutil.Executor, NodeIds: []string{"node-b-1"}},
 					},
 				},
 			},
 		},
+		[]*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(2.0)},
+		},
 	)
-	require.NoError(t, err)
-	require.Equal(t, int64(10), preserved[testutil.Executor])
-	require.Equal(t, int64(20), notPreserved[testutil.Executor])
+
+	require.Equal(t, int64(20), preserved[testutil.Executor])
 }
 
 func TestGetInferenceServingNodeIdsUsesUpcomingEpochAnchor(t *testing.T) {
