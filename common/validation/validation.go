@@ -417,15 +417,15 @@ func ExecuteValidation(
 		return nil, err
 	}
 
-	// If the validator's inference node rejects the payload (400/422), treat as passed.
-	// This can happen when the original inference could not be executed due to upstream
-	// payload rejection, and validators on older versions may still attempt re-execution.
+	// A 4xx from the validator's own re-execution means the executor-supplied
+	// prompt/enforced_tokens could not be processed, so the inference is
+	// unverifiable and must not be auto-approved (previously failed open to Valid:true).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		logging.Warn("Validator inference node rejected payload; treating validation as passed", types.Validation,
+		logging.Warn("validation failed: validator re-execution rejected request", types.Validation,
 			"inferenceId", inferenceID, "status", resp.StatusCode)
-		return &SimilarityValidationResult{
-			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
-			Value:                1.0,
+		return &InvalidInferenceResult{
+			InferenceId: inferenceID,
+			Reason:      "Validator re-execution rejected request.",
 		}, nil
 	}
 
@@ -456,14 +456,23 @@ func ExecuteValidation(
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
-	if len(originalLogits) == 0 || len(validationLogits) == 0 {
-		logging.Error("No logits found in original or validation response",
+	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// logits are empty, so an executor that stored a response with no logprobs
+	// would always pass. Reject only the asymmetric case (exactly one side empty):
+	// the executor's output cannot be verified against the validator's
+	// re-execution. Both-empty is left to CompareLogits so legitimate
+	// reasoning-burn empties (e.g. Kimi-K2.6, finish_reason=length) still match.
+	if (len(originalLogits) == 0) != (len(validationLogits) == 0) {
+		logging.Warn("validation failed: logit presence mismatch between original and validation response",
 			types.Validation,
-			"id", inferenceID,
-			"originalLogits", originalLogits,
-			"validationLogits", validationLogits,
+			"inferenceId", inferenceID,
+			"originalLogits", len(originalLogits),
+			"validationLogits", len(validationLogits),
 		)
-		return nil, errors.New("no logits found in original or validation response")
+		return &InvalidInferenceResult{
+			InferenceId: inferenceID,
+			Reason:      "Logit presence mismatch between original and validation response.",
+		}, nil
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
