@@ -29,7 +29,7 @@ type devshardValidator struct {
 	engine      *devshardEngine // reused for doWithLockedNode retry loop
 	chainParams internaldevshard.ChainParamsProvider
 
-	contextMu      sync.Mutex
+	contextMu      sync.RWMutex
 	contextWindows map[string]uint64
 }
 
@@ -73,12 +73,12 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 // fresh ModelsAll query so newly-added governance models get picked up
 // without a restart.
 func (v *devshardValidator) modelContextWindow(ctx context.Context, model string) uint64 {
-	v.contextMu.Lock()
+	v.contextMu.RLock()
 	if cw, ok := v.contextWindows[model]; ok {
-		v.contextMu.Unlock()
+		v.contextMu.RUnlock()
 		return cw
 	}
-	v.contextMu.Unlock()
+	v.contextMu.RUnlock()
 
 	resp, err := v.recorder.NewInferenceQueryClient().ModelsAll(ctx, &chaintypes.QueryModelsAllRequest{})
 	if err != nil {
