@@ -161,14 +161,14 @@ func TestVerifyDevshardSettlement_HappyPath(t *testing.T) {
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.NoError(t, err)
 }
 
 func TestVerifyDevshardSettlement_AlreadySettled(t *testing.T) {
 	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator", Settled: true}
 	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1}
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already settled")
 }
@@ -176,7 +176,7 @@ func TestVerifyDevshardSettlement_AlreadySettled(t *testing.T) {
 func TestVerifyDevshardSettlement_WrongSettler(t *testing.T) {
 	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator"}
 	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1wrong", EscrowId: 1}
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not the escrow creator")
 }
@@ -184,7 +184,7 @@ func TestVerifyDevshardSettlement_WrongSettler(t *testing.T) {
 func TestVerifyDevshardSettlement_VersionTooLong(t *testing.T) {
 	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator"}
 	msg := &types.MsgSettleDevshardEscrow{Settler: "gonka1creator", EscrowId: 1, Version: string(make([]byte, 129))}
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "version exceeds maximum length")
 }
@@ -200,7 +200,7 @@ func TestVerifyDevshardSettlement_InsufficientQuorum(t *testing.T) {
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 	msg.Signatures = msg.Signatures[:10] // below quorum of 11
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "insufficient quorum")
 }
@@ -215,7 +215,7 @@ func TestVerifyDevshardSettlement_CostExceedsAmount(t *testing.T) {
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 1_000_000_000) // 16 GNK total > 1 GNK
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds escrow amount")
 }
@@ -231,7 +231,7 @@ func TestVerifyDevshardSettlement_FeesExceedAmount(t *testing.T) {
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 50_000_000) // total 800M
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 200_000_001)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds escrow amount")
 }
@@ -244,9 +244,9 @@ func TestVerifyDevshardSettlement_NonceExceedsLimit(t *testing.T) {
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
-	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, keeper.DevshardMaxNonce+1)
+	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, uint64(types.DefaultDevshardMaxNonce)+1)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds maximum")
 }
@@ -262,7 +262,7 @@ func TestVerifyDevshardSettlement_MissedExceedsAssignedPerSlot(t *testing.T) {
 	hostStats[0].Missed = 3
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missed count")
 }
@@ -279,7 +279,7 @@ func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
 	hostStats[0].Invalid = 2
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid count")
 }
@@ -295,7 +295,7 @@ func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
 	hostStats[1].Missed = 2 // nonce 19 => slot 1 is one of the remainder slots
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 19)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.NoError(t, err)
 }
 
@@ -310,7 +310,7 @@ func TestVerifyDevshardSettlement_NonRemainderSlotMissedRejected(t *testing.T) {
 	hostStats[0].Missed = 2 // nonce 19 => slot 0 only gets nonce 16
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 19)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missed count")
 }
@@ -331,7 +331,7 @@ func TestVerifyDevshardSettlement_InvalidSignature(t *testing.T) {
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err = keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recovered")
 }
@@ -355,7 +355,7 @@ func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
 	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
 
 	// Without warm key checker, should fail
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recovered")
 
@@ -369,7 +369,7 @@ func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
 		}
 		return false
 	}
-	err = keeper.VerifyDevshardSettlement(escrow, msg, acceptAllWarmKeys)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, acceptAllWarmKeys)
 	require.NoError(t, err)
 }
 
@@ -389,7 +389,7 @@ func TestVerifyDevshardSettlement_WarmKeyRejected(t *testing.T) {
 	rejectAll := func(granter, grantee string) bool {
 		return false
 	}
-	err := keeper.VerifyDevshardSettlement(escrow, msg, rejectAll)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, rejectAll)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recovered")
 }
@@ -419,7 +419,7 @@ func TestVerifyDevshardSettlement_DuplicateSignerMultiSlot(t *testing.T) {
 	}
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err = keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.NoError(t, err) // 16 slot votes >= 11 quorum
 }
 
@@ -463,7 +463,7 @@ func TestVerifyDevshardSettlement_DuplicateHostStatsSlotId(t *testing.T) {
 	})
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "duplicate host_stats slot_id")
 }
@@ -489,7 +489,7 @@ func TestVerifyDevshardSettlement_DuplicateSlotId(t *testing.T) {
 	}
 	msg.Signatures = dupSigs
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "duplicate signature for slot")
 }
@@ -515,7 +515,7 @@ func TestVerifyDevshardSettlement_UnsortedHostStats(t *testing.T) {
 
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.NoError(t, err)
 }
 
@@ -530,7 +530,7 @@ func TestVerifyDevshardSettlement_ZeroCost(t *testing.T) {
 
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.NoError(t, err)
 }
 
@@ -599,7 +599,7 @@ func TestVerifyDevshardSettlement_WrongPhaseRejected(t *testing.T) {
 	msg.StateRoot = wrongRoot[:]
 	msg.Signatures = sigs
 
-	err = keeper.VerifyDevshardSettlement(escrow, msg, nil)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, types.DefaultDevshardMaxNonce, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "state_root mismatch")
 }

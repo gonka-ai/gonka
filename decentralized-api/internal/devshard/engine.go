@@ -47,7 +47,7 @@ func (e *EngineAdapter) Execute(ctx context.Context, req devshard.ExecuteRequest
 		ctx,
 		req,
 		e.payloadStore,
-		currentEpochID(e.phaseTracker),
+		req.EpochID,
 		e.executeMLRequest,
 		e.chainParams,
 	)

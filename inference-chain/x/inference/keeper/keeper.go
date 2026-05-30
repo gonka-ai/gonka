@@ -30,7 +30,7 @@ type (
 		authority     string
 		AccountKeeper types.AccountKeeper
 		AuthzKeeper   types.AuthzKeeper
-		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+		getWasmKeeper *wasmKeeperGetter
 		mintTokensFn  func(ctx sdk.Context, contractAddr, recipient, amount string) error
 
 		collateralKeeper    types.CollateralKeeper
@@ -123,6 +123,10 @@ type (
 	}
 )
 
+type wasmKeeperGetter struct {
+	fn func() wasmkeeper.Keeper
+}
+
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeService store.KVStoreService,
@@ -165,7 +169,7 @@ func NewKeeper(
 		BlsKeeper:             blsKeeper,
 		collateralKeeper:      collateralKeeper,
 		streamvestingKeeper:   streamvestingKeeper,
-		getWasmKeeper:         getWasmKeeper,
+		getWasmKeeper:         &wasmKeeperGetter{fn: getWasmKeeper},
 		UpgradeKeeper:         upgradeKeeper,
 		// collection init
 		Participants: collections.NewMap(
@@ -615,7 +619,20 @@ func (k Keeper) GetAuthority() string {
 
 // GetWasmKeeper returns the WASM keeper
 func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
-	return k.getWasmKeeper()
+	if k.getWasmKeeper == nil || k.getWasmKeeper.fn == nil {
+		return wasmkeeper.Keeper{}
+	}
+	return k.getWasmKeeper.fn()
+}
+
+// SetWasmKeeperGetter updates the shared WASM keeper getter. Keeper values are
+// copied into AppModule/msgServer during app wiring, so the getter itself must
+// be shared for post-legacy-module initialization updates to reach those copies.
+func (k Keeper) SetWasmKeeperGetter(getWasmKeeper func() wasmkeeper.Keeper) {
+	if k.getWasmKeeper == nil {
+		k.getWasmKeeper = &wasmKeeperGetter{}
+	}
+	k.getWasmKeeper.fn = getWasmKeeper
 }
 
 // GetCollateralKeeper returns the collateral keeper.

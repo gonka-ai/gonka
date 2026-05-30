@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -46,7 +47,7 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                 // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -57,21 +58,30 @@ type AcceptanceChecker interface {
 	Check(st types.EscrowState, applied []*types.DevshardTx) error
 }
 
+const (
+	defaultValidationWorkers   = 20
+	defaultValidationQueueSize = 20_000
+)
+
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu        sync.Mutex
-	sm        *state.StateMachine
-	signer    signing.Signer
-	verifier  signing.Verifier
-	engine    devshard.InferenceEngine
-	validator devshard.ValidationEngine // optional, nil = no validation
-	escrowID  string
-	slotIDs   map[uint32]bool
-	group     []types.SlotAssignment
-	mempool   *Mempool
-	checker   AcceptanceChecker
-	store     storage.Storage // optional, nil = no persistence
-	gsp       *gossip.Gossip  // optional, nil = no gossip pruning
+	mu           sync.Mutex
+	sm           *state.StateMachine
+	signer       signing.Signer
+	verifier     signing.Verifier
+	engine       devshard.InferenceEngine
+	validator    devshard.ValidationEngine // optional, nil = no validation
+	escrowID     string
+	epochID      uint64
+	slotIDs      map[uint32]bool
+	group        []types.SlotAssignment
+	mempool      *Mempool
+	checker      AcceptanceChecker
+	store        storage.Storage // optional, nil = no persistence
+	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
+	availability devshard.AvailabilityProvider
+
+	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
 
 	// Lookup maps built from group at construction time.
 	slotToAddr  map[uint32]string   // slotID -> validator address
@@ -79,10 +89,14 @@ type Host struct {
 
 	sortedSlots        []uint32            // deterministic slot order for this host
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with in-flight validation
-	completedResponses map[uint64][]byte   // inference ID -> cached ML response body
-	ownSeed            int64               // deterministic seed derived from signer + escrowID
+	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
+	validationQueue    chan validateJob
+	completedResponses map[uint64][]byte // inference ID -> cached ML response body
+	ownSeed            int64             // deterministic seed derived from signer + escrowID
 }
+
+// SnapshotInterval controls how often hosts persist full state snapshots.
+const SnapshotInterval = 500
 
 func NewHost(
 	sm *state.StateMachine,
@@ -163,6 +177,10 @@ func NewHost(
 	for _, opt := range opts {
 		opt(h)
 	}
+	if h.validator != nil {
+		h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+		h.startValidationWorkers(defaultValidationWorkers)
+	}
 	return h, nil
 }
 
@@ -179,6 +197,12 @@ func WithStorage(s storage.Storage) HostOption {
 	return func(h *Host) { h.store = s }
 }
 
+// WithEpochID pins the host to the mainnet epoch stored on its DevshardEscrow.
+// Payload storage and validation use this epoch to route across epoch changes.
+func WithEpochID(epochID uint64) HostOption {
+	return func(h *Host) { h.epochID = epochID }
+}
+
 // WithVerifier sets the signature verifier for gossip sig accumulation.
 func WithVerifier(v signing.Verifier) HostOption {
 	return func(h *Host) { h.verifier = v }
@@ -192,6 +216,10 @@ func WithGossip(g *gossip.Gossip) HostOption {
 // WithValidator sets the validation engine for validating other hosts' inferences.
 func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
+}
+
+func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
+	return func(h *Host) { h.availability = p }
 }
 
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
@@ -267,6 +295,11 @@ func (h *Host) Signer() signing.Signer { return h.signer }
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
 
+	if requestBlockedWhenUnavailable(req) && !h.completionRequestsEnabled() {
+		h.mu.Unlock()
+		return nil, devshard.ErrRequestsDisabled
+	}
+
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
 	for _, diff := range req.Diffs {
@@ -303,9 +336,9 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Validate other hosts' inferences outside mutex.
+	// (g) Queue validation work outside mutex.
 	for _, vj := range validationJobs {
-		go h.validateAsync(context.Background(), vj)
+		h.enqueueValidation(vj)
 	}
 
 	return &HostResponse{
@@ -320,6 +353,38 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}, nil
 }
 
+func requestBlockedWhenUnavailable(req HostRequest) bool {
+	if req.Payload != nil {
+		return true
+	}
+	for _, diff := range req.Diffs {
+		for _, tx := range diff.Txs {
+			if tx.GetStartInference() != nil ||
+				tx.GetTimeoutInference() != nil ||
+				tx.GetValidation() != nil ||
+				tx.GetValidationVote() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (h *Host) CompletionRequestsEnabled() bool {
+	return h.completionRequestsEnabled()
+}
+
+func (h *Host) completionRequestsEnabled() bool {
+	return h.currentAvailability().Enabled
+}
+
+func (h *Host) currentAvailability() devshard.AvailabilityStatus {
+	if h.availability == nil {
+		return devshard.AvailabilityStatus{Enabled: true}
+	}
+	return h.availability.CurrentAvailability()
+}
+
 // applyAndPersist applies a diff, removes included txs from mempool, and persists.
 // Captures WarmKeyDelta (new warm key bindings introduced by this diff) for replay.
 // Caller must hold h.mu.
@@ -328,6 +393,7 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	if diff.Nonce <= currentNonce {
 		return nil
 	}
+	phaseBefore := h.sm.Phase()
 	var warmBefore map[uint32]string
 	if h.store != nil {
 		warmBefore = h.sm.WarmKeys()
@@ -355,8 +421,46 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
 			return fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err)
 		}
+		phaseAfter := h.sm.Phase()
+		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
+		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
+		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
 	}
 	return nil
+}
+
+// maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
+// JSON marshaling and storage I/O happen asynchronously outside h.mu.
+// Caller must hold h.mu.
+func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow bool) {
+	if h.store == nil || nonce == 0 || !shouldSnapshot {
+		return
+	}
+	if !settledNow && !h.snapshotInFlight.CompareAndSwap(false, true) {
+		return
+	}
+
+	store := h.store
+	escrowID := h.escrowID
+	state := h.sm.ExportState()
+
+	go func() {
+		if !settledNow {
+			defer h.snapshotInFlight.Store(false)
+		}
+		writeSnapshot(store, escrowID, nonce, state)
+	}()
+}
+
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState) {
+	data, err := MarshalStateSnapshot(state)
+	if err != nil {
+		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
+		return
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
+		logging.Warn("failed to persist host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
+	}
 }
 
 // ApplyCatchUpDiffs applies diffs the host hasn't seen yet.
@@ -491,6 +595,7 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 			InputLength: start.InputLength,
 			MaxTokens:   start.MaxTokens,
 			EscrowID:    h.escrowID,
+			EpochID:     h.epochID,
 		}
 		return sig, confirmedAt, job, nil, nil
 	}
@@ -631,24 +736,28 @@ type validateJob struct {
 // collectValidationJobs finds finished inferences that this host should validate.
 // Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
-	if h.validator == nil {
+	if h.validator == nil || h.validationQueue == nil {
+		return nil
+	}
+	if !h.completionRequestsEnabled() {
 		return nil
 	}
 
 	st := h.sm.SnapshotState()
+	available := cap(h.validationQueue) - len(h.validationQueue)
+	if available <= 0 {
+		return nil
+	}
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
-		if rec.Status != types.StatusFinished {
+		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
 			continue
 		}
-
-		// Skip if this host is the executor (no self-validation).
 		if h.slotIDs[rec.ExecutorSlot] {
 			continue
 		}
 
-		// Skip if already validated by any of this host's slots.
 		alreadyValidated := false
 		for slot := range h.slotIDs {
 			if rec.ValidatedBy.IsSet(slot) {
@@ -659,26 +768,25 @@ func (h *Host) collectValidationJobs() []validateJob {
 		if alreadyValidated {
 			continue
 		}
-
-		// Skip if already validating or has a validation in mempool.
 		if _, ok := h.validating[infID]; ok {
 			continue
 		}
-		if h.hasMempoolValidation(infID) {
+		if h.hasMempoolValidationOrVote(infID) {
 			continue
 		}
 
-		// Probabilistic check: should this host validate this inference?
-		mySlotCount := uint32(len(h.slotIDs))
 		executorAddr := h.slotToAddr[rec.ExecutorSlot]
-		executorSlotCount := h.sm.AddressSlotCount(executorAddr)
-		totalSlots := h.sm.TotalSlots()
 
-		if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
-			continue
+		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
+		if rec.Status == types.StatusFinished {
+			mySlotCount := uint32(len(h.slotIDs))
+			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
+			totalSlots := h.sm.TotalSlots()
+			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
+				continue
+			}
 		}
 
-		// Pick first owned slot as the validator slot (deterministic).
 		validatorSlot := h.sortedSlots[0]
 
 		h.validating[infID] = struct{}{}
@@ -692,19 +800,57 @@ func (h *Host) collectValidationJobs() []validateJob {
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
 			executorAddress: executorAddr,
-			epochID:         0, // ValidationAdapter will use its own phaseTracker
+			epochID:         h.epochID,
 		})
+		available--
+		if available == 0 {
+			break
+		}
 	}
 
 	return jobs
 }
 
-// hasMempoolValidation returns true if a MsgValidation for infID from this host
-// is already in the mempool. Caller must hold h.mu.
-func (h *Host) hasMempoolValidation(infID uint64) bool {
+func (h *Host) startValidationWorkers(count int) {
+	for i := 0; i < count; i++ {
+		go func() {
+			for job := range h.validationQueue {
+				h.validateAsync(context.Background(), job)
+			}
+		}()
+	}
+}
+
+func (h *Host) enqueueValidation(job validateJob) {
+	if h.validationQueue == nil {
+		h.mu.Lock()
+		delete(h.validating, job.inferenceID)
+		h.mu.Unlock()
+		return
+	}
+
+	select {
+	case h.validationQueue <- job:
+	default:
+		h.mu.Lock()
+		delete(h.validating, job.inferenceID)
+		h.mu.Unlock()
+		logging.Debug("validation queue full; retry later", "subsystem", "host", "inference_id", job.inferenceID)
+	}
+}
+
+// hasMempoolValidationOrVote returns true if a MsgValidation or
+// MsgValidationVote for infID from this host is already in the mempool.
+// Caller must hold h.mu.
+func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 	for _, tx := range h.mempool.Txs() {
 		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
 			if h.slotIDs[v.ValidatorSlot] {
+				return true
+			}
+		}
+		if v := tx.GetValidationVote(); v != nil && v.InferenceId == infID {
+			if h.slotIDs[v.VoterSlot] {
 				return true
 			}
 		}
@@ -712,8 +858,10 @@ func (h *Host) hasMempoolValidation(infID uint64) bool {
 	return false
 }
 
-// validateAsync runs validator.Validate, builds MsgValidation, signs it, and
-// adds it to the mempool. Called outside the mutex.
+// validateAsync emits MsgValidation when status is Finished, MsgValidationVote
+// when Challenged. Re-reads status after Validate returns to catch races where
+// another host challenged the inference while this validator was running.
+// Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	defer func() {
 		h.mu.Lock()
@@ -737,24 +885,52 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		return
 	}
 
-	msg := &types.MsgValidation{
-		InferenceId:   job.inferenceID,
-		ValidatorSlot: job.validatorSlot,
-		Valid:         result.Valid,
-		EscrowId:      h.escrowID,
-	}
-	proposerSig, err := h.signProposer(msg)
-	if err != nil {
-		logging.Error("sign validation msg failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+	rec, ok := h.sm.GetInference(job.inferenceID)
+	if !ok {
+		logging.Error("validate: inference disappeared", "subsystem", "host", "inference_id", job.inferenceID)
 		return
 	}
-	msg.ProposerSig = proposerSig
+
+	var tx *types.DevshardTx
+	switch rec.Status {
+	case types.StatusFinished:
+		// TODO: if this MsgValidation lands after another host has already
+		// challenged the inference, the state machine records participation
+		// without vote weight. Counting that requires a coordinated upgrade.
+		msg := &types.MsgValidation{
+			InferenceId:   job.inferenceID,
+			ValidatorSlot: job.validatorSlot,
+			Valid:         result.Valid,
+			EscrowId:      h.escrowID,
+		}
+		proposerSig, err := h.signProposer(msg)
+		if err != nil {
+			logging.Error("sign validation msg failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+			return
+		}
+		msg.ProposerSig = proposerSig
+		tx = &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: msg}}
+	case types.StatusChallenged:
+		msg := &types.MsgValidationVote{
+			InferenceId: job.inferenceID,
+			VoterSlot:   job.validatorSlot,
+			VoteValid:   result.Valid,
+			EscrowId:    h.escrowID,
+		}
+		proposerSig, err := h.signProposer(msg)
+		if err != nil {
+			logging.Error("sign validation vote failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+			return
+		}
+		msg.ProposerSig = proposerSig
+		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
+	default:
+		return
+	}
 
 	h.mu.Lock()
 	h.mempool.Add(MempoolEntry{
-		Tx: &types.DevshardTx{Tx: &types.DevshardTx_Validation{
-			Validation: msg,
-		}},
+		Tx:         tx,
 		ProposedAt: h.sm.LatestNonce(),
 	})
 	h.mu.Unlock()
@@ -939,6 +1115,7 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
 		EscrowID:    h.escrowID,
+		EpochID:     h.epochID,
 	}
 	return sig, confirmedAt, job, nil
 }
