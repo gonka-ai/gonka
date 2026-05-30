@@ -1,8 +1,14 @@
 package validation
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"decentralized-api/payloadstorage"
 	devshardpkg "devshard"
@@ -75,6 +81,90 @@ func TestVerifyPayloadHashes_ResponseMismatch(t *testing.T) {
 	// Use wrong response hash
 	err = VerifyPayloadHashes(promptPayload, responsePayload, expectedPromptHash, "wrong-hash", "inf-1")
 	assert.ErrorIs(t, err, ErrHashMismatch)
+}
+
+// TestFetchPayloadsHTTP_RejectsOversizedResponse pins the OOM-defense: a
+// malicious executor that streams more than MaxPayloadResponseSize bytes must
+// be rejected before json.Unmarshal allocates the whole body.
+func TestFetchPayloadsHTTP_RejectsOversizedResponse(t *testing.T) {
+	origLimit := MaxPayloadResponseSize
+	MaxPayloadResponseSize = 1024 // 1 KiB cap for the test
+	defer func() { MaxPayloadResponseSize = origLimit }()
+
+	// Body is well-formed JSON-shape but exceeds the cap due to a large
+	// prompt_payload string. The test cares about the size check firing,
+	// not about JSON validity.
+	oversizedField := strings.Repeat("a", int(MaxPayloadResponseSize+128))
+	body := `{"inference_id":"test","prompt_payload":"` + oversizedField + `"}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := FetchPayloadsHTTP(context.Background(), client, server.URL, "validator", 0, 0, "sig")
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum size")
+}
+
+// TestFetchPayloadsHTTP_AcceptsResponseUnderLimit pins that the size guard
+// does not break the happy path: a well-formed response under the cap must
+// still decode normally.
+func TestFetchPayloadsHTTP_AcceptsResponseUnderLimit(t *testing.T) {
+	origLimit := MaxPayloadResponseSize
+	MaxPayloadResponseSize = 1024 // 1 KiB cap for the test
+	defer func() { MaxPayloadResponseSize = origLimit }()
+
+	expected := PayloadResponse{
+		InferenceId:       "inf-1",
+		PromptPayload:     []byte("hello"),
+		ResponsePayload:   []byte("world"),
+		ExecutorSignature: "sig",
+	}
+	bodyBytes, err := json.Marshal(expected)
+	require.NoError(t, err)
+	require.Less(t, int64(len(bodyBytes)), MaxPayloadResponseSize)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bodyBytes)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	got, err := FetchPayloadsHTTP(context.Background(), client, server.URL, "validator", 0, 0, "sig")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, expected.InferenceId, got.InferenceId)
+	require.Equal(t, expected.PromptPayload, got.PromptPayload)
+	require.Equal(t, expected.ResponsePayload, got.ResponsePayload)
+	require.Equal(t, expected.ExecutorSignature, got.ExecutorSignature)
+}
+
+// TestFetchPayloadsHTTP_BoundsErrorBody pins that even the non-2xx error path
+// no longer reads an unbounded body when an executor returns an error status
+// with a giant body.
+func TestFetchPayloadsHTTP_BoundsErrorBody(t *testing.T) {
+	// 1 MiB of "x" so the test catches a bug that would have ReadAll'd the
+	// whole thing into the error string.
+	big := strings.Repeat("x", 1024*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(big))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := FetchPayloadsHTTP(context.Background(), client, server.URL, "validator", 0, 0, "sig")
+	require.Nil(t, resp)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "executor returned status 502")
+	// Error string must not embed the full 1 MiB; the snippet is bounded by
+	// maxPayloadErrorBodySize (4 KiB) plus the fixed prefix.
+	require.Less(t, len(err.Error()), maxPayloadErrorBodySize+256)
 }
 
 func TestBuildPayloadRequestURL(t *testing.T) {
