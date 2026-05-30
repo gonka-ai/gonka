@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -37,11 +38,30 @@ import (
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
 
+// maxConcurrentValidations caps the number of in-flight validation goroutines
+// per validator process. Each in-flight validation can hold a model lock, an
+// open HTTP connection to an ML node, and up to 20 minutes of retry state, so
+// the unbounded fan-out used previously could blow up resident memory and
+// exhaust the broker's node pool after a single recovery burst.
+const maxConcurrentValidations = 10
+
+// validationHTTPClient is the shared HTTP client used for replay calls into
+// the local ML node. It carries a hard timeout so a stalled or hung ML node
+// endpoint cannot pin a validation goroutine (and the model lock it holds)
+// indefinitely.
+var validationHTTPClient = &http.Client{Timeout: 5 * time.Minute}
+
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
 	nodeBroker    *broker.Broker
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
+	// recoveryRunning is a cross-trigger guard for ExecuteRecoveryValidations.
+	// Recovery can be initiated from the new-block dispatcher, the startup
+	// reward-recovery path, and the admin recovery handler; without this guard
+	// two of them firing within the same epoch would each spawn their own fan-
+	// out and double the in-flight goroutine count.
+	recoveryRunning atomic.Bool
 }
 
 func NewInferenceValidator(
@@ -392,9 +412,27 @@ func (s *InferenceValidator) DetectMissedValidations(epochIndex uint64, seed int
 }
 
 // ExecuteRecoveryValidations executes validation for a list of missed inferences
-// This function uses the inference data already obtained and executes validations in parallel goroutines
-// It waits for all validations to complete before returning
+// using a bounded worker pool. The previous implementation spawned one goroutine
+// per missed inference and waited on a single WaitGroup; after extended validator
+// downtime the missed-inference backlog can easily reach thousands of entries,
+// and each goroutine retains payloads, retry state, an HTTP connection, and a
+// model-lock reservation in the broker. Combined with the fact that recovery
+// can be triggered from three independent paths (new-block dispatcher, startup
+// reward recovery, admin handler), the unbounded fan-out is enough to OOM the
+// API process and starve the node pool used by live traffic. A fixed worker
+// pool keeps memory and concurrent broker load O(1) in the backlog size, and
+// recoveryRunning prevents the trigger paths from doubling up on each other.
 func (s *InferenceValidator) ExecuteRecoveryValidations(missedInferences []types.Inference) (int, error) {
+	// Cross-path mutual exclusion: only one recovery run at a time, regardless
+	// of which trigger path called us. Without this, two concurrent recoveries
+	// would each spin up maxConcurrentValidations workers and double the live
+	// validation load on the local ML nodes.
+	if !s.recoveryRunning.CompareAndSwap(false, true) {
+		logging.Warn("Skipping recovery: another recovery execution is already running", types.ValidationRecovery)
+		return 0, nil
+	}
+	defer s.recoveryRunning.Store(false)
+
 	// TODO: allow to send validation for previous epoch and then rollback changes
 	// Chain requires validator to be active in CURRENT epoch
 	if !s.isActiveInCurrentEpoch() {
@@ -426,33 +464,48 @@ func (s *InferenceValidator) ExecuteRecoveryValidations(missedInferences []types
 		return 0, nil
 	}
 
-	logging.Info("Starting recovery validation execution", types.ValidationRecovery, "missedValidations", len(missedInferencesToValidate))
+	logging.Info("Starting recovery validation execution", types.ValidationRecovery,
+		"missedValidations", len(missedInferencesToValidate),
+		"workerCount", maxConcurrentValidations)
 
+	// Bounded worker pool. workChan is buffered to the total backlog so the
+	// producer loop never blocks; workers drain it cooperatively until close.
+	workChan := make(chan types.Inference, len(missedInferencesToValidate))
 	var wg sync.WaitGroup
 
-	// Execute recovery validations in parallel goroutines with WaitGroup synchronization
-	for _, inf := range missedInferencesToValidate {
-		wg.Add(1)
-		go func(inference types.Inference) {
-			defer wg.Done()
-
-			logging.Info("Executing recovery validation", types.ValidationRecovery, "inferenceId", inference.InferenceId)
-
-			// Use existing validation infrastructure
-			// The validateInferenceAndSendValMessage function handles all validation logic, node locking, and message sending
-			// Cast the interface back to concrete type (safe since it's always *InferenceCosmosClient)
-			concreteRecorder := s.recorder.(*cosmosclient.InferenceCosmosClient)
-			s.validateInferenceAndSendValMessage(inference, *concreteRecorder, false)
-
-			logging.Info("Recovery validation completed", types.ValidationRecovery, "inferenceId", inference.InferenceId)
-		}(inf)
+	numWorkers := maxConcurrentValidations
+	if numWorkers > len(missedInferencesToValidate) {
+		numWorkers = len(missedInferencesToValidate)
 	}
 
-	// Wait for all recovery validations to complete
-	logging.Info("Waiting for all recovery validations to complete", types.ValidationRecovery, "count", len(missedInferences))
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for inference := range workChan {
+				logging.Info("Executing recovery validation", types.ValidationRecovery,
+					"inferenceId", inference.InferenceId, "worker", workerID)
+
+				// Cast the interface back to the concrete type (safe: it is
+				// always *InferenceCosmosClient in production wiring).
+				concreteRecorder := s.recorder.(*cosmosclient.InferenceCosmosClient)
+				s.validateInferenceAndSendValMessage(inference, *concreteRecorder, false)
+
+				logging.Info("Recovery validation completed", types.ValidationRecovery,
+					"inferenceId", inference.InferenceId, "worker", workerID)
+			}
+		}(i)
+	}
+
+	for _, inf := range missedInferencesToValidate {
+		workChan <- inf
+	}
+	close(workChan)
+
+	logging.Info("Waiting for all recovery validations to complete", types.ValidationRecovery, "count", len(missedInferencesToValidate))
 	wg.Wait()
 
-	logging.Info("All recovery validations completed", types.ValidationRecovery, "count", len(missedInferences))
+	logging.Info("All recovery validations completed", types.ValidationRecovery, "count", len(missedInferencesToValidate))
 	return len(missedInferencesToValidate), nil
 }
 
@@ -532,16 +585,47 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 	}
 
 	logInferencesToValidate(toValidateIds)
-	for _, inf := range toValidateIds {
-		go func() {
-			response, err := queryClient.Inference(transactionRecorder.GetContext(), &types.QueryGetInferenceRequest{Index: inf})
-			if err != nil {
-				logging.Error("Failed to get inference by id", types.Validation, "id", response, "error", err)
-				return
-			}
-			s.validateInferenceAndSendValMessage(response.Inference, transactionRecorder, false)
-		}()
+
+	if len(toValidateIds) == 0 {
+		return
 	}
+
+	// Bounded fan-out for real-time sampled validations. SampleInferenceToValidate
+	// is called from the event-handler worker pool and must remain fire-and-
+	// forget, so the dispatcher goroutine is preserved; inside it we use the
+	// same fixed-size pool as recovery so a single block carrying a large batch
+	// of inferences cannot spawn unbounded goroutines.
+	go func() {
+		workChan := make(chan string, len(toValidateIds))
+		var wg sync.WaitGroup
+
+		numWorkers := maxConcurrentValidations
+		if numWorkers > len(toValidateIds) {
+			numWorkers = len(toValidateIds)
+		}
+
+		for i := 0; i < numWorkers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for infID := range workChan {
+					response, err := queryClient.Inference(transactionRecorder.GetContext(), &types.QueryGetInferenceRequest{Index: infID})
+					if err != nil {
+						logging.Error("Failed to get inference by id", types.Validation, "id", infID, "error", err)
+						continue
+					}
+					s.validateInferenceAndSendValMessage(response.Inference, transactionRecorder, false)
+				}
+			}()
+		}
+
+		for _, inf := range toValidateIds {
+			workChan <- inf
+		}
+		close(workChan)
+
+		wg.Wait()
+	}()
 }
 
 func logInferencesToSample(inferences []*types.InferenceValidationDetails) {
@@ -923,11 +1007,17 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	resp, err := http.Post(
-		completionsUrl,
-		"application/json",
-		bytes.NewReader(requestBody),
-	)
+	// Use the shared client with a hard timeout instead of http.Post. http.Post
+	// uses http.DefaultClient, which has no timeout, so a hung ML node would
+	// pin this goroutine (and the model lock it holds via broker.LockNode)
+	// indefinitely, compounding the recovery fan-out problem.
+	req, err := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewReader(requestBody))
+	if err != nil {
+		logging.Error("Failed to create ML node request", types.Validation, "url", completionsUrl, "error", err)
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := validationHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
