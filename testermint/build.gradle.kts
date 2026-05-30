@@ -265,6 +265,8 @@ dependencies {
     implementation("io.grpc:grpc-netty-shaded:1.70.0")
     implementation("com.google.protobuf:protobuf-java:4.29.3")
     implementation("javax.annotation:javax.annotation-api:1.3.2")
+    // PostgreSQL JDBC for DevshardPostgresStorageTests (gated by -PusePostgres).
+    implementation("org.postgresql:postgresql:42.7.4")
 }
 
 protobuf {
@@ -293,7 +295,7 @@ tasks.test {
     filter {
         isFailOnNoMatchingTests = false
     }
-    
+
     outputs.upToDateWhen { false }
     useJUnitPlatform {
         val includeTags = System.getProperty("includeTags")
