@@ -375,7 +375,7 @@ func TestRunInference_FatalHTTPErrorReturnsImmediately(t *testing.T) {
 
 	start := time.Now()
 	var buf bytes.Buffer
-	err := env.proxy.runInference(ctx, defaultParams(), &buf)
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
