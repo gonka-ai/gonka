@@ -267,8 +267,13 @@ func EvaluateValidationResponse(
 	originalResponsePayload []byte,
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
+	// A 4xx from the validator's own re-execution means the executor-supplied
+	// prompt/enforced_tokens could not be processed, so the inference is
+	// unverifiable and must not be auto-approved (previously failed open to Valid:true).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		return &devshardpkg.ValidateResult{Valid: true}, nil
+		logging.Warn(logPrefix+" validation failed: validator re-execution rejected request",
+			chaintypes.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
+		return &devshardpkg.ValidateResult{Valid: false}, nil
 	}
 
 	respBytes, err := ReadHTTPBody(resp)
@@ -301,11 +306,21 @@ func EvaluateValidationResponse(
 		InferenceId:   inferenceID,
 		ResponseBytes: respBytes,
 	}
-	result := validationpkg.CompareLogits(
-		originalResponse.ExtractLogits(),
-		validationResponse.ExtractLogits(),
-		base,
-	)
+	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// logits are empty, so an executor that stored a response with no logprobs
+	// would always pass. Reject only the asymmetric case (exactly one side empty):
+	// the executor's output cannot be verified against the validator's
+	// re-execution. Both-empty is left to CompareLogits so legitimate
+	// reasoning-burn empties (e.g. Kimi-K2.6, finish_reason=length) still match.
+	originalLogits := originalResponse.ExtractLogits()
+	validationLogits := validationResponse.ExtractLogits()
+	if (len(originalLogits) == 0) != (len(validationLogits) == 0) {
+		logging.Warn(logPrefix+" validation failed: logit presence mismatch between original and validation response",
+			chaintypes.Validation, "inferenceId", inferenceID,
+			"originalLogits", len(originalLogits), "validationLogits", len(validationLogits))
+		return &devshardpkg.ValidateResult{Valid: false}, nil
+	}
+	result := validationpkg.CompareLogits(originalLogits, validationLogits, base)
 	valid, err := EvaluateValidationResult(ctx, result, req, thresholds)
 	if err != nil {
 		return nil, err
