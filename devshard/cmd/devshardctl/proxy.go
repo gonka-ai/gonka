@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,76 @@ import (
 	"devshard/types"
 	"devshard/user"
 )
+
+const defaultMetaDrainTimeout = 10 * time.Second
+
+// metaDrainTimeout applies only after client disconnect (flag.Done() in
+// sendAndProcess), not during normal connected flows. If devshard_meta /
+// MsgFinishInference is missed due to this cap, proxy continues via
+// handleTimeout (progresses, but may classify as timeout).
+var metaDrainTimeout = metaDrainTimeoutFromEnv()
+
+func metaDrainTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_META_DRAIN_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultMetaDrainTimeout
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		return defaultMetaDrainTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// cancelFlag is a one-shot signal used to communicate "client disconnected"
+// from the request handler down into runInference / sendAndProcess. The
+// upstream HTTP context is intentionally NOT canceled when the client goes
+// away -- protocol completion (devshard_meta + ProcessResponse) must run to
+// preserve session sequencing of MsgFinishInference into the next user diff.
+type cancelFlag struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newCancelFlag() *cancelFlag { return &cancelFlag{ch: make(chan struct{})} }
+
+func (cf *cancelFlag) Trigger() {
+	if cf == nil {
+		return
+	}
+	cf.once.Do(func() { close(cf.ch) })
+}
+
+func (cf *cancelFlag) Gone() bool {
+	if cf == nil {
+		return false
+	}
+	select {
+	case <-cf.ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func (cf *cancelFlag) Done() <-chan struct{} {
+	if cf == nil {
+		return nil
+	}
+	return cf.ch
+}
+
+// watchClientCancel triggers flag when r's context is canceled (client
+// disconnected). Spawns one short-lived goroutine bounded by request lifetime.
+func watchClientCancel(r *http.Request, flag *cancelFlag) {
+	if flag == nil || r == nil {
+		return
+	}
+	go func() {
+		<-r.Context().Done()
+		flag.Trigger()
+	}()
+}
 
 // streamRegistry routes SSE lines to per-request writers by nonce.
 type streamRegistry struct {
@@ -138,7 +209,12 @@ var timeoutBuffer = 5 * time.Second
 // runInference sends the inference to the host with at most two attempts.
 // On first failure, waits for the appropriate deadline then retries once.
 // If both attempts fail, collects timeout votes and submits MsgTimeoutInference.
-func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w io.Writer) error {
+//
+// flag may be nil. When non-nil and triggered (client disconnected), the
+// second attempt is skipped (mitigation 2): no point streaming a reset to
+// nobody, but the timeout flow still runs because the network needs
+// MsgTimeoutInference recorded if the executor truly didn't finish.
+func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w io.Writer, flag *cancelFlag) error {
 	prepared, err := p.session.PrepareInference(params)
 	if err != nil {
 		return fmt.Errorf("prepare: %w", err)
@@ -154,7 +230,7 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 	now := time.Now()
 
 	// Attempt 1.
-	finished, confirmedAt, err := p.sendAndProcess(ctx, prepared, nonce)
+	finished, confirmedAt, err := p.sendAndProcess(ctx, prepared, nonce, flag)
 	if err != nil {
 		return err
 	}
@@ -162,7 +238,7 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		return nil
 	}
 
-	// Wait for the appropriate deadline.
+	// Wait for the appropriate deadline before retrying or collecting timeout votes.
 	var reason types.TimeoutReason
 	if confirmedAt > 0 {
 		deadline := time.Unix(confirmedAt, 0).Add(
@@ -179,21 +255,21 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
 
-	// Attempt 2 (final).
-	if w != nil {
-		writeStreamReset(w)
-	}
-	finished, confirmedAt, err = p.sendAndProcess(ctx, prepared, nonce)
-	if err != nil {
-		return err
-	}
-	if finished {
-		return nil
-	}
-
-	// Update reason if attempt 2 revealed a receipt.
-	if confirmedAt > 0 {
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+	// Attempt 2 (final). Skipped when the client is gone.
+	if !flag.Gone() {
+		if w != nil {
+			writeStreamReset(w)
+		}
+		finished, confirmedAt, err = p.sendAndProcess(ctx, prepared, nonce, flag)
+		if err != nil {
+			return err
+		}
+		if finished {
+			return nil
+		}
+		if confirmedAt > 0 {
+			reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+		}
 	}
 
 	return p.handleTimeout(ctx, prepared, nonce, reason, params)
@@ -202,12 +278,38 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 // sendAndProcess sends the prepared inference and processes the response.
 // Returns finished=true when MsgFinishInference is in the host's mempool.
 // confirmedAt is the executor's receipt timestamp (0 if no receipt received).
-func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64) (finished bool, confirmedAt int64, err error) {
-	resp, sendErr := p.session.SendOnly(ctx, prepared)
+//
+// When flag is non-nil and triggered, the underlying upstream context is
+// capped by metaDrainTimeout so a malicious upstream host cannot pin the
+// proxy indefinitely after the client has disconnected.
+func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64, flag *cancelFlag) (finished bool, confirmedAt int64, err error) {
+	sendCtx := ctx
+	if flag != nil {
+		var cancel context.CancelFunc
+		sendCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-flag.Done():
+				select {
+				case <-time.After(metaDrainTimeout):
+					cancel()
+				case <-sendCtx.Done():
+				}
+			case <-sendCtx.Done():
+			}
+		}()
+	}
+
+	resp, sendErr := p.session.SendOnly(sendCtx, prepared)
 	if sendErr != nil && resp == nil {
 		return false, 0, nil
 	}
 
+	// Always process whatever response we got -- even partial. The host
+	// emits devshard_meta after [DONE]; if the client disconnected and
+	// metaDrainTimeout fired mid-parse, the partial result still carries
+	// receipt/state and any mempool txs that were read before the cap.
 	if err := p.session.ProcessResponse(prepared.HostIdx(), resp, nonce); err != nil {
 		return false, 0, fmt.Errorf("process response: %w", err)
 	}
@@ -283,58 +385,84 @@ func (p *Proxy) handleTimeout(ctx context.Context, prepared *user.PreparedInfere
 	return fmt.Errorf("inference %d timed out but insufficient votes to prove it", nonce)
 }
 
-// deferredWriter delays WriteHeader(200) until the first Write call.
-// If runInference errors before any streaming data arrives, the proxy
-// can still return a proper HTTP error status.
-type deferredWriter struct {
+// proxyWriter delays WriteHeader(200) until the first Write call and
+// swallows all output once the client has disconnected. This is the
+// downstream side of the "decouple upstream from r.Context()" design:
+// upstream work (host SSE drain, ProcessResponse, timeout flow) keeps
+// running while the client-facing writer becomes a no-op.
+type proxyWriter struct {
 	w       http.ResponseWriter
 	started bool
+	flag    *cancelFlag
 }
 
-func (d *deferredWriter) Write(p []byte) (int, error) {
-	if !d.started {
-		d.w.Header().Set("Content-Type", "text/event-stream")
-		d.w.Header().Set("Cache-Control", "no-cache")
-		d.w.Header().Set("Connection", "keep-alive")
-		d.w.WriteHeader(http.StatusOK)
-		d.started = true
+func (pw *proxyWriter) Write(p []byte) (int, error) {
+	if pw.flag.Gone() {
+		// Client is gone; pretend success so callers don't error mid-protocol.
+		return len(p), nil
 	}
-	return d.w.Write(p)
+	if !pw.started {
+		pw.w.Header().Set("Content-Type", "text/event-stream")
+		pw.w.Header().Set("Cache-Control", "no-cache")
+		pw.w.Header().Set("Connection", "keep-alive")
+		pw.w.WriteHeader(http.StatusOK)
+		pw.started = true
+	}
+	return pw.w.Write(p)
 }
 
-func (d *deferredWriter) Flush() {
-	if f, ok := d.w.(http.Flusher); ok {
+func (pw *proxyWriter) Flush() {
+	if pw.flag.Gone() {
+		return
+	}
+	if f, ok := pw.w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
 func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	dw := &deferredWriter{w: w}
+	flag := newCancelFlag()
+	pw := &proxyWriter{w: w, flag: flag}
+	watchClientCancel(r, flag)
 
-	err := p.runInference(r.Context(), params, dw)
+	// Upstream work is intentionally NOT bound to r.Context(): the host
+	// SSE body must be drained through devshard_meta even if the client
+	// disconnects, so the session can merge MsgFinishInference into pending.
+	// metaDrainTimeout (applied inside sendAndProcess) bounds how long the
+	// upstream may run after the client is gone.
+	err := p.runInference(context.Background(), params, pw, flag)
+	if flag.Gone() {
+		// Client already gone. Protocol work has been completed (or
+		// capped by metaDrainTimeout). Nothing more to send back.
+		return
+	}
 	if err != nil {
-		if !dw.started {
-			// No streaming data sent yet -- return proper HTTP error.
+		if !pw.started {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `{"error":{"message":%q}}`, err.Error())
 			return
 		}
-		// Already streaming -- send error as SSE data.
 		log.Printf("inference error (mid-stream): %v", err)
-		fmt.Fprintf(dw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
-		dw.Flush()
+		fmt.Fprintf(pw, "data: {\"error\":{\"message\":%q}}\n\n", err.Error())
+		pw.Flush()
 		return
 	}
 
-	fmt.Fprint(dw, "data: [DONE]\n\n")
-	dw.Flush()
+	fmt.Fprint(pw, "data: [DONE]\n\n")
+	pw.Flush()
 }
 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	var buf bytes.Buffer
+	flag := newCancelFlag()
+	watchClientCancel(r, flag)
 
-	err := p.runInference(r.Context(), params, &buf)
+	err := p.runInference(context.Background(), params, &buf, flag)
+	if flag.Gone() {
+		// Client gone; skip the response write but protocol work has run.
+		return
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
 		return
@@ -412,8 +540,9 @@ type statusSessionConfig struct {
 	CreateDevshardFee uint64 `json:"create_devshard_fee"`
 	FeePerNonce       uint64 `json:"fee_per_nonce"`
 	VoteThreshold     uint32 `json:"vote_threshold"`
-	ValidationRate    uint32 `json:"validation_rate"`
-	SealGraceNonces   uint32 `json:"seal_grace_nonces"`
+	ValidationRate             uint32 `json:"validation_rate"`
+	SealGraceNonces            uint32 `json:"seal_grace_nonces"`
+	InferenceClearGraceSeconds uint32 `json:"inference_clear_grace_seconds"`
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -530,8 +659,9 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 			CreateDevshardFee: cfg.CreateDevshardFee,
 			FeePerNonce:       cfg.FeePerNonce,
 			VoteThreshold:     cfg.VoteThreshold,
-			ValidationRate:    cfg.ValidationRate,
-			SealGraceNonces:   cfg.SealGraceNonces,
+			ValidationRate:             cfg.ValidationRate,
+			SealGraceNonces:            cfg.SealGraceNonces,
+			InferenceClearGraceSeconds: cfg.InferenceClearGraceSeconds,
 		},
 	}
 

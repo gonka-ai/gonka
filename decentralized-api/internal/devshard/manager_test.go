@@ -756,12 +756,13 @@ func TestCreateSession_FreezesSealGraceFromBridge(t *testing.T) {
 
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:        "escrow-1",
-			Amount:          100000,
-			CreatorAddress:  user.Address(),
-			Slots:           addresses,
-			SealGraceNonces: 123,
-			TokenPrice:      1,
+			EscrowID:                   "escrow-1",
+			Amount:                     100000,
+			CreatorAddress:             user.Address(),
+			Slots:                      addresses,
+			SealGraceNonces:            123,
+			InferenceClearGraceSeconds: 456,
+			TokenPrice:                 1,
 		},
 	}
 
@@ -772,6 +773,7 @@ func TestCreateSession_FreezesSealGraceFromBridge(t *testing.T) {
 	meta, err := store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
+	require.Equal(t, uint32(456), meta.Config.InferenceClearGraceSeconds)
 }
 
 func TestCreateSession_RejectsExistingDifferentVersion(t *testing.T) {
