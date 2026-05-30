@@ -1,0 +1,5 @@
+# Genesis-only: expose postgres host port for testermint JDBC asserts.
+services:
+  postgres:
+    ports:
+      - "${TESTERMINT_PG_PORT:-15432}:5432"
