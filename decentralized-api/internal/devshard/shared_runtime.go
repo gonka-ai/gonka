@@ -250,6 +250,31 @@ func EvaluateValidationResponse(
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+		respBytes, readErr := ReadHTTPBody(resp)
+		if readErr != nil {
+			logging.Warn(logPrefix+" validation replay rejected by ML node; treating as passed (body unreadable)",
+				chaintypes.Validation,
+				"inferenceId", inferenceID,
+				"escrowId", req.EscrowID,
+				"model", req.Model,
+				"status", resp.StatusCode,
+				"claimedInputTokens", req.InputTokens,
+				"claimedOutputTokens", req.OutputTokens,
+				"readError", readErr,
+			)
+		} else {
+			logging.Warn(logPrefix+" validation replay rejected by ML node; treating as passed (logits not checked)",
+				chaintypes.Validation,
+				"inferenceId", inferenceID,
+				"escrowId", req.EscrowID,
+				"model", req.Model,
+				"status", resp.StatusCode,
+				"claimedInputTokens", req.InputTokens,
+				"claimedOutputTokens", req.OutputTokens,
+				"rejectHint", validationReplayRejectHint(respBytes),
+				"body", truncateForLog(respBytes, 2048),
+			)
+		}
 		return &devshardpkg.ValidateResult{Valid: true}, nil
 	}
 
@@ -299,6 +324,35 @@ func tokenCountInflated(claimed, validation uint64) bool {
 	// TODO: figure out tokens
 	const tokenCountTolerance uint64 = 3
 	return claimed > validation && claimed-validation > tokenCountTolerance
+}
+
+// validationReplayRejectHint classifies ML-node error bodies for warn logs only.
+// It does not affect pass/fail; operators use it to spot context-limit vs other rejects.
+func validationReplayRejectHint(body []byte) string {
+	s := strings.ToLower(string(body))
+	switch {
+	case strings.Contains(s, "context_length_exceeded"),
+		strings.Contains(s, "max_model_len"),
+		strings.Contains(s, "maximum context length"),
+		strings.Contains(s, "context length"):
+		return "likely_context_limit"
+	case strings.Contains(s, "enforced_tokens"), strings.Contains(s, "enforced tokens"):
+		return "likely_enforced_tokens"
+	case strings.Contains(s, "logprobs"):
+		return "likely_logprobs"
+	default:
+		return "unspecified"
+	}
+}
+
+func truncateForLog(body []byte, maxLen int) string {
+	if maxLen <= 0 || len(body) == 0 {
+		return ""
+	}
+	if len(body) <= maxLen {
+		return string(body)
+	}
+	return string(body[:maxLen]) + "...(truncated)"
 }
 
 func EvaluateValidationResult(
