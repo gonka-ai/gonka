@@ -49,7 +49,15 @@ val DNS_COMPOSE_FILES = listOf(
 val BASE_COMPOSE_FILES = listOf(
     "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
 )
-val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml" + DNS_COMPOSE_FILES
+
+// Genesis-only overlay that exposes its postgres host port for JDBC asserts.
+// Join pairs keep their postgres reachable only from chain-public.
+private val POSTGRES_HOST_OVERLAY = listOf("$LOCAL_TEST_NET_DIR/docker-compose.postgres.yml")
+
+val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES +
+    "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml" +
+    DNS_COMPOSE_FILES +
+    POSTGRES_HOST_OVERLAY
 val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml" + DNS_COMPOSE_FILES
 
 data class GenesisUrls(val keyName: String) {
@@ -248,7 +256,10 @@ data class DockerGroup(
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
         }
-        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down"))
+        // -v removes the per-pair postgres-data volume so a rebooted cluster
+        // starts on a clean database. Bind-mounted dapi state is cleaned up
+        // separately by the launch scripts.
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down", "-v"))
         dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
     }
 
@@ -317,6 +328,13 @@ data class DockerGroup(
                 put("SEED_NODE_P2P_URL", it.p2pUrl)
                 put("SEED_API_URL", it.apiUrl)
             }
+
+            // Each pair has its own postgres (see docker-compose-base.yml).
+            put("PGHOST", "$pairName-postgres")
+            put("PGPORT", "5432")
+            put("PGDATABASE", "payloads")
+            put("PGUSER", "payloads")
+            put("PGPASSWORD", "test")
 
             // Test-supplied extras applied last so they override defaults.
             // DevshardStandaloneTests uses this to set VERSIOND_BINARY_NAME,

@@ -631,6 +631,7 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 		GroupSize:               types.DefaultDevshardGroupSize,
 		AllowedCreatorAddresses: []string{"gonka1someotheraddressxxxxxxxxxxxxxxxxxx"},
 		TokenPrice:              types.DefaultDevshardTokenPrice,
+		MaxNonce:                types.DefaultDevshardMaxNonce,
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
