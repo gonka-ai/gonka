@@ -35,6 +35,12 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if devshardParams == nil {
 		return nil, fmt.Errorf("devshard escrow params not configured")
 	}
+	// Enforce the devshard kill switch: when requests are disabled, no escrow may be
+	// settled. This keeps funds frozen in place during an incident instead of letting
+	// a (possibly crafted) settlement drain the module while the switch is off.
+	if !devshardParams.DevshardRequestsEnabled {
+		return nil, fmt.Errorf("devshard requests are currently disabled")
+	}
 	if err := VerifyDevshardSettlement(escrow, msg, devshardParams.MaxNonce, warmKeyChecker); err != nil {
 		return nil, err
 	}

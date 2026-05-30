@@ -24,6 +24,13 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 
 	ep := k.GetDevshardEscrowParams(goCtx)
 
+	// Enforce the devshard kill switch: when requests are disabled, refuse to lock
+	// any new funds. Without this check the Guardian-gated kill switch only stops
+	// off-chain hosts from serving while the chain keeps accepting escrows.
+	if !ep.DevshardRequestsEnabled {
+		return nil, fmt.Errorf("devshard requests are currently disabled")
+	}
+
 	if msg.Amount < ep.MinAmount || msg.Amount > ep.MaxAmount {
 		return nil, fmt.Errorf("escrow amount %d out of range [%d, %d]", msg.Amount, ep.MinAmount, ep.MaxAmount)
 	}
