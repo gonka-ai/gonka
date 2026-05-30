@@ -33,7 +33,6 @@ func GetBitcoinSettleAmounts(
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
-	coefficients map[string]mathsdk.LegacyDec,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	if participants == nil {
@@ -62,7 +61,6 @@ func GetBitcoinSettleAmounts(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
-		coefficients,
 		logger,
 	)
 	if err != nil {
@@ -118,7 +116,7 @@ func GetBitcoinSettleAmounts(
 }
 
 func saturatingAddUint64Max(a int64, b uint64) int64 {
-	if a >= math.MaxInt64 {
+	if a == math.MaxInt64 {
 		return math.MaxInt64
 	}
 	headroom := uint64(math.MaxInt64 - a) // safe because a >= 0
@@ -545,7 +543,6 @@ func CalculateParticipantBitcoinRewards(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
-	coefficients map[string]mathsdk.LegacyDec,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	// Parameter validation
@@ -574,6 +571,7 @@ func CalculateParticipantBitcoinRewards(
 	// 2. Calculate effective weights with confirmation capping
 	participantWeights := make(map[string]uint64)
 	participantFullWeights := make(map[string]uint64) // Track full weights for denominator (prevents redistribution)
+	confirmationWeightCoefficients := types.ConfirmationWeightCoefficients(epochGroupData.ConfirmationWeightScales)
 
 	// Calculate effectiveWeight for each participant using helper function
 	effectiveWeights := make([]*types.ActiveParticipant, 0, len(participants))
@@ -612,18 +610,27 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Rescale ConfirmationWeight (raw MLNode scale) into fullWeight's
-		// (consensus-weight) scale so the numerator matches the denominator.
-		effectiveWeight := vw.ConfirmationWeight
-		if effectiveWeight < 0 {
+		effectiveWeight := fullWeight
+		if len(epochGroupData.ConfirmationWeightScales) == 0 {
+			logger.Info("Bitcoin Rewards: no confirmation weight scales, skipping confirmation rescale",
+				"participant", participant.Address,
+				"fullWeight", fullWeight)
+		} else {
+			rawTotal := types.ConfirmationWeightOfModelNodesWithCoefficients(
+				participantMLNodes[participant.Address],
+				confirmationWeightCoefficients,
+			)
 			effectiveWeight = 0
-		}
-		rawTotal := CoefficientAdjustedWeight(participantMLNodes[participant.Address], coefficients, nil)
-		if rawTotal > 0 && vw.Weight < rawTotal {
-			ewBig := big.NewInt(effectiveWeight)
-			ewBig.Mul(ewBig, big.NewInt(vw.Weight))
-			ewBig.Div(ewBig, big.NewInt(rawTotal))
-			effectiveWeight = ewBig.Int64()
+			if rawTotal > 0 {
+				confirmed := vw.ConfirmationWeight
+				if confirmed < 0 {
+					confirmed = 0
+				}
+				ewBig := big.NewInt(confirmed)
+				ewBig.Mul(ewBig, big.NewInt(vw.Weight))
+				ewBig.Div(ewBig, big.NewInt(rawTotal))
+				effectiveWeight = ewBig.Int64()
+			}
 		}
 		if effectiveWeight > int64(fullWeight) {
 			effectiveWeight = int64(fullWeight)

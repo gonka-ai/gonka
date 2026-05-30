@@ -165,6 +165,7 @@ func TestUpdateParticipantStatus_TransitionToInvalid(t *testing.T) {
 
 	// Status should transition to INVALID
 	require.Equal(t, types.ParticipantStatus_INVALID, participant.Status)
+	require.Equal(t, int64(0), participant.ConsecutiveInvalidInferences)
 	// EpochsCompleted should be reduced by InvalidReputationPreserve (10 * 0.5 = 5)
 	require.Equal(t, uint32(5), participant.EpochsCompleted)
 }
@@ -364,6 +365,7 @@ func TestParticipantStatusFlow_ActiveToInvalid(t *testing.T) {
 	saved, found := k.GetParticipant(ctx, participant.Address)
 	require.True(t, found)
 	require.Equal(t, types.ParticipantStatus_INVALID, saved.Status)
+	require.Equal(t, int64(0), saved.ConsecutiveInvalidInferences)
 	require.Equal(t, uint32(15), saved.EpochsCompleted) // 30 * 0.5 = 15
 }
 

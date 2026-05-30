@@ -380,6 +380,8 @@ message DevshardEscrowParams {
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
   repeated DevshardApprovedVersion approved_versions = 7;
+  uint32 max_nonce = 8;
+  bool devshard_requests_enabled = 9;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level
