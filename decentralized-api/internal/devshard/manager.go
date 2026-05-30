@@ -249,14 +249,14 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 }
 
 func (m *HostManager) create(escrowID string) (*transport.Server, error) {
-	group, err := bridge.BuildGroup(escrowID, m.bridge)
-	if err != nil {
-		return nil, fmt.Errorf("build group: %w", err)
-	}
-
 	escrow, err := m.bridge.GetEscrow(escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+
+	group, err := bridge.BuildGroupFromEscrow(escrow)
+	if err != nil {
+		return nil, fmt.Errorf("build group: %w", err)
 	}
 
 	creatorAddr := escrow.CreatorAddress

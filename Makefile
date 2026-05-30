@@ -1,7 +1,13 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version versiond-build-docker testapp-server-build-docker
+
+include scripts/blst-portable.mk
 
 VERSION ?= $(shell git describe --always)
+# devshardd link stamp; Testermint VERSIOND_FORCE follows this via build/devshard-version or `make print-devshard-version`.
 DEVSHARD_VERSION ?= dev
+
+print-devshard-version:
+	@echo $(DEVSHARD_VERSION)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
 ifeq ($(USE_REGISTRY_CACHE),1)
@@ -21,10 +27,10 @@ all: build-docker
 build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
 
 api-build-docker:
-	@make -C decentralized-api build-docker SET_LATEST=1
+	@make -C decentralized-api build-docker SET_LATEST=1 BLST_PORTABLE=$(BLST_PORTABLE)
 
 node-build-docker:
-	@make -C inference-chain build-docker SET_LATEST=1 $(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
+	@make -C inference-chain build-docker SET_LATEST=1 BLST_PORTABLE=$(BLST_PORTABLE) $(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
 
 mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
@@ -42,8 +48,8 @@ bridge-build-docker:
 	@make -C bridge build-docker SET_LATEST=1
 
 versiond-build-docker:
-	@echo "Building versiond docker image..."
-	@docker build -t versiond:latest -f versioned/Dockerfile versioned
+	@echo "Building versiond docker image (linux/amd64, matches devshardd-build)..."
+	@docker build --platform linux/amd64 -t versiond:latest -f versioned/Dockerfile versioned
 
 testapp-server-build-docker:
 	@echo "Building testapp-server docker image..."
@@ -118,12 +124,12 @@ devshardctl-build:
 	@cd devshard && go build -ldflags "-X main.Version=$(DEVSHARD_VERSION)" -o ../build/devshardctl ./cmd/devshardctl/
 
 devshardd-build:
-	@echo "Building devshardd..."
+	@echo "Building devshardd (DEVSHARD_VERSION=$(DEVSHARD_VERSION))..."
 	@mkdir -p build
 	@$(_DEVSHARDD_BUILD_CMD) --platform linux/amd64 --target builder \
 		--build-arg GOOS=linux \
 		--build-arg GOARCH=amd64 \
-		--build-arg BLST_PORTABLE=1 \
+		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		-f decentralized-api/Dockerfile . \
 		-t devshardd-builder:latest -q >/dev/null
@@ -131,6 +137,7 @@ devshardd-build:
 		docker cp $$CID:/app/decentralized-api/build/devshardd build/devshardd && \
 		docker rm $$CID >/dev/null
 	@chmod +x build/devshardd
+	@echo "$(DEVSHARD_VERSION)" > build/devshard-version
 	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
 
 node-local-build:

@@ -283,6 +283,7 @@ func (s *Server) HandleInference(c echo.Context) error {
 	if err != nil {
 		logging.Error("HandleInference", "error", "handle request: "+err.Error())
 		if errors.Is(err, devshard.ErrRequestsDisabled) {
+			logging.Debug("HandleInference: devshard_requests_enabled=false", "subsystem", "server")
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -377,6 +378,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
 	if !s.host.CompletionRequestsEnabled() {
+		logging.Debug("HandleVerifyTimeout: devshard_requests_enabled=false", "subsystem", "server")
 		return echo.NewHTTPError(http.StatusServiceUnavailable, devshard.ErrRequestsDisabled.Error())
 	}
 

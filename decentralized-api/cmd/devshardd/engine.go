@@ -13,7 +13,7 @@ import (
 
 	"devshard"
 	mlnodeclient "devshard/mlnode"
-	mlnodegen "devshard/mlnode/gen"
+	nmgen "devshard/nodemanager/gen"
 )
 
 // devshardEngine implements devshard.InferenceEngine for the standalone
@@ -107,17 +107,17 @@ func (e *devshardEngine) doWithLockedNode(
 		}
 
 		resp, httpErr := fn(acq.Endpoint)
-		outcome := mlnodegen.ReleaseOutcome_SUCCESS
+		outcome := nmgen.ReleaseOutcome_SUCCESS
 
 		if httpErr != nil {
 			// Transport-class failure on the outbound HTTP. The node may be
 			// sick; exclude it and retry.
-			outcome = mlnodegen.ReleaseOutcome_TRANSPORT_ERROR
+			outcome = nmgen.ReleaseOutcome_TRANSPORT_ERROR
 			lastErr = httpErr
 		} else if resp.StatusCode >= 500 {
 			// Upstream 5xx: also rotate nodes.
 			resp.Body.Close()
-			outcome = mlnodegen.ReleaseOutcome_TRANSPORT_ERROR
+			outcome = nmgen.ReleaseOutcome_TRANSPORT_ERROR
 			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 			resp = nil
 		}
@@ -131,7 +131,7 @@ func (e *devshardEngine) doWithLockedNode(
 			}
 		}
 
-		if outcome == mlnodegen.ReleaseOutcome_SUCCESS {
+		if outcome == nmgen.ReleaseOutcome_SUCCESS {
 			return resp, nil
 		}
 

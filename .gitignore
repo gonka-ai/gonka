@@ -1,5 +1,6 @@
 vue/node_modules
 vue/dist
+/build/
 release/
 .idea/
 .vscode/
@@ -44,6 +45,8 @@ run-parallel-tests/
 **/target/
 /tmp
 .worklog
+.metals
+actionlint
 
 # Generated proto artifacts (buf output in wrong location)
 inference-chain/proto/github.com/

@@ -21,7 +21,7 @@ import (
 	"net"
 
 	"decentralized-api/nodemanager"
-	nmgen "decentralized-api/nodemanager/gen"
+	nmgen "devshard/nodemanager/gen"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -30,7 +30,6 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant"
-	devshardpkg "devshard"
 	devshardstorage "devshard/storage"
 	devshardtypes "devshard/types"
 	"encoding/json"
@@ -101,9 +100,8 @@ func main() {
 		return
 	}
 	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
-	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
 	if params.Params.DevshardEscrowParams != nil {
-		availabilityTracker.Record(params.Params.DevshardEscrowParams.DevshardRequestsEnabled, time.Now().Unix(), 0)
+		internaldevshard.SeedDevshardVersionsCache(configManager, params.Params.DevshardEscrowParams)
 	}
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
@@ -186,7 +184,6 @@ func main() {
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
 	)
-	listener.SetAvailabilityTracker(availabilityTracker)
 	go listener.Start(ctx)
 
 	mlnodeBackgroundManager := modelmanager.NewMLNodeBackgroundManager(
@@ -242,7 +239,10 @@ func main() {
 	)
 
 	if devshardSigner != nil {
-		devshardBridge := internaldevshard.NewChainBridge(recorder)
+		devshardBridge := internaldevshard.NewChainBridgeWithDefaults(
+			recorder,
+			internaldevshard.NewConfigManagerDefaults(configManager),
+		)
 		httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 		chainParams := &configParamsProvider{cm: configManager}
 		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
@@ -258,11 +258,15 @@ func main() {
 		if storeErr != nil {
 			logging.Error("devshard storage init failed", types.System, "error", storeErr)
 		} else {
-			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, 30*time.Second, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
+			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
 			defer devshardStore.Close()
 
+			configManager.SetEpochChangeHandler(func(_, _ uint64) {
+				devshardStore.PruneOnceAsync(ctx)
+			})
+
 			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)
-			hostManager.SetAvailabilityProvider(availabilityTracker)
+			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
@@ -311,7 +315,7 @@ func main() {
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

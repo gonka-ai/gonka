@@ -127,21 +127,23 @@ is pruned.
 
 ### Managed Pruning Starts After Recovery
 
-Decision: `NewManagedStorage` constructs the wrapper only. Callers start the
-background pruner after legacy migration and `HostManager.RecoverSessions`.
+Decision: `NewManagedStorage` constructs the wrapper only. Pruning runs on
+**epoch change** (runtime-config publish / long-poll) via `PruneOnce`, plus one
+catch-up `Start()` after recovery — not on a periodic ticker.
 
 Why: Pruning before recovery can delete old-but-active sessions before the host
-has had a chance to replay them.
+has had a chance to replay them. Epoch transitions are already observed on the
+dapi event-listener path.
 
 Consequence: dapi and `devshardd` wire storage in this order:
 
 1. Create inner storage.
 2. Run legacy migration.
-3. Create `ManagedStorage`.
+3. Create `ManagedStorage` and register epoch-change → `PruneOnce`.
 4. Run `RecoverSessions`.
-5. Call `ManagedStorage.Start`.
+5. Call `ManagedStorage.Start()` (one-shot catch-up prune).
 
-Tests can use `PruneOnce` without starting the background loop.
+Tests can call `PruneOnce` directly.
 
 ### Prune Cursor Advances Only After Full Success
 

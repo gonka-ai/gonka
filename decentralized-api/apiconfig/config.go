@@ -248,9 +248,13 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 	return PoCModelConfigCache{}, false
 }
 
-// DevshardVersionsCache holds approved devshard versions synced from chain params.
+// DevshardVersionsCache holds devshard runtime fields synced from DevshardEscrowParams.
 type DevshardVersionsCache struct {
-	Versions []DevshardVersion `json:"versions"`
+	Versions                          []DevshardVersion `json:"versions"`
+	DevshardRequestsEnabled           bool              `json:"devshard_requests_enabled"`
+	DefaultSealGraceNonces            uint32            `json:"default_seal_grace_nonces"`
+	DefaultInferenceClearGraceSeconds uint32            `json:"default_inference_clear_grace_seconds"`
+	MaxNonce                          uint32            `json:"max_nonce"`
 }
 
 // DevshardVersion describes a single approved devshard binary.

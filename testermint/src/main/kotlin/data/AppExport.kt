@@ -306,6 +306,8 @@ data class DevshardEscrowParams(
     val defaultSealGraceNonces: Long = 0,
     @SerializedName("default_inference_clear_grace_seconds")
     val defaultInferenceClearGraceSeconds: Long = 0,
+    @SerializedName("devshard_requests_enabled")
+    val devshardRequestsEnabled: Boolean = true,
 )
 
 data class PocParams(

@@ -180,8 +180,8 @@ class DevshardPostgresStorageTests : TestermintTest() {
             genesis.waitForNextEpoch()
         }
 
-        // ManagedStorage prunes on a 30s ticker. Wait up to 90s for the
-        // first-epoch partitions to disappear from PG.
+        // ManagedStorage prunes on epoch change (dapi runtime-config publish).
+        // Wait up to 90s for the first-epoch partitions to disappear from PG.
         logSection("Waiting for pruner to drop epoch $firstEpoch partitions")
         val deadline = Instant.now().plus(Duration.ofSeconds(90))
         var pruned = false

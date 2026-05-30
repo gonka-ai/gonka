@@ -357,6 +357,13 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	h.mu.Lock()
 
 	if requestBlockedWhenUnavailable(req) && !h.completionRequestsEnabled() {
+		avail := h.currentAvailability()
+		logging.Debug("completion rejected: devshard_requests_enabled=false",
+			"subsystem", "host",
+			"enabled", avail.Enabled,
+			"epochID", avail.EpochID,
+			"availabilityTime", avail.Time,
+		)
 		h.mu.Unlock()
 		return nil, devshard.ErrRequestsDisabled
 	}
