@@ -62,7 +62,6 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 		v.executeMLRequest,
 		"devshard",
 		v.chainParams,
-		v.broker.GetModelContextWindow(req.Model),
 	)
 }
 
