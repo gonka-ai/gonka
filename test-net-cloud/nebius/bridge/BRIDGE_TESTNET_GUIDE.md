@@ -1,6 +1,6 @@
 # Bridge Testnet Setup Guide (Sepolia)
 
-This guide covers the steps to deploy the bridge contract on Sepolia, register it on Gonka, register the USDC Sepolia implementation, and instantiate the Liquidity Pool.
+This guide covers the steps to deploy the bridge contract on Sepolia, register it on Gonka, register the USDC Sepolia implementation, instantiate the Liquidity Pool, and perform bridging operations (wrap/unwrap) between the chains.
 
 ## 1. Register (Deploy) Bridge Contract on Sepolia
 
@@ -320,3 +320,86 @@ Once the Liquidity Pool is funded and an IBC token is approved, you can verify t
     *This executes a CW20 "Send" to the Liquidity Pool with the purchase hook payload.*
 
     **Verification:** Look for **"SUCCESS! Wrapped Token Trade executed successfully."** in the output.
+
+---
+
+## 12. Bridging GNK (Gonka -> Ethereum)
+
+This process wraps native GNK into WGNK on Ethereum/Sepolia.
+
+1.  **Initiate Wrap on Gonka**:
+    Run the wrap script to lock GNK on Gonka and request a mint on Ethereum.
+    ```bash
+    # Usage: ./bridge-gnk-wrap.sh --amount <AMT_NGONKA> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--local]
+    ./bridge-gnk-wrap.sh --amount 1000000000000000000 --destination 0xYourEthAddr --bridge 0xBridgeAddr --local
+    ```
+    *This creates a `MsgRequestBridgeMint` transaction. Record the **Transaction Hash** from the output.*
+
+2.  **Finalize Mint on Ethereum**:
+    Wait ~1 minute for the BLS signature to be generated (threshold signing completion), then run the finalization tool:
+    ```bash
+    # Usage: node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+    node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key 0xYourEthKey --bridge 0xBridgeAddr
+    ```
+    *This script fetches the uncompressed BLS signature from Gonka and executes the `mintWithSignature` call on Sepolia.*
+
+---
+
+## 13. Bridging Wrapped Tokens (Gonka -> Ethereum)
+
+This process unwraps tokens (like bridged USDC) from Gonka back to their Ethereum implementation.
+
+1.  **Initiate Unwrap on Gonka**:
+    ```bash
+    # Usage: ./bridge-token-unwrap.sh --cw20 <CW20_ADDR> --amount <AMT> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--local]
+    ./bridge-token-unwrap.sh --cw20 gonka1... --amount 1000000 --destination 0xYourEthAddr --bridge 0xBridgeAddr --local
+    ```
+    *This executes a `withdraw` call on the wrapped token contract. Record the **Transaction Hash**.*
+
+2.  **Finalize Withdrawal on Ethereum**:
+    ```bash
+    # Uses the same finalization tool as GNK wrapping
+    node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+    ```
+    *The tool automatically detects whether it's a native GNK mint or a CW20 token withdrawal.*
+
+---
+
+## 14. Bridging WGNK (Ethereum -> Gonka)
+
+This process burns WGNK on Ethereum and releases native GNK on Gonka.
+
+1.  **Burn WGNK on Ethereum**:
+    ```bash
+    # Usage: node bridge-wgnk-unwrap.js --amount <AMT> --eth-key <ETH_KEY> --gonka-recipient <GONKA_ADDR>
+    node bridge-wgnk-unwrap.js --amount 1000000000000000000 --eth-key 0xYourEthKey --gonka-recipient gonka1...
+    ```
+    *This transfers WGNK to the bridge contract (burning it). Note the **Block Number** and **Log Index** from the output.*
+
+2.  **Release GNK on Gonka (Manual Simulation)**:
+    In a testnet environment, use the simulation tool to trigger the release on the Gonka side:
+    ```bash
+    # The full command is provided by the output of bridge-wgnk-unwrap.js
+    ./bridge-token-mint-sim.sh --contract 0xBridgeAddr --owner 0xYourEthAddr --amount 1000000000000000000 --block <BLOCK> --index <INDEX> --local
+    ```
+
+---
+
+## 15. Bridge Maintenance & Troubleshooting
+
+### Enable Normal Operation Manually
+If the bridge contract is stuck in `ADMIN_CONTROL` or if you need to manually sync epochs:
+```bash
+# Usage: node bridge-enable-normal-op.js --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+node bridge-enable-normal-op.js --eth-key 0xYourEthKey --bridge 0xBridgeAddr
+```
+*This script fetches the current epoch data from Gonka and transitions the contract to `NORMAL_OPERATION`.*
+
+### Cancel Pending Bridge Operation
+If a bridge operation (mint/withdraw) is stuck or you want to refund the escrowed tokens to the sender:
+```bash
+# Usage: ./bridge-cancel-operation.sh --tx <GONKA_TX_HASH> [--local]
+./bridge-cancel-operation.sh --tx <GONKA_TX_HASH> --local
+```
+*This submits a `MsgCancelBridgeOperation` on Gonka. Only the original sender can cancel.*
+

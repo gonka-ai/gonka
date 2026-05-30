@@ -300,6 +300,8 @@ data class DevshardEscrowParams(
     val tokenPrice: Long,
     @SerializedName("approved_versions")
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
+    @SerializedName("max_nonce")
+    val maxNonce: Long = 0,
 )
 
 data class PocParams(
