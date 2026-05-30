@@ -873,6 +873,7 @@ type inflight struct {
 	// classifyPartial keeps the tail after the last '\n' from prior Writes;
 	// used to reassemble fragmented SSE events for the classifier.
 	classifyPartial []byte
+	classifyCapLog  sync.Once
 
 	// contentSource labels the field that produced the first content event
 	// ("delta.content", "delta.reasoning_content", "delta.tool_calls", or the
@@ -1280,13 +1281,33 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
+// logClassifyDrop reports the first reassembly-buffer drop for this attempt.
+// Capped at once per attempt so a persistently newline-less or oversized
+// transport can't spam the log.
+func (rw *raceWriter) logClassifyDrop(reason string) {
+	rw.inf.classifyCapLog.Do(func() {
+		ctx := context.Background()
+		if rw.group != nil {
+			ctx = rw.group.logCtx
+		}
+		logInferenceStage(ctx, rw.inf.escrowID, rw.nonce, "classify_buffer_dropped",
+			"host", rw.inf.hostID,
+			"reason", reason,
+			"buffered", len(rw.inf.classifyPartial),
+			"global_bytes", classifyPartialBytes.Load(),
+		)
+	})
+}
+
 // growClassify appends tail to classifyPartial if both caps still fit.
 func (rw *raceWriter) growClassify(tail []byte) bool {
 	if len(rw.inf.classifyPartial)+len(tail) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
 		return false
 	}
 	if classifyPartialBytes.Add(int64(len(tail))) > maxClassifyPartialGlobal {
 		classifyPartialBytes.Add(-int64(len(tail)))
+		rw.logClassifyDrop("global_cap")
 		return false
 	}
 	rw.inf.classifyPartial = append(rw.inf.classifyPartial, tail...)
@@ -1296,11 +1317,13 @@ func (rw *raceWriter) growClassify(tail []byte) bool {
 // replaceClassify swaps classifyPartial for buf, adjusting global accounting.
 func (rw *raceWriter) replaceClassify(buf []byte) bool {
 	if len(buf) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
 		return false
 	}
 	delta := int64(len(buf) - len(rw.inf.classifyPartial))
 	if delta > 0 && classifyPartialBytes.Add(delta) > maxClassifyPartialGlobal {
 		classifyPartialBytes.Add(-delta)
+		rw.logClassifyDrop("global_cap")
 		return false
 	}
 	if delta < 0 {
