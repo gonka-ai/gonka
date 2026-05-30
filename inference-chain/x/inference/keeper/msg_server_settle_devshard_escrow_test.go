@@ -642,3 +642,81 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create devshard escrows")
 }
+
+// TestSettleDevshardEscrow_MissingParticipantPaidDirectlyWithoutStranding pins
+// the asymmetry fix: when a slot's Participant record is absent (e.g. pruned),
+// the handler must pay that slot via the bank-module fallback that already
+// exists for present-but-inactive participants, instead of reverting the whole
+// settlement and stranding the escrow.
+func TestSettleDevshardEscrow_MissingParticipantPaidDirectlyWithoutStranding(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	// Register Participant records for every slot EXCEPT the last one. The
+	// last slot's address has no Participant record in state - the same
+	// condition that arises after participant pruning.
+	for i, addr := range slots {
+		if i == keeper.DevshardGroupSize-1 {
+			continue
+		}
+		setParticipantForDevshardTest(t, k, ctx, addr)
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, slots[:keeper.DevshardGroupSize-1]...)
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x51
+	escrow := types.DevshardEscrow{
+		Id:         1,
+		Creator:    creator.String(),
+		Amount:     7_000_000_000,
+		Slots:      slots,
+		EpochIndex: 5,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	costPerSlot := uint64(100_000_000)
+	fees := uint64(200_000_000)
+	msg := buildSettlementTestData(t, escrow, keys, makeHostStats(keeper.DevshardGroupSize, costPerSlot), fees)
+
+	// The missing-participant slot must be paid via the bank module fallback
+	// (same path as the present-but-inactive case), not error the tx out.
+	missingAddr, err := sdk.AccAddressFromBech32(slots[keeper.DevshardGroupSize-1])
+	require.NoError(t, err)
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, missingAddr, gomock.Any(), gomock.Eq("devshard_escrow_payment")).
+		Return(nil).
+		Times(1)
+	expectedRefund := escrow.Amount - uint64(keeper.DevshardGroupSize)*costPerSlot - fees
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+		DoAndReturn(func(_ context.Context, _ string, _ sdk.AccAddress, coins sdk.Coins, _ string) error {
+			require.Len(t, coins, 1)
+			require.Equal(t, expectedRefund, coins[0].Amount.Uint64())
+			return nil
+		})
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
+
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	// Escrow must be marked settled (i.e. no revert).
+	settled, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.True(t, settled.Settled)
+
+	// Active participants who exist in state are credited in-memory.
+	activeParticipant, found := k.GetParticipant(ctx, slots[0])
+	require.True(t, found)
+	require.Equal(t, int64(costPerSlot)+int64(fees/uint64(keeper.DevshardGroupSize)), activeParticipant.CoinBalance)
+
+	// The handler must NOT silently create a Participant record for the
+	// missing address: the fallback pays via the bank module only.
+	_, found = k.GetParticipant(ctx, slots[keeper.DevshardGroupSize-1])
+	require.False(t, found)
+}

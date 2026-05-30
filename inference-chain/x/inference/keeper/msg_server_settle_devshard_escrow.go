@@ -66,7 +66,16 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	for _, addr := range uniqueAddrs {
 		participant, found := k.GetParticipant(goCtx, addr)
 		if !found {
-			return nil, fmt.Errorf("participant %s not found", addr)
+			// Participant record does not exist for this slot (e.g. it was
+			// pruned). Fall through to the bank-module payout path that this
+			// same handler already uses for present-but-inactive participants
+			// instead of reverting the whole settlement. treatAsCurrentEpochSettle
+			// is left at its zero value (false), so the payout loop routes the
+			// validator to payCoinsDirectly and the per-participant epoch-stats
+			// aggregation (which requires a non-nil *Participant) is skipped.
+			// Without this fallback a single missing-record slot would strand
+			// every other validator's payout and the creator's refund.
+			continue
 		}
 		participantByAddr[addr] = &participant
 		if escrow.EpochIndex != currentEpochIndex {
