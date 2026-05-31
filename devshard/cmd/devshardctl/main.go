@@ -209,7 +209,7 @@ func parseCLIFlags() cliFlags {
 	model := fs.String("model", defaultModelName, "default model name")
 	port := fs.String("port", defaultListenPort, "listen port")
 	privateKey := fs.String("private-key", "", "private key hex (alternative to DEVSHARD_PRIVATE_KEY env)")
-	storagePath := fs.String("storage-path", "", "SQLite path for crash recovery")
+	storagePath := fs.String("storage-path", "", "SQLite storage directory for crash recovery")
 	storageDir := fs.String("storage-dir", "", "base directory for multi-devshard SQLite files")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		log.Fatal(err)
@@ -230,7 +230,7 @@ func resolveBaseStorageDir(flagStorageDir, storagePath string) string {
 	baseStorageDir := firstNonEmpty(flagStorageDir, os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if baseStorageDir == "" {
 		if storagePath != "" {
-			baseStorageDir = filepath.Dir(storagePath)
+			baseStorageDir = filepath.Dir(normalizeStorageDir(storagePath))
 		} else {
 			home, err := os.UserHomeDir()
 			if err != nil {

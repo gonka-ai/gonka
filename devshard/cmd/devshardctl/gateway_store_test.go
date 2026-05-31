@@ -32,7 +32,7 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 			ID:            "12",
 			PrivateKeyHex: "secret",
 			Model:         "Qwen/Test",
-			StoragePath:   "/root/.devshardctl/escrow-12/state.db",
+			StoragePath:   "/root/.devshardctl/escrow-12",
 		},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -48,7 +48,7 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 	require.Len(t, state.Devshards, 1)
 	require.Equal(t, "12", state.Devshards[0].ID)
 	require.True(t, state.Devshards[0].Active)
-	require.Equal(t, "/root/.devshardctl/escrow-12/state.db", state.Devshards[0].StoragePath)
+	require.Equal(t, "/root/.devshardctl/escrow-12", state.Devshards[0].StoragePath)
 	require.Equal(t, rotationRoleRegular, state.Devshards[0].RotationRole)
 	require.EqualValues(t, 7, state.Devshards[0].RotationEpoch)
 	require.False(t, state.Settings.Disabled.Enabled)

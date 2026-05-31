@@ -213,6 +213,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 }
 
 func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	legacyStoragePath := strings.TrimSpace(cfg.StoragePath)
 	keyHex := strings.TrimSpace(cfg.PrivateKeyHex)
 	if keyHex == "" && cfg.PrivateKeyEnv != "" {
 		keyHex = strings.TrimSpace(os.Getenv(cfg.PrivateKeyEnv))
@@ -226,7 +227,8 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 		model = defaultModel
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.StoragePath), 0o755); err != nil {
+	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
+	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil {
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
 	}
 
@@ -253,7 +255,7 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
-	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, cfg.StoragePath, session.HostParticipantKeyList()); err != nil {
+	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}
 
@@ -1720,7 +1722,31 @@ func resolveRuntimeConfigs(singleEscrowID, singleKeyHex, singleModel, singleStor
 }
 
 func defaultStoragePath(baseStorageDir, escrowID string) string {
-	return filepath.Join(baseStorageDir, fmt.Sprintf("escrow-%s", escrowID), "state.db")
+	return filepath.Join(baseStorageDir, fmt.Sprintf("escrow-%s", escrowID))
+}
+
+func normalizeStorageDir(storagePath string) string {
+	storagePath = strings.TrimSpace(storagePath)
+	if storagePath == "" {
+		return ""
+	}
+	clean := filepath.Clean(storagePath)
+	if filepath.Base(clean) == "state.db" {
+		return filepath.Dir(clean)
+	}
+	return clean
+}
+
+func legacyPerfSourcePath(storagePath string) string {
+	storagePath = strings.TrimSpace(storagePath)
+	if storagePath == "" {
+		return ""
+	}
+	clean := filepath.Clean(storagePath)
+	if filepath.Base(clean) == "state.db" {
+		return clean
+	}
+	return ""
 }
 
 type adminDevshardRequest struct {
@@ -2439,6 +2465,8 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 	}
 	if record.StoragePath == "" {
 		record.StoragePath = defaultStoragePath(g.baseStorageDir, record.ID)
+	} else {
+		record.StoragePath = normalizeStorageDir(record.StoragePath)
 	}
 	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
 	if err != nil {
@@ -2641,7 +2669,7 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	req.ID = strings.TrimSpace(req.ID)
-	req.StoragePath = strings.TrimSpace(req.StoragePath)
+	req.StoragePath = normalizeStorageDir(req.StoragePath)
 	if req.ID == "" {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest)
 		return
@@ -2795,7 +2823,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 			record.Model = strings.TrimSpace(req.Model)
 		}
 		if strings.TrimSpace(req.StoragePath) != "" {
-			record.StoragePath = strings.TrimSpace(req.StoragePath)
+			record.StoragePath = normalizeStorageDir(req.StoragePath)
 		}
 		if strings.TrimSpace(req.ProtocolVersion) != "" {
 			record.ProtocolVersion = strings.TrimSpace(req.ProtocolVersion)
@@ -2813,7 +2841,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 				PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
 				PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
 				Model:           strings.TrimSpace(req.Model),
-				StoragePath:     strings.TrimSpace(req.StoragePath),
+				StoragePath:     normalizeStorageDir(req.StoragePath),
 				ProtocolVersion: strings.TrimSpace(req.ProtocolVersion),
 			},
 			Active: true,
@@ -2844,6 +2872,8 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 	}
 	if record.StoragePath == "" {
 		record.StoragePath = defaultStoragePath(g.baseStorageDir, record.ID)
+	} else {
+		record.StoragePath = normalizeStorageDir(record.StoragePath)
 	}
 
 	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
@@ -3172,24 +3202,15 @@ func removeDevshardStorage(storagePath, baseStorageDir string) error {
 	if strings.TrimSpace(storagePath) == "" {
 		return nil
 	}
-	storagePath = filepath.Clean(storagePath)
+	storagePath = normalizeStorageDir(storagePath)
 	baseStorageDir = filepath.Clean(baseStorageDir)
 	if !strings.HasPrefix(storagePath, baseStorageDir+string(os.PathSeparator)) && storagePath != baseStorageDir {
 		return fmt.Errorf("refusing to delete storage outside base dir: %s", storagePath)
 	}
-	parent := filepath.Dir(storagePath)
-	if filepath.Base(storagePath) == "state.db" && strings.HasPrefix(parent, baseStorageDir+string(os.PathSeparator)) {
-		return os.RemoveAll(parent)
+	if storagePath == baseStorageDir {
+		return fmt.Errorf("refusing to delete base storage dir: %s", storagePath)
 	}
-	for _, path := range []string{storagePath, storagePath + "-shm", storagePath + "-wal"} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", path, err)
-		}
-	}
-	if err := os.Remove(parent); err != nil && !os.IsNotExist(err) {
-		return nil
-	}
-	return nil
+	return os.RemoveAll(storagePath)
 }
 
 func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageDir string) ([]RuntimeConfig, error) {
@@ -3209,6 +3230,8 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 		}
 		if cfg.StoragePath == "" {
 			cfg.StoragePath = defaultStoragePath(baseStorageDir, cfg.ID)
+		} else {
+			cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
 		}
 		out = append(out, cfg)
 	}

@@ -1,14 +1,19 @@
 package devshard
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"decentralized-api/completionapi"
 	"decentralized-api/internal/validation"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	devshardpkg "devshard"
+	"devshard/bridge"
 )
 
 func TestCompareLogitsMatching(t *testing.T) {
@@ -84,10 +89,10 @@ func TestEnforcedTokensExtraction(t *testing.T) {
 
 func TestValidationRequestBodyConstruction(t *testing.T) {
 	requestMap := map[string]interface{}{
-		"model":            "test-model",
-		"messages":         []interface{}{},
-		"stream":           true,
-		"stream_options":   map[string]interface{}{"include_usage": true},
+		"model":               "test-model",
+		"messages":            []interface{}{},
+		"stream":              true,
+		"stream_options":      map[string]interface{}{"include_usage": true},
 		"skip_special_tokens": false,
 	}
 
@@ -126,6 +131,115 @@ func TestResponseFromPayload(t *testing.T) {
 	assert.Equal(t, "hello", logits[0].Token)
 }
 
+func TestEvaluateValidationResult_UsesModelThreshold(t *testing.T) {
+	req := devshardpkg.ValidateRequest{
+		EscrowID: "escrow-1",
+		EpochID:  7,
+		Model:    "model-a",
+	}
+	resolver := cachedThresholdResolver(req, &bridge.Decimal{Value: 90, Exponent: -2})
+
+	tests := []struct {
+		name       string
+		similarity float64
+		want       bool
+	}{
+		{name: "above threshold passes", similarity: 0.91, want: true},
+		{name: "equal threshold fails", similarity: 0.90, want: false},
+		{name: "below threshold fails", similarity: 0.89, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &validation.SimilarityValidationResult{Value: tt.similarity}
+			valid, err := EvaluateValidationResult(context.Background(), result, req, resolver)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, valid)
+		})
+	}
+}
+
+func TestEvaluateValidationResult_KnownFailureTypesFailWithoutThreshold(t *testing.T) {
+	req := devshardpkg.ValidateRequest{}
+	results := []validation.ValidationResult{
+		&validation.DifferentLengthValidationResult{},
+		&validation.DifferentTokensValidationResult{},
+		&validation.InvalidInferenceResult{},
+	}
+
+	for _, result := range results {
+		valid, err := EvaluateValidationResult(context.Background(), result, req, nil)
+		require.NoError(t, err)
+		assert.False(t, valid)
+	}
+}
+
+func TestEvaluateValidationResult_UnknownTypeErrors(t *testing.T) {
+	valid, err := EvaluateValidationResult(context.Background(), unknownValidationResult{}, devshardpkg.ValidateRequest{}, nil)
+	require.Error(t, err)
+	assert.False(t, valid)
+}
+
+func TestValidationThresholdResolverFailsClosed(t *testing.T) {
+	resolver := NewValidationThresholdResolver(nil, time.Minute)
+	_, err := resolver.Resolve(context.Background(), "escrow-1", 7, "model-a")
+	require.Error(t, err)
+
+	resolver = NewValidationThresholdResolver(&thresholdBridge{}, time.Minute)
+	_, err = resolver.Resolve(context.Background(), "escrow-1", 7, "model-a")
+	require.Error(t, err)
+}
+
+func cachedThresholdResolver(req devshardpkg.ValidateRequest, threshold *bridge.Decimal) *ValidationThresholdResolver {
+	return &ValidationThresholdResolver{
+		cache: map[validationThresholdCacheKey]validationThresholdCacheEntry{
+			{escrowID: req.EscrowID, modelID: req.Model}: {
+				epochID:   req.EpochID,
+				threshold: threshold,
+				expiresAt: time.Now().Add(time.Hour),
+			},
+		},
+	}
+}
+
+type unknownValidationResult struct{}
+
+func (unknownValidationResult) IsSuccessful() bool { return true }
+
+func (unknownValidationResult) GetInferenceId() string { return "unknown" }
+
+func (unknownValidationResult) GetValidationResponseBytes() []byte { return nil }
+
+type thresholdBridge struct{}
+
+func (thresholdBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	return nil, bridge.ErrNotImplemented
+}
+
+func (thresholdBridge) GetHostInfo(string) (*bridge.HostInfo, error) {
+	return nil, bridge.ErrNotImplemented
+}
+
+func (thresholdBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, nil
+}
+
+func (thresholdBridge) VerifyWarmKey(string, string) (bool, error) {
+	return false, bridge.ErrNotImplemented
+}
+
+func (thresholdBridge) OnEscrowCreated(bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
+
+func (thresholdBridge) OnSettlementProposed(string, []byte, uint64) error {
+	return bridge.ErrNotImplemented
+}
+
+func (thresholdBridge) OnSettlementFinalized(string) error { return bridge.ErrNotImplemented }
+
+func (thresholdBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
+	return bridge.ErrNotImplemented
+}
+
 func TestTokenCountValidation_MatchingUsage(t *testing.T) {
 	// Stored response has prompt_tokens=10, completion_tokens=5
 	jsonResp := `{"id":"test","choices":[{"message":{"content":"hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`
@@ -142,6 +256,15 @@ func TestTokenCountValidation_MatchingUsage(t *testing.T) {
 
 	assert.False(t, claimedInput > usage.PromptTokens, "matching input should not exceed stored")
 	assert.False(t, claimedOutput > usage.CompletionTokens, "matching output should not exceed stored")
+}
+
+func TestTokenCountValidation_AllowsTokenDriftUpToThreshold(t *testing.T) {
+	const tokenCountDriftThreshold = 3
+	assert.False(t, tokenCountInflated(10+tokenCountDriftThreshold-1, 10), "drift below threshold should be tolerated")
+	assert.False(t, tokenCountInflated(10, 10), "matching token count should pass")
+	assert.False(t, tokenCountInflated(9, 10), "lower claimed token count should pass")
+	assert.False(t, tokenCountInflated(10+tokenCountDriftThreshold, 10), "drift at threshold should be accepted")
+	assert.True(t, tokenCountInflated(10+tokenCountDriftThreshold+1, 10), "drift above threshold should be rejected")
 }
 
 func TestTokenCountValidation_InflatedOutputTokens(t *testing.T) {

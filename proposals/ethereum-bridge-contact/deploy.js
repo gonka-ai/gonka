@@ -4,6 +4,7 @@
 
 import hardhat from "hardhat";
 import dotenv from "dotenv";
+import { base64ToHex } from "./bls.js";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -30,6 +31,19 @@ async function getProviderAndSigner() {
     return { provider, signer, ethers };
 }
 
+function evmChainIdToBytes32(ethers, chainId) {
+    const value = String(chainId || "").trim();
+    if (!value) {
+        throw new Error("ETHEREUM_CHAIN_ID is empty");
+    }
+
+    if (value.startsWith("0x")) {
+        return ethers.zeroPadValue(value, 32);
+    }
+
+    return ethers.zeroPadValue(ethers.toBeHex(BigInt(value)), 32);
+}
+
 async function main() {
     console.log("Deploying BridgeContract...");
     
@@ -38,17 +52,19 @@ async function main() {
     const deployerAddress = await signer.getAddress();
     console.log("Deploying from:", deployerAddress);
     
-    // Define chain IDs for cross-chain replay protection
-    // Gonka chain identifier (using sha256 for unique chain ID)
-    const gonkaChainId = ethers.sha256(ethers.toUtf8Bytes("gonka-mainnet"));
+    // Define chain IDs for cross-chain replay protection.
+    // Must match ctx.ChainID() on the Gonka chain that creates BLS signatures.
+    const gonkaChainName = process.env.GONKA_CHAIN_ID || "gonka-mainnet";
+    const gonkaChainId = ethers.sha256(ethers.toUtf8Bytes(gonkaChainName));
     
-    // Ethereum chain ID (convert network chain ID to bytes32)
     const networkInfo = await signer.provider.getNetwork();
-    const ethereumChainId = ethers.zeroPadValue(ethers.toBeHex(networkInfo.chainId), 32);
+    const ethereumChainIdInput = process.env.ETHEREUM_CHAIN_ID || networkInfo.chainId;
+    const ethereumChainId = evmChainIdToBytes32(ethers, ethereumChainIdInput);
     
     console.log("Chain IDs:");
+    console.log("- Gonka Chain Name:", gonkaChainName);
     console.log("- Gonka Chain ID:", gonkaChainId);
-    console.log("- Ethereum Chain ID:", ethereumChainId, "(chain", networkInfo.chainId + ")");
+    console.log("- Ethereum Chain ID:", ethereumChainId, "(domain", ethereumChainIdInput + ", network", networkInfo.chainId + ")");
 
     // Deploy the contract using ethers.deployContract (better Ledger support)
     console.log("\nPlease confirm the transaction on your device if using Ledger...");
@@ -68,13 +84,13 @@ async function main() {
     const latestEpoch = await bridge.getLatestEpochInfo();
     
     console.log("\nInitial State:");
-    console.log("- Contract State:", currentState === 0 ? "ADMIN_CONTROL" : "NORMAL_OPERATION");
+    console.log("- Contract State:", currentState === 0n ? "ADMIN_CONTROL" : "NORMAL_OPERATION");
     console.log("- Latest Epoch ID:", latestEpoch.epochId.toString());
     console.log("- Contract Owner:", await bridge.owner());
 
     console.log("\nNext Steps:");
     console.log("1. Submit genesis epoch (epoch 1) group key:");
-    console.log("   bridge.submitGroupKey(1, genesisGroupKey, '0x')");
+    console.log("   bridge.setGroupKey(1, genesisGroupKey)");
     console.log("2. Reset to normal operation:");
     console.log("   bridge.resetToNormalOperation()");
 
@@ -86,13 +102,13 @@ async function main() {
 async function submitGenesisEpoch(bridgeAddress, groupPublicKey) {
     const { ethers } = await getProviderAndSigner();
     const bridge = await ethers.getContractAt("BridgeContract", bridgeAddress);
+    const contractGroupPublicKey = base64ToHex(groupPublicKey);
 
     console.log("Submitting genesis epoch (epoch 1)...");
     
-    const tx = await bridge.submitGroupKey(
+    const tx = await bridge.setGroupKey(
         1, // epochId
-        groupPublicKey, // 96-byte G2 public key
-        "0x" // empty validation signature for genesis
+        contractGroupPublicKey // 256-byte EIP-2537 G2 public key
     );
     
     await tx.wait();
@@ -145,12 +161,12 @@ function createWithdrawalCommand(epochId, requestId, recipient, tokenContract, a
         recipient: recipient,
         tokenContract: tokenContract,
         amount: amount,
-        signature: "0x" + "00".repeat(48) // Placeholder - replace with actual BLS signature
+        signature: "0x" + "00".repeat(128) // Placeholder - replace with actual EIP-2537 BLS signature
     };
 }
 
 // Example BLS group public key (placeholder - replace with actual key)
-const EXAMPLE_GROUP_PUBLIC_KEY = "0x" + "00".repeat(96);
+const EXAMPLE_GROUP_PUBLIC_KEY = "0x" + "00".repeat(256);
 
 // Export functions for use in other scripts
 export {
