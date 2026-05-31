@@ -112,7 +112,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
 
     private fun waitForSyncedRuntimeConfig(client: NodeManagerClient): NodeManagerProto.RuntimeConfig {
         var clientHeight = 0L
-        repeat(60) { attempt ->
+        repeat(60) {
             val resp = client.getRuntimeConfig(clientParamsBlockHeight = clientHeight, maxWaitSeconds = 0)
             if (!resp.unchanged && resp.hasConfig()) {
                 clientHeight = resp.config.paramsBlockHeight
@@ -121,11 +121,8 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                 }
             }
             Thread.sleep(5_000)
-            if (attempt == 59) {
-                error("dapi runtime config never synced after 5m")
-            }
         }
-        error("unreachable")
+        error("dapi runtime config never synced after 5m")
     }
 
     private fun waitForRuntimeEpochAtLeast(
@@ -244,7 +241,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             routePrefix = overrideRoutePrefix,
         )
         try {
-            genesis.waitForMidEpochWindowForRuntimeTests()
+            genesis.waitForMidEpochWindow()
             genesis.waitForDevshardProxyWarmup()
             val okBefore = genesis.sendChatCompletionWithStatus(handle.proxyUrl, devshardEscrowModel, "before gov")
             assertThat(okBefore.httpCode).isBetween(200, 299)
@@ -316,7 +313,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
     @Tag("integration")
     fun `epoch transition reaches devshardd runtime config within 30s`() {
         nodeManagerClient(genesis).use { client ->
-            genesis.waitForMidEpochWindowForRuntimeTests()
+            genesis.waitForMidEpochWindow()
             val before = waitForSyncedRuntimeConfig(client)
             val chainEpochBefore = genesis.getEpochData().latestEpoch.index
 
@@ -398,31 +395,6 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             assertThat(elapsed).isLessThan(recoveryDeadlineMs)
         } finally {
             genesis.stopDevshardProxy(escrowId)
-        }
-    }
-
-    /** Same mid-epoch guard as [RuntimeConfigTests] (epoch transition wakes long-poll). */
-    private fun LocalInferencePair.waitForMidEpochWindowForRuntimeTests(
-        minBlocksIntoEpoch: Long = 3,
-        minBlocksBeforeNextPoc: Long = 4,
-    ) {
-        repeat(60) { attempt ->
-            val epoch = getEpochData()
-            val height = getCurrentBlockHeight()
-            val pocStart = epoch.latestEpoch.pocStartBlockHeight
-            val nextPocStart = epoch.nextEpochStages.pocStart
-            val blocksInto = height - pocStart
-            val blocksUntilNextPoc = nextPocStart - height
-            if (epoch.phase == EpochPhase.Inference &&
-                blocksInto >= minBlocksIntoEpoch &&
-                blocksUntilNextPoc >= minBlocksBeforeNextPoc
-            ) {
-                return
-            }
-            Thread.sleep(2_000)
-            if (attempt == 59) {
-                error("timed out waiting for mid-epoch window")
-            }
         }
     }
 

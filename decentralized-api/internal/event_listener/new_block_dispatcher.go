@@ -245,20 +245,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				versions := make([]apiconfig.DevshardVersion, len(params.Params.DevshardEscrowParams.ApprovedVersions))
-				for i, v := range params.Params.DevshardEscrowParams.ApprovedVersions {
-					versions[i] = apiconfig.DevshardVersion{
-						Name: v.Name, Binary: v.Binary, SHA256: v.Sha256,
-					}
-				}
-				dep := params.Params.DevshardEscrowParams
-				d.configManager.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-					Versions:                          versions,
-					DevshardRequestsEnabled:           dep.DevshardRequestsEnabled,
-					DefaultSealGraceNonces:            dep.DefaultSealGraceNonces,
-					DefaultInferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
-					MaxNonce:                          dep.MaxNonce,
-				})
+				d.configManager.SetDevshardVersions(
+					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
+				)
 			}
 		}
 	}

@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"sync"
 	"time"
-
-	dstypes "devshard/types"
 )
 
 // warmCacheKey is the key for the warm key verification cache.
@@ -55,7 +53,9 @@ type escrowResponse struct {
 		EpochIndex uint64   `json:"epoch_index,string"`
 		AppHash    string   `json:"app_hash"`
 		Settled    bool     `json:"settled"`
-		TokenPrice uint64   `json:"token_price,string"`
+		TokenPrice        uint64 `json:"token_price,string"`
+		CreateDevshardFee uint64 `json:"create_devshard_fee,string"`
+		FeePerNonce       uint64 `json:"fee_per_nonce,string"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -136,36 +136,16 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		return nil, fmt.Errorf("decode app_hash: %w", err)
 	}
 
-	groupSize := len(resp.Escrow.Slots)
-	sealGraceNonces := uint32(0)
-	clearGraceSeconds := uint32(0)
-	pu := fmt.Sprintf("%s/productscience/inference/inference/params", b.baseURL)
-	if presp, perr := doGet[paramsResponse](b.client, pu); perr == nil && presp != nil {
-		if presp.Params != nil && presp.Params.DevshardEscrowParams != nil {
-			dep := presp.Params.DevshardEscrowParams
-			if dep.DefaultSealGraceNonces > 0 {
-				sealGraceNonces = dep.DefaultSealGraceNonces
-			} else {
-				sealGraceNonces = dstypes.DefaultSealGraceNonces(groupSize)
-			}
-			if dep.DefaultInferenceClearGraceSeconds > 0 {
-				clearGraceSeconds = dep.DefaultInferenceClearGraceSeconds
-			} else {
-				clearGraceSeconds = dstypes.DefaultInferenceClearGraceSeconds
-			}
-		}
-	}
-
 	return &EscrowInfo{
-		EscrowID:                   escrowID,
-		Amount:                     resp.Escrow.Amount,
-		CreatorAddress:             resp.Escrow.Creator,
-		AppHash:                    appHash,
-		Slots:                      resp.Escrow.Slots,
-		TokenPrice:                 resp.Escrow.TokenPrice,
-		SealGraceNonces:            sealGraceNonces,
-		InferenceClearGraceSeconds: clearGraceSeconds,
-		EpochID:                    resp.Escrow.EpochIndex,
+		EscrowID:          escrowID,
+		Amount:            resp.Escrow.Amount,
+		CreatorAddress:    resp.Escrow.Creator,
+		AppHash:           appHash,
+		Slots:             resp.Escrow.Slots,
+		TokenPrice:        resp.Escrow.TokenPrice,
+		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
+		FeePerNonce:       resp.Escrow.FeePerNonce,
+		EpochID:           resp.Escrow.EpochIndex,
 	}, nil
 }
 

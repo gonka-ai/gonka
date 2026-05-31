@@ -89,6 +89,8 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.Equal(t, uint64(5), escrow.EpochIndex)
 	require.Equal(t, testDevshardModelID, escrow.ModelId)
 	require.False(t, escrow.Settled)
+	require.Equal(t, types.DefaultDevshardCreateDevshardFee, escrow.CreateDevshardFee)
+	require.Equal(t, types.DefaultDevshardFeePerNonce, escrow.FeePerNonce)
 	for _, slotAddr := range escrow.Slots {
 		require.Contains(t, subgroupAddrs, slotAddr)
 	}

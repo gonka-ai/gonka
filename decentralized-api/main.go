@@ -31,7 +31,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/participant"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,10 +238,7 @@ func main() {
 	)
 
 	if devshardSigner != nil {
-		devshardBridge := internaldevshard.NewChainBridgeWithDefaults(
-			recorder,
-			internaldevshard.NewConfigManagerDefaults(configManager),
-		)
+		devshardBridge := internaldevshard.NewChainBridge(recorder)
 		httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 		chainParams := &configParamsProvider{cm: configManager}
 		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
@@ -265,8 +261,10 @@ func main() {
 				devshardStore.PruneOnceAsync(ctx)
 			})
 
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.DefaultStateRootVersion, devshardBridge, payloadStore, recorder)
+			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, "v1", devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
+			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
+			hostManager.SetRuntimeParamsProvider(internaldevshard.ConfigManagerRuntimeParams(configManager))
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {

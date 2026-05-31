@@ -16,6 +16,10 @@ type runtimeConfigContent struct {
 	DefaultInferenceClearGraceSeconds uint32
 	MaxNonce                          uint32
 	ApprovedVersions                  []DevshardVersion
+	RefusalTimeout                    int64
+	ExecutionTimeout                  int64
+	ValidationRate                    uint32
+	VoteThresholdFactor               uint32
 }
 
 func runtimeConfigSnapshotFromContent(height int64, epochID uint64, c runtimeConfigContent) RuntimeConfigSnapshot {
@@ -31,6 +35,10 @@ func runtimeConfigSnapshotFromContent(height int64, epochID uint64, c runtimeCon
 		MaxNonce:                          c.MaxNonce,
 		ApprovedVersions:                  versions,
 		ServedAt:                          time.Now(),
+		RefusalTimeout:                    c.RefusalTimeout,
+		ExecutionTimeout:                  c.ExecutionTimeout,
+		ValidationRate:                    c.ValidationRate,
+		VoteThresholdFactor:               c.VoteThresholdFactor,
 	}
 }
 
@@ -40,7 +48,11 @@ func (a runtimeConfigContent) equal(b runtimeConfigContent) bool {
 		a.DefaultSealGraceNonces == b.DefaultSealGraceNonces &&
 		a.DefaultInferenceClearGraceSeconds == b.DefaultInferenceClearGraceSeconds &&
 		a.MaxNonce == b.MaxNonce &&
-		devshardVersionsEqual(a.ApprovedVersions, b.ApprovedVersions)
+		devshardVersionsEqual(a.ApprovedVersions, b.ApprovedVersions) &&
+		a.RefusalTimeout == b.RefusalTimeout &&
+		a.ExecutionTimeout == b.ExecutionTimeout &&
+		a.ValidationRate == b.ValidationRate &&
+		a.VoteThresholdFactor == b.VoteThresholdFactor
 }
 
 func devshardVersionsEqual(a, b []DevshardVersion) bool {

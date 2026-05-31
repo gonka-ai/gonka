@@ -42,7 +42,7 @@ func ComputeStateRoot(
 	phase types.SessionPhase,
 	warmKeys map[uint32]string,
 	fees uint64,
-	version ...string,
+	version string,
 ) ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(hostStats)
 	if err != nil {
@@ -54,7 +54,7 @@ func ComputeStateRoot(
 		return nil, err
 	}
 
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version...), nil
+	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version), nil
 }
 
 // ComputeHostStatsHash computes sha256(proto(sorted host stats)).
@@ -134,11 +134,11 @@ func FoldSealedAccumulator(acc [32]byte, sealNonce, infID uint64, committedEntry
 
 // ComputeStateRootFromRestHash computes the canonical state root when host
 // stats hash and rest hash are already available.
-func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version ...string) []byte {
+func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version string) []byte {
 	// Encode fees as fixed-width big-endian to preserve deterministic hashing.
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, fees)
-	versionHash := ComputeVersionHash(resolveVersion(version...))
+	versionHash := ComputeVersionHash(version)
 
 	h := sha256.New()
 	h.Write(hostStatsHash)
@@ -151,15 +151,8 @@ func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees ui
 
 // ComputeVersionHash computes sha256 over the bound session version string.
 func ComputeVersionHash(version string) []byte {
-	sum := sha256.Sum256([]byte(types.NormalizeVersion(version)))
+	sum := sha256.Sum256([]byte(version))
 	return sum[:]
-}
-
-func resolveVersion(version ...string) string {
-	if len(version) == 0 {
-		return types.DefaultStateRootVersion
-	}
-	return types.NormalizeVersion(version[0])
 }
 
 // computeWarmKeysHash computes sha256 over sorted (slotID, address) pairs.

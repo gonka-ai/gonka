@@ -113,9 +113,9 @@ func (s *failAfterAppendStorage) AppendDiff(escrowID string, rec types.DiffRecor
 
 func TestMigrateLegacy_RoundTrip(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "esc-a", version: types.DefaultStateRootVersion, status: "active", balance: 1000, latestNonce: 3, lastFinalized: 1},
-		{escrowID: "esc-b", version: types.DefaultStateRootVersion, status: "active", balance: 2000, latestNonce: 5, lastFinalized: 2},
-		{escrowID: "esc-settled", version: types.DefaultStateRootVersion, status: "settled", balance: 500, latestNonce: 1, lastFinalized: 1},
+		{escrowID: "esc-a", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1000, latestNonce: 3, lastFinalized: 1},
+		{escrowID: "esc-b", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 2000, latestNonce: 5, lastFinalized: 2},
+		{escrowID: "esc-settled", version: types.DevshardStateRootAndProtocolVersion, status: "settled", balance: 500, latestNonce: 1, lastFinalized: 1},
 	})
 
 	dest := NewMemory()
@@ -180,13 +180,9 @@ func TestMigrateLegacy_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestMigrateLegacy_NormalizesEmptyVersion exercises the legacy-compatibility
-// contract end-to-end: a pre-DefaultStateRootVersion SQLite row (version
-// column NULL or empty) migrates into the destination store with
-// meta.Version == DefaultStateRootVersion via types.NormalizeVersion. This
-// is the only path in production that can produce a Version-empty row at the
-// boundary; once the migrate ships it, the destination row carries the
-// current binary's composition tag.
+// TestMigrateLegacy_NormalizesEmptyVersion exercises legacy migration: a SQLite
+// row with an empty version column is stamped with DevshardStateRootAndProtocolVersion
+// before CreateSession so the destination store carries an explicit tag.
 func TestMigrateLegacy_NormalizesEmptyVersion(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
 		{escrowID: "no-ver", version: "", status: "active", balance: 1000, latestNonce: 2, lastFinalized: 1},
@@ -201,8 +197,8 @@ func TestMigrateLegacy_NormalizesEmptyVersion(t *testing.T) {
 
 	meta, err := dest.GetSessionMeta("no-ver")
 	require.NoError(t, err)
-	require.Equal(t, types.DefaultStateRootVersion, meta.Version,
-		"legacy empty version must be normalized to DefaultStateRootVersion")
+	require.Equal(t, types.DevshardStateRootAndProtocolVersion, meta.Version,
+		"legacy empty version must be stamped with DevshardStateRootAndProtocolVersion")
 	require.Equal(t, uint64(9), meta.EpochID)
 	require.Equal(t, uint64(2), meta.LatestNonce)
 	require.Equal(t, uint64(1), meta.LastFinalized)
@@ -231,8 +227,8 @@ func TestMigrateLegacy_DirPath_NoOp(t *testing.T) {
 
 func TestMigrateLegacy_SkipsUnknownEscrow(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "good", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
-		{escrowID: "stale", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "good", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "stale", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()
@@ -258,8 +254,8 @@ func TestMigrateLegacy_SkipsUnknownEscrow(t *testing.T) {
 
 func TestMigrateLegacy_ResolverErrorKeepsLegacyFile(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "good", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
-		{escrowID: "rpc-fails", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "good", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "rpc-fails", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()
@@ -286,7 +282,7 @@ func TestMigrateLegacy_ResolverErrorKeepsLegacyFile(t *testing.T) {
 
 func TestMigrateLegacy_RetryAfterPartialDiffCopy(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "retry", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 3, lastFinalized: 2},
+		{escrowID: "retry", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 3, lastFinalized: 2},
 	})
 
 	dest := NewMemory()
@@ -315,13 +311,15 @@ func TestMigrateLegacy_RetryAfterPartialDiffCopy(t *testing.T) {
 
 func TestMigrateLegacy_RetryAfterFullCopyBeforeRename(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "renamed-late", version: types.DefaultStateRootVersion, status: "settled", balance: 1, latestNonce: 2, lastFinalized: 1},
+		{escrowID: "renamed-late", version: types.DevshardStateRootAndProtocolVersion, status: "settled", balance: 1, latestNonce: 2, lastFinalized: 1},
 	})
 
 	dest := NewMemory()
 	resolve := func(string) (uint64, error) { return 6, nil }
 
-	require.NoError(t, dest.CreateSession(paramsForEpoch("renamed-late", 6)))
+	renamedLate := paramsForEpoch("renamed-late", 6)
+	renamedLate.Version = types.DevshardStateRootAndProtocolVersion
+	require.NoError(t, dest.CreateSession(renamedLate))
 	require.NoError(t, dest.AppendDiff("renamed-late", types.DiffRecord{
 		Diff:       types.Diff{Nonce: 1},
 		StateHash:  []byte{1},
@@ -349,11 +347,13 @@ func TestMigrateLegacy_RetryAfterFullCopyBeforeRename(t *testing.T) {
 
 func TestMigrateLegacy_DetectsConflictingCopiedDiff(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "conflict", version: types.DefaultStateRootVersion, status: "active", balance: 1, latestNonce: 1},
+		{escrowID: "conflict", version: types.DevshardStateRootAndProtocolVersion, status: "active", balance: 1, latestNonce: 1},
 	})
 
 	dest := NewMemory()
-	require.NoError(t, dest.CreateSession(paramsForEpoch("conflict", 7)))
+	conflictParams := paramsForEpoch("conflict", 7)
+	conflictParams.Version = types.DevshardStateRootAndProtocolVersion
+	require.NoError(t, dest.CreateSession(conflictParams))
 	conflicting := makeDiffRecord(1)
 	conflicting.StateHash = []byte("different")
 	require.NoError(t, dest.AppendDiff("conflict", conflicting))

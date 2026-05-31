@@ -36,6 +36,10 @@ func SnapshotFromProto(c *gen.RuntimeConfig) Snapshot {
 		MaxNonce:                          c.GetMaxNonce(),
 		ApprovedVersions:                  versions,
 		ServedAt:                          servedAt,
+		RefusalTimeout:                    c.GetRefusalTimeout(),
+		ExecutionTimeout:                  c.GetExecutionTimeout(),
+		ValidationRate:                    c.GetValidationRate(),
+		VoteThresholdFactor:               c.GetVoteThresholdFactor(),
 	}
 }
 
@@ -63,5 +67,9 @@ func ProtoFromSnapshot(s Snapshot) *gen.RuntimeConfig {
 		MaxNonce:                          s.MaxNonce,
 		ApprovedVersions:                  versions,
 		ServedAtUnix:                      servedAt,
+		RefusalTimeout:                    s.RefusalTimeout,
+		ExecutionTimeout:                  s.ExecutionTimeout,
+		ValidationRate:                    s.ValidationRate,
+		VoteThresholdFactor:               s.VoteThresholdFactor,
 	}
 }

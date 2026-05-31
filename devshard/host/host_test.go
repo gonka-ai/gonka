@@ -603,7 +603,7 @@ func TestHost_StoresOwnSignature(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
 	require.NoError(t, err)
@@ -630,7 +630,7 @@ func TestHost_AccumulateGossipSig(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
 	require.NoError(t, err)
@@ -672,7 +672,7 @@ func TestHost_AccumulateGossipSig_WrongSigner(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
 	require.NoError(t, err)
@@ -708,7 +708,7 @@ func TestHost_GetSignatures(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
 	require.NoError(t, err)
@@ -743,7 +743,7 @@ func TestHost_FinalizationThreshold(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
 	require.NoError(t, err)
@@ -1410,7 +1410,7 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 10000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 10000}))
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
@@ -1476,6 +1476,7 @@ func TestHost_SavesSnapshotOnSettlement(t *testing.T) {
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		Config:         config,
 		Group:          group,
 		InitialBalance: 10000,

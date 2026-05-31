@@ -14,8 +14,10 @@ import (
 	"sync"
 	"time"
 
+	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/state"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -151,6 +153,27 @@ type Proxy struct {
 	escrowID string
 	model    string
 	registry *streamRegistry
+	// liveTimeouts optional; when set, refusal/execution deadlines are read per
+	// inference instead of from the bound SessionConfig snapshot.
+	liveTimeouts devshardpkg.InferenceTimeouts
+}
+
+func (p *Proxy) refusalTimeoutSeconds(cfg types.SessionConfig) int64 {
+	if p.liveTimeouts != nil {
+		if t := p.liveTimeouts.RefusalTimeout(); t > 0 {
+			return t
+		}
+	}
+	return cfg.RefusalTimeout
+}
+
+func (p *Proxy) executionTimeoutSeconds(cfg types.SessionConfig) int64 {
+	if p.liveTimeouts != nil {
+		if t := p.liveTimeouts.ExecutionTimeout(); t > 0 {
+			return t
+		}
+	}
+	return cfg.ExecutionTimeout
 }
 
 type chatRequest struct {
@@ -242,13 +265,13 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 	var reason types.TimeoutReason
 	if confirmedAt > 0 {
 		deadline := time.Unix(confirmedAt, 0).Add(
-			time.Duration(cfg.ExecutionTimeout)*time.Second + timeoutBuffer)
+			time.Duration(p.executionTimeoutSeconds(cfg))*time.Second + timeoutBuffer)
 		if !sleepUntil(ctx, deadline) {
 			return ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
-		deadline := now.Add(time.Duration(cfg.RefusalTimeout)*time.Second + timeoutBuffer)
+		deadline := now.Add(time.Duration(p.refusalTimeoutSeconds(cfg))*time.Second + timeoutBuffer)
 		if !sleepUntil(ctx, deadline) {
 			return ctx.Err()
 		}
@@ -282,6 +305,12 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 // When flag is non-nil and triggered, the underlying upstream context is
 // capped by metaDrainTimeout so a malicious upstream host cannot pin the
 // proxy indefinitely after the client has disconnected.
+//
+// Fatal HTTP errors from the host (4xx other than 408/425/429) are propagated
+// immediately so the caller fails fast with a clear cause instead of waiting
+// through refusal/execution timeouts. Retryable errors (5xx, 408, 425, 429,
+// network failures) keep the existing behavior: no receipt is returned and
+// runInference falls through to its deadline-based retry.
 func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64, flag *cancelFlag) (finished bool, confirmedAt int64, err error) {
 	sendCtx := ctx
 	if flag != nil {
@@ -303,6 +332,9 @@ func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInfer
 
 	resp, sendErr := p.session.SendOnly(sendCtx, prepared)
 	if sendErr != nil && resp == nil {
+		if transport.IsFatalHTTPError(sendErr) {
+			return false, 0, fmt.Errorf("host rejected inference: %w", sendErr)
+		}
 		return false, 0, nil
 	}
 

@@ -12,32 +12,24 @@ import (
 
 func TestGetEscrow_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/productscience/inference/inference/devshard_escrow/42":
-			json.NewEncoder(w).Encode(map[string]any{
-				"escrow": map[string]any{
-					"id":          "42",
-					"creator":     "inference1abc",
-					"amount":      "5000000000",
-					"slots":       []string{"valA", "valB", "valC"},
-					"epoch_index": "10",
-					"app_hash":    "deadbeef",
-					"settled":     false,
-					"token_price": "1",
-				},
-				"found": true,
-			})
-		case "/productscience/inference/inference/params":
-			json.NewEncoder(w).Encode(map[string]any{
-				"params": map[string]any{
-					"devshard_escrow_params": map[string]any{
-						"default_seal_grace_nonces": 55,
-					},
-				},
-			})
-		default:
+		if r.URL.Path != "/productscience/inference/inference/devshard_escrow/42" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id":          "42",
+				"creator":     "inference1abc",
+				"amount":      "5000000000",
+				"slots":       []string{"valA", "valB", "valC"},
+				"epoch_index": "10",
+				"app_hash":    "deadbeef",
+				"settled":     false,
+				"token_price":         "1",
+				"create_devshard_fee": "10000",
+				"fee_per_nonce":       "1000",
+			},
+			"found": true,
+		})
 	}))
 	defer srv.Close()
 
@@ -50,24 +42,18 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, "inference1abc", info.CreatorAddress)
 	assert.Equal(t, []byte{0xde, 0xad, 0xbe, 0xef}, info.AppHash)
 	assert.Equal(t, []string{"valA", "valB", "valC"}, info.Slots)
-	assert.Equal(t, uint32(55), info.SealGraceNonces)
-	assert.Equal(t, uint32(120), info.InferenceClearGraceSeconds)
+	assert.Equal(t, uint64(10_000), info.CreateDevshardFee)
+	assert.Equal(t, uint64(1_000), info.FeePerNonce)
 }
 
-func TestGetEscrow_ParamsUnavailable_LeavesSealGraceZero(t *testing.T) {
+func TestGetEscrow_FeesMissingKeysDecodeZero(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/productscience/inference/inference/devshard_escrow/42":
 			json.NewEncoder(w).Encode(map[string]any{
 				"escrow": map[string]any{
-					"id":          "42",
-					"creator":     "inference1abc",
-					"amount":      "1",
-					"slots":       []string{"a", "b", "c"},
-					"epoch_index": "0",
-					"app_hash":    "aa",
-					"settled":     false,
-					"token_price": "1",
+					"id": "42", "creator": "c", "amount": "1", "slots": []string{"a"},
+					"epoch_index": "0", "app_hash": "aa", "settled": false, "token_price": "1",
 				},
 				"found": true,
 			})
@@ -79,81 +65,36 @@ func TestGetEscrow_ParamsUnavailable_LeavesSealGraceZero(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	b := NewRESTBridge(srv.URL)
-	info, err := b.GetEscrow("42")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(0), info.SealGraceNonces)
-}
-
-func TestGetEscrow_ParamsPresentButGraceZero_UsesGroupFallback(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/productscience/inference/inference/devshard_escrow/42":
-			json.NewEncoder(w).Encode(map[string]any{
-				"escrow": map[string]any{
-					"id":          "42",
-					"creator":     "inference1abc",
-					"amount":      "1",
-					"slots":       []string{"a", "b", "c"},
-					"epoch_index": "0",
-					"app_hash":    "aa",
-					"settled":     false,
-					"token_price": "1",
-				},
-				"found": true,
-			})
-		case "/productscience/inference/inference/params":
-			json.NewEncoder(w).Encode(map[string]any{
-				"params": map[string]any{
-					"devshard_escrow_params": map[string]any{
-						"default_seal_grace_nonces": 0,
-					},
-				},
-			})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-
-	b := NewRESTBridge(srv.URL)
-	info, err := b.GetEscrow("42")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(30), info.SealGraceNonces) // 10 * 3 slots
-	assert.Equal(t, uint32(120), info.InferenceClearGraceSeconds)
-}
-
-func TestGetEscrow_ParamsExplicitClearGrace(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/productscience/inference/inference/devshard_escrow/42":
-			json.NewEncoder(w).Encode(map[string]any{
-				"escrow": map[string]any{
-					"id": "42", "creator": "inference1abc", "amount": "1",
-					"slots": []string{"a", "b"}, "epoch_index": "0", "app_hash": "aa",
-					"settled": false, "token_price": "1",
-				},
-				"found": true,
-			})
-		case "/productscience/inference/inference/params":
-			json.NewEncoder(w).Encode(map[string]any{
-				"params": map[string]any{
-					"devshard_escrow_params": map[string]any{
-						"default_seal_grace_nonces":               11,
-						"default_inference_clear_grace_seconds": 90,
-					},
-				},
-			})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-
 	info, err := NewRESTBridge(srv.URL).GetEscrow("42")
 	require.NoError(t, err)
-	assert.Equal(t, uint32(11), info.SealGraceNonces)
-	assert.Equal(t, uint32(90), info.InferenceClearGraceSeconds)
+	assert.Equal(t, uint64(0), info.CreateDevshardFee)
+	assert.Equal(t, uint64(0), info.FeePerNonce)
+}
+
+func TestGetEscrow_DoesNotQueryParams(t *testing.T) {
+	var paramsCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/productscience/inference/inference/devshard_escrow/42":
+			json.NewEncoder(w).Encode(map[string]any{
+				"escrow": map[string]any{
+					"id": "42", "creator": "c", "amount": "1", "slots": []string{"a"},
+					"epoch_index": "0", "app_hash": "aa", "settled": false, "token_price": "1",
+				},
+				"found": true,
+			})
+		case "/productscience/inference/inference/params":
+			paramsCalls++
+			t.Fatal("GetEscrow must not query chain params")
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	_, err := NewRESTBridge(srv.URL).GetEscrow("42")
+	require.NoError(t, err)
+	require.Equal(t, 0, paramsCalls)
 }
 
 func TestGetEscrow_NotFound(t *testing.T) {

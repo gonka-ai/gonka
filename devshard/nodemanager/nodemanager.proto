@@ -62,6 +62,10 @@ message RuntimeConfig {
   uint32 max_nonce = 7;
   repeated ApprovedVersion approved_versions = 8;
   int64 served_at_unix = 9;
+  int64 refusal_timeout = 10;
+  int64 execution_timeout = 11;
+  uint32 validation_rate = 12;
+  uint32 vote_threshold_factor = 13;
 }
 
 message ApprovedVersion {

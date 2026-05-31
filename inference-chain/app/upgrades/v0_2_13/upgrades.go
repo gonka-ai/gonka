@@ -139,6 +139,9 @@ func CreateUpgradeHandler(
 		if err := setDevshardEscrowParams(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := backfillDevshardEscrowFees(ctx, k); err != nil {
+			return nil, err
+		}
 		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
 			return nil, err
 		}
@@ -263,7 +266,31 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 	if params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds == 0 {
 		params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
 	}
-	
+
+	// v0.2.13 adds fee + bind-time governance fields. Existing chains decode
+	// these as zero (proto3 default) and would fail DevshardEscrowParams.Validate
+	// because refusal_timeout/execution_timeout/vote_threshold_factor must be > 0.
+	// Backfill zero-valued fields with canonical defaults; non-zero values left
+	// in place so any pre-existing governance override survives the upgrade.
+	if params.DevshardEscrowParams.CreateDevshardFee == 0 {
+		params.DevshardEscrowParams.CreateDevshardFee = types.DefaultDevshardCreateDevshardFee
+	}
+	if params.DevshardEscrowParams.FeePerNonce == 0 {
+		params.DevshardEscrowParams.FeePerNonce = types.DefaultDevshardFeePerNonce
+	}
+	if params.DevshardEscrowParams.RefusalTimeout == 0 {
+		params.DevshardEscrowParams.RefusalTimeout = types.DefaultDevshardRefusalTimeout
+	}
+	if params.DevshardEscrowParams.ExecutionTimeout == 0 {
+		params.DevshardEscrowParams.ExecutionTimeout = types.DefaultDevshardExecutionTimeout
+	}
+	if params.DevshardEscrowParams.ValidationRate == 0 {
+		params.DevshardEscrowParams.ValidationRate = types.DefaultDevshardValidationRate
+	}
+	if params.DevshardEscrowParams.VoteThresholdFactor == 0 {
+		params.DevshardEscrowParams.VoteThresholdFactor = types.DefaultDevshardVoteThresholdFactor
+	}
+
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
@@ -272,7 +299,77 @@ func setDevshardEscrowParams(ctx context.Context, k keeper.Keeper) error {
 		"max_nonce", MaxNonce,
 		"devshard_requests_enabled", params.DevshardEscrowParams.DevshardRequestsEnabled,
 		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
-		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds,
+		"create_devshard_fee", params.DevshardEscrowParams.CreateDevshardFee,
+		"fee_per_nonce", params.DevshardEscrowParams.FeePerNonce,
+		"refusal_timeout", params.DevshardEscrowParams.RefusalTimeout,
+		"execution_timeout", params.DevshardEscrowParams.ExecutionTimeout,
+		"validation_rate", params.DevshardEscrowParams.ValidationRate,
+		"vote_threshold_factor", params.DevshardEscrowParams.VoteThresholdFactor,
+	)
+	return nil
+}
+
+// backfillDevshardEscrowFees populates the new per-escrow fee snapshot fields
+// (create_devshard_fee, fee_per_nonce) on DevshardEscrow rows created before
+// v0.2.13. Pre-upgrade rows decode both fields as zero; settlement and any
+// downstream consumer expect a non-zero per-escrow snapshot matching the
+// governance values active when the escrow was created. Since pre-upgrade
+// escrows have no historical record of those values, we backfill with the
+// current (just-migrated) DevshardEscrowParams values, which match what a
+// fresh CreateDevshardEscrow would write today. Rows that already carry a
+// non-zero snapshot (post-upgrade creates, or future re-runs of this handler)
+// are left untouched.
+func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		k.LogInfo("backfill devshard escrow fees skipped: devshard escrow params missing", types.Upgrades)
+		return nil
+	}
+	createFee := params.DevshardEscrowParams.CreateDevshardFee
+	feePerNonce := params.DevshardEscrowParams.FeePerNonce
+
+	// Keep memory bounded during Walk: record only escrow IDs that need a backfill,
+	// then re-read and update each row. This avoids buffering full escrow objects
+	// while still preserving two-phase iteration (no writes during Walk).
+	//
+	// Important: we intentionally do not call SetDevshardEscrow inside Walk.
+	// collections.Map iteration is safest when mutation happens after traversal,
+	// so future SDK/internal iterator changes cannot invalidate traversal state.
+	var updateIDs []uint64
+	if err := k.DevshardEscrows.Walk(ctx, nil, func(_ uint64, escrow types.DevshardEscrow) (bool, error) {
+		if escrow.CreateDevshardFee != 0 && escrow.FeePerNonce != 0 {
+			return false, nil
+		}
+		updateIDs = append(updateIDs, escrow.Id)
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk devshard escrows for fee backfill: %w", err)
+	}
+
+	for _, id := range updateIDs {
+		escrow, found := k.GetDevshardEscrow(ctx, id)
+		if !found {
+			return fmt.Errorf("get devshard escrow %d during fee backfill: not found", id)
+		}
+		if escrow.CreateDevshardFee == 0 {
+			escrow.CreateDevshardFee = createFee
+		}
+		if escrow.FeePerNonce == 0 {
+			escrow.FeePerNonce = feePerNonce
+		}
+		if err := k.SetDevshardEscrow(ctx, escrow); err != nil {
+			return fmt.Errorf("set devshard escrow %d during fee backfill: %w", escrow.Id, err)
+		}
+	}
+	k.LogInfo("backfilled devshard escrow fees", types.Upgrades,
+		"updated", len(updateIDs),
+		"create_devshard_fee", createFee,
+		"fee_per_nonce", feePerNonce,
+	)
 	return nil
 }
 

@@ -50,7 +50,8 @@ import (
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
+
+	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
 // Version is the devshardd version. Set via ldflags
@@ -63,19 +64,19 @@ func main() {
 	dataDir := flag.String("data-dir", "/var/lib/devshardd", "data directory for sqlite/payloads (set by versiond)")
 	flag.Parse()
 
-	prefix := os.Getenv("DEVSHARD_LOG_PREFIX")
-	runtimeVersion, err := resolveRuntimeVersion(prefix, Version)
+	oracleVersion := os.Getenv("DEVSHARD_BINARY_VERSION")
+	runtimeVersion, err := resolveRuntimeVersion(oracleVersion, Version)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("devshardd starting",
 		"build_version", Version,
-		"selected_version", prefix,
+		"oracle_version", oracleVersion,
 		"runtime_version", runtimeVersion,
 		"port", *port,
 		"data-dir", *dataDir)
 	if err != nil {
 		slog.Error("devshardd version mismatch",
 			"build_version", Version,
-			"selected_version", prefix,
+			"oracle_version", oracleVersion,
 			"runtime_version", runtimeVersion)
 		log.Fatalf("resolve runtime version: %v", err)
 	}
@@ -131,16 +132,16 @@ func main() {
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
-	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker)
+
+	seedAvailabilityFromChain(ctx, recorder, availabilityTracker)
+
+	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker, slog.Default())
 	if err != nil {
 		log.Fatalf("runtime params provider: %v", err)
 	}
 	chainParams := paramsSetup.Provider
 
-	br := internaldevshard.NewChainBridgeWithDefaults(
-		recorder,
-		internaldevshard.NewRuntimeConfigDefaults(chainParams),
-	)
+	br := internaldevshard.NewChainBridge(recorder)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
@@ -172,8 +173,10 @@ func main() {
 		defer cancelEpochPrune()
 	}
 
-	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeVersion(runtimeVersion), br, payloadStore, recorder)
+	manager := internaldevshard.NewHostManager(store, signer, engine, validator, runtimeVersion, br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
+	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
+	manager.SetRuntimeParamsProvider(internaldevshard.RuntimeConfigRuntimeParams(chainParams))
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
@@ -264,20 +267,20 @@ func buildApiAccount(ignite *igniteclient.Client, keyName string) (apiconfig.Api
 	}, nil
 }
 
-func resolveRuntimeVersion(selectedVersion, buildVersion string) (string, error) {
-	if selectedVersion == "" {
+func resolveRuntimeVersion(oracleVersion, buildVersion string) (string, error) {
+	if oracleVersion == "" {
 		if buildVersion == "" {
 			return "", fmt.Errorf("empty build version")
 		}
 		return buildVersion, nil
 	}
 	if buildVersion == "" {
-		return "", fmt.Errorf("selected version %q provided but build version is empty", selectedVersion)
+		return "", fmt.Errorf("oracle version %q provided but build version is empty", oracleVersion)
 	}
-	if selectedVersion != buildVersion {
-		return selectedVersion, fmt.Errorf("selected version %q does not match build version %q", selectedVersion, buildVersion)
+	if oracleVersion != buildVersion {
+		return oracleVersion, fmt.Errorf("oracle version %q does not match build version %q", oracleVersion, buildVersion)
 	}
-	return selectedVersion, nil
+	return oracleVersion, nil
 }
 
 // newIgniteClient builds an ignite cosmosclient.Client with the same options
@@ -326,6 +329,39 @@ func newIgniteClient(ctx context.Context, nodeConfig apiconfig.ChainNodeConfig) 
 	}
 
 	return &c, nil
+}
+
+// availabilitySeedTimeout bounds the synchronous chain query used to seed
+// AvailabilityTracker at startup. Short so a misconfigured / unreachable chain
+// does not delay devshardd boot; the long-lived params provider (grpc or
+// chain) corrects the value afterwards on its normal cadence.
+const availabilitySeedTimeout = 3 * time.Second
+
+// seedAvailabilityFromChain queries chain params once and records
+// DevshardRequestsEnabled into tracker. Errors are logged at warn level; we
+// preserve the constructor seed (Enabled=true) so a temporary chain hiccup
+// does not refuse all requests until the provider catches up.
+func seedAvailabilityFromChain(ctx context.Context, qcp internaldevshard.InferenceQueryClientProvider, tracker *devshardpkg.AvailabilityTracker) {
+	if qcp == nil || tracker == nil {
+		return
+	}
+	seedCtx, cancel := context.WithTimeout(ctx, availabilitySeedTimeout)
+	defer cancel()
+
+	qc := qcp.NewInferenceQueryClient()
+	resp, err := qc.Params(seedCtx, &chaintypes.QueryParamsRequest{})
+	if err != nil {
+		slog.Warn("availability seed: chain Params query failed; keeping optimistic seed",
+			"err", err)
+		return
+	}
+	if resp.Params.DevshardEscrowParams == nil {
+		slog.Warn("availability seed: chain returned no DevshardEscrowParams; keeping optimistic seed")
+		return
+	}
+	enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
+	tracker.Record(enabled, time.Now().Unix(), 0)
+	slog.Info("availability seed: applied from chain", "devshard_requests_enabled", enabled)
 }
 
 func envOr(key, fallback string) string {

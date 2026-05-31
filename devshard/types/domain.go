@@ -2,23 +2,19 @@ package types
 
 import "fmt"
 
-// DefaultStateRootVersion is the binary tag stamped into EscrowState.Version
-// (and the settlement payload's Version field) when no explicit value is
-// supplied. It must match an entry in chain DevshardEscrowParams.approved_versions
-// (governance adds "v2" on the v0.2.13 upgrade). This binary always uses Phase 1
-// v2 state-root composition (sealed accumulator + live inference set).
-const DefaultStateRootVersion = "v2"
+// DevshardStateRootAndProtocolVersion is the devshard state-root and settlement
+// protocol version for this binary. It is stamped into EscrowState and settlement
+// payloads and hashed as version_hash = sha256(tag) in the state-root preimage.
+//
+// This is not the versiond runtime name from DevshardEscrowParams.approved_versions
+// (which binaries may run). Bump this constant and ship a new binary when state-root
+// composition or settlement wire/verification changes. See devshard/docs/protocol-version.md.
+const DevshardStateRootAndProtocolVersion = "v2"
 
-// NormalizeVersion returns the state-root version tag, defaulting to
-// DefaultStateRootVersion when version is empty. Use at storage bind, host
-// manager wiring, settlement payload assembly, and hash preimages so empty
-// legacy rows and unset caller input share one canonical default.
-func NormalizeVersion(version string) string {
-	if version == "" {
-		return DefaultStateRootVersion
-	}
-	return version
-}
+// LegacyRouteSessionVersion is the session/storage bind tag for the historical
+// /v1/devshard HTTP mount and embedded dapi hosts (HostManager boundVersion).
+// It is not DevshardStateRootAndProtocolVersion.
+const LegacyRouteSessionVersion = "v1"
 
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
@@ -78,7 +74,10 @@ type SessionConfig struct {
 	TokenPrice                 uint64 // price per input / output token (flat per session)
 	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
 	FeePerNonce                uint64 // fee charged per applied nonce (diff)
-	VoteThreshold              uint32 // minimum accept votes for timeout (total_slots / 2)
+	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
+	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
+	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
+	VoteThreshold              uint32
 	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
 	SealGraceNonces            uint32
 	InferenceClearGraceSeconds uint32
@@ -87,13 +86,12 @@ type SessionConfig struct {
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
 	EscrowID string
-	// Version is the opaque binary tag stamped by devshardd at session
-	// creation (default DefaultStateRootVersion). Used by storage for
-	// peer-binding consistency and surfaced in the settlement payload so the
-	// chain verifier can pick the right hash composition. The runtime does
-	// not branch on this value - state-root composition is fixed by the
-	// running binary.
-	Version       string
+	// StateRootAndProtocolVersion is the protocol tag stamped at session creation
+	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
+	// is part of the signed state-root preimage (version_hash). Peers in one
+	// session must use the same tag. Storage CreateSessionParams.Version is the
+	// separate runtime/bind version for versiond routing, not this field.
+	StateRootAndProtocolVersion string
 	Config        SessionConfig
 	Group         []SlotAssignment
 	Balance       uint64

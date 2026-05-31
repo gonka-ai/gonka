@@ -24,5 +24,9 @@ func runtimeConfigFromSnapshot(snap apiconfig.RuntimeConfigSnapshot) *gen.Runtim
 		MaxNonce:                          snap.MaxNonce,
 		ApprovedVersions:                  versions,
 		ServedAtUnix:                      snap.ServedAt.Unix(),
+		RefusalTimeout:                    snap.RefusalTimeout,
+		ExecutionTimeout:                  snap.ExecutionTimeout,
+		ValidationRate:                    snap.ValidationRate,
+		VoteThresholdFactor:               snap.VoteThresholdFactor,
 	}
 }

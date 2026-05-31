@@ -107,12 +107,17 @@ func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 	return func(sm *StateMachine) { sm.warmResolver = r }
 }
 
-// WithVersion binds the session to a specific devshard binary version tag.
-// Empty values fall back to types.DefaultStateRootVersion.
-func WithVersion(version string) SMOption {
+// WithStateRootAndProtocolVersion binds the state-root and settlement protocol
+// tag (not the versiond runtime name). Callers must pass a non-empty value.
+func WithStateRootAndProtocolVersion(version string) SMOption {
 	return func(sm *StateMachine) {
-		sm.state.Version = types.NormalizeVersion(version)
+		sm.state.StateRootAndProtocolVersion = version
 	}
+}
+
+// WithVersion is an alias for WithStateRootAndProtocolVersion.
+func WithVersion(version string) SMOption {
+	return WithStateRootAndProtocolVersion(version)
 }
 
 // WithInferenceStore enables Phase 0 sealed-inference persistence.
@@ -169,7 +174,7 @@ func NewStateMachine(
 	sm := &StateMachine{
 		state: &types.EscrowState{
 			EscrowID:   escrowID,
-			Version:    types.DefaultStateRootVersion,
+			StateRootAndProtocolVersion: types.DevshardStateRootAndProtocolVersion,
 			Config:     config,
 			Group:      groupCopy,
 			Balance:    initialBalance,
@@ -194,7 +199,7 @@ func NewStateMachine(
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
 		"group_size", len(group),
-		"version", sm.state.Version,
+		"state_root_and_protocol_version", sm.state.StateRootAndProtocolVersion,
 		"balance", initialBalance,
 		"create_devshard_fee", config.CreateDevshardFee,
 		"token_price", config.TokenPrice,
@@ -900,7 +905,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		rec.VotesInvalid += weight
 	}
 
-	// Check majority using VoteThreshold from config.
+	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
 	threshold := sm.state.Config.VoteThreshold
 	if rec.VotesInvalid > threshold {
 		rec.Status = types.StatusInvalidated
@@ -988,7 +993,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		}
 	}
 
-	// Check threshold using VoteThreshold from config.
+	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
 	threshold := sm.state.Config.VoteThreshold
 	if acceptCount <= threshold {
 		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)

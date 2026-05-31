@@ -20,6 +20,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -113,20 +114,31 @@ func TestMetaDrainTimeoutFromEnv_InvalidFallsBack(t *testing.T) {
 // --- Test infrastructure for proxy-level tests ---
 
 // killableClient wraps a HostClient. Kill/Revive toggle availability.
+// KillFatal simulates a non-retryable HTTP 4xx response from the host
+// (for example a 403 "sender not in group" from the auth layer).
 type killableClient struct {
 	inner  user.HostClient
 	killed atomic.Bool
+	fatal  atomic.Bool
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
+	if c.fatal.Load() {
+		return nil, &transport.HTTPStatusError{
+			StatusCode: http.StatusForbidden,
+			Path:       "/sessions/escrow-proxy/chat/completions",
+			Body:       "sender not in group",
+		}
+	}
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
 	return c.inner.Send(ctx, req)
 }
 
-func (c *killableClient) Kill()   { c.killed.Store(true) }
-func (c *killableClient) Revive() { c.killed.Store(false) }
+func (c *killableClient) Kill()      { c.killed.Store(true) }
+func (c *killableClient) Revive()    { c.killed.Store(false) }
+func (c *killableClient) KillFatal() { c.fatal.Store(true) }
 
 // verifierClient wraps killableClient and implements user.TimeoutVerifier.
 // This allows session.TimeoutVerifiers() to discover it.
@@ -349,6 +361,50 @@ func TestRunInference_RecoveryOnRetry(t *testing.T) {
 		}
 	}
 	require.True(t, hasFinish, "MsgFinishInference should be in pending txs after recovery")
+}
+
+// TestRunInference_FatalHTTPErrorReturnsImmediately reproduces #1019: fatal 4xx
+// from the host must surface immediately instead of blocking on timeouts.
+func TestRunInference_FatalHTTPErrorReturnsImmediately(t *testing.T) {
+	zeroTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	ctx := context.Background()
+
+	// Nonce 1 routes to host 1 % 3 = 1.
+	env.killables[1].KillFatal()
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "host rejected inference")
+	require.Contains(t, err.Error(), "403")
+	require.NotContains(t, err.Error(), "timed out")
+	require.NotContains(t, err.Error(), "insufficient votes")
+	require.True(t, transport.IsFatalHTTPError(err))
+	require.Less(t, elapsed, 500*time.Millisecond)
+
+	st := env.sm.SnapshotState()
+	rec, ok := st.Inferences[1]
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+}
+
+type stubInferenceTimeouts struct {
+	refusal    int64
+	execution  int64
+}
+
+func (s stubInferenceTimeouts) RefusalTimeout() int64    { return s.refusal }
+func (s stubInferenceTimeouts) ExecutionTimeout() int64 { return s.execution }
+
+func TestProxy_timeoutHelpersPreferLiveProvider(t *testing.T) {
+	p := &Proxy{liveTimeouts: stubInferenceTimeouts{refusal: 99, execution: 88}}
+	cfg := types.SessionConfig{RefusalTimeout: 1, ExecutionTimeout: 2}
+	require.Equal(t, int64(99), p.refusalTimeoutSeconds(cfg))
+	require.Equal(t, int64(88), p.executionTimeoutSeconds(cfg))
 }
 
 func TestHandleTimeout_InsufficientVotes(t *testing.T) {

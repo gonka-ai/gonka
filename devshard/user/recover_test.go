@@ -17,6 +17,23 @@ import (
 	"devshard/types"
 )
 
+func newTestStateMachine(
+	t *testing.T,
+	escrowID string,
+	config types.SessionConfig,
+	group []types.SlotAssignment,
+	balance uint64,
+	userAddr string,
+	verifier signing.Verifier,
+	opts ...state.SMOption,
+) *state.StateMachine {
+	t.Helper()
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion)}, opts...)
+	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, opts...)
+	require.NoError(t, err)
+	return sm
+}
+
 func newTestStore(t *testing.T) *storage.SQLite {
 	t.Helper()
 	db, err := storage.NewSQLite(filepath.Join(t.TempDir(), "test.db"))
@@ -44,6 +61,7 @@ func setupRecoverableSession(
 	// Create storage session.
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -53,8 +71,7 @@ func setupRecoverableSession(
 	// Create hosts.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
@@ -62,8 +79,7 @@ func setupRecoverableSession(
 	}
 
 	// Create user session with storage.
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-	require.NoError(t, err)
+	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, WithStorage(store))
 	require.NoError(t, err)
 
@@ -94,8 +110,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
@@ -103,7 +118,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	}
 
 	// Recover.
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
@@ -132,6 +147,7 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -140,14 +156,13 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 
 	clients := make([]HostClient, 3)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), session.Nonce())
 }
@@ -168,6 +183,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -185,10 +201,9 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 		return false, nil
 	}
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier,
 		state.WithWarmKeyResolver(resolver),
 	)
-	require.NoError(t, err)
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
@@ -231,14 +246,13 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 	// Recover WITHOUT a resolver. Warm keys must come from stored delta only.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm2 := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, hErr := host.NewHost(sm2, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, hErr)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 
@@ -265,6 +279,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -273,8 +288,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil)
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
@@ -287,7 +301,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 	}
 
 	// Recover with a warm key resolver option.
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients,
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients,
 		state.WithWarmKeyResolver(resolver),
 	)
 	require.NoError(t, err)
@@ -310,14 +324,13 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.DefaultStateRootVersion, group, clients)
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 
 	// Each inference gets a signature from the executor host.
@@ -337,12 +350,9 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 }
 
 // legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
-// specific escrow. This simulates a pre-DefaultStateRootVersion row that was
-// written directly to disk (e.g. by an older binary) and bypasses the
-// types.NormalizeVersion step CreateSession applies. The production API
-// cannot produce such a row anymore, but the empty-meta-version branch in
-// RecoverSession exists to bridge data written before that normalization
-// landed; this wrapper is the only way to exercise it from tests.
+// specific escrow, simulating a corrupt or pre-versioning row. GetSessionMeta
+// on real backends rejects empty stored versions; this wrapper is only used
+// to exercise RecoverSession's boundVersion fallback when meta.Version is "".
 type legacyMetaWrapper struct {
 	storage.Storage
 	legacyEscrow string
@@ -378,28 +388,25 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
 	session, recSM, err := RecoverSession(legacy, user, verifier, "escrow-1",
-		types.DefaultStateRootVersion, group, clients)
+		testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err, "recovery must bridge empty stored Version to boundVersion")
 	require.Equal(t, uint64(numInferences), session.Nonce())
 
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
-	require.Equal(t, types.DefaultStateRootVersion, exported.Version,
+	require.Equal(t, testutil.RuntimeTestVersion, exported.StateRootAndProtocolVersion,
 		"recovered state machine must carry the caller's boundVersion when meta.Version is empty")
 }
 
-// TestRecoverSession_LegacyEmptyMetaVersion_FallsBackToDefault covers the
-// inner branch of the bridge: when both meta.Version and the caller's
-// boundVersion are empty, recovery defaults to DefaultStateRootVersion.
-func TestRecoverSession_LegacyEmptyMetaVersion_FallsBackToDefault(t *testing.T) {
+// TestRecoverSession_EmptyVersionRejected requires a version from storage or caller.
+func TestRecoverSession_EmptyVersionRejected(t *testing.T) {
 	store := newTestStore(t)
 	numHosts := 3
 
@@ -411,18 +418,13 @@ func TestRecoverSession_LegacyEmptyMetaVersion_FallsBackToDefault(t *testing.T) 
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	_, recSM, err := RecoverSession(legacy, user, verifier, "escrow-1", "", group, clients)
-	require.NoError(t, err)
-
-	exported := recSM.ExportState()
-	require.NotNil(t, exported)
-	require.Equal(t, types.DefaultStateRootVersion, exported.Version,
-		"empty meta.Version + empty boundVersion must default to DefaultStateRootVersion")
+	_, _, err := RecoverSession(legacy, user, verifier, "escrow-1", "", group, clients)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "session version required")
 }

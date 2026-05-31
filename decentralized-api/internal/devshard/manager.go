@@ -54,6 +54,8 @@ type HostManager struct {
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
 	availability devshardpkg.AvailabilityProvider
+	maxNonce     devshardpkg.MaxNonceProvider
+	params       RuntimeParamsProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
@@ -126,7 +128,7 @@ func NewHostManager(
 		verifier:          signing.NewSecp256k1Verifier(),
 		engine:            engine,
 		validator:         validator,
-		boundVersion:      types.NormalizeVersion(boundVersion),
+		boundVersion:      boundVersion,
 		bridge:            br,
 		payloadStore:      payloadStore,
 		recorder:          recorder,
@@ -177,6 +179,20 @@ func (m *HostManager) SetUnavailable(err error) {
 
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
+}
+
+// SetMaxNonceProvider enforces chain max_nonce on every host (with finalization reserve).
+func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
+	m.maxNonce = p
+}
+
+// SetRuntimeParamsProvider supplies the live long-poll-backed view of session
+// governance params, read at HostManager.create to freeze bind-time fields.
+// freeze ValidationRate / grace / VoteThreshold onto the bound SessionConfig.
+// Until then the provider is captured but not consulted, so wiring this in
+// dapi/devshardd is a no-op for behavior.
+func (m *HostManager) SetRuntimeParamsProvider(p RuntimeParamsProvider) {
+	m.params = p
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
@@ -261,14 +277,24 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	creatorAddr := escrow.CreatorAddress
 
-	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
-	if escrow.SealGraceNonces > 0 {
-		config.SealGraceNonces = escrow.SealGraceNonces
+	config := types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
+		TokenPrice:        escrow.TokenPrice,
+		CreateDevshardFee: escrow.CreateDevshardFee,
+		FeePerNonce:       escrow.FeePerNonce,
+	})
+	if m.params != nil {
+		live := m.params.SessionParams()
+		config = types.ApplyLiveSessionParams(config, len(group), types.LiveSessionBindParams{
+			RefusalTimeout:             live.RefusalTimeout,
+			ExecutionTimeout:           live.ExecutionTimeout,
+			ValidationRate:             live.ValidationRate,
+			SealGraceNonces:            live.SealGraceNonces,
+			InferenceClearGraceSeconds: live.InferenceClearGraceSeconds,
+			VoteThresholdFactor:        live.VoteThresholdFactor,
+		})
+	} else {
+		config = types.NormalizeSessionConfig(config, len(group))
 	}
-	if escrow.InferenceClearGraceSeconds > 0 {
-		config.InferenceClearGraceSeconds = escrow.InferenceClearGraceSeconds
-	}
-	config = types.NormalizeSessionConfig(config, len(group))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
@@ -495,6 +521,9 @@ func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
 	if m.pruneSink != nil {
 		opts = append(opts, host.WithPruneSink(m.pruneSink))
 	}
+	if m.maxNonce != nil {
+		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
+	}
 	return opts
 }
 
@@ -604,7 +633,7 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 		EscrowID:        escrowID,
 		EpochID:         sess.EpochID,
 		Nonce:           st.LatestNonce,
-		Version:         st.Version,
+		Version:         st.StateRootAndProtocolVersion,
 		CachedAt:        now.Unix(),
 		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
 		HostStats:       statsHostStatsFromState(st.HostStats),

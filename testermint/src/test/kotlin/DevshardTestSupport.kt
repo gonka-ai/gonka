@@ -39,6 +39,45 @@ data class DevshardTestUser(
     val fundAmount: Long,
 )
 
+/**
+ * Wait until the chain is in [EpochPhase.Inference] with enough blocks after PoC start
+ * and before the next PoC start. Avoids starting runtime-config long-polls right before
+ * an epoch transition (which wakes waiters unpredictably).
+ *
+ * Uses [EpochResponse.nextEpochStages.pocStart] like [EpochResponse.safeForInference].
+ */
+fun LocalInferencePair.waitForMidEpochWindow(
+    minBlocksIntoEpoch: Long = 3,
+    minBlocksBeforeNextPoc: Long = 4,
+) {
+    repeat(60) {
+        val epoch = getEpochData()
+        val height = getCurrentBlockHeight()
+        val pocStart = epoch.latestEpoch.pocStartBlockHeight
+        val nextPocStart = epoch.nextEpochStages.pocStart
+        val blocksInto = height - pocStart
+        val blocksUntilNextPoc = nextPocStart - height
+        if (epoch.phase == EpochPhase.Inference &&
+            blocksInto >= minBlocksIntoEpoch &&
+            blocksUntilNextPoc >= minBlocksBeforeNextPoc
+        ) {
+            return
+        }
+        Thread.sleep(2_000)
+    }
+    val epoch = getEpochData()
+    val height = getCurrentBlockHeight()
+    val pocStart = epoch.latestEpoch.pocStartBlockHeight
+    val nextPocStart = epoch.nextEpochStages.pocStart
+    val blocksInto = height - pocStart
+    val blocksUntilNextPoc = nextPocStart - height
+    error(
+        "timed out waiting for mid-epoch window: height=$height phase=${epoch.phase} " +
+            "pocStart=$pocStart nextPocStart=$nextPocStart blocksInto=$blocksInto " +
+            "blocksUntilNextPoc=$blocksUntilNextPoc",
+    )
+}
+
 fun LocalInferencePair.waitForDevshardProxyWarmup(delay: Duration = devshardProxyWarmupDelay) {
     logSection("Waiting for devshard proxy warmup")
     Thread.sleep(delay.toMillis())

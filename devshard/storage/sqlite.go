@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -62,14 +63,6 @@ const metaDBFile = "_meta.db"
 
 var epochFileRegex = regexp.MustCompile(`^epoch_(\d+)\.db$`)
 
-const metaSchema = `
-CREATE TABLE IF NOT EXISTS escrow_epoch (
-    escrow_id TEXT PRIMARY KEY,
-    epoch_id  INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS escrow_epoch_by_epoch ON escrow_epoch(epoch_id);
-`
-
 // NewSQLite opens (or creates) a per-epoch SQLite store under baseDir. Reads
 // the escrow_id -> epoch_id index from _meta.db so per-epoch DBs do not need
 // to be opened until a request actually touches them.
@@ -128,9 +121,9 @@ func openMetaDB(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("exec %s on meta db: %w", p, err)
 		}
 	}
-	if _, err := db.Exec(metaSchema); err != nil {
+	if err := MigrateMeta(context.Background(), db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("create meta schema: %w", err)
+		return nil, err
 	}
 	return db, nil
 }
@@ -312,63 +305,10 @@ func openEpochPool(dbPath string) (*epochPool, error) {
 		return nil, fmt.Errorf("read pool: %w", err)
 	}
 
-	schema := `
-	CREATE TABLE IF NOT EXISTS sessions (
-		escrow_id       TEXT PRIMARY KEY,
-		version         TEXT,
-		creator_addr    TEXT NOT NULL,
-		config_json     TEXT NOT NULL,
-		group_json      TEXT NOT NULL,
-		initial_balance INTEGER NOT NULL,
-		latest_nonce    INTEGER NOT NULL DEFAULT 0,
-		last_finalized  INTEGER NOT NULL DEFAULT 0,
-		status          TEXT NOT NULL DEFAULT 'active',
-		settled_at      INTEGER
-	);
-
-	CREATE TABLE IF NOT EXISTS diffs (
-		escrow_id       TEXT NOT NULL,
-		nonce           INTEGER NOT NULL,
-		txs_proto       BLOB NOT NULL,
-		user_sig        BLOB,
-		post_state_root BLOB,
-		state_hash      BLOB,
-		warm_keys_json  TEXT,
-		created_at      INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (escrow_id, nonce)
-	);
-
-	CREATE TABLE IF NOT EXISTS signatures (
-		escrow_id TEXT NOT NULL,
-		nonce     INTEGER NOT NULL,
-		slot_id   INTEGER NOT NULL,
-		sig       BLOB NOT NULL,
-		PRIMARY KEY (escrow_id, nonce, slot_id)
-	);
-
-	CREATE TABLE IF NOT EXISTS snapshots (
-		escrow_id  TEXT PRIMARY KEY,
-		nonce      INTEGER NOT NULL,
-		state_data BLOB NOT NULL,
-		created_at INTEGER NOT NULL DEFAULT 0
-	);
-
-	CREATE TABLE IF NOT EXISTS sealed_inferences (
-		escrow_id    TEXT NOT NULL,
-		inference_id INTEGER NOT NULL,
-		sealed_nonce INTEGER NOT NULL,
-		PRIMARY KEY (escrow_id, inference_id)
-	);
-	`
-	if _, err := writeDB.Exec(schema); err != nil {
+	if err := MigrateEpochPool(context.Background(), writeDB); err != nil {
 		writeDB.Close()
 		readDB.Close()
-		return nil, fmt.Errorf("create schema: %w", err)
-	}
-	if _, err := writeDB.Exec(`ALTER TABLE sessions ADD COLUMN version TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name: version") {
-		writeDB.Close()
-		readDB.Close()
-		return nil, fmt.Errorf("add sessions.version column: %w", err)
+		return nil, err
 	}
 
 	return &epochPool{writeDB: writeDB, readDB: readDB}, nil
@@ -433,7 +373,10 @@ func (s *SQLite) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeVersion(params.Version)
+	requestedVersion, err := requireSessionVersion(params.Version)
+	if err != nil {
+		return err
+	}
 
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
@@ -509,10 +452,10 @@ func (s *SQLite) sessionVersion(p *epochPool, escrowID string) (string, error) {
 		}
 		return "", err
 	}
-	if version.Valid {
-		return types.NormalizeVersion(version.String), nil
+	if !version.Valid || strings.TrimSpace(version.String) == "" {
+		return "", fmt.Errorf("%w: %s", ErrSessionVersionRequired, escrowID)
 	}
-	return types.DefaultStateRootVersion, nil
+	return version.String, nil
 }
 
 func (s *SQLite) findSessionEpoch(escrowID string) (uint64, bool, error) {
@@ -756,6 +699,9 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.Version = version.String
 	}
 	meta.EpochID = epochID
+	if err := finalizeSessionMeta(&meta); err != nil {
+		return nil, err
+	}
 
 	return &meta, nil
 }

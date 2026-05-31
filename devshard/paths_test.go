@@ -1,6 +1,10 @@
 package devshard
 
-import "testing"
+import (
+	"testing"
+
+	"devshard/types"
+)
 
 func TestNormalizeRoutePrefixDefaultsToLegacy(t *testing.T) {
 	if got := NormalizeRoutePrefix(""); got != LegacyRoutePrefix {
@@ -25,19 +29,24 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "default legacy",
+			name:        "empty defaults to legacy bind v1",
 			routePrefix: "",
-			want:        "v2",
+			want:        types.LegacyRouteSessionVersion,
 		},
 		{
-			name:        "explicit legacy",
+			name:        "explicit legacy bind v1",
 			routePrefix: LegacyRoutePrefix,
-			want:        "v2",
+			want:        types.LegacyRouteSessionVersion,
 		},
 		{
-			name:        "versioned",
+			name:        "versioned path uses versiond runtime name from URL",
 			routePrefix: VersionedRoutePrefix("v2.1.0"),
 			want:        "v2.1.0",
+		},
+		{
+			name:        "versioned v1 segment is runtime bind not protocol v1",
+			routePrefix: VersionedRoutePrefix("v1"),
+			want:        "v1",
 		},
 		{
 			name:        "invalid",

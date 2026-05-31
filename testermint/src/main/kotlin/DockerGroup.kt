@@ -140,8 +140,8 @@ data class DockerGroup(
             .also { it.environment().putAll(getCommonEnvMap(useSnapshots)) }
             .start()
 
-        val output = process.inputStream.bufferedReader().readText()
-        val errorOutput = process.errorStream.bufferedReader().readText()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val errorOutput = process.errorStream.bufferedReader().use { it.readText() }
 
         process.waitFor()
 
@@ -169,8 +169,8 @@ data class DockerGroup(
             .also { it.environment().putAll(getCommonEnvMap(useSnapshots)) }
             .start()
 
-        val output = process.inputStream.bufferedReader().readText()
-        val errorOutput = process.errorStream.bufferedReader().readText()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val errorOutput = process.errorStream.bufferedReader().use { it.readText() }
 
         process.waitFor()
 
@@ -211,8 +211,8 @@ data class DockerGroup(
             }
             val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
             val process = dockerProcess.start()
-            process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
-            process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
+            process.inputStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
+            process.errorStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
             process.waitFor()
         }
         if (!isGenesis) {
@@ -303,7 +303,7 @@ data class DockerGroup(
             "inferenced keys show \"$coldKeyName\" --pubkey --keyring-backend $keyringBackend " +
                 "--keyring-dir /root/.inference | jq -r '.key'",
         ).redirectErrorStream(true).start()
-        val pubkey = proc.inputStream.bufferedReader().readText().trim()
+        val pubkey = proc.inputStream.bufferedReader().use { it.readText().trim() }
         if (proc.waitFor() != 0 || pubkey.isEmpty()) {
             error("Failed to read cold pubkey from $nodeContainer (exit=${proc.exitValue()}, out=$pubkey)")
         }
@@ -340,7 +340,7 @@ data class DockerGroup(
         val proc = ProcessBuilder("docker", "inspect", "-f", "{{.State.Running}}", containerName)
             .redirectErrorStream(true)
             .start()
-        val out = proc.inputStream.bufferedReader().readText().trim()
+        val out = proc.inputStream.bufferedReader().use { it.readText().trim() }
         proc.waitFor()
         return proc.exitValue() == 0 && out == "true"
     }
@@ -457,7 +457,7 @@ data class DockerGroup(
                 
                 val exitCode = cleanupProcess.waitFor()
                 if (exitCode != 0) {
-                    val errorOutput = cleanupProcess.errorStream.bufferedReader().readText()
+                    val errorOutput = cleanupProcess.errorStream.bufferedReader().use { it.readText() }
                     Logger.warn("Docker cleanup failed with exit code {}: {}", exitCode, errorOutput)
                     // Fallback to regular deletion
                     prodLocal.deleteRecursively()

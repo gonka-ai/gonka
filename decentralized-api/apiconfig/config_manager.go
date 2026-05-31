@@ -341,6 +341,10 @@ func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
 		DefaultInferenceClearGraceSeconds: dv.DefaultInferenceClearGraceSeconds,
 		MaxNonce:                          dv.MaxNonce,
 		ApprovedVersions:                  versions,
+		RefusalTimeout:                    dv.RefusalTimeout,
+		ExecutionTimeout:                  dv.ExecutionTimeout,
+		ValidationRate:                    dv.ValidationRate,
+		VoteThresholdFactor:               dv.VoteThresholdFactor,
 	}
 }
 

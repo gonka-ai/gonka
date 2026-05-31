@@ -27,10 +27,10 @@ func clampMaxWait(maxWaitSeconds int32) time.Duration {
 	if maxWaitSeconds <= 0 {
 		return 0
 	}
-	cap := runtimeConfigMaxWaitCap()
+	maxWaitCap := runtimeConfigMaxWaitCap()
 	requested := time.Duration(maxWaitSeconds) * time.Second
-	if requested > cap {
-		return cap
+	if requested > maxWaitCap {
+		return maxWaitCap
 	}
 	return requested
 }

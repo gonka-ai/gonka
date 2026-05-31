@@ -13,18 +13,11 @@ import (
 
 // ChainBridge implements bridge.MainnetBridge via gRPC through CosmosMessageClient.
 type ChainBridge struct {
-	client   InferenceQueryClientProvider
-	defaults bridge.DevshardDefaults
+	client InferenceQueryClientProvider
 }
 
 func NewChainBridge(client InferenceQueryClientProvider) *ChainBridge {
-	return NewChainBridgeWithDefaults(client, nil)
-}
-
-// NewChainBridgeWithDefaults constructs a bridge. When defaults is non-nil,
-// GetEscrow uses it for seal/clear grace and does not call QueryParams.
-func NewChainBridgeWithDefaults(client InferenceQueryClientProvider, defaults bridge.DevshardDefaults) *ChainBridge {
-	return &ChainBridge{client: client, defaults: defaults}
+	return &ChainBridge{client: client}
 }
 
 func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
@@ -49,41 +42,17 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		return nil, fmt.Errorf("decode app_hash: %w", err)
 	}
 
-	groupSize := len(resp.Escrow.Slots)
-	sealGraceNonces, clearGraceSeconds := b.bindGraceDefaults(ctx, qc, groupSize)
-
 	return &bridge.EscrowInfo{
-		EscrowID:                   escrowID,
-		Amount:                     resp.Escrow.Amount,
-		CreatorAddress:             resp.Escrow.Creator,
-		AppHash:                    appHash,
-		Slots:                      resp.Escrow.Slots,
-		TokenPrice:                 resp.Escrow.TokenPrice,
-		SealGraceNonces:            sealGraceNonces,
-		InferenceClearGraceSeconds: clearGraceSeconds,
-		EpochID:                    resp.Escrow.EpochIndex,
+		EscrowID:          escrowID,
+		Amount:            resp.Escrow.Amount,
+		CreatorAddress:    resp.Escrow.Creator,
+		AppHash:           appHash,
+		Slots:             resp.Escrow.Slots,
+		TokenPrice:        resp.Escrow.TokenPrice,
+		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
+		FeePerNonce:       resp.Escrow.FeePerNonce,
+		EpochID:           resp.Escrow.EpochIndex,
 	}, nil
-}
-
-func (b *ChainBridge) bindGraceDefaults(ctx context.Context, qc types.QueryClient, groupSize int) (sealGrace, clearGrace uint32) {
-	if b.defaults != nil {
-		return bridge.ResolveBindGrace(
-			b.defaults.DefaultSealGraceNonces(),
-			b.defaults.DefaultInferenceClearGraceSeconds(),
-			groupSize,
-		)
-	}
-
-	if presp, perr := qc.Params(ctx, &types.QueryParamsRequest{}); perr == nil && presp != nil {
-		if dep := presp.Params.DevshardEscrowParams; dep != nil {
-			return bridge.ResolveBindGrace(
-				dep.DefaultSealGraceNonces,
-				dep.DefaultInferenceClearGraceSeconds,
-				groupSize,
-			)
-		}
-	}
-	return 0, 0
 }
 
 func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {

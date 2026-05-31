@@ -14,6 +14,10 @@ var ErrSessionNotFound = errors.New("session not found")
 // DevshardEscrow, so local storage must not choose a different epoch silently.
 var ErrSessionEpochConflict = errors.New("session epoch conflict")
 
+// ErrSessionVersionRequired is returned when a session version tag is missing
+// at a storage or recovery boundary.
+var ErrSessionVersionRequired = errors.New("session version required")
+
 // ErrSessionVersionConflict is returned when an escrow already belongs to a
 // different devshard binary version tag. Operators can run multiple
 // devshardd binaries against the same Postgres database, so storage pins one

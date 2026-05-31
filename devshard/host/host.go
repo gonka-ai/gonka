@@ -118,6 +118,7 @@ type Host struct {
 	terminalAtTime        map[uint64]time.Time // inference ID -> wall clock at terminal (v2)
 	sealGraceNonces       uint64               // nonce gate from SessionConfig.SealGraceNonces
 	inferenceClearGrace   time.Duration        // wall-clock gate from SessionConfig
+	maxNonce              devshard.MaxNonceProvider // nil = do not enforce
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -262,6 +263,12 @@ func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
 	return func(h *Host) { h.availability = p }
 }
 
+// WithMaxNonceProvider enforces chain max_nonce on the host, reserving
+// FinalizeNonceReserve(groupSize) nonces so settlement can succeed on-chain.
+func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
+	return func(h *Host) { h.maxNonce = p }
+}
+
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
@@ -372,6 +379,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	var lastAppliedTxs []*types.DevshardTx
 	diffsApplied := false
 	for _, diff := range req.Diffs {
+		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
 		if err := h.applyAndPersist(diff); err != nil {
 			h.mu.Unlock()
 			return nil, err
@@ -466,6 +477,43 @@ func (h *Host) currentAvailability() devshard.AvailabilityStatus {
 	return h.availability.CurrentAvailability()
 }
 
+// checkDiffNonceLimitLocked enforces chain max_nonce before applying a new diff.
+// Caller must hold h.mu.
+func (h *Host) checkDiffNonceLimitLocked(diff types.Diff) error {
+	currentNonce := h.sm.LatestNonce()
+	if diff.Nonce <= currentNonce {
+		return nil
+	}
+	maxNonce := h.chainMaxNonce()
+	if maxNonce == 0 {
+		return nil
+	}
+	max := uint64(maxNonce)
+	if diff.Nonce > max {
+		return fmt.Errorf("%w: nonce %d exceeds chain maximum %d", types.ErrNonceLimitExceeded, diff.Nonce, maxNonce)
+	}
+	if h.sm.Phase() != types.PhaseActive {
+		return nil
+	}
+	if !types.DiffHasActiveCompletionWork(diff) {
+		return nil
+	}
+	activeCap := types.MaxActiveNonce(maxNonce, len(h.group))
+	if diff.Nonce > activeCap {
+		reserve := types.FinalizeNonceReserve(len(h.group))
+		return fmt.Errorf("%w: nonce %d exceeds active cap %d (reserved %d for finalization/settlement)",
+			types.ErrNonceLimitExceeded, diff.Nonce, activeCap, reserve)
+	}
+	return nil
+}
+
+func (h *Host) chainMaxNonce() uint32 {
+	if h.maxNonce == nil {
+		return 0
+	}
+	return h.maxNonce.MaxNonce()
+}
+
 // applyAndPersist applies a diff, removes included txs from mempool, and persists.
 // Captures WarmKeyDelta (new warm key bindings introduced by this diff) for replay.
 // Caller must hold h.mu.
@@ -473,6 +521,9 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	currentNonce := h.sm.LatestNonce()
 	if diff.Nonce <= currentNonce {
 		return nil
+	}
+	if err := h.checkDiffNonceLimitLocked(diff); err != nil {
+		return err
 	}
 	phaseBefore := h.sm.Phase()
 	var warmBefore map[uint32]string

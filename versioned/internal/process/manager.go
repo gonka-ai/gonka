@@ -575,10 +575,13 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	}
 }
 
+// childEnv sets per-child env vars for devshardd (and testapp in e2e).
+// version is the oracle approved_versions name for this slot.
 func childEnv(version string) []string {
 	return append(
 		os.Environ(),
 		fmt.Sprintf("DEVSHARD_LOG_PREFIX=%s", version),
+		fmt.Sprintf("DEVSHARD_BINARY_VERSION=%s", version),
 	)
 }
 

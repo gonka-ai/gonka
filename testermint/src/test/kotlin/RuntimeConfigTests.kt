@@ -3,9 +3,11 @@ import com.productscience.LocalInferencePair
 import com.productscience.NodeManagerClient
 import com.productscience.createSpec
 import com.productscience.data.AppState
+import com.productscience.data.DevshardEscrowParams
 import com.productscience.data.EpochPhase
 import com.productscience.data.GovParams
 import com.productscience.data.GovState
+import com.productscience.data.InferenceParams
 import com.productscience.data.UpdateParams
 import com.productscience.data.spec
 import com.productscience.initCluster
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.TestMethodOrder
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 
 /**
@@ -34,6 +37,10 @@ import kotlin.system.measureTimeMillis
  *
  * Host-path coverage: [DevsharddRuntimeConfigTests] (governance 503, epoch, dapi restart).
  * Do not duplicate long-poll wake cases there.
+ *
+ * Phase 4 (session-config-flow-plan): governance updates to `refusal_timeout`,
+ * `execution_timeout`, `validation_rate`, and `vote_threshold_factor` each wake
+ * long-poll within ~30s (same path devshardd consumes via NodeManager).
  *
  * Genesis: `epoch_length=15`, `voting_period=12s` (~one epoch per vote window).
  */
@@ -72,38 +79,6 @@ class RuntimeConfigTests : TestermintTest() {
         }
     }
 
-    /**
-     * Avoid starting a long-poll near the next PoC start (epoch transition wakes runtime-config waiters).
-     * Uses [EpochResponse.nextEpochStages.pocStart] like [EpochResponse.safeForInference].
-     */
-    private fun LocalInferencePair.waitForMidEpochWindow(
-        minBlocksIntoEpoch: Long = 3,
-        minBlocksBeforeNextPoc: Long = 4,
-    ) {
-        repeat(60) { attempt ->
-            val epoch = getEpochData()
-            val height = getCurrentBlockHeight()
-            val pocStart = epoch.latestEpoch.pocStartBlockHeight
-            val nextPocStart = epoch.nextEpochStages.pocStart
-            val blocksInto = height - pocStart
-            val blocksUntilNextPoc = nextPocStart - height
-            if (epoch.phase == EpochPhase.Inference &&
-                blocksInto >= minBlocksIntoEpoch &&
-                blocksUntilNextPoc >= minBlocksBeforeNextPoc
-            ) {
-                return
-            }
-            Thread.sleep(2_000)
-            if (attempt == 59) {
-                error(
-                    "timed out waiting for mid-epoch window: height=$height phase=${epoch.phase} " +
-                        "pocStart=$pocStart nextPocStart=$nextPocStart blocksInto=$blocksInto " +
-                        "blocksUntilNextPoc=$blocksUntilNextPoc"
-                )
-            }
-        }
-    }
-
     private fun nodeManagerClient(pair: LocalInferencePair): NodeManagerClient {
         val port = pair.nodeManagerGrpcHostPort
             ?: error("NodeManager gRPC port not available for ${pair.name}")
@@ -112,8 +87,10 @@ class RuntimeConfigTests : TestermintTest() {
 
     private fun waitForSyncedRuntimeConfig(client: NodeManagerClient): NodeManagerProto.RuntimeConfig {
         var clientHeight = 0L
-        repeat(60) { attempt ->
+        var lastResp: NodeManagerProto.GetRuntimeConfigResponse? = null
+        repeat(60) {
             val resp = client.getRuntimeConfig(clientParamsBlockHeight = clientHeight, maxWaitSeconds = 0)
+            lastResp = resp
             if (!resp.unchanged && resp.hasConfig()) {
                 clientHeight = resp.config.paramsBlockHeight
                 if (clientHeight > 0) {
@@ -121,17 +98,18 @@ class RuntimeConfigTests : TestermintTest() {
                 }
             }
             Thread.sleep(5_000)
-            if (attempt == 59) {
-                error(
-                    "dapi runtime config never synced (params_block_height still 0 after 5m): " +
-                        "unchanged=${resp.unchanged} hasConfig=${resp.hasConfig()}"
-                )
-            }
         }
-        error("unreachable")
+        val resp = lastResp
+        error(
+            "dapi runtime config never synced (params_block_height still 0 after 5m): " +
+                "unchanged=${resp?.unchanged} hasConfig=${resp?.hasConfig() == true}",
+        )
     }
 
-    /** Stable params_block_height + epoch; optional mid-epoch guard for idle long-polls (tests 3–4). */
+    /**
+     * Wait until the client is caught up on the current runtime revision.
+     * With max_wait=0, a caught-up client gets immediate `unchanged` (no config body).
+     */
     private fun waitForStableRuntimeRevision(
         client: NodeManagerClient,
         pair: LocalInferencePair? = null,
@@ -141,12 +119,15 @@ class RuntimeConfigTests : TestermintTest() {
         repeat(15) {
             Thread.sleep(2_000)
             val resp = client.getRuntimeConfig(clientParamsBlockHeight = prev.paramsBlockHeight, maxWaitSeconds = 0)
-            check(!resp.unchanged && resp.hasConfig()) {
-                "expected full runtime config while stabilizing revision"
+            if (resp.unchanged) {
+                return prev
+            }
+            check(resp.hasConfig()) {
+                "server revision advanced without config payload"
             }
             val cur = resp.config
             if (cur.paramsBlockHeight == prev.paramsBlockHeight && cur.currentEpochId == prev.currentEpochId) {
-                return prev
+                return cur
             }
             prev = cur
         }
@@ -169,17 +150,15 @@ class RuntimeConfigTests : TestermintTest() {
         verifyResponse: (NodeManagerProto.GetRuntimeConfigResponse) -> Unit,
     ) {
         val result = CompletableFuture<NodeManagerProto.GetRuntimeConfigResponse>()
-        val pollThread = Thread {
+        val pollThread = thread(start = true) {
             result.complete(
-                client.getRuntimeConfig(clientParamsBlockHeight = atHeight, maxWaitSeconds = maxWaitSeconds)
+                client.getRuntimeConfig(clientParamsBlockHeight = atHeight, maxWaitSeconds = maxWaitSeconds),
             )
         }
-        pollThread.start()
         Thread.sleep(500)
 
         // Run trigger concurrently — waitForNextEpoch() can exceed maxWaitSeconds.
-        val triggerThread = Thread { trigger() }
-        triggerThread.start()
+        val triggerThread = thread(start = true) { trigger() }
 
         val resultTimeoutSeconds = maxWaitSeconds.toLong() + 15L
         val elapsed = measureTimeMillis {
@@ -197,6 +176,39 @@ class RuntimeConfigTests : TestermintTest() {
     private fun NodeManagerProto.GetRuntimeConfigResponse.configOrNull() =
         if (hasConfig()) config else null
 
+    /**
+     * Runs a governance [UpdateParams] while a long-poll is blocked, then verifies the
+     * new value on the runtime snapshot and on chain (phase 4 acceptance gate).
+     */
+    private fun runGovernanceDevshardLongPollWake(
+        client: NodeManagerClient,
+        fieldLabel: String,
+        maxElapsedMs: Long = 30_000,
+        applyGovernance: (chainParams: InferenceParams, escrow: DevshardEscrowParams) -> InferenceParams,
+        verifyRuntime: (NodeManagerProto.RuntimeConfig) -> Unit,
+        verifyChain: (DevshardEscrowParams) -> Unit,
+    ) {
+        val synced = waitForStableRuntimeRevision(client)
+        val height = synced.paramsBlockHeight
+        val chainParams = genesis.getParams()
+        val escrow = chainEscrow(genesis)
+
+        runLongPollWakeTest(
+            client = client,
+            atHeight = height,
+            maxElapsedMs = maxElapsedMs,
+            trigger = {
+                logSection("Governance: $fieldLabel")
+                genesis.runProposal(
+                    cluster,
+                    UpdateParams(params = applyGovernance(chainParams, escrow)),
+                )
+            },
+            verifyResponse = { resp -> verifyRuntime(resp.config) },
+        )
+        verifyChain(chainEscrow(genesis))
+    }
+
     @Test
     @Order(1)
     fun `initial fetch returns runtime config after chain sync`() {
@@ -213,6 +225,10 @@ class RuntimeConfigTests : TestermintTest() {
             assertThat(cfg.defaultInferenceClearGraceSeconds)
                 .isEqualTo(escrow.defaultInferenceClearGraceSeconds.toInt())
             assertThat(cfg.maxNonce).isEqualTo(escrow.maxNonce.toInt())
+            assertThat(cfg.refusalTimeout).isEqualTo(escrow.refusalTimeout)
+            assertThat(cfg.executionTimeout).isEqualTo(escrow.executionTimeout)
+            assertThat(cfg.validationRate).isEqualTo(escrow.validationRate.toInt())
+            assertThat(cfg.voteThresholdFactor).isEqualTo(escrow.voteThresholdFactor.toInt())
 
             val chainVersions = escrow.approvedVersions.orEmpty()
             assertThat(cfg.approvedVersionsList.map { it.name })
@@ -344,32 +360,100 @@ class RuntimeConfigTests : TestermintTest() {
     @Test
     @Order(6)
     @Tag("integration")
-    fun `long poll wakes on governance param change`() {
+    fun `long poll wakes on governance max_nonce change`() {
         nodeManagerClient(genesis).use { client ->
             // No mid-epoch guard: test 5 just advanced epoch; next PoC is ~epoch_length blocks away
             // and we assert max_nonce from governance (epoch-only wake would fail).
-            val synced = waitForStableRuntimeRevision(client)
-            val height = synced.paramsBlockHeight
-            val chainParams = genesis.getParams()
-            val escrow = chainEscrow(genesis)
-            val maxNonceBefore = escrow.maxNonce
-
-            runLongPollWakeTest(
+            val before = chainEscrow(genesis).maxNonce
+            runGovernanceDevshardLongPollWake(
                 client = client,
-                atHeight = height,
-                trigger = {
-                    logSection("Governance: bump devshard_escrow_params.max_nonce $maxNonceBefore -> ${maxNonceBefore + 1}")
-                    val modifiedParams = chainParams.copy(
-                        devshardEscrowParams = escrow.copy(maxNonce = maxNonceBefore + 1)
-                    )
-                    genesis.runProposal(cluster, UpdateParams(params = modifiedParams))
+                fieldLabel = "bump devshard_escrow_params.max_nonce $before -> ${before + 1}",
+                applyGovernance = { chainParams, escrow ->
+                    chainParams.copy(devshardEscrowParams = escrow.copy(maxNonce = before + 1))
                 },
-                verifyResponse = { resp ->
-                    assertThat(resp.config.maxNonce).isEqualTo((maxNonceBefore + 1).toInt())
+                verifyRuntime = { cfg ->
+                    assertThat(cfg.maxNonce).isEqualTo((before + 1).toInt())
                 },
+                verifyChain = { escrow -> assertThat(escrow.maxNonce).isEqualTo(before + 1) },
             )
+        }
+    }
 
-            assertThat(chainEscrow(genesis).maxNonce).isEqualTo(maxNonceBefore + 1)
+    @Test
+    @Order(7)
+    @Tag("integration")
+    fun `long poll wakes on governance refusal_timeout change`() {
+        nodeManagerClient(genesis).use { client ->
+            val before = chainEscrow(genesis).refusalTimeout
+            val after = before + 10
+            runGovernanceDevshardLongPollWake(
+                client = client,
+                fieldLabel = "bump devshard_escrow_params.refusal_timeout $before -> $after",
+                applyGovernance = { chainParams, escrow ->
+                    chainParams.copy(devshardEscrowParams = escrow.copy(refusalTimeout = after))
+                },
+                verifyRuntime = { cfg -> assertThat(cfg.refusalTimeout).isEqualTo(after) },
+                verifyChain = { escrow -> assertThat(escrow.refusalTimeout).isEqualTo(after) },
+            )
+        }
+    }
+
+    @Test
+    @Order(8)
+    @Tag("integration")
+    fun `long poll wakes on governance execution_timeout change`() {
+        nodeManagerClient(genesis).use { client ->
+            val before = chainEscrow(genesis).executionTimeout
+            val after = before + 100
+            runGovernanceDevshardLongPollWake(
+                client = client,
+                fieldLabel = "bump devshard_escrow_params.execution_timeout $before -> $after",
+                applyGovernance = { chainParams, escrow ->
+                    chainParams.copy(devshardEscrowParams = escrow.copy(executionTimeout = after))
+                },
+                verifyRuntime = { cfg -> assertThat(cfg.executionTimeout).isEqualTo(after) },
+                verifyChain = { escrow -> assertThat(escrow.executionTimeout).isEqualTo(after) },
+            )
+        }
+    }
+
+    @Test
+    @Order(9)
+    @Tag("integration")
+    fun `long poll wakes on governance validation_rate change`() {
+        nodeManagerClient(genesis).use { client ->
+            val before = chainEscrow(genesis).validationRate
+            val after = before + 100
+            require(after <= 10_000) { "validation_rate bump would exceed chain max 10000 bps" }
+            runGovernanceDevshardLongPollWake(
+                client = client,
+                fieldLabel = "bump devshard_escrow_params.validation_rate $before -> $after",
+                applyGovernance = { chainParams, escrow ->
+                    chainParams.copy(devshardEscrowParams = escrow.copy(validationRate = after))
+                },
+                verifyRuntime = { cfg -> assertThat(cfg.validationRate).isEqualTo(after.toInt()) },
+                verifyChain = { escrow -> assertThat(escrow.validationRate).isEqualTo(after) },
+            )
+        }
+    }
+
+    @Test
+    @Order(10)
+    @Tag("integration")
+    fun `long poll wakes on governance vote_threshold_factor change`() {
+        nodeManagerClient(genesis).use { client ->
+            val before = chainEscrow(genesis).voteThresholdFactor
+            val after = (before + 1).coerceAtMost(100)
+            require(after in 1..100) { "vote_threshold_factor must stay in (0, 100]" }
+            runGovernanceDevshardLongPollWake(
+                client = client,
+                fieldLabel = "bump devshard_escrow_params.vote_threshold_factor $before -> $after",
+                applyGovernance = { chainParams, escrow ->
+                    chainParams.copy(devshardEscrowParams = escrow.copy(voteThresholdFactor = after))
+                },
+                verifyRuntime = { cfg -> assertThat(cfg.voteThresholdFactor).isEqualTo(after.toInt()) },
+                verifyChain = { escrow -> assertThat(escrow.voteThresholdFactor).isEqualTo(after) },
+            )
         }
     }
 }

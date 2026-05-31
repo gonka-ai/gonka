@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/internal/testutil"
 	"devshard/types"
 )
 
@@ -104,8 +105,8 @@ func TestSQLite_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestSQLite(t))
 }
 
-func TestSQLite_CreateSession_LegacyEmptyVersionNormalizes(t *testing.T) {
-	runCreateSession_LegacyEmptyVersionNormalizes(t, newTestSQLite(t))
+func TestSQLite_CreateSession_EmptyVersionRejected(t *testing.T) {
+	runCreateSession_EmptyVersionRejected(t, newTestSQLite(t))
 }
 
 func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
@@ -238,6 +239,7 @@ func TestSQLite_ConcurrentSessions(t *testing.T) {
 			params := CreateSessionParams{
 				EscrowID:       escrowID,
 				EpochID:        7,
+				Version:        testutil.RuntimeTestVersion,
 				CreatorAddr:    "creator",
 				Config:         types.SessionConfig{},
 				Group:          defaultGroup(),
@@ -525,6 +527,7 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 		params := CreateSessionParams{
 			EscrowID:       escrowID,
 			EpochID:        uint64(s % 2),
+			Version:        testutil.RuntimeTestVersion,
 			CreatorAddr:    fmt.Sprintf("creator-%d", s),
 			Config:         types.SessionConfig{TokenPrice: 1},
 			Group:          defaultGroup(),
@@ -708,7 +711,7 @@ func TestSQLite_MetaIndex_DuplicateEscrowAcrossEpochFiles(t *testing.T) {
 	_, err = p.writeDB.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		"dup", types.DefaultStateRootVersion, "creator", `{}`, `[]`, 1000,
+		"dup", testutil.RuntimeTestVersion, "creator", `{}`, `[]`, 1000,
 	)
 	require.NoError(t, err)
 	require.NoError(t, p.close())

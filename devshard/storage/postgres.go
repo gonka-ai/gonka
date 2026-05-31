@@ -61,68 +61,6 @@ func pgInferencesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgInferencesParent, epochID)
 }
 
-const pgCreateParents = `
-CREATE TABLE IF NOT EXISTS devshard_session_index (
-    escrow_id TEXT   PRIMARY KEY,
-    epoch_id  BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS devshard_session_index_by_epoch ON devshard_session_index(epoch_id);
-
-CREATE TABLE IF NOT EXISTS devshard_sessions (
-    epoch_id        BIGINT NOT NULL,
-    escrow_id       TEXT   NOT NULL,
-    version         TEXT,
-    creator_addr    TEXT   NOT NULL,
-    config_json     TEXT   NOT NULL,
-    group_json      TEXT   NOT NULL,
-    initial_balance BIGINT NOT NULL,
-    latest_nonce    BIGINT NOT NULL DEFAULT 0,
-    last_finalized  BIGINT NOT NULL DEFAULT 0,
-    status          TEXT   NOT NULL DEFAULT 'active',
-    settled_at      BIGINT,
-    PRIMARY KEY (epoch_id, escrow_id)
-) PARTITION BY RANGE (epoch_id);
-
-CREATE TABLE IF NOT EXISTS devshard_diffs (
-    epoch_id        BIGINT NOT NULL,
-    escrow_id       TEXT   NOT NULL,
-    nonce           BIGINT NOT NULL,
-    txs_proto       BYTEA  NOT NULL,
-    user_sig        BYTEA,
-    post_state_root BYTEA,
-    state_hash      BYTEA,
-    warm_keys_json  TEXT,
-    created_at      BIGINT NOT NULL DEFAULT 0,
-    PRIMARY KEY (epoch_id, escrow_id, nonce)
-) PARTITION BY RANGE (epoch_id);
-
-CREATE TABLE IF NOT EXISTS devshard_signatures (
-    epoch_id  BIGINT NOT NULL,
-    escrow_id TEXT   NOT NULL,
-    nonce     BIGINT NOT NULL,
-    slot_id   BIGINT NOT NULL,
-    sig       BYTEA  NOT NULL,
-    PRIMARY KEY (epoch_id, escrow_id, nonce, slot_id)
-) PARTITION BY RANGE (epoch_id);
-
-CREATE TABLE IF NOT EXISTS devshard_snapshots (
-    epoch_id   BIGINT NOT NULL,
-    escrow_id  TEXT   NOT NULL,
-    nonce      BIGINT NOT NULL,
-    state_data BYTEA  NOT NULL,
-    created_at BIGINT NOT NULL DEFAULT 0,
-    PRIMARY KEY (epoch_id, escrow_id)
-) PARTITION BY RANGE (epoch_id);
-
-CREATE TABLE IF NOT EXISTS devshard_sealed_inferences (
-    epoch_id     BIGINT NOT NULL,
-    escrow_id    TEXT   NOT NULL,
-    inference_id BIGINT NOT NULL,
-    sealed_nonce BIGINT NOT NULL,
-    PRIMARY KEY (epoch_id, escrow_id, inference_id)
-) PARTITION BY RANGE (epoch_id);
-`
-
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
 // vars (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD). Schema is created
 // idempotently and the escrow index is rebuilt by scanning devshard_sessions.
@@ -136,9 +74,9 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if _, err := pool.Exec(ctx, pgCreateParents); err != nil {
+	if err := MigratePostgres(ctx, pool); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("create parents: %w", err)
+		return nil, err
 	}
 
 	s := &Postgres{
@@ -226,9 +164,11 @@ func (s *Postgres) Close() error {
 	return nil
 }
 
-// ensurePartition creates per-epoch partitions for all three parents on first
-// touch. The check + create is racy across multiple writers, but PG returns
-// 42P07 (table already exists) which we swallow.
+// ensurePartition creates per-epoch partitions for all five partitioned parents
+// on first touch. This is the only site that may issue CREATE TABLE ... PARTITION OF
+// for devshard Postgres; write paths must call ensurePartition instead of inline DDL.
+// The check + create is racy across multiple writers, but PG returns 42P07 (table
+// already exists) which we swallow.
 func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 	s.mu.RLock()
 	_, ok := s.knownEpochs[epochID]
@@ -295,7 +235,10 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	if err != nil {
 		return fmt.Errorf("marshal group: %w", err)
 	}
-	requestedVersion := types.NormalizeVersion(params.Version)
+	requestedVersion, err := requireSessionVersion(params.Version)
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	if err := s.ensurePartition(ctx, params.EpochID); err != nil {
@@ -359,13 +302,16 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	).Scan(&storedVersion); err != nil {
 		return fmt.Errorf("read session version: %w", err)
 	}
-	normalizedStoredVersion := types.DefaultStateRootVersion
+	stored := ""
 	if storedVersion != nil {
-		normalizedStoredVersion = types.NormalizeVersion(*storedVersion)
+		stored = *storedVersion
 	}
-	if normalizedStoredVersion != requestedVersion {
+	if strings.TrimSpace(stored) == "" {
+		return fmt.Errorf("%w: %s", ErrSessionVersionRequired, params.EscrowID)
+	}
+	if stored != requestedVersion {
 		return fmt.Errorf("%w: escrow %s exists with version %s, requested %s",
-			ErrSessionVersionConflict, params.EscrowID, normalizedStoredVersion, requestedVersion)
+			ErrSessionVersionConflict, params.EscrowID, stored, requestedVersion)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -552,6 +498,9 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.Version = *version
 	}
 	meta.EpochID = epochID
+	if err := finalizeSessionMeta(&meta); err != nil {
+		return nil, err
+	}
 	return &meta, nil
 }
 
@@ -682,15 +631,11 @@ func (s *Postgres) SaveSnapshot(escrowID string, nonce uint64, data []byte) erro
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(context.Background(),
-		fmt.Sprintf(
-			`CREATE TABLE IF NOT EXISTS %s PARTITION OF %s FOR VALUES FROM (%d) TO (%d)`,
-			pgSnapshotsPartition(epochID), pgSnapshotsParent, epochID, epochID+1,
-		),
-	); err != nil {
-		return fmt.Errorf("create snapshot partition: %w", err)
+	ctx := context.Background()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
 	}
-	_, err = s.pool.Exec(context.Background(),
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO devshard_snapshots (epoch_id, escrow_id, nonce, state_data, created_at)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (epoch_id, escrow_id) DO UPDATE
