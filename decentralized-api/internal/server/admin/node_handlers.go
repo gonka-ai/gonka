@@ -93,12 +93,20 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 	testFailed := n.State.FailureReason != "" &&
 		n.State.CurrentStatus == types.HardwareNodeStatus_FAILED
 	failingModel := ""
+	// validated == the node's most recent test passed. Gates the
+	// reassuring "waiting for PoC" wording per the proposal.
+	validated := false
 	if s.tester != nil {
 		nodeId := n.Node.Id
 		isTesting = s.tester.IsRunning(nodeId)
-		if last := s.tester.LastResult(nodeId); last != nil && last.Status == TestFailed {
-			testFailed = true
-			failingModel = last.FailingModel
+		if last := s.tester.LastResult(nodeId); last != nil {
+			switch last.Status {
+			case TestFailed:
+				testFailed = true
+				failingModel = last.FailingModel
+			case TestSuccess:
+				validated = true
+			}
 		}
 	}
 
@@ -115,7 +123,7 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 	// set. Otherwise lead with participant-level onboarding guidance.
 	var userMsg, guidance string
 	if active || mlState == MLNodeState_TESTING || mlState == MLNodeState_TEST_FAILED {
-		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel)
+		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel, validated)
 		guidance = BuildParticipantMessage(participantState)
 	} else {
 		userMsg = BuildParticipantMessage(participantState)

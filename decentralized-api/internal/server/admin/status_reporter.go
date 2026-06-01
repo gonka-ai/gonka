@@ -7,10 +7,12 @@ import (
 // BuildMLNodeMessage produces the human-facing one-liner shown to the
 // operator for the MLnode's current onboarding state.
 //
-// failingModel is included in the TEST_FAILED message when non-empty;
-// the WAITING_FOR_POC message branches on whether the next PoC is
-// inside the online-alert window.
-func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, failingModel string) string {
+// failingModel is included in the TEST_FAILED message when non-empty.
+// validated gates the reassuring "waiting for PoC" wording: per the
+// proposal, the calm "validated, safe to be offline" message is only
+// shown once a test has passed; until then we say the MLnode is not yet
+// validated (it still tells the operator to be online when PoC is near).
+func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, failingModel string, validated bool) string {
 	switch state {
 	case MLNodeState_TESTING:
 		return "Testing MLnode configuration - model loading in progress"
@@ -20,17 +22,26 @@ func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, 
 		}
 		return "MLnode test failed: model '" + failingModel + "' could not be loaded"
 	case MLNodeState_WAITING_FOR_POC:
-		if secondsUntilNextPoC < 0 {
+		switch {
+		case secondsUntilNextPoC < 0 && validated:
 			// Schedule not yet known (chain phase tracker not synced):
 			// avoid an invented countdown like "in 0s".
 			return "Waiting for next PoC cycle (schedule syncing)"
-		}
-		if secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds {
+		case secondsUntilNextPoC < 0:
+			return "MLnode not yet validated - it will be tested before the next PoC"
+		case secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds && validated:
 			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) +
 				") - MLnode must be online now"
+		case secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds:
+			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) +
+				") - MLnode not yet validated, bring it online now"
+		case validated:
+			return "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) +
+				") - validated, safe to be offline until " + formatShortDuration(apiconfig.OnlineAlertLeadSeconds) + " before PoC"
+		default:
+			return "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) +
+				") - MLnode not yet validated; it will be auto-tested, or run a manual test"
 		}
-		return "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) +
-			") - safe to be offline until " + formatShortDuration(apiconfig.OnlineAlertLeadSeconds) + " before PoC"
 	}
 	return ""
 }

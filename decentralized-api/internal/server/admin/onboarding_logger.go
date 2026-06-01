@@ -59,6 +59,26 @@ func (s *Server) logOnboardingStatus(prevActive bool) bool {
 	if timing := ComputeTiming(s.phaseTracker.GetCurrentEpochState()); timing != nil {
 		seconds = timing.SecondsUntilNextPoC
 	}
-	logging.Info(BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, seconds, ""), types.Nodes)
+	logging.Info(BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, seconds, "", s.allNodesValidated()), types.Nodes)
 	return false
+}
+
+// allNodesValidated reports whether every configured MLnode has a passing
+// most-recent test. Used to gate the reassuring "waiting for PoC" wording:
+// the calm "validated, safe to be offline" line is only logged once all
+// nodes have been verified.
+func (s *Server) allNodesValidated() bool {
+	if s.tester == nil {
+		return false
+	}
+	nodes := s.configManager.GetNodes()
+	if len(nodes) == 0 {
+		return false
+	}
+	for _, n := range nodes {
+		if r := s.tester.LastResult(n.Id); r == nil || r.Status != TestSuccess {
+			return false
+		}
+	}
+	return true
 }

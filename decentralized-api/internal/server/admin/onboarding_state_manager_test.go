@@ -64,21 +64,35 @@ func TestDeriveMLNodeState(t *testing.T) {
 }
 
 func TestBuildMLNodeMessage(t *testing.T) {
-	got := BuildMLNodeMessage(MLNodeState_TEST_FAILED, 0, "Qwen2.5-7B")
+	got := BuildMLNodeMessage(MLNodeState_TEST_FAILED, 0, "Qwen2.5-7B", false)
 	if !strings.Contains(got, "Qwen2.5-7B") {
 		t.Errorf("failing model not surfaced: %q", got)
 	}
-	near := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds-1, "")
+	// Validated node within the alert window: be online now.
+	near := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds-1, "", true)
 	if !strings.Contains(near, "must be online") {
 		t.Errorf("alert message missing online directive: %q", near)
 	}
-	far := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds+3600, "")
+	// Validated node, far out: reassuring "safe to be offline".
+	far := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds+3600, "", true)
 	if !strings.Contains(far, "safe to be offline") {
-		t.Errorf("non-alert message missing offline guidance: %q", far)
+		t.Errorf("non-alert validated message missing offline guidance: %q", far)
 	}
-	unknown := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, SecondsUntilPoCUnknown, "")
+	// Unknown schedule (validated): no invented countdown.
+	unknown := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, SecondsUntilPoCUnknown, "", true)
 	if !strings.Contains(unknown, "syncing") || strings.Contains(unknown, "0s") {
 		t.Errorf("unknown-timing message should not invent a countdown: %q", unknown)
+	}
+	// Not validated, far out: must NOT show the reassuring "safe to be
+	// offline" — should flag it isn't validated yet.
+	unval := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds+3600, "", false)
+	if strings.Contains(unval, "safe to be offline") || !strings.Contains(unval, "not yet validated") {
+		t.Errorf("unvalidated waiting message should withhold the ready reassurance: %q", unval)
+	}
+	// Not validated, near PoC: still tells operator to come online.
+	unvalNear := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds-1, "", false)
+	if !strings.Contains(unvalNear, "online") || !strings.Contains(unvalNear, "not yet validated") {
+		t.Errorf("unvalidated near-PoC message should flag unvalidated + online: %q", unvalNear)
 	}
 }
 
