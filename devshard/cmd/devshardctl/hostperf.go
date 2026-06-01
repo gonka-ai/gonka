@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"devshard/user"
 )
 
 var (
@@ -258,6 +260,7 @@ type PerfTracker struct {
 	requests          requestRing
 	firstTokenBuckets map[string]*firstTokenBucketRing
 	contextLimits     map[string]uint64 // participant_key -> observed max context length
+	toolUnsupported   map[string]bool   // participant_key -> host reported vLLM tool-choice support is disabled
 	pairwise          *PairwiseTracker
 	store             *PerfStore
 }
@@ -267,6 +270,7 @@ func NewPerfTracker(store *PerfStore) *PerfTracker {
 		hosts:             make(map[string]*hostRing),
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
 		contextLimits:     make(map[string]uint64),
+		toolUnsupported:   make(map[string]bool),
 		pairwise:          NewPairwiseTracker(),
 		store:             store,
 	}
@@ -501,6 +505,18 @@ func (t *PerfTracker) RecordContextLimit(participantKey string, maxTokens uint64
 	t.mu.Unlock()
 }
 
+func (t *PerfTracker) RecordToolUnsupported(participantKey string) {
+	if t == nil || participantKey == "" {
+		return
+	}
+	t.mu.Lock()
+	if !t.toolUnsupported[participantKey] {
+		t.toolUnsupported[participantKey] = true
+		log.Printf("perf: recorded tool_unsupported participant_key=%s", participantKey)
+	}
+	t.mu.Unlock()
+}
+
 // ContextLimits returns a snapshot of all observed host context length limits.
 func (t *PerfTracker) ContextLimits() map[string]uint64 {
 	if t == nil {
@@ -513,6 +529,52 @@ func (t *PerfTracker) ContextLimits() map[string]uint64 {
 		result[k] = v
 	}
 	return result
+}
+
+func (t *PerfTracker) ToolUnsupported() map[string]bool {
+	if t == nil {
+		return nil
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	result := make(map[string]bool, len(t.toolUnsupported))
+	for k, v := range t.toolUnsupported {
+		result[k] = v
+	}
+	return result
+}
+
+func (t *PerfTracker) HostCannotServeRequest(participantKey string, params user.InferenceParams) (string, bool) {
+	if t == nil || participantKey == "" {
+		return "", false
+	}
+	requiresTools := requestRequiresTools(params)
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if requiresTools && t.toolUnsupported[participantKey] {
+		return "tool_choice_unsupported", true
+	}
+	if limit := t.contextLimits[participantKey]; limit > 0 && params.ContextTotalHint > limit {
+		return "context_limit_exceeded", true
+	}
+	return "", false
+}
+
+func (t *PerfTracker) AllKnownToolUnsupported(participantKeys []string) bool {
+	if t == nil || len(participantKeys) == 0 {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, key := range participantKeys {
+		if key == "" {
+			continue
+		}
+		if !t.toolUnsupported[key] {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *PerfTracker) PairwiseSummaries() []PairwiseSummary {

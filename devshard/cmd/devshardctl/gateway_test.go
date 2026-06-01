@@ -1046,12 +1046,27 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 
 func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testing.T) {
 	var calls atomic.Int32
+	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	perf := NewPerfTracker(store)
+
 	rt := &devshardRuntime{
 		id:    "12",
 		model: "Qwen/Test",
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
 			if rid, ok := requestLogFromContext(r.Context()); ok {
+				perf.RecordAccountingRequestStart(rid, "12", "Qwen/Test", time.Unix(100, 0))
+				perf.RecordAccountingAttempt(RequestAccountingAttempt{
+					RequestID:      rid,
+					EscrowID:       "12",
+					Nonce:          7,
+					HostIdx:        1,
+					ParticipantKey: "host-a",
+					CreatedAt:      time.Unix(101, 0),
+				})
+				perf.CompleteAccountingRequest(rid, "12", 7, "primary_only", "success", time.Unix(102, 0))
 				w.Header().Set("X-Request-Id", rid)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1060,6 +1075,7 @@ func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testin
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.perf = perf
 	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
 	body := `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`
 
@@ -1080,9 +1096,19 @@ func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testin
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, firstBody, rec.Body.String())
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
-	require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
-	require.NotEqual(t, firstRequestID, rec.Header().Get("X-Request-Id"))
+	cachedRequestID := rec.Header().Get("X-Request-Id")
+	require.NotEmpty(t, cachedRequestID)
+	require.NotEqual(t, firstRequestID, cachedRequestID)
 	require.EqualValues(t, 1, calls.Load())
+
+	accounting, ok, err := perf.FindAccountingRequest(cachedRequestID, "12")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, cachedRequestID, accounting.RequestID)
+	require.Equal(t, firstRequestID, accounting.CachedFromRequestID)
+	require.Equal(t, "cached", accounting.Outcome)
+	require.Equal(t, "cache_hit", accounting.Decision)
+	require.Len(t, accounting.Attempts, 1)
 }
 
 func TestGatewayPooledChatCachesStreamingResponseWithFreshRequestID(t *testing.T) {
@@ -1252,6 +1278,31 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
+	require.False(t, forwarded)
+	require.EqualValues(t, 0, rt.activeRequests.Load())
+}
+
+func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t *testing.T) {
+	var forwarded bool
+	rt := &devshardRuntime{
+		id:    "12",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			forwarded = true
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"Nope/Unsupported","messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+
+	g.handlePooledChat(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
+	require.NotContains(t, rec.Body.String(), "admin API key")
 	require.False(t, forwarded)
 	require.EqualValues(t, 0, rt.activeRequests.Load())
 }
@@ -2133,11 +2184,17 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 
 	oldDefault := DefaultRequestMaxTokens
 	oldCap := RequestMaxTokensCap
+	oldStreamingHardTimeout := StreamingAttemptHardTimeout
+	oldNonStreamNoContentTimeout := nonStreamingNoContentTimeout
+	oldNonStreamMaxAttemptWait := nonStreamingMaxAttemptWait
 	DefaultRequestMaxTokens = 1000
 	RequestMaxTokensCap = 2000
 	t.Cleanup(func() {
 		DefaultRequestMaxTokens = oldDefault
 		RequestMaxTokensCap = oldCap
+		StreamingAttemptHardTimeout = oldStreamingHardTimeout
+		nonStreamingNoContentTimeout = oldNonStreamNoContentTimeout
+		nonStreamingMaxAttemptWait = oldNonStreamMaxAttemptWait
 	})
 
 	limiter := NewGatewayLimiter(2, 200)
@@ -2157,7 +2214,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	}, t.TempDir(), store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
-		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"non_stream_response_floor_ms":1900,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
+		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"streaming_attempt_hard_timeout_ms":1810,"non_stream_response_floor_ms":1900,"non_stream_no_content_timeout_ms":2200,"non_stream_max_attempt_wait_ms":2600,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
 	rec := httptest.NewRecorder()
 	g.handleAdminSettings(rec, req)
 
@@ -2192,9 +2249,15 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.EqualValues(t, 2, state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
+	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
+	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
+	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.Equal(t, 1500*time.Millisecond, ReceiptTimeout)
 	require.Equal(t, 17*time.Millisecond, PerInputTokenFirstTokenLag)
+	require.Equal(t, 1810*time.Millisecond, StreamingAttemptHardTimeout)
+	require.Equal(t, 2200*time.Millisecond, nonStreamingNoContentTimeout)
+	require.Equal(t, 2600*time.Millisecond, nonStreamingMaxAttemptWait)
 }
 
 func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {

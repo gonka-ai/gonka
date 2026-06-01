@@ -384,6 +384,46 @@ func TestSseChunkErrorDetails(t *testing.T) {
 	require.Equal(t, "bad request", details.Message)
 }
 
+func TestRetriableCapabilityErrorClassification(t *testing.T) {
+	require.True(t, isToolChoiceCapabilityError("tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"))
+	require.True(t, isRetriableCapabilityErrorMessage("This model's maximum context length is 131072 tokens. However, you requested 150000 tokens."))
+	require.False(t, isRetriableCapabilityErrorMessage("plain model error"))
+	require.EqualValues(t, 131072, parseContextLengthLimit("This model's maximum context length is 131072 tokens."))
+	require.EqualValues(t, 120001, parseContextTotalRequested("This model's maximum context length is 120000 tokens. However, you requested 3072 output tokens and your prompt contains at least 116929 input tokens, for a total of at least 120001 tokens."))
+}
+
+func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	inf := &inflight{
+		hostID:       "host-A",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+	body := []byte(`data: {"error":{"code":400,"message":"tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set","type":"BadRequestError"}}` + "\n\n")
+
+	_, err := rw.Write(body)
+
+	require.NoError(t, err)
+	require.Equal(t, "error.BadRequestError", inf.errorSource)
+	require.Equal(t, int64(0), inf.contentChunks.Load(), "capability miss must not be treated as winning content")
+	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
+}
+
+func TestCapabilityErrorsSkippedFromCache(t *testing.T) {
+	streamBody := []byte(`data: {"error":{"message":"tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"}}` + "\n\n")
+	jsonBody := []byte(`{"error":{"message":"This model's maximum context length is 120000 tokens."}}`)
+
+	require.True(t, responseBodyHasRetriableCapabilityError(streamBody))
+	require.True(t, responseBodyHasRetriableCapabilityError(jsonBody))
+	require.False(t, responseBodyHasRetriableCapabilityError([]byte(`{"error":{"message":"ordinary error"}}`)))
+}
+
 func TestHostApplicationErrorPayloadAndStatus(t *testing.T) {
 	body := []byte(`data: {"error":{"code":400,"message":"bad request","type":"BadRequestError"}}` + "\n\n")
 	details, payload, ok := sseChunkErrorPayload(body)
@@ -448,18 +488,6 @@ func TestEmptyStreamBodySampleDefaultLimitIs256KB(t *testing.T) {
 
 	require.True(t, truncated)
 	require.Len(t, sample, emptyStreamBodySampleLimit)
-}
-
-func TestEmptyStreamRequestBodySampleUsesOriginalPrompt(t *testing.T) {
-	params := user.InferenceParams{
-		Model:  "Kimi/Test",
-		Prompt: []byte(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`),
-	}
-
-	sample, truncated := requestBodySampleForLog(params)
-
-	require.False(t, truncated)
-	require.JSONEq(t, `{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`, sample)
 }
 
 func TestRequestFlagsForLogOmitsPromptBody(t *testing.T) {
@@ -641,7 +669,7 @@ func TestRaceWriter_EmptyAttemptDoesNotWin(t *testing.T) {
 	require.True(t, isEmptyStreamAttempt(inf))
 }
 
-func TestRaceWriter_ErrorStreamWinsAndDoesNotCountAsEmpty(t *testing.T) {
+func TestRaceWriter_ErrorStreamDoesNotWinAndDoesNotCountAsEmpty(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer
 	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
@@ -662,9 +690,8 @@ func TestRaceWriter_ErrorStreamWinsAndDoesNotCountAsEmpty(t *testing.T) {
 	_, err := rw.Write(payload)
 	require.NoError(t, err)
 
-	require.Equal(t, uint64(1), rg.winnerNonce(), "error stream is a valid terminal response")
-	require.Contains(t, sink.String(), `"error"`)
-	require.Contains(t, sink.String(), "[DONE]")
+	require.Equal(t, uint64(0), rg.winnerNonce(), "error stream should not win before a real content attempt")
+	require.Empty(t, sink.String(), "error stream should be buffered until all attempts fail")
 	require.Equal(t, int64(1), inf.outputChunks.Load())
 	require.Equal(t, int64(1), inf.contentChunks.Load())
 	require.Equal(t, "error.BadRequestError", inf.errorSource)

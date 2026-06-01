@@ -107,10 +107,11 @@ var errPickerStopped = errors.New("session picker: stopped")
 type ghostKind int
 
 const (
-	ghostNone      ghostKind = iota
-	ghostPoC                 // host requires PoC under relaxed bypass
-	ghostExclude             // queue had no compatible request after pickerStaleThreshold
-	ghostThrottled           // host is reactively throttled (tokens<1)
+	ghostNone       ghostKind = iota
+	ghostPoC                  // host requires PoC under relaxed bypass
+	ghostExclude              // queue had no compatible request after pickerStaleThreshold
+	ghostThrottled            // host is reactively throttled (tokens<1)
+	ghostCapability           // host is known incompatible with queued request shape
 )
 
 func (g ghostKind) reason() string {
@@ -121,6 +122,8 @@ func (g ghostKind) reason() string {
 		return "no_compatible_request_after_stale"
 	case ghostThrottled:
 		return "participant_throttled_no_send"
+	case ghostCapability:
+		return "participant_capability_no_send"
 	default:
 		return ""
 	}
@@ -174,6 +177,8 @@ type ghostDispatcher func(prepared *user.PreparedInference, kind ghostKind, reas
 // info available" (everything passes through to branch 2).
 type throttleChecker func(participantKey string) bool
 
+type capabilityChecker func(participantKey string, params user.InferenceParams) (string, bool)
+
 // sessionPicker serializes nonce dispatch for one Session. It owns the
 // run loop goroutine that drains the queue.
 type sessionPicker struct {
@@ -181,6 +186,7 @@ type sessionPicker struct {
 	model           string // escrow's registered model; used for ghost probe params
 	dispatchGhost   ghostDispatcher
 	throttleBlocked throttleChecker
+	capabilityBlock capabilityChecker
 	logCtx          context.Context
 
 	mu     sync.Mutex
@@ -192,12 +198,13 @@ type sessionPicker struct {
 	stopped  chan struct{}
 }
 
-func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker) *sessionPicker {
+func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, capabilityBlock capabilityChecker) *sessionPicker {
 	return &sessionPicker{
 		session:         session,
 		model:           model,
 		dispatchGhost:   dispatchGhost,
 		throttleBlocked: throttleBlocked,
+		capabilityBlock: capabilityBlock,
 		logCtx:          context.Background(),
 		notify:          make(chan struct{}, 1),
 		stopped:         make(chan struct{}),
@@ -358,12 +365,22 @@ func (p *sessionPicker) run() {
 			// excluding by ParticipantKey ensures a request that
 			// already failed on participant X is not re-dispatched to
 			// another slot owned by X.
+			blockReason := ""
 			for i, r := range p.queue {
-				if !r.excludeParticipants[b.ParticipantKey] {
-					chosen = r
-					p.removeAtLocked(i)
-					return r.params, false, nil
+				if r.excludeParticipants[b.ParticipantKey] {
+					continue
 				}
+				if p.capabilityBlock != nil {
+					if reason, blocked := p.capabilityBlock(b.ParticipantKey, r.params); blocked {
+						if blockReason == "" {
+							blockReason = reason
+						}
+						continue
+					}
+				}
+				chosen = r
+				p.removeAtLocked(i)
+				return r.params, false, nil
 			}
 
 			// Branch 3: no compatible request. Hold the nonce briefly
@@ -376,6 +393,16 @@ func (p *sessionPicker) run() {
 			if time.Now().Before(mature) {
 				holdUntil = mature
 				return user.InferenceParams{}, false, errPickerHold
+			}
+			if blockReason != "" {
+				ghost = ghostCapability
+				logRequestStage(p.logCtx, "session_picker_capability_blocked",
+					"reason", blockReason,
+					"participant_key", b.ParticipantKey,
+					"host_idx", b.HostIdx,
+					"queue_depth", len(p.queue),
+				)
+				return ghostProbeParams(p.model), true, nil
 			}
 			ghost = ghostExclude
 			return ghostProbeParams(p.model), true, nil
@@ -522,7 +549,7 @@ func (p *sessionPicker) dropExhaustedLocked(available map[string]bool) {
 	}
 	kept := p.queue[:0]
 	for _, r := range p.queue {
-		if hasCompatibleParticipant(r.excludeParticipants, available) {
+		if p.hasCompatibleParticipantLocked(r, available) {
 			kept = append(kept, r)
 			continue
 		}
@@ -531,14 +558,26 @@ func (p *sessionPicker) dropExhaustedLocked(available map[string]bool) {
 	p.queue = kept
 }
 
-// hasCompatibleParticipant returns true iff at least one available
-// participant is not in the request's exclude set. An empty
-// available set always returns false (no participant is usable).
-func hasCompatibleParticipant(exclude, available map[string]bool) bool {
+// hasCompatibleParticipantLocked returns true iff at least one available
+// participant is not in the request's exclude set and is not known to be
+// incompatible with this request shape. Capability-blocked participants are
+// ghost-skipped while a compatible unknown/larger participant remains; if none
+// remains, the request is exhausted so redundancy can return the first host
+// capability error it already observed.
+func (p *sessionPicker) hasCompatibleParticipantLocked(req *pickerRequest, available map[string]bool) bool {
+	if req == nil {
+		return false
+	}
 	for key := range available {
-		if !exclude[key] {
-			return true
+		if req.excludeParticipants[key] {
+			continue
 		}
+		if p.capabilityBlock != nil {
+			if _, blocked := p.capabilityBlock(key, req.params); blocked {
+				continue
+			}
+		}
+		return true
 	}
 	return false
 }

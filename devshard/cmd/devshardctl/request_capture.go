@@ -22,17 +22,46 @@ type requestCaptureStore struct {
 }
 
 type capturedChatRequest struct {
-	RequestID  string          `json:"request_id,omitempty"`
-	CapturedAt string          `json:"captured_at"`
-	Kind       string          `json:"kind"`
-	Error      string          `json:"error,omitempty"`
-	Method     string          `json:"method,omitempty"`
-	Path       string          `json:"path,omitempty"`
-	Model      string          `json:"model,omitempty"`
-	Escrow     string          `json:"escrow,omitempty"`
-	Stream     bool            `json:"stream,omitempty"`
-	Body       json.RawMessage `json:"body,omitempty"`
-	BodyBase64 string          `json:"body_base64,omitempty"`
+	RequestID    string                `json:"request_id,omitempty"`
+	CapturedAt   string                `json:"captured_at"`
+	Kind         string                `json:"kind"`
+	Error        string                `json:"error,omitempty"`
+	Method       string                `json:"method,omitempty"`
+	Path         string                `json:"path,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	Escrow       string                `json:"escrow,omitempty"`
+	Stream       bool                  `json:"stream,omitempty"`
+	RequestFlags string                `json:"request_flags,omitempty"`
+	Attempts     []capturedChatAttempt `json:"attempts,omitempty"`
+	Body         json.RawMessage       `json:"body,omitempty"`
+	BodyBase64   string                `json:"body_base64,omitempty"`
+}
+
+type capturedChatAttempt struct {
+	Escrow                      string `json:"escrow,omitempty"`
+	Nonce                       uint64 `json:"nonce,omitempty"`
+	Host                        string `json:"host,omitempty"`
+	HostIdx                     int    `json:"host_idx,omitempty"`
+	Winner                      bool   `json:"winner,omitempty"`
+	Probe                       bool   `json:"probe,omitempty"`
+	EmptyStream                 bool   `json:"empty_stream,omitempty"`
+	ErrorStream                 bool   `json:"error_stream,omitempty"`
+	Error                       string `json:"error,omitempty"`
+	Finished                    bool   `json:"finished,omitempty"`
+	Responsive                  bool   `json:"responsive,omitempty"`
+	HasReceipt                  bool   `json:"has_receipt,omitempty"`
+	ConfirmedAt                 int64  `json:"confirmed_at,omitempty"`
+	OutputChunks                int64  `json:"output_chunks,omitempty"`
+	ContentChunks               int64  `json:"content_chunks,omitempty"`
+	OutputBytes                 int64  `json:"output_bytes,omitempty"`
+	StreamBytesRead             int64  `json:"stream_bytes_read,omitempty"`
+	ContentSource               string `json:"content_source,omitempty"`
+	ErrorSource                 string `json:"error_source,omitempty"`
+	ErrorCode                   string `json:"error_code,omitempty"`
+	ErrorType                   string `json:"error_type,omitempty"`
+	ErrorMessage                string `json:"error_message,omitempty"`
+	ResponseBodySample          string `json:"response_body_sample,omitempty"`
+	ResponseBodySampleTruncated bool   `json:"response_body_sample_truncated,omitempty"`
 }
 
 var (
@@ -111,6 +140,88 @@ func captureAllAttemptsFailedRequest(ctx context.Context, escrow string, params 
 	}
 	setCapturedRequestBody(&record, params.Prompt)
 	_ = store.write(record)
+}
+
+func captureEmptyStreamAttemptRequest(ctx context.Context, escrow string, params user.InferenceParams, attempts []*inflight, winnerNonce uint64) {
+	if len(params.Prompt) == 0 || !hasEmptyStreamAttempt(attempts) {
+		return
+	}
+	store := currentRequestCaptureStore()
+	if store == nil {
+		return
+	}
+	record := capturedChatRequest{
+		RequestID:    requestIDOrEmpty(ctx),
+		CapturedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:         "empty_stream_attempt",
+		Path:         "/v1/chat/completions",
+		Model:        params.Model,
+		Escrow:       escrow,
+		Stream:       params.Stream,
+		RequestFlags: requestFlagsForLog(params),
+		Attempts:     capturedAttempts(attempts, winnerNonce),
+	}
+	setCapturedRequestBody(&record, params.Prompt)
+	_ = store.write(record)
+}
+
+func hasEmptyStreamAttempt(attempts []*inflight) bool {
+	for _, inf := range attempts {
+		if inf != nil && !inf.probe && isEmptyStreamAttempt(inf) {
+			return true
+		}
+	}
+	return false
+}
+
+func capturedAttempts(attempts []*inflight, winnerNonce uint64) []capturedChatAttempt {
+	captured := make([]capturedChatAttempt, 0, len(attempts))
+	for _, inf := range attempts {
+		if inf == nil {
+			continue
+		}
+		var (
+			confirmedAt     int64
+			hasReceipt      bool
+			streamBytesRead int64
+		)
+		if inf.resp != nil {
+			confirmedAt = inf.resp.ConfirmedAt
+			hasReceipt = len(inf.resp.Receipt) > 0
+			streamBytesRead = inf.resp.StreamBytesRead
+		}
+		errText := ""
+		if inf.err != nil {
+			errText = inf.err.Error()
+		}
+		captured = append(captured, capturedChatAttempt{
+			Escrow:                      inf.escrowID,
+			Nonce:                       inf.nonce,
+			Host:                        inf.hostID,
+			HostIdx:                     inf.hostIdx,
+			Winner:                      inf.nonce == winnerNonce,
+			Probe:                       inf.probe,
+			EmptyStream:                 isEmptyStreamAttempt(inf),
+			ErrorStream:                 isErrorStreamAttempt(inf),
+			Error:                       errText,
+			Finished:                    inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isFailedStreamAttempt(inf),
+			Responsive:                  confirmedAt > 0,
+			HasReceipt:                  hasReceipt,
+			ConfirmedAt:                 confirmedAt,
+			OutputChunks:                inf.outputChunks.Load(),
+			ContentChunks:               inf.contentChunks.Load(),
+			OutputBytes:                 inf.outputBytes.Load(),
+			StreamBytesRead:             streamBytesRead,
+			ContentSource:               inf.contentSource,
+			ErrorSource:                 inf.errorSource,
+			ErrorCode:                   inf.errorCode,
+			ErrorType:                   inf.errorType,
+			ErrorMessage:                inf.errorMessage,
+			ResponseBodySample:          inf.emptyResponseBodySample,
+			ResponseBodySampleTruncated: inf.emptyResponseBodySampleTruncated,
+		})
+	}
+	return captured
 }
 
 func (s *requestCaptureStore) write(record capturedChatRequest) error {

@@ -80,6 +80,15 @@ func NewPerfStore(dbPath string) (*PerfStore, error) {
 		created_at      TEXT NOT NULL,
 		PRIMARY KEY (request_id, escrow_id, nonce)
 	);
+	CREATE TABLE IF NOT EXISTS request_accounting_aliases (
+		request_id        TEXT NOT NULL,
+		escrow_id         TEXT NOT NULL,
+		source_request_id TEXT NOT NULL,
+		source_escrow_id  TEXT NOT NULL,
+		reason            TEXT NOT NULL DEFAULT '',
+		created_at        TEXT NOT NULL,
+		PRIMARY KEY (request_id, escrow_id)
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()

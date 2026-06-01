@@ -20,15 +20,17 @@ type RequestAccountingAttempt struct {
 }
 
 type RequestAccountingRecord struct {
-	RequestID   string                     `json:"request_id"`
-	EscrowID    string                     `json:"escrow_id"`
-	Model       string                     `json:"model,omitempty"`
-	StartedAt   time.Time                  `json:"started_at"`
-	CompletedAt time.Time                  `json:"completed_at,omitempty"`
-	Outcome     string                     `json:"outcome"`
-	Decision    string                     `json:"decision,omitempty"`
-	WinnerNonce uint64                     `json:"winner_nonce,omitempty"`
-	Attempts    []RequestAccountingAttempt `json:"attempts"`
+	RequestID           string                     `json:"request_id"`
+	EscrowID            string                     `json:"escrow_id"`
+	Model               string                     `json:"model,omitempty"`
+	StartedAt           time.Time                  `json:"started_at"`
+	CompletedAt         time.Time                  `json:"completed_at,omitempty"`
+	Outcome             string                     `json:"outcome"`
+	Decision            string                     `json:"decision,omitempty"`
+	WinnerNonce         uint64                     `json:"winner_nonce,omitempty"`
+	CachedFromRequestID string                     `json:"cached_from_request_id,omitempty"`
+	CachedFromEscrowID  string                     `json:"cached_from_escrow_id,omitempty"`
+	Attempts            []RequestAccountingAttempt `json:"attempts"`
 }
 
 func (s *PerfStore) UpsertAccountingRequest(requestID, escrowID, model string, startedAt time.Time) error {
@@ -120,6 +122,35 @@ func (s *PerfStore) CompleteAccountingRequest(requestID, escrowID string, winner
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *PerfStore) UpsertAccountingAlias(requestID, escrowID, sourceRequestID, sourceEscrowID, reason string, createdAt time.Time) error {
+	if s == nil || requestID == "" || escrowID == "" || sourceRequestID == "" || sourceEscrowID == "" {
+		return nil
+	}
+	if requestID == sourceRequestID && escrowID == sourceEscrowID {
+		return nil
+	}
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO request_accounting_aliases (
+		   request_id, escrow_id, source_request_id, source_escrow_id, reason, created_at
+		 ) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(request_id, escrow_id) DO UPDATE SET
+		   source_request_id = excluded.source_request_id,
+		   source_escrow_id = excluded.source_escrow_id,
+		   reason = excluded.reason,
+		   created_at = excluded.created_at`,
+		requestID,
+		escrowID,
+		sourceRequestID,
+		sourceEscrowID,
+		reason,
+		createdAt.Format(time.RFC3339Nano),
+	)
+	return err
 }
 
 func (s *PerfStore) ImportRequestAccounting(sourcePath, escrowID string) (int64, int64, error) {
@@ -260,6 +291,29 @@ func (s *PerfStore) FindAccountingRequest(requestID, escrowID string) (RequestAc
 	if s == nil || requestID == "" || escrowID == "" {
 		return RequestAccountingRecord{}, false, nil
 	}
+	rec, ok, err := s.findAccountingRequestDirect(requestID, escrowID)
+	if err != nil || ok {
+		return rec, ok, err
+	}
+
+	alias, aliasOK, err := s.findAccountingAlias(requestID, escrowID)
+	if err != nil || !aliasOK {
+		return RequestAccountingRecord{}, false, err
+	}
+	rec, ok, err = s.findAccountingRequestDirect(alias.sourceRequestID, alias.sourceEscrowID)
+	if err != nil || !ok {
+		return RequestAccountingRecord{}, ok, err
+	}
+	rec.RequestID = requestID
+	rec.EscrowID = escrowID
+	rec.Outcome = "cached"
+	rec.Decision = alias.reason
+	rec.CachedFromRequestID = alias.sourceRequestID
+	rec.CachedFromEscrowID = alias.sourceEscrowID
+	return rec, true, nil
+}
+
+func (s *PerfStore) findAccountingRequestDirect(requestID, escrowID string) (RequestAccountingRecord, bool, error) {
 	var rec RequestAccountingRecord
 	var startedAt, completedAt string
 	err := s.db.QueryRow(
@@ -284,6 +338,33 @@ func (s *PerfStore) FindAccountingRequest(requestID, escrowID string) (RequestAc
 	}
 	rec.Attempts = attempts
 	return rec, true, nil
+}
+
+type requestAccountingAlias struct {
+	sourceRequestID string
+	sourceEscrowID  string
+	reason          string
+}
+
+func (s *PerfStore) findAccountingAlias(requestID, escrowID string) (requestAccountingAlias, bool, error) {
+	var alias requestAccountingAlias
+	err := s.db.QueryRow(
+		`SELECT source_request_id, source_escrow_id, reason
+		 FROM request_accounting_aliases
+		 WHERE request_id = ? AND escrow_id = ?`,
+		requestID,
+		escrowID,
+	).Scan(&alias.sourceRequestID, &alias.sourceEscrowID, &alias.reason)
+	if err == sql.ErrNoRows {
+		return requestAccountingAlias{}, false, nil
+	}
+	if err != nil {
+		if isSQLiteMissingTable(err) {
+			return requestAccountingAlias{}, false, nil
+		}
+		return requestAccountingAlias{}, false, err
+	}
+	return alias, true, nil
 }
 
 func (s *PerfStore) findAccountingAttempts(requestID, escrowID string) ([]RequestAccountingAttempt, error) {
@@ -352,6 +433,15 @@ func (t *PerfTracker) CompleteAccountingRequest(requestID, escrowID string, winn
 	}
 	if err := t.store.CompleteAccountingRequest(requestID, escrowID, winnerNonce, decision, outcome, completedAt); err != nil {
 		log.Printf("perf: persist request accounting completion: %v", err)
+	}
+}
+
+func (t *PerfTracker) RecordAccountingAlias(requestID, escrowID, sourceRequestID, sourceEscrowID, reason string, createdAt time.Time) {
+	if t == nil || t.store == nil {
+		return
+	}
+	if err := t.store.UpsertAccountingAlias(requestID, escrowID, sourceRequestID, sourceEscrowID, reason, createdAt); err != nil {
+		log.Printf("perf: persist request accounting alias: %v", err)
 	}
 }
 
