@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"encoding/json"
@@ -191,6 +192,27 @@ func TestLogOnboardingStatus(t *testing.T) {
 	registerTestNode(t, s, cm, "node-1")
 	assert.False(t, s.logOnboardingStatus(false))
 	assert.False(t, s.logOnboardingStatus(true))
+}
+
+// TestComputeOnboarding_BrokerFailedIsNotTestFailed guards the fix that
+// TEST_FAILED comes only from the MLnode test, not the broker's
+// operational FAILED status. An inactive node the broker marked FAILED
+// ("no epoch models") with no recorded test result must NOT be shown as
+// TEST_FAILED — that is normal onboarding.
+func TestComputeOnboarding_BrokerFailedIsNotTestFailed(t *testing.T) {
+	s, _, _ := setupTestServer(t)
+	n := broker.NodeResponse{
+		Node: broker.Node{Id: "inactive-node"},
+		State: broker.NodeState{
+			FailureReason: "No epoch models available for this node",
+			CurrentStatus: types.HardwareNodeStatus_FAILED,
+		},
+	}
+	ob := s.computeOnboarding(n)
+	if assert.NotNil(t, ob) {
+		assert.NotEqual(t, MLNodeState_TEST_FAILED, ob.MLNodeState,
+			"inactive node with broker FAILED must not surface as TEST_FAILED")
+	}
 }
 
 // TestGetNodesOnboarding verifies the GET /nodes response shape (the

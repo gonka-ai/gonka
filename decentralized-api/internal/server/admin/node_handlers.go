@@ -89,9 +89,13 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 	// (with the offending model) from the most recent failed result. A
 	// broker-side FAILED status is kept as a secondary signal so genuine
 	// operational failures still surface even without a recent test.
+	// TEST_FAILED is derived ONLY from the MLnode validation test, never
+	// from the broker's operational FAILED status. An inactive
+	// participant's node is driven to INFERENCE and "fails" with
+	// no-epoch-models — that is normal onboarding, not a test failure, so
+	// surfacing it as TEST_FAILED would contradict the proposal.
 	isTesting := false
-	testFailed := n.State.FailureReason != "" &&
-		n.State.CurrentStatus == types.HardwareNodeStatus_FAILED
+	testFailed := false
 	failingModel := ""
 	// validated == the node's most recent test passed. Gates the
 	// reassuring "waiting for PoC" wording per the proposal.
