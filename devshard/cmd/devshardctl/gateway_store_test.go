@@ -454,7 +454,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	require.True(t, statuses[0].Completed)
 }
 
-func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenDisabled(t *testing.T) {
+func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementDisabled(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
