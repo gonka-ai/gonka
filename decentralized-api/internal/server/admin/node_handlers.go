@@ -77,23 +77,45 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 
 	participantState := DeriveParticipantState(active)
 
-	var seconds int64
+	// Use a sentinel (not 0) when the schedule is unknown so downstream
+	// helpers never render a bogus "PoC starting soon (in 0s)".
+	seconds := SecondsUntilPoCUnknown
 	if timing != nil {
 		seconds = timing.SecondsUntilNextPoC
 	}
 
+	// Onboarding test signal is owned by the MLNodeTester, not the
+	// broker: IsTesting while a one-shot test is in flight, TEST_FAILED
+	// (with the offending model) from the most recent failed result. A
+	// broker-side FAILED status is kept as a secondary signal so genuine
+	// operational failures still surface even without a recent test.
+	isTesting := false
 	testFailed := n.State.FailureReason != "" &&
 		n.State.CurrentStatus == types.HardwareNodeStatus_FAILED
+	failingModel := ""
+	if s.tester != nil {
+		nodeId := n.Node.Id
+		isTesting = s.tester.IsRunning(nodeId)
+		if last := s.tester.LastResult(nodeId); last != nil && last.Status == TestFailed {
+			testFailed = true
+			failingModel = last.FailingModel
+		}
+	}
+
 	mlState, _ := DeriveMLNodeState(OnboardingStateInputs{
 		ParticipantActive:   active,
-		IsTesting:           false,
+		IsTesting:           isTesting,
 		TestFailed:          testFailed,
 		SecondsUntilNextPoC: seconds,
 	})
 
+	// Lead with the MLnode-level message when the participant is active
+	// OR when there is a test signal to report — a test in progress or a
+	// failed test matters even before the participant joins the active
+	// set. Otherwise lead with participant-level onboarding guidance.
 	var userMsg, guidance string
-	if active {
-		userMsg = BuildMLNodeMessage(mlState, seconds, "")
+	if active || mlState == MLNodeState_TESTING || mlState == MLNodeState_TEST_FAILED {
+		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel)
 		guidance = BuildParticipantMessage(participantState)
 	} else {
 		userMsg = BuildParticipantMessage(participantState)
@@ -235,6 +257,8 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 		}
 		// sync config file with updated node list
 		syncNodesWithConfig(s.nodeBroker, s.configManager)
+		// Config changed — re-test if PoC is far enough away.
+		s.maybeAutoTest(node.Id)
 		return ctx.JSON(http.StatusOK, node)
 	} else {
 		node, err := s.addNode(newNode)
@@ -273,7 +297,43 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to save node configuration: %v", err))
 	}
 
+	// Auto-test the freshly registered node if PoC is far enough away.
+	s.maybeAutoTest(node.Id)
+
 	return *node, nil
+}
+
+// shouldAutoTest reports whether a node should be auto-tested right now.
+// We only auto-test when the next PoC is more than
+// AutoTestMinSecondsBeforePoC away, so loading models for a validation
+// run never disturbs an imminent PoC. An unknown schedule
+// (SecondsUntilPoCUnknown / negative) returns false.
+func shouldAutoTest(secondsUntilNextPoC int64) bool {
+	return secondsUntilNextPoC > apiconfig.AutoTestMinSecondsBeforePoC
+}
+
+// maybeAutoTest fires a one-shot MLnode validation in the background
+// after a node is registered or its config changes, implementing the
+// proposal's "auto-test a new MLnode when there's >1h until PoC". It is
+// fire-and-forget: the result is recorded on the MLNodeTester and
+// surfaces through GET /nodes via computeOnboarding — nothing is written
+// back to the broker. No-op when the schedule is unknown, PoC is near,
+// or a test for this node is already running.
+func (s *Server) maybeAutoTest(nodeId string) {
+	if s.tester == nil || s.phaseTracker == nil {
+		return
+	}
+	timing := ComputeTiming(s.phaseTracker.GetCurrentEpochState())
+	if timing == nil || !shouldAutoTest(timing.SecondsUntilNextPoC) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if _, err := s.tester.Run(ctx, nodeId); err != nil && !errors.Is(err, ErrTestInProgress) {
+			logging.Debug("auto-test not run", types.Nodes, "node_id", nodeId, "error", err)
+		}
+	}()
 }
 
 // postNodeTest handles POST /admin/v1/nodes/:id/test by running a
