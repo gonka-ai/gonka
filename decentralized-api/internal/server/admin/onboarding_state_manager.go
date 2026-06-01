@@ -25,6 +25,12 @@ const (
 	ParticipantState_ACTIVE_PARTICIPATING ParticipantState = "ACTIVE_PARTICIPATING"
 )
 
+// SecondsUntilPoCUnknown is the sentinel SecondsUntilNextPoC value used
+// when the chain phase tracker has not synced yet. It suppresses
+// timing-based alerting so onboarding never renders a bogus
+// "PoC starting soon (in 0s)" derived from an unknown schedule.
+const SecondsUntilPoCUnknown int64 = -1
+
 // OnboardingStateInputs aggregates everything required to derive
 // onboarding state for one MLnode. All fields are inputs computed
 // elsewhere — none of these are mutated by the helpers in this file.
@@ -54,6 +60,10 @@ func DeriveMLNodeState(in OnboardingStateInputs) (state MLNodeOnboardingState, a
 		return MLNodeState_TEST_FAILED, true
 	case in.IsTesting:
 		return MLNodeState_TESTING, true
+	case in.SecondsUntilNextPoC < 0:
+		// Timing unknown (tracker not synced yet): waiting, but we have
+		// no basis to alert the operator to come online.
+		return MLNodeState_WAITING_FOR_POC, false
 	case in.SecondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds:
 		return MLNodeState_WAITING_FOR_POC, true
 	default:

@@ -6,6 +6,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -148,7 +149,17 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 		_ = client.Stop(stopCtx)
 	}()
 
-	for modelId, modelCfg := range cfg.Models {
+	// Iterate models in a stable (sorted) order so FailingModel and the
+	// per-model load sequence are deterministic across runs — Go map
+	// iteration order is randomized.
+	modelIds := make([]string, 0, len(cfg.Models))
+	for modelId := range cfg.Models {
+		modelIds = append(modelIds, modelId)
+	}
+	sort.Strings(modelIds)
+
+	for _, modelId := range modelIds {
+		modelCfg := cfg.Models[modelId]
 		modelStart := time.Now()
 		if err := client.InferenceUp(ctx, modelId, modelCfg.Args); err != nil {
 			result.Status = TestFailed

@@ -20,6 +20,11 @@ func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, 
 		}
 		return "MLnode test failed: model '" + failingModel + "' could not be loaded"
 	case MLNodeState_WAITING_FOR_POC:
+		if secondsUntilNextPoC < 0 {
+			// Schedule not yet known (chain phase tracker not synced):
+			// avoid an invented countdown like "in 0s".
+			return "Waiting for next PoC cycle (schedule syncing)"
+		}
 		if secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds {
 			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) +
 				") - MLnode must be online now"
@@ -46,7 +51,8 @@ func BuildParticipantMessage(state ParticipantState) string {
 // do automatically.
 func BuildInactiveGuidance(secondsUntilNextPoC int64) string {
 	if secondsUntilNextPoC > apiconfig.AutoTestMinSecondsBeforePoC {
-		return "MLnode will be tested automatically when there is more than 1 hour until next PoC"
+		return "MLnode will be tested automatically when there is more than " +
+			formatShortDuration(apiconfig.AutoTestMinSecondsBeforePoC) + " until next PoC"
 	}
 	return ""
 }

@@ -46,6 +46,12 @@ func TestDeriveMLNodeState(t *testing.T) {
 			wantState: MLNodeState_WAITING_FOR_POC,
 			wantAlert: true,
 		},
+		{
+			name:      "timing unknown -> waiting, no alert",
+			in:        OnboardingStateInputs{SecondsUntilNextPoC: SecondsUntilPoCUnknown},
+			wantState: MLNodeState_WAITING_FOR_POC,
+			wantAlert: false,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,6 +75,10 @@ func TestBuildMLNodeMessage(t *testing.T) {
 	far := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, apiconfig.OnlineAlertLeadSeconds+3600, "")
 	if !strings.Contains(far, "safe to be offline") {
 		t.Errorf("non-alert message missing offline guidance: %q", far)
+	}
+	unknown := BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, SecondsUntilPoCUnknown, "")
+	if !strings.Contains(unknown, "syncing") || strings.Contains(unknown, "0s") {
+		t.Errorf("unknown-timing message should not invent a countdown: %q", unknown)
 	}
 }
 
