@@ -193,6 +193,25 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesWithoutSettlement(t *testing.
 	require.EqualValues(t, 0, settled.Load())
 }
 
+func TestGatewayBalanceExhaustedDeactivatesWhenRotationDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	rt.proxy.redundancy = &Redundancy{}
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Enabled = false
+	})
+	g.attachEscrowChecker(rt)
+
+	rt.proxy.redundancy.onBalanceExhausted()
+
+	require.EqualValues(t, 0, created.Load())
+	require.EqualValues(t, 0, settled.Load())
+	require.False(t, rt.active.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
+}
+
 func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")

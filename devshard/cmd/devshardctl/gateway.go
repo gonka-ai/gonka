@@ -3063,6 +3063,7 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	}
 	rt.proxy.redundancy.onBalanceExhausted = func() {
 		if !g.escrowRotationEnabled() {
+			g.deactivateDevshardByIDWithReason(escrowID, "escrow balance exhausted")
 			return
 		}
 		log.Printf("gateway_replacing_exhausted_escrow escrow=%s", escrowID)
@@ -3153,7 +3154,7 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 		ctx, cancel := context.WithTimeout(context.Background(), autoSettlementAttemptTimeout)
 		defer cancel()
 		if err := g.replaceDepletedEscrow(ctx, id, modelID, reason); err != nil {
-			log.Printf("escrow_depletion_replacement_failed escrow=%s model=%q reason=%s error=%v", id, modelID, reason, err)
+			log.Printf("escrow_depletion_replacement_failed escrow=%s model=%q reason=%q error=%v", id, modelID, reason, err)
 		}
 	}()
 }
@@ -3182,7 +3183,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if err != nil {
 		return fmt.Errorf("create replacement escrow: %w", err)
 	}
-	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%s tx_hash=%s",
+	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%q tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
