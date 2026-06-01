@@ -181,9 +181,10 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 			NewURL:  os.Getenv("DEVSHARD_GATEWAY_DISABLED_NEW_URL"),
 		},
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:      readBoolEnv("DEVSHARD_ESCROW_ROTATION_ENABLED", false),
-			PrePoCBlocks: readInt64Env("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 300),
-			Models:       mustReadEscrowRotationModelsEnv(),
+			Enabled:            readBoolEnv("DEVSHARD_ESCROW_ROTATION_ENABLED", false),
+			SettlementDisabled: readBoolEnv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_DISABLED", false),
+			PrePoCBlocks:       readInt64Env("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 300),
+			Models:             mustReadEscrowRotationModelsEnv(),
 		},
 	}.WithTuningDefaults()
 	return opts

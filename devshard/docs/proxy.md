@@ -31,7 +31,8 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_GATEWAY_DISABLED` | no | `false` | Return a 308 redirect-shaped JSON response for all non-admin requests |
 | - | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | no | `please use ... base url` | Message shown while the gateway is disabled |
 | - | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | no | - | Replacement chat completions URL returned while the gateway is disabled |
-| - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch escrow rotation |
+| - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch and depletion escrow rotation |
+| - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_DISABLED` | no | `false` | Keep automatic escrow creation/deactivation, but skip automatic finalization and on-chain settlement |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
 
@@ -255,7 +256,9 @@ Automatic rotation uses two roles:
   PoC/epoch transition.
 
 When `escrow_rotation.enabled` is true, the gateway watches the chain phase
-snapshot from `DEVSHARD_PUBLIC_API`:
+snapshot from `DEVSHARD_PUBLIC_API` and also replaces escrows that approach the
+low-balance or high-nonce limits. When it is false, both epoch rotation and
+depletion replacement are disabled.
 
 1. During inference phase, when the chain is within `pre_poc_blocks` of PoC,
    the gateway ensures `temp_count` temp escrows exist for the current epoch.
@@ -265,6 +268,11 @@ snapshot from `DEVSHARD_PUBLIC_API`:
    exist for the new epoch.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
    escrows.
+
+Set `escrow_rotation.settlement_disabled` to `true` to keep automatic creation
+and local deactivation while skipping automatic finalization and on-chain
+settlement. Manual settlement through `POST /v1/admin/devshards/{id}/settle`
+remains available.
 
 Rotation settings are persisted in `gateway.db`. After first boot, update them
 through `POST /v1/admin/settings`:
@@ -276,12 +284,15 @@ curl -X POST http://localhost:8080/v1/admin/settings \
   -d '{
     "escrow_rotation": {
       "enabled": true,
-      "private_key_env": "DEVSHARD_PRIVATE_KEY",
-      "amount": 5000000000,
-      "model_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+      "settlement_disabled": false,
       "pre_poc_blocks": 300,
-      "temp_count": 8,
-      "target_count": 16
+      "models": [{
+        "model_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
+        "temp_count": 8,
+        "target_count": 16,
+        "amount": 5000000000,
+        "private_key_env": "DEVSHARD_PRIVATE_KEY"
+      }]
     },
     "tx_gas_limit": 700000
   }'

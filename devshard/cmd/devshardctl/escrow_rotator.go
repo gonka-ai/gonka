@@ -147,11 +147,11 @@ func (g *Gateway) prepareBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gat
 			if devshard.RotationRole == rotationRoleTemp || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			log.Printf("escrow_rotation_settling_regular epoch=%d model=%q escrow=%s", epoch, model.ModelID, devshard.ID)
-			if _, err := gatewaySettleDevshardOnChain(g, context.Background(), devshard.ID, adminSettleEscrowRequest{}); err != nil {
-				log.Printf("escrow_rotation_regular_settle_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
+			settledOnChain, err := g.retireRotatedDevshard(context.Background(), devshard.ID, "escrow rotation regular retired", settings)
+			if err != nil {
+				log.Printf("escrow_rotation_regular_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
-			} else {
+			} else if settledOnChain {
 				settled++
 			}
 		}
@@ -215,11 +215,11 @@ func (g *Gateway) finishBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gate
 			if devshard.RotationRole != rotationRoleTemp || devshard.RotationEpoch > epoch || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			log.Printf("escrow_rotation_settling_temp epoch=%d model=%q temp_epoch=%d escrow=%s", epoch, model.ModelID, devshard.RotationEpoch, devshard.ID)
-			if _, err := gatewaySettleDevshardOnChain(g, context.Background(), devshard.ID, adminSettleEscrowRequest{}); err != nil {
-				log.Printf("escrow_rotation_temp_settle_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
+			settledOnChain, err := g.retireRotatedDevshard(context.Background(), devshard.ID, "escrow rotation temp retired", settings)
+			if err != nil {
+				log.Printf("escrow_rotation_temp_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
-			} else {
+			} else if settledOnChain {
 				settled++
 			}
 		}

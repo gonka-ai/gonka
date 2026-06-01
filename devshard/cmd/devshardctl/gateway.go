@@ -556,6 +556,10 @@ const (
 // escrow is close to exhausting its usable balance or nonce budget.
 func (g *Gateway) checkBalances() {
 	g.mu.Lock()
+	if !g.settings.EscrowRotation.Enabled {
+		g.mu.Unlock()
+		return
+	}
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
@@ -1292,11 +1296,13 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	skipReasonCounts := make(map[string]int)
 	for _, rt := range g.runtimeOrder {
 		if g.runtimeAtNonceLimit(rt) {
-			depletedEscrows = append(depletedEscrows, struct {
-				id     string
-				model  string
-				reason string
-			}{id: rt.id, model: rt.model, reason: "high_nonce"})
+			if g.settings.EscrowRotation.Enabled {
+				depletedEscrows = append(depletedEscrows, struct {
+					id     string
+					model  string
+					reason string
+				}{id: rt.id, model: rt.model, reason: "high_nonce"})
+			}
 			skipReasonCounts["high_nonce"]++
 			continue
 		}
@@ -1847,9 +1853,10 @@ type adminPerfRequest struct {
 }
 
 type adminEscrowRotationRequest struct {
-	Enabled      *bool                          `json:"enabled,omitempty"`
-	PrePoCBlocks *int64                         `json:"pre_poc_blocks,omitempty"`
-	Models       *[]EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled            *bool                          `json:"enabled,omitempty"`
+	SettlementDisabled *bool                          `json:"settlement_disabled,omitempty"`
+	PrePoCBlocks       *int64                         `json:"pre_poc_blocks,omitempty"`
+	Models             *[]EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -2055,9 +2062,10 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": map[string]any{
-			"enabled":        settings.EscrowRotation.Enabled,
-			"pre_poc_blocks": settings.EscrowRotation.PrePoCBlocks,
-			"models":         settings.EscrowRotation.Models,
+			"enabled":             settings.EscrowRotation.Enabled,
+			"settlement_disabled": settings.EscrowRotation.SettlementDisabled,
+			"pre_poc_blocks":      settings.EscrowRotation.PrePoCBlocks,
+			"models":              settings.EscrowRotation.Models,
 		},
 		"chain": map[string]any{
 			"block_height":               snapshot.BlockHeight,
@@ -2172,6 +2180,9 @@ func applyPerfRequest(settings *PerfSettings, req *adminPerfRequest) {
 func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscrowRotationRequest) {
 	if req.Enabled != nil {
 		settings.Enabled = *req.Enabled
+	}
+	if req.SettlementDisabled != nil {
+		settings.SettlementDisabled = *req.SettlementDisabled
 	}
 	if req.PrePoCBlocks != nil {
 		settings.PrePoCBlocks = *req.PrePoCBlocks
@@ -3051,9 +3062,21 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 		}
 	}
 	rt.proxy.redundancy.onBalanceExhausted = func() {
+		if !g.escrowRotationEnabled() {
+			return
+		}
 		log.Printf("gateway_replacing_exhausted_escrow escrow=%s", escrowID)
 		g.scheduleDepletedEscrowReplacement(escrowID, modelID, "balance_exhausted")
 	}
+}
+
+func (g *Gateway) escrowRotationEnabled() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.settings.EscrowRotation.Enabled
 }
 
 // deactivateDevshardByID marks a devshard inactive in memory and persists the change.
@@ -3087,8 +3110,25 @@ func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 	g.scheduleAutoSettlement(id, reason)
 }
 
+func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
+	if settings.EscrowRotation.SettlementDisabled {
+		if g.deactivateDevshardByIDWithReason(id, reason) {
+			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%s", id, reason)
+		}
+		return false, nil
+	}
+	log.Printf("escrow_rotation_settling escrow=%s reason=%s", id, reason)
+	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) {
 	if g == nil {
+		return
+	}
+	if !g.escrowRotationEnabled() {
 		return
 	}
 	g.replenishmentMu.Lock()
@@ -3118,7 +3158,12 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 }
 
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
+	g.mu.Lock()
 	settings := g.settings
+	g.mu.Unlock()
+	if !settings.EscrowRotation.Enabled {
+		return nil
+	}
 	model, ok := replacementModelForDepletedEscrow(settings, modelID)
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
@@ -3138,7 +3183,11 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%s tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
-	g.deactivateAndSettleDevshardByID(id, reason)
+	if settings.EscrowRotation.SettlementDisabled {
+		g.deactivateDevshardByIDWithReason(id, reason)
+	} else {
+		g.deactivateAndSettleDevshardByID(id, reason)
+	}
 	return nil
 }
 
