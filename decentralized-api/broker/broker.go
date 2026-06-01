@@ -1619,12 +1619,16 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 // if that model exists in the current epoch subgroup set.
 func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 	if b.phaseTracker == nil {
-		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: only happens during early startup before the
+		// phase tracker is wired — expected, not an error.
+		logging.Info("Cannot populate node epoch data yet: phase tracker not initialized (normal during startup)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("phase tracker not initialized")
 	}
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || epochState.IsNilOrNotSynced() {
-		logging.Warn("Cannot populate node epoch data: epoch state not synced", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: normal while the node is still syncing the chain
+		// during onboarding — epoch data is populated once it is synced.
+		logging.Info("Cannot populate node epoch data yet: epoch state not synced (normal until the chain syncs)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("epoch state not synced")
 	}
 
