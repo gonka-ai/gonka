@@ -9,15 +9,15 @@ The devshard gateway has two automatic escrow rotation paths:
 
 This change makes `escrow_rotation.enabled` the master switch for both paths. When it is `false`, the gateway no longer performs automatic PoC rotation or low-balance/high-nonce replacement.
 
-It also adds `escrow_rotation.settlement_disabled`. When rotation is enabled but settlement is disabled, the gateway still creates replacement escrows and locally deactivates old escrows, but it skips automatic finalization and on-chain settlement. Manual settlement through the admin API remains available.
+It also adds `escrow_rotation.settlement_enabled`. When rotation is enabled but settlement is not enabled, the gateway still creates replacement escrows and locally deactivates old escrows, but it skips automatic finalization and on-chain settlement. Manual settlement through the admin API remains available.
 
-For first-boot env config, `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=false` is the default and maps to `escrow_rotation.settlement_disabled=true`.
+For first-boot env config, `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=false` is the default and maps to `escrow_rotation.settlement_enabled=false`.
 
 ## Behavior
 
 - `escrow_rotation.enabled=false`: no automatic escrow rotation.
-- `escrow_rotation.enabled=true` and `settlement_disabled=false`: create replacements, deactivate old escrows, and settle them on-chain.
-- `escrow_rotation.enabled=true` and `settlement_disabled=true`: create replacements and deactivate old escrows locally, but do not auto-settle.
+- `escrow_rotation.enabled=true` and `settlement_enabled=true`: create replacements, deactivate old escrows, and settle them on-chain.
+- `escrow_rotation.enabled=true` and `settlement_enabled=false`: create replacements and deactivate old escrows locally, but do not auto-settle.
 
 `GET /v1/admin/settings` shows the persisted gateway settings from `gateway.db`, which are the effective settings after first boot.
 

@@ -90,7 +90,8 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettin
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "m",
 				TempCount:     1,
@@ -181,7 +182,7 @@ func TestGatewayCheckBalancesNoOpWhenRotationDisabled(t *testing.T) {
 func TestGatewayCheckBalancesReplacesAndDeactivatesWithoutSettlement(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
-		settings.EscrowRotation.SettlementDisabled = true
+		settings.EscrowRotation.SettlementEnabled = false
 	})
 
 	g.checkBalances()
@@ -2262,7 +2263,7 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "empty_stream_threshold")
 }
 
-func TestAdminSettingsUpdatesEscrowRotationSettlementDisabled(t *testing.T) {
+func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -2287,7 +2288,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementDisabled(t *testing.T) {
 	}, t.TempDir(), store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
-		strings.NewReader(`{"escrow_rotation":{"settlement_disabled":true}}`))
+		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))
 	rec := httptest.NewRecorder()
 	g.handleAdminSettings(rec, req)
 
@@ -2295,7 +2296,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementDisabled(t *testing.T) {
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.True(t, state.Settings.EscrowRotation.SettlementDisabled)
+	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 }
 
 func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
@@ -2356,7 +2357,7 @@ func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 
 	var body struct {
 		Settings struct {
-			SettlementDisabled bool `json:"settlement_disabled"`
+			SettlementEnabled bool `json:"settlement_enabled"`
 		} `json:"settings"`
 		Chain struct {
 			BlocksToEpochSwitch     int64 `json:"blocks_to_epoch_switch"`
@@ -2365,7 +2366,7 @@ func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 		Latest []GatewayRotationStatus `json:"latest"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.False(t, body.Settings.SettlementDisabled)
+	require.False(t, body.Settings.SettlementEnabled)
 	require.EqualValues(t, 400, body.Chain.BlocksToEpochSwitch)
 	require.EqualValues(t, 100, body.Chain.BlocksUntilNextRotation)
 	require.Len(t, body.Latest, 1)

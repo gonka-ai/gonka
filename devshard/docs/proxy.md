@@ -269,7 +269,7 @@ depletion replacement are disabled.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
    escrows.
 
-Set `escrow_rotation.settlement_disabled` to `true` to keep automatic creation
+Set `escrow_rotation.settlement_enabled` to `false` to keep automatic creation
 and local deactivation while skipping automatic finalization and on-chain
 settlement. Manual settlement through `POST /v1/admin/devshards/{id}/settle`
 remains available.
@@ -284,7 +284,7 @@ curl -X POST http://localhost:8080/v1/admin/settings \
   -d '{
     "escrow_rotation": {
       "enabled": true,
-      "settlement_disabled": false,
+      "settlement_enabled": false,
       "pre_poc_blocks": 300,
       "models": [{
         "model_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",

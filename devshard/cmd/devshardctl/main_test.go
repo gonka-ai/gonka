@@ -15,14 +15,14 @@ func TestBootstrapEscrowRotationSettlementEnabledEnv(t *testing.T) {
 	t.Setenv("DEVSHARDS_JSON", "[]")
 	t.Setenv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED", "true")
 	opts := mustLoadBootstrapOptions(cliFlags{}, t.TempDir())
-	require.False(t, opts.bootstrapSettings.EscrowRotation.SettlementDisabled)
+	require.True(t, opts.bootstrapSettings.EscrowRotation.SettlementEnabled)
 }
 
 func TestBootstrapEscrowRotationSettlementDefaultsDisabled(t *testing.T) {
 	t.Setenv("DEVSHARDS_JSON", "[]")
 	require.NoError(t, os.Unsetenv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED"))
 	opts := mustLoadBootstrapOptions(cliFlags{}, t.TempDir())
-	require.True(t, opts.bootstrapSettings.EscrowRotation.SettlementDisabled)
+	require.False(t, opts.bootstrapSettings.EscrowRotation.SettlementEnabled)
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {

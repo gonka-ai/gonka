@@ -136,9 +136,9 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			UnresponsiveThreshold:        0.8,
 		},
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:            true,
-			SettlementDisabled: true,
-			PrePoCBlocks:       123,
+			Enabled:           true,
+			SettlementEnabled: true,
+			PrePoCBlocks:      123,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Kimi/Rotate",
 				TempCount:     2,
@@ -169,7 +169,7 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.True(t, state.Settings.EscrowRotation.Enabled)
-	require.True(t, state.Settings.EscrowRotation.SettlementDisabled)
+	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 	require.EqualValues(t, 123, state.Settings.EscrowRotation.PrePoCBlocks)
 	require.Equal(t, []EscrowRotationModelSettings{{
 		ModelID:       "Kimi/Rotate",
@@ -278,7 +278,8 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     8,
@@ -347,7 +348,8 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -403,7 +405,8 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -465,8 +468,8 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenDisabled(t 
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:            true,
-			SettlementDisabled: true,
+			Enabled:           true,
+			SettlementEnabled: false,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -533,8 +536,8 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenDisabled(t *tes
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:            true,
-			SettlementDisabled: true,
+			Enabled:           true,
+			SettlementEnabled: false,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -601,7 +604,8 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -673,8 +677,9 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:      true,
-			PrePoCBlocks: 300,
+			Enabled:           true,
+			SettlementEnabled: true,
+			PrePoCBlocks:      300,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,

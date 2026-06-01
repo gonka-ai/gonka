@@ -1853,10 +1853,10 @@ type adminPerfRequest struct {
 }
 
 type adminEscrowRotationRequest struct {
-	Enabled            *bool                          `json:"enabled,omitempty"`
-	SettlementDisabled *bool                          `json:"settlement_disabled,omitempty"`
-	PrePoCBlocks       *int64                         `json:"pre_poc_blocks,omitempty"`
-	Models             *[]EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled           *bool                          `json:"enabled,omitempty"`
+	SettlementEnabled *bool                          `json:"settlement_enabled,omitempty"`
+	PrePoCBlocks      *int64                         `json:"pre_poc_blocks,omitempty"`
+	Models            *[]EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -2062,10 +2062,10 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": map[string]any{
-			"enabled":             settings.EscrowRotation.Enabled,
-			"settlement_disabled": settings.EscrowRotation.SettlementDisabled,
-			"pre_poc_blocks":      settings.EscrowRotation.PrePoCBlocks,
-			"models":              settings.EscrowRotation.Models,
+			"enabled":            settings.EscrowRotation.Enabled,
+			"settlement_enabled": settings.EscrowRotation.SettlementEnabled,
+			"pre_poc_blocks":     settings.EscrowRotation.PrePoCBlocks,
+			"models":             settings.EscrowRotation.Models,
 		},
 		"chain": map[string]any{
 			"block_height":               snapshot.BlockHeight,
@@ -2181,8 +2181,8 @@ func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscr
 	if req.Enabled != nil {
 		settings.Enabled = *req.Enabled
 	}
-	if req.SettlementDisabled != nil {
-		settings.SettlementDisabled = *req.SettlementDisabled
+	if req.SettlementEnabled != nil {
+		settings.SettlementEnabled = *req.SettlementEnabled
 	}
 	if req.PrePoCBlocks != nil {
 		settings.PrePoCBlocks = *req.PrePoCBlocks
@@ -3111,7 +3111,7 @@ func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 }
 
 func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	if settings.EscrowRotation.SettlementDisabled {
+	if !settings.EscrowRotation.SettlementEnabled {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%s", id, reason)
 		}
@@ -3183,7 +3183,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%s tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
-	if settings.EscrowRotation.SettlementDisabled {
+	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)

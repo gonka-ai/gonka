@@ -81,10 +81,10 @@ type PerfSettings struct {
 }
 
 type EscrowRotationSettings struct {
-	Enabled            bool                          `json:"enabled"`
-	SettlementDisabled bool                          `json:"settlement_disabled"`
-	PrePoCBlocks       int64                         `json:"pre_poc_blocks"`
-	Models             []EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled           bool                          `json:"enabled"`
+	SettlementEnabled bool                          `json:"settlement_enabled"`
+	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
+	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 type EscrowRotationModelSettings struct {
@@ -552,7 +552,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		return GatewayState{}, false, fmt.Errorf("load gateway settings: %w", err)
 	}
 	state.Settings.EscrowRotation.Enabled = rotationEnabled != 0
-	state.Settings.EscrowRotation.SettlementDisabled = rotationSettlementEnabled == 0
+	state.Settings.EscrowRotation.SettlementEnabled = rotationSettlementEnabled != 0
 	if strings.TrimSpace(rotationModelsJSON) != "" {
 		if err := json.Unmarshal([]byte(rotationModelsJSON), &state.Settings.EscrowRotation.Models); err != nil {
 			return GatewayState{}, false, fmt.Errorf("load gateway rotation models: %w", err)
@@ -689,7 +689,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
-		gatewayBoolToInt(!settings.EscrowRotation.SettlementDisabled),
+		gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
 		settings.EscrowRotation.PrePoCBlocks,
 		mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
 		gatewayBoolToInt(settings.Disabled.Enabled),
@@ -798,7 +798,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
-		gatewayBoolToInt(!settings.EscrowRotation.SettlementDisabled),
+		gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
 		settings.EscrowRotation.PrePoCBlocks,
 		mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
 		gatewayBoolToInt(settings.Disabled.Enabled),
