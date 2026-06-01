@@ -35,12 +35,20 @@ const (
 // Run blocks until completion (a few seconds at most) or until ctx is
 // cancelled.
 func Run(ctx context.Context) (Report, error) {
-	// Disable the production "enforced model id" gate — selfcheck uses
-	// a synthetic model id and otherwise registration would be
-	// rejected. Tests in broker_test.go set this same env var.
-	if os.Getenv("ENFORCED_MODEL_ID") == "" {
-		os.Setenv("ENFORCED_MODEL_ID", "disabled")
-	}
+	// Disable the production "enforced model id" gate for the duration
+	// of this run — selfcheck uses a synthetic model id that the gate
+	// would otherwise reject. Restore the caller's prior value on return
+	// so we don't leak process-wide state into tests or programmatic
+	// callers in the same process.
+	prevEnforced, hadEnforced := os.LookupEnv("ENFORCED_MODEL_ID")
+	os.Setenv("ENFORCED_MODEL_ID", "disabled")
+	defer func() {
+		if hadEnforced {
+			os.Setenv("ENFORCED_MODEL_ID", prevEnforced)
+		} else {
+			os.Unsetenv("ENFORCED_MODEL_ID")
+		}
+	}()
 
 	bridge := &MockChainBridge{
 		ParticipantAddress: selfParticipantAddress,
@@ -126,7 +134,41 @@ func Run(ctx context.Context) (Report, error) {
 	epochPopulated := ev.AssertEpochModelsPopulated()
 	hwSubmitted := ev.AssertHardwareDiffSubmitted()
 
-	return ev.Combine(registered, epochPopulated, hwSubmitted), nil
+	// Drive a full PoC lifecycle and assert the broker reacts to each
+	// phase the way the production OnNewBlockDispatcher would. We step
+	// the synthetic chain through PoCGenerate -> PoCValidate -> back to
+	// Inference, queueing the same broker commands a real block would,
+	// and observe the broker's intended-state decisions (no real MLnode
+	// needed). This is what "PoC lifecycle working" means at the broker
+	// layer — the part reviewers asked us to verify in isolation.
+	ec := types.NewEpochContext(*epoch, *phaseParams.Params.EpochParams)
+
+	// PoC generation phase.
+	driver.PushBlock(ec.StartOfPoC())
+	if err := driver.TriggerStartPoC(); err != nil {
+		return Report{}, fmt.Errorf("TriggerStartPoC: %w", err)
+	}
+	pocGenerate := ev.AssertNodeIntendedStatus("poc-generate",
+		types.HardwareNodeStatus_POC, broker.PocStatusGenerating)
+
+	// PoC validation phase.
+	driver.PushBlock(ec.StartOfPoCValidation())
+	if err := driver.TriggerInitValidate(); err != nil {
+		return Report{}, fmt.Errorf("TriggerInitValidate: %w", err)
+	}
+	pocValidate := ev.AssertNodeIntendedStatus("poc-validate",
+		types.HardwareNodeStatus_POC, broker.PocStatusValidating)
+
+	// Back to inference once validation is over.
+	driver.PushBlock(ec.EndOfPoCValidation())
+	if err := driver.TriggerInferenceUpAll(); err != nil {
+		return Report{}, fmt.Errorf("TriggerInferenceUpAll: %w", err)
+	}
+	inferenceResume := ev.AssertNodeIntendedStatus("inference-resumed",
+		types.HardwareNodeStatus_INFERENCE, "")
+
+	return ev.Combine(registered, epochPopulated, hwSubmitted,
+		pocGenerate, pocValidate, inferenceResume), nil
 }
 
 func waitOrCtx(ctx context.Context, d time.Duration) error {

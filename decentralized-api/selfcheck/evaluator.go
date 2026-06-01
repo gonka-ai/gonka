@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // CheckResult is the outcome of one assertion stage.
@@ -122,6 +124,40 @@ func (e *Evaluator) AssertHardwareDiffSubmitted() CheckResult {
 	return CheckResult{
 		Name: "hardware-diff-submitted", Pass: false,
 		Details: "broker did not submit hardware diff within timeout",
+	}
+}
+
+// AssertNodeIntendedStatus waits until the broker has driven the
+// synthetic node to the expected intended status. This is the core
+// PoC-lifecycle check: it proves the broker reacted to a phase
+// transition by setting the node's target state, without needing a
+// real MLnode. wantPoC is only checked when non-empty (it distinguishes
+// the GENERATING vs VALIDATING sub-states, both of which map to the
+// POC hardware status).
+func (e *Evaluator) AssertNodeIntendedStatus(name string, wantHW types.HardwareNodeStatus, wantPoC broker.PocStatus) CheckResult {
+	deadline := time.Now().Add(e.Timeout)
+	var lastHW types.HardwareNodeStatus
+	var lastPoC broker.PocStatus
+	for time.Now().Before(deadline) {
+		nodes, err := e.Broker.GetNodes()
+		if err != nil {
+			return CheckResult{Name: name, Pass: false, Details: err.Error()}
+		}
+		for _, n := range nodes {
+			if n.Node.Id != e.NodeId {
+				continue
+			}
+			lastHW, lastPoC = n.State.IntendedStatus, n.State.PocIntendedStatus
+			if lastHW == wantHW && (wantPoC == "" || lastPoC == wantPoC) {
+				return CheckResult{Name: name, Pass: true}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return CheckResult{
+		Name: name, Pass: false,
+		Details: fmt.Sprintf("intended status never reached %v/%v within timeout (last seen %v/%v)",
+			wantHW, wantPoC, lastHW, lastPoC),
 	}
 }
 
