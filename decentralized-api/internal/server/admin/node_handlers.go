@@ -299,6 +299,8 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 
 	// Auto-test the freshly registered node if PoC is far enough away.
 	s.maybeAutoTest(node.Id)
+	// Make "waiting for PoC" the visible log right after registration.
+	s.logOnboardingStatus(false)
 
 	return *node, nil
 }

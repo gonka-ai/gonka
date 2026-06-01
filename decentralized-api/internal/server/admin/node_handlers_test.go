@@ -176,6 +176,23 @@ func TestMaybeAutoTest(t *testing.T) {
 	})
 }
 
+// TestLogOnboardingStatus covers the onboarding status logger's branching:
+// no-op (returns prevActive) when no node is configured, and reports
+// inactive (false) while a configured node's participant isn't active.
+func TestLogOnboardingStatus(t *testing.T) {
+	s, cm, _ := setupTestServer(t)
+
+	// No nodes configured yet -> no-op, prevActive passes through.
+	assert.True(t, s.logOnboardingStatus(true))
+	assert.False(t, s.logOnboardingStatus(false))
+
+	// With a configured node and an inactive participant (activityTracker
+	// nil in the test server), it reports inactive and logs "waiting".
+	registerTestNode(t, s, cm, "node-1")
+	assert.False(t, s.logOnboardingStatus(false))
+	assert.False(t, s.logOnboardingStatus(true))
+}
+
 // TestGetNodesOnboarding verifies the GET /nodes response shape (the
 // existing node fields plus the new optional onboarding envelope) and
 // that a failed manual test surfaces as TEST_FAILED — the gap #1 wiring

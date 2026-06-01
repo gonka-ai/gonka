@@ -317,6 +317,9 @@ func main() {
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
 	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, chainPhaseTracker, activityTracker, &mlnodeclient.HttpClientFactory{})
 	adminServer.Start(addr)
+	// Surface a periodic "waiting for PoC" status while onboarding so the
+	// most visible log during the wait is the onboarding state.
+	adminServer.StartOnboardingStatusLogger(ctx, 5*time.Minute)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
 	if nmGrpcPort == 0 {
