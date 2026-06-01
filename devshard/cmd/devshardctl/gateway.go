@@ -3191,7 +3191,6 @@ func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, 
 	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
 		return false, err
 	}
-	}
 	return true, nil
 }
 
