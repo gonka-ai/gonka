@@ -60,7 +60,7 @@ func pickerEnv(t *testing.T) (*sessionPicker, *user.Session, *fakeGhost) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 	return p, env.session, ghost
@@ -96,7 +96,7 @@ func TestPicker_PrepareErrorRepliesToChosenRequest(t *testing.T) {
 	env := setupTestProxyWithBalance(t, 3, nil, true, 100)
 	env.proxy.redundancy.picker.stop()
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -115,7 +115,7 @@ func TestPicker_PrepareErrorWhileGhostingDrainsQueue(t *testing.T) {
 	env := setupTestProxyWithBalance(t, 3, nil, true, 0)
 	env.proxy.redundancy.picker.stop()
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -216,7 +216,7 @@ func TestPicker_DropsCanceledRequest(t *testing.T) {
 func TestPicker_StopRejectsSubmissions(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
-	p := newSessionPicker(env.session, "llama", (&fakeGhost{}).dispatch, nil)
+	p := newSessionPicker(env.session, "llama", (&fakeGhost{}).dispatch, nil, nil)
 	p.start()
 
 	p.stop()
@@ -329,7 +329,7 @@ func TestPicker_PoCFlipDropsQueuedRequest(t *testing.T) {
 	env.proxy.redundancy.picker.stop()
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -390,7 +390,7 @@ func TestPicker_MultiSlotParticipantTreatedAsOne(t *testing.T) {
 	})
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -426,7 +426,7 @@ func TestPicker_AllSlotsOneParticipantExhaustsImmediately(t *testing.T) {
 	env.session.SetParticipantKeys([]string{soleKey, soleKey, soleKey})
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -468,7 +468,7 @@ func TestPicker_ThrottledHost_BurnsGhostNoSend(t *testing.T) {
 	checker := func(key string) bool { return throttled[key] }
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -486,6 +486,65 @@ func TestPicker_ThrottledHost_BurnsGhostNoSend(t *testing.T) {
 	// participant_throttled_no_send reason string so operators can
 	// distinguish it in logs from PoC / stale-exclude burns.
 	require.Contains(t, ghost.reasons, ghostThrottled.reason())
+}
+
+func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	blockedKey := env.session.HostParticipantKey(1)
+	checker := func(key string, _ user.InferenceParams) (string, bool) {
+		if key == blockedKey {
+			return "context_limit_exceeded", true
+		}
+		return "", false
+	}
+
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, checker)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.NoError(t, res.err)
+	require.False(t, res.isProbe)
+	require.NotEqual(t, 1, res.prepared.HostIdx(),
+		"real request must skip a known capability-incompatible host while other hosts remain")
+	require.GreaterOrEqual(t, ghost.kindCount(ghostCapability), 1)
+	require.Contains(t, ghost.reasons, ghostCapability.reason())
+}
+
+func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	key0 := env.session.HostParticipantKey(0)
+	key1 := env.session.HostParticipantKey(1)
+	key2 := env.session.HostParticipantKey(2)
+	blocked := map[string]bool{key0: true, key2: true}
+	checker := func(key string, _ user.InferenceParams) (string, bool) {
+		if blocked[key] {
+			return "context_limit_exceeded", true
+		}
+		return "", false
+	}
+
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, checker)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	req.excludeParticipants = map[string]bool{key1: true}
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.ErrorIs(t, res.err, ErrNoAvailableHost)
+	require.Equal(t, 0, ghost.kindCount(ghostCapability),
+		"exhaustion sweep should drop before burning known-incompatible hosts")
 }
 
 // TestPicker_PoCWinsOverThrottle: when a host is BOTH PoC-required
@@ -524,7 +583,7 @@ func TestPicker_PoCWinsOverThrottle(t *testing.T) {
 	checker := func(key string) bool { return throttled[key] }
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -567,7 +626,7 @@ func TestPicker_PoCFilteringIsModelAware(t *testing.T) {
 	env.proxy.redundancy.picker.stop()
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
 	p.start()
 	t.Cleanup(p.stop)
 
@@ -623,7 +682,7 @@ func TestPicker_AllRemainingHostsThrottled_DropsExhausted(t *testing.T) {
 	checker := func(key string) bool { return throttled[key] }
 
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker)
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker, nil)
 	p.start()
 	t.Cleanup(p.stop)
 

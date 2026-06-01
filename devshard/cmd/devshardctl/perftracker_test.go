@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"devshard/user"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +56,32 @@ func TestParticipantFailureThreshold(t *testing.T) {
 
 	perf.Record(RequestSample{HostIdx: 0, ParticipantKey: key, Responsive: false, SendTime: now})
 	require.True(t, perf.ParticipantFailureThresholdExceeded(key), "2 failures crosses both short and 100-sample thresholds")
+}
+
+func TestPerfTrackerHostCannotServeRequestUsesCapabilities(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	perf.RecordToolUnsupported("p1")
+	perf.RecordContextLimit("p2", 1000)
+
+	toolParams := user.InferenceParams{Prompt: []byte(`{"messages":[{"role":"user","content":"x"}],"tools":[{"type":"function"}],"tool_choice":"auto"}`), InputLength: 10}
+	reason, blocked := perf.HostCannotServeRequest("p1", toolParams)
+	require.True(t, blocked)
+	require.Equal(t, "tool_choice_unsupported", reason)
+
+	// Do not guess from gateway-estimated input length or max_tokens. Context
+	// routing only activates after this request gets the upstream total hint.
+	unhintedParams := user.InferenceParams{Prompt: []byte(`{"messages":[{"role":"user","content":"x"}]}`), InputLength: 900, MaxTokens: 101}
+	_, blocked = perf.HostCannotServeRequest("p2", unhintedParams)
+	require.False(t, blocked)
+
+	smallParams := user.InferenceParams{Prompt: []byte(`{"messages":[{"role":"user","content":"x"}]}`), ContextTotalHint: 1000}
+	_, blocked = perf.HostCannotServeRequest("p2", smallParams)
+	require.False(t, blocked)
+
+	hintedParams := user.InferenceParams{Prompt: []byte(`{"messages":[{"role":"user","content":"x"}]}`), InputLength: 10, MaxTokens: 10, ContextTotalHint: 1001}
+	reason, blocked = perf.HostCannotServeRequest("p2", hintedParams)
+	require.True(t, blocked)
+	require.Equal(t, "context_limit_exceeded", reason)
 }
 
 func TestPerfTrackerFirstTokenFallbackUsesP95AfterFullBucket(t *testing.T) {

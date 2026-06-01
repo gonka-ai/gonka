@@ -200,12 +200,13 @@ func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream
 
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
-	Model       string
-	Prompt      []byte
-	InputLength uint64
-	MaxTokens   uint64
-	StartedAt   int64
-	Stream      bool
+	Model            string
+	Prompt           []byte
+	InputLength      uint64
+	MaxTokens        uint64
+	ContextTotalHint uint64
+	StartedAt        int64
+	Stream           bool
 }
 
 // Session manages the user side of the devshard protocol.

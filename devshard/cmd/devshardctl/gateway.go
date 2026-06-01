@@ -1077,6 +1077,11 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	fields = append(fields, g.apiKeyLogFields(r)...)
 	logRequestStage(ctx, "gateway_request_received", fields...)
 	requestModel := firstNonEmpty(model, g.settings.DefaultModel)
+	if err := g.validatePooledRequestedModel(requestModel); err != nil {
+		logRequestStage(ctx, "gateway_model_rejected", "model", requestModel, "error", err)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
+		return
+	}
 	if err := g.modelAccessError(r, requestModel); err != nil {
 		logRequestStage(ctx, "gateway_model_temporarily_unavailable", "model", requestModel, "error", err)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
@@ -1087,6 +1092,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	stream := chatRequestStream(body)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
+		g.recordCachedAccountingAlias(ctx, entry)
 		serveCachedChatResponse(w, r, entry)
 		return
 	}
@@ -1120,11 +1126,31 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	logRequestStage(ctx, "gateway_runtime_selected", "escrow", rt.id)
 
 	if capture := g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r); capture != nil {
-		if entry, ok := capture.cacheEntry(rt.id, stream); ok {
+		sourceRequestID, _ := requestLogFromContext(ctx)
+		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID); ok {
 			g.chatCache.Set(cacheKey, entry, time.Now())
 			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
 		}
 	}
+}
+
+func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
+	requestModel = strings.TrimSpace(requestModel)
+	if g == nil || requestModel == "" {
+		return nil
+	}
+	g.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	g.mu.Unlock()
+	if len(runtimes) == 0 {
+		return nil
+	}
+	for _, rt := range runtimes {
+		if rt != nil && rt.model == requestModel {
+			return nil
+		}
+	}
+	return &UnsupportedModelError{Model: requestModel, Supported: supportedModels(runtimes)}
 }
 
 func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
@@ -1176,6 +1202,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		stream := chatRequestStream(body)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
+			g.recordCachedAccountingAlias(ctx, entry)
 			serveCachedChatResponse(w, r, entry)
 			return
 		}
@@ -1199,7 +1226,8 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		logRequestStage(ctx, "gateway_devshard_runtime_selected", "escrow", devshardID, "input_tokens", inputTokens)
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
-			if entry, ok := capture.cacheEntry(rt.id, stream); ok {
+			sourceRequestID, _ := requestLogFromContext(ctx)
+			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID); ok {
 				g.chatCache.Set(cacheKey, entry, time.Now())
 				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
 			}
@@ -1276,6 +1304,27 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	capture := &gatewayChatCacheCapture{ResponseWriter: w}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
+}
+
+func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedChatResponse) {
+	requestID, ok := requestLogFromContext(ctx)
+	if !ok || requestID == "" || entry.SourceRequestID == "" || entry.EscrowID == "" {
+		return
+	}
+	perf := g.perf
+	if perf == nil {
+		g.mu.Lock()
+		rt := g.runtimes[entry.EscrowID]
+		g.mu.Unlock()
+		if rt != nil && rt.proxy != nil {
+			perf = rt.proxy.perf
+		}
+	}
+	if perf == nil {
+		return
+	}
+	perf.RecordAccountingAlias(requestID, entry.EscrowID, entry.SourceRequestID, entry.EscrowID, "cache_hit", time.Now())
+	logRequestStage(ctx, "gateway_cache_accounting_alias", "escrow", entry.EscrowID, "source_request_id", entry.SourceRequestID)
 }
 
 func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64) (*devshardRuntime, error) {
@@ -1829,22 +1878,25 @@ type adminParticipantThrottleRequest struct {
 }
 
 type adminRedundancyRequest struct {
-	ReceiptTimeoutMS             *int64   `json:"receipt_timeout_ms,omitempty"`
-	FirstTokenTimeoutFloorMS     *int64   `json:"first_token_timeout_floor_ms,omitempty"`
-	PerInputTokenFirstTokenLagMS *int64   `json:"per_input_token_first_token_lag_ms,omitempty"`
-	InterChunkStallTimeoutMS     *int64   `json:"inter_chunk_stall_timeout_ms,omitempty"`
-	NonStreamResponseFloorMS     *int64   `json:"non_stream_response_floor_ms,omitempty"`
-	PerInputTokenResponseLagMS   *int64   `json:"per_input_token_response_lag_ms,omitempty"`
-	SecondaryWaitAfterWinnerMS   *int64   `json:"secondary_wait_after_winner_ms,omitempty"`
-	ParallelAdvantageThreshold   *float64 `json:"parallel_advantage_threshold,omitempty"`
-	UnresponsiveThreshold        *float64 `json:"unresponsive_threshold,omitempty"`
-	SpeedPolicy                  *string  `json:"speed_policy,omitempty"`
-	PairwiseBudgetPercentile     *float64 `json:"pairwise_budget_percentile,omitempty"`
-	PairwiseMaxProactiveAttempts *int     `json:"pairwise_max_proactive_attempts,omitempty"`
-	PairwiseMinDirectComparisons *int     `json:"pairwise_min_direct_comparisons,omitempty"`
-	PairwiseWinnerHoldMS         *int64   `json:"pairwise_winner_hold_ms,omitempty"`
-	PairwiseWinnerHoldMinSpeedup *float64 `json:"pairwise_winner_hold_min_speedup,omitempty"`
-	PairwiseWinnerHoldMinSamples *int     `json:"pairwise_winner_hold_min_samples,omitempty"`
+	ReceiptTimeoutMS              *int64   `json:"receipt_timeout_ms,omitempty"`
+	FirstTokenTimeoutFloorMS      *int64   `json:"first_token_timeout_floor_ms,omitempty"`
+	PerInputTokenFirstTokenLagMS  *int64   `json:"per_input_token_first_token_lag_ms,omitempty"`
+	InterChunkStallTimeoutMS      *int64   `json:"inter_chunk_stall_timeout_ms,omitempty"`
+	StreamingAttemptHardTimeoutMS *int64   `json:"streaming_attempt_hard_timeout_ms,omitempty"`
+	NonStreamResponseFloorMS      *int64   `json:"non_stream_response_floor_ms,omitempty"`
+	NonStreamNoContentTimeoutMS   *int64   `json:"non_stream_no_content_timeout_ms,omitempty"`
+	NonStreamMaxAttemptWaitMS     *int64   `json:"non_stream_max_attempt_wait_ms,omitempty"`
+	PerInputTokenResponseLagMS    *int64   `json:"per_input_token_response_lag_ms,omitempty"`
+	SecondaryWaitAfterWinnerMS    *int64   `json:"secondary_wait_after_winner_ms,omitempty"`
+	ParallelAdvantageThreshold    *float64 `json:"parallel_advantage_threshold,omitempty"`
+	UnresponsiveThreshold         *float64 `json:"unresponsive_threshold,omitempty"`
+	SpeedPolicy                   *string  `json:"speed_policy,omitempty"`
+	PairwiseBudgetPercentile      *float64 `json:"pairwise_budget_percentile,omitempty"`
+	PairwiseMaxProactiveAttempts  *int     `json:"pairwise_max_proactive_attempts,omitempty"`
+	PairwiseMinDirectComparisons  *int     `json:"pairwise_min_direct_comparisons,omitempty"`
+	PairwiseWinnerHoldMS          *int64   `json:"pairwise_winner_hold_ms,omitempty"`
+	PairwiseWinnerHoldMinSpeedup  *float64 `json:"pairwise_winner_hold_min_speedup,omitempty"`
+	PairwiseWinnerHoldMinSamples  *int     `json:"pairwise_winner_hold_min_samples,omitempty"`
 }
 
 type adminPerfRequest struct {
@@ -2130,8 +2182,17 @@ func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRe
 	if req.InterChunkStallTimeoutMS != nil {
 		settings.InterChunkStallTimeoutMS = *req.InterChunkStallTimeoutMS
 	}
+	if req.StreamingAttemptHardTimeoutMS != nil {
+		settings.StreamingAttemptHardTimeoutMS = *req.StreamingAttemptHardTimeoutMS
+	}
 	if req.NonStreamResponseFloorMS != nil {
 		settings.NonStreamResponseFloorMS = *req.NonStreamResponseFloorMS
+	}
+	if req.NonStreamNoContentTimeoutMS != nil {
+		settings.NonStreamNoContentTimeoutMS = *req.NonStreamNoContentTimeoutMS
+	}
+	if req.NonStreamMaxAttemptWaitMS != nil {
+		settings.NonStreamMaxAttemptWaitMS = *req.NonStreamMaxAttemptWaitMS
 	}
 	if req.PerInputTokenResponseLagMS != nil {
 		settings.PerInputTokenResponseLagMS = *req.PerInputTokenResponseLagMS
@@ -2236,8 +2297,16 @@ func validateGatewaySettings(settings GatewaySettings) error {
 		return fmt.Errorf("redundancy.per_input_token_first_token_lag_ms must be >= 0")
 	case r.InterChunkStallTimeoutMS < 0:
 		return fmt.Errorf("redundancy.inter_chunk_stall_timeout_ms must be >= 0")
+	case r.StreamingAttemptHardTimeoutMS <= 0:
+		return fmt.Errorf("redundancy.streaming_attempt_hard_timeout_ms must be > 0")
 	case r.NonStreamResponseFloorMS <= 0:
 		return fmt.Errorf("redundancy.non_stream_response_floor_ms must be > 0")
+	case r.NonStreamNoContentTimeoutMS <= 0:
+		return fmt.Errorf("redundancy.non_stream_no_content_timeout_ms must be > 0")
+	case r.NonStreamMaxAttemptWaitMS <= 0:
+		return fmt.Errorf("redundancy.non_stream_max_attempt_wait_ms must be > 0")
+	case r.NonStreamMaxAttemptWaitMS < r.NonStreamNoContentTimeoutMS:
+		return fmt.Errorf("redundancy.non_stream_max_attempt_wait_ms must be >= non_stream_no_content_timeout_ms")
 	case r.PerInputTokenResponseLagMS < 0:
 		return fmt.Errorf("redundancy.per_input_token_response_lag_ms must be >= 0")
 	case r.SecondaryWaitAfterWinnerMS <= 0:

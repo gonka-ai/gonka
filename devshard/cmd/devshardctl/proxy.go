@@ -562,6 +562,7 @@ func (p *Proxy) handleDebugPerf(w http.ResponseWriter, r *http.Request) {
 		"requests":               requests,
 		"pairwise":               p.perf.PairwiseSummaries(),
 		"context_limits":         p.perf.ContextLimits(),
+		"tool_unsupported":       p.perf.ToolUnsupported(),
 		"receipt_timeout_ms":     ReceiptTimeout.Milliseconds(),
 		"advantage_threshold":    ParallelAdvantageThreshold,
 		"unresponsive_threshold": UnresponsiveThreshold,
@@ -684,17 +685,19 @@ type requestAccountingAttemptResponse struct {
 }
 
 type requestAccountingResponse struct {
-	RequestID   string                             `json:"request_id"`
-	EscrowID    string                             `json:"escrow_id"`
-	Model       string                             `json:"model,omitempty"`
-	Outcome     string                             `json:"outcome"`
-	Decision    string                             `json:"decision,omitempty"`
-	WinnerNonce uint64                             `json:"winner_nonce,omitempty"`
-	Winner      *requestAccountingAttemptResponse  `json:"winner,omitempty"`
-	Attempts    []requestAccountingAttemptResponse `json:"attempts"`
-	Cost        requestAccountingCostResponse      `json:"cost"`
-	StartedAt   string                             `json:"started_at,omitempty"`
-	CompletedAt string                             `json:"completed_at,omitempty"`
+	RequestID           string                             `json:"request_id"`
+	EscrowID            string                             `json:"escrow_id"`
+	Model               string                             `json:"model,omitempty"`
+	Outcome             string                             `json:"outcome"`
+	Decision            string                             `json:"decision,omitempty"`
+	WinnerNonce         uint64                             `json:"winner_nonce,omitempty"`
+	CachedFromRequestID string                             `json:"cached_from_request_id,omitempty"`
+	CachedFromEscrowID  string                             `json:"cached_from_escrow_id,omitempty"`
+	Winner              *requestAccountingAttemptResponse  `json:"winner,omitempty"`
+	Attempts            []requestAccountingAttemptResponse `json:"attempts"`
+	Cost                requestAccountingCostResponse      `json:"cost"`
+	StartedAt           string                             `json:"started_at,omitempty"`
+	CompletedAt         string                             `json:"completed_at,omitempty"`
 }
 
 func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) {
@@ -723,13 +726,15 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 
 	stateSnapshot := p.sm.SnapshotState()
 	resp := requestAccountingResponse{
-		RequestID:   rec.RequestID,
-		EscrowID:    rec.EscrowID,
-		Model:       rec.Model,
-		Outcome:     rec.Outcome,
-		Decision:    rec.Decision,
-		WinnerNonce: rec.WinnerNonce,
-		Attempts:    make([]requestAccountingAttemptResponse, 0, len(rec.Attempts)),
+		RequestID:           rec.RequestID,
+		EscrowID:            rec.EscrowID,
+		Model:               rec.Model,
+		Outcome:             rec.Outcome,
+		Decision:            rec.Decision,
+		WinnerNonce:         rec.WinnerNonce,
+		CachedFromRequestID: rec.CachedFromRequestID,
+		CachedFromEscrowID:  rec.CachedFromEscrowID,
+		Attempts:            make([]requestAccountingAttemptResponse, 0, len(rec.Attempts)),
 	}
 	if !rec.StartedAt.IsZero() {
 		resp.StartedAt = rec.StartedAt.Format(time.RFC3339Nano)

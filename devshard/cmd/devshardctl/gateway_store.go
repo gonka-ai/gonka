@@ -57,22 +57,25 @@ type ParticipantThrottleSettings struct {
 }
 
 type RedundancySettings struct {
-	ReceiptTimeoutMS             int64   `json:"receipt_timeout_ms"`
-	FirstTokenTimeoutFloorMS     int64   `json:"first_token_timeout_floor_ms"`
-	PerInputTokenFirstTokenLagMS int64   `json:"per_input_token_first_token_lag_ms"`
-	InterChunkStallTimeoutMS     int64   `json:"inter_chunk_stall_timeout_ms"`
-	NonStreamResponseFloorMS     int64   `json:"non_stream_response_floor_ms"`
-	PerInputTokenResponseLagMS   int64   `json:"per_input_token_response_lag_ms"`
-	SecondaryWaitAfterWinnerMS   int64   `json:"secondary_wait_after_winner_ms"`
-	ParallelAdvantageThreshold   float64 `json:"parallel_advantage_threshold"`
-	UnresponsiveThreshold        float64 `json:"unresponsive_threshold"`
-	SpeedPolicy                  string  `json:"speed_policy"`
-	PairwiseBudgetPercentile     float64 `json:"pairwise_budget_percentile"`
-	PairwiseMaxProactiveAttempts int     `json:"pairwise_max_proactive_attempts"`
-	PairwiseMinDirectComparisons int     `json:"pairwise_min_direct_comparisons"`
-	PairwiseWinnerHoldMS         int64   `json:"pairwise_winner_hold_ms"`
-	PairwiseWinnerHoldMinSpeedup float64 `json:"pairwise_winner_hold_min_speedup"`
-	PairwiseWinnerHoldMinSamples int     `json:"pairwise_winner_hold_min_samples"`
+	ReceiptTimeoutMS              int64   `json:"receipt_timeout_ms"`
+	FirstTokenTimeoutFloorMS      int64   `json:"first_token_timeout_floor_ms"`
+	PerInputTokenFirstTokenLagMS  int64   `json:"per_input_token_first_token_lag_ms"`
+	InterChunkStallTimeoutMS      int64   `json:"inter_chunk_stall_timeout_ms"`
+	StreamingAttemptHardTimeoutMS int64   `json:"streaming_attempt_hard_timeout_ms"`
+	NonStreamResponseFloorMS      int64   `json:"non_stream_response_floor_ms"`
+	NonStreamNoContentTimeoutMS   int64   `json:"non_stream_no_content_timeout_ms"`
+	NonStreamMaxAttemptWaitMS     int64   `json:"non_stream_max_attempt_wait_ms"`
+	PerInputTokenResponseLagMS    int64   `json:"per_input_token_response_lag_ms"`
+	SecondaryWaitAfterWinnerMS    int64   `json:"secondary_wait_after_winner_ms"`
+	ParallelAdvantageThreshold    float64 `json:"parallel_advantage_threshold"`
+	UnresponsiveThreshold         float64 `json:"unresponsive_threshold"`
+	SpeedPolicy                   string  `json:"speed_policy"`
+	PairwiseBudgetPercentile      float64 `json:"pairwise_budget_percentile"`
+	PairwiseMaxProactiveAttempts  int     `json:"pairwise_max_proactive_attempts"`
+	PairwiseMinDirectComparisons  int     `json:"pairwise_min_direct_comparisons"`
+	PairwiseWinnerHoldMS          int64   `json:"pairwise_winner_hold_ms"`
+	PairwiseWinnerHoldMinSpeedup  float64 `json:"pairwise_winner_hold_min_speedup"`
+	PairwiseWinnerHoldMinSamples  int     `json:"pairwise_winner_hold_min_samples"`
 }
 
 type PerfSettings struct {
@@ -130,6 +133,15 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 	}
 	if s.Redundancy == (RedundancySettings{}) {
 		s.Redundancy = redundancyDefaults
+	}
+	if s.Redundancy.StreamingAttemptHardTimeoutMS == 0 {
+		s.Redundancy.StreamingAttemptHardTimeoutMS = redundancyDefaults.StreamingAttemptHardTimeoutMS
+	}
+	if s.Redundancy.NonStreamNoContentTimeoutMS == 0 {
+		s.Redundancy.NonStreamNoContentTimeoutMS = redundancyDefaults.NonStreamNoContentTimeoutMS
+	}
+	if s.Redundancy.NonStreamMaxAttemptWaitMS == 0 {
+		s.Redundancy.NonStreamMaxAttemptWaitMS = redundancyDefaults.NonStreamMaxAttemptWaitMS
 	}
 	if s.Redundancy.SpeedPolicy == "" {
 		s.Redundancy.SpeedPolicy = redundancyDefaults.SpeedPolicy
@@ -321,9 +333,12 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			redundancy_first_token_timeout_floor_ms INTEGER NOT NULL DEFAULT 1000,
 			redundancy_per_input_token_first_token_lag_ms INTEGER NOT NULL DEFAULT 10,
 			redundancy_inter_chunk_stall_timeout_ms INTEGER NOT NULL DEFAULT 60000,
+			redundancy_streaming_attempt_hard_timeout_ms INTEGER NOT NULL DEFAULT 1200000,
 			redundancy_non_stream_response_floor_ms INTEGER NOT NULL DEFAULT 20000,
+			redundancy_non_stream_no_content_timeout_ms INTEGER NOT NULL DEFAULT 1200000,
+			redundancy_non_stream_max_attempt_wait_ms INTEGER NOT NULL DEFAULT 1800000,
 			redundancy_per_input_token_response_lag_ms INTEGER NOT NULL DEFAULT 20,
-			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 300000,
+			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 600000,
 			redundancy_parallel_advantage_threshold REAL NOT NULL DEFAULT 0.5,
 			redundancy_unresponsive_threshold REAL NOT NULL DEFAULT 1.0,
 			redundancy_speed_policy TEXT NOT NULL DEFAULT 'hybrid',
@@ -480,7 +495,9 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       participant_empty_stream_threshold, participant_eof_transport_failure_threshold,
 		       redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
 		       redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
-		       redundancy_non_stream_response_floor_ms, redundancy_per_input_token_response_lag_ms,
+		       redundancy_streaming_attempt_hard_timeout_ms,
+		       redundancy_non_stream_response_floor_ms, redundancy_non_stream_no_content_timeout_ms,
+		       redundancy_non_stream_max_attempt_wait_ms, redundancy_per_input_token_response_lag_ms,
 		       redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
 		       redundancy_unresponsive_threshold, redundancy_speed_policy, redundancy_pairwise_budget_percentile,
 		       redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
@@ -523,7 +540,10 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Redundancy.FirstTokenTimeoutFloorMS,
 		&state.Settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		&state.Settings.Redundancy.InterChunkStallTimeoutMS,
+		&state.Settings.Redundancy.StreamingAttemptHardTimeoutMS,
 		&state.Settings.Redundancy.NonStreamResponseFloorMS,
+		&state.Settings.Redundancy.NonStreamNoContentTimeoutMS,
+		&state.Settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		&state.Settings.Redundancy.PerInputTokenResponseLagMS,
 		&state.Settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		&state.Settings.Redundancy.ParallelAdvantageThreshold,
@@ -638,7 +658,9 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			participant_empty_stream_threshold, participant_eof_transport_failure_threshold,
 			redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
 			redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
-			redundancy_non_stream_response_floor_ms, redundancy_per_input_token_response_lag_ms,
+			redundancy_streaming_attempt_hard_timeout_ms,
+			redundancy_non_stream_response_floor_ms, redundancy_non_stream_no_content_timeout_ms,
+			redundancy_non_stream_max_attempt_wait_ms, redundancy_per_input_token_response_lag_ms,
 			redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
 			redundancy_unresponsive_threshold, redundancy_speed_policy, redundancy_pairwise_budget_percentile,
 			redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
@@ -649,7 +671,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -674,7 +696,10 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Redundancy.FirstTokenTimeoutFloorMS,
 		settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		settings.Redundancy.InterChunkStallTimeoutMS,
+		settings.Redundancy.StreamingAttemptHardTimeoutMS,
 		settings.Redundancy.NonStreamResponseFloorMS,
+		settings.Redundancy.NonStreamNoContentTimeoutMS,
+		settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		settings.Redundancy.PerInputTokenResponseLagMS,
 		settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		settings.Redundancy.ParallelAdvantageThreshold,
@@ -736,7 +761,10 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    redundancy_first_token_timeout_floor_ms = ?,
 		    redundancy_per_input_token_first_token_lag_ms = ?,
 		    redundancy_inter_chunk_stall_timeout_ms = ?,
+		    redundancy_streaming_attempt_hard_timeout_ms = ?,
 		    redundancy_non_stream_response_floor_ms = ?,
+		    redundancy_non_stream_no_content_timeout_ms = ?,
+		    redundancy_non_stream_max_attempt_wait_ms = ?,
 		    redundancy_per_input_token_response_lag_ms = ?,
 		    redundancy_secondary_wait_after_winner_ms = ?,
 		    redundancy_parallel_advantage_threshold = ?,
@@ -783,7 +811,10 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Redundancy.FirstTokenTimeoutFloorMS,
 		settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		settings.Redundancy.InterChunkStallTimeoutMS,
+		settings.Redundancy.StreamingAttemptHardTimeoutMS,
 		settings.Redundancy.NonStreamResponseFloorMS,
+		settings.Redundancy.NonStreamNoContentTimeoutMS,
+		settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		settings.Redundancy.PerInputTokenResponseLagMS,
 		settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		settings.Redundancy.ParallelAdvantageThreshold,
@@ -1124,9 +1155,12 @@ func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
 		{"redundancy_first_token_timeout_floor_ms", "INTEGER NOT NULL DEFAULT 1000"},
 		{"redundancy_per_input_token_first_token_lag_ms", "INTEGER NOT NULL DEFAULT 10"},
 		{"redundancy_inter_chunk_stall_timeout_ms", "INTEGER NOT NULL DEFAULT 60000"},
+		{"redundancy_streaming_attempt_hard_timeout_ms", "INTEGER NOT NULL DEFAULT 1200000"},
 		{"redundancy_non_stream_response_floor_ms", "INTEGER NOT NULL DEFAULT 20000"},
+		{"redundancy_non_stream_no_content_timeout_ms", "INTEGER NOT NULL DEFAULT 1200000"},
+		{"redundancy_non_stream_max_attempt_wait_ms", "INTEGER NOT NULL DEFAULT 1800000"},
 		{"redundancy_per_input_token_response_lag_ms", "INTEGER NOT NULL DEFAULT 20"},
-		{"redundancy_secondary_wait_after_winner_ms", "INTEGER NOT NULL DEFAULT 300000"},
+		{"redundancy_secondary_wait_after_winner_ms", "INTEGER NOT NULL DEFAULT 600000"},
 		{"redundancy_parallel_advantage_threshold", "REAL NOT NULL DEFAULT 0.5"},
 		{"redundancy_unresponsive_threshold", "REAL NOT NULL DEFAULT 1.0"},
 		{"redundancy_speed_policy", "TEXT NOT NULL DEFAULT 'hybrid'"},

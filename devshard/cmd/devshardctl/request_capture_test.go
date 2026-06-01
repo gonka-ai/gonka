@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/host"
 	"devshard/user"
 
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,61 @@ func TestCaptureAllAttemptsFailedRequestWritesSeparateFile(t *testing.T) {
 	require.True(t, record.Stream)
 	require.Contains(t, record.Error, "all attempts failed")
 	require.Contains(t, string(record.Body), `"stream": true`)
+}
+
+func TestCaptureEmptyStreamAttemptRequestWritesSeparateFileWithAttempts(t *testing.T) {
+	captureDir := t.TempDir()
+	setRequestCaptureStore(&requestCaptureStore{dir: captureDir})
+	t.Cleanup(func() { setRequestCaptureStore(nil) })
+
+	ctx, requestID := ensureRequestLogContext(t.Context())
+	attempts := []*inflight{
+		{
+			hostIdx:                          2,
+			hostID:                           "host-empty",
+			escrowID:                         "escrow-7",
+			nonce:                            11,
+			receiptTime:                      time.Now(),
+			resp:                             &host.HostResponse{ConfirmedAt: 123, Receipt: []byte("receipt"), StreamBytesRead: 14},
+			err:                              errEmptyStream,
+			emptyResponseBodySample:          "data: [DONE]\n\n",
+			emptyResponseBodySampleTruncated: false,
+		},
+		{
+			hostIdx:  3,
+			hostID:   "host-ok",
+			escrowID: "escrow-7",
+			nonce:    12,
+			resp:     &host.HostResponse{ConfirmedAt: 124, Receipt: []byte("receipt"), StreamBytesRead: 64},
+			err:      nil,
+		},
+	}
+	attempts[0].outputBytes.Store(14)
+	attempts[1].outputChunks.Store(1)
+	attempts[1].contentChunks.Store(1)
+	attempts[1].outputBytes.Store(64)
+
+	captureEmptyStreamAttemptRequest(ctx, "escrow-7", user.InferenceParams{
+		Model:  "Qwen/Test",
+		Prompt: []byte(`{"model":"Qwen/Test","stream":true,"messages":[{"role":"user","content":"hello"}]}`),
+		Stream: true,
+	}, attempts, 12)
+
+	record := requireSingleCapturedRequest(t, captureDir, "empty_stream_attempt")
+	require.Equal(t, requestID, record.RequestID)
+	require.Equal(t, "empty_stream_attempt", record.Kind)
+	require.Equal(t, "Qwen/Test", record.Model)
+	require.Equal(t, "escrow-7", record.Escrow)
+	require.True(t, record.Stream)
+	require.Contains(t, string(record.Body), `"stream": true`)
+	require.NotEmpty(t, record.RequestFlags)
+	require.Len(t, record.Attempts, 2)
+	require.True(t, record.Attempts[0].EmptyStream)
+	require.Equal(t, "host-empty", record.Attempts[0].Host)
+	require.Equal(t, "data: [DONE]\n\n", record.Attempts[0].ResponseBodySample)
+	require.False(t, record.Attempts[0].Winner)
+	require.True(t, record.Attempts[1].Winner)
+	require.False(t, record.Attempts[1].EmptyStream)
 }
 
 func TestConfigureRequestCaptureStoreDefaultsUnderGatewayDBDirectory(t *testing.T) {

@@ -446,9 +446,21 @@ func setSpeculativeTiming(t *testing.T, receipt time.Duration, firstTokenCap tim
 func setInterChunkStallTimeout(t *testing.T, d time.Duration) {
 	t.Helper()
 	saved := InterChunkStallTimeout
+	savedLogThreshold := InterChunkStallLogThreshold
 	InterChunkStallTimeout = d
+	InterChunkStallLogThreshold = d
 	t.Cleanup(func() {
 		InterChunkStallTimeout = saved
+		InterChunkStallLogThreshold = savedLogThreshold
+	})
+}
+
+func setStreamingAttemptHardTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	saved := StreamingAttemptHardTimeout
+	StreamingAttemptHardTimeout = d
+	t.Cleanup(func() {
+		StreamingAttemptHardTimeout = saved
 	})
 }
 
@@ -662,6 +674,37 @@ func (streamContentWithoutFinishClient) Send(ctx context.Context, req host.HostR
 	}, nil
 }
 
+type emptyStartedClient struct{}
+
+func (emptyStartedClient) Send(_ context.Context, req host.HostRequest, _ io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	return &host.HostResponse{
+		Nonce:       req.Nonce,
+		ConfirmedAt: time.Now().Unix(),
+	}, nil
+}
+
+type errorStreamWithoutFinishClient struct {
+	calls atomic.Int32
+}
+
+func (c *errorStreamWithoutFinishClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	c.calls.Add(1)
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"error":{"code":404,"message":"The model does not exist.","type":"NotFoundError"}}`+"\n\n")
+		_, _ = io.WriteString(stream, "data: [DONE]\n\n")
+	}
+	return &host.HostResponse{
+		Nonce:       req.Nonce,
+		ConfirmedAt: time.Now().Add(-10 * time.Second).Unix(),
+	}, nil
+}
+
 type streamContentThenStallClient struct{}
 
 func (streamContentThenStallClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
@@ -763,7 +806,7 @@ func TestRunInference_WinnerFailsAfterContentDoesNotWaitForLosers(t *testing.T) 
 
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
-	setSecondaryWaitAfterWinner(t, 50*time.Millisecond)
+	setStreamingAttemptHardTimeout(t, 120*time.Millisecond)
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
@@ -773,9 +816,9 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
 	elapsed := time.Since(start)
 
-	require.ErrorContains(t, err, "winner stalled waiting for next chunk")
-	require.Less(t, elapsed, time.Second,
-		"stalled winner should fail promptly once no new chunks arrive")
+	require.ErrorContains(t, err, "inference: no non-probe attempt finished")
+	require.GreaterOrEqual(t, elapsed, 100*time.Millisecond,
+		"stalled winner should be allowed to keep running until the hard attempt timeout")
 	require.Contains(t, buf.String(), `"content":"x"`,
 		"winner should still forward the first chunk before timing out")
 
@@ -789,22 +832,29 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 
 func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
-	setSecondaryWaitAfterWinner(t, time.Second)
 	release := make(chan struct{})
 	env := setupTestProxyWithClients(t, []user.HostClient{&streamContentThenReleaseClient{releaseCh: release}})
 
 	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
-	require.ErrorContains(t, err, "winner stalled waiting for next chunk")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(buf.String(), `"content":"x"`)
+	}, time.Second, 10*time.Millisecond)
+	time.Sleep(75 * time.Millisecond)
 	require.Contains(t, buf.String(), `"content":"x"`)
 
 	close(release)
+	require.NoError(t, <-errCh)
 
 	require.Eventually(t, func() bool {
 		return env.session.IsNonceFinished(1)
 	}, time.Second, 10*time.Millisecond)
-	require.NotContains(t, buf.String(), `"content":"late"`,
-		"late chunks after client timeout should be consumed for settlement but not forwarded")
+	require.Contains(t, buf.String(), `"content":"late"`,
+		"late chunks after a logged stall should still be forwarded")
 
 	stats := env.proxy.redundancy.perf.Stats(0)
 	require.Equal(t, 1, stats.TotalSamples)
@@ -813,7 +863,6 @@ func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 
 func TestRunInference_StalledWinnerNaturalErrorAfterClientTimeoutRecordsFailure(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
-	setSecondaryWaitAfterWinner(t, time.Second)
 	release := make(chan struct{})
 	env := setupTestProxyWithClients(t, []user.HostClient{&streamContentThenReleaseClient{
 		releaseCh: release,
@@ -821,10 +870,17 @@ func TestRunInference_StalledWinnerNaturalErrorAfterClientTimeoutRecordsFailure(
 	}})
 
 	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
-	require.ErrorContains(t, err, "winner stalled waiting for next chunk")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	}()
 
+	require.Eventually(t, func() bool {
+		return strings.Contains(buf.String(), `"content":"x"`)
+	}, time.Second, 10*time.Millisecond)
+	time.Sleep(75 * time.Millisecond)
 	close(release)
+	require.ErrorIs(t, <-errCh, errSimulatedWinnerTransport)
 
 	require.Eventually(t, func() bool {
 		stats := env.proxy.redundancy.perf.Stats(0)
@@ -965,6 +1021,46 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 	require.Equal(t, 0, env.proxy.redundancy.perf.Stats(0).TotalSamples)
 }
 
+func TestRunInference_AllHostsKnownToolUnsupportedReturnsToolError(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	for _, key := range env.session.ParticipantKeys() {
+		env.proxy.redundancy.perf.RecordToolUnsupported(key)
+	}
+	params := defaultParams()
+	params.Prompt = []byte(`{"messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"auto"}`)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf)
+
+	var hostErr *hostApplicationError
+	require.ErrorAs(t, err, &hostErr)
+	require.Equal(t, toolChoiceUnsupportedMessage, hostErr.Error())
+	require.Equal(t, http.StatusBadRequest, hostErr.statusCode())
+	require.Empty(t, env.proxy.perf.RecentRequests(), "no real host attempt should be recorded")
+}
+
+func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T) {
+	zeroReceiptTimeout(t)
+	env := setupTestProxy(t, 2, nil, true)
+	divergent := env.killables[1]
+	divergent.ForceError(fmt.Errorf(`http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`))
+
+	var first bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first))
+	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+
+	// Even if the host would answer now, this escrow must stop sending it
+	// real traffic because its local state no longer matches our diff chain.
+	divergent.ForceError(nil)
+	var second bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second))
+	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+
+	reason, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	require.True(t, blocked)
+	require.Equal(t, "escrow_state_root_diverged", reason)
+}
+
 func TestRunInference_IncompleteWinnerAfterContentQuarantinesParticipant(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentWithoutFinishClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)
@@ -993,7 +1089,7 @@ func requireIncompleteWinnerError(t *testing.T, err error) {
 		"unexpected incomplete winner error: %v", err)
 }
 
-func TestRecordStartedAttemptSamplesRecordsFailedHostAttempts(t *testing.T) {
+func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
@@ -1012,7 +1108,7 @@ func TestRecordStartedAttemptSamplesRecordsFailedHostAttempts(t *testing.T) {
 	stats := env.proxy.redundancy.perf.Stats(0)
 	require.Equal(t, emptyStreamQuarantineThreshold, stats.TotalSamples)
 	require.Zero(t, stats.ResponsiveRate)
-	require.True(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
+	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
 
 	unstarted := &inflight{hostIdx: 0, nonce: 99}
 	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{unstarted}, defaultParams(), true)
@@ -1036,9 +1132,94 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamWhenRequestFailed(t *
 	}
 
 	stats := env.proxy.redundancy.perf.Stats(0)
-	require.Equal(t, emptyStreamQuarantineThreshold, stats.TotalSamples)
-	require.Zero(t, stats.ResponsiveRate)
+	require.Zero(t, stats.TotalSamples)
+	require.Zero(t, stats.FailureSamples)
 	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
+}
+
+func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+
+	inf := &inflight{
+		nonce:       prepared.Nonce(),
+		receiptTime: time.Now(),
+		resp:        &host.HostResponse{ConfirmedAt: time.Now().Unix()},
+	}
+
+	reason, skip := emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
+
+	require.False(t, skip)
+	require.Empty(t, reason)
+
+	inf.resp.Mempool = []*types.DevshardTx{
+		{
+			Tx: &types.DevshardTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: prepared.Nonce()},
+			},
+		},
+	}
+	require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), inf.resp, prepared.Nonce()))
+
+	reason, skip = emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
+
+	require.True(t, skip)
+	require.Equal(t, "empty_stream_without_non_empty_winner", reason)
+}
+
+func TestErrorStreamWithoutFinishPostsTimeoutVote(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	params := defaultParams()
+	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+
+	body := []byte(`data: {"error":{"code":404,"message":"The model does not exist.","type":"NotFoundError"}}` + "\n\n" +
+		"data: [DONE]\n\n")
+	inf := &inflight{
+		hostIdx:         prepared.HostIdx(),
+		hostID:          env.session.HostLabel(prepared.HostIdx()),
+		nonce:           prepared.Nonce(),
+		escrowID:        "escrow-proxy",
+		sendTime:        time.Now().Add(-10 * time.Second),
+		receiptTime:     time.Now().Add(-9 * time.Second),
+		errorSource:     "error.NotFoundError",
+		errorCode:       "404",
+		errorType:       "NotFoundError",
+		errorMessage:    "The model does not exist.",
+		errorBodySample: body,
+		resp:            &host.HostResponse{Nonce: prepared.Nonce()},
+		done:            make(chan struct{}),
+	}
+	inf.outputChunks.Store(1)
+	inf.contentChunks.Store(1)
+	close(inf.done)
+
+	err = env.proxy.redundancy.finishRaceOutcome(context.Background(), []*inflight{inf}, params, Decision{Reason: "test"}, prepared.Nonce(), raceFinishOptions{recordFailureSamples: true})
+
+	var hostErr *hostApplicationError
+	require.ErrorAs(t, err, &hostErr)
+	require.Equal(t, http.StatusNotFound, hostErr.statusCode())
+	st := env.sm.SnapshotState()
+	require.Equal(t, types.StatusTimedOut, st.Inferences[prepared.Nonce()].Status)
+}
+
+func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	zeroReceiptTimeout(t)
+	env := setupTestProxy(t, 3, nil, true)
+	errorClient := &errorStreamWithoutFinishClient{}
+	env.killables[1].inner = errorClient
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+
+	require.NoError(t, err)
+	require.Equal(t, int32(1), errorClient.calls.Load())
+	require.NotContains(t, buf.String(), `"NotFoundError"`)
+	require.Contains(t, buf.String(), `"choices"`)
+	require.True(t, env.session.IsNonceFinished(2))
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {

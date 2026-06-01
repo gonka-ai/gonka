@@ -20,12 +20,13 @@ type chatResponseCache struct {
 }
 
 type cachedChatResponse struct {
-	EscrowID    string
-	Stream      bool
-	StatusCode  int
-	ContentType string
-	Body        []byte
-	ExpiresAt   time.Time
+	EscrowID        string
+	Stream          bool
+	StatusCode      int
+	ContentType     string
+	Body            []byte
+	SourceRequestID string
+	ExpiresAt       time.Time
 }
 
 func newChatResponseCache(ttl time.Duration) *chatResponseCache {
@@ -60,12 +61,19 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		delete(c.entries, key)
 		return cachedChatResponse{}, false
 	}
+	if responseBodyHasRetriableCapabilityError(entry.Body) {
+		delete(c.entries, key)
+		return cachedChatResponse{}, false
+	}
 	entry.Body = append([]byte(nil), entry.Body...)
 	return entry, true
 }
 
 func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.Time) {
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
+		return
+	}
+	if responseBodyHasRetriableCapabilityError(entry.Body) {
 		return
 	}
 	if entry.ExpiresAt.IsZero() {
@@ -143,7 +151,7 @@ func (w *gatewayChatCacheCapture) statusCode() int {
 	return w.status
 }
 
-func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool) (cachedChatResponse, bool) {
+func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string) (cachedChatResponse, bool) {
 	if w == nil || w.writeErr != nil || w.body.Len() == 0 {
 		return cachedChatResponse{}, false
 	}
@@ -151,11 +159,25 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool) (cach
 	if statusCode < 200 {
 		return cachedChatResponse{}, false
 	}
+	if responseBodyHasRetriableCapabilityError(w.body.Bytes()) {
+		return cachedChatResponse{}, false
+	}
 	return cachedChatResponse{
-		EscrowID:    escrowID,
-		Stream:      stream,
-		StatusCode:  statusCode,
-		ContentType: w.Header().Get("Content-Type"),
-		Body:        append([]byte(nil), w.body.Bytes()...),
+		EscrowID:        escrowID,
+		Stream:          stream,
+		StatusCode:      statusCode,
+		ContentType:     w.Header().Get("Content-Type"),
+		Body:            append([]byte(nil), w.body.Bytes()...),
+		SourceRequestID: sourceRequestID,
 	}, true
+}
+
+func responseBodyHasRetriableCapabilityError(body []byte) bool {
+	if details, ok := sseChunkErrorDetails(body); ok {
+		return isRetriableCapabilityErrorMessage(details.Message)
+	}
+	if details, ok := jsonErrorPayloadDetails(body); ok {
+		return isRetriableCapabilityErrorMessage(details.Message)
+	}
+	return false
 }
