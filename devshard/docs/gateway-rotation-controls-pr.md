@@ -23,4 +23,4 @@ For first-boot env config, `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=false` i
 
 ## Test Plan
 
-- `GOMODCACHE="/Users/dima/go/pkg/mod" go test ./cmd/devshardctl`
+- `(cd devshard && go test ./cmd/devshardctl)`
