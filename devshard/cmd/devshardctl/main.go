@@ -182,7 +182,7 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		},
 		EscrowRotation: EscrowRotationSettings{
 			Enabled:            readBoolEnv("DEVSHARD_ESCROW_ROTATION_ENABLED", false),
-			SettlementDisabled: readBoolEnv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_DISABLED", false),
+			SettlementDisabled: !readBoolEnv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED", false),
 			PrePoCBlocks:       readInt64Env("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 300),
 			Models:             mustReadEscrowRotationModelsEnv(),
 		},

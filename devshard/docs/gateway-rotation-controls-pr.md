@@ -11,6 +11,8 @@ This change makes `escrow_rotation.enabled` the master switch for both paths. Wh
 
 It also adds `escrow_rotation.settlement_disabled`. When rotation is enabled but settlement is disabled, the gateway still creates replacement escrows and locally deactivates old escrows, but it skips automatic finalization and on-chain settlement. Manual settlement through the admin API remains available.
 
+For first-boot env config, `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=false` is the default and maps to `escrow_rotation.settlement_disabled=true`.
+
 ## Behavior
 
 - `escrow_rotation.enabled=false`: no automatic escrow rotation.

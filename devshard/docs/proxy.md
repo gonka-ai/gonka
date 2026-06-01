@@ -32,7 +32,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | no | `please use ... base url` | Message shown while the gateway is disabled |
 | - | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | no | - | Replacement chat completions URL returned while the gateway is disabled |
 | - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch and depletion escrow rotation |
-| - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_DISABLED` | no | `false` | Keep automatic escrow creation/deactivation, but skip automatic finalization and on-chain settlement |
+| - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
 
