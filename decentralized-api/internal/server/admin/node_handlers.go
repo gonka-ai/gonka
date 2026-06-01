@@ -340,8 +340,21 @@ func (s *Server) maybeAutoTest(nodeId string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		if _, err := s.tester.Run(ctx, nodeId); err != nil && !errors.Is(err, ErrTestInProgress) {
-			logging.Debug("auto-test not run", types.Nodes, "node_id", nodeId, "error", err)
+		result, err := s.tester.Run(ctx, nodeId)
+		switch {
+		case errors.Is(err, ErrTestInProgress):
+			// A test is already running for this node; nothing to do.
+		case err != nil:
+			logging.Debug("Auto-test could not run", types.Nodes, "node_id", nodeId, "error", err)
+		case result != nil && result.Status == TestFailed:
+			// Report the failure prominently in the API node logs so the
+			// operator can fix it before PoC (proposal: detailed error
+			// reporting on TEST_FAILED).
+			logging.Error("Auto-test failed for MLnode before PoC", types.Nodes,
+				"node_id", nodeId, "failing_model", result.FailingModel, "error", result.Error)
+		case result != nil:
+			logging.Info("Auto-test passed for MLnode", types.Nodes,
+				"node_id", nodeId, "duration_ms", result.DurationMs)
 		}
 	}()
 }
