@@ -3113,13 +3113,14 @@ func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
 	if !settings.EscrowRotation.SettlementEnabled {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
-			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%s", id, reason)
+			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
 		return false, nil
 	}
-	log.Printf("escrow_rotation_settling escrow=%s reason=%s", id, reason)
+	log.Printf("escrow_rotation_settling escrow=%s reason=%q", id, reason)
 	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
 		return false, err
+	}
 	}
 	return true, nil
 }
