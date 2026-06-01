@@ -191,7 +191,7 @@ data class ApplicationCLI(
     private fun getWarmAccountIfNeeded() {
         if (warmAccountKey == null) {
             val keys = getKeys()
-            val warmAccountName = config.pairName.trimStart('/') + "_WARM"
+            val warmAccountName = config.pairName.trimStart('/') + "-WARM"
             warmAccountKey = (keys.firstOrNull { it.name == warmAccountName }
                 ?: keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") }
                 ?: keys.first())
@@ -389,10 +389,6 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-tokenomics-data"))
     }
 
-    fun getTopMiners(): TopMinersResponse = wrapLog("getTopMiners", false) {
-        execAndParse(listOf("query", "inference", "list-top-miner"))
-    }
-
     fun queryBLSEpochData(epochId: Long): EpochBLSDataWrapper = wrapLog("queryBLSEpochData", false) {
         execAndParse(listOf("query", "bls", "epoch-data", epochId.toString()))
     }
@@ -400,6 +396,15 @@ data class ApplicationCLI(
     fun queryBLSSigningStatus(requestId: String): SigningStatusWrapper = wrapLog("queryBLSSigningStatus", false) {
         execAndParse(listOf("query", "bls", "signing-status", requestId))
     }
+
+    fun queryDevshardEscrow(id: Long): DevshardEscrowResponse = wrapLog("queryDevshardEscrow", false) {
+        execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
+    }
+
+    fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
+        wrapLog("queryPreservedNodesSnapshot", false) {
+            execAndParse(listOf("query", "inference", "preserved-nodes-snapshot"))
+        }
 
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(
@@ -644,7 +649,14 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
-    private fun getTransactionArgs(from: String) = listOf(
+    fun sendTransactionWithFees(args: List<String>, fees: String, useColdAccount: Boolean = true): TxResponse {
+        val from = if (useColdAccount) this.getColdAccountName() else this.getWarmAccountName()
+        Logger.info("Sending transaction with fees=$fees")
+        val finalArgs = listOf("tx") + args + getTransactionArgsWithFees(from, fees)
+        return execAndParse(finalArgs, stdIn = passwordInjection)
+    }
+
+    private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
         "--keyring-dir=/root/${config.stateDirName}",
@@ -659,6 +671,27 @@ data class ApplicationCLI(
         "--from",
         from
     )
+
+    // Returns getTransactionArgs with gas-adjustment replaced by a fixed gas
+    // and a --fees flag added. Used by tests that need to assert specific
+    // fee values (e.g., TransactionFeeTests verifying fee rejection).
+    private fun getTransactionArgsWithFees(from: String, fees: String): List<String> {
+        val base = getTransactionArgs(from).toMutableList()
+        // Remove gas-adjustment pair (we set a fixed gas instead)
+        val gasAdjIdx = base.indexOf("--gas-adjustment")
+        if (gasAdjIdx >= 0) {
+            base.removeAt(gasAdjIdx + 1)
+            base.removeAt(gasAdjIdx)
+        }
+        // Replace --gas value with a smaller fixed value for fee tests
+        val gasIdx = base.indexOf("--gas")
+        if (gasIdx >= 0 && gasIdx + 1 < base.size) {
+            base[gasIdx + 1] = "200000"
+        }
+        // Append the --fees flag
+        base.addAll(listOf("--fees", fees))
+        return base
+    }
 
     fun getTransactionJson(args: List<String>): String {
         val from = this.getColdAccountName()
@@ -736,7 +769,7 @@ data class ApplicationCLI(
         ).count
     }
 
-    fun getPoCV2StoreCommit(epochStartHeight: Long, participantAddress: String): PoCV2StoreCommitResponse =
+    fun getPoCV2StoreCommit(epochStartHeight: Long, participantAddress: String, modelId: String = defaultModel): PoCV2StoreCommitResponse =
         wrapLog("getPoCV2StoreCommit", infoLevel = false) {
             execAndParse(
                 listOf(
@@ -744,12 +777,14 @@ data class ApplicationCLI(
                     "inference",
                     "poc-v2-store-commit",
                     epochStartHeight.toString(),
-                    participantAddress
+                    participantAddress,
+                    "--model-id",
+                    modelId
                 )
             )
         }
 
-    fun getMLNodeWeightDistribution(epochStartHeight: Long, participantAddress: String): MLNodeWeightDistributionResponse =
+    fun getMLNodeWeightDistribution(epochStartHeight: Long, participantAddress: String, modelId: String = defaultModel): MLNodeWeightDistributionResponse =
         wrapLog("getMLNodeWeightDistribution", infoLevel = false) {
             execAndParse(
                 listOf(
@@ -757,7 +792,9 @@ data class ApplicationCLI(
                     "inference",
                     "mlnode-weight-distribution",
                     epochStartHeight.toString(),
-                    participantAddress
+                    participantAddress,
+                    "--model-id",
+                    modelId
                 )
             )
         }
@@ -786,10 +823,25 @@ data class ApplicationCLI(
             )
         }
 
-    fun getColdPrivateKey(): String = wrapLog("getColdPrivateKey", infoLevel = false) {
-        val accountName = this.getColdAccountName()
+    fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =
+        wrapLog("queryEpochGroupData", infoLevel = false) {
+            val args = mutableListOf(
+                "query",
+                "inference",
+                "show-epoch-group-data",
+                epochIndex.toString(),
+            )
+            if (modelId.isNotEmpty()) {
+                args += listOf("--model-id", modelId)
+            }
+            execAndParse(args)
+        }
+
+    fun getColdPrivateKey(): String = getPrivateKey(this.getColdAccountName())
+
+    fun getPrivateKey(keyName: String): String = wrapLog("getPrivateKey($keyName)", infoLevel = false) {
         exec(
-            listOf(config.execName, "keys", "export", accountName, "--unsafe", "--yes", "--unarmored-hex"),
+            listOf(config.execName, "keys", "export", keyName, "--unsafe", "--yes", "--unarmored-hex"),
             passwordInjection
         ).first()
     }
@@ -861,6 +913,8 @@ data class ApplicationCLI(
         @JsonProperty("participant_address")
         val participantAddress: String = "",
         val count: Long = 0,
+        @JsonProperty("model_id")
+        val modelId: String = "",
         @JsonProperty("root_hash")
         val rootHash: String? = null
     )

@@ -14,12 +14,15 @@ const (
 
 	// MemStoreKey defines the in-memory store key
 	MemStoreKey = "mem_inference"
+	// TransientStoreKey defines the transient store key
+	TransientStoreKey = "transient_inference"
 
 	TopRewardPoolAccName     = "top_reward"
 	PreProgrammedSaleAccName = "pre_programmed_sale"
 	BridgeEscrowAccName      = "bridge_escrow"
 )
 
+// These prefixes should NEVER change, only increase
 var (
 	ParticipantsPrefix                = collections.NewPrefix(0)
 	RandomSeedPrefix                  = collections.NewPrefix(1)
@@ -58,12 +61,48 @@ var (
 	LiquidityPoolPrefix               = collections.NewPrefix(34)
 	LiquidityPoolApprovedTokensPrefix = collections.NewPrefix(35)
 	ParticipantAllowListPrefix        = collections.NewPrefix(36)
-	PoCValidationV2Prefix             = collections.NewPrefix(38)
-	PoCV2StoreCommitPrefix            = collections.NewPrefix(39)
-	MLNodeWeightDistributionPrefix    = collections.NewPrefix(40)
-	PocV2EnabledEpochPrefix           = collections.NewPrefix(41)
-	PoCValidationSnapshotPrefix       = collections.NewPrefix(42)
-	PunishmentGraceEpochsPrefix       = collections.NewPrefix(43)
+	// Legacy PoC v2 prefixes -- key codec changed in v0.2.12 (added model_id).
+	// Cleared by the v0.2.12 upgrade handler. Never used by new code.
+	LegacyPoCValidationV2Prefix            = collections.NewPrefix(38)
+	LegacyPoCV2StoreCommitPrefix           = collections.NewPrefix(39)
+	LegacyMLNodeWeightDistributionPrefix   = collections.NewPrefix(40)
+	PocV2EnabledEpochPrefix                = collections.NewPrefix(41)
+	PoCValidationSnapshotPrefix            = collections.NewPrefix(42)
+	PunishmentGraceEpochsPrefix            = collections.NewPrefix(43)
+	ActiveParticipantsCachePrefix          = collections.NewPrefix(44)
+	ModelLoadRollingWindowPrefix           = collections.NewPrefix(45)
+	ModelInferenceCountRollingWindowPrefix = collections.NewPrefix(46)
+	EpochGroupValidationEntryPrefix        = collections.NewPrefix(47)
+	DevshardEscrowsPrefix                  = collections.NewPrefix(48)
+	DevshardEscrowCounterPrefix            = collections.NewPrefix(49)
+	DevshardEscrowEpochCountPrefix         = collections.NewPrefix(50)
+	DevshardHostEpochStatsPrefix           = collections.NewPrefix(51)
+	DevshardEscrowsByEpochPrefix           = collections.NewPrefix(52)
+	PoCDelegationPrefix                    = collections.NewPrefix(53)
+	PoCRefusalPrefix                       = collections.NewPrefix(54)
+	PoCDirectIntentPrefix                  = collections.NewPrefix(55)
+	DelegationSnapshotPrefix               = collections.NewPrefix(56)
+	BootstrapDelegationSnapshotPrefix      = collections.NewPrefix(57)
+	// Replacement PoC v2 prefixes with model-aware key codecs.
+	// Introduced in v0.2.12; see Legacy* prefixes 38/39/40 above for the
+	// cleared predecessors.
+	PoCValidationV2Prefix           = collections.NewPrefix(58)
+	PoCV2StoreCommitPrefix          = collections.NewPrefix(59)
+	MLNodeWeightDistributionPrefix  = collections.NewPrefix(60)
+	BridgeMintRefundsPrefix         = collections.NewPrefix(61)
+	BridgeWithdrawalRefundsPrefix   = collections.NewPrefix(62)
+	BridgeWithdrawalTokenRefsPrefix = collections.NewPrefix(63)
+	// BridgeTransactionValidatorsPrefix indexes per-validator confirmations
+	// for a bridge transaction. Split off of BridgeTransaction.Validators
+	// (an inline []string) so each validator's confirmation tx pays constant
+	// gas regardless of how many other validators have already confirmed.
+	// Keyed by (chainId, blockNumber, contentHashPart, validator) — the
+	// first three match BridgeTransactionsPrefix's triple (content-addressed,
+	// not receipt-addressed, so conflict transactions at the same receipt
+	// location get separate validator sets), the fourth is the validator's
+	// canonical bech32 address.
+	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
+	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
 	ParamsKey                         = []byte("p_inference")
 )
 
@@ -75,4 +114,13 @@ const (
 	TokenomicsDataKey  = "TokenomicsData/value/"
 	GenesisOnlyDataKey = "GenesisOnlyData/value/"
 	MLNodeVersionKey   = "MLNodeVersion/value/"
+)
+
+// TransientStore prefixes
+var (
+	FinishedInferenceQueueEntryPrefix = collections.NewPrefix(1)
+	FinishedInferenceQueueNextSeqKey  = collections.NewPrefix(2)
+	TransientSPRTValuesKey            = collections.NewPrefix(3)
+	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
+	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
 )

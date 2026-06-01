@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -706,9 +707,11 @@ func (s *InferenceValidator) isAlreadyValidated(inferenceId string, epochId uint
 // For post-upgrade inferences, returns ErrPayloadUnavailable for caller to handle invalidation.
 // Returns ErrHashMismatch immediately (no retry) when executor serves wrong payload with valid signature.
 // Returns ErrEpochStale if inference epoch becomes too old during retries.
+// Retries use a short first backoff and longer subsequent backoffs, both with jitter.
 func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]byte, []byte, error) {
 	const maxRetries = 10
-	const retryInterval = 2 * time.Minute // 10 * 2 min = 20 min total
+	const firstRetryInterval = 10 * time.Second
+	const subsequentRetryInterval = 2 * time.Minute
 
 	ctx := s.recorder.GetContext()
 	var lastErr error
@@ -749,8 +752,20 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 
 		// Wait between retries with random jitter (skip sleep on final attempt since we're done)
 		if attempt < maxRetries {
-			jitter := time.Duration(1+rand.Intn(120)) * time.Second
-			time.Sleep(retryInterval + jitter)
+			retryInterval := subsequentRetryInterval
+			jitterMaxSeconds := 120
+			if attempt == 1 {
+				retryInterval = firstRetryInterval
+				jitterMaxSeconds = 10
+			}
+			sleepDuration := retryInterval + time.Duration(1+rand.Intn(jitterMaxSeconds))*time.Second
+			timer := time.NewTimer(sleepDuration)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 
@@ -878,8 +893,21 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return &InvalidInferenceResult{inference.InferenceId, "Failed to get enforced string.", err}, nil
 	}
 
-	// From here on, errors are on the part of the validator, not the inference that was passed in
-	requestMap["enforced_tokens"] = enforcedTokens
+	isEmptySentinel := isEmptySentinelTokens(enforcedTokens)
+
+	if !isEmptySentinel && hasNonNumericTokens(enforcedTokens) {
+		logging.Warn("Executor response contains non-numeric token strings in logprobs instead of token IDs", types.Validation,
+			"inferenceId", inference.InferenceId)
+		return &InvalidInferenceResult{inference.InferenceId, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
+	}
+
+	if isEmptySentinel {
+		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
+			"inferenceId", inference.InferenceId)
+		delete(requestMap, "enforced_tokens")
+	} else {
+		requestMap["enforced_tokens"] = enforcedTokens
+	}
 	requestMap["stream"] = false
 	requestMap["skip_special_tokens"] = false
 	delete(requestMap, "stream_options")
@@ -927,6 +955,13 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		}, nil
 	}
 
+	if isEmptySentinel && resp.StatusCode == http.StatusOK {
+		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
+			"inferenceId", inference.InferenceId,
+			"validatorStatus", resp.StatusCode)
+		return &InvalidInferenceResult{inference.InferenceId, "Executor returned error but prompt is servable.", nil}, nil
+	}
+
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
 	responseValidation, err := completionapi.NewCompletionResponseFromBytes(respBodyBytes)
 	if err != nil {
@@ -945,7 +980,7 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
-	return compareLogits(originalLogits, validationLogits, baseResult), nil
+	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
 func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
@@ -1036,7 +1071,34 @@ func (r InvalidInferenceResult) GetValidationResponseBytes() []byte {
 	return []byte{}
 }
 
-func compareLogits(
+const emptySentinelToken = "<EMPTY>"
+
+func isEmptySentinelTokens(et completionapi.EnforcedTokens) bool {
+	for _, t := range et.Tokens {
+		if t.Token == emptySentinelToken {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNonNumericTokens(et completionapi.EnforcedTokens) bool {
+	for _, t := range et.Tokens {
+		n, err := strconv.Atoi(t.Token)
+		if err != nil || n < 0 {
+			return true
+		}
+		for _, topToken := range t.TopTokens {
+			n, err := strconv.Atoi(topToken)
+			if err != nil || n < 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func CompareLogits(
 	originalLogits []completionapi.Logprob,
 	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,

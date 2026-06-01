@@ -210,6 +210,12 @@ data class ProposalVotes(
     val pagination: ProposalVotePagination
 )
 
+data class MsgCreateDevshardEscrow(
+    override val type: String = "/inference.inference.MsgCreateDevshardEscrow",
+    val creator: String = "",
+    val amount: String = "",
+) : TxMessage
+
 data class Transaction(
     val body: TransactionBody,
 )

@@ -20,29 +20,29 @@ import (
 //
 // Deprecated: use computeParticipantPublicKeyBlst. The gnark-crypto implementation is kept only
 // for legacy/reference purposes and is intended to be removed in a future cleanup.
-func (k Keeper) computeParticipantPublicKey(epochBLSData *types.EpochBLSData, slotIndices []uint32) ([]byte, error) {
-	// Initialize aggregated public key as G2 identity
-	var aggregatedPubKey bls12381.G2Affine
-	aggregatedPubKey.SetInfinity()
-
-	// For each slot assigned to this participant
-	for _, slotIndex := range slotIndices {
-		if len(epochBLSData.SlotPublicKeys) <= int(slotIndex) {
-			return nil, fmt.Errorf("precomputed slot public key missing for slot %d", slotIndex)
-		}
-
-		// Use precomputed slot public key
-		var slotPubKey bls12381.G2Affine
-		if err := slotPubKey.Unmarshal(epochBLSData.SlotPublicKeys[slotIndex]); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal precomputed slot public key %d: %w", slotIndex, err)
-		}
-		aggregatedPubKey.Add(&aggregatedPubKey, &slotPubKey)
-	}
-
-	// Return compressed public key bytes
-	pubKeyBytes := aggregatedPubKey.Bytes()
-	return pubKeyBytes[:], nil
-}
+// func (k Keeper) computeParticipantPublicKey(epochBLSData *types.EpochBLSData, slotIndices []uint32) ([]byte, error) {
+// 	// Initialize aggregated public key as G2 identity
+// 	var aggregatedPubKey bls12381.G2Affine
+// 	aggregatedPubKey.SetInfinity()
+//
+// 	// For each slot assigned to this participant
+// 	for _, slotIndex := range slotIndices {
+// 		if len(epochBLSData.SlotPublicKeys) <= int(slotIndex) {
+// 			return nil, fmt.Errorf("precomputed slot public key missing for slot %d", slotIndex)
+// 		}
+//
+// 		// Use precomputed slot public key
+// 		var slotPubKey bls12381.G2Affine
+// 		if err := slotPubKey.Unmarshal(epochBLSData.SlotPublicKeys[slotIndex]); err != nil {
+// 			return nil, fmt.Errorf("failed to unmarshal precomputed slot public key %d: %w", slotIndex, err)
+// 		}
+// 		aggregatedPubKey.Add(&aggregatedPubKey, &slotPubKey)
+// 	}
+//
+// 	// Return compressed public key bytes
+// 	pubKeyBytes := aggregatedPubKey.Bytes()
+// 	return pubKeyBytes[:], nil
+// }
 
 // computeParticipantPublicKeyBlst computes individual BLS public key for participant's slots using blst.
 func (k Keeper) computeParticipantPublicKeyBlst(epochBLSData *types.EpochBLSData, slotIndices []uint32) ([]byte, error) {
@@ -398,7 +398,7 @@ func (k Keeper) aggregateBLSPartialSignaturesBlst(partialSignatures []types.Part
 		return nil, fmt.Errorf("no partial signatures to aggregate")
 	}
 
-	// Flatten per-slot signatures and track unique slots
+	// Flatten per-slot signatures and require globally unique slot indices.
 	type slotSig struct {
 		slot uint32
 		sig  *blst.P1Affine
@@ -417,6 +417,12 @@ func (k Keeper) aggregateBLSPartialSignaturesBlst(partialSignatures []types.Part
 		}
 		for j := 0; j < count; j++ {
 			slot := ps.SlotIndices[j]
+			if _, ok := slotSeen[slot]; ok {
+				return nil, fmt.Errorf("duplicate slot index in aggregation input: slot=%d", slot)
+			}
+			slotSeen[slot] = struct{}{}
+			uniqueSlots = append(uniqueSlots, slot)
+
 			start := j * 48
 			end := start + 48
 			g1 := new(blst.P1Affine).Uncompress(ps.Signature[start:end])
@@ -428,10 +434,6 @@ func (k Keeper) aggregateBLSPartialSignaturesBlst(partialSignatures []types.Part
 				return nil, fmt.Errorf("invalid signature at batch %d item %d (SigValidate failed)", i, j)
 			}
 			slotSigs = append(slotSigs, slotSig{slot: slot, sig: g1})
-			if _, ok := slotSeen[slot]; !ok {
-				slotSeen[slot] = struct{}{}
-				uniqueSlots = append(uniqueSlots, slot)
-			}
 		}
 	}
 
@@ -503,7 +505,7 @@ func (k Keeper) aggregateBLSPartialSignatures(partialSignatures []types.PartialS
 		return nil, fmt.Errorf("no partial signatures to aggregate")
 	}
 
-	// Flatten per-slot signatures
+	// Flatten per-slot signatures and require globally unique slot indices.
 	type slotSig struct {
 		slot uint32
 		sig  bls12381.G1Affine
@@ -521,6 +523,12 @@ func (k Keeper) aggregateBLSPartialSignatures(partialSignatures []types.PartialS
 		}
 		for j := 0; j < count; j++ {
 			slot := ps.SlotIndices[j]
+			if _, ok := slotSeen[slot]; ok {
+				return nil, fmt.Errorf("duplicate slot index in aggregation input: slot=%d", slot)
+			}
+			slotSeen[slot] = struct{}{}
+			slots = append(slots, slot)
+
 			start := j * 48
 			end := start + 48
 			var g1 bls12381.G1Affine
@@ -528,10 +536,6 @@ func (k Keeper) aggregateBLSPartialSignatures(partialSignatures []types.PartialS
 				return nil, fmt.Errorf("failed to unmarshal signature at batch %d item %d: %w", i, j, err)
 			}
 			slotSigs = append(slotSigs, slotSig{slot: slot, sig: g1})
-			if _, ok := slotSeen[slot]; !ok {
-				slotSeen[slot] = struct{}{}
-				slots = append(slots, slot)
-			}
 		}
 	}
 	if len(slots) == 0 {

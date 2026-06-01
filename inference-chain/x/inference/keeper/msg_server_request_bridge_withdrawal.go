@@ -28,26 +28,29 @@ var (
 )
 
 func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.MsgRequestBridgeWithdrawal) (*types.MsgRequestBridgeWithdrawalResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ContractPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// 1. Get the actual transaction signer (this is validated by the Cosmos SDK framework)
-	signers := msg.GetSigners()
+	// 1. Get the actual transaction signer (currently just the Creator of the message and is only one signer)
+	signers := msg.GetSignersStrings()
 	if len(signers) != 1 {
 		return nil, fmt.Errorf("expected exactly one signer, got %d", len(signers))
 	}
-	contractAddr := signers[0]
-	contractAddrStr := contractAddr.String()
-
-	// 2. Verify that the caller is actually a smart contract
-	err := k.validateContractCaller(ctx, contractAddrStr)
-	if err != nil {
-		return nil, fmt.Errorf("caller validation failed: %v", err)
-	}
+	contractAddrStr := signers[0]
 
 	// 3. Verify that the calling contract is a registered wrapped token contract
 	bridgeWrappedTokenContract, found := k.getWrappedTokenMetadata(ctx, contractAddrStr)
 	if !found {
 		return nil, fmt.Errorf("calling contract %s is not a registered wrapped token contract", contractAddrStr)
+	}
+
+	// Validate the specific destination bridge address
+	if !k.IsBridgeContractAddress(ctx, bridgeWrappedTokenContract.ChainId, msg.DestinationBridgeAddress) {
+		err := fmt.Errorf("invalid destination bridge address: %s for chain: %s", msg.DestinationBridgeAddress, bridgeWrappedTokenContract.ChainId)
+		k.LogError("Bridge withdrawal: Invalid destination bridge address", types.Messages, "error", err)
+		return nil, err
 	}
 
 	// 4. Get chain ID for request identification
@@ -72,13 +75,17 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 
 	// Prepare data for BLS signing - only the parts after epochId/chainId/requestId
 	// The BLS system will prepend: epochId (8 bytes) + gonkaChainId (32 bytes) + requestId (32 bytes)
-	// We need to provide: ethereumChainId + WITHDRAW_OPERATION + recipient + tokenContract + amount
-	blsData := k.prepareBridgeWithdrawalSignatureData(
+	// We need to provide: ethereumChainId + WITHDRAW_OPERATION + recipient + bridgeContract + tokenContract + amount
+	blsData, err := k.prepareBridgeWithdrawalSignatureData(
 		destinationChainId,                         // Numeric chain ID (e.g., "1", "137")
 		msg.DestinationAddress,                     // Ethereum address to receive tokens
+		msg.DestinationBridgeAddress,               // Specific bridge contract
 		bridgeWrappedTokenContract.ContractAddress, // Original token address on destination chain
 		msg.Amount, // Amount as string
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare bridge withdrawal signature data: %v", err)
+	}
 
 	// 8. Request BLS threshold signature
 	// Use the actual Gonka chain ID from context (source chain)
@@ -97,12 +104,22 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, fmt.Errorf("failed to request BLS signature: %v", err)
 	}
 
+	err = k.setBridgeWithdrawalPendingRefund(goCtx, requestIdHash[:], msg, types.BridgeTokenReference{
+		ChainId:         bridgeWrappedTokenContract.ChainId,
+		ContractAddress: bridgeWrappedTokenContract.ContractAddress,
+	})
+	if err != nil {
+		k.LogError("Bridge withdrawal: Failed to persist pending refund context", types.Messages, "error", err)
+		return nil, fmt.Errorf("failed to persist bridge withdrawal pending refund context: %v", err)
+	}
+
 	// 9. Log the withdrawal request
 	k.LogInfo("Contract bridge withdrawal requested", types.Messages,
 		"contract_address", contractAddrStr,
 		"user_address", msg.UserAddress,
 		"amount", msg.Amount,
 		"destination_address", msg.DestinationAddress,
+		"destination_bridge_address", msg.DestinationBridgeAddress,
 		"request_id", requestID,
 		"epoch_index", currentEpochGroup.GroupData.EpochIndex,
 		"chain_id", chainID,
@@ -115,30 +132,9 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	}, nil
 }
 
-// validateContractCaller ensures that the caller is actually a smart contract
-func (k msgServer) validateContractCaller(ctx sdk.Context, contractAddress string) error {
-	contractAddr, err := sdk.AccAddressFromBech32(contractAddress)
-	if err != nil {
-		return fmt.Errorf("invalid contract address: %v", err)
-	}
-
-	// Check if the address is a contract by querying contract info
-	wasmKeeper := k.getWasmKeeper()
-	contractInfo := wasmKeeper.GetContractInfo(ctx, contractAddr)
-	if contractInfo == nil {
-		return fmt.Errorf("address %s is not a smart contract", contractAddress)
-	}
-
-	return nil
-}
-
 // Helper function to get wasm keeper
 func (k msgServer) getWasmKeeper() wasmkeeper.Keeper {
-	if k.Keeper.getWasmKeeper == nil {
-		//nolint:forbidigo // init code
-		panic("wasm keeper not available")
-	}
-	return k.Keeper.getWasmKeeper()
+	return k.Keeper.GetWasmKeeper()
 }
 
 // Helper function to get wrapped token metadata using the keeper's existing method
@@ -159,23 +155,40 @@ func (k msgServer) generateRequestID(ctx sdk.Context) string {
 
 // prepareBridgeWithdrawalSignatureData prepares the data portion for BLS signature according to Ethereum bridge format
 // This function only prepares the data that comes AFTER epochId, gonkaChainId, and requestId
-// Final message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
-func (k msgServer) prepareBridgeWithdrawalSignatureData(chainId, recipient, tokenContract, amount string) [][]byte {
+// Final message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, bridgeContract, tokenContract, amount]
+func (k msgServer) prepareBridgeWithdrawalSignatureData(chainId, recipient, bridgeContract, tokenContract, amount string) ([][]byte, error) {
 	// Use helper functions for consistent encoding
-	ethereumChainIdBytes := chainIdToBytes32(chainId)
-	recipientBytes := ethereumAddressToBytes(recipient)
-	tokenBytes := ethereumAddressToBytes(tokenContract)
-	amountBytes := amountToBytes32(amount)
+	ethereumChainIdBytes, err := chainIdToBytes32(chainId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode chain ID: %w", err)
+	}
+	recipientBytes, err := ethereumAddressToBytes(recipient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode recipient address: %w", err)
+	}
+	bridgeContractBytes, err := ethereumAddressToBytes(bridgeContract)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode bridge contract address: %w", err)
+	}
+	tokenBytes, err := ethereumAddressToBytes(tokenContract)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode token contract address: %w", err)
+	}
+	amountBytes, err := amountToBytes32(amount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode amount: %w", err)
+	}
 
 	// Return the data fields that come after epochId, gonkaChainId, requestId
-	// Order: ethereumChainId (32 bytes) + WITHDRAW_OPERATION (32 bytes) + recipient (20 bytes) + tokenContract (20 bytes) + amount (32 bytes)
+	// Order: ethereumChainId (32 bytes) + WITHDRAW_OPERATION (32 bytes) + recipient (20 bytes) + bridgeContract (20 bytes) + tokenContract (20 bytes) + amount (32 bytes)
 	data := [][]byte{
 		ethereumChainIdBytes,     // ETHEREUM_CHAIN_ID (32 bytes)
 		withdrawOperationHash[:], // WITHDRAW_OPERATION hash (32 bytes)
 		recipientBytes,           // Recipient address (20 bytes)
+		bridgeContractBytes,      // Destination bridge address (20 bytes)
 		tokenBytes,               // Token contract address (20 bytes)
 		amountBytes,              // Amount as uint256 (32 bytes)
 	}
 
-	return data
+	return data, nil
 }

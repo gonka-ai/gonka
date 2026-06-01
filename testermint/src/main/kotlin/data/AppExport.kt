@@ -40,15 +40,9 @@ data class TokenomicsData(
 data class GenesisOnlyParams(
     val totalSupply: Long,
     val originatorSupply: Long,
-    val topRewardAmount: Long,
     val standardRewardAmount: Long,
     val preProgrammedSaleAmount: Long,
-    val topRewards: Int,
     val supplyDenom: String,
-    val topRewardPeriod: Long,
-    val topRewardPayouts: Long,
-    val topRewardPayoutsPerMiner: Long,
-    val topRewardMaxDuration: Long,
     val maxIndividualPowerPercentage: Decimal?,
     val genesisGuardianEnabled: Boolean,
     val genesisGuardianNetworkMaturityThreshold: Long,
@@ -76,20 +70,52 @@ data class InferenceParams(
     val confirmationPocParams: ConfirmationPoCParams? = null,
     @SerializedName("transfer_agent_access_params")
     val transferAgentAccessParams: TransferAgentAccessParams? = null,
+    @SerializedName("devshard_escrow_params")
+    val devshardEscrowParams: DevshardEscrowParams? = null,
+    @SerializedName("fee_params")
+    val feeParams: FeeParamsData? = null,
+    @SerializedName("delegation_params")
+    val delegationParams: DelegationParams? = null,
+)
+
+data class FeeParamsData(
+    @SerializedName("min_gas_price_ngonka")
+    val minGasPriceNgonka: Long = 0,
+    @SerializedName("base_validation_gas")
+    val baseValidationGas: Long = 0,
+    @SerializedName("gas_per_poc_count")
+    val gasPerPocCount: Long = 0,
+)
+
+data class DelegationParams(
+    @SerializedName("deploy_window")
+    val deployWindow: Long = 1,
+    @SerializedName("refusal_penalty")
+    val refusalPenalty: Decimal = Decimal(0, 0),
+    @SerializedName("no_participation_penalty")
+    val noParticipationPenalty: Decimal = Decimal(0, 0),
+    @SerializedName("delegation_share")
+    val delegationShare: Decimal = Decimal(0, 0),
+    @SerializedName("w_threshold")
+    val wThreshold: Decimal = Decimal(0, 0),
+    @SerializedName("v_min")
+    val vMin: Long = 0,
+    @SerializedName("cap_factor")
+    val capFactor: Decimal = Decimal(0, 0),
+    @SerializedName("initial_model_id")
+    val initialModelId: String = "",
+    @SerializedName("max_model_voting_power_percentage")
+    val maxModelVotingPowerPercentage: Decimal = Decimal(0, 0),
 )
 
 data class TokenomicsParams(
     val subsidyReductionInterval: Decimal,
     val subsidyReductionAmount: Decimal,
     val currentSubsidyPercentage: Decimal,
-    val topRewardAllowedFailure: Decimal,
-    val topMinerPocQualification: Long,
     @SerializedName("work_vesting_period")
     val workVestingPeriod: Long? = null,
     @SerializedName("reward_vesting_period") 
     val rewardVestingPeriod: Long? = null,
-    @SerializedName("top_miner_vesting_period")
-    val topMinerVestingPeriod: Long? = null,
 )
 
 data class BitcoinRewardParams(
@@ -144,6 +170,7 @@ data class EpochParams(
     val pocPruningMax: Long,
     @SerializedName("poc_slot_allocation")
     val pocSlotAllocation: Decimal?,
+    val confirmationPocSafetyWindow: Long,
 )
 
 data class Decimal(
@@ -157,6 +184,8 @@ data class Decimal(
     override fun equals(other: Any?): Boolean {
         return this.toDouble() == (other as? Decimal)?.toDouble()
     }
+
+    override fun hashCode(): Int = toDouble().hashCode()
 
     companion object {
         private fun fromNumber(number: Number): Decimal {
@@ -209,6 +238,10 @@ data class ValidationParams(
     val quickFailureThreshold: Decimal?,
     @SerializedName("binom_test_p0")
     val binomTestP0: Decimal?,
+    @SerializedName("claim_validation_enabled")
+    val claimValidationEnabled: Boolean = false,
+    @SerializedName("logprobs_mode")
+    val logprobsMode: String = "",
 )
 
 data class BandwidthLimitsParams(
@@ -221,7 +254,7 @@ data class BandwidthLimitsParams(
     @SerializedName("invalidations_limit")
     val invalidationsLimit: Long,
     @SerializedName("invalidations_sample_period")
-    val invalidationsSamplePeriod: Long,
+    val invalidationsSamplePeriod: Long = 1,
     @SerializedName("invalidations_limit_curve")
     val invalidationsLimitCurve: Long,
     @SerializedName("minimum_concurrent_invalidations")
@@ -246,11 +279,36 @@ data class TransferAgentAccessParams(
     val allowedTransferAddresses: List<String> = emptyList(),
 )
 
+data class DevshardApprovedVersion(
+    val name: String,
+    val binary: String,
+    val sha256: String,
+)
+
+data class DevshardEscrowParams(
+    @SerializedName("min_amount")
+    val minAmount: Long,
+    @SerializedName("max_amount")
+    val maxAmount: Long,
+    @SerializedName("max_escrows_per_epoch")
+    val maxEscrowsPerEpoch: Long,
+    @SerializedName("group_size")
+    val groupSize: Long,
+    @SerializedName("allowed_creator_addresses")
+    val allowedCreatorAddresses: List<String>? = emptyList(),
+    @SerializedName("token_price")
+    val tokenPrice: Long,
+    @SerializedName("approved_versions")
+    val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
+)
+
 data class PocParams(
     val defaultDifficulty: Int,
     val validationSampleSize: Int,
     @SerializedName("poc_data_pruning_epoch_threshold")
     val pocDataPruningEpochThreshold: Long,
+    @SerializedName("models")
+    val models: List<PoCModelConfig> = emptyList(),
     @SerializedName("weight_scale_factor")
     val weightScaleFactor: Decimal? = null,
     @SerializedName("model_params")
@@ -269,6 +327,29 @@ data class PocParams(
     val validationSlots: Long = 2,
     @SerializedName("poc_normalization_enabled")
     val pocNormalizationEnabled: Boolean = false,  // Disabled by default in tests
+) {
+    fun primaryModelConfig(): PoCModelConfig? {
+        return models.firstOrNull()
+    }
+
+    val effectiveModelId: String?
+        get() = primaryModelConfig()?.modelId
+
+    val effectiveSeqLen: Long?
+        get() = primaryModelConfig()?.seqLen
+}
+
+data class PoCModelConfig(
+    @SerializedName("model_id")
+    val modelId: String? = null,
+    @SerializedName("seq_len")
+    val seqLen: Long? = null,
+    @SerializedName("stat_test")
+    val statTest: PoCStatTestParams? = null,
+    @SerializedName("weight_scale_factor")
+    val weightScaleFactor: Decimal? = null,
+    @SerializedName("penalty_start_epoch")
+    val penaltyStartEpoch: Long = 0,
 )
 
 data class PoCStatTestParams(

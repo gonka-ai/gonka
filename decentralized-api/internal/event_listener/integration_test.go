@@ -35,6 +35,8 @@ var defaultEpochParams = types.EpochParams{
 	PocValidationDuration: 10,
 }
 
+const integrationTestModelID = keeper.GenesisModelsTest_QWQ
+
 var defaultReconciliationConfig = MlNodeReconciliationConfig{
 	Inference: &MlNodeStageReconciliationConfig{
 		BlockInterval: 50,
@@ -48,11 +50,9 @@ var defaultReconciliationConfig = MlNodeReconciliationConfig{
 }
 
 // Mock implementations using minimal interfaces
-type MockNodePoCOrchestratorV2 struct{}
+type MockOffChainValidator struct{}
 
-func (m *MockNodePoCOrchestratorV2) ValidateReceivedArtifacts(pocStageStartBlockHeight int64, pocStartBlockHash string) {
-	// Mock implementation - does nothing
-}
+func (m *MockOffChainValidator) ValidateAll(pocStartBlockHeight int64, pocStartBlockHash string) {}
 
 type MockOrchestratorChainBridge struct {
 }
@@ -139,6 +139,14 @@ func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, mod
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
+}
+
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
@@ -210,8 +218,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
-	phaseTracker := chainphase.NewChainPhaseTracker()
-	phaseTracker.UpdatePocV2Enabled(true)
+	phaseTracker := &chainphase.ChainPhaseTracker{}
 
 	// Create mock client factory that tracks calls
 	mockClientFactory := mlnodeclient.NewMockClientFactory()
@@ -251,18 +258,18 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
 			PocStartBlockHeight: 100,
-			SubGroupModels:      []string{"test-model"},
+			SubGroupModels:      []string{integrationTestModelID},
 		},
 	}, nil)
 	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "").Return(&types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
 			PocStartBlockHeight: 100,
-			SubGroupModels:      []string{"test-model"},
+			SubGroupModels:      []string{integrationTestModelID},
 		},
 	}, nil)
-	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), integrationTestModelID).Return(&types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
-			ModelSnapshot: &types.Model{Id: "test-model"},
+			ModelSnapshot: &types.Model{Id: integrationTestModelID},
 			ValidationWeights: []*types.ValidationWeight{
 				{
 					MemberAddress: "some-address",
@@ -276,9 +283,17 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	}, nil)
 	mockChainBridge.On("GetParams").Return(&types.QueryParamsResponse{
 		Params: types.Params{
-			PocParams: types.DefaultPocParams(),
+			PocParams: &types.PocParams{
+				Models: []*types.PoCModelConfig{
+					{
+						ModelId: integrationTestModelID,
+						SeqLen:  256,
+					},
+				},
+			},
 		},
 	}, nil)
+	mockChainBridge.On("GetPreservedNodesSnapshot", mock.Anything).Return(&types.QueryPreservedNodesSnapshotResponse{Found: false}, nil)
 
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
@@ -315,12 +330,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	// Create dispatcher with mocked dependencies
 	mockValidator := &validation.InferenceValidator{}
 
-	// Create mock v2 orchestrator
-	mockV2Orchestrator := &MockNodePoCOrchestratorV2{}
+	mockOffChainValidator := &MockOffChainValidator{}
 
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
-		mockV2Orchestrator,
+		mockOffChainValidator,
 		mockQueryClient,
 		phaseTracker,
 		mockStatusFunc,
@@ -538,8 +552,8 @@ func TestInferenceReconciliation(t *testing.T) {
 
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node2Client)
 
 	var i = int64(1)
 	for i <= int64(reconciliationConfig.Inference.BlockInterval) {
@@ -560,7 +574,7 @@ func TestInferenceReconciliation(t *testing.T) {
 		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.IntendedStatus)
 	})
 
-	expected := NodeClientAssertion{1, 0, 0, 1}
+	expected := NodeClientAssertion{1, 0, 1}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
@@ -582,21 +596,34 @@ func TestRegularPocScenario(t *testing.T) {
 
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node2Client)
 
 	var i int64 = 1
-	for i <= setup.EpochParams.EpochLength {
-		require.Equal(t, 0, node1Client.InitGenerateV2Called, "InitGenerateV2 was called. n = %d. i = %d", node1Client.InitGenerateV2Called, i)
-		require.Equal(t, 0, node2Client.InitGenerateV2Called, "InitGenerateV2 was called. n = %d. i = %d", node2Client.InitGenerateV2Called, i)
-		if i == setup.EpochParams.EpochLength {
-			setup.transitionChainStateToNextEpoch(i)
-		}
+	inferenceReconcileHeight := int64(defaultReconciliationConfig.Inference.BlockInterval)
+	for i <= inferenceReconcileHeight {
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
 	}
+
+	waitForNodeStatus(t, setup, "node-1", types.HardwareNodeStatus_INFERENCE, 2*time.Second)
+	waitForNodeStatus(t, setup, "node-2", types.HardwareNodeStatus_INFERENCE, 2*time.Second)
+	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InferenceUpCalled: 1}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InferenceUpCalled: 1}, node2Client)
+
+	for i < setup.EpochParams.EpochLength {
+		err := setup.simulateBlock(i)
+		require.NoError(t, err)
+		require.Equal(t, 0, node1Client.GetInitGenerateV2Called(), "InitGenerateV2 was called early. i = %d", i)
+		require.Equal(t, 0, node2Client.GetInitGenerateV2Called(), "InitGenerateV2 was called early. i = %d", i)
+		i++
+	}
+
+	setup.transitionChainStateToNextEpoch(i)
+	err := setup.simulateBlock(i)
+	require.NoError(t, err)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -612,7 +639,7 @@ func TestRegularPocScenario(t *testing.T) {
 	})
 
 	// v2 doesn't call Stop() before PoC generation (unlike v1)
-	expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+	expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InferenceUpCalled: 1}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
@@ -622,7 +649,7 @@ func TestRegularPocScenario(t *testing.T) {
 		require.NoError(t, err)
 
 		// Expect no new calls to ml node client
-		expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+		expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InferenceUpCalled: 1}
 		assertNodeClient(t, expected, node1Client)
 		assertNodeClient(t, expected, node2Client)
 		i++
@@ -638,7 +665,7 @@ func TestRegularPocScenario(t *testing.T) {
 			waitForAsync(300 * time.Millisecond)
 		}
 
-		expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+		expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InferenceUpCalled: 1}
 		assertNodeClient(t, expected, node1Client)
 		assertNodeClient(t, expected, node2Client)
 
@@ -646,12 +673,12 @@ func TestRegularPocScenario(t *testing.T) {
 	}
 	require.Equal(t, pocValEnd, i)
 
-	err := setup.simulateBlock(i)
+	err = setup.simulateBlock(i)
 	require.NoError(t, err)
 	waitForAsync(300 * time.Millisecond)
 
 	// After PoC validation ends, nodes return to inference (+1 stop for inference transition)
-	expected = NodeClientAssertion{StopCalled: 2, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 2}
+	expected = NodeClientAssertion{StopCalled: 2, InitGenerateV2Called: 1, InferenceUpCalled: 2}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
@@ -687,7 +714,7 @@ func TestNodeUpdateSwitchesPocAddresses(t *testing.T) {
 	waitForAsync(200 * time.Millisecond)
 	waitForNodeStatus(t, setup, nodeID, types.HardwareNodeStatus_INFERENCE, 2*time.Second)
 
-	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InitValidateCalled: 0, InferenceUpCalled: 1}, nodeClient)
+	assertNodeClient(t, NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InferenceUpCalled: 1}, nodeClient)
 
 	nodes, err := setup.NodeBroker.GetNodes()
 	require.NoError(t, err)
@@ -747,22 +774,15 @@ func TestNodeUpdateSwitchesPocAddresses(t *testing.T) {
 type NodeClientAssertion struct {
 	StopCalled           int
 	InitGenerateV2Called int
-	InitValidateCalled   int
 	InferenceUpCalled    int
 }
 
 func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *mlnodeclient.MockClient) {
-	lock := nodeClient.Mu.TryLock()
-	if !lock {
-		t.Fatal("Failed to acquire lock on nodeClient")
-	} else {
-		defer nodeClient.Mu.Unlock()
-	}
-
-	require.Equal(t, expected.InitGenerateV2Called, nodeClient.InitGenerateV2Called, "InitGenerateV2 was called. n = %d", nodeClient.InitGenerateV2Called)
-	require.Equal(t, expected.InitValidateCalled, nodeClient.InitValidateCalled, "InitValidate was called. n = %d", nodeClient.InitValidateCalled)
-	require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
-	require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
+	nodeClient.WithTryLock(t, func() {
+		require.Equal(t, expected.InitGenerateV2Called, nodeClient.InitGenerateV2Called, "InitGenerateV2 was called. n = %d", nodeClient.InitGenerateV2Called)
+		require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
+		require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
+	})
 }
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
@@ -834,21 +854,19 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 	// Verify only node-2 received PoC start command, node-1 should be excluded
 	node1Client.WithTryLock(t, func() {
 		assert.Equal(t, 0, node1Client.InitGenerateV2Called, "Disabled node-1 should NOT receive InitGenerateV2 call")
-		assert.Equal(t, 0, node1Client.InitValidateCalled, "Disabled node-1 should NOT receive InitValidate call")
 	})
 	node2Client.WithTryLock(t, func() {
 		assert.Equal(t, 1, node2Client.InitGenerateV2Called, "Enabled node-2 should receive InitGenerateV2 call")
-		assert.Equal(t, 0, node2Client.InitValidateCalled, "Enabled node-2 should receive no InitValidate call")
 	})
 
-	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InitValidateCalled: 0, InferenceUpCalled: 1}
+	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 0, InferenceUpCalled: 1}
 	assertNodeClient(t, node1Expected, node1Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		// Default state is inference
 		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
 	})
 
-	node2Expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+	node2Expected := NodeClientAssertion{StopCalled: 1, InitGenerateV2Called: 1, InferenceUpCalled: 1}
 	assertNodeClient(t, node2Expected, node2Client)
 	setup.assertNode("node-2", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
@@ -890,8 +908,12 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	waitForAsync(500 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command
-	require.Equal(t, 0, node1Client.InitGenerateV2Called, "Disabled node-1 should NOT receive InitGenerateV2 call")
-	require.Equal(t, 1, node2Client.InitGenerateV2Called, "Enabled node-2 should receive InitGenerateV2 call")
+	node1Client.WithTryLock(t, func() {
+		require.Equal(t, 0, node1Client.InitGenerateV2Called, "Disabled node-1 should NOT receive InitGenerateV2 call")
+	})
+	node2Client.WithTryLock(t, func() {
+		require.Equal(t, 1, node2Client.InitGenerateV2Called, "Enabled node-2 should receive InitGenerateV2 call")
+	})
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
 	})
@@ -938,8 +960,12 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	})
 
 	// Verify both nodes received PoC start command
-	require.Equal(t, 1, node1Client.InitGenerateV2Called, "Node-1 should receive InitGenerateV2 call after being enabled")
-	require.Equal(t, 2, node2Client.InitGenerateV2Called, "Node-2 should continue to receive InitGenerateV2 call")
+	node1Client.WithTryLock(t, func() {
+		require.Equal(t, 1, node1Client.InitGenerateV2Called, "Node-1 should receive InitGenerateV2 call after being enabled")
+	})
+	node2Client.WithTryLock(t, func() {
+		require.Equal(t, 2, node2Client.InitGenerateV2Called, "Node-2 should continue to receive InitGenerateV2 call")
+	})
 }
 
 // Test Scenario 4: Full epoch transition with PoC commands
@@ -953,8 +979,8 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0}, node2Client)
 
 	// Simulate PoC start (block 0)
 	setup.transitionChainStateToNextEpoch(100)
@@ -963,16 +989,17 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// Both nodes should start PoC
-	assert.Greater(t, node1Client.InitGenerateV2Called, 0, "Node-1 should start PoC v2")
-	assert.Greater(t, node2Client.InitGenerateV2Called, 0, "Node-2 should start PoC v2")
+	node1Client.WithTryLock(t, func() {
+		assert.Greater(t, node1Client.InitGenerateV2Called, 0, "Node-1 should start PoC v2")
+	})
+	node2Client.WithTryLock(t, func() {
+		assert.Greater(t, node2Client.InitGenerateV2Called, 0, "Node-2 should start PoC v2")
+	})
 
 	// Simulate end of PoC stage (block 20)
 	err = setup.simulateBlock(120)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
-
-	assert.Equal(t, node1Client.InitValidateCalled, 0, "Node-1 should receive no InitValidate call (v2 uses no-op)")
-	assert.Equal(t, node2Client.InitValidateCalled, 0, "Node-2 should receive no InitValidate call (v2 uses no-op)")
 
 	// Simulate PoC validation start (block 22)
 	err = setup.simulateBlock(122)
@@ -987,8 +1014,8 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// Nodes should receive inference up commands
-	assert.Greater(t, node1Client.InferenceUpCalled, 0, "Node-1 should receive InferenceUp command")
-	assert.Greater(t, node2Client.InferenceUpCalled, 0, "Node-2 should receive InferenceUp command")
+	assert.Greater(t, node1Client.GetInferenceUpCalled(), 0, "Node-1 should receive InferenceUp command")
+	assert.Greater(t, node2Client.GetInferenceUpCalled(), 0, "Node-2 should receive InferenceUp command")
 
 	t.Logf("✅ Test 4 passed: Full epoch transition with proper PoC and validation commands")
 }
@@ -1036,8 +1063,8 @@ func TestPoCRetry(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// v2: no error injection, so both nodes successfully start PoC
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node2Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
 	})
@@ -1056,8 +1083,8 @@ func TestPoCRetry(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// v2: no errors injected, so no retry needed - still 1 call each
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node2Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
 	})
@@ -1076,8 +1103,8 @@ func TestPoCRetry(t *testing.T) {
 	}
 
 	// v2: no error injection means no retries - just 1 successful call per node
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node1Client)
-	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0}, node2Client)
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
 		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
 		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)

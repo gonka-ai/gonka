@@ -42,6 +42,22 @@ func (ms msgServer) RequestThresholdSignature(ctx context.Context, msg *types.Ms
 	// Convert to SDK context
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
+	// External callers must request signatures against the current signing epoch only.
+	currentSigningEpochID, found := ms.GetCurrentSigningEpochID(sdkCtx)
+	if !found {
+		return nil, fmt.Errorf("current signing epoch is not set")
+	}
+	if msg.CurrentEpochId != currentSigningEpochID {
+		return nil, fmt.Errorf("current_epoch_id mismatch: expected %d, got %d", currentSigningEpochID, msg.CurrentEpochId)
+	}
+
+	// Namespace the RequestId: keccak256(creator || request_id)
+	// This prevents external users from front-running and colliding with internal module requests
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(msg.Creator))
+	hash.Write(msg.RequestId)
+	namespacedRequestId := hash.Sum(nil)
+
 	// Add domain separation for external requests by prepending CUSTOM_SIGNATURE_DOMAIN
 	// This prevents unauthorized signatures from being created for unintended operations
 	customData := make([][]byte, 0, len(msg.Data)+1)
@@ -52,7 +68,7 @@ func (ms msgServer) RequestThresholdSignature(ctx context.Context, msg *types.Ms
 	signingData := types.SigningData{
 		CurrentEpochId: msg.CurrentEpochId,
 		ChainId:        msg.ChainId,
-		RequestId:      msg.RequestId,
+		RequestId:      namespacedRequestId,
 		Data:           customData,
 	}
 
@@ -65,5 +81,7 @@ func (ms msgServer) RequestThresholdSignature(ctx context.Context, msg *types.Ms
 		return nil, fmt.Errorf("failed to request threshold signature: %w", err)
 	}
 
-	return &types.MsgRequestThresholdSignatureResponse{}, nil
+	return &types.MsgRequestThresholdSignatureResponse{
+		DerivedRequestId: namespacedRequestId,
+	}, nil
 }

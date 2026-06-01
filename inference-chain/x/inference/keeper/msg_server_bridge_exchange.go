@@ -26,6 +26,9 @@ func PubKeyToAddress(pubKey string) (string, error) {
 }
 
 func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExchange) (*types.MsgBridgeExchangeResponse, error) {
+	if err := k.CheckPermission(goCtx, msg, ActiveParticipantPermission, PreviousActiveParticipantPermission); err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.LogInfo("Bridge exchange: Processing transaction request", types.Messages,
@@ -51,17 +54,12 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	// Check if the validator account exists
-	acc := k.AccountKeeper.GetAccount(ctx, addr)
-	if acc == nil {
-		k.LogError("Bridge exchange: Account not found for validator", types.Messages, "validator", msg.Validator)
-		return nil, fmt.Errorf("account not found for validator")
-	}
-
 	// Create transaction object with all the content for secure validation
+	// ContractAddress is normalized to lowercase to ensure consistent dedup and comparison
+	// regardless of EIP-55 checksum casing used by individual validator nodes.
 	proposedTx := &types.BridgeTransaction{
 		ChainId:         msg.OriginChain,
-		ContractAddress: msg.ContractAddress,
+		ContractAddress: strings.ToLower(msg.ContractAddress),
 		OwnerAddress:    msg.OwnerAddress,
 		Amount:          msg.Amount,
 		BlockNumber:     msg.BlockNumber,
@@ -130,22 +128,32 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			return nil, fmt.Errorf("validator not in transaction's epoch group")
 		}
 
-		// Check if validator already validated
-		for _, validator := range existingTx.Validators {
-			existingAddr, err := sdk.AccAddressFromBech32(validator)
-			if err != nil {
-				continue
-			}
-			if existingAddr.Equals(addr) {
-				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
-				return nil, fmt.Errorf("validator has already validated this transaction")
-			}
+		// Check if validator already validated. O(1) via the KeySet
+		// lookup; replaces the prior O(N) slice scan.
+		alreadyValidated, err := k.HasBridgeTransactionValidator(ctx, existingTx, addr.String())
+		if err != nil {
+			k.LogError("Bridge exchange: Failed to check validator confirmation", types.Messages,
+				"validator", msg.Validator, "error", err)
+			return nil, fmt.Errorf("failed to check validator confirmation: %v", err)
+		}
+		if alreadyValidated {
+			k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
+			return nil, fmt.Errorf("validator has already validated this transaction")
 		}
 
-		// Add validator and their power to totals
-		// Store normalized (canonical lowercase) address to ensure consistency
-		existingTx.Validators = append(existingTx.Validators, addr.String())
+		// Record this validator's confirmation in its own sub-key. Write
+		// cost is constant regardless of how many prior validators have
+		// already confirmed, which is the whole point of the split.
+		if err := k.AddBridgeTransactionValidator(ctx, existingTx, addr.String()); err != nil {
+			k.LogError("Bridge exchange: Failed to record validator confirmation", types.Messages,
+				"validator", msg.Validator, "error", err)
+			return nil, fmt.Errorf("failed to record validator confirmation: %v", err)
+		}
 		existingTx.TotalValidationPower += validatorPower
+		// Clear the rehydrated Validators slice before SetBridgeTransaction
+		// so the sync loop there doesn't redundantly re-Set every prior
+		// validator's sub-key on each confirmation.
+		existingTx.Validators = nil
 
 		// Use total epoch power from epoch group data
 		totalEpochPower := epochGroup.GroupData.TotalWeight
@@ -258,9 +266,17 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	proposedTx.Id = "" // Will be set by SetBridgeTransaction
 	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
 	proposedTx.EpochIndex = currentEpochGroup.GroupData.EpochIndex
-	// Store normalized (canonical lowercase) address to ensure consistency
-	proposedTx.Validators = []string{addr.String()}
 	proposedTx.TotalValidationPower = validatorPower
+	// Record the first validator's confirmation via the KeySet and leave
+	// the in-memory Validators slice empty so the base struct stays
+	// constant-size on disk. Store normalized (canonical lowercase)
+	// address to ensure consistency.
+	if err := k.AddBridgeTransactionValidator(ctx, proposedTx, addr.String()); err != nil {
+		k.LogError("Bridge exchange: Failed to record first validator confirmation", types.Messages,
+			"validator", msg.Validator, "error", err)
+		return nil, fmt.Errorf("failed to record validator confirmation: %v", err)
+	}
+	proposedTx.Validators = nil
 
 	k.SetBridgeTransaction(ctx, proposedTx)
 

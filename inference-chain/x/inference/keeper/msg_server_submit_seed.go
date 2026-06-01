@@ -3,17 +3,27 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k msgServer) SubmitSeed(goCtx context.Context, msg *types.MsgSubmitSeed) (*types.MsgSubmitSeedResponse, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
+func (k msgServer) SubmitSeed(ctx context.Context, msg *types.MsgSubmitSeed) (*types.MsgSubmitSeedResponse, error) {
+	if err := k.CheckPermission(ctx, msg, ParticipantPermission); err != nil {
+		return nil, err
+	}
 
 	seed := types.RandomSeed{
 		Participant: msg.Creator,
 		EpochIndex:  msg.EpochIndex,
 		Signature:   msg.Signature,
+	}
+
+	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return nil, types.ErrEffectiveEpochNotFound
+	}
+
+	if msg.EpochIndex < currentEpochIndex || msg.EpochIndex > currentEpochIndex+1 {
+		return nil, types.ErrEpochIndexOutOfRange
 	}
 
 	if err := k.SetRandomSeed(ctx, seed); err != nil {

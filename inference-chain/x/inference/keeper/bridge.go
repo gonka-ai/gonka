@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -16,7 +17,9 @@ func (k Keeper) generateBridgeAddressKey(_ context.Context, chainId, address str
 }
 
 // SetBridgeContractAddress stores a bridge contract address
+// Address is normalized to lowercase to ensure consistent storage regardless of EIP-55 checksum casing.
 func (k Keeper) SetBridgeContractAddress(ctx context.Context, address types.BridgeContractAddress) {
+	address.Address = strings.ToLower(address.Address)
 	address.Id = k.generateBridgeAddressKey(ctx, address.ChainId, address.Address)
 	if err := k.BridgeContractAddresses.Set(ctx, collections.Join(address.ChainId, address.Address), address); err != nil {
 		k.LogError("Bridge exchange: Failed to set bridge contract address",
@@ -80,7 +83,7 @@ func (k Keeper) GetAllBridgeContractAddresses(ctx context.Context) []types.Bridg
 
 // HasBridgeContractAddress checks if a bridge contract address exists for a chain
 func (k Keeper) HasBridgeContractAddress(ctx context.Context, chainId, address string) bool {
-	has, err := k.BridgeContractAddresses.Has(ctx, collections.Join(chainId, address))
+	has, err := k.BridgeContractAddresses.Has(ctx, collections.Join(chainId, strings.ToLower(address)))
 	if err != nil {
 		k.LogError("Bridge exchange: Failed to check bridge contract address",
 			types.Messages,
@@ -95,5 +98,5 @@ func (k Keeper) HasBridgeContractAddress(ctx context.Context, chainId, address s
 
 // RemoveBridgeContractAddress removes a bridge contract address
 func (k Keeper) RemoveBridgeContractAddress(ctx context.Context, chainId, address string) {
-	_ = k.BridgeContractAddresses.Remove(ctx, collections.Join(chainId, address))
+	_ = k.BridgeContractAddresses.Remove(ctx, collections.Join(chainId, strings.ToLower(address)))
 }

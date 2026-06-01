@@ -239,6 +239,121 @@ func (m *MsgSubmitDealerPartResponse) XXX_DiscardUnknown() {
 var xxx_messageInfo_MsgSubmitDealerPartResponse proto.InternalMessageInfo
 
 // MsgSubmitVerificationVector is the message for confirming verification completion during the verifying phase
+type VerificationDealerComplaint struct {
+	// dealer_index identifies the disputed dealer index in EpochBLSData.participants
+	DealerIndex uint32 `protobuf:"varint,1,opt,name=dealer_index,json=dealerIndex,proto3" json:"dealer_index,omitempty"`
+	// disputed_slot_index identifies the disputed slot covered by this complaint
+	DisputedSlotIndex uint32 `protobuf:"varint,2,opt,name=disputed_slot_index,json=disputedSlotIndex,proto3" json:"disputed_slot_index,omitempty"`
+	// disputed_ciphertext_index identifies the disputed ciphertext offset covered by this complaint
+	DisputedCiphertextIndex uint32 `protobuf:"varint,3,opt,name=disputed_ciphertext_index,json=disputedCiphertextIndex,proto3" json:"disputed_ciphertext_index,omitempty"`
+}
+
+func (m *VerificationDealerComplaint) Reset()         { *m = VerificationDealerComplaint{} }
+func (m *VerificationDealerComplaint) String() string { return proto.CompactTextString(m) }
+func (*VerificationDealerComplaint) ProtoMessage()    {}
+func (*VerificationDealerComplaint) Descriptor() ([]byte, []int) {
+	return fileDescriptor_06b0e6f51d329716, []int{4}
+}
+func (m *VerificationDealerComplaint) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *VerificationDealerComplaint) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_VerificationDealerComplaint.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *VerificationDealerComplaint) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_VerificationDealerComplaint.Merge(m, src)
+}
+func (m *VerificationDealerComplaint) XXX_Size() int {
+	return m.Size()
+}
+func (m *VerificationDealerComplaint) XXX_DiscardUnknown() {
+	xxx_messageInfo_VerificationDealerComplaint.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_VerificationDealerComplaint proto.InternalMessageInfo
+
+func (m *VerificationDealerComplaint) GetDealerIndex() uint32 {
+	if m != nil {
+		return m.DealerIndex
+	}
+	return 0
+}
+
+func (m *VerificationDealerComplaint) GetDisputedSlotIndex() uint32 {
+	if m != nil {
+		return m.DisputedSlotIndex
+	}
+	return 0
+}
+
+func (m *VerificationDealerComplaint) GetDisputedCiphertextIndex() uint32 {
+	if m != nil {
+		return m.DisputedCiphertextIndex
+	}
+	return 0
+}
+
+type DealerValidityProof struct {
+	DealerIndex    uint32 `protobuf:"varint,1,opt,name=dealer_index,json=dealerIndex,proto3" json:"dealer_index,omitempty"`
+	ProofSignature []byte `protobuf:"bytes,2,opt,name=proof_signature,json=proofSignature,proto3" json:"proof_signature,omitempty"`
+}
+
+func (m *DealerValidityProof) Reset()         { *m = DealerValidityProof{} }
+func (m *DealerValidityProof) String() string { return proto.CompactTextString(m) }
+func (*DealerValidityProof) ProtoMessage()    {}
+func (*DealerValidityProof) Descriptor() ([]byte, []int) {
+	return fileDescriptor_06b0e6f51d329716, []int{5}
+}
+func (m *DealerValidityProof) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DealerValidityProof) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DealerValidityProof.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DealerValidityProof) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DealerValidityProof.Merge(m, src)
+}
+func (m *DealerValidityProof) XXX_Size() int {
+	return m.Size()
+}
+func (m *DealerValidityProof) XXX_DiscardUnknown() {
+	xxx_messageInfo_DealerValidityProof.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DealerValidityProof proto.InternalMessageInfo
+
+func (m *DealerValidityProof) GetDealerIndex() uint32 {
+	if m != nil {
+		return m.DealerIndex
+	}
+	return 0
+}
+
+func (m *DealerValidityProof) GetProofSignature() []byte {
+	if m != nil {
+		return m.ProofSignature
+	}
+	return nil
+}
+
 type MsgSubmitVerificationVector struct {
 	// creator is the address of the participant confirming verification completion
 	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
@@ -249,13 +364,18 @@ type MsgSubmitVerificationVector struct {
 	// true = dealer's shares verified correctly against their commitments
 	// false = dealer's shares failed verification or dealer didn't submit
 	DealerValidity []bool `protobuf:"varint,3,rep,packed,name=dealer_validity,json=dealerValidity,proto3" json:"dealer_validity,omitempty"`
+	// dealer_complaints carries optional per-dealer complaint evidence for dealers voted false.
+	// This is used in DISPUTING phase to resolve objective fault assignment.
+	DealerComplaints []VerificationDealerComplaint `protobuf:"bytes,4,rep,name=dealer_complaints,json=dealerComplaints,proto3" json:"dealer_complaints"`
+	// dealer_validity_proofs carries a proof for each dealer voted true.
+	DealerValidityProofs []DealerValidityProof `protobuf:"bytes,5,rep,name=dealer_validity_proofs,json=dealerValidityProofs,proto3" json:"dealer_validity_proofs"`
 }
 
 func (m *MsgSubmitVerificationVector) Reset()         { *m = MsgSubmitVerificationVector{} }
 func (m *MsgSubmitVerificationVector) String() string { return proto.CompactTextString(m) }
 func (*MsgSubmitVerificationVector) ProtoMessage()    {}
 func (*MsgSubmitVerificationVector) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{4}
+	return fileDescriptor_06b0e6f51d329716, []int{6}
 }
 func (m *MsgSubmitVerificationVector) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -305,6 +425,20 @@ func (m *MsgSubmitVerificationVector) GetDealerValidity() []bool {
 	return nil
 }
 
+func (m *MsgSubmitVerificationVector) GetDealerComplaints() []VerificationDealerComplaint {
+	if m != nil {
+		return m.DealerComplaints
+	}
+	return nil
+}
+
+func (m *MsgSubmitVerificationVector) GetDealerValidityProofs() []DealerValidityProof {
+	if m != nil {
+		return m.DealerValidityProofs
+	}
+	return nil
+}
+
 // MsgSubmitVerificationVectorResponse defines the response structure for executing a
 // MsgSubmitVerificationVector message.
 type MsgSubmitVerificationVectorResponse struct {
@@ -314,7 +448,7 @@ func (m *MsgSubmitVerificationVectorResponse) Reset()         { *m = MsgSubmitVe
 func (m *MsgSubmitVerificationVectorResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgSubmitVerificationVectorResponse) ProtoMessage()    {}
 func (*MsgSubmitVerificationVectorResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{5}
+	return fileDescriptor_06b0e6f51d329716, []int{7}
 }
 func (m *MsgSubmitVerificationVectorResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -343,6 +477,181 @@ func (m *MsgSubmitVerificationVectorResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgSubmitVerificationVectorResponse proto.InternalMessageInfo
 
+// DealerComplaintResponse represents one dealer response for one complainer complaint.
+type DealerComplaintResponse struct {
+	// complainer_index identifies the complainer participant index in EpochBLSData.participants
+	ComplainerIndex uint32 `protobuf:"varint,1,opt,name=complainer_index,json=complainerIndex,proto3" json:"complainer_index,omitempty"`
+	// response_share_bytes carries dealer response share material
+	ResponseShareBytes []byte `protobuf:"bytes,2,opt,name=response_share_bytes,json=responseShareBytes,proto3" json:"response_share_bytes,omitempty"`
+	// response_opening_material carries dealer response opening material
+	ResponseOpeningMaterial []byte `protobuf:"bytes,3,opt,name=response_opening_material,json=responseOpeningMaterial,proto3" json:"response_opening_material,omitempty"`
+}
+
+func (m *DealerComplaintResponse) Reset()         { *m = DealerComplaintResponse{} }
+func (m *DealerComplaintResponse) String() string { return proto.CompactTextString(m) }
+func (*DealerComplaintResponse) ProtoMessage()    {}
+func (*DealerComplaintResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_06b0e6f51d329716, []int{8}
+}
+func (m *DealerComplaintResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DealerComplaintResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DealerComplaintResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DealerComplaintResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DealerComplaintResponse.Merge(m, src)
+}
+func (m *DealerComplaintResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *DealerComplaintResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_DealerComplaintResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DealerComplaintResponse proto.InternalMessageInfo
+
+func (m *DealerComplaintResponse) GetComplainerIndex() uint32 {
+	if m != nil {
+		return m.ComplainerIndex
+	}
+	return 0
+}
+
+func (m *DealerComplaintResponse) GetResponseShareBytes() []byte {
+	if m != nil {
+		return m.ResponseShareBytes
+	}
+	return nil
+}
+
+func (m *DealerComplaintResponse) GetResponseOpeningMaterial() []byte {
+	if m != nil {
+		return m.ResponseOpeningMaterial
+	}
+	return nil
+}
+
+// MsgRespondDealerComplaints is the message for responding to dealer complaints during disputing phase
+type MsgRespondDealerComplaints struct {
+	// creator is the dealer responding to complaints
+	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	// epoch_id identifies the DKG round these responses belong to
+	EpochId uint64 `protobuf:"varint,2,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	// dealer_index identifies the dealer index in EpochBLSData.participants
+	DealerIndex uint32 `protobuf:"varint,3,opt,name=dealer_index,json=dealerIndex,proto3" json:"dealer_index,omitempty"`
+	// responses carries one response entry per complainer complaint.
+	Responses []DealerComplaintResponse `protobuf:"bytes,4,rep,name=responses,proto3" json:"responses"`
+}
+
+func (m *MsgRespondDealerComplaints) Reset()         { *m = MsgRespondDealerComplaints{} }
+func (m *MsgRespondDealerComplaints) String() string { return proto.CompactTextString(m) }
+func (*MsgRespondDealerComplaints) ProtoMessage()    {}
+func (*MsgRespondDealerComplaints) Descriptor() ([]byte, []int) {
+	return fileDescriptor_06b0e6f51d329716, []int{9}
+}
+func (m *MsgRespondDealerComplaints) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRespondDealerComplaints) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRespondDealerComplaints.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRespondDealerComplaints) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRespondDealerComplaints.Merge(m, src)
+}
+func (m *MsgRespondDealerComplaints) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRespondDealerComplaints) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRespondDealerComplaints.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRespondDealerComplaints proto.InternalMessageInfo
+
+func (m *MsgRespondDealerComplaints) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *MsgRespondDealerComplaints) GetEpochId() uint64 {
+	if m != nil {
+		return m.EpochId
+	}
+	return 0
+}
+
+func (m *MsgRespondDealerComplaints) GetDealerIndex() uint32 {
+	if m != nil {
+		return m.DealerIndex
+	}
+	return 0
+}
+
+func (m *MsgRespondDealerComplaints) GetResponses() []DealerComplaintResponse {
+	if m != nil {
+		return m.Responses
+	}
+	return nil
+}
+
+// MsgRespondDealerComplaintsResponse defines the response structure for executing a
+// MsgRespondDealerComplaints message.
+type MsgRespondDealerComplaintsResponse struct {
+}
+
+func (m *MsgRespondDealerComplaintsResponse) Reset()         { *m = MsgRespondDealerComplaintsResponse{} }
+func (m *MsgRespondDealerComplaintsResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgRespondDealerComplaintsResponse) ProtoMessage()    {}
+func (*MsgRespondDealerComplaintsResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_06b0e6f51d329716, []int{10}
+}
+func (m *MsgRespondDealerComplaintsResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRespondDealerComplaintsResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRespondDealerComplaintsResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRespondDealerComplaintsResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRespondDealerComplaintsResponse.Merge(m, src)
+}
+func (m *MsgRespondDealerComplaintsResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRespondDealerComplaintsResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRespondDealerComplaintsResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRespondDealerComplaintsResponse proto.InternalMessageInfo
+
 // MsgSubmitGroupKeyValidationSignature is the message for submitting partial signatures for group key validation
 type MsgSubmitGroupKeyValidationSignature struct {
 	// creator is the address of the participant submitting their partial signature
@@ -359,7 +668,7 @@ func (m *MsgSubmitGroupKeyValidationSignature) Reset()         { *m = MsgSubmitG
 func (m *MsgSubmitGroupKeyValidationSignature) String() string { return proto.CompactTextString(m) }
 func (*MsgSubmitGroupKeyValidationSignature) ProtoMessage()    {}
 func (*MsgSubmitGroupKeyValidationSignature) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{6}
+	return fileDescriptor_06b0e6f51d329716, []int{11}
 }
 func (m *MsgSubmitGroupKeyValidationSignature) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -429,7 +738,7 @@ func (m *MsgSubmitGroupKeyValidationSignatureResponse) String() string {
 }
 func (*MsgSubmitGroupKeyValidationSignatureResponse) ProtoMessage() {}
 func (*MsgSubmitGroupKeyValidationSignatureResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{7}
+	return fileDescriptor_06b0e6f51d329716, []int{12}
 }
 func (m *MsgSubmitGroupKeyValidationSignatureResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -474,7 +783,7 @@ func (m *MsgSubmitPartialSignature) Reset()         { *m = MsgSubmitPartialSigna
 func (m *MsgSubmitPartialSignature) String() string { return proto.CompactTextString(m) }
 func (*MsgSubmitPartialSignature) ProtoMessage()    {}
 func (*MsgSubmitPartialSignature) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{8}
+	return fileDescriptor_06b0e6f51d329716, []int{13}
 }
 func (m *MsgSubmitPartialSignature) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -540,7 +849,7 @@ func (m *MsgSubmitPartialSignatureResponse) Reset()         { *m = MsgSubmitPart
 func (m *MsgSubmitPartialSignatureResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgSubmitPartialSignatureResponse) ProtoMessage()    {}
 func (*MsgSubmitPartialSignatureResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{9}
+	return fileDescriptor_06b0e6f51d329716, []int{14}
 }
 func (m *MsgSubmitPartialSignatureResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -587,7 +896,7 @@ func (m *MsgRequestThresholdSignature) Reset()         { *m = MsgRequestThreshol
 func (m *MsgRequestThresholdSignature) String() string { return proto.CompactTextString(m) }
 func (*MsgRequestThresholdSignature) ProtoMessage()    {}
 func (*MsgRequestThresholdSignature) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{10}
+	return fileDescriptor_06b0e6f51d329716, []int{15}
 }
 func (m *MsgRequestThresholdSignature) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -654,13 +963,15 @@ func (m *MsgRequestThresholdSignature) GetData() [][]byte {
 // MsgRequestThresholdSignatureResponse defines the response structure for executing a
 // MsgRequestThresholdSignature message.
 type MsgRequestThresholdSignatureResponse struct {
+	// derived_request_id is the actual request ID used for KVStore lookups, derived as keccak256(creator || request_id)
+	DerivedRequestId []byte `protobuf:"bytes,1,opt,name=derived_request_id,json=derivedRequestId,proto3" json:"derived_request_id,omitempty"`
 }
 
 func (m *MsgRequestThresholdSignatureResponse) Reset()         { *m = MsgRequestThresholdSignatureResponse{} }
 func (m *MsgRequestThresholdSignatureResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgRequestThresholdSignatureResponse) ProtoMessage()    {}
 func (*MsgRequestThresholdSignatureResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_06b0e6f51d329716, []int{11}
+	return fileDescriptor_06b0e6f51d329716, []int{16}
 }
 func (m *MsgRequestThresholdSignatureResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -689,13 +1000,25 @@ func (m *MsgRequestThresholdSignatureResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgRequestThresholdSignatureResponse proto.InternalMessageInfo
 
+func (m *MsgRequestThresholdSignatureResponse) GetDerivedRequestId() []byte {
+	if m != nil {
+		return m.DerivedRequestId
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "inference.bls.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "inference.bls.MsgUpdateParamsResponse")
 	proto.RegisterType((*MsgSubmitDealerPart)(nil), "inference.bls.MsgSubmitDealerPart")
 	proto.RegisterType((*MsgSubmitDealerPartResponse)(nil), "inference.bls.MsgSubmitDealerPartResponse")
+	proto.RegisterType((*VerificationDealerComplaint)(nil), "inference.bls.VerificationDealerComplaint")
+	proto.RegisterType((*DealerValidityProof)(nil), "inference.bls.DealerValidityProof")
 	proto.RegisterType((*MsgSubmitVerificationVector)(nil), "inference.bls.MsgSubmitVerificationVector")
 	proto.RegisterType((*MsgSubmitVerificationVectorResponse)(nil), "inference.bls.MsgSubmitVerificationVectorResponse")
+	proto.RegisterType((*DealerComplaintResponse)(nil), "inference.bls.DealerComplaintResponse")
+	proto.RegisterType((*MsgRespondDealerComplaints)(nil), "inference.bls.MsgRespondDealerComplaints")
+	proto.RegisterType((*MsgRespondDealerComplaintsResponse)(nil), "inference.bls.MsgRespondDealerComplaintsResponse")
 	proto.RegisterType((*MsgSubmitGroupKeyValidationSignature)(nil), "inference.bls.MsgSubmitGroupKeyValidationSignature")
 	proto.RegisterType((*MsgSubmitGroupKeyValidationSignatureResponse)(nil), "inference.bls.MsgSubmitGroupKeyValidationSignatureResponse")
 	proto.RegisterType((*MsgSubmitPartialSignature)(nil), "inference.bls.MsgSubmitPartialSignature")
@@ -707,64 +1030,84 @@ func init() {
 func init() { proto.RegisterFile("inference/bls/tx.proto", fileDescriptor_06b0e6f51d329716) }
 
 var fileDescriptor_06b0e6f51d329716 = []byte{
-	// 902 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x96, 0xcf, 0x6f, 0xdc, 0x44,
-	0x14, 0xc7, 0xe3, 0xec, 0xa6, 0x49, 0x5e, 0xb6, 0x6d, 0x6a, 0x4a, 0xbb, 0x6b, 0xe8, 0x76, 0xe3,
-	0x40, 0x59, 0x92, 0xb0, 0x86, 0x4d, 0x85, 0xd0, 0x02, 0x07, 0x22, 0x02, 0x8a, 0x50, 0xa4, 0xc8,
-	0x81, 0x1c, 0xb8, 0x58, 0xb3, 0xf6, 0xc4, 0x3b, 0xd2, 0xda, 0x63, 0x66, 0xc6, 0x6d, 0x17, 0xa9,
-	0x12, 0xe2, 0x06, 0x27, 0x24, 0xc4, 0xff, 0xc0, 0x31, 0x07, 0x24, 0x0e, 0xfc, 0x03, 0x3d, 0x16,
-	0xb8, 0x70, 0x42, 0x28, 0x39, 0xe4, 0x7f, 0xe0, 0x84, 0x3c, 0xfe, 0x91, 0x66, 0x36, 0xde, 0x84,
-	0x40, 0x2f, 0xbb, 0x9e, 0xf7, 0xbe, 0x6f, 0xe6, 0xfb, 0x3e, 0x9a, 0x19, 0x1b, 0x6e, 0x91, 0x70,
-	0x1f, 0x33, 0x1c, 0xba, 0xd8, 0xea, 0x0f, 0xb9, 0x25, 0x1e, 0x75, 0x22, 0x46, 0x05, 0xd5, 0xaf,
-	0x16, 0xf1, 0x4e, 0x7f, 0xc8, 0x8d, 0x1b, 0x28, 0x20, 0x21, 0xb5, 0xe4, 0x6f, 0xaa, 0x30, 0x6e,
-	0xbb, 0x94, 0x07, 0x94, 0x5b, 0x01, 0xf7, 0xad, 0x07, 0x6f, 0x25, 0x7f, 0x59, 0xa2, 0x91, 0x26,
-	0x1c, 0x39, 0xb2, 0xd2, 0x41, 0x96, 0xba, 0xe9, 0x53, 0x9f, 0xa6, 0xf1, 0xe4, 0x29, 0x8b, 0x1a,
-	0xa7, 0x3d, 0x44, 0x88, 0xa1, 0x20, 0xaf, 0x68, 0x28, 0xfe, 0x46, 0x11, 0xce, 0x52, 0xe6, 0xcf,
-	0x1a, 0x5c, 0xdf, 0xe6, 0xfe, 0x67, 0x91, 0x87, 0x04, 0xde, 0x91, 0x45, 0xfa, 0xdb, 0x30, 0x8f,
-	0x62, 0x31, 0xa0, 0x8c, 0x88, 0x51, 0x5d, 0x6b, 0x69, 0xed, 0xf9, 0x8d, 0xfa, 0x6f, 0x3f, 0xbd,
-	0x71, 0x33, 0x73, 0xf1, 0x81, 0xe7, 0x31, 0xcc, 0xf9, 0xae, 0x60, 0x24, 0xf4, 0xed, 0x13, 0xa9,
-	0xfe, 0x0e, 0x5c, 0x49, 0x97, 0xad, 0x4f, 0xb7, 0xb4, 0xf6, 0x42, 0xf7, 0xc5, 0xce, 0xa9, 0xfe,
-	0x3b, 0xe9, 0xf4, 0x1b, 0xf3, 0x4f, 0xfe, 0xbc, 0x3b, 0xf5, 0xe3, 0xf1, 0xc1, 0x8a, 0x66, 0x67,
-	0xfa, 0x5e, 0xf7, 0xeb, 0xe3, 0x83, 0x95, 0x93, 0x99, 0xbe, 0x3d, 0x3e, 0x58, 0xb9, 0x7b, 0xe2,
-	0xf9, 0x91, 0x74, 0xad, 0xb8, 0x34, 0x1b, 0x70, 0x5b, 0x09, 0xd9, 0x98, 0x47, 0x34, 0xe4, 0xd8,
-	0xfc, 0x65, 0x1a, 0x5e, 0xd8, 0xe6, 0xfe, 0x6e, 0xdc, 0x0f, 0x88, 0xf8, 0x10, 0xa3, 0x21, 0x66,
-	0x3b, 0x88, 0x09, 0xbd, 0x0b, 0xb3, 0x2e, 0xc3, 0x48, 0x50, 0x76, 0x6e, 0x5b, 0xb9, 0x50, 0x6f,
-	0xc0, 0x1c, 0x8e, 0xa8, 0x3b, 0x70, 0x88, 0x27, 0xdb, 0xaa, 0xda, 0xb3, 0x72, 0xbc, 0xe5, 0xe9,
-	0x2d, 0x58, 0x70, 0x69, 0x10, 0x10, 0x11, 0xe0, 0x50, 0xf0, 0x7a, 0xa5, 0x55, 0x69, 0xd7, 0xec,
-	0x67, 0x43, 0xfa, 0x63, 0x58, 0xc2, 0xa1, 0xcb, 0x46, 0x91, 0xc0, 0x9e, 0xc3, 0x07, 0x88, 0x61,
-	0xee, 0xec, 0x53, 0xe6, 0x44, 0x88, 0x09, 0xe2, 0x92, 0x08, 0x25, 0x75, 0xd5, 0x56, 0xa5, 0xbd,
-	0xd0, 0x5d, 0x53, 0x60, 0x6d, 0xe6, 0x75, 0xbb, 0xb2, 0xec, 0x23, 0x2a, 0x5b, 0xc8, 0x8a, 0x36,
-	0xaa, 0x09, 0x43, 0xbb, 0x89, 0x27, 0x89, 0x78, 0xef, 0x7e, 0x82, 0x35, 0xef, 0x24, 0x81, 0xba,
-	0x7c, 0x06, 0x54, 0x95, 0x92, 0x79, 0x07, 0x5e, 0x3a, 0x23, 0x5c, 0xc0, 0xfd, 0x5d, 0x7b, 0x26,
-	0xbf, 0x87, 0x19, 0xd9, 0x27, 0x2e, 0x12, 0x84, 0x86, 0x7b, 0xd8, 0x4d, 0x80, 0xfd, 0xcf, 0x90,
-	0x5f, 0x83, 0xeb, 0x9e, 0x34, 0xe1, 0x3c, 0x40, 0x43, 0xe2, 0x25, 0x5b, 0x32, 0x01, 0x3d, 0x67,
-	0x5f, 0x4b, 0xc3, 0x7b, 0x59, 0xb4, 0xf7, 0x9e, 0xda, 0xec, 0x6a, 0x69, 0xb3, 0xe3, 0xae, 0xcd,
-	0x57, 0x61, 0x79, 0x42, 0xba, 0x68, 0xfe, 0xfb, 0x69, 0x78, 0xa5, 0xd0, 0x7d, 0xcc, 0x68, 0x1c,
-	0x7d, 0x82, 0x47, 0xd2, 0x82, 0x54, 0xef, 0x12, 0x3f, 0x44, 0x22, 0x66, 0xf8, 0x52, 0x14, 0x5a,
-	0x50, 0x0b, 0xf1, 0x43, 0x47, 0x21, 0x01, 0x21, 0x7e, 0xb8, 0x99, 0xc1, 0x58, 0x82, 0x1a, 0x1f,
-	0x52, 0xe1, 0x90, 0xd0, 0x23, 0x2e, 0x4e, 0xb7, 0xdc, 0x55, 0x7b, 0x21, 0x89, 0x6d, 0xa5, 0x21,
-	0x7d, 0x15, 0x6e, 0xc8, 0xdd, 0x85, 0x86, 0x0e, 0xcf, 0xdd, 0xd4, 0xab, 0x2d, 0xad, 0x5d, 0xb3,
-	0x17, 0xb3, 0x44, 0xe1, 0xb2, 0xb7, 0xa9, 0x32, 0xbb, 0x5f, 0xca, 0x6c, 0x42, 0xb3, 0x66, 0x07,
-	0xd6, 0x2e, 0xa2, 0x2b, 0x28, 0xfe, 0xad, 0x41, 0xa3, 0x28, 0xd8, 0x51, 0x4c, 0x5d, 0x0a, 0xdd,
-	0x1d, 0x00, 0x86, 0xbf, 0x88, 0x31, 0x17, 0x39, 0xb8, 0x9a, 0x3d, 0x9f, 0x45, 0x9e, 0x03, 0xb7,
-	0x9e, 0xca, 0xed, 0xf5, 0x52, 0x6e, 0x6a, 0x7b, 0xe6, 0x32, 0x2c, 0x95, 0x26, 0x0b, 0x42, 0xdf,
-	0x4c, 0xc3, 0xcb, 0xdb, 0xdc, 0xb7, 0xd3, 0x0e, 0x3e, 0x1d, 0x30, 0xcc, 0x07, 0x74, 0xe8, 0xfd,
-	0x37, 0x48, 0x6d, 0x58, 0x74, 0x63, 0xc6, 0x70, 0x28, 0xd4, 0x3d, 0x76, 0x2d, 0x8b, 0xe7, 0xfb,
-	0xac, 0x01, 0x73, 0xee, 0x00, 0x91, 0x30, 0x51, 0x54, 0x24, 0x83, 0x59, 0x39, 0xde, 0xf2, 0x14,
-	0xd2, 0x55, 0x95, 0xb4, 0x0e, 0x55, 0x0f, 0x09, 0x54, 0x9f, 0x91, 0x97, 0xa1, 0x7c, 0xee, 0xbd,
-	0xaf, 0xd2, 0x5a, 0x3b, 0x83, 0x56, 0x69, 0xab, 0xe6, 0x3d, 0x79, 0xe4, 0x4a, 0xf3, 0x39, 0xb3,
-	0xee, 0xaf, 0x33, 0x50, 0xd9, 0xe6, 0xbe, 0xbe, 0x07, 0xb5, 0x53, 0xaf, 0xb3, 0xa6, 0x72, 0xb3,
-	0x2a, 0x6f, 0x0d, 0xe3, 0xde, 0xe4, 0x7c, 0x3e, 0xbf, 0xde, 0x87, 0xc5, 0xb1, 0x37, 0x8a, 0x39,
-	0x5e, 0xab, 0x6a, 0x8c, 0x95, 0xf3, 0x35, 0xc5, 0x1a, 0x5f, 0x42, 0xbd, 0xf4, 0x62, 0x2d, 0x9d,
-	0x67, 0x5c, 0x6b, 0x74, 0x2f, 0xae, 0x2d, 0xd6, 0xfe, 0x41, 0x83, 0xa5, 0xf3, 0x2f, 0xb6, 0xf5,
-	0xb2, 0x99, 0x27, 0x14, 0x19, 0xef, 0x5e, 0xa2, 0xa8, 0xf0, 0x25, 0xe0, 0x56, 0xc9, 0x4d, 0xd1,
-	0x2e, 0x9b, 0x56, 0x55, 0x1a, 0x6f, 0x5e, 0x54, 0x59, 0xac, 0xfa, 0x18, 0x1a, 0xe5, 0xa7, 0x6f,
-	0x75, 0x7c, 0xba, 0x52, 0xb1, 0xb1, 0xfe, 0x2f, 0xc4, 0xf9, 0xf2, 0xc6, 0xcc, 0x57, 0xc9, 0x07,
-	0xd2, 0xc6, 0xd6, 0x93, 0xc3, 0xa6, 0xf6, 0xf4, 0xb0, 0xa9, 0xfd, 0x75, 0xd8, 0xd4, 0xbe, 0x3b,
-	0x6a, 0x4e, 0x3d, 0x3d, 0x6a, 0x4e, 0xfd, 0x71, 0xd4, 0x9c, 0xfa, 0xdc, 0xf2, 0x89, 0x18, 0xc4,
-	0xfd, 0x8e, 0x4b, 0x03, 0x2b, 0x62, 0xd4, 0x8b, 0x5d, 0xc1, 0x5d, 0x22, 0xcf, 0x94, 0x7a, 0xba,
-	0xe4, 0xf7, 0x5e, 0xff, 0x8a, 0xfc, 0xe0, 0x5b, 0xff, 0x27, 0x00, 0x00, 0xff, 0xff, 0xe9, 0x31,
-	0x77, 0x84, 0xad, 0x0a, 0x00, 0x00,
+	// 1217 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x57, 0x4f, 0x6f, 0x1b, 0xc5,
+	0x1b, 0xce, 0xda, 0xee, 0x9f, 0xbc, 0x71, 0x9b, 0x64, 0x9b, 0x5f, 0x6d, 0x6f, 0x7f, 0x75, 0x9d,
+	0x6d, 0x69, 0x1d, 0x27, 0xd8, 0xad, 0x53, 0x21, 0xe4, 0xc2, 0x81, 0xb4, 0x01, 0x05, 0x14, 0x11,
+	0x6d, 0x4a, 0x0e, 0x48, 0xb0, 0x5a, 0xef, 0x4e, 0xec, 0x91, 0xec, 0x9d, 0x65, 0x66, 0x9c, 0xc4,
+	0x48, 0x95, 0x10, 0x37, 0x38, 0x21, 0x10, 0xe2, 0x2b, 0x70, 0xe0, 0x10, 0x21, 0x24, 0x0e, 0x7c,
+	0x81, 0x8a, 0x53, 0xc5, 0x89, 0x13, 0x42, 0xc9, 0x21, 0xdf, 0x81, 0x13, 0xda, 0xd9, 0x3f, 0x4e,
+	0xc6, 0x5e, 0x27, 0x84, 0x72, 0x49, 0xbc, 0xef, 0xfb, 0xbc, 0x33, 0xcf, 0xfb, 0xcc, 0x33, 0xaf,
+	0xd7, 0x70, 0x1d, 0xbb, 0xdb, 0x88, 0x22, 0xd7, 0x46, 0xb5, 0x66, 0x87, 0xd5, 0xf8, 0x5e, 0xd5,
+	0xa3, 0x84, 0x13, 0xf5, 0x4a, 0x1c, 0xaf, 0x36, 0x3b, 0x4c, 0x9b, 0xb5, 0xba, 0xd8, 0x25, 0x35,
+	0xf1, 0x37, 0x40, 0x68, 0x39, 0x9b, 0xb0, 0x2e, 0x61, 0xb5, 0x2e, 0x6b, 0xd5, 0x76, 0x1e, 0xf8,
+	0xff, 0xc2, 0x44, 0x21, 0x48, 0x98, 0xe2, 0xa9, 0x16, 0x3c, 0x84, 0xa9, 0xb9, 0x16, 0x69, 0x91,
+	0x20, 0xee, 0x7f, 0x0a, 0xa3, 0xda, 0x49, 0x0e, 0x9e, 0x45, 0xad, 0x6e, 0x54, 0x51, 0x90, 0xf8,
+	0xf5, 0x3d, 0x14, 0xa6, 0xf4, 0x9f, 0x15, 0x98, 0x5e, 0x67, 0xad, 0x0f, 0x3c, 0xc7, 0xe2, 0x68,
+	0x43, 0x14, 0xa9, 0xaf, 0xc1, 0xa4, 0xd5, 0xe3, 0x6d, 0x42, 0x31, 0xef, 0xe7, 0x95, 0x92, 0x52,
+	0x9e, 0x5c, 0xc9, 0xff, 0xf6, 0xd3, 0xab, 0x73, 0x21, 0x8b, 0xb7, 0x1c, 0x87, 0x22, 0xc6, 0x36,
+	0x39, 0xc5, 0x6e, 0xcb, 0x18, 0x40, 0xd5, 0xd7, 0xe1, 0x62, 0xb0, 0x6d, 0x3e, 0x55, 0x52, 0xca,
+	0x53, 0xf5, 0xff, 0x55, 0x4f, 0xf4, 0x5f, 0x0d, 0x96, 0x5f, 0x99, 0x7c, 0xfe, 0xc7, 0xad, 0x89,
+	0xef, 0x8f, 0xf6, 0x2b, 0x8a, 0x11, 0xe2, 0x1b, 0xf5, 0xcf, 0x8f, 0xf6, 0x2b, 0x83, 0x95, 0xbe,
+	0x3c, 0xda, 0xaf, 0xdc, 0x1a, 0x70, 0xde, 0x13, 0xac, 0x25, 0x96, 0x7a, 0x01, 0x72, 0x52, 0xc8,
+	0x40, 0xcc, 0x23, 0x2e, 0x43, 0xfa, 0x2f, 0x29, 0xb8, 0xb6, 0xce, 0x5a, 0x9b, 0xbd, 0x66, 0x17,
+	0xf3, 0x27, 0xc8, 0xea, 0x20, 0xba, 0x61, 0x51, 0xae, 0xd6, 0xe1, 0x92, 0x4d, 0x91, 0xc5, 0x09,
+	0x3d, 0xb5, 0xad, 0x08, 0xa8, 0x16, 0xe0, 0x32, 0xf2, 0x88, 0xdd, 0x36, 0xb1, 0x23, 0xda, 0xca,
+	0x18, 0x97, 0xc4, 0xf3, 0x9a, 0xa3, 0x96, 0x60, 0xca, 0x26, 0xdd, 0x2e, 0xe6, 0x5d, 0xe4, 0x72,
+	0x96, 0x4f, 0x97, 0xd2, 0xe5, 0xac, 0x71, 0x3c, 0xa4, 0x3e, 0x83, 0x79, 0xe4, 0xda, 0xb4, 0xef,
+	0x71, 0xe4, 0x98, 0xac, 0x6d, 0x51, 0xc4, 0xcc, 0x6d, 0x42, 0x4d, 0xcf, 0xa2, 0x1c, 0xdb, 0xd8,
+	0xb3, 0xfc, 0xba, 0x4c, 0x29, 0x5d, 0x9e, 0xaa, 0x2f, 0x49, 0x62, 0xad, 0x46, 0x75, 0x9b, 0xa2,
+	0xec, 0x6d, 0x22, 0x5a, 0x08, 0x8b, 0x56, 0x32, 0xbe, 0x86, 0x46, 0x11, 0x8d, 0x03, 0xb1, 0xc6,
+	0x43, 0x5f, 0xd6, 0xa8, 0x13, 0x5f, 0xd4, 0xdb, 0x23, 0x44, 0x95, 0x55, 0xd2, 0x6f, 0xc2, 0x8d,
+	0x11, 0xe1, 0x58, 0xdc, 0x1f, 0x14, 0xb8, 0xb1, 0x85, 0x28, 0xde, 0xc6, 0xb6, 0xc5, 0x31, 0x71,
+	0x03, 0xc8, 0x63, 0xd2, 0xf5, 0x3a, 0x16, 0x76, 0xb9, 0x3a, 0x0f, 0x59, 0x47, 0x84, 0x4c, 0xec,
+	0x3a, 0x68, 0x4f, 0x28, 0x7d, 0xc5, 0x98, 0x0a, 0x62, 0x6b, 0x7e, 0x48, 0xad, 0xc2, 0x35, 0x07,
+	0x33, 0xaf, 0x27, 0x54, 0xe9, 0x10, 0x1e, 0x22, 0x53, 0x02, 0x39, 0x1b, 0xa5, 0x36, 0x3b, 0x84,
+	0x07, 0xf8, 0x06, 0x14, 0x62, 0xbc, 0x8d, 0xbd, 0x36, 0xa2, 0x1c, 0xed, 0x45, 0x55, 0x69, 0x51,
+	0x95, 0x8b, 0x00, 0x8f, 0xe3, 0xbc, 0xa8, 0xd5, 0x2d, 0xb8, 0x16, 0x30, 0xdc, 0xb2, 0x3a, 0xd8,
+	0xc1, 0xbc, 0xbf, 0x41, 0x09, 0xd9, 0x3e, 0x0b, 0xcb, 0x7b, 0x30, 0xed, 0xf9, 0x58, 0x93, 0xe1,
+	0x96, 0x6b, 0xf1, 0x1e, 0x45, 0x82, 0x61, 0xd6, 0xb8, 0x2a, 0xc2, 0x9b, 0x51, 0x54, 0xff, 0x3a,
+	0x7d, 0x4c, 0xb1, 0xe3, 0xd2, 0x6c, 0x21, 0xdb, 0xb7, 0xd0, 0x4b, 0xb6, 0xdd, 0x3d, 0x98, 0x0e,
+	0xa9, 0xef, 0x84, 0x2d, 0x09, 0xeb, 0x5d, 0x36, 0xae, 0x3a, 0x27, 0x1a, 0x55, 0x3f, 0x82, 0xd9,
+	0x10, 0x68, 0x47, 0xa7, 0x13, 0xb9, 0xad, 0x22, 0xb9, 0x6d, 0xcc, 0x81, 0x86, 0x5e, 0x9b, 0x71,
+	0x4e, 0x86, 0x99, 0xfa, 0x31, 0x5c, 0x97, 0x78, 0x98, 0x42, 0x18, 0x96, 0xbf, 0x20, 0xf6, 0xd0,
+	0xa5, 0x3d, 0x46, 0x1c, 0x43, 0xb8, 0xf6, 0x9c, 0x33, 0x9c, 0x62, 0x8d, 0x37, 0x64, 0xf7, 0x2e,
+	0x26, 0xba, 0x77, 0x58, 0x74, 0xfd, 0x15, 0xb8, 0x3d, 0x26, 0x1d, 0xbb, 0xf9, 0x47, 0x05, 0x72,
+	0x52, 0xc3, 0x51, 0x4e, 0x5d, 0x80, 0x99, 0x48, 0x38, 0xc9, 0x27, 0xd3, 0x83, 0x78, 0xe0, 0x95,
+	0xfb, 0x30, 0x47, 0xc3, 0xb2, 0xe0, 0x9e, 0x9b, 0xcd, 0x3e, 0x47, 0x2c, 0x34, 0x8c, 0x1a, 0xe5,
+	0xc4, 0x35, 0x5d, 0xf1, 0x33, 0xbe, 0xa7, 0xe3, 0x0a, 0xe2, 0x21, 0x17, 0xbb, 0x2d, 0xb3, 0x6b,
+	0x71, 0x44, 0xb1, 0xd5, 0x11, 0x9e, 0xce, 0x1a, 0xb9, 0x08, 0xf0, 0x7e, 0x90, 0x5f, 0x0f, 0xd3,
+	0xfa, 0x77, 0x29, 0xd0, 0xd6, 0x59, 0x2b, 0x20, 0xea, 0x3c, 0x91, 0x0f, 0xe6, 0x25, 0xfb, 0x4d,
+	0xbe, 0x2a, 0xe9, 0xe1, 0xab, 0xf2, 0x2e, 0x4c, 0x46, 0x5c, 0x23, 0x87, 0xdd, 0x1d, 0x79, 0xfa,
+	0x43, 0x22, 0x87, 0x0e, 0x18, 0x94, 0x37, 0x1e, 0xc9, 0xc7, 0x5e, 0x19, 0x71, 0xec, 0x09, 0xad,
+	0xeb, 0x77, 0x40, 0x4f, 0xce, 0xc6, 0x87, 0xfe, 0x4d, 0x0a, 0xee, 0xc4, 0xe6, 0x78, 0x87, 0x92,
+	0x9e, 0xf7, 0x1e, 0xea, 0x0b, 0xf7, 0x09, 0x8b, 0xc4, 0x37, 0xfb, 0x5c, 0x4a, 0x96, 0x20, 0xeb,
+	0xa2, 0x5d, 0x53, 0x52, 0x13, 0x5c, 0xb4, 0xbb, 0x3a, 0x10, 0x34, 0x9a, 0x7a, 0xd8, 0x46, 0xc1,
+	0x17, 0xc7, 0x15, 0x63, 0x8a, 0x05, 0xf3, 0xce, 0x0f, 0xa9, 0x8b, 0x30, 0x2b, 0xbe, 0x23, 0xac,
+	0xce, 0xb1, 0xe9, 0x93, 0x11, 0xae, 0x98, 0x09, 0x13, 0x31, 0xcb, 0xc6, 0xaa, 0xac, 0xd8, 0xc3,
+	0xc4, 0x8b, 0x32, 0xa6, 0x59, 0xbd, 0x0a, 0x4b, 0x67, 0xc1, 0xc5, 0x2a, 0xfe, 0xa5, 0x40, 0x21,
+	0x2e, 0xd8, 0x90, 0x48, 0x9d, 0x4b, 0xba, 0x9b, 0x00, 0x14, 0x7d, 0xd2, 0x43, 0x8c, 0x47, 0xc2,
+	0x65, 0x7d, 0x67, 0x88, 0xc8, 0x7f, 0xa0, 0x5b, 0x43, 0xd6, 0x6d, 0x21, 0x51, 0x37, 0xb9, 0x3d,
+	0xfd, 0x36, 0xcc, 0x27, 0x26, 0x63, 0x85, 0xbe, 0x48, 0xc1, 0xff, 0x85, 0x1d, 0x45, 0x07, 0x4f,
+	0xdb, 0x14, 0xb1, 0x36, 0xe9, 0x38, 0xff, 0x4e, 0xa4, 0x32, 0xcc, 0xd8, 0x3d, 0x4a, 0x91, 0xcb,
+	0x65, 0x8f, 0x5d, 0x0d, 0xe3, 0x91, 0xcf, 0x0a, 0x70, 0xd9, 0x6e, 0x5b, 0xd8, 0xf5, 0x11, 0xc1,
+	0x44, 0xb9, 0x24, 0x9e, 0xd7, 0x1c, 0x49, 0xe9, 0x8c, 0xac, 0xb4, 0x0a, 0x19, 0xc7, 0xe2, 0x96,
+	0x18, 0xe4, 0x59, 0x43, 0x7c, 0x6e, 0xbc, 0x29, 0xab, 0xb5, 0x34, 0xf2, 0x5e, 0x26, 0xb4, 0xaa,
+	0x3f, 0x15, 0x57, 0x2e, 0x31, 0x1f, 0x0f, 0xdd, 0x25, 0x50, 0x1d, 0x44, 0xf1, 0x0e, 0x72, 0xcc,
+	0x63, 0x0c, 0x95, 0xe0, 0x08, 0xc3, 0x8c, 0x11, 0x11, 0xad, 0xff, 0x7a, 0x11, 0xd2, 0xeb, 0xac,
+	0xa5, 0x6e, 0x41, 0xf6, 0xc4, 0x2b, 0x6c, 0x51, 0x9a, 0x3e, 0xd2, 0x9b, 0xa2, 0x76, 0x77, 0x7c,
+	0x3e, 0x66, 0xd3, 0x84, 0x99, 0xa1, 0xb7, 0x48, 0x7d, 0xb8, 0x56, 0xc6, 0x68, 0x95, 0xd3, 0x31,
+	0xf1, 0x1e, 0x9f, 0x42, 0x3e, 0xf1, 0xd5, 0x21, 0x71, 0x9d, 0x61, 0xac, 0x56, 0x3f, 0x3b, 0x36,
+	0xde, 0x7b, 0x17, 0x72, 0x49, 0xdf, 0x22, 0x0b, 0xc3, 0xcb, 0x25, 0x40, 0xb5, 0x07, 0x67, 0x86,
+	0xc6, 0x1b, 0x7f, 0xab, 0xc0, 0xfc, 0xe9, 0xf3, 0x77, 0x39, 0xa9, 0xa5, 0x31, 0x45, 0xda, 0xa3,
+	0x73, 0x14, 0xc5, 0xbc, 0x38, 0x5c, 0x4f, 0x18, 0x68, 0xe5, 0xa4, 0x65, 0x65, 0xa4, 0x76, 0xff,
+	0xac, 0xc8, 0x78, 0xd7, 0x67, 0x50, 0x48, 0x1e, 0x12, 0x8b, 0xa3, 0xd4, 0x4d, 0x00, 0x6b, 0xcb,
+	0xff, 0x00, 0x1c, 0x6d, 0xaf, 0x5d, 0xf8, 0xcc, 0xff, 0x35, 0xb6, 0xb2, 0xf6, 0xfc, 0xa0, 0xa8,
+	0xbc, 0x38, 0x28, 0x2a, 0x7f, 0x1e, 0x14, 0x95, 0xaf, 0x0e, 0x8b, 0x13, 0x2f, 0x0e, 0x8b, 0x13,
+	0xbf, 0x1f, 0x16, 0x27, 0x3e, 0xac, 0xb5, 0x30, 0x6f, 0xf7, 0x9a, 0x55, 0x9b, 0x74, 0x6b, 0x1e,
+	0x25, 0x4e, 0xcf, 0xe6, 0xcc, 0xc6, 0xe2, 0xea, 0xcb, 0x43, 0x40, 0xfc, 0xb8, 0x6c, 0x5e, 0x14,
+	0xbf, 0x2e, 0x97, 0xff, 0x0e, 0x00, 0x00, 0xff, 0xff, 0x13, 0xb6, 0x81, 0x9d, 0x1a, 0x0f, 0x00,
+	0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -786,6 +1129,8 @@ type MsgClient interface {
 	SubmitDealerPart(ctx context.Context, in *MsgSubmitDealerPart, opts ...grpc.CallOption) (*MsgSubmitDealerPartResponse, error)
 	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
 	SubmitVerificationVector(ctx context.Context, in *MsgSubmitVerificationVector, opts ...grpc.CallOption) (*MsgSubmitVerificationVectorResponse, error)
+	// RespondDealerComplaints allows a dealer to submit complaint responses in a single transaction during disputing phase
+	RespondDealerComplaints(ctx context.Context, in *MsgRespondDealerComplaints, opts ...grpc.CallOption) (*MsgRespondDealerComplaintsResponse, error)
 	// SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
 	SubmitGroupKeyValidationSignature(ctx context.Context, in *MsgSubmitGroupKeyValidationSignature, opts ...grpc.CallOption) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
@@ -829,6 +1174,15 @@ func (c *msgClient) SubmitVerificationVector(ctx context.Context, in *MsgSubmitV
 	return out, nil
 }
 
+func (c *msgClient) RespondDealerComplaints(ctx context.Context, in *MsgRespondDealerComplaints, opts ...grpc.CallOption) (*MsgRespondDealerComplaintsResponse, error) {
+	out := new(MsgRespondDealerComplaintsResponse)
+	err := c.cc.Invoke(ctx, "/inference.bls.Msg/RespondDealerComplaints", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) SubmitGroupKeyValidationSignature(ctx context.Context, in *MsgSubmitGroupKeyValidationSignature, opts ...grpc.CallOption) (*MsgSubmitGroupKeyValidationSignatureResponse, error) {
 	out := new(MsgSubmitGroupKeyValidationSignatureResponse)
 	err := c.cc.Invoke(ctx, "/inference.bls.Msg/SubmitGroupKeyValidationSignature", in, out, opts...)
@@ -865,6 +1219,8 @@ type MsgServer interface {
 	SubmitDealerPart(context.Context, *MsgSubmitDealerPart) (*MsgSubmitDealerPartResponse, error)
 	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
 	SubmitVerificationVector(context.Context, *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error)
+	// RespondDealerComplaints allows a dealer to submit complaint responses in a single transaction during disputing phase
+	RespondDealerComplaints(context.Context, *MsgRespondDealerComplaints) (*MsgRespondDealerComplaintsResponse, error)
 	// SubmitGroupKeyValidationSignature allows a participant to submit their partial signature for group key validation
 	SubmitGroupKeyValidationSignature(context.Context, *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
@@ -885,6 +1241,9 @@ func (*UnimplementedMsgServer) SubmitDealerPart(ctx context.Context, req *MsgSub
 }
 func (*UnimplementedMsgServer) SubmitVerificationVector(ctx context.Context, req *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitVerificationVector not implemented")
+}
+func (*UnimplementedMsgServer) RespondDealerComplaints(ctx context.Context, req *MsgRespondDealerComplaints) (*MsgRespondDealerComplaintsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RespondDealerComplaints not implemented")
 }
 func (*UnimplementedMsgServer) SubmitGroupKeyValidationSignature(ctx context.Context, req *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitGroupKeyValidationSignature not implemented")
@@ -950,6 +1309,24 @@ func _Msg_SubmitVerificationVector_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SubmitVerificationVector(ctx, req.(*MsgSubmitVerificationVector))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RespondDealerComplaints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRespondDealerComplaints)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RespondDealerComplaints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.bls.Msg/RespondDealerComplaints",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RespondDealerComplaints(ctx, req.(*MsgRespondDealerComplaints))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1024,6 +1401,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitVerificationVector",
 			Handler:    _Msg_SubmitVerificationVector_Handler,
+		},
+		{
+			MethodName: "RespondDealerComplaints",
+			Handler:    _Msg_RespondDealerComplaints_Handler,
 		},
 		{
 			MethodName: "SubmitGroupKeyValidationSignature",
@@ -1186,6 +1567,79 @@ func (m *MsgSubmitDealerPartResponse) MarshalToSizedBuffer(dAtA []byte) (int, er
 	return len(dAtA) - i, nil
 }
 
+func (m *VerificationDealerComplaint) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *VerificationDealerComplaint) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *VerificationDealerComplaint) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.DisputedCiphertextIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DisputedCiphertextIndex))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.DisputedSlotIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DisputedSlotIndex))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.DealerIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DealerIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *DealerValidityProof) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DealerValidityProof) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DealerValidityProof) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.ProofSignature) > 0 {
+		i -= len(m.ProofSignature)
+		copy(dAtA[i:], m.ProofSignature)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.ProofSignature)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.DealerIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DealerIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *MsgSubmitVerificationVector) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -1206,6 +1660,34 @@ func (m *MsgSubmitVerificationVector) MarshalToSizedBuffer(dAtA []byte) (int, er
 	_ = i
 	var l int
 	_ = l
+	if len(m.DealerValidityProofs) > 0 {
+		for iNdEx := len(m.DealerValidityProofs) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.DealerValidityProofs[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if len(m.DealerComplaints) > 0 {
+		for iNdEx := len(m.DealerComplaints) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.DealerComplaints[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x22
+		}
+	}
 	if len(m.DealerValidity) > 0 {
 		for iNdEx := len(m.DealerValidity) - 1; iNdEx >= 0; iNdEx-- {
 			i--
@@ -1250,6 +1732,125 @@ func (m *MsgSubmitVerificationVectorResponse) MarshalTo(dAtA []byte) (int, error
 }
 
 func (m *MsgSubmitVerificationVectorResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *DealerComplaintResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DealerComplaintResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DealerComplaintResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.ResponseOpeningMaterial) > 0 {
+		i -= len(m.ResponseOpeningMaterial)
+		copy(dAtA[i:], m.ResponseOpeningMaterial)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.ResponseOpeningMaterial)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.ResponseShareBytes) > 0 {
+		i -= len(m.ResponseShareBytes)
+		copy(dAtA[i:], m.ResponseShareBytes)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.ResponseShareBytes)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.ComplainerIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.ComplainerIndex))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgRespondDealerComplaints) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRespondDealerComplaints) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRespondDealerComplaints) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Responses) > 0 {
+		for iNdEx := len(m.Responses) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Responses[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTx(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x22
+		}
+	}
+	if m.DealerIndex != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.DealerIndex))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.EpochId != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.EpochId))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgRespondDealerComplaintsResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRespondDealerComplaintsResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRespondDealerComplaintsResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1503,6 +2104,13 @@ func (m *MsgRequestThresholdSignatureResponse) MarshalToSizedBuffer(dAtA []byte)
 	_ = i
 	var l int
 	_ = l
+	if len(m.DerivedRequestId) > 0 {
+		i -= len(m.DerivedRequestId)
+		copy(dAtA[i:], m.DerivedRequestId)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.DerivedRequestId)))
+		i--
+		dAtA[i] = 0xa
+	}
 	return len(dAtA) - i, nil
 }
 
@@ -1578,6 +2186,40 @@ func (m *MsgSubmitDealerPartResponse) Size() (n int) {
 	return n
 }
 
+func (m *VerificationDealerComplaint) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.DealerIndex != 0 {
+		n += 1 + sovTx(uint64(m.DealerIndex))
+	}
+	if m.DisputedSlotIndex != 0 {
+		n += 1 + sovTx(uint64(m.DisputedSlotIndex))
+	}
+	if m.DisputedCiphertextIndex != 0 {
+		n += 1 + sovTx(uint64(m.DisputedCiphertextIndex))
+	}
+	return n
+}
+
+func (m *DealerValidityProof) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.DealerIndex != 0 {
+		n += 1 + sovTx(uint64(m.DealerIndex))
+	}
+	l = len(m.ProofSignature)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	return n
+}
+
 func (m *MsgSubmitVerificationVector) Size() (n int) {
 	if m == nil {
 		return 0
@@ -1594,10 +2236,76 @@ func (m *MsgSubmitVerificationVector) Size() (n int) {
 	if len(m.DealerValidity) > 0 {
 		n += 1 + sovTx(uint64(len(m.DealerValidity))) + len(m.DealerValidity)*1
 	}
+	if len(m.DealerComplaints) > 0 {
+		for _, e := range m.DealerComplaints {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	if len(m.DealerValidityProofs) > 0 {
+		for _, e := range m.DealerValidityProofs {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
 	return n
 }
 
 func (m *MsgSubmitVerificationVectorResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *DealerComplaintResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.ComplainerIndex != 0 {
+		n += 1 + sovTx(uint64(m.ComplainerIndex))
+	}
+	l = len(m.ResponseShareBytes)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.ResponseOpeningMaterial)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	return n
+}
+
+func (m *MsgRespondDealerComplaints) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.EpochId != 0 {
+		n += 1 + sovTx(uint64(m.EpochId))
+	}
+	if m.DealerIndex != 0 {
+		n += 1 + sovTx(uint64(m.DealerIndex))
+	}
+	if len(m.Responses) > 0 {
+		for _, e := range m.Responses {
+			l = e.Size()
+			n += 1 + l + sovTx(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *MsgRespondDealerComplaintsResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1715,6 +2423,10 @@ func (m *MsgRequestThresholdSignatureResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
+	l = len(m.DerivedRequestId)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
 	return n
 }
 
@@ -2106,6 +2818,216 @@ func (m *MsgSubmitDealerPartResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *VerificationDealerComplaint) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: VerificationDealerComplaint: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: VerificationDealerComplaint: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DealerIndex", wireType)
+			}
+			m.DealerIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DealerIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DisputedSlotIndex", wireType)
+			}
+			m.DisputedSlotIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DisputedSlotIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DisputedCiphertextIndex", wireType)
+			}
+			m.DisputedCiphertextIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DisputedCiphertextIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DealerValidityProof) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DealerValidityProof: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DealerValidityProof: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DealerIndex", wireType)
+			}
+			m.DealerIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DealerIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ProofSignature", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ProofSignature = append(m.ProofSignature[:0], dAtA[iNdEx:postIndex]...)
+			if m.ProofSignature == nil {
+				m.ProofSignature = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *MsgSubmitVerificationVector) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -2256,6 +3178,74 @@ func (m *MsgSubmitVerificationVector) Unmarshal(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field DealerValidity", wireType)
 			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DealerComplaints", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DealerComplaints = append(m.DealerComplaints, VerificationDealerComplaint{})
+			if err := m.DealerComplaints[len(m.DealerComplaints)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DealerValidityProofs", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DealerValidityProofs = append(m.DealerValidityProofs, DealerValidityProof{})
+			if err := m.DealerValidityProofs[len(m.DealerValidityProofs)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -2304,6 +3294,347 @@ func (m *MsgSubmitVerificationVectorResponse) Unmarshal(dAtA []byte) error {
 		}
 		if fieldNum <= 0 {
 			return fmt.Errorf("proto: MsgSubmitVerificationVectorResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DealerComplaintResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DealerComplaintResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DealerComplaintResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ComplainerIndex", wireType)
+			}
+			m.ComplainerIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ComplainerIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ResponseShareBytes", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ResponseShareBytes = append(m.ResponseShareBytes[:0], dAtA[iNdEx:postIndex]...)
+			if m.ResponseShareBytes == nil {
+				m.ResponseShareBytes = []byte{}
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ResponseOpeningMaterial", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ResponseOpeningMaterial = append(m.ResponseOpeningMaterial[:0], dAtA[iNdEx:postIndex]...)
+			if m.ResponseOpeningMaterial == nil {
+				m.ResponseOpeningMaterial = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRespondDealerComplaints) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRespondDealerComplaints: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRespondDealerComplaints: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
+			}
+			m.EpochId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DealerIndex", wireType)
+			}
+			m.DealerIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DealerIndex |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Responses", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Responses = append(m.Responses, DealerComplaintResponse{})
+			if err := m.Responses[len(m.Responses)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRespondDealerComplaintsResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRespondDealerComplaintsResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRespondDealerComplaintsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:
@@ -3094,6 +4425,40 @@ func (m *MsgRequestThresholdSignatureResponse) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: MsgRequestThresholdSignatureResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DerivedRequestId", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DerivedRequestId = append(m.DerivedRequestId[:0], dAtA[iNdEx:postIndex]...)
+			if m.DerivedRequestId == nil {
+				m.DerivedRequestId = []byte{}
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

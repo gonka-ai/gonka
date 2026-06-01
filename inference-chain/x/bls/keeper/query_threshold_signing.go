@@ -64,6 +64,16 @@ func (k Keeper) SigningHistory(ctx context.Context, req *types.QuerySigningHisto
 			return nil // Skip this request
 		}
 
+		// Rehydrate PartialSignatures from sub-keys. The base struct is
+		// persisted with PartialSignatures stripped (see
+		// storeThresholdSigningRequest); reading it raw here would expose
+		// an empty slice to API consumers.
+		partials, err := k.ListThresholdPartialSignatures(sdkCtx, signingRequest.RequestId)
+		if err != nil {
+			return fmt.Errorf("list partial sigs for request %x: %w", signingRequest.RequestId, err)
+		}
+		signingRequest.PartialSignatures = partials
+
 		signingRequests = append(signingRequests, signingRequest)
 		return nil
 	})

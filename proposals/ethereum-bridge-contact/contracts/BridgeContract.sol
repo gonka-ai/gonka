@@ -185,6 +185,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     error InvalidEpochSequence();
     error NoValidGenesisEpoch();
     error TimeoutNotReached();
+    error InvalidAmount();
 
     // =============================================================================
     // CONSTRUCTOR
@@ -288,23 +289,27 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         uint64 epochId,
         bytes calldata groupPublicKey,
         bytes calldata validationSig
-    ) public {
+    ) public onlyNormalOperation {
+        // Disallow external submission for genesis epoch
+        require(epochId > 1, "Epoch 1 must be set via Admin");
+
         // Verify sequential submission
         if (epochId != epochMeta.latestEpochId + 1) {
             revert InvalidEpochSequence();
         }
 
+        require(epochId > 1, "Epoch 1 must be set via Admin");
+
         // Verify group public key is 256 bytes (G2 point uncompressed)
         require(groupPublicKey.length == 256, "Invalid group key length");
 
-        // Verify validation signature against previous epoch (if not genesis)
+        // Verify validation signature against previous epoch
         GroupKey memory newGroupKeyStruct = _bytesToGroupKey(groupPublicKey);
-        if (epochId > 1) {
-            GroupKey memory prevGroupKeyStruct = epochGroupKeys[epochId - 1];
-            require(!_isGroupKeyEmpty(prevGroupKeyStruct), "Previous epoch not found");
-            
-            require(_verifyTransitionSignature(prevGroupKeyStruct, newGroupKeyStruct, validationSig, epochId - 1), "Invalid transition signature");
-        }
+        
+        GroupKey memory prevGroupKeyStruct = epochGroupKeys[epochId - 1];
+        require(!_isGroupKeyEmpty(prevGroupKeyStruct), "Previous epoch not found");
+        
+        require(_verifyTransitionSignature(prevGroupKeyStruct, newGroupKeyStruct, validationSig, epochId - 1), "Invalid transition signature");
 
         // Store only the group public key
         epochGroupKeys[epochId] = newGroupKeyStruct;
@@ -328,6 +333,8 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      * @param cmd The withdrawal command containing all necessary data
      */
     function withdraw(WithdrawalCommand calldata cmd) external nonReentrant onlyNormalOperation {
+        if (cmd.amount == 0) revert InvalidAmount();
+
         // 1. Epoch Validation: Cache group key to avoid double SLOAD
         GroupKey memory groupKeyStruct = epochGroupKeys[cmd.epochId];
         if (_isGroupKeyEmpty(groupKeyStruct)) {
@@ -341,7 +348,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         }
 
         // 3. Signature Verification: Use cached group key with dual chain ID protection
-        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, tokenContract, amount]
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, bridgeContract, tokenContract, amount]
         bytes32 messageHash = keccak256(
             abi.encodePacked(
                 cmd.epochId,        // Gonka epoch
@@ -350,6 +357,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
                 WITHDRAW_OPERATION, // Operation type
                 cmd.recipient,      // Withdrawal details
+                address(this),      // Destination bridge contract address
                 cmd.tokenContract,
                 cmd.amount
             )
@@ -359,7 +367,10 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert InvalidSignature();
         }
 
-        // 4. Execution: Transfer tokens or ETH to recipient address
+        // 4. Record Processing: Mark requestId as processed (defense-in-depth CEI pattern)
+        processedRequests[cmd.epochId][cmd.requestId] = true;
+
+        // 5. Execution: Transfer tokens or ETH to recipient address
         if (cmd.tokenContract == address(this)) {
             // ETH withdrawal: tokenContract == address(this) indicates ETH
             require(address(this).balance >= cmd.amount, "Insufficient ETH balance");
@@ -371,9 +382,6 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             // ERC-20 withdrawal: standard token transfer
             IERC20(cmd.tokenContract).safeTransfer(cmd.recipient, cmd.amount);
         }
-
-        // 5. Record Processing: Mark requestId as processed (only after successful transfer)
-        processedRequests[cmd.epochId][cmd.requestId] = true;
 
         emit WithdrawalProcessed(
             cmd.epochId,
@@ -389,6 +397,8 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      * @param cmd The mint command containing all necessary data
      */
     function mintWithSignature(MintCommand calldata cmd) external nonReentrant onlyNormalOperation {
+        if (cmd.amount == 0) revert InvalidAmount();
+
         // 1. Epoch Validation: Cache group key to avoid double SLOAD
         GroupKey memory groupKeyStruct = epochGroupKeys[cmd.epochId];
         if (_isGroupKeyEmpty(groupKeyStruct)) {
@@ -402,7 +412,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         }
 
         // 3. Signature Verification: Use cached group key with dual chain ID protection
-        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, MINT_OPERATION, recipient, amount]
+        // Message format: [epochId, gonkaChainId, requestId, ethereumChainId, MINT_OPERATION, recipient, bridgeContract, amount]
         bytes32 messageHash = keccak256(
             abi.encodePacked(
                 cmd.epochId,        // Gonka epoch
@@ -411,6 +421,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 ETHEREUM_CHAIN_ID,  // This Ethereum chain ID (prevents cross-Ethereum-chain replays)
                 MINT_OPERATION,     // Operation type
                 cmd.recipient,      // Mint details
+                address(this),      // Destination bridge contract address
                 cmd.amount
             )
         );
@@ -419,11 +430,11 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert InvalidSignature();
         }
 
-        // 4. Execution: Mint WGNK tokens to recipient
-        _mint(cmd.recipient, cmd.amount);
-
-        // 5. Record Processing: Mark requestId as processed (only after successful mint)
+        // 4. Record Processing: Mark requestId as processed (defense-in-depth CEI pattern)
         processedRequests[cmd.epochId][cmd.requestId] = true;
+
+        // 5. Execution: Mint WGNK tokens to recipient
+        _mint(cmd.recipient, cmd.amount);
 
         emit WGNKMinted(cmd.epochId, cmd.requestId, cmd.recipient, cmd.amount);
     }
@@ -435,6 +446,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      */
     function transfer(address to, uint256 amount) public override returns (bool) {
         if (to == address(this)) {
+            if (epochMeta.currentState != ContractState.NORMAL_OPERATION) {
+                revert BridgeNotOperational();
+            }
             // Auto-burn: sending tokens to contract burns them
             _burn(msg.sender, amount);
             emit WGNKBurned(msg.sender, amount, block.timestamp);
@@ -453,6 +467,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
      */
     function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
         if (to == address(this)) {
+            if (epochMeta.currentState != ContractState.NORMAL_OPERATION) {
+                revert BridgeNotOperational();
+            }
             // Auto-burn: sending tokens to contract burns them
             _spendAllowance(from, msg.sender, amount);
             _burn(from, amount);

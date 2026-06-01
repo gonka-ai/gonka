@@ -52,9 +52,29 @@ message BridgeWrappedTokenContract {
   string wrappedContractAddress = 3;           
 }
 
+message BridgePendingMintRefund {
+  string requestId = 1;
+  string creator = 2;
+  string amount = 3;
+  string destinationAddress = 4;
+  string chainId = 5;
+}
+
+message BridgePendingWithdrawalRefund {
+  string requestId = 1;
+  string creator = 2;
+  string userAddress = 3;
+  string amount = 4;
+  string destinationAddress = 5;
+  string chainId = 6;
+  string contractAddress = 7;
+}
+
 // Bridge groups all bridge-related entities under a single parent structure
 message Bridge {
   repeated BridgeContractAddress      contract_addresses      = 1;
   repeated BridgeTokenMetadata        token_metadata          = 2;
   repeated BridgeTokenReference       trade_approved_tokens   = 3;
+  repeated BridgePendingMintRefund    pending_mint_refunds    = 4;
+  repeated BridgePendingWithdrawalRefund pending_withdrawal_refunds = 5;
 }

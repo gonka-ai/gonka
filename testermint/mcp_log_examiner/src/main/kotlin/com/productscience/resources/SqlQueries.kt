@@ -62,7 +62,7 @@ fun loadSqlQueries(resourcePath: String): List<SqlQuery> {
     val resourceStream = object {}.javaClass.classLoader.getResourceAsStream(resourcePath)
 
     if (resourceStream == null) {
-        println("SQL queries resource not found: $resourcePath")
+        System.err.println("SQL queries resource not found: $resourcePath")
         return emptyList()
     }
 
@@ -71,7 +71,7 @@ fun loadSqlQueries(resourcePath: String): List<SqlQuery> {
         val queries = Json.decodeFromString<SqlQueries>(jsonContent)
         queries.queries
     } catch (e: Exception) {
-        println("Error loading SQL queries: ${e.message}")
+        System.err.println("Error loading SQL queries: ${e.message}")
         emptyList()
     }
 }

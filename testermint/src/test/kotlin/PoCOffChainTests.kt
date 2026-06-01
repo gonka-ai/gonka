@@ -58,7 +58,8 @@ class PoCOffChainTests : TestermintTest() {
         // === Part 2: Query DAPI artifact store and proofs ===
         logSection("Querying artifact store state from DAPI")
 
-        val artifactState = genesis.api.getPocArtifactsState(pocStartHeight)
+        val modelId = defaultModel
+        val artifactState = genesis.api.getPocArtifactsState(pocStartHeight, modelId)
         Logger.info("Artifact store state: count=${artifactState.count}, rootHash=${artifactState.rootHash}")
 
         if (artifactState.count == 0L) {
@@ -78,6 +79,7 @@ class PoCOffChainTests : TestermintTest() {
 
         val signPayload = buildPocProofsSignPayload(
             pocStartHeight,
+            modelId,
             Base64.getDecoder().decode(rootHash),
             count,
             leafIndices,
@@ -89,6 +91,7 @@ class PoCOffChainTests : TestermintTest() {
 
         val request = PocProofsRequest(
             pocStageStartBlockHeight = pocStartHeight,
+            modelId = modelId,
             rootHash = rootHash,
             count = count,
             leafIndices = leafIndices,
@@ -133,48 +136,120 @@ class PoCOffChainTests : TestermintTest() {
         val pocStartHeight = epochData.latestEpoch.pocStartBlockHeight
         val participantAddress = genesis.node.getColdAddress()
 
-        // First verify individual store commit works
-        logSection("Verifying individual store commit query")
-        val storeCommit = genesis.node.getPoCV2StoreCommit(pocStartHeight, participantAddress)
-        Logger.info("Individual store commit: found=${storeCommit.found}, count=${storeCommit.count}")
+        val modelId = defaultModel
 
-        // Query all store commits for the stage using the new endpoint
-        logSection("Querying all store commits for stage using new endpoint")
+        // Query all store commits for the stage
+        logSection("Querying all store commits for stage")
         val allCommits = genesis.node.getAllPoCV2StoreCommitsForStage(pocStartHeight)
         Logger.info("All commits for stage: ${allCommits.commits.size} participants")
 
         // Verify results
-        if (storeCommit.found) {
-            // If we have an individual commit, it should appear in all commits
-            assertThat(allCommits.commits).isNotEmpty()
-            
-            // Find our participant in the list
-            val ourCommit = allCommits.commits.find { it.participantAddress == participantAddress }
-            if (ourCommit != null) {
-                Logger.info("Found our commit in all commits: count=${ourCommit.count}")
-                assertThat(ourCommit.count).isEqualTo(storeCommit.count)
-            } else {
-                Logger.warn("Our participant not found in all commits (may have been filtered)")
-            }
+        assertThat(allCommits.commits).isNotEmpty()
+
+        val ourCommit = allCommits.commits.find {
+            it.participantAddress == participantAddress && it.modelId == modelId
         }
+        assertThat(ourCommit)
+            .describedAs("Expected stage commit for participant %s and model %s", participantAddress, modelId)
+            .isNotNull
+        Logger.info("Found our commit in all commits: count=${ourCommit!!.count}, model=${ourCommit.modelId}")
+        assertThat(ourCommit.count).isGreaterThan(0)
 
         allCommits.commits.forEach { commit ->
-            Logger.info("Commit: participant=${commit.participantAddress}, count=${commit.count}")
+            Logger.info("Commit: participant=${commit.participantAddress}, model=${commit.modelId}, count=${commit.count}")
             assertThat(commit.participantAddress).isNotEmpty()
+            assertThat(commit.modelId).isNotEmpty()
             assertThat(commit.count).isGreaterThanOrEqualTo(0)
         }
 
         logSection("TEST PASSED: All store commits query works correctly")
     }
 
+    @Test
+    fun `poc offchain validation - cheating via high nonce porosity is detected and participant excluded`() {
+        logSection("=== TEST: PoC Porosity Cheating Detection ===")
+
+        val (cluster, genesis) = initCluster(reboot = true, config = bandwidthConfig)
+        cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
+        val cheater = cluster.joinPairs.first()
+        val cheaterAddress = cheater.node.getColdAddress()
+
+        // === Phase 1: Let all 3 participants complete a normal PoC epoch ===
+        logSection("Phase 1: Normal PoC epoch — all participants honest")
+
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+
+        val activeBeforeCheating = genesis.api.getActiveParticipants()
+        val cheaterBefore = activeBeforeCheating.activeParticipants.getParticipant(cheater)
+        Logger.info("Active participants before cheating: ${activeBeforeCheating.activeParticipants.participants.map { it.index }}")
+        assertThat(cheaterBefore)
+            .describedAs("Cheater $cheaterAddress should be active before cheating")
+            .isNotNull
+
+        // === Phase 2: Make one participant cheat by using billion-range nonces ===
+        logSection("Phase 2: Setting cheater nonce to 1 billion (simulating brute-force nonce search)")
+        cheater.mock?.setLatestPocNonce(1_000_000_000L)
+
+        // Wait for the next PoC generation + validation + new validators cycle
+        genesis.waitForStage(EpochStage.START_OF_POC)
+        Logger.info("PoC generation started — cheater will produce billion-range nonces")
+        genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION, offset = 2)
+        Logger.info("PoC validation ended")
+
+        // Verify the cheater's store commit has high nonces
+        val epochData = genesis.getEpochData()
+        val pocStartHeight = epochData.latestEpoch.pocStartBlockHeight
+        val cheaterCommit = genesis.node.getPoCV2StoreCommit(pocStartHeight, cheaterAddress)
+        Logger.info("Cheater store commit: found=${cheaterCommit.found}, count=${cheaterCommit.count}")
+
+        // === Phase 3: After validation, cheater should be excluded ===
+        logSection("Phase 3: Waiting for new validators to be set after porosity check")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+
+        val activeAfterCheating = genesis.api.getActiveParticipants()
+        Logger.info("Active participants after cheating: ${activeAfterCheating.activeParticipants.participants.map { it.index }}")
+        Logger.info("Excluded participants: ${activeAfterCheating.excludedParticipants.map { it.address }}")
+
+        val cheaterAfter = activeAfterCheating.activeParticipants.getParticipant(cheater)
+        val cheaterExcluded = activeAfterCheating.excludedParticipants.any { it.address == cheaterAddress }
+
+        assertThat(cheaterAfter == null || cheaterExcluded)
+            .describedAs(
+                "Cheater $cheaterAddress should be removed from active participants " +
+                "or appear in excluded list after porosity violation"
+            )
+            .isTrue()
+
+        // Verify the honest participants are still active
+        val genesisStillActive = activeAfterCheating.activeParticipants.getParticipant(genesis)
+        assertThat(genesisStillActive)
+            .describedAs("Honest genesis participant should still be active")
+            .isNotNull
+
+        logSection("TEST PASSED: Porosity cheating detected — cheater excluded from active set")
+    }
+
     companion object {
         /**
          * Builds the binary payload for PoC proofs signature verification.
-         * Format: SHA256(poc_stage_start_block_height(LE64) || root_hash(32) || count(LE32) ||
-         *         leaf_indices(LE32 each) || timestamp(LE64) || validator_address || validator_signer_address)
+         * Format: SHA256(
+         *   poc_stage_start_block_height (LE64) ||
+         *   len(model_id) (LE32) || model_id ||
+         *   root_hash (32 bytes) ||
+         *   count (LE32) ||
+         *   num_leaf_indices (LE32) || leaf_indices (LE32 each) ||
+         *   timestamp (LE64) ||
+         *   len(validator_address) (LE32) || validator_address ||
+         *   len(validator_signer_address) (LE32) || validator_signer_address
+         * )
+         *
+         * Variable-length string fields are length-prefixed so distinct
+         * semantic tuples cannot collide. Must stay in lockstep with the
+         * Go server-side buildPocProofsSignPayload in poc_handler.go.
          */
         fun buildPocProofsSignPayload(
             pocStageStartBlockHeight: Long,
+            modelId: String,
             rootHash: ByteArray,
             count: Long,
             leafIndices: List<Long>,
@@ -182,20 +257,35 @@ class PoCOffChainTests : TestermintTest() {
             validatorAddress: String,
             validatorSignerAddress: String
         ): ByteArray {
-            // Calculate buffer size
-            val size = 8 + 32 + 4 + (leafIndices.size * 4) + 8 +
-                    validatorAddress.toByteArray().size + validatorSignerAddress.toByteArray().size
+            val modelIdBytes = modelId.toByteArray()
+            val validatorAddressBytes = validatorAddress.toByteArray()
+            val validatorSignerAddressBytes = validatorSignerAddress.toByteArray()
+
+            // Calculate buffer size: fixed fields + length prefixes + variable data
+            val size = 8 +                                           // pocStageStartBlockHeight
+                    4 + modelIdBytes.size +                          // len + model_id
+                    32 +                                             // root_hash
+                    4 +                                              // count
+                    4 + (leafIndices.size * 4) +                     // num_leaf_indices + leaf_indices
+                    8 +                                              // timestamp
+                    4 + validatorAddressBytes.size +                 // len + validator_address
+                    4 + validatorSignerAddressBytes.size             // len + validator_signer_address
 
             val buffer = ByteBuffer.allocate(size)
             buffer.order(ByteOrder.LITTLE_ENDIAN)
 
             buffer.putLong(pocStageStartBlockHeight)
+            buffer.putInt(modelIdBytes.size)
+            buffer.put(modelIdBytes)
             buffer.put(rootHash)
             buffer.putInt(count.toInt())
+            buffer.putInt(leafIndices.size)
             leafIndices.forEach { buffer.putInt(it.toInt()) }
             buffer.putLong(timestamp)
-            buffer.put(validatorAddress.toByteArray())
-            buffer.put(validatorSignerAddress.toByteArray())
+            buffer.putInt(validatorAddressBytes.size)
+            buffer.put(validatorAddressBytes)
+            buffer.putInt(validatorSignerAddressBytes.size)
+            buffer.put(validatorSignerAddressBytes)
 
             // SHA256 hash
             val digest = MessageDigest.getInstance("SHA-256")

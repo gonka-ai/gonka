@@ -28,7 +28,8 @@
           "poc_exchange_duration": "1",
           "poc_validation_delay": "1",
           "poc_validation_duration": "4",
-          "set_new_validators_delay": "1"
+          "set_new_validators_delay": "1",
+          "confirmation_poc_safety_window": "0"
         },
         "validation_params": {
           "expiration_blocks": "10",
@@ -57,16 +58,25 @@
           "kb_per_output_token": {
             "value": "64",
             "exponent": "-2"
-          }
+          },
+          "invalidations_sample_period": "1"
+        },
+        "delegation_params": {
+          "deploy_window": "1",
+          "refusal_penalty": { "value": "0", "exponent": 0 },
+          "no_participation_penalty": { "value": "0", "exponent": 0 },
+          "delegation_share": { "value": "0", "exponent": 0 },
+          "w_threshold": { "value": "0", "exponent": 0 },
+          "v_min": "0",
+          "cap_factor": { "value": "1", "exponent": 0 },
+          "initial_model_id": "Qwen/Qwen2.5-7B-Instruct"
         }
       },
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
         "originator_supply": "160000000000000000",
-        "top_reward_amount": "120000000000000000",
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
-        "top_rewards": 3,
         "supply_denom": "ngonka"
       },
       "model_list": [

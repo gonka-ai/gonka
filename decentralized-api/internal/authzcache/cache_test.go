@@ -23,12 +23,12 @@ func (m *MockQueryClient) GranteesByMessageType(ctx context.Context, req *types.
 	return args.Get(0).(*types.QueryGranteesByMessageTypeResponse), args.Error(1)
 }
 
-func (m *MockQueryClient) InferenceParticipant(ctx context.Context, req *types.QueryInferenceParticipantRequest) (*types.QueryInferenceParticipantResponse, error) {
+func (m *MockQueryClient) AccountByAddress(ctx context.Context, req *types.QueryAccountByAddressRequest) (*types.QueryAccountByAddressResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryInferenceParticipantResponse), args.Error(1)
+	return args.Get(0).(*types.QueryAccountByAddressResponse), args.Error(1)
 }
 
 // MockCosmosClient mocks the cosmos message client
@@ -39,7 +39,7 @@ type MockCosmosClient struct {
 
 func (m *MockCosmosClient) NewInferenceQueryClient() interface {
 	GranteesByMessageType(ctx context.Context, req *types.QueryGranteesByMessageTypeRequest) (*types.QueryGranteesByMessageTypeResponse, error)
-	InferenceParticipant(ctx context.Context, req *types.QueryInferenceParticipantRequest) (*types.QueryInferenceParticipantResponse, error)
+	AccountByAddress(ctx context.Context, req *types.QueryAccountByAddressRequest) (*types.QueryAccountByAddressResponse, error)
 } {
 	return m.queryClient
 }

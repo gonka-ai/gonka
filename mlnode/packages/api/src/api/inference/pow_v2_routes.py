@@ -37,6 +37,7 @@ class PoCInitGenerateRequest(BaseModel):
     batch_size: int = 32
     params: PoCParamsModel
     url: Optional[str] = None
+    poc_stronger_rng: bool = False
 
 
 class ArtifactModel(BaseModel):
@@ -68,6 +69,7 @@ class PoCGenerateRequest(BaseModel):
     url: Optional[str] = None
     validation: Optional[ValidationModel] = None
     stat_test: Optional[StatTestModel] = None
+    poc_stronger_rng: bool = False
 
 
 # Endpoints

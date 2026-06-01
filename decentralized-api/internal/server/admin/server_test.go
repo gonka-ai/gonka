@@ -123,7 +123,7 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	}).Return(modelEpochData, nil)
 
 	// 3. PhaseTracker
-	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker := &chainphase.ChainPhaseTracker{}
 	phaseTracker.Update(
 		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
 		&types.Epoch{Index: 100, PocStartBlockHeight: 100},

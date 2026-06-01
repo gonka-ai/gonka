@@ -81,6 +81,7 @@ func (h StakingHooks) BeforeValidatorSlashed(ctx context.Context, valAddr sdk.Va
 	)
 
 	// Tendermint driven slashing is not limited per epoch, so pass in a blank reason
-	_, err := h.k.Slash(sdkCtx, accAddr, fraction, "")
+	requiredCollateral := h.k.GetRequiredCollateralForSlash(sdkCtx, accAddr)
+	_, err := h.k.Slash(sdkCtx, accAddr, fraction, "", requiredCollateral)
 	return err
 }

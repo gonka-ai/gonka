@@ -18,6 +18,16 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// Set the active epoch ID from genesis
 	k.SetActiveEpochID(ctx, genState.ActiveEpochId)
+
+	// Set the current signing epoch ID from genesis if it's set
+	if genState.CurrentSigningEpochId > 0 {
+		k.SetCurrentSigningEpochID(ctx, genState.CurrentSigningEpochId)
+	}
+
+	// Set all the loaded entity models
+	k.SetAllEpochBLSData(ctx, genState.BlsDataList)
+	k.SetAllThresholdSigningRequests(ctx, genState.SigningRequests)
+	k.SetAllGroupKeyValidationStates(ctx, genState.GroupValidationStates)
 }
 
 // ExportGenesis returns the module's exported genesis.
@@ -35,6 +45,17 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	if found {
 		genesis.ActiveEpochId = activeEpochID
 	}
+
+	// Export the current signing epoch ID
+	currentSigningEpochID, foundSigning := k.GetCurrentSigningEpochID(ctx)
+	if foundSigning {
+		genesis.CurrentSigningEpochId = currentSigningEpochID
+	}
+
+	// Export all entity models
+	genesis.BlsDataList = k.GetAllEpochBLSData(ctx)
+	genesis.SigningRequests = k.GetAllThresholdSigningRequests(ctx)
+	genesis.GroupValidationStates = k.GetAllGroupKeyValidationStates(ctx)
 
 	// this line is used by starport scaffolding # genesis/module/export
 

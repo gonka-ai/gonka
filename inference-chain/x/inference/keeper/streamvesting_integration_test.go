@@ -19,9 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	streamvestingkeeper "github.com/productscience/inference/x/streamvesting/keeper"
@@ -38,11 +40,13 @@ func setupKeeperWithMocksForStreamVesting(t testing.TB) (keeper.Keeper, types.Ms
 func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, streamvestingkeeper.Keeper, types.MsgServer, streamvestingtypes.MsgServer) {
 	// --- Store and Codec Setup ---
 	inferenceStoreKey := storetypes.NewKVStoreKey(types.StoreKey)
+	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	streamvestingStoreKey := storetypes.NewKVStoreKey(streamvestingtypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(inferenceStoreKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(streamvestingStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
@@ -50,6 +54,8 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 	cdc := codec.NewProtoCodec(registry)
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	authorityBech32, err := sdk.Bech32ifyAddressBytes(sdk.GetConfig().GetBech32AccountAddrPrefix(), authority)
+	require.NoError(t, err)
 
 	// --- Mock Keepers ---
 	ctrl := gomock.NewController(t)
@@ -67,27 +73,28 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		cdc,
 		runtime.NewKVStoreService(streamvestingStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		nil,                   // bank keeper
 		bookkeepingBankKeeper, // bank escrow keeper
 	)
 
 	// Create a BLS keeper for testing (similar to testutil/keeper/inference.go)
-	blsStoreKey := storetypes.NewKVStoreKey("bls")
+	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	blsKeeper := blskeeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(blsStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 	)
 
 	upgradeMock := keepertest.NewMockUpgradeKeeper(ctrl)
 	inferenceKeeper := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(inferenceStoreKey),
+		runtime.NewTransientStoreService(transientStoreKey),
 		keepertest.PrintlnLogger{},
-		authority.String(),
+		authorityBech32,
 		bookkeepingBankKeeper,
 		bankViewKeeper,
 		groupMock,
@@ -98,7 +105,7 @@ func setupRealStreamVestingKeepers(t testing.TB) (sdk.Context, keeper.Keeper, st
 		collateralKeeper,
 		svKeeper,
 		authzKeeper,
-		nil,
+		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
 		upgradeMock,
 	)
 
@@ -123,9 +130,8 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	// Set parameters for vesting periods
 	params := types.DefaultParams()
-	params.TokenomicsParams.WorkVestingPeriod = 5      // 5 epochs for work coins
-	params.TokenomicsParams.RewardVestingPeriod = 10   // 10 epochs for reward coins
-	params.TokenomicsParams.TopMinerVestingPeriod = 15 // 15 epochs for top miner rewards
+	params.TokenomicsParams.WorkVestingPeriod = 5    // 5 epochs for work coins
+	params.TokenomicsParams.RewardVestingPeriod = 10 // 10 epochs for reward coins
 	k.SetParams(ctx, params)
 
 	participantAddrStr := sample.AccAddress()
@@ -137,7 +143,7 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 	// Mock expectations for vesting flow (escrow payment goes through inference module)
 	expectedWorkCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(workAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedWorkCoins, &workVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedWorkCoins, &workVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from escrow
@@ -150,7 +156,7 @@ func TestVestingIntegration_ParameterBased(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	// Execute payment from top reward pool module
@@ -278,33 +284,10 @@ func TestVestingIntegration_MixedVestingScenario(t *testing.T) {
 
 	expectedRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, "inference", expectedRewardCoins, &rewardVestingPeriod, gomock.Any()).
 		Return(nil)
 
 	err = k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "reward-payment", &rewardVestingPeriod)
-	require.NoError(t, err)
-}
-
-func TestVestingIntegration_TopMinerRewards(t *testing.T) {
-	k, _, ctx, mocks := setupKeeperWithMocksForStreamVesting(t)
-
-	// Configure top miner vesting period
-	params := types.DefaultParams()
-	params.TokenomicsParams.TopMinerVestingPeriod = 15 // 15 epochs for top miner rewards
-	k.SetParams(ctx, params)
-
-	participantAddrStr := sample.AccAddress()
-	rewardAmount := int64(5000)
-	topMinerVestingPeriod := uint64(15)
-
-	expectedCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, int64(rewardAmount)))
-
-	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, "inference", expectedCoins, &topMinerVestingPeriod, gomock.Any()).
-		Return(nil)
-
-	// Execute top miner reward payment
-	err := k.PayParticipantFromModule(ctx, participantAddrStr, rewardAmount, types.TopRewardPoolAccName, "top-miner-reward", &topMinerVestingPeriod)
 	require.NoError(t, err)
 }
 
@@ -315,7 +298,6 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	params := types.DefaultParams()
 	params.TokenomicsParams.WorkVestingPeriod = 0
 	params.TokenomicsParams.RewardVestingPeriod = 180
-	params.TokenomicsParams.TopMinerVestingPeriod = 365
 
 	// Should not error on valid parameters
 	err := k.SetParams(ctx, params)
@@ -326,7 +308,6 @@ func TestVestingIntegration_ParameterValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), retrievedParams.TokenomicsParams.WorkVestingPeriod)
 	require.Equal(t, uint64(180), retrievedParams.TokenomicsParams.RewardVestingPeriod)
-	require.Equal(t, uint64(365), retrievedParams.TokenomicsParams.TopMinerVestingPeriod)
 }
 
 func TestVestingIntegration_ErrorHandling(t *testing.T) {
@@ -340,7 +321,7 @@ func TestVestingIntegration_ErrorHandling(t *testing.T) {
 
 	// Test case 2: Vesting keeper failure should be handled
 	mocks.StreamVestingKeeper.EXPECT().
-		AddVestedRewards(ctx, participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
+		AddVestedRewards(gomock.Any(), participantAddrStr, types.ModuleName, expectedCoins, &vestingPeriod, gomock.Any()).
 		Return(fmt.Errorf("invalid request"))
 
 	err := k.PayParticipantFromModule(ctx, participantAddrStr, amount, types.TopRewardPoolAccName, "vesting-error-test", &vestingPeriod)
