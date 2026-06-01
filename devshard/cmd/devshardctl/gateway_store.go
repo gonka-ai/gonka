@@ -84,9 +84,10 @@ type PerfSettings struct {
 }
 
 type EscrowRotationSettings struct {
-	Enabled      bool                          `json:"enabled"`
-	PrePoCBlocks int64                         `json:"pre_poc_blocks"`
-	Models       []EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled           bool                          `json:"enabled"`
+	SettlementEnabled bool                          `json:"settlement_enabled"`
+	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
+	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 type EscrowRotationModelSettings struct {
@@ -350,6 +351,7 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			perf_sample_size INTEGER NOT NULL DEFAULT 256,
 			perf_window_ms INTEGER NOT NULL DEFAULT 3600000,
 			escrow_rotation_enabled INTEGER NOT NULL DEFAULT 0,
+			escrow_rotation_settlement_enabled INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_pre_poc_blocks INTEGER NOT NULL DEFAULT 300,
 			escrow_rotation_models_json TEXT NOT NULL DEFAULT '',
 			gateway_disabled_enabled INTEGER NOT NULL DEFAULT 0,
@@ -502,11 +504,13 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 		       redundancy_pairwise_winner_hold_min_samples,
 		       perf_sample_size, perf_window_ms,
-		       escrow_rotation_enabled, escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
+		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
+		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int
+	var rotationSettlementEnabled int
 	var disabledEnabled int
 	var rotationModelsJSON string
 	var modelLimitsJSON string
@@ -554,6 +558,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Perf.SampleSize,
 		&state.Settings.Perf.WindowMS,
 		&rotationEnabled,
+		&rotationSettlementEnabled,
 		&state.Settings.EscrowRotation.PrePoCBlocks,
 		&rotationModelsJSON,
 		&disabledEnabled,
@@ -567,6 +572,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		return GatewayState{}, false, fmt.Errorf("load gateway settings: %w", err)
 	}
 	state.Settings.EscrowRotation.Enabled = rotationEnabled != 0
+	state.Settings.EscrowRotation.SettlementEnabled = rotationSettlementEnabled != 0
 	if strings.TrimSpace(rotationModelsJSON) != "" {
 		if err := json.Unmarshal([]byte(rotationModelsJSON), &state.Settings.EscrowRotation.Models); err != nil {
 			return GatewayState{}, false, fmt.Errorf("load gateway rotation models: %w", err)
@@ -661,10 +667,11 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 			redundancy_pairwise_winner_hold_min_samples,
 			perf_sample_size, perf_window_ms,
-			escrow_rotation_enabled, escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
+			escrow_rotation_enabled, escrow_rotation_settlement_enabled,
+			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -707,6 +714,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
+		gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
 		settings.EscrowRotation.PrePoCBlocks,
 		mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
 		gatewayBoolToInt(settings.Disabled.Enabled),
@@ -771,6 +779,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    perf_sample_size = ?,
 		    perf_window_ms = ?,
 		    escrow_rotation_enabled = ?,
+		    escrow_rotation_settlement_enabled = ?,
 		    escrow_rotation_pre_poc_blocks = ?,
 		    escrow_rotation_models_json = ?,
 		    gateway_disabled_enabled = ?,
@@ -820,6 +829,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
+		gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
 		settings.EscrowRotation.PrePoCBlocks,
 		mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
 		gatewayBoolToInt(settings.Disabled.Enabled),
@@ -1177,6 +1187,7 @@ func ensureGatewaySettingsRotationColumns(db *sql.DB) error {
 		ddl  string
 	}{
 		{"escrow_rotation_enabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"escrow_rotation_settlement_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_pre_poc_blocks", "INTEGER NOT NULL DEFAULT 300"},
 		{"escrow_rotation_models_json", "TEXT NOT NULL DEFAULT ''"},
 	}

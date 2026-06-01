@@ -76,7 +76,7 @@ func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64)
 	}
 }
 
-func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime) (*Gateway, *atomic.Int32, *atomic.Int32) {
+func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettings ...func(*GatewaySettings)) (*Gateway, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
@@ -90,7 +90,8 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime) (*Gateway, *
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "m",
 				TempCount:     1,
@@ -100,6 +101,9 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime) (*Gateway, *
 			}},
 		},
 	}.WithTuningDefaults()
+	for _, modify := range modifySettings {
+		modify(&settings)
+	}
 	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model},
 		Active:        true,
@@ -160,6 +164,52 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return created.Load() == 1 && settled.Load() == 1 && !rt.active.Load()
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestGatewayCheckBalancesNoOpWhenRotationDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Enabled = false
+	})
+
+	g.checkBalances()
+
+	require.EqualValues(t, 0, created.Load())
+	require.EqualValues(t, 0, settled.Load())
+	require.True(t, rt.active.Load())
+}
+
+func TestGatewayCheckBalancesReplacesAndDeactivatesWithoutSettlement(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+	})
+
+	g.checkBalances()
+
+	require.Eventually(t, func() bool {
+		return created.Load() == 1 && !rt.active.Load()
+	}, time.Second, 10*time.Millisecond)
+	require.EqualValues(t, 0, settled.Load())
+}
+
+func TestGatewayBalanceExhaustedDeactivatesWhenRotationDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	rt.proxy.redundancy = &Redundancy{}
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Enabled = false
+	})
+	g.attachEscrowChecker(rt)
+
+	rt.proxy.redundancy.onBalanceExhausted()
+
+	require.EqualValues(t, 0, created.Load())
+	require.EqualValues(t, 0, settled.Load())
+	require.False(t, rt.active.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
 }
 
 func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
@@ -2295,6 +2345,42 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "empty_stream_threshold")
 }
 
+func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+
+	g := NewManagedGateway(nil, NewGatewayLimiter(2, 200), GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, t.TempDir(), store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
+		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))
+	rec := httptest.NewRecorder()
+	g.handleAdminSettings(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
+}
+
 func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -2352,6 +2438,9 @@ func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var body struct {
+		Settings struct {
+			SettlementEnabled bool `json:"settlement_enabled"`
+		} `json:"settings"`
 		Chain struct {
 			BlocksToEpochSwitch     int64 `json:"blocks_to_epoch_switch"`
 			BlocksUntilNextRotation int64 `json:"blocks_until_next_rotation"`
@@ -2359,6 +2448,7 @@ func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 		Latest []GatewayRotationStatus `json:"latest"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.False(t, body.Settings.SettlementEnabled)
 	require.EqualValues(t, 400, body.Chain.BlocksToEpochSwitch)
 	require.EqualValues(t, 100, body.Chain.BlocksUntilNextRotation)
 	require.Len(t, body.Latest, 1)

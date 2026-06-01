@@ -139,8 +139,9 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			UnresponsiveThreshold:         0.8,
 		},
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:      true,
-			PrePoCBlocks: 123,
+			Enabled:           true,
+			SettlementEnabled: true,
+			PrePoCBlocks:      123,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Kimi/Rotate",
 				TempCount:     2,
@@ -174,6 +175,7 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.True(t, state.Settings.EscrowRotation.Enabled)
+	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 	require.EqualValues(t, 123, state.Settings.EscrowRotation.PrePoCBlocks)
 	require.Equal(t, []EscrowRotationModelSettings{{
 		ModelID:       "Kimi/Rotate",
@@ -282,7 +284,8 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     8,
@@ -351,7 +354,8 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -407,7 +411,8 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -455,6 +460,142 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	require.True(t, statuses[0].Completed)
 }
 
+func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementDisabled(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Enabled:           true,
+			SettlementEnabled: false,
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       "Qwen/Test",
+				TempCount:     1,
+				TargetCount:   2,
+				Amount:        1000,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+			}},
+		},
+	}.WithTuningDefaults()
+	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
+		Active:        true,
+		RotationRole:  rotationRoleRegular,
+		RotationEpoch: 9,
+	}}))
+
+	oldCreate := gatewayCreateRotationEscrow
+	oldSettle := gatewaySettleDevshardOnChain
+	createAttempts := 0
+	settleAttempts := 0
+	gatewayCreateRotationEscrow = func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error) {
+		createAttempts++
+		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
+	}
+	gatewaySettleDevshardOnChain = func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		settleAttempts++
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		gatewayCreateRotationEscrow = oldCreate
+		gatewaySettleDevshardOnChain = oldSettle
+	})
+
+	rt := &devshardRuntime{id: "12"}
+	rt.active.Store(true)
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]struct{})}
+	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+
+	require.Equal(t, 1, createAttempts)
+	require.Equal(t, 0, settleAttempts)
+	require.False(t, rt.active.Load())
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
+	statuses, err := store.LoadRotationStatuses(1)
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.EqualValues(t, 0, statuses[0].SettledCount)
+	require.True(t, statuses[0].Completed)
+}
+
+func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisabled(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Enabled:           true,
+			SettlementEnabled: false,
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       "Qwen/Test",
+				TempCount:     1,
+				TargetCount:   1,
+				Amount:        1000,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+			}},
+		},
+	}.WithTuningDefaults()
+	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
+		Active:        true,
+		RotationRole:  rotationRoleTemp,
+		RotationEpoch: 10,
+	}}))
+
+	oldCreate := gatewayCreateRotationEscrow
+	oldSettle := gatewaySettleDevshardOnChain
+	createAttempts := 0
+	settleAttempts := 0
+	gatewayCreateRotationEscrow = func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error) {
+		createAttempts++
+		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
+	}
+	gatewaySettleDevshardOnChain = func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		settleAttempts++
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		gatewayCreateRotationEscrow = oldCreate
+		gatewaySettleDevshardOnChain = oldSettle
+	})
+
+	rt := &devshardRuntime{id: "12"}
+	rt.active.Store(true)
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]struct{})}
+	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+
+	require.Equal(t, 1, createAttempts)
+	require.Equal(t, 0, settleAttempts)
+	require.False(t, rt.active.Load())
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
+	statuses, err := store.LoadRotationStatuses(1)
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.EqualValues(t, 0, statuses[0].SettledCount)
+	require.True(t, statuses[0].Completed)
+}
+
 func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -469,7 +610,8 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled: true,
+			Enabled:           true,
+			SettlementEnabled: true,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
@@ -541,8 +683,9 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:      true,
-			PrePoCBlocks: 300,
+			Enabled:           true,
+			SettlementEnabled: true,
+			PrePoCBlocks:      300,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:       "Qwen/Test",
 				TempCount:     1,
