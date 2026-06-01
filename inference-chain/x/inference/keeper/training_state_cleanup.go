@@ -24,6 +24,7 @@ func (k Keeper) ClearTrainingState(ctx context.Context) error {
 		[]byte(inferencetypes.TrainingTaskSequenceKey),
 		[]byte(inferencetypes.QueuedTrainingTaskKeyPrefix),
 		[]byte(inferencetypes.InProgressTrainingTaskKeyPrefix),
+		[]byte(inferencetypes.TrainingTaskKvRecordKeyPrefix),
 		[]byte("TrainingTask/sync/"),
 	} {
 		prefixStore := prefix.NewStore(store, keyPrefix)
