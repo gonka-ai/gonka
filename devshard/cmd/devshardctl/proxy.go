@@ -306,11 +306,11 @@ func (p *Proxy) runInference(ctx context.Context, params user.InferenceParams, w
 // capped by metaDrainTimeout so a malicious upstream host cannot pin the
 // proxy indefinitely after the client has disconnected.
 //
-// Fatal HTTP errors from the host (4xx other than 408/425/429) are propagated
+// Fail-fast HTTP errors (fatal 4xx, 501, 503 with X-Devshard-Error) are propagated
 // immediately so the caller fails fast with a clear cause instead of waiting
-// through refusal/execution timeouts. Retryable errors (5xx, 408, 425, 429,
-// network failures) keep the existing behavior: no receipt is returned and
-// runInference falls through to its deadline-based retry.
+// through refusal/execution timeouts. Retryable errors (unclassified 5xx, 408,
+// 425, 429, network failures) keep the existing behavior: no receipt is returned
+// and runInference falls through to its deadline-based retry.
 func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInference, nonce uint64, flag *cancelFlag) (finished bool, confirmedAt int64, err error) {
 	sendCtx := ctx
 	if flag != nil {
@@ -332,7 +332,7 @@ func (p *Proxy) sendAndProcess(ctx context.Context, prepared *user.PreparedInfer
 
 	resp, sendErr := p.session.SendOnly(sendCtx, prepared)
 	if sendErr != nil && resp == nil {
-		if transport.IsFatalHTTPError(sendErr) {
+		if transport.IsFailFastHTTPError(sendErr) {
 			return false, 0, fmt.Errorf("host rejected inference: %w", sendErr)
 		}
 		return false, 0, nil
@@ -471,7 +471,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	if err != nil {
 		if !pw.started {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
+			w.WriteHeader(transport.ClientHTTPStatusFromError(err))
 			fmt.Fprintf(w, `{"error":{"message":%q}}`, err.Error())
 			return
 		}
@@ -496,7 +496,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), transport.ClientHTTPStatusFromError(err))
 		return
 	}
 

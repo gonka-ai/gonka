@@ -248,7 +248,7 @@ data class DockerGroup(
             if (additionalForPair.any { it.contains("versiond") }) {
                 joinServices.add("versiond")
             }
-            val startRemainingArgs = baseArgs + joinServices
+            val startRemainingArgs = baseArgs + listOf("up", "-d") + joinServices
             this.coldAccountPubkey = node.getColdPubKey()
             dockerProcess(*startRemainingArgs.toTypedArray()).start().waitFor()
             Thread.sleep(Duration.ofSeconds(10))

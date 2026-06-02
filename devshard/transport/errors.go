@@ -7,14 +7,14 @@ import (
 )
 
 // HTTPStatusError is returned by the HTTP transport layer when a host
-// responds with a non-200 status. Callers can inspect StatusCode to
-// classify the error as fatal (4xx — unlikely to succeed on retry)
-// or retryable (selected 4xx, 5xx — transient infrastructure issues).
+// responds with a non-200 status. Callers can inspect StatusCode and
+// DevshardError (from X-Devshard-Error) to classify fail-fast vs retry.
 type HTTPStatusError struct {
-	Method     string
-	Path       string
-	StatusCode int
-	Body       string
+	Method        string
+	Path          string
+	StatusCode    int
+	Body          string
+	DevshardError string // X-Devshard-Error value when present
 }
 
 // Error implements the error interface.
@@ -52,6 +52,27 @@ func (e *HTTPStatusError) IsFatal() bool {
 	return !isRetryableClientStatus(e.StatusCode)
 }
 
+// IsFailFast reports whether devshardctl should skip refusal/execution waits.
+// Includes fatal 4xx, 501, and 503 only when X-Devshard-Error is set to a known code.
+func (e *HTTPStatusError) IsFailFast() bool {
+	if e == nil {
+		return false
+	}
+	if e.IsFatal() {
+		return true
+	}
+	if e.StatusCode == http.StatusNotImplemented {
+		return true
+	}
+	if e.StatusCode == http.StatusServiceUnavailable {
+		switch e.DevshardError {
+		case DevshardErrorRequestsDisabled, DevshardErrorInitializing:
+			return true
+		}
+	}
+	return false
+}
+
 // IsFatalHTTPError reports whether err wraps an HTTPStatusError with a
 // fatal (non-retryable) status code. Returns false for nil errors and
 // errors that do not wrap HTTPStatusError.
@@ -61,4 +82,24 @@ func IsFatalHTTPError(err error) bool {
 		return false
 	}
 	return httpErr.IsFatal()
+}
+
+// IsFailFastHTTPError reports whether err wraps an HTTPStatusError that should
+// fail fast in devshardctl (fatal 4xx, 501, or classified 503).
+func IsFailFastHTTPError(err error) bool {
+	var httpErr *HTTPStatusError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	return httpErr.IsFailFast()
+}
+
+// ClientHTTPStatusFromError returns the HTTP status to expose to OpenAI clients
+// when err wraps a fail-fast HTTPStatusError; otherwise BadGateway.
+func ClientHTTPStatusFromError(err error) int {
+	var httpErr *HTTPStatusError
+	if errors.As(err, &httpErr) && httpErr.IsFailFast() {
+		return httpErr.StatusCode
+	}
+	return http.StatusBadGateway
 }

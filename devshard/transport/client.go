@@ -384,12 +384,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, &HTTPStatusError{
-			Method:     http.MethodPost,
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
-		}
+		return nil, StatusErrorFromResponse(http.MethodPost, path, resp, string(respBody))
 	}
 
 	return resp, nil
