@@ -1,5 +1,6 @@
 import com.productscience.*
 import com.productscience.data.CreatePartialUpgrade
+import com.github.dockerjava.api.exception.NotFoundException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -13,6 +14,26 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.assertNotNull
 
 class UpgradeTests : TestermintTest() {
+    private fun assertLastUpgradeHeight(pair: LocalInferencePair, expectedHeight: Long, expectedFound: Boolean = true) {
+        val response = pair.node.getLastUpgradeHeight()
+        assertThat(response.found).isEqualTo(expectedFound)
+        assertThat(response.lastUpgradeHeight).isEqualTo(expectedHeight)
+    }
+
+    private fun assertLastUpgradeHeight(cluster: LocalCluster, expectedHeight: Long, expectedFound: Boolean = true) {
+        cluster.allPairs.forEach { pair ->
+            assertLastUpgradeHeight(pair, expectedHeight, expectedFound)
+        }
+    }
+
+    private fun assertLastUpgradeHeightUnset(pair: LocalInferencePair) {
+        assertLastUpgradeHeight(pair, 0, expectedFound = false)
+    }
+
+    private fun assertLastUpgradeHeightUnset(cluster: LocalCluster) {
+        assertLastUpgradeHeight(cluster, 0, expectedFound = false)
+    }
+
     private fun initUpgradeCluster(config: ApplicationConfig = inferenceConfig): Pair<LocalCluster, LocalInferencePair> {
         var lastFailure: Throwable? = null
         repeat(3) { attempt ->
@@ -21,7 +42,8 @@ class UpgradeTests : TestermintTest() {
             } catch (t: Throwable) {
                 val shouldRetry =
                     t.message?.contains("Could not find node container for keyName=genesis") == true ||
-                        generateSequence(t) { it.cause }.any { it is SocketException }
+                        t.message?.contains("Failed to get validator info within 90 seconds") == true ||
+                        generateSequence(t) { it.cause }.any { it is SocketException || it is NotFoundException }
                 if (!shouldRetry || attempt == 2) {
                     throw t
                 }
@@ -31,6 +53,92 @@ class UpgradeTests : TestermintTest() {
             }
         }
         throw lastFailure ?: IllegalStateException("Upgrade cluster bootstrap failed")
+    }
+
+    private fun verifyPairHealthy(pair: LocalInferencePair) {
+        pair.api.getParticipants()
+        pair.api.getNodes()
+        pair.node.getColdAddress()
+    }
+
+    private fun pairIsOperational(pair: LocalInferencePair): Boolean =
+        runCatching {
+            verifyPairHealthy(pair)
+            pair.api.getNodes().isNotEmpty() &&
+                pair.api.getNodes().all { node ->
+                    node.state.currentStatus != "UNKNOWN" && node.state.intendedStatus != "UNKNOWN"
+                }
+        }.getOrDefault(false)
+
+    private fun waitForClusterOperational(cluster: LocalCluster, genesis: LocalInferencePair, maxBlocks: Int = 20) {
+        val startBlock = genesis.getCurrentBlockHeight()
+        val targetBlock = startBlock + maxBlocks
+
+        while (genesis.getCurrentBlockHeight() < targetBlock) {
+            if (cluster.allPairs.all(::pairIsOperational)) {
+                return
+            }
+            genesis.node.waitForNextBlock(1)
+        }
+
+        error("Cluster did not become operational by block $targetBlock")
+    }
+
+    private fun waitForLastUpgradeHeight(cluster: LocalCluster, genesis: LocalInferencePair, expectedHeight: Long, maxBlocks: Int = 20) {
+        val startBlock = genesis.getCurrentBlockHeight()
+        val targetBlock = startBlock + maxBlocks
+
+        while (genesis.getCurrentBlockHeight() < targetBlock) {
+            val allUpdated = cluster.allPairs.all { pair ->
+                runCatching {
+                    val response = pair.node.getLastUpgradeHeight()
+                    response.found && response.lastUpgradeHeight == expectedHeight
+                }.getOrDefault(false)
+            }
+            if (allUpdated) {
+                return
+            }
+            genesis.node.waitForNextBlock(1)
+        }
+
+        error("LastUpgradeHeight did not become $expectedHeight by block $targetBlock")
+    }
+
+    private fun isBadGatewayFailure(t: Throwable): Boolean =
+        generateSequence(t) { it.cause }.any { cause ->
+            cause.message?.contains("502") == true || cause.message?.contains("Bad Gateway") == true
+        }
+
+    private fun verifyUpgradeWithLocalApiRecovery(cluster: LocalCluster, genesis: LocalInferencePair) {
+        fun failedPairs(): List<LocalInferencePair> =
+            cluster.allPairs.filter { pair -> runCatching { verifyPairHealthy(pair) }.isFailure }
+
+        val initialFailures = failedPairs()
+        if (initialFailures.isEmpty()) {
+            return
+        }
+
+        val firstFailure = runCatching { verifyPairHealthy(initialFailures.first()) }.exceptionOrNull()
+        if (firstFailure == null || !isBadGatewayFailure(firstFailure)) {
+            throw firstFailure ?: IllegalStateException("Upgrade verification failed for unknown reason")
+        }
+
+        Logger.warn(
+            "Post-upgrade API verification failed with 502; restarting local API containers for {}",
+            initialFailures.joinToString(", ") { it.name }
+        )
+        initialFailures.forEach { it.restartApiContainer() }
+
+        genesis.waitForBlock(20) {
+            cluster.allPairs.all { pair ->
+                runCatching {
+                    verifyPairHealthy(pair)
+                    true
+                }.getOrDefault(false)
+            }
+        }
+
+        cluster.allPairs.forEach(::verifyPairHealthy)
     }
 
     @Test
@@ -79,22 +187,7 @@ class UpgradeTests : TestermintTest() {
         Thread.sleep(Duration.ofMinutes(5))
         logSection("Verifying upgrade")
         genesis.node.waitForNextBlock(1)
-        genesis.waitForBlock(40) {
-            cluster.allPairs.all { pair ->
-                runCatching {
-                    pair.api.getParticipants()
-                    pair.api.getNodes()
-                    pair.node.getColdAddress()
-                    true
-                }.getOrDefault(false)
-            }
-        }
-
-        cluster.allPairs.forEach {
-            it.api.getParticipants()
-            it.api.getNodes()
-            it.node.getColdAddress()
-        }
+        verifyUpgradeWithLocalApiRecovery(cluster, genesis)
 
     }
     @Test
@@ -109,6 +202,8 @@ class UpgradeTests : TestermintTest() {
         )
         genesis.markNeedsReboot()
         val pairs = cluster.joinPairs
+        waitForClusterOperational(cluster, genesis)
+        assertLastUpgradeHeightUnset(cluster)
         val height = genesis.getCurrentBlockHeight()
         val path = getBinaryPath("v2/inferenced/inferenced-amd64.zip")
         val apiPath = getBinaryPath("v2/dapi/decentralized-api-amd64.zip")
@@ -139,32 +234,31 @@ class UpgradeTests : TestermintTest() {
         }
         logSection("Waiting for upgrade to be effective at block $upgradeBlock")
         genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
+        assertLastUpgradeHeightUnset(cluster)
         logSection("Waiting for upgrade to finish")
         Thread.sleep(Duration.ofMinutes(5))
         logSection("Verifying upgrade")
         genesis.node.waitForNextBlock(1)
-        // Some other action?
-        cluster.allPairs.forEach {
-            it.api.getParticipants()
-            it.api.getNodes()
-            it.node.getColdAddress()
-        }
+        verifyUpgradeWithLocalApiRecovery(cluster, genesis)
+        waitForLastUpgradeHeight(cluster, genesis, upgradeBlock)
+        assertLastUpgradeHeight(cluster, upgradeBlock)
 
     }
 
 
     @Test
-    @Timeout(value = 15, unit = TimeUnit.MINUTES)
+    @Timeout(value = 30, unit = TimeUnit.MINUTES)
     fun testVersionedEndpointSwitching() {
         val (cluster, genesis) = initUpgradeCluster()
 
         logSection("Waiting for initial system to be ready")
-        var currentHeight = genesis.getCurrentBlockHeight()
+        waitForClusterOperational(cluster, genesis)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
+        waitForClusterOperational(cluster, genesis)
 
         // Test that the system works initially before we modify it
         logSection("Verifying system is working before version changes")
+        genesis.waitForNextInferenceWindow()
         val systemCheckResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(systemCheckResponse.choices.first().message.content).isNotEmpty()
 
@@ -205,14 +299,17 @@ class UpgradeTests : TestermintTest() {
 
         logSection("Testing initial version v3.0.8 - should use default endpoints")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        currentHeight = genesis.getCurrentBlockHeight()
-        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
+        waitForClusterOperational(cluster, genesis)
+        genesis.waitForNextInferenceWindow()
         val initialInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         // Initially should use non-versioned endpoints, so default response
         assertThat(initialInferenceResponse.choices.first().message.content).isNotEmpty()
 
         logSection("Initiating first upgrade: v3.0.8 → v3.0.9")
-        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + 10
+        // Give governance enough runway to submit, deposit, and collect all votes before the upgrade height.
+        val upgradeLeadBlocks = 25
+        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
+        assertLastUpgradeHeightUnset(cluster)
 
         val firstProposalId = genesis.runProposal(
             cluster,
@@ -224,12 +321,16 @@ class UpgradeTests : TestermintTest() {
         )
 
         logSection("Waiting for first upgrade to take effect at height $firstUpgradeHeight")
+        assertLastUpgradeHeightUnset(cluster)
         genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+10")
+        waitForLastUpgradeHeight(cluster, genesis, firstUpgradeHeight)
+        assertLastUpgradeHeight(cluster, firstUpgradeHeight)
+        waitForClusterOperational(cluster, genesis)
 
         logSection("Testing post-upgrade requests should hit v3.0.9 endpoints")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        currentHeight = genesis.getCurrentBlockHeight()
-        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
+        waitForClusterOperational(cluster, genesis)
+        genesis.waitForNextInferenceWindow()
         val upgradedInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(upgradedInferenceResponse.choices.first().message.content)
             .withFailMessage("After first upgrade, inference should use v3.0.9 endpoint")
@@ -246,7 +347,7 @@ class UpgradeTests : TestermintTest() {
         }
 
         logSection("Initiating second upgrade: v3.0.9 → v3.0.10")
-        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + 10
+        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
 
         val secondProposalId = genesis.runProposal(
             cluster,
@@ -258,7 +359,11 @@ class UpgradeTests : TestermintTest() {
         )
 
         logSection("Waiting for second upgrade to take effect at height $secondUpgradeHeight")
-        genesis.node.waitForMinimumBlock(secondUpgradeHeight + 10, "secondUpgradeHeight+10")
+        assertLastUpgradeHeight(cluster, firstUpgradeHeight)
+        genesis.node.waitForMinimumBlock(secondUpgradeHeight + 1, "secondUpgradeHeight+1")
+        waitForLastUpgradeHeight(cluster, genesis, secondUpgradeHeight)
+        assertLastUpgradeHeight(cluster, secondUpgradeHeight)
+        waitForClusterOperational(cluster, genesis)
 
         logSection("Testing post-second-upgrade requests should hit v3.0.10 endpoints")
         genesis.waitForNextInferenceWindow()

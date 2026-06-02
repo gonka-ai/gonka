@@ -3,9 +3,9 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math/bits"
 
 	"cosmossdk.io/log"
-	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -149,9 +149,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
 
-	// Extract per-model coefficients for cross-model weight aggregation
-	coefficients := modelCoefficients(params.PocParams)
-
 	// Check if this is a grace epoch and override BinomTestP0 if so
 	validationParams := params.ValidationParams
 	if validationParams == nil {
@@ -174,7 +171,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		validationParams,
 		settleParameters,
 		participantMLNodes,
-		coefficients,
 		k.Logger(),
 	)
 	if err != nil {
@@ -261,8 +257,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			k.LogError("Error calculating settle amounts", types.Settle, "error", amount.Error, "participant", amount.Settle.Participant)
 			continue
 		}
-		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
-		if totalPayment == 0 {
+		// checked add: a wrapping sum to 0 would skip a real payout
+		paymentSum, paymentCarry := bits.Add64(amount.Settle.WorkCoins, amount.Settle.RewardCoins, 0)
+		if paymentCarry == 0 && paymentSum == 0 {
 			k.LogDebug("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
 			continue
 		}
@@ -321,19 +318,4 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 type SettleResult struct {
 	Settle *types.SettleAmount
 	Error  error
-}
-
-// modelCoefficients extracts per-model weight_scale_factor from PocParams.
-// Mirrors module.ModelCoefficients but lives in keeper to avoid circular imports.
-func modelCoefficients(pocParams *types.PocParams) map[string]mathsdk.LegacyDec {
-	coeffs := make(map[string]mathsdk.LegacyDec)
-	if pocParams == nil {
-		return coeffs
-	}
-	for _, config := range pocParams.GetModelConfigs() {
-		if config != nil && config.ModelId != "" {
-			coeffs[config.ModelId] = config.GetWeightScaleFactorDec()
-		}
-	}
-	return coeffs
 }

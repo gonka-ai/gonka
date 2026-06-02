@@ -394,17 +394,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
-	// Track full chain upgrades from UpgradeKeeper
-	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
-	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
-		am.LogInfo("FullUpgradeActive - tracking height", types.Upgrades,
-			"upgradeHeight", upgradePlan.Height, "blockHeight", blockHeight, "name", upgradePlan.Name)
-		err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
-		if err != nil {
-			am.LogError("Failed to set last upgrade height for full upgrade", types.Upgrades, "error", err)
-		}
-	}
-
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {
@@ -736,6 +725,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		participationState.participationByModel,
 		am.delegationVotingPowerCapParams(params),
 	)
+	confirmationWeightScales := buildConfirmationWeightScales(
+		participationState.eligibleModels,
+		activeParticipants,
+		params.PocParams,
+	)
 
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
 		participationState.eligibleModels, activeParticipants,
@@ -774,6 +768,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
 		return
 	}
+
+	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
 
@@ -1116,7 +1113,8 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		return
 	}
 	validationParams := params.ValidationParams
-	coefficients := ModelCoefficients(params.PocParams)
+	scales := upcomingEg.GroupData.ConfirmationWeightScales
+	coefficients := types.ConfirmationWeightCoefficients(scales)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -1131,8 +1129,8 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		}
 
 		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
-		initialConfirmationWeight := epochgroup.CalculateMLNodesTotalWeight(p.Models, p.MlNodes, coefficients)
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight, coefficients)
+		initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
@@ -1258,6 +1256,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
 	for _, participant := range participants {
 		participant.Status = types.ParticipantStatus_ACTIVE
+		participant.ConsecutiveInvalidInferences = 0
 		err := am.keeper.SetParticipant(ctx, participant)
 		if err != nil {
 			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())

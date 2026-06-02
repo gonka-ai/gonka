@@ -23,6 +23,7 @@ type ValidationAdapter struct {
 	bridge       bridge.MainnetBridge
 	recorder     PayloadAuthClient
 	chainParams  ChainParamsProvider
+	thresholds   *ValidationThresholdResolver
 }
 
 func NewValidationAdapter(
@@ -42,26 +43,23 @@ func NewValidationAdapter(
 		bridge:       br,
 		recorder:     recorder,
 		chainParams:  chainParams,
+		thresholds:   NewValidationThresholdResolver(br, ValidationThresholdCacheTTL),
 	}
 }
 
 func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateRequest) (*devshard.ValidateResult, error) {
-	epochID := req.EpochID
-	if epochID == 0 {
-		epochID = currentEpochID(v.phaseTracker)
-	}
-
 	return ValidateInferenceWithExecutor(
 		ctx,
 		req,
 		v.httpClient,
 		v.bridge,
 		v.recorder,
-		epochID,
+		req.EpochID,
 		devshard.LegacySessionPayloadPath(req.EscrowID),
 		v.executeMLRequest,
 		"devshard",
 		v.chainParams,
+		v.thresholds,
 	)
 }
 

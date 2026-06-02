@@ -75,6 +75,11 @@ data class MlNodeVersionQueryResponse(
     val mlnodeVersion: MlNodeVersion
 )
 
+data class LastUpgradeHeightQueryResponse(
+    val lastUpgradeHeight: Long,
+    val found: Boolean,
+)
+
 data class MlNodeVersion(
     val currentVersion: String,
 )

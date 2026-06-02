@@ -218,6 +218,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
 				},
 				{
+					RpcMethod:      "LastUpgradeHeight",
+					Use:            "last-upgrade-height",
+					Short:          "Shows the most recent applied upgrade height",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
 					RpcMethod:      "GetAllModelCapacities",
 					Use:            "all-model-capacities",
 					Short:          "Get cached capacities for all models",
