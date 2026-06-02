@@ -288,7 +288,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #reject-unknown-param
 
-**What**: HTTP 400, `feature "<name>" is currently rejected by the Gonka network. Some non-standard parameters can crash the vLLM engine on Gonka Host MLNodes, so the network rejects parameters that are not explicitly supported (see: https://github.com/gonka-ai/gonka/blob/dl/devshards-gateway-to-main/devshard/docs/supported-params.md). If you do not need this parameter, remove it from the request; if you need it, file a request at https://github.com/gonka-ai/gonka/issues`.
+**What**: HTTP 400, `feature "<name>" is currently rejected by the Gonka network. Some non-standard parameters can crash the vLLM engine on Gonka Host MLNodes, so the network rejects parameters that are not explicitly supported (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/README.md). If you do not need this parameter, remove it from the request; if you need it, file a request at https://github.com/gonka-ai/gonka/issues`.
 
 **Why**: Closed-allowlist policy at the gateway. vLLM's `extra='allow'` model can crash the engine when unknown fields hit certain code paths; the conservative gate keeps the network stable. See the [vLLM project](https://github.com/vllm-project/vllm) for the upstream `extra='allow'` behavior.
 

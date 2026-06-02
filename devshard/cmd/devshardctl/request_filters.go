@@ -281,6 +281,5 @@ func capOutputTokens(value uint64, explicitlySet bool, bypassLimit bool, limits 
 }
 
 func unsupportedChatParameterMessage(name string) string {
-	return fmt.Sprintf("Chat completions parameter %q is currently rejected by the Gonka network. Some non-standard parameters can crash the vLLM engine on Gonka Host MLNodes, so the network rejects parameters that are not explicitly supported (see: https://github.com/gonka-ai/gonka/blob/dl/devshards-gateway-to-main/devshard/docs/supported-params.md). If you do not need this parameter, remove it from the request; if you need it, file a request at https://github.com/gonka-ai/gonka/issues", name)
+	return fmt.Sprintf("Chat completions parameter %q is currently rejected by the Gonka network. Some non-standard parameters can crash the vLLM engine on Gonka Host MLNodes, so the network rejects parameters that are not explicitly supported (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/README.md). If you do not need this parameter, remove it from the request; if you need it, file a request at https://github.com/gonka-ai/gonka/issues", name)
 }
-
