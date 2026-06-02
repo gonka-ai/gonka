@@ -77,7 +77,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 	// Recompute state root to sign it.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeSettlementStateRoot(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -108,7 +108,7 @@ func TestVerifySettlement_Success(t *testing.T) {
 	// Independently recompute and compare.
 	hostStatsHash, err := ComputeHostStatsHash(payload.HostStats)
 	require.NoError(t, err)
-	expected := ComputeSettlementStateRoot(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	expected := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
 	require.Equal(t, expected, root)
 }
 
@@ -229,7 +229,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	// Recompute state root for signing.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeSettlementStateRoot(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -285,7 +285,7 @@ func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
 
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeSettlementStateRoot(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,

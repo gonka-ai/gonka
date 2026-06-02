@@ -662,7 +662,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeSettlementStateRootForProtocol(p.ProtocolVersion, hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
+	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {

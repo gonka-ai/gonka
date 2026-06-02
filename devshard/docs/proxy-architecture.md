@@ -6,6 +6,11 @@ This note explains how the main `devshardctl` runtime pieces fit together:
 - `Proxy`
 - `Redundancy`
 - `user.Session`
+- `GatewayStore`
+- `CapacityState`
+- request filters / parameter validators
+- response cache / request accounting
+- escrow rotation
 - `ParticipantRequestLimiter`
 - metrics / connection observation
 
@@ -19,6 +24,11 @@ flowchart TD
     Gateway[Gateway]
     GLimiter[GatewayLimiter]
     PLimiter[ParticipantRequestLimiter]
+    Capacity[CapacityState]
+    Store[GatewayStore / gateway.db]
+    Filters[ChatRequestPipeline]
+    Cache[ResponseCache]
+    Rotation[EscrowRotation]
     Metrics[DevshardMetrics]
     ConnTrack[HostConnectionTracker]
 
@@ -34,9 +44,14 @@ flowchart TD
     Client --> Gateway
     Gateway --> GLimiter
     Gateway --> PLimiter
+    Gateway --> Capacity
+    Gateway --> Store
+    Gateway --> Cache
+    Gateway --> Rotation
     Gateway --> Metrics
     Gateway --> Proxy
 
+    Proxy --> Filters
     Proxy --> Redundancy
 
     Redundancy --> Session
@@ -48,8 +63,11 @@ flowchart TD
 
     Clients --> PLimiter
     Clients --> ConnTrack
+    PLimiter --> Store
+    Rotation --> Store
     ConnTrack --> Metrics
     PLimiter --> Metrics
+    Capacity --> Metrics
 ```
 
 ## Mental Model
@@ -63,10 +81,13 @@ The easiest way to think about it is:
 
 - `Gateway` decides **which escrow** gets the request.
 - `Proxy` decides **how to present the request and response** (HTTP in/out).
+- `ChatRequestPipeline` decides **what upstream request shape is allowed**.
 - `Redundancy` decides **how many nonces to race** for reliability.
 - `user.Session` owns **protocol state, nonce lifecycle, and protocol consequences** (finish, timeout).
 - `transport.HTTPClient` performs **real network calls to hosts**, streaming output directly to per-send writers.
 - `ParticipantRequestLimiter` is a **cross-runtime shared guard** on those host calls.
+- `CapacityState` converts chain capacity, PoC preservation, and live host availability into routing weights.
+- `GatewayStore` persists settings, devshard membership, throttle state, perf samples, and rotation state.
 - `DevshardMetrics` and `HostConnectionTracker` are **observers**, not core business logic.
 
 ## Component Responsibilities
@@ -78,14 +99,52 @@ The easiest way to think about it is:
 It is responsible for:
 
 - serving pooled OpenAI-compatible endpoints like `/v1/chat/completions`
-- exposing admin and metrics endpoints
+- exposing admin, OpenAPI/Swagger, debug, and metrics endpoints
 - choosing a `devshardRuntime` when multiple escrows are active
 - enforcing gateway-wide admission control:
   - `GatewayLimiter` for request concurrency and input-token reservation
   - `ParticipantRequestLimiter` for participant/nginx safety
 - tracking per-runtime load (`activeRequests`, `reservedTokens`)
+- applying model access controls (`open`, `api_key`, `admin_only`)
+- managing persisted gateway settings and runtime membership via `GatewayStore`
+- activating, deactivating, importing, cleaning, and settling devshards through admin APIs
+- coordinating capacity-aware routing and automatic escrow rotation
 
 It is **not** responsible for devshard protocol execution details. Once it forwards a request to a runtime, the runtime-specific logic takes over.
+
+### `GatewayStore`
+
+`GatewayStore` is the SQLite-backed persistence layer (`gateway.db`) for the gateway process.
+
+It persists:
+
+- `GatewaySettings`, including request limits, model limits, access modes, throttle settings, redundancy settings, perf settings, and escrow rotation settings
+- active/inactive devshard records and runtime configuration
+- participant throttle/quarantine state
+- performance samples used to seed `PerfTracker`
+- escrow rotation progress and rotation failure guards
+
+This keeps operational state outside process memory. A restarted gateway can rebuild runtimes, reload throttle state, preserve admin changes, and continue rotation decisions without relying only on environment variables.
+
+### `CapacityState`
+
+`CapacityState` is the in-memory view used for capacity-aware routing.
+
+It combines:
+
+- per-host raw chain weights (`poc_weight`) from phase/capacity polling
+- per-model host capacity views when the chain reports model-specific capacity
+- per-escrow membership and host slot counts
+- PoC preservation state
+- live availability from `ParticipantRequestLimiter`
+
+It exposes effective weights:
+
+- `W(e)`: per-escrow effective capacity used by the gateway picker
+- `W_tot`: gateway-wide currently available capacity
+- `W_ref`: gateway-wide baseline capacity outside PoC/throttle reduction
+
+`GatewayLimiter` can scale admission by `W_tot / W_ref`, while `Gateway` uses `W(e)` and current runtime load to pick the escrow with the most spare effective capacity.
 
 ### `devshardRuntime`
 
@@ -98,6 +157,7 @@ It groups:
 - `PerfTracker`
 - per-runtime HTTP handler
 - runtime metadata like escrow id, model, and participant keys
+- runtime status such as imported/active/disabled state and capacity membership
 
 This is the boundary between:
 
@@ -111,18 +171,49 @@ This is the boundary between:
 It is responsible for:
 
 - parsing chat completion requests
-- normalizing content
+- running `ChatRequestPipeline` to normalize/validate request bodies
 - building `user.InferenceParams`
+- serving cached responses when the request body/model matches a prior successful response
 - switching between streaming and non-streaming response handling
 - mapping runner errors to HTTP responses
-- serving debug/status/finalize endpoints
+- serving debug/status/finalize/request-accounting/OpenAPI endpoints
 
 It is intentionally thin. It does not know about nonces, attempts, hosts, or protocol messages. It delegates execution to `Redundancy`.
 
 `Proxy` does **not**:
+
 - know about nonce routing or host selection
 - parse protocol messages like MsgFinishInference or MsgTimeoutInference
 - manage the stream registry (removed — writers are passed per-send now)
+
+### Request filters and parameter validators
+
+`ChatRequestPipeline` is the gateway boundary for OpenAI-compatible chat requests.
+
+It is responsible for:
+
+- parsing the raw JSON body into a mutable document and typed request view
+- applying model-aware parameter rules before and after output-token limits
+- normalizing message shape and rejecting malformed conversations
+- enforcing conservative bounds on structured JSON fields (`tools`, `response_format`, `metadata`, `chat_template_kwargs`, etc.)
+- stripping or rejecting unsupported / unsafe vLLM parameters before hosts see them
+- forcing validation-related fields such as `logprobs`, `top_logprobs`, and `return_token_ids`
+- applying Kimi/thinking-specific compatibility rules
+
+The pipeline is intentionally outside `user.Session`. Request filtering is an HTTP/API compatibility concern, not protocol state.
+
+### Response cache and request accounting
+
+The gateway has a short-lived in-memory chat response cache keyed by normalized model + request body.
+
+It is responsible for:
+
+- serving repeated equivalent requests without consuming another devshard nonce
+- caching both streaming and non-streaming successful responses
+- avoiding cache entries for retriable capability errors
+- preserving request/escrow headers when serving cached responses
+
+Request accounting records per-request attempts and cache aliases so operators can explain which request produced a cached response and which escrow/nonce attempts were involved.
 
 ### `Redundancy`
 
@@ -150,6 +241,7 @@ It depends on:
 - `PerfTracker` for host-health estimates
 
 It does **not**:
+
 - own a stream registry (removed — writers are passed directly through Session/transport per-send)
 - know about multi-escrow routing (that is a `Gateway` concern)
 - own protocol message handling (finish detection, timeout vote collection — that is `Session`)
@@ -181,8 +273,8 @@ It is responsible for:
 keep one bad executor from flooding the network with simultaneous verifier
 RPCs (M concurrent timeouts × N verifiers worth of outbound connections),
 every `Session` uses a **process-wide** per-verifier semaphore
-(`user.SharedVerifierQueue`, capacity `MaxConcurrentVerifierRPCs`, default
-1) keyed by the verifier's validator address. The queue is shared by every
+(`user.SharedVerifierQueue`, capacity `MaxConcurrentVerifierRPCs`, default `1`)
+keyed by the verifier's validator address. The queue is shared by every
 `Session` in the process — one proxy running K escrows can't stack K
 simultaneous `VerifyTimeout` calls onto the same verifier just because the
 same validator appears in K groups. Each goroutine in the fan-out
@@ -240,6 +332,27 @@ It is intentionally **outside** any one runtime, because the same participant ca
 
 So this limiter must be shared globally, not attached per runtime.
 
+### Escrow rotation and chain transactions
+
+Escrow rotation is the automation layer that keeps gateway capacity available across epoch changes and escrow depletion.
+
+It is responsible for:
+
+- creating temporary bridge escrows before PoC when configured
+- retiring or settling temporary escrows after PoC
+- replacing low-balance or high-nonce regular escrows before they become unusable
+- respecting per-model target counts, temp counts, amounts, and private-key env bindings
+- persisting rotation progress and failures in `GatewayStore`
+- optionally submitting settlement/finalization chain transactions through REST helpers
+
+Rotation acts on runtime membership, not on individual request execution. When it activates or deactivates a devshard, `Gateway` updates the runtime map and `CapacityState` membership.
+
+### Gateway disabled mode
+
+Gateway disabled mode is a persisted operational switch.
+
+When enabled, non-admin requests receive a redirect-shaped JSON response with a configured message/new URL. Admin/status/debug flows remain available so operators can inspect or recover the gateway.
+
 ### `DevshardMetrics`
 
 `DevshardMetrics` is the observability façade.
@@ -295,7 +408,7 @@ All layers use `logging.Stage(ctx, stage, kv...)` for structured log output.
 
 The format is:
 
-```
+```text
 request=req-... stage=some_stage escrow=... nonce=17 host=a1b2c3d4 key=value
 ```
 
@@ -310,24 +423,28 @@ Request ID is propagated via `context.Context` using `logging.WithRequestID(ctx)
 For a pooled request:
 
 1. Client calls `Gateway` on `/v1/chat/completions`.
-2. `Gateway` parses the request and applies `GatewayLimiter`.
-3. `Gateway` skips escrows blocked by `ParticipantRequestLimiter`.
-4. `Gateway` chooses the least-loaded runtime and forwards the request to that runtime's `Proxy`.
-5. `Proxy` normalizes the request and builds `InferenceParams`.
-6. `Proxy` calls `Redundancy.RunInference(ctx, params, clientWriter)`.
-7. `Redundancy` prepares one or more nonces through `Session.PrepareInference`.
-8. For each nonce, `Redundancy` creates a `raceWriter` and calls `Session.SendOnly(ctx, prepared, raceWriter, receiptHandler)`.
-9. `Session.SendOnly` calls `transport.HTTPClient.Send(ctx, req, raceWriter, receiptHandler)`.
-10. `transport.HTTPClient`:
+2. `Gateway` checks disabled state, model access mode, and request admission.
+3. `Gateway` applies `GatewayLimiter` using model-specific limits and capacity scaling.
+4. `Gateway` skips escrows blocked by `ParticipantRequestLimiter` or unavailable by phase/import/active state.
+5. `Gateway` uses `CapacityState` plus current runtime load to choose a runtime.
+6. `Gateway` forwards the request to that runtime's `Proxy`.
+7. `Proxy` runs `ChatRequestPipeline` and builds `InferenceParams`.
+8. `Proxy` checks response cache for the normalized model/body.
+9. `Proxy` calls `Redundancy.RunInference(ctx, params, clientWriter)` on a cache miss.
+10. `Redundancy` prepares one or more nonces through `Session.PrepareInference`.
+11. For each nonce, `Redundancy` creates a `raceWriter` and calls `Session.SendOnly(ctx, prepared, raceWriter, receiptHandler)`.
+12. `Session.SendOnly` calls `transport.HTTPClient.Send(ctx, req, raceWriter, receiptHandler)`.
+13. `transport.HTTPClient`:
     - checks participant admission
     - sends the HTTP request
     - reports upstream status like `429` / `503`
     - streams SSE data lines directly to the per-send writer
     - calls the per-send receipt handler when devshard_receipt arrives
-11. `raceWriter` forwards output only from the winning nonce to the client writer.
-12. `Redundancy` finalizes the race, updates performance history, and for any failed nonce calls `Session.HandleTimeout(...)`.
-13. `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference.
-14. `Proxy` returns the final client response.
+14. `raceWriter` forwards output only from the winning nonce to the client writer.
+15. `Redundancy` finalizes the race, updates performance history, and for any failed nonce calls `Session.HandleTimeout(...)`.
+16. `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference.
+17. `Proxy` stores eligible responses in the cache and request-accounting log.
+18. `Proxy` returns the final client response.
 
 ## Dependency Map
 
@@ -338,8 +455,11 @@ These are effectively process-wide:
 - `Gateway`
 - `GatewayLimiter`
 - `ParticipantRequestLimiter`
+- `GatewayStore`
+- `CapacityState`
 - `DevshardMetrics`
 - `HostConnectionTracker`
+- response cache
 
 ### Per-runtime pieces
 
@@ -351,6 +471,7 @@ These belong to one escrow runtime:
 - `PerfTracker`
 - `user.Session`
 - `state.StateMachine`
+- request accounting for that runtime/request path
 
 ### Boundary pieces
 
@@ -358,6 +479,7 @@ These connect the runtime to the outside world:
 
 - `transport.HTTPClient`
 - bridge / chain REST access during runtime construction
+- chain transaction REST helpers for create/finalize/settle/deactivate operations
 
 ## What Is Independent
 
@@ -367,6 +489,7 @@ The cleanest independence boundaries are:
 
 - `Gateway` is about routing and admission across escrows.
 - `Proxy` is about serving one escrow.
+- `GatewayStore` persists gateway-wide settings and runtime membership used by both.
 
 You can reason about speculative logic without understanding multi-escrow routing.
 
@@ -392,7 +515,18 @@ You can reason about speculative logic without understanding multi-escrow routin
 They influence the same request outcome, but they solve different problems:
 
 - speculation = latency / resiliency
-- participant limiter = reactive upstream capacity safety (only after observed 429/503)
+- participant limiter = reactive upstream capacity safety (after observed HTTP 429/503, transport failures, repeated empty streams, or stalled winners)
+
+### `CapacityState` vs `ParticipantRequestLimiter`
+
+- `CapacityState` computes how much effective capacity each escrow has.
+- `ParticipantRequestLimiter` decides whether a participant is currently safe to call.
+
+`CapacityState` consults the limiter as a live availability source, but it does not own quarantine state or recovery timers.
+
+### `GatewayStore` vs runtime objects
+
+`GatewayStore` owns persisted configuration and membership. Runtime objects (`Gateway`, `devshardRuntime`, `Proxy`, `Session`) are reconstructed from that persisted state and then updated in memory as admin actions occur.
 
 ### `HostConnectionTracker` vs business logic
 
@@ -459,10 +593,15 @@ These are orchestration-level observations, not protocol state, so they belong i
 If you are changing:
 
 - **escrow selection**: start in `Gateway`
+- **persisted gateway settings / devshard membership**: start in `GatewayStore`
+- **capacity-aware routing / PoC capacity scaling**: start in `CapacityState`
 - **client HTTP API behavior**: start in `Proxy`
+- **chat request normalization / parameter compatibility**: start in `ChatRequestPipeline` and `paramvalidators`
 - **multi-nonce racing / fallbacks / escalation policy**: start in `Redundancy`
 - **protocol state / diffs / nonces / timeout votes / finish detection**: start in `user.Session`
 - **participant capacity protection**: start in `ParticipantRequestLimiter`
+- **automatic escrow creation/replacement/settlement**: start in `EscrowRotator` and chain transaction helpers
+- **cache hits / cache aliases / request accounting**: start in response cache and request accounting
 - **network socket visibility**: start in `HostConnectionTracker`
 - **Prometheus exposure**: start in `DevshardMetrics`
 - **structured log format / request ID propagation**: start in `logging`
@@ -473,10 +612,15 @@ The system is layered like this:
 
 - `Gateway` chooses an escrow.
 - `Proxy` converts client requests into devshard inference requests (HTTP in/out).
+- `ChatRequestPipeline` normalizes and validates request bodies before hosts see them.
+- `GatewayStore` persists settings, membership, throttle, perf, and rotation state.
+- `CapacityState` turns chain capacity and live participant availability into routing weights.
 - `Redundancy` runs one request across one escrow's hosts (multi-nonce policy).
 - `user.Session` owns protocol state, nonce lifecycle, and protocol consequences (finish, timeout).
 - `transport.HTTPClient` performs the real network calls with per-send stream writers.
 - `ParticipantRequestLimiter` is a shared safety rail across all runtimes.
+- Escrow rotation changes runtime membership over time to maintain capacity.
+- Response cache and request accounting explain repeated requests without extra nonces.
 - `DevshardMetrics` and `HostConnectionTracker` observe the system rather than drive it.
 - `logging.Stage` provides uniform structured logging across all layers.
 

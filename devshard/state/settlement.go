@@ -12,10 +12,9 @@ import (
 // HostStats + Fees + RestHash + VersionHash + phase byte.
 // The state root itself is not included in the payload.
 type SettlementPayload struct {
-	EscrowID        string
-	Version         string
-	ProtocolVersion types.ProtocolVersion
-	Nonce           uint64
+	EscrowID string
+	Version  string
+	Nonce    uint64
 	// Fees is the cumulative amount deducted from escrow balance as protocol fees.
 	Fees       uint64
 	RestHash   []byte
@@ -25,29 +24,19 @@ type SettlementPayload struct {
 
 // BuildSettlement constructs a SettlementPayload from the final escrow state.
 func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint32][]byte, nonce uint64) (*SettlementPayload, error) {
-	return BuildSettlementForProtocol(escrowID, st, signatures, nonce, "")
-}
-
-// BuildSettlementForProtocol constructs a SettlementPayload using the runtime
-// protocol version configured for this escrow.
-func BuildSettlementForProtocol(escrowID string, st types.EscrowState, signatures map[uint32][]byte, nonce uint64, protocol types.ProtocolVersion) (*SettlementPayload, error) {
 	restHash, err := ComputeRestHash(st.Balance, st.Inferences, st.WarmKeys)
 	if err != nil {
 		return nil, err
 	}
-	if protocol == "" {
-		protocol = types.ProtocolV1
-	}
 
 	return &SettlementPayload{
-		EscrowID:        escrowID,
-		Version:         types.NormalizeSessionVersion(st.Version),
-		ProtocolVersion: protocol,
-		Nonce:           nonce,
-		Fees:            st.Fees,
-		RestHash:        restHash,
-		HostStats:       st.HostStats,
-		Signatures:      signatures,
+		EscrowID:   escrowID,
+		Version:    types.NormalizeSessionVersion(st.Version),
+		Nonce:      nonce,
+		Fees:       st.Fees,
+		RestHash:   restHash,
+		HostStats:  st.HostStats,
+		Signatures: signatures,
 	}, nil
 }
 
@@ -72,7 +61,7 @@ func VerifySettlement(
 	if err != nil {
 		return nil, fmt.Errorf("compute host stats hash: %w", err)
 	}
-	stateRoot := ComputeSettlementStateRootForProtocol(payload.ProtocolVersion, hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
 
 	// 2. Build the signed message: proto(StateSignatureContent{state_root, escrow_id, nonce}).
 	sigContent := &types.StateSignatureContent{
@@ -131,15 +120,4 @@ func VerifySettlement(
 	}
 
 	return stateRoot, nil
-}
-
-// ComputeSettlementStateRoot computes the version-bound settlement root.
-func ComputeSettlementStateRoot(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version string) []byte {
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version)
-}
-
-// ComputeSettlementStateRootForProtocol computes the settlement root using the
-// runtime protocol configured for the escrow.
-func ComputeSettlementStateRootForProtocol(protocol types.ProtocolVersion, hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version string) []byte {
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version)
 }

@@ -31,13 +31,6 @@ func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
 	}
 }
 
-func TestSessionConfigForVersion_Fees(t *testing.T) {
-	cfg := SessionConfigForVersion(3, ProtocolV1)
-	if cfg.CreateDevshardFee == 0 || cfg.FeePerNonce == 0 {
-		t.Fatalf("expected v1 fee config, got create=%d per_nonce=%d", cfg.CreateDevshardFee, cfg.FeePerNonce)
-	}
-}
-
 func TestValidateGroup(t *testing.T) {
 	tests := []struct {
 		name    string
