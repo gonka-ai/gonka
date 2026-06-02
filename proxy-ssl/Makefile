@@ -25,8 +25,11 @@ endef
 
 all: build-docker
 
+NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+DOCKER_GOARCH ?= $(NATIVE_ARCH)
+
 build-docker:
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=linux/$(DOCKER_GOARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/proxy-ssl:$(VERSION))
 	$(DOCKER_BUILD)

@@ -85,11 +85,14 @@ build: download-linux-deps
 		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
 		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
+NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+DOCKER_GOARCH ?= $(NATIVE_ARCH)
+
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=linux/$(DOCKER_GOARCH))
 	$(eval GOOS=linux)
-	$(eval GOARCH=amd64)
+	$(eval GOARCH=$(DOCKER_GOARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)

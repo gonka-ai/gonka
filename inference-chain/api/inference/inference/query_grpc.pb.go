@@ -84,6 +84,7 @@ const (
 	Query_GetAllModelCapacities_FullMethodName                     = "/inference.inference.Query/GetAllModelCapacities"
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_MLNodeVersion_FullMethodName                             = "/inference.inference.Query/MLNodeVersion"
+	Query_LastUpgradeHeight_FullMethodName                         = "/inference.inference.Query/LastUpgradeHeight"
 	Query_ParticipantAllowList_FullMethodName                      = "/inference.inference.Query/ParticipantAllowList"
 	Query_ExcludedParticipants_FullMethodName                      = "/inference.inference.Query/ExcludedParticipants"
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
@@ -210,6 +211,8 @@ type QueryClient interface {
 	GranteesByMessageType(ctx context.Context, in *QueryGranteesByMessageTypeRequest, opts ...grpc.CallOption) (*QueryGranteesByMessageTypeResponse, error)
 	// Queries the current MLNode version.
 	MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error)
+	// Queries the most recent applied upgrade height.
+	LastUpgradeHeight(ctx context.Context, in *QueryGetLastUpgradeHeightRequest, opts ...grpc.CallOption) (*QueryGetLastUpgradeHeightResponse, error)
 	// Queries the participant allowlist.
 	ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
@@ -823,6 +826,15 @@ func (c *queryClient) MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersi
 	return out, nil
 }
 
+func (c *queryClient) LastUpgradeHeight(ctx context.Context, in *QueryGetLastUpgradeHeightRequest, opts ...grpc.CallOption) (*QueryGetLastUpgradeHeightResponse, error) {
+	out := new(QueryGetLastUpgradeHeightResponse)
+	err := c.cc.Invoke(ctx, Query_LastUpgradeHeight_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error) {
 	out := new(QueryParticipantAllowListResponse)
 	err := c.cc.Invoke(ctx, Query_ParticipantAllowList_FullMethodName, in, out, opts...)
@@ -1035,6 +1047,8 @@ type QueryServer interface {
 	GranteesByMessageType(context.Context, *QueryGranteesByMessageTypeRequest) (*QueryGranteesByMessageTypeResponse, error)
 	// Queries the current MLNode version.
 	MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error)
+	// Queries the most recent applied upgrade height.
+	LastUpgradeHeight(context.Context, *QueryGetLastUpgradeHeightRequest) (*QueryGetLastUpgradeHeightResponse, error)
 	// Queries the participant allowlist.
 	ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
@@ -1254,6 +1268,9 @@ func (UnimplementedQueryServer) GranteesByMessageType(context.Context, *QueryGra
 }
 func (UnimplementedQueryServer) MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MLNodeVersion not implemented")
+}
+func (UnimplementedQueryServer) LastUpgradeHeight(context.Context, *QueryGetLastUpgradeHeightRequest) (*QueryGetLastUpgradeHeightResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LastUpgradeHeight not implemented")
 }
 func (UnimplementedQueryServer) ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAllowList not implemented")
@@ -2471,6 +2488,24 @@ func _Query_MLNodeVersion_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_LastUpgradeHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetLastUpgradeHeightRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).LastUpgradeHeight(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_LastUpgradeHeight_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).LastUpgradeHeight(ctx, req.(*QueryGetLastUpgradeHeightRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ParticipantAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryParticipantAllowListRequest)
 	if err := dec(in); err != nil {
@@ -2935,6 +2970,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MLNodeVersion",
 			Handler:    _Query_MLNodeVersion_Handler,
+		},
+		{
+			MethodName: "LastUpgradeHeight",
+			Handler:    _Query_LastUpgradeHeight_Handler,
 		},
 		{
 			MethodName: "ParticipantAllowList",

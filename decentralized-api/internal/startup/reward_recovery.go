@@ -8,6 +8,8 @@ import (
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"math"
+	"math/bits"
 	"sync/atomic"
 	"time"
 
@@ -137,7 +139,11 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 	}
 
 	settleAmount := settleAmountResp.SettleAmount
-	totalAmount := settleAmount.RewardCoins + settleAmount.WorkCoins
+	sum, carry := bits.Add64(settleAmount.RewardCoins, settleAmount.WorkCoins, 0)
+	totalAmount := sum
+	if carry != 0 {
+		totalAmount = math.MaxUint64
+	}
 	logging.Info("[AutoRewardRecovery] Found settle amount for participant", types.Claims,
 		"address", address,
 		"rewardCoins", settleAmount.RewardCoins,
@@ -146,7 +152,7 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 		"epochIndex", settleAmount.EpochIndex)
 
 	// Check if we have unclaimed rewards (totalAmount > 0 indicates pending rewards)
-	if totalAmount <= 0 {
+	if totalAmount == 0 {
 		logging.Info("[AutoRewardRecovery] No unclaimed rewards found", types.Claims, "address", address, "totalAmount", totalAmount)
 		return
 	}
