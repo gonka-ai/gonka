@@ -53,7 +53,7 @@ Note: top-level `enable_thinking` (without the `chat_template_kwargs.` prefix) i
 
 | Sub-field | Cap | CVEs |
 |-----------|-----|------|
-| `json` | Same xgrammar bounds as `response_format` (depth ≤5, nodes ≤128, branch ≤16, enum ≤256, size ≤16 KiB; `$ref`/`$defs`/`definitions` forbidden; `pattern` ≤512 B + regex-compile). Rejects upstream-legal `json: string` form — clients must pre-parse. | [[CVE-2]](references.md#security-advisories), [[CVE-3]](references.md#security-advisories) |
+| `json` | Same xgrammar bounds as `response_format` (depth ≤16, nodes ≤128, branch ≤16, enum ≤256, size ≤16 KiB; `$ref`/`$defs`/`definitions` forbidden; `pattern` ≤512 B + regex-compile). Rejects upstream-legal `json: string` form — clients must pre-parse. | [[CVE-2]](references.md#security-advisories), [[CVE-3]](references.md#security-advisories) |
 | `regex` | (same regex-compile + pattern-length checks as `response_format` pattern fields) | [[CVE-2]](references.md#security-advisories) |
 | `choice` | ≤256 entries × 1 KiB each | [[CVE-4]](references.md#security-advisories) |
 | `grammar` | ≤8 KiB + active bracket-nesting depth ≤200 | [[CVE-8]](references.md#security-advisories) |
