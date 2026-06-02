@@ -197,12 +197,11 @@ fun LocalInferencePair.assertDevshardSettlement(
 
 fun LocalInferencePair.findChallengedDevshardInference(
     handle: LocalInferencePair.DevshardProxyHandle,
-    numInferences: Long,
+    maxNonceToScan: Long,
 ): DevshardInferencePayload? {
-    // Some flows expose inference IDs starting at 0, others are observed as 1-based.
-    // Scan the full inclusive range and ignore missing IDs so the test checks the
-    // challenged outcome rather than the local indexing scheme.
-    return (0..numInferences).firstNotNullOfOrNull { inferenceId ->
+    // Redundancy can consume extra nonces for secondary attempts or ghost probes,
+    // so scan the finalized nonce range instead of assuming request N == nonce N.
+    return (0..maxNonceToScan).firstNotNullOfOrNull { inferenceId ->
         runCatching {
             cosmosJson.fromJson(
                 getDevshardInferenceState(handle.proxyUrl, inferenceId),

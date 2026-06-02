@@ -120,18 +120,20 @@ class DevshardTests : TestermintTest() {
                 assertThat(response).contains("data:")
             }
 
-            genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
+            val result = genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
 
             logSection("Verifying inference statuses")
-            for (inferenceId in 1..numInferences) {
-                val inference = cosmosJson.fromJson(
-                    genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                    DevshardInferencePayload::class.java,
-                )
-                logSection("Inference $inferenceId: $inference")
-                assertNotNull(inference)
-                assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
-            }
+            val finished = (1..result.parsed.nonce).mapNotNull { inferenceId ->
+                runCatching {
+                    cosmosJson.fromJson(
+                        genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
+                        DevshardInferencePayload::class.java,
+                    )
+                }.getOrNull()
+            }.count { it.status == DevshardInferenceStatus.FINISHED }
+            assertThat(finished)
+                .describedAs("finished devshard inferences within finalized nonce range")
+                .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
@@ -295,7 +297,7 @@ class DevshardTests : TestermintTest() {
             assertThat(escrow.escrow!!.settled).isTrue()
 
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, result.parsed.nonce))
             logSection("Inference: $inference")
             assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
             assertThat(inference.votesInvalid).isNotZero()
