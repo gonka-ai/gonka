@@ -961,6 +961,12 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 	participantKey := env.session.HostParticipantKey(0)
+	markStalled := func(inf *inflight) {
+		inf.contentChunks.Store(1)
+		inf.lastChunkAt.Store(time.Now().Add(-2 * InterChunkStallLogThreshold).UnixNano())
+		_, ok := inf.startInterChunkStall(time.Now())
+		require.True(t, ok)
+	}
 
 	first := &inflight{
 		hostIdx:     0,
@@ -969,6 +975,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		receiptTime: time.Now().Add(-900 * time.Millisecond),
 		firstToken:  time.Now().Add(-800 * time.Millisecond),
 	}
+	markStalled(first)
 	env.proxy.redundancy.recordStalledWinnerFailureOnce(first, defaultParams())
 	require.False(t, limiter.IsBlocked(participantKey))
 
@@ -979,6 +986,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		receiptTime: time.Now().Add(-900 * time.Millisecond),
 		firstToken:  time.Now().Add(-800 * time.Millisecond),
 	}
+	markStalled(second)
 	env.proxy.redundancy.recordStalledWinnerFailureOnce(second, defaultParams())
 	require.True(t, limiter.IsBlocked(participantKey))
 }

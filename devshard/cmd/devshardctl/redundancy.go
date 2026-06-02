@@ -2938,6 +2938,13 @@ func (e *Redundancy) recordStalledWinnerFailureOnce(inf *inflight, params user.I
 	if !inf.hasRecordedStall() {
 		return
 	}
+	e.recordPostContentWinnerFailureOnce(inf, params)
+}
+
+func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params user.InferenceParams) {
+	if inf == nil {
+		return
+	}
 	if inf.phaseTransitionAborted {
 		return
 	}
@@ -2989,7 +2996,10 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
-	e.recordStalledWinnerFailureOnce(inf, params)
+	if !inf.hasRecordedStall() && (inf.err != nil || inf.processErr != nil) {
+		return
+	}
+	e.recordPostContentWinnerFailureOnce(inf, params)
 }
 
 func (e *Redundancy) processInflightOnce(inf *inflight) error {
