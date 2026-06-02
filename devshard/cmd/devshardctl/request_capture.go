@@ -70,11 +70,12 @@ var (
 )
 
 func configureRequestCaptureStore(baseStorageDir string) {
-	dir := strings.TrimSpace(os.Getenv("DEVSHARD_REQUEST_CAPTURE_DIR"))
-	if dir == "" && readBoolEnv("DEVSHARD_REQUEST_CAPTURE_DISABLED", false) {
+	// Off unless explicitly enabled; DEVSHARD_REQUEST_CAPTURE_DIR is optional (defaults under the storage dir).
+	if !readBoolEnv("DEVSHARD_REQUEST_CAPTURE_ENABLED", false) {
 		setRequestCaptureStore(nil)
 		return
 	}
+	dir := strings.TrimSpace(os.Getenv("DEVSHARD_REQUEST_CAPTURE_DIR"))
 	if dir == "" {
 		dir = filepath.Join(baseStorageDir, requestCaptureDirName)
 	}

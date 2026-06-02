@@ -123,10 +123,20 @@ func TestCaptureEmptyStreamAttemptRequestWritesSeparateFileWithAttempts(t *testi
 	require.False(t, record.Attempts[1].EmptyStream)
 }
 
+func TestConfigureRequestCaptureStoreDisabledByDefault(t *testing.T) {
+	t.Setenv("DEVSHARD_REQUEST_CAPTURE_DIR", "")
+	t.Setenv("DEVSHARD_REQUEST_CAPTURE_ENABLED", "")
+	t.Cleanup(func() { setRequestCaptureStore(nil) })
+
+	configureRequestCaptureStore(t.TempDir())
+
+	require.Nil(t, currentRequestCaptureStore())
+}
+
 func TestConfigureRequestCaptureStoreDefaultsUnderGatewayDBDirectory(t *testing.T) {
 	baseStorageDir := t.TempDir()
+	t.Setenv("DEVSHARD_REQUEST_CAPTURE_ENABLED", "true")
 	t.Setenv("DEVSHARD_REQUEST_CAPTURE_DIR", "")
-	t.Setenv("DEVSHARD_REQUEST_CAPTURE_DISABLED", "")
 	t.Cleanup(func() { setRequestCaptureStore(nil) })
 
 	configureRequestCaptureStore(baseStorageDir)
@@ -134,6 +144,19 @@ func TestConfigureRequestCaptureStoreDefaultsUnderGatewayDBDirectory(t *testing.
 	store := currentRequestCaptureStore()
 	require.NotNil(t, store)
 	require.Equal(t, filepath.Join(baseStorageDir, requestCaptureDirName), store.dir)
+}
+
+func TestConfigureRequestCaptureStoreUsesExplicitDir(t *testing.T) {
+	captureDir := t.TempDir()
+	t.Setenv("DEVSHARD_REQUEST_CAPTURE_ENABLED", "true")
+	t.Setenv("DEVSHARD_REQUEST_CAPTURE_DIR", captureDir)
+	t.Cleanup(func() { setRequestCaptureStore(nil) })
+
+	configureRequestCaptureStore(t.TempDir())
+
+	store := currentRequestCaptureStore()
+	require.NotNil(t, store)
+	require.Equal(t, captureDir, store.dir)
 }
 
 func requireSingleCapturedRequest(t *testing.T, captureDir, kind string) capturedChatRequest {
