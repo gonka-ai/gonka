@@ -22,6 +22,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/storage"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
@@ -242,6 +243,9 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	}
 
 	br := newRESTBridgeForProtocol(chainREST, pv)
+	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
+		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
+	}
 	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:    keyHex,
@@ -1787,6 +1791,51 @@ func normalizeStorageDir(storagePath string) string {
 		return filepath.Dir(clean)
 	}
 	return clean
+}
+
+func migrateGatewayLegacyStorage(storageDir, originalStoragePath, escrowID string, br bridge.MainnetBridge) error {
+	storageDir = strings.TrimSpace(storageDir)
+	if storageDir == "" {
+		return nil
+	}
+	sqlStore, err := storage.NewSQLite(storageDir)
+	if err != nil {
+		return fmt.Errorf("open storage: %w", err)
+	}
+	defer sqlStore.Close()
+
+	legacyPath := legacyStateDBPath(originalStoragePath, storageDir)
+	migrated, err := storage.MigrateLegacySQLite(legacyPath, sqlStore, func(sessionEscrowID string) (uint64, error) {
+		if sessionEscrowID != escrowID {
+			return 0, fmt.Errorf("%w: legacy session %s does not belong to gateway runtime %s", storage.ErrSkipLegacySession, sessionEscrowID, escrowID)
+		}
+		info, gErr := br.GetEscrow(sessionEscrowID)
+		if gErr != nil {
+			if errors.Is(gErr, bridge.ErrEscrowNotFound) {
+				return 0, storage.ErrSkipLegacySession
+			}
+			return 0, gErr
+		}
+		return info.EpochID, nil
+	})
+	if err != nil {
+		return err
+	}
+	if migrated > 0 {
+		log.Printf("runtime %s: legacy storage migration complete: sessions_migrated=%d", escrowID, migrated)
+	}
+	return nil
+}
+
+func legacyStateDBPath(originalStoragePath, storageDir string) string {
+	originalStoragePath = strings.TrimSpace(originalStoragePath)
+	if originalStoragePath != "" {
+		clean := filepath.Clean(originalStoragePath)
+		if filepath.Base(clean) == "state.db" {
+			return clean
+		}
+	}
+	return filepath.Join(storageDir, "state.db")
 }
 
 func legacyPerfSourcePath(storagePath string) string {

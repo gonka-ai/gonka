@@ -949,6 +949,15 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 	return rec, true
 }
 
+func (inf *inflight) hasRecordedStall() bool {
+	if inf == nil {
+		return false
+	}
+	inf.stallMu.Lock()
+	defer inf.stallMu.Unlock()
+	return len(inf.stalls) > 0
+}
+
 func (inf *inflight) stallLogFields(now time.Time) []any {
 	if inf == nil {
 		return nil
@@ -2756,6 +2765,9 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		e.maybeRecordCapabilityError(inf)
 		return
 	}
+	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
+		return
+	}
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
@@ -2921,6 +2933,9 @@ func (e *Redundancy) recordStartedAttemptSamples(attempts []*inflight, params us
 
 func (e *Redundancy) recordStalledWinnerFailureOnce(inf *inflight, params user.InferenceParams) {
 	if inf == nil {
+		return
+	}
+	if !inf.hasRecordedStall() {
 		return
 	}
 	if inf.phaseTransitionAborted {

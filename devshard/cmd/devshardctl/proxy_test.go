@@ -804,6 +804,74 @@ func TestRunInference_WinnerFailsAfterContentDoesNotWaitForLosers(t *testing.T) 
 	close(releaseSlow)
 }
 
+func TestRecordWinnerTerminalFailureSkipsNonStallTerminalErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "state hash mismatch", err: fmt.Errorf("process response: %w", types.ErrStateHashMismatch)},
+		{name: "generic process error", err: fmt.Errorf("process response: malformed terminal chunk")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			perf := NewPerfTracker(nil)
+			limiter := NewParticipantRequestLimiter(10, 10)
+			redundancy := &Redundancy{
+				perf:               perf,
+				participantLimiter: limiter,
+			}
+
+			// One prior failure means the old stalled-winner path would add a second
+			// failed sample and immediately quarantine the participant. Terminal errors
+			// without a recorded stream stall must not be classified as stalled winners.
+			perf.Record(RequestSample{HostIdx: 0, ParticipantKey: "host:0", Responsive: false})
+
+			inf := &inflight{
+				hostIdx:    0,
+				nonce:      7,
+				sendTime:   time.Now().Add(-time.Second),
+				processErr: tc.err,
+			}
+			inf.contentChunks.Store(1)
+
+			redundancy.recordWinnerTerminalFailureOnce(inf, user.InferenceParams{InputLength: 1}, 7)
+
+			stats := perf.StatsForParticipant("host:0")
+			require.Equal(t, 1, stats.TotalSamples)
+			require.Equal(t, 1, stats.FailureSamples)
+			require.False(t, limiter.IsBlocked("host:0"))
+		})
+	}
+}
+
+func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	limiter := NewParticipantRequestLimiter(10, 10)
+	redundancy := &Redundancy{
+		perf:               perf,
+		participantLimiter: limiter,
+	}
+	perf.Record(RequestSample{HostIdx: 0, ParticipantKey: "host:0", Responsive: false})
+
+	lastChunkAt := time.Now().Add(-2 * InterChunkStallLogThreshold)
+	inf := &inflight{
+		hostIdx:  0,
+		nonce:    7,
+		sendTime: time.Now().Add(-time.Second),
+	}
+	inf.contentChunks.Store(1)
+	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
+	_, ok := inf.startInterChunkStall(time.Now())
+	require.True(t, ok)
+
+	redundancy.recordWinnerTerminalFailureOnce(inf, user.InferenceParams{InputLength: 1}, 7)
+
+	stats := perf.StatsForParticipant("host:0")
+	require.Equal(t, 2, stats.TotalSamples)
+	require.Equal(t, 2, stats.FailureSamples)
+	require.True(t, limiter.IsBlocked("host:0"))
+}
+
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
 	setStreamingAttemptHardTimeout(t, 120*time.Millisecond)

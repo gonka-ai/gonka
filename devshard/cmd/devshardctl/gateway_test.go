@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,11 +20,15 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
+	"devshard/storage"
 	"devshard/transport"
 	"devshard/types"
+
+	_ "modernc.org/sqlite"
 )
 
 func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *state.StateMachine {
@@ -2190,6 +2196,134 @@ func TestResolveBaseStorageDirNormalizesLegacyStateDBPath(t *testing.T) {
 	legacyPath := filepath.Join(baseDir, "escrow-12", "state.db")
 	require.Equal(t, baseDir, resolveBaseStorageDir("", legacyPath))
 	require.Equal(t, baseDir, resolveBaseStorageDir("", filepath.Dir(legacyPath)))
+}
+
+func TestMigrateGatewayLegacyStorageUsesChainEpoch(t *testing.T) {
+	storageDir := t.TempDir()
+	legacyPath := filepath.Join(storageDir, "state.db")
+	writeGatewayLegacyStateDB(t, legacyPath, "12", 3)
+
+	err := migrateGatewayLegacyStorage(storageDir, legacyPath, "12", gatewayMigrationBridge{epochID: 270})
+	require.NoError(t, err)
+
+	_, err = os.Stat(legacyPath)
+	require.True(t, os.IsNotExist(err), "legacy state.db should be renamed after successful migration")
+
+	sqlStore, err := storage.NewSQLite(storageDir)
+	require.NoError(t, err)
+	defer sqlStore.Close()
+	meta, err := sqlStore.GetSessionMeta("12")
+	require.NoError(t, err)
+	require.Equal(t, uint64(270), meta.EpochID)
+	require.Equal(t, uint64(3), meta.LatestNonce)
+}
+
+func TestMigrateGatewayLegacyStorageRejectsConflictingEpochDB(t *testing.T) {
+	storageDir := t.TempDir()
+	legacyPath := filepath.Join(storageDir, "state.db")
+	writeGatewayLegacyStateDB(t, legacyPath, "12", 1)
+
+	sqlStore, err := storage.NewSQLite(storageDir)
+	require.NoError(t, err)
+	require.NoError(t, sqlStore.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "12",
+		EpochID:        270,
+		Version:        types.LegacySessionVersion,
+		CreatorAddr:    "creator",
+		Config:         types.SessionConfig{},
+		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: "a"}},
+		InitialBalance: 1000,
+	}))
+	require.NoError(t, sqlStore.AppendDiff("12", types.DiffRecord{
+		Diff:      types.Diff{Nonce: 1},
+		StateHash: []byte("different"),
+	}))
+	require.NoError(t, sqlStore.Close())
+
+	err = migrateGatewayLegacyStorage(storageDir, legacyPath, "12", gatewayMigrationBridge{epochID: 270})
+	require.ErrorContains(t, err, "migrated diff conflict")
+
+	_, statErr := os.Stat(legacyPath)
+	require.NoError(t, statErr, "legacy state.db must remain after a conflicting migration")
+}
+
+type gatewayMigrationBridge struct {
+	epochID uint64
+}
+
+func (b gatewayMigrationBridge) OnEscrowCreated(bridge.EscrowInfo) error { return nil }
+func (b gatewayMigrationBridge) OnSettlementProposed(string, []byte, uint64) error {
+	return nil
+}
+func (b gatewayMigrationBridge) OnSettlementFinalized(string) error { return nil }
+func (b gatewayMigrationBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+	return &bridge.EscrowInfo{EscrowID: escrowID, EpochID: b.epochID}, nil
+}
+func (b gatewayMigrationBridge) GetHostInfo(string) (*bridge.HostInfo, error) { return nil, nil }
+func (b gatewayMigrationBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, nil
+}
+func (b gatewayMigrationBridge) VerifyWarmKey(string, string) (bool, error) { return false, nil }
+func (b gatewayMigrationBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
+	return nil
+}
+
+func writeGatewayLegacyStateDB(t *testing.T, path, escrowID string, latestNonce uint64) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(`
+	CREATE TABLE sessions (
+		escrow_id       TEXT PRIMARY KEY,
+		version         TEXT,
+		creator_addr    TEXT NOT NULL,
+		config_json     TEXT NOT NULL,
+		group_json      TEXT NOT NULL,
+		initial_balance INTEGER NOT NULL,
+		latest_nonce    INTEGER NOT NULL DEFAULT 0,
+		last_finalized  INTEGER NOT NULL DEFAULT 0,
+		status          TEXT NOT NULL DEFAULT 'active',
+		settled_at      INTEGER
+	);
+	CREATE TABLE diffs (
+		escrow_id       TEXT NOT NULL,
+		nonce           INTEGER NOT NULL,
+		txs_proto       BLOB NOT NULL,
+		user_sig        BLOB,
+		post_state_root BLOB,
+		state_hash      BLOB,
+		warm_keys_json  TEXT,
+		created_at      INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (escrow_id, nonce)
+	);
+	CREATE TABLE signatures (
+		escrow_id TEXT NOT NULL,
+		nonce     INTEGER NOT NULL,
+		slot_id   INTEGER NOT NULL,
+		sig       BLOB NOT NULL,
+		PRIMARY KEY (escrow_id, nonce, slot_id)
+	);`)
+	require.NoError(t, err)
+
+	groupJSON, err := json.Marshal([]types.SlotAssignment{{SlotID: 0, ValidatorAddress: "a"}})
+	require.NoError(t, err)
+	configJSON, err := json.Marshal(types.SessionConfig{})
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		escrowID, types.LegacySessionVersion, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
+	)
+	require.NoError(t, err)
+	for nonce := uint64(1); nonce <= latestNonce; nonce++ {
+		_, err = db.Exec(
+			`INSERT INTO diffs (escrow_id, nonce, txs_proto, state_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
+			escrowID, nonce, []byte{}, []byte{byte(nonce)}, int64(nonce),
+		)
+		require.NoError(t, err)
+	}
 }
 
 func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
