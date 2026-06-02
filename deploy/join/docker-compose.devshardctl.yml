@@ -4,11 +4,6 @@ services:
     image: libermans/gonka-devshard-proxy:latest
     env_file:
       - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
-    environment:
-      - DEVSHARD_CHAIN_REST=http://node:1317
-      - DEVSHARD_PUBLIC_API=http://api:9000
-      - DEVSHARD_PORT=8080
-      - DEVSHARD_STORAGE_DIR=/root/.devshardctl
     volumes:
       - ${DEVSHARD_STORAGE_HOST_DIR:-.devshardctl}:/root/.devshardctl
     expose:
