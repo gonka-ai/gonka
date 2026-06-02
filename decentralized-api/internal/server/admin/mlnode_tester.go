@@ -30,6 +30,7 @@ type TestResult struct {
 	Error        string           `json:"error,omitempty"`
 	LoadMs       map[string]int64 `json:"load_ms,omitempty"`
 	HealthMs     int64            `json:"health_ms,omitempty"`
+	RespMs       int64            `json:"resp_ms,omitempty"`
 	StartedAt    time.Time        `json:"started_at"`
 	DurationMs   int64            `json:"duration_ms"`
 }
@@ -158,6 +159,7 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 	}
 	sort.Strings(modelIds)
 
+	lastModel := ""
 	for _, modelId := range modelIds {
 		modelCfg := cfg.Models[modelId]
 		modelStart := time.Now()
@@ -169,6 +171,7 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			return result
 		}
 		result.LoadMs[modelId] = time.Since(modelStart).Milliseconds()
+		lastModel = modelId
 	}
 
 	healthStart := time.Now()
@@ -183,6 +186,22 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 		result.Status = TestFailed
 		result.Error = "health check returned not ok"
 		return result
+	}
+
+	// Response validation: send one real inference request against the
+	// loaded model and validate the response, recording response time.
+	// (Uses the existing host:port URL construction; see #717 follow-up
+	// in proposals/onboarding-clarity-v1/README.md.)
+	if lastModel != "" {
+		respStart := time.Now()
+		if err := client.Inference(ctx, lastModel); err != nil {
+			result.Status = TestFailed
+			result.FailingModel = lastModel
+			result.Error = "inference request error: " + err.Error()
+			result.RespMs = time.Since(respStart).Milliseconds()
+			return result
+		}
+		result.RespMs = time.Since(respStart).Milliseconds()
 	}
 
 	return result

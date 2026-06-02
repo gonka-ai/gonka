@@ -31,6 +31,7 @@ type MockClient struct {
 	NodeStateError        error
 	InferenceHealthError  error
 	InferenceUpError      error
+	InferenceError        error
 	GetGPUDevicesError    error
 	GetGPUDriverError     error
 	CheckModelStatusError error
@@ -44,6 +45,7 @@ type MockClient struct {
 	NodeStateCalled        int
 	InferenceHealthCalled  int
 	InferenceUpCalled      int
+	InferenceCalled        int
 	GetGPUDevicesCalled    int
 	GetGPUDriverCalled     int
 	CheckModelStatusCalled int
@@ -141,6 +143,7 @@ func (m *MockClient) Reset() {
 	m.NodeStateError = nil
 	m.InferenceHealthError = nil
 	m.InferenceUpError = nil
+	m.InferenceError = nil
 	m.GetGPUDevicesError = nil
 	m.GetGPUDriverError = nil
 	m.CheckModelStatusError = nil
@@ -153,6 +156,7 @@ func (m *MockClient) Reset() {
 	m.NodeStateCalled = 0
 	m.InferenceHealthCalled = 0
 	m.InferenceUpCalled = 0
+	m.InferenceCalled = 0
 	m.GetGPUDevicesCalled = 0
 	m.GetGPUDriverCalled = 0
 	m.CheckModelStatusCalled = 0
@@ -220,6 +224,17 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 	}
 	m.CurrentState = MlNodeState_INFERENCE
 	m.InferenceIsHealthy = true
+	return nil
+}
+
+func (m *MockClient) Inference(ctx context.Context, model string) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.InferenceCalled++
+	m.LastInferenceModel = model
+	if m.InferenceError != nil {
+		return m.InferenceError
+	}
 	return nil
 }
 

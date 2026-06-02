@@ -112,6 +112,39 @@ func TestMLNodeTester_ModelLoadFailure(t *testing.T) {
 	}
 }
 
+func TestMLNodeTester_InferenceRequestFailure(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models: map[string]apiconfig.ModelConfig{
+			"model-a": {},
+		},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	// Model loads fine and is healthy, but the inference request fails —
+	// the response-validation step must catch it.
+	mockClient.InferenceIsHealthy = true
+	mockClient.InferenceError = errors.New("bad gateway")
+
+	tester := NewMLNodeTester(cm, factory)
+	result, err := tester.Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestFailed {
+		t.Fatalf("got %q, want %q", result.Status, TestFailed)
+	}
+	if result.FailingModel != "model-a" {
+		t.Errorf("FailingModel=%q, want model-a", result.FailingModel)
+	}
+	if mockClient.InferenceCalled == 0 {
+		t.Errorf("expected the response-validation step to call Inference")
+	}
+}
+
 func TestMLNodeTester_RejectsConcurrent(t *testing.T) {
 	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
 		Id:            "node1",
