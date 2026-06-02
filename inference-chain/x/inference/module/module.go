@@ -200,6 +200,12 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
+	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
+	err = am.keeper.ProcessMaintenanceTransitions(ctx)
+	if err != nil {
+		am.LogError("Failed to process maintenance transitions", types.Maintenance, "error", err)
+	}
+
 	return nil
 }
 
@@ -221,13 +227,17 @@ func (am AppModule) expireInferences(
 		return err
 	}
 
+	// Pre-build maintenance address set once to avoid repeated O(log N) lookups
+	// per expired inference in handleExpiredInferenceWithContext.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+
 	for _, i := range timeouts {
 		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
 		if !found {
 			continue
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
-			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
+			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx, maintenanceAddrs)
 		}
 	}
 	return nil
@@ -252,7 +262,7 @@ func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference
 	return inference
 }
 
-func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext) {
+func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext, maintenanceAddrs map[string]struct{}) {
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
@@ -304,6 +314,29 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight))
 
 		// Still issue refund and mark as expired, but don't penalize executor
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
+	}
+
+	// Executor has the required node — check maintenance exemption before penalizing.
+	// During active maintenance, expiry penalties are waived (the participant is
+	// expected to be offline and should not accumulate MissedRequests).
+	if _, inMaint := maintenanceAddrs[inference.AssignedTo]; inMaint {
+		am.LogInfo("Inference expired during active maintenance, waiving penalty",
+			types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"executor", inference.AssignedTo,
+			"model", inference.Model,
+			"epochIndex", epochToCheck.Index)
+
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"maintenance_penalty_waived",
+			sdk.NewAttribute("inference_id", inference.InferenceId),
+			sdk.NewAttribute("executor", inference.AssignedTo),
+			sdk.NewAttribute("reason", "expiry_during_active_maintenance"),
+		))
+
 		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
