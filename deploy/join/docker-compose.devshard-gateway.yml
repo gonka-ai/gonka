@@ -1,6 +1,6 @@
 services:
-  devshardctl:
-    container_name: ${DEVSHARD_INSTANCE_NAME:-devshardctl}
+  devshard-gateway:
+    container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
     image: libermans/gonka-devshard-proxy:latest
     env_file:
       - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
@@ -13,7 +13,7 @@ services:
     networks:
       join_default:
         aliases:
-          - ${DEVSHARD_INSTANCE_NAME:-devshardctl}
+          - ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
           - devshard-pool
     restart: unless-stopped
     healthcheck:
