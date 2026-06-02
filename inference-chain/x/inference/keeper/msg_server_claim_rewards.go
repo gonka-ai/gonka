@@ -482,21 +482,21 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
-		safeTotalWeight, err := safeUint32FromInt64(totalWeight)
+		safeTotalWeight, err := safeUint64FromInt64(totalWeight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"totalWeight", totalWeight, "error", err, "inference", inference.InferenceId)
 			continue // Skip this inference -- can't compute validation probability safely
 		}
-		safeValidatorWeight, err := safeUint32FromInt64(validatorPowerForModel.Weight)
+		safeValidatorWeight, err := safeUint64FromInt64(validatorPowerForModel.Weight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"validatorWeight", validatorPowerForModel.Weight, "error", err, "inference", inference.InferenceId)
 			continue
 		}
-		safeExecutorWeight, err := safeUint32FromInt64(executorPower.Weight)
+		safeExecutorWeight, err := safeUint64FromInt64(executorPower.Weight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"executorWeight", executorPower.Weight, "error", err, "inference", inference.InferenceId)
 			continue
 		}
