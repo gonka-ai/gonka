@@ -37,19 +37,9 @@ http {
         default $time_iso8601;
     }
 
-    map $request_uri $log_zone_name {
-        ~^/chain-rpc/ "CHAINRPC";
-        ~^/chain-api/ "CHAINAPI";
-        ~^/chain-grpc/ "CHAINGRPC";
-        ~^/api/ "GNKAPI";
-        ~^/v[0-9]+/ "GNKAPI";
-        ~^/devshard/ "EXEMPT";
-        default "GLOBAL";
-    }
-
     # Custom Log Format with Timing and Whitelist Indicator
     # Using tabs (\t) for better visual alignment
-    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$log_zone_name]\t$log_status_symbol\t'
+    log_format detailed '[$time_rfc3339]\t$remote_addr\t[$whitelist_log_type]\t[$limit_zone_name]\t$log_status_symbol\t'
                         '"$request" $status $body_bytes_sent '
                         '"$http_referer" "$http_user_agent" '
                         'rt=$request_time uct="$upstream_connect_time" uht="$upstream_header_time" urt="$upstream_response_time" '
@@ -127,6 +117,9 @@ http {
         # Real IP Configuration
         ${REAL_IP_CONFIG}
 
+        # Default Zone Label
+        set $$limit_zone_name "GLOBAL";
+
         # Global Ban Check
         if ($$is_banned) {
             return 444; # Drop connection
@@ -156,17 +149,6 @@ http {
 
         # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
         ${DEVSHARD_VERSIOND_LOCATION}
-
-        # Devshard gateway proxy - routes /devshard-gateway/<escrow-id>/...
-        # to devshardctl without colliding with /devshard/<version>/...
-        ${DEVSHARD_GATEWAY_PROXY_LOCATION}
-
-        # Optional exact /v1/chat/completions alias to the devshard gateway.
-        ${DEVSHARD_CHAT_ALIAS_LOCATION}
-
-        # Devshard direct proxy - legacy transparent routing to per-escrow
-        # devshardctl-<escrow-id> containers on /devshard-gateway-direct/...
-        ${DEVSHARD_DIRECT_PROXY_LOCATION}
 
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
