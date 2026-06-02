@@ -2,11 +2,9 @@ package transport
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -106,31 +104,6 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	require.Less(t, time.Since(start), 200*time.Millisecond)
 }
 
-func TestHTTPClient_LegacyProtocolUsesSubnetAuthHeaders(t *testing.T) {
-	signer := testutil.MustGenerateKey(t)
-	var sawSubnetSig, sawSubnetTS, sawDevshardSig, sawDevshardTS string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawSubnetSig = r.Header.Get(LegacySubnetHeaderSignature)
-		sawSubnetTS = r.Header.Get(LegacySubnetHeaderTimestamp)
-		sawDevshardSig = r.Header.Get(HeaderSignature)
-		sawDevshardTS = r.Header.Get(HeaderTimestamp)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	cfg := DefaultClientConfig()
-	cfg.ProtocolVersion = types.ProtocolV0211
-	client := NewHTTPClient(srv.URL, "83", signer, cfg)
-
-	err := client.post(context.Background(), "/sessions/83/verify-timeout", cfg.VerifyTimeout, VerifyTimeoutRequest{InferenceID: 1, Reason: "refused"}, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, sawSubnetSig)
-	require.NotEmpty(t, sawSubnetTS)
-	require.Empty(t, sawDevshardSig)
-	require.Empty(t, sawDevshardTS)
-}
-
 func TestHTTPClient_GetDiffs(t *testing.T) {
 	client, _, userSigner, _ := setupClientTestEnv(t)
 	ctx := context.Background()
@@ -197,26 +170,6 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	require.Equal(t, uint64(1), result.Nonce)
 	require.NotNil(t, result.Receipt, "receipt should be extracted from partial stream")
 	require.Equal(t, int64(1000), result.ConfirmedAt)
-}
-
-func TestParseSSE_LegacySubnetReceiptAndMeta(t *testing.T) {
-	client := &HTTPClient{config: DefaultClientConfig()}
-	client.config.ProtocolVersion = types.ProtocolV0211
-	mempool, err := DevshardTxsToBytes([]*types.DevshardTx{
-		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
-	})
-	require.NoError(t, err)
-	meta, err := json.Marshal(DevshardMetaEvent{Mempool: mempool})
-	require.NoError(t, err)
-
-	sseData := "data: {\"subnet_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\n" +
-		fmt.Sprintf("data: {\"subnet_meta\":%s}\n\n", meta)
-	result, err := client.parseSSEResponse(strings.NewReader(sseData), nil, nil)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), result.Nonce)
-	require.NotEmpty(t, result.Receipt)
-	require.Equal(t, int64(1000), result.ConfirmedAt)
-	require.NotEmpty(t, result.Mempool)
 }
 
 // truncatedReader returns data followed by an io.ErrUnexpectedEOF to simulate a broken connection.

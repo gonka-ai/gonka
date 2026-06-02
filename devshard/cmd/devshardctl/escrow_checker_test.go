@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/transport"
-	"devshard/types"
 )
 
 func TestIsUpstreamEscrowNotFound(t *testing.T) {
@@ -121,26 +120,6 @@ func TestEscrowCheckerKeepsActiveWhenFound(t *testing.T) {
 	})
 
 	assert.Equal(t, int64(0), deactivated.Load(), "should not deactivate when escrow exists")
-}
-
-func TestEscrowCheckerUsesLegacyEndpointForProtocolV0211(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"escrow":{"id":"83","creator":"addr","amount":"1000","slots":["a","b"],"epoch_index":"0","app_hash":"","token_price":"1"},"found":true}`)
-	}))
-	defer srv.Close()
-
-	checker := NewEscrowChecker(func() string { return srv.URL })
-	var deactivated atomic.Int64
-
-	checker.TriggerCheckForProtocol("83", types.ProtocolV0211, func() {
-		deactivated.Add(1)
-	})
-
-	assert.Equal(t, "/productscience/inference/inference/subnet_escrow/83", gotPath)
-	assert.Equal(t, int64(0), deactivated.Load(), "should not deactivate when legacy escrow exists")
 }
 
 func TestEscrowCheckerKeepsActiveOnChainError(t *testing.T) {

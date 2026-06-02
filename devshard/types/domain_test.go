@@ -25,15 +25,16 @@ func TestParseProtocolVersion_AcceptsRouteStyleV1(t *testing.T) {
 	}
 }
 
-func TestSessionConfigForVersion_Fees(t *testing.T) {
-	v211 := SessionConfigForVersion(3, ProtocolV0211)
-	if v211.CreateDevshardFee != 0 || v211.FeePerNonce != 0 {
-		t.Fatalf("expected v0.2.11 no-fee config, got create=%d per_nonce=%d", v211.CreateDevshardFee, v211.FeePerNonce)
+func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
+	if _, err := ParseProtocolVersion("0.2.11"); err == nil {
+		t.Fatal("expected old protocol to be rejected")
 	}
+}
 
-	v212 := SessionConfigForVersion(3, ProtocolV1)
-	if v212.CreateDevshardFee == 0 || v212.FeePerNonce == 0 {
-		t.Fatalf("expected v1 fee config, got create=%d per_nonce=%d", v212.CreateDevshardFee, v212.FeePerNonce)
+func TestSessionConfigForVersion_Fees(t *testing.T) {
+	cfg := SessionConfigForVersion(3, ProtocolV1)
+	if cfg.CreateDevshardFee == 0 || cfg.FeePerNonce == 0 {
+		t.Fatalf("expected v1 fee config, got create=%d per_nonce=%d", cfg.CreateDevshardFee, cfg.FeePerNonce)
 	}
 }
 

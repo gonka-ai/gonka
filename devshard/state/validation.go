@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"math/bits"
 
 	"devshard/types"
@@ -22,14 +21,6 @@ func DeriveSeed(signature []byte) (int64, error) {
 		seed = 1
 	}
 	return seed, nil
-}
-
-// DeterministicFloat generates the legacy v0.2.11 deterministic draw in [0,1).
-// It is kept only for replaying/verifying v0.2.11 sessions. New protocol
-// versions use deterministicHash and fixed-point integer math.
-func DeterministicFloat(seed int64, inferenceID uint64) float64 {
-	hashInt := deterministicHash(seed, inferenceID)
-	return float64(hashInt) / float64(math.MaxUint64)
 }
 
 // deterministicHash returns a deterministic uint64 from seed and inferenceID.
@@ -95,27 +86,4 @@ func ShouldValidate(seed int64, inferenceID uint64, validatorSlotCount, executor
 	threshold := uint64ProbabilityScale32(numer, denom)
 	hashInt := deterministicHash(seed, inferenceID)
 	return (hashInt >> 32) < threshold
-}
-
-// ShouldValidateV0211 returns the legacy v0.2.11 validation decision.
-// It intentionally uses floating-point probability math to match that protocol.
-func ShouldValidateV0211(seed int64, inferenceID uint64, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints uint32) bool {
-	if totalSlots <= executorSlotCount {
-		return false
-	}
-	rate := float64(rateBasisPoints) / 10000.0
-	probability := rate * float64(validatorSlotCount) / float64(totalSlots-executorSlotCount)
-	if probability > 1.0 {
-		probability = 1.0
-	}
-	return DeterministicFloat(seed, inferenceID) < probability
-}
-
-// ShouldValidateForProtocol dispatches validation by explicit protocol version.
-// v1 is the normal/default path; v0.2.11 must be requested explicitly.
-func ShouldValidateForProtocol(version types.ProtocolVersion, seed int64, inferenceID uint64, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints uint32) bool {
-	if version == types.ProtocolV0211 {
-		return ShouldValidateV0211(seed, inferenceID, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints)
-	}
-	return ShouldValidate(seed, inferenceID, validatorSlotCount, executorSlotCount, totalSlots, rateBasisPoints)
 }

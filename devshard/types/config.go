@@ -13,28 +13,14 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 	}
 }
 
-// DefaultSessionConfigV0211 returns the legacy v0.2.11 session config without fees.
-func DefaultSessionConfigV0211(groupSize int) SessionConfig {
-	cfg := DefaultSessionConfig(groupSize)
-	cfg.CreateDevshardFee = 0
-	cfg.FeePerNonce = 0
-	return cfg
-}
-
-// DefaultSessionConfigV1 returns the v1 session config with fee fields.
+// DefaultSessionConfigV1 returns the v1 session config.
 func DefaultSessionConfigV1(groupSize int) SessionConfig {
-	cfg := DefaultSessionConfig(groupSize)
-	return cfg
+	return DefaultSessionConfig(groupSize)
 }
 
 // SessionConfigForVersion returns the default config for the given protocol version.
 func SessionConfigForVersion(groupSize int, version ProtocolVersion) SessionConfig {
-	switch version {
-	case ProtocolV0211:
-		return DefaultSessionConfigV0211(groupSize)
-	default:
-		return DefaultSessionConfigV1(groupSize)
-	}
+	return DefaultSessionConfigV1(groupSize)
 }
 
 // SessionConfigWithPrice returns a session config with a custom token price.

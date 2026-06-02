@@ -22,21 +22,15 @@ func TestResolveVersionedRoutePrefix(t *testing.T) {
 }
 
 func TestResolveHostRoutePrefix(t *testing.T) {
-	if got := ResolveHostRoutePrefix(types.ProtocolV0211, ""); got != LegacySubnetRoutePrefix {
-		t.Fatalf("ResolveHostRoutePrefix(v0.2.11) = %q, want %q", got, LegacySubnetRoutePrefix)
-	}
 	if got := ResolveHostRoutePrefix(types.ProtocolV1, ""); got != LegacyRoutePrefix {
 		t.Fatalf("ResolveHostRoutePrefix(v1) = %q, want %q", got, LegacyRoutePrefix)
 	}
-	if got := ResolveHostRoutePrefix(types.ProtocolV0211, LegacyRoutePrefix); got != LegacyRoutePrefix {
+	if got := ResolveHostRoutePrefix(types.ProtocolV1, LegacyRoutePrefix); got != LegacyRoutePrefix {
 		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
 	}
 }
 
 func TestProtocolSessionVersion(t *testing.T) {
-	if got := ProtocolSessionVersion(types.ProtocolV0211); got != types.LegacySessionVersion {
-		t.Fatalf("ProtocolSessionVersion(v0.2.11) = %q, want %q", got, types.LegacySessionVersion)
-	}
 	if got := ProtocolSessionVersion(types.ProtocolV1); got != "v1" {
 		t.Fatalf("ProtocolSessionVersion(v1) = %q, want %q", got, "v1")
 	}
@@ -66,9 +60,9 @@ func TestVersionForRoutePrefix(t *testing.T) {
 			want:        "v1",
 		},
 		{
-			name:        "explicit old subnet host route",
-			routePrefix: LegacySubnetRoutePrefix,
-			want:        "v1",
+			name:        "old subnet host route rejected",
+			routePrefix: "/v1/subnet",
+			wantErr:     true,
 		},
 		{
 			name:        "versioned",

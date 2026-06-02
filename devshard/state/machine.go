@@ -87,9 +87,8 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver       WarmKeyResolver       // optional, nil = no warm key support
-	protocolVersion    types.ProtocolVersion // surfaced for gateway status/config compatibility
-	protocolVersionSet bool                  // true when WithProtocolVersion was provided explicitly
+	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	protocolVersion types.ProtocolVersion // surfaced for gateway status/config compatibility
 }
 
 // SMOption configures optional StateMachine behavior.
@@ -108,21 +107,20 @@ func WithVersion(version string) SMOption {
 }
 
 // WithProtocolVersion records the configured protocol version and enables
-// compatibility behavior for protocols with distinct state-root semantics.
+// status/config reporting.
 func WithProtocolVersion(v types.ProtocolVersion) SMOption {
 	return func(sm *StateMachine) {
 		if v == "" {
-			v = types.ProtocolV0211
+			v = types.ProtocolV1
 		}
 		sm.protocolVersion = v
-		sm.protocolVersionSet = true
 	}
 }
 
-// ProtocolVersion returns the configured compatibility protocol version.
+// ProtocolVersion returns the configured protocol version.
 func (sm *StateMachine) ProtocolVersion() types.ProtocolVersion {
 	if sm.protocolVersion == "" {
-		return types.ProtocolV0211
+		return types.ProtocolV1
 	}
 	return sm.protocolVersion
 }
@@ -177,15 +175,14 @@ func NewStateMachine(
 		addressToSlotCount: addrToSlotCount,
 		addressToSlots:     addrToSlots,
 		totalSlots:         uint32(len(group)),
-		protocolVersion:    types.ProtocolV0211,
+		protocolVersion:    types.ProtocolV1,
 	}
 	for _, o := range opts {
 		o(sm)
 	}
 
-	// Charge the one-time devshard creation fee unless explicitly running
-	// v0.2.11 compatibility.
-	if !sm.useProtocolV0211Rules() && config.CreateDevshardFee > 0 {
+	// Charge the one-time devshard creation fee at state initialization.
+	if config.CreateDevshardFee > 0 {
 		if sm.state.Balance < config.CreateDevshardFee {
 			return nil, fmt.Errorf("%w: create devshard fee %d exceeds escrow amount %d",
 				types.ErrInsufficientBalance, config.CreateDevshardFee, balance)
@@ -286,11 +283,11 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 		applied = append(applied, tx)
 	}
 
-	// Charge per applied nonce unless explicitly running v0.2.11 compatibility.
+	// Charge per applied nonce only during the active phase.
 	// NOTE: During the finalization round, the `txs` slice will contain a [types.MsgFinalizeRound] message,
 	// the call to [StateMachine.applyTx] above will transition the state machine's phase to [types.PhaseFinalizing],
 	// and this block will be skipped.
-	if !sm.useProtocolV0211Rules() && sm.state.Phase == types.PhaseActive {
+	if sm.state.Phase == types.PhaseActive {
 		if sm.state.Balance < sm.state.Config.FeePerNonce {
 			sm.restoreMutable(snap)
 			return nil, nil, types.ErrInsufficientBalance
@@ -366,8 +363,8 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		}
 	}
 
-	// 5. Charge per applied nonce unless explicitly running v0.2.11 compatibility.
-	if !sm.useProtocolV0211Rules() && sm.state.Phase == types.PhaseActive {
+	// 5. Charge per applied nonce only during the active phase.
+	if sm.state.Phase == types.PhaseActive {
 		if sm.state.Balance < sm.state.Config.FeePerNonce {
 			sm.restoreMutable(snap)
 			return nil, types.ErrInsufficientBalance
@@ -562,9 +559,6 @@ func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 }
 
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
-	if sm.useProtocolV0211Rules() {
-		return ComputeStateRootV0211(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys)
-	}
 	return ComputeStateRoot(sm.state.Balance, sm.state.HostStats, sm.state.Inferences, sm.state.Phase, sm.state.WarmKeys, sm.state.Fees, sm.state.Version)
 }
 
@@ -651,7 +645,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
-	logging.Info("inference -> pending", "subsystem", "state",
+	logging.Debug("inference -> pending", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", executorSlot,
 		"model", msg.Model,
@@ -700,7 +694,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
-	logging.Info("inference pending -> started", "subsystem", "state",
+	logging.Debug("inference pending -> started", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
 		"confirmed_at", msg.ConfirmedAt,
@@ -756,7 +750,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
-	logging.Info("inference started -> finished", "subsystem", "state",
+	logging.Debug("inference started -> finished", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", msg.ExecutorSlot,
 		"input_tokens", msg.InputTokens,
@@ -822,7 +816,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
-			logging.Info("inference finished -> challenged", "subsystem", "state",
+			logging.Debug("inference finished -> challenged", "subsystem", "state",
 				"inference_id", msg.InferenceId,
 				"validator_slot", msg.ValidatorSlot,
 			)
@@ -904,14 +898,14 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 			hs.Cost -= rec.ActualCost
 		}
 		sm.state.Balance += rec.ActualCost
-		logging.Info("inference challenged -> invalidated", "subsystem", "state",
+		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
 			"inference_id", msg.InferenceId,
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
 		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
-		logging.Info("inference challenged -> validated", "subsystem", "state",
+		logging.Debug("inference challenged -> validated", "subsystem", "state",
 			"inference_id", msg.InferenceId,
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
@@ -998,7 +992,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	// Release reserved cost back to escrow.
 	sm.state.Balance += rec.ReservedCost
 
-	logging.Info("inference -> timed_out", "subsystem", "state",
+	logging.Debug("inference -> timed_out", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
 		"reason", msg.Reason.String(),
@@ -1111,8 +1105,6 @@ func (sm *StateMachine) recomputeCompliance() {
 
 // penalizeUnrevealedSeeds sets RequiredValidations for unrevealed hosts.
 // Mirrors applyRevealSeed with penaltyValidationRate. CompletedValidations stays 0.
-// v0.2.11 keeps the legacy floating-point calculation; current protocols use
-// integer math only to avoid architecture-dependent state root splits.
 func (sm *StateMachine) penalizeUnrevealedSeeds() {
 	revealedAddrs := make(map[string]bool, len(sm.state.RevealedSeeds))
 	for slot := range sm.state.RevealedSeeds {
@@ -1125,12 +1117,7 @@ func (sm *StateMachine) penalizeUnrevealedSeeds() {
 		}
 
 		validatorSlotCount := sm.addressToSlotCount[addr]
-		var required uint32
-		if sm.useProtocolV0211Rules() {
-			required = sm.penaltyRequiredValidationsV0211(addr, validatorSlotCount)
-		} else {
-			required = sm.penaltyRequiredValidationsCurrent(addr, validatorSlotCount)
-		}
+		required := sm.penaltyRequiredValidationsCurrent(addr, validatorSlotCount)
 
 		for _, slot := range slots {
 			if hs, ok := sm.state.HostStats[slot]; ok {
@@ -1138,33 +1125,6 @@ func (sm *StateMachine) penalizeUnrevealedSeeds() {
 			}
 		}
 	}
-}
-
-func (sm *StateMachine) penaltyRequiredValidationsV0211(addr string, validatorSlotCount uint32) uint32 {
-	rate := float64(penaltyValidationRate) / 10000.0
-	var probSum float64
-	for _, infID := range slices.Sorted(maps.Keys(sm.state.Inferences)) {
-		rec := sm.state.Inferences[infID]
-		switch rec.Status {
-		case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
-		default:
-			continue
-		}
-		executorAddr := sm.slotToAddress[rec.ExecutorSlot]
-		if executorAddr == addr {
-			continue
-		}
-		executorSlotCount := sm.addressToSlotCount[executorAddr]
-		if sm.totalSlots <= executorSlotCount {
-			continue
-		}
-		p := rate * float64(validatorSlotCount) / float64(sm.totalSlots-executorSlotCount)
-		if p > 1.0 {
-			p = 1.0
-		}
-		probSum += p
-	}
-	return uint32(math.Ceil(probSum))
 }
 
 func (sm *StateMachine) penaltyRequiredValidationsCurrent(addr string, validatorSlotCount uint32) uint32 {
@@ -1191,15 +1151,7 @@ func (sm *StateMachine) penaltyRequiredValidationsCurrent(addr string, validator
 }
 
 func (sm *StateMachine) shouldValidate(seed int64, inferenceID uint64, validatorSlotCount, executorSlotCount uint32) bool {
-	version := types.ProtocolV1
-	if sm.useProtocolV0211Rules() {
-		version = types.ProtocolV0211
-	}
-	return ShouldValidateForProtocol(version, seed, inferenceID, validatorSlotCount, executorSlotCount, sm.totalSlots, sm.state.Config.ValidationRate)
-}
-
-func (sm *StateMachine) useProtocolV0211Rules() bool {
-	return sm.protocolVersionSet && sm.protocolVersion == types.ProtocolV0211
+	return ShouldValidate(seed, inferenceID, validatorSlotCount, executorSlotCount, sm.totalSlots, sm.state.Config.ValidationRate)
 }
 
 func (sm *StateMachine) applyFinalizeRound() error {

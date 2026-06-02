@@ -41,7 +41,7 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 
 func TestGetEscrow_CustomEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/productscience/inference/inference/subnet_escrow/42", r.URL.Path)
+		assert.Equal(t, "/productscience/inference/inference/custom_escrow/42", r.URL.Path)
 		json.NewEncoder(w).Encode(map[string]any{
 			"escrow": map[string]any{
 				"id":          "42",
@@ -57,7 +57,7 @@ func TestGetEscrow_CustomEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	b := NewRESTBridge(srv.URL, WithEscrowEndpoint("subnet_escrow"))
+	b := NewRESTBridge(srv.URL, WithEscrowEndpoint("custom_escrow"))
 	info, err := b.GetEscrow("42")
 	require.NoError(t, err)
 

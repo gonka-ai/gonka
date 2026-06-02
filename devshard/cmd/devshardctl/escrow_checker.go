@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"devshard/bridge"
-	"devshard/types"
 )
 
 // EscrowChecker verifies escrow existence against the chain when a host
@@ -29,12 +28,10 @@ func NewEscrowChecker(chainREST func() string) *EscrowChecker {
 // calls deactivate. If another check for the same escrow is already in flight,
 // this call returns immediately (the in-flight check will handle deactivation).
 func (ec *EscrowChecker) TriggerCheck(escrowID string, deactivate func()) {
-	ec.TriggerCheckForProtocol(escrowID, types.ProtocolV1, deactivate)
+	ec.triggerCheck(escrowID, deactivate)
 }
 
-// TriggerCheckForProtocol is protocol-aware so legacy v0.2.11 escrows are
-// verified against the chain's legacy subnet escrow query endpoint.
-func (ec *EscrowChecker) TriggerCheckForProtocol(escrowID string, protocol types.ProtocolVersion, deactivate func()) {
+func (ec *EscrowChecker) triggerCheck(escrowID string, deactivate func()) {
 	ec.mu.Lock()
 	if ec.inflight[escrowID] {
 		ec.mu.Unlock()
@@ -49,7 +46,7 @@ func (ec *EscrowChecker) TriggerCheckForProtocol(escrowID string, protocol types
 		ec.mu.Unlock()
 	}()
 
-	br := newRESTBridgeForProtocol(ec.chainREST(), protocol)
+	br := newRESTBridgeForProtocol(ec.chainREST(), "")
 	_, err := br.GetEscrow(escrowID)
 	if err != nil {
 		if errors.Is(err, bridge.ErrEscrowNotFound) {

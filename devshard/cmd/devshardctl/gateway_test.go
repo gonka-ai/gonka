@@ -649,30 +649,6 @@ func TestGatewayModelsEndpointRejectsUnsupportedMethod(t *testing.T) {
 	require.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
 }
 
-func TestNewRESTBridgeForProtocolUsesLegacyEscrowEndpointForV0211(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		json.NewEncoder(w).Encode(map[string]any{
-			"escrow": map[string]any{
-				"id":          "83",
-				"creator":     "gonka1creator",
-				"amount":      "1000000000",
-				"slots":       []string{"gonka1host"},
-				"epoch_index": "1",
-				"app_hash":    "deadbeef",
-				"settled":     false,
-			},
-			"found": true,
-		})
-	}))
-	t.Cleanup(srv.Close)
-
-	_, err := newRESTBridgeForProtocol(srv.URL, types.ProtocolV0211).GetEscrow("83")
-	require.NoError(t, err)
-	require.Equal(t, "/productscience/inference/inference/subnet_escrow/83", gotPath)
-}
-
 func TestNewRESTBridgeForProtocolUsesDevshardEscrowEndpointByDefault(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

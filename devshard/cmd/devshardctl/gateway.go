@@ -291,9 +291,6 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 }
 
 func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {
-	if pv == types.ProtocolV0211 {
-		return bridge.NewRESTBridge(chainREST, bridge.WithEscrowEndpoint("subnet_escrow"))
-	}
 	return bridge.NewRESTBridge(chainREST)
 }
 
@@ -3122,10 +3119,9 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	}
 	escrowID := rt.id
 	modelID := rt.model
-	protocol := rt.proxy.sm.ProtocolVersion()
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
-			go g.escrowChecker.TriggerCheckForProtocol(escrowID, protocol, func() {
+			go g.escrowChecker.TriggerCheck(escrowID, func() {
 				g.deactivateDevshardByID(escrowID)
 			})
 		}

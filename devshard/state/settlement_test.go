@@ -112,59 +112,6 @@ func TestVerifySettlement_Success(t *testing.T) {
 	require.Equal(t, expected, root)
 }
 
-func TestVerifySettlement_ExplicitProtocolV0211UsesLegacyRoot(t *testing.T) {
-	signers := make([]*signing.Secp256k1Signer, 3)
-	for i := range signers {
-		signers[i] = testutil.MustGenerateKey(t)
-	}
-	group := testutil.MakeGroup(signers)
-	verifier := signing.NewSecp256k1Verifier()
-
-	hostStats := map[uint32]*types.HostStats{
-		0: {Cost: 100},
-		1: {Cost: 200},
-		2: {Cost: 150},
-	}
-	inferences := map[uint64]*types.InferenceRecord{
-		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
-	}
-	st := types.EscrowState{Balance: 9900, Fees: 77, Version: types.LegacySessionVersion, HostStats: hostStats, Inferences: inferences}
-	payload, err := BuildSettlementForProtocol("escrow-legacy", st, nil, 5, types.ProtocolV0211)
-	require.NoError(t, err)
-	require.Equal(t, types.LegacySessionVersion, payload.Version)
-	require.Equal(t, types.ProtocolV0211, payload.ProtocolVersion)
-
-	hostStatsHash, err := ComputeHostStatsHash(hostStats)
-	require.NoError(t, err)
-	v0211Root, err := ComputeStateRootV0211(st.Balance, hostStats, inferences, types.PhaseSettlement, st.WarmKeys)
-	require.NoError(t, err)
-	settlementRoot := ComputeSettlementStateRootForProtocol(payload.ProtocolVersion, hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
-	require.Equal(t, v0211Root, settlementRoot)
-	require.NotEqual(t,
-		ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version),
-		settlementRoot,
-	)
-
-	sigContent := &types.StateSignatureContent{
-		StateRoot: settlementRoot,
-		EscrowId:  payload.EscrowID,
-		Nonce:     payload.Nonce,
-	}
-	sigData, err := proto.Marshal(sigContent)
-	require.NoError(t, err)
-	sigs := make(map[uint32][]byte, len(signers))
-	for i, signer := range signers {
-		sig, err := signer.Sign(sigData)
-		require.NoError(t, err)
-		sigs[uint32(i)] = sig
-	}
-	payload.Signatures = sigs
-
-	got, err := VerifySettlement(*payload, group, verifier, nil)
-	require.NoError(t, err)
-	require.Equal(t, settlementRoot, got)
-}
-
 func TestVerifySettlement_InsufficientSigs(t *testing.T) {
 	payload, group, verifier := buildSignedSettlement(t, 3)
 

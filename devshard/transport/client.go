@@ -190,16 +190,10 @@ func (c *HTTPClient) ClearAdmission() {
 }
 
 func (c *HTTPClient) signatureHeader() string {
-	if c.config.ProtocolVersion == types.ProtocolV0211 {
-		return LegacySubnetHeaderSignature
-	}
 	return HeaderSignature
 }
 
 func (c *HTTPClient) timestampHeader() string {
-	if c.config.ProtocolVersion == types.ProtocolV0211 {
-		return LegacySubnetHeaderTimestamp
-	}
 	return HeaderTimestamp
 }
 
@@ -427,10 +421,7 @@ func (c *HTTPClient) handleSSELine(
 }
 
 func (c *HTTPClient) protocolEnvelope(envelope map[string]json.RawMessage, suffix string) (json.RawMessage, string, bool) {
-	keys := []string{"devshard_" + suffix, "subnet_" + suffix}
-	if c.config.ProtocolVersion == types.ProtocolV0211 {
-		keys[0], keys[1] = keys[1], keys[0]
-	}
+	keys := []string{"devshard_" + suffix}
 	for _, key := range keys {
 		if raw, ok := envelope[key]; ok {
 			return raw, key, true
