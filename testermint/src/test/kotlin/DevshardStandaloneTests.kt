@@ -273,7 +273,7 @@ class DevshardStandaloneTests : TestermintTest() {
                 assertThat(response).contains("data:")
             }
 
-            genesis.assertDevshardSettlement(
+            val result = genesis.assertDevshardSettlement(
                 handle,
                 escrowId,
                 user,
@@ -294,7 +294,6 @@ class DevshardStandaloneTests : TestermintTest() {
             assertThat(finished)
                 .describedAs("finished devshardd inferences within finalized nonce range")
                 .isGreaterThanOrEqualTo(numInferences.toInt())
-            }
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
