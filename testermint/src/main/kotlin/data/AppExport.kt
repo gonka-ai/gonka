@@ -302,6 +302,8 @@ data class DevshardEscrowParams(
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
     @SerializedName("max_nonce")
     val maxNonce: Long = 0,
+    @SerializedName("devshard_requests_enabled")
+    val devshardRequestsEnabled: Boolean? = null,
 )
 
 data class PocParams(
