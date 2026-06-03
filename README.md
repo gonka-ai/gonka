@@ -21,7 +21,7 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 
 ![The Task flow](https://github.com/user-attachments/assets/1ba81a47-f4ef-4eb1-9fcd-b6d371a20f5f)
 
-*[Work in progress] Diagram 1. The Task flow [Source](docs/papers/InferenceFlow.png)**
+*[Work in progress] Diagram 1. The Task flow [Source](docs/papers/InferenceFlow.png)*
 
 For a deeper technical and conceptual explanation, check out [the White Paper](https://gonka.ai/whitepaper.pdf).
 ## Getting started
@@ -49,7 +49,7 @@ Make sure you have the following installed:
 Clone the repository:
 ```
 git clone https://github.com/gonka-ai/gonka.git
-cd gonka (or repo name)**
+cd gonka
 ```
 
 Build chain and API nodes, and run unit tests:
