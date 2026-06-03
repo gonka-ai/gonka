@@ -318,7 +318,10 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 	return nil
 }
 
-func (m *Memory) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+func (m *Memory) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -326,6 +329,13 @@ func (m *Memory) IncrInferenceValidationObs(escrowID string, inferenceID uint64,
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
+	for _, e := range entries {
+		m.recordValidationAppliedOnceLockedSession(s, e.InferenceID, e.SlotID)
+	}
+	return nil
+}
+
+func (m *Memory) recordValidationAppliedOnceLockedSession(s *sessionData, inferenceID uint64, slotID uint32) {
 	if s.inferenceValidationObs == nil {
 		s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	}
@@ -334,12 +344,14 @@ func (m *Memory) IncrInferenceValidationObs(escrowID string, inferenceID uint64,
 		bySlot = make(map[uint32]SlotValidationObs)
 		s.inferenceValidationObs[inferenceID] = bySlot
 	}
-	obs := bySlot[slotID]
-	obs.SlotID = slotID
-	obs.RequiredValidations += requiredDelta
-	obs.CompletedValidations += completedDelta
-	bySlot[slotID] = obs
-	return nil
+	if _, exists := bySlot[slotID]; exists {
+		return
+	}
+	bySlot[slotID] = SlotValidationObs{
+		SlotID:               slotID,
+		RequiredValidations:  1,
+		CompletedValidations: 1,
+	}
 }
 
 func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {

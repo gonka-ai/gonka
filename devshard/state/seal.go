@@ -158,7 +158,6 @@ func (sm *StateMachine) GetCommittedRecord(id uint64) (types.InferenceRecord, bo
 // the on-chain v2 settlement payload does not need to carry live inference
 // records: rest_hash is then fully determined by sealed_acc + balance + warm
 // keys at the moment of settlement.
-//
 func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	if len(sm.state.Inferences) == 0 {
 		return nil
@@ -297,9 +296,24 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 		SealedExecutorSlot: rec.ExecutorSlot,
 		SealedVotesValid:   rec.VotesValid,
 		SealedVotesInvalid: rec.VotesInvalid,
+		SealedModel:        rec.Model,
+		SealedInputLength:  rec.InputLength,
+		SealedMaxTokens:    rec.MaxTokens,
+		SealedInputTokens:  rec.InputTokens,
+		SealedOutputTokens: rec.OutputTokens,
+		SealedReservedCost: rec.ReservedCost,
+		SealedActualCost:   rec.ActualCost,
+		SealedStartedAt:    rec.StartedAt,
+		SealedConfirmedAt:  rec.ConfirmedAt,
+	}
+	if len(rec.PromptHash) > 0 {
+		row.SealedPromptHash = append([]byte(nil), rec.PromptHash...)
+	}
+	if len(rec.ResponseHash) > 0 {
+		row.SealedResponseHash = append([]byte(nil), rec.ResponseHash...)
 	}
 	if vb := rec.ValidatedBy.Bytes(); len(vb) > 0 {
-		row.SealedValidatedBy = vb
+		row.SealedValidatedBy = append([]byte(nil), vb...)
 	}
 	return row
 }
@@ -308,6 +322,17 @@ func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
 	return types.InferenceRecord{
 		Status:       types.InferenceStatus(row.SealedStatus),
 		ExecutorSlot: row.SealedExecutorSlot,
+		Model:        row.SealedModel,
+		PromptHash:   append([]byte(nil), row.SealedPromptHash...),
+		ResponseHash: append([]byte(nil), row.SealedResponseHash...),
+		InputLength:  row.SealedInputLength,
+		MaxTokens:    row.SealedMaxTokens,
+		InputTokens:  row.SealedInputTokens,
+		OutputTokens: row.SealedOutputTokens,
+		ReservedCost: row.SealedReservedCost,
+		ActualCost:   row.SealedActualCost,
+		StartedAt:    row.SealedStartedAt,
+		ConfirmedAt:  row.SealedConfirmedAt,
 		VotesValid:   row.SealedVotesValid,
 		VotesInvalid: row.SealedVotesInvalid,
 		ValidatedBy:  types.Bitmap128FromBytes(row.SealedValidatedBy),

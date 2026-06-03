@@ -696,8 +696,13 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 		`INSERT INTO devshard_sealed_inferences (
 			epoch_id, escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
-			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+			sealed_model, sealed_prompt_hash, sealed_response_hash,
+			sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens,
+			sealed_reserved_cost, sealed_actual_cost,
+			sealed_started_at, sealed_confirmed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = EXCLUDED.sealed_nonce,
 			obs_present = EXCLUDED.obs_present,
@@ -705,10 +710,26 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 			sealed_executor_slot = EXCLUDED.sealed_executor_slot,
 			sealed_votes_valid = EXCLUDED.sealed_votes_valid,
 			sealed_votes_invalid = EXCLUDED.sealed_votes_invalid,
-			sealed_validated_by = EXCLUDED.sealed_validated_by`,
+			sealed_validated_by = EXCLUDED.sealed_validated_by,
+			sealed_model = EXCLUDED.sealed_model,
+			sealed_prompt_hash = EXCLUDED.sealed_prompt_hash,
+			sealed_response_hash = EXCLUDED.sealed_response_hash,
+			sealed_input_length = EXCLUDED.sealed_input_length,
+			sealed_max_tokens = EXCLUDED.sealed_max_tokens,
+			sealed_input_tokens = EXCLUDED.sealed_input_tokens,
+			sealed_output_tokens = EXCLUDED.sealed_output_tokens,
+			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
+			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
+			sealed_started_at = EXCLUDED.sealed_started_at,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`,
 		epochID, escrowID, row.InferenceID, row.SealedNonce, row.ObsPresent,
 		row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
+		row.SealedModel, row.SealedPromptHash, row.SealedResponseHash,
+		row.SealedInputLength, row.SealedMaxTokens,
+		row.SealedInputTokens, row.SealedOutputTokens,
+		row.SealedReservedCost, row.SealedActualCost,
+		row.SealedStartedAt, row.SealedConfirmedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -723,7 +744,12 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 	}
 	row := s.pool.QueryRow(context.Background(),
 		`SELECT sealed_nonce, obs_present, sealed_status, sealed_executor_slot,
-		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+		        sealed_model, sealed_prompt_hash, sealed_response_hash,
+		        sealed_input_length, sealed_max_tokens,
+		        sealed_input_tokens, sealed_output_tokens,
+		        sealed_reserved_cost, sealed_actual_cost,
+		        sealed_started_at, sealed_confirmed_at
 		   FROM devshard_sealed_inferences
 		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
 		epochID, escrowID, inferenceID,
@@ -732,6 +758,11 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 	if err := row.Scan(
 		&out.SealedNonce, &out.ObsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
 		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
+		&out.SealedModel, &out.SealedPromptHash, &out.SealedResponseHash,
+		&out.SealedInputLength, &out.SealedMaxTokens,
+		&out.SealedInputTokens, &out.SealedOutputTokens,
+		&out.SealedReservedCost, &out.SealedActualCost,
+		&out.SealedStartedAt, &out.SealedConfirmedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil
@@ -761,7 +792,10 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 	return nil
 }
 
-func (s *Postgres) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+func (s *Postgres) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
 		return err
@@ -770,16 +804,21 @@ func (s *Postgres) IncrInferenceValidationObs(escrowID string, inferenceID uint6
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
+	inferenceIDs := make([]int64, len(entries))
+	slotIDs := make([]int32, len(entries))
+	for i, e := range entries {
+		inferenceIDs[i] = int64(e.InferenceID)
+		slotIDs[i] = int32(e.SlotID)
+	}
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO devshard_inference_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
-		   required_validations = devshard_inference_validation_obs.required_validations + EXCLUDED.required_validations,
-		   completed_validations = devshard_inference_validation_obs.completed_validations + EXCLUDED.completed_validations`,
-		epochID, escrowID, inferenceID, slotID, requiredDelta, completedDelta,
+		 SELECT $1, $2, t.inference_id, t.slot_id, 1, 1
+		 FROM unnest($3::bigint[], $4::int[]) AS t(inference_id, slot_id)
+		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO NOTHING`,
+		epochID, escrowID, inferenceIDs, slotIDs,
 	)
 	if err != nil {
-		return fmt.Errorf("incr inference validation obs: %w", err)
+		return fmt.Errorf("record validations applied once: %w", err)
 	}
 	return nil
 }

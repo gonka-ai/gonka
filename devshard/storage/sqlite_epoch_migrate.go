@@ -15,6 +15,7 @@ var sqliteEpochMigrationSteps = []migrate.Step{
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS sessions (
     escrow_id       TEXT PRIMARY KEY,
+    version         TEXT,
     creator_addr    TEXT NOT NULL,
     config_json     TEXT NOT NULL,
     group_json      TEXT NOT NULL,
@@ -69,31 +70,31 @@ CREATE TABLE IF NOT EXISTS snapshots (
 		Name: "sealed_inferences",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS sealed_inferences (
-    escrow_id    TEXT NOT NULL,
-    inference_id INTEGER NOT NULL,
-    sealed_nonce INTEGER NOT NULL,
+    escrow_id            TEXT NOT NULL,
+    inference_id         INTEGER NOT NULL,
+    sealed_nonce         INTEGER NOT NULL,
+    obs_present          INTEGER NOT NULL DEFAULT 0,
+    sealed_status        INTEGER NOT NULL DEFAULT 0,
+    sealed_executor_slot INTEGER NOT NULL DEFAULT 0,
+    sealed_votes_valid   INTEGER NOT NULL DEFAULT 0,
+    sealed_votes_invalid INTEGER NOT NULL DEFAULT 0,
+    sealed_validated_by  BLOB,
+    sealed_model         TEXT NOT NULL DEFAULT '',
+    sealed_prompt_hash   BLOB,
+    sealed_response_hash BLOB,
+    sealed_input_length  INTEGER NOT NULL DEFAULT 0,
+    sealed_max_tokens    INTEGER NOT NULL DEFAULT 0,
+    sealed_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    sealed_output_tokens INTEGER NOT NULL DEFAULT 0,
+    sealed_reserved_cost INTEGER NOT NULL DEFAULT 0,
+    sealed_actual_cost   INTEGER NOT NULL DEFAULT 0,
+    sealed_started_at    INTEGER NOT NULL DEFAULT 0,
+    sealed_confirmed_at  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (escrow_id, inference_id)
 )`},
 	},
 	{
 		ID:   6,
-		Name: "sessions_version_column",
-		SQLiteRun: func(ctx context.Context, tx *sql.Tx) error {
-			var n int
-			if err := tx.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'version'`,
-			).Scan(&n); err != nil {
-				return err
-			}
-			if n > 0 {
-				return nil
-			}
-			_, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN version TEXT`)
-			return err
-		},
-	},
-	{
-		ID:   7,
 		Name: "slot_validation_obs",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS slot_validation_obs (
@@ -105,37 +106,7 @@ CREATE TABLE IF NOT EXISTS slot_validation_obs (
 )`},
 	},
 	{
-		ID:   8,
-		Name: "sealed_inferences_obs_snapshot",
-		SQLiteRun: func(ctx context.Context, tx *sql.Tx) error {
-			cols := []struct{ name, ddl string }{
-				{"obs_present", `ALTER TABLE sealed_inferences ADD COLUMN obs_present INTEGER NOT NULL DEFAULT 0`},
-				{"sealed_status", `ALTER TABLE sealed_inferences ADD COLUMN sealed_status INTEGER NOT NULL DEFAULT 0`},
-				{"sealed_executor_slot", `ALTER TABLE sealed_inferences ADD COLUMN sealed_executor_slot INTEGER NOT NULL DEFAULT 0`},
-				{"sealed_votes_valid", `ALTER TABLE sealed_inferences ADD COLUMN sealed_votes_valid INTEGER NOT NULL DEFAULT 0`},
-				{"sealed_votes_invalid", `ALTER TABLE sealed_inferences ADD COLUMN sealed_votes_invalid INTEGER NOT NULL DEFAULT 0`},
-				{"sealed_validated_by", `ALTER TABLE sealed_inferences ADD COLUMN sealed_validated_by BLOB`},
-			}
-			for _, col := range cols {
-				var n int
-				if err := tx.QueryRowContext(ctx,
-					`SELECT COUNT(*) FROM pragma_table_info('sealed_inferences') WHERE name = ?`,
-					col.name,
-				).Scan(&n); err != nil {
-					return err
-				}
-				if n > 0 {
-					continue
-				}
-				if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	},
-	{
-		ID:   10,
+		ID:   7,
 		Name: "inference_validation_obs",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS inference_validation_obs (
@@ -154,11 +125,6 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
     completed_validations  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (escrow_id, inference_id, slot_id)
 )`},
-	},
-	{
-		ID:         11,
-		Name:       "noop",
-		Statements: []string{`SELECT 1`},
 	},
 }
 

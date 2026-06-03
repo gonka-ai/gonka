@@ -106,7 +106,8 @@ type Host struct {
 	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
 	availability devshard.AvailabilityProvider
 
-	snapshotInFlight atomic.Bool // prevents overlapping async snapshot writes
+	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
+	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
 
 	// Lookup maps built from group at construction time.
 	slotToAddr  map[uint32]string   // slotID -> validator address
@@ -580,6 +581,10 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
 			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
 		}
+		// Validation obs recording runs only after successful ApplyDiff. Correctness
+		// depends on ApplyDiff rejecting late/sealed validations before this runs;
+		// do not move recording before ApplyDiff.
+		h.recordValidationObsFromAppliedDiff(diff.Txs)
 		phaseAfter := h.sm.Phase()
 		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
 		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
@@ -1096,7 +1101,6 @@ func (h *Host) collectValidationJobs() []validateJob {
 		validatorSlot := h.sortedSlots[0]
 
 		h.validating[infID] = struct{}{}
-		storage.RecordValidationRequired(h.store, h.escrowID, infID, validatorSlot)
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
 			validatorSlot:   validatorSlot,
@@ -1311,7 +1315,6 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
-	storage.RecordValidationCompleted(h.store, h.escrowID, job.inferenceID, job.validatorSlot)
 	observability.IncValidation(observability.StageVotePublished, observability.MetricStatusOK)
 	fields := []any{
 		"inference_id", job.inferenceID,

@@ -63,6 +63,10 @@ zero, keeping the wire format bit-identical with
 - Loss of compliance observability: the existing chain query keeps
   returning `RequiredValidations` / `CompletedValidations` constantly
   at zero.
+- Host-local **validation observability** (outside the state root, exposed
+  on `GET /v1/devshard/stats/shards/{escrow_id}`) is populated when signed
+  diffs are applied; see
+  [validation-observability-diff-apply.md](./validation-observability-diff-apply.md).
 
 ## 2. Drop inference records from RAM and state
 

@@ -85,12 +85,12 @@ class CollateralTests : TestermintTest() {
         assertThat(balanceAfterDeposit).isEqualTo(initialBalance - depositAmount)
 
         logSection("Withdrawing $depositAmount nicoin from ${participant.name}")
-        val epochBeforeWithdraw = participant.api.getLatestEpoch().latestEpoch.index-1
+        val currentEpoch = participant.api.getLatestEpoch().latestEpoch.index
         val startLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
-        val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
-        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $epochBeforeWithdraw + $unbondingPeriod)")
+        val expectedCompletionEpoch = currentEpoch + unbondingPeriod
+        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $currentEpoch + $unbondingPeriod)")
         Thread.sleep(10000)
 
         participant.withdrawCollateral(depositAmount)

@@ -873,8 +873,13 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 		`INSERT INTO sealed_inferences (
 			escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
-			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+			sealed_model, sealed_prompt_hash, sealed_response_hash,
+			sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens,
+			sealed_reserved_cost, sealed_actual_cost,
+			sealed_started_at, sealed_confirmed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = excluded.sealed_nonce,
 			obs_present = excluded.obs_present,
@@ -882,10 +887,26 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 			sealed_executor_slot = excluded.sealed_executor_slot,
 			sealed_votes_valid = excluded.sealed_votes_valid,
 			sealed_votes_invalid = excluded.sealed_votes_invalid,
-			sealed_validated_by = excluded.sealed_validated_by`,
+			sealed_validated_by = excluded.sealed_validated_by,
+			sealed_model = excluded.sealed_model,
+			sealed_prompt_hash = excluded.sealed_prompt_hash,
+			sealed_response_hash = excluded.sealed_response_hash,
+			sealed_input_length = excluded.sealed_input_length,
+			sealed_max_tokens = excluded.sealed_max_tokens,
+			sealed_input_tokens = excluded.sealed_input_tokens,
+			sealed_output_tokens = excluded.sealed_output_tokens,
+			sealed_reserved_cost = excluded.sealed_reserved_cost,
+			sealed_actual_cost = excluded.sealed_actual_cost,
+			sealed_started_at = excluded.sealed_started_at,
+			sealed_confirmed_at = excluded.sealed_confirmed_at`,
 		escrowID, row.InferenceID, row.SealedNonce,
 		obsPresent, row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
+		row.SealedModel, row.SealedPromptHash, row.SealedResponseHash,
+		row.SealedInputLength, row.SealedMaxTokens,
+		row.SealedInputTokens, row.SealedOutputTokens,
+		row.SealedReservedCost, row.SealedActualCost,
+		row.SealedStartedAt, row.SealedConfirmedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -900,7 +921,12 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 	}
 	row := p.readDB.QueryRow(
 		`SELECT sealed_nonce, obs_present, sealed_status, sealed_executor_slot,
-		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+		        sealed_model, sealed_prompt_hash, sealed_response_hash,
+		        sealed_input_length, sealed_max_tokens,
+		        sealed_input_tokens, sealed_output_tokens,
+		        sealed_reserved_cost, sealed_actual_cost,
+		        sealed_started_at, sealed_confirmed_at
 		   FROM sealed_inferences
 		  WHERE escrow_id = ? AND inference_id = ?`,
 		escrowID, inferenceID,
@@ -910,6 +936,11 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 	if err := row.Scan(
 		&out.SealedNonce, &obsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
 		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
+		&out.SealedModel, &out.SealedPromptHash, &out.SealedResponseHash,
+		&out.SealedInputLength, &out.SealedMaxTokens,
+		&out.SealedInputTokens, &out.SealedOutputTokens,
+		&out.SealedReservedCost, &out.SealedActualCost,
+		&out.SealedStartedAt, &out.SealedConfirmedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return InferenceRow{}, false, nil
@@ -934,21 +965,35 @@ func (s *SQLite) DeleteSealedInferences(escrowID string) error {
 	return nil
 }
 
-func (s *SQLite) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+const sqliteValidationObsBatchChunk = 100
+
+func (s *SQLite) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
 	p, _, err := s.poolFor(escrowID)
 	if err != nil {
 		return err
 	}
-	_, err = p.writeDB.Exec(
-		`INSERT INTO inference_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(escrow_id, inference_id, slot_id) DO UPDATE SET
-		   required_validations = required_validations + excluded.required_validations,
-		   completed_validations = completed_validations + excluded.completed_validations`,
-		escrowID, inferenceID, slotID, requiredDelta, completedDelta,
-	)
-	if err != nil {
-		return fmt.Errorf("incr inference validation obs: %w", err)
+	for start := 0; start < len(entries); start += sqliteValidationObsBatchChunk {
+		end := start + sqliteValidationObsBatchChunk
+		if end > len(entries) {
+			end = len(entries)
+		}
+		chunk := entries[start:end]
+		query := `INSERT INTO inference_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations) VALUES `
+		args := make([]any, 0, len(chunk)*3)
+		for i, e := range chunk {
+			if i > 0 {
+				query += ", "
+			}
+			query += "(?, ?, ?, 1, 1)"
+			args = append(args, escrowID, e.InferenceID, e.SlotID)
+		}
+		query += " ON CONFLICT(escrow_id, inference_id, slot_id) DO NOTHING"
+		if _, err := p.writeDB.Exec(query, args...); err != nil {
+			return fmt.Errorf("record validations applied once: %w", err)
+		}
 	}
 	return nil
 }
