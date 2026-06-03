@@ -88,7 +88,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
 		require.NoError(t, err)
 		h, err := host.NewHost(
 			sm, hosts[i], stub.NewInferenceEngine(),
@@ -99,7 +99,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-validation", group, clients, verifier)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	// runs once per inference, not three times.
 	hostBySigner := make([]*host.Host, len(hosts))
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
 		require.NoError(t, err)
 		h, err := host.NewHost(
 			sm, hosts[i], stub.NewInferenceEngine(),
@@ -236,7 +236,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		require.NotNil(t, clients[i], "no client for slot %d", i)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-multi", group, clients, verifier)
 	require.NoError(t, err)

@@ -216,7 +216,7 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 	killables := make([]*killableClient, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-proxy", userKey.Address(), config, group, 1_000_000))
 		require.NoError(t, err)
 		var engine devshard.InferenceEngine
 		if engines != nil {
@@ -237,7 +237,7 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 		}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-proxy", userKey.Address(), config, group, 1_000_000))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier)
 	require.NoError(t, err)

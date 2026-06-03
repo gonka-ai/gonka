@@ -42,7 +42,7 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
@@ -288,7 +288,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 		return warmAddr == warmSigner.Address() && coldAddr == hostSigner.Address(), nil
 	}
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
 	// Create warm key binding via confirm start.
@@ -315,7 +315,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	}))
 
 	// Rebuild SM from scratch for host (host needs nonce 0 start).
-	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, state.WithWarmKeyResolver(resolver))
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm2, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
@@ -475,7 +475,7 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Host at slot 0. Inference 1 maps to executor slot 1, so host 0 is NOT executor.
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()

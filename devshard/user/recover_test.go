@@ -29,7 +29,7 @@ func newTestStateMachine(
 ) *state.StateMachine {
 	t.Helper()
 	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion)}, opts...)
-	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, opts...)
+	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance), opts...)
 	require.NoError(t, err)
 	return sm
 }
@@ -402,7 +402,7 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
 	require.Equal(t, types.EffectiveStateRootAndProtocolVersion, exported.StateRootAndProtocolVersion,
-		"recovered state machine must use the effective protocol tag when meta.Version is empty")
+		"recovered state machine uses the binary's state-root protocol version")
 }
 
 // TestRecoverSession_EmptyVersionRejected requires a version from storage or caller.

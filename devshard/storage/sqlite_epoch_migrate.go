@@ -93,7 +93,70 @@ CREATE TABLE IF NOT EXISTS sealed_inferences (
 		},
 	},
 	{
-		ID:         7,
+		ID:   7,
+		Name: "slot_validation_obs",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS slot_validation_obs (
+    escrow_id              TEXT NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (escrow_id, slot_id)
+)`},
+	},
+	{
+		ID:   8,
+		Name: "sealed_inferences_obs_snapshot",
+		SQLiteRun: func(ctx context.Context, tx *sql.Tx) error {
+			cols := []struct{ name, ddl string }{
+				{"obs_present", `ALTER TABLE sealed_inferences ADD COLUMN obs_present INTEGER NOT NULL DEFAULT 0`},
+				{"sealed_status", `ALTER TABLE sealed_inferences ADD COLUMN sealed_status INTEGER NOT NULL DEFAULT 0`},
+				{"sealed_executor_slot", `ALTER TABLE sealed_inferences ADD COLUMN sealed_executor_slot INTEGER NOT NULL DEFAULT 0`},
+				{"sealed_votes_valid", `ALTER TABLE sealed_inferences ADD COLUMN sealed_votes_valid INTEGER NOT NULL DEFAULT 0`},
+				{"sealed_votes_invalid", `ALTER TABLE sealed_inferences ADD COLUMN sealed_votes_invalid INTEGER NOT NULL DEFAULT 0`},
+				{"sealed_validated_by", `ALTER TABLE sealed_inferences ADD COLUMN sealed_validated_by BLOB`},
+			}
+			for _, col := range cols {
+				var n int
+				if err := tx.QueryRowContext(ctx,
+					`SELECT COUNT(*) FROM pragma_table_info('sealed_inferences') WHERE name = ?`,
+					col.name,
+				).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		ID:   10,
+		Name: "inference_validation_obs",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS inference_validation_obs (
+    escrow_id              TEXT NOT NULL,
+    inference_id           INTEGER NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (escrow_id, inference_id, slot_id)
+)`,
+			`CREATE TABLE IF NOT EXISTS sealed_validation_obs (
+    escrow_id              TEXT NOT NULL,
+    inference_id           INTEGER NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (escrow_id, inference_id, slot_id)
+)`},
+	},
+	{
+		ID:         11,
 		Name:       "noop",
 		Statements: []string{`SELECT 1`},
 	},

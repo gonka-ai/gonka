@@ -36,7 +36,7 @@ func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace ui
 	// Create hosts.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance))
 		require.NoError(t, err)
 		var engine devshard.InferenceEngine
 		if engines != nil {
@@ -50,7 +50,7 @@ func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace ui
 	}
 
 	// Create user session.
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 			clients[i] = &ErrorClient{Err: fmt.Errorf("host unavailable")}
 			continue
 		}
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(100))
@@ -164,7 +164,7 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 				break
 			}
 		}
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, slotSigner, engine, "escrow-1", group, nil, host.WithGrace(100))
@@ -330,7 +330,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -447,7 +447,7 @@ func TestUser_Finalize_DeadlineSettlement(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(100))
@@ -455,7 +455,7 @@ func TestUser_Finalize_DeadlineSettlement(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)

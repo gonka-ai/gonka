@@ -201,6 +201,11 @@ class DevshardTests : TestermintTest() {
                 }.awaitAll()
             }
 
+            logSection("Waiting for validation observability on active escrows")
+            sessions.forEach { session ->
+                genesis.waitForDevshardValidationObservability(session.escrowId, minCompleted = 1)
+            }
+
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
                 val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
@@ -209,7 +214,10 @@ class DevshardTests : TestermintTest() {
                     .isEqualTo(session.escrowId.toString())
                 assertThat(result.parsed.hostStats).isNotEmpty()
                 assertThat(result.parsed.signatures).isNotEmpty()
-                assertThat(result.parsed.hostStats.sumOf { it.completedValidations }).isGreaterThan(0)
+                val obs = genesis.getDevshardShardStatsDetail(session.escrowId)
+                assertThat(obs.validationObservability.totals.completedValidations)
+                    .withFailMessage("validation observability for escrow ${session.escrowId}")
+                    .isGreaterThan(0)
 
                 val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
                 assertThat(settleResp.code)

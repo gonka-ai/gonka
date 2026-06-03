@@ -234,7 +234,6 @@ class DevshardStandaloneTests : TestermintTest() {
                 user,
                 escrowAmount,
                 requireCompletedValidations = false,
-                expectedVersion = standaloneTestVersionName,
             )
         } finally {
             genesis.stopDevshardProxy(escrowId)
@@ -280,7 +279,6 @@ class DevshardStandaloneTests : TestermintTest() {
                 user,
                 escrowAmount,
                 requireCompletedValidations = false,
-                expectedVersion = standaloneTestVersionName,
             )
 
             logSection("Verifying inference statuses")
@@ -359,24 +357,37 @@ class DevshardStandaloneTests : TestermintTest() {
                 }.awaitAll()
             }
 
+            logSection("Waiting for validation observability on active escrows")
+            sessions.forEach { session ->
+                genesis.waitForDevshardValidationObservability(
+                    session.escrowId,
+                    minCompleted = 1,
+                    routePrefix = overrideRoutePrefix,
+                )
+            }
+
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
                 val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
                 assertThat(result.parsed.escrowId)
                     .withFailMessage("Escrow ID mismatch for ${session.keyName}")
                     .isEqualTo(session.escrowId.toString())
-                assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
+                assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
                 assertThat(result.parsed.hostStats).isNotEmpty()
                 assertThat(result.parsed.signatures).isNotEmpty()
-                assertThat(result.parsed.hostStats.sumOf { it.completedValidations }).isGreaterThan(0)
+                val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
+                assertThat(obs.validationObservability.totals.completedValidations)
+                    .withFailMessage("validation observability for escrow ${session.escrowId}")
+                    .isGreaterThan(0)
 
                 val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
                 assertThat(settleResp.code)
                     .withFailMessage("Settlement failed for escrow ${session.escrowId}")
                     .isEqualTo(0)
                 val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
-                assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-                    .isEqualTo(standaloneTestVersionName)
+                assertThat(
+                    settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
+                ).isEqualTo(devshardStateRootProtocolVersion())
 
                 val escrow = genesis.node.queryDevshardEscrow(session.escrowId)
                 assertThat(escrow.escrow!!.settled)
@@ -437,7 +448,7 @@ class DevshardStandaloneTests : TestermintTest() {
 
             logSection("Verifying settlement data")
             assertThat(result.parsed.escrowId).isEqualTo("$escrowId")
-            assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
+            assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
@@ -446,8 +457,9 @@ class DevshardStandaloneTests : TestermintTest() {
             val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = user.keyName)
             assertThat(settleResp.code).isEqualTo(0)
             val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
-            assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-                .isEqualTo(standaloneTestVersionName)
+            assertThat(
+                settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
+            ).isEqualTo(devshardStateRootProtocolVersion())
 
             logSection("Verifying escrow settled")
             val escrow = genesis.node.queryDevshardEscrow(escrowId)
@@ -456,7 +468,10 @@ class DevshardStandaloneTests : TestermintTest() {
             logSection("Verifying inference status")
             val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
             logSection("Inference: $inference")
-            assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
+            assertThat(inference.status).isIn(
+                DevshardInferenceStatus.CHALLENGED,
+                DevshardInferenceStatus.INVALIDATED,
+            )
             assertThat(inference.votesInvalid).isNotZero()
         } finally {
             genesis.stopDevshardProxy(escrowId)

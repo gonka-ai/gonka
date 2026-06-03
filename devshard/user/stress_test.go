@@ -193,7 +193,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-stress", userKey.Address(), config, group, stressBalance))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-stress", group, nil, host.WithGrace(grace))
@@ -201,7 +201,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 		clients[i] = &ConcurrentClient{inner: &InProcessClient{Host: h}}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-stress", userKey.Address(), config, group, stressBalance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-stress", group, clients, verifier)
 	require.NoError(t, err)

@@ -865,10 +865,27 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 	if err != nil {
 		return err
 	}
+	obsPresent := 0
+	if row.ObsPresent {
+		obsPresent = 1
+	}
 	_, err = p.writeDB.Exec(
-		`INSERT INTO sealed_inferences (escrow_id, inference_id, sealed_nonce)
-		 VALUES (?, ?, ?)`,
+		`INSERT INTO sealed_inferences (
+			escrow_id, inference_id, sealed_nonce,
+			obs_present, sealed_status, sealed_executor_slot,
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(escrow_id, inference_id) DO UPDATE SET
+			sealed_nonce = excluded.sealed_nonce,
+			obs_present = excluded.obs_present,
+			sealed_status = excluded.sealed_status,
+			sealed_executor_slot = excluded.sealed_executor_slot,
+			sealed_votes_valid = excluded.sealed_votes_valid,
+			sealed_votes_invalid = excluded.sealed_votes_invalid,
+			sealed_validated_by = excluded.sealed_validated_by`,
 		escrowID, row.InferenceID, row.SealedNonce,
+		obsPresent, row.SealedStatus, row.SealedExecutorSlot,
+		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -882,17 +899,24 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 		return InferenceRow{}, false, err
 	}
 	row := p.readDB.QueryRow(
-		`SELECT sealed_nonce FROM sealed_inferences
+		`SELECT sealed_nonce, obs_present, sealed_status, sealed_executor_slot,
+		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		   FROM sealed_inferences
 		  WHERE escrow_id = ? AND inference_id = ?`,
 		escrowID, inferenceID,
 	)
 	out := InferenceRow{InferenceID: inferenceID}
-	if err := row.Scan(&out.SealedNonce); err != nil {
+	var obsPresent int
+	if err := row.Scan(
+		&out.SealedNonce, &obsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
+		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			return InferenceRow{}, false, nil
 		}
 		return InferenceRow{}, false, err
 	}
+	out.ObsPresent = obsPresent != 0
 	return out, true, nil
 }
 
@@ -904,7 +928,125 @@ func (s *SQLite) DeleteSealedInferences(escrowID string) error {
 	if _, err := p.writeDB.Exec(`DELETE FROM sealed_inferences WHERE escrow_id = ?`, escrowID); err != nil {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
+	if _, err := p.writeDB.Exec(`DELETE FROM sealed_validation_obs WHERE escrow_id = ?`, escrowID); err != nil {
+		return fmt.Errorf("delete sealed validation obs: %w", err)
+	}
 	return nil
+}
+
+func (s *SQLite) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	_, err = p.writeDB.Exec(
+		`INSERT INTO inference_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(escrow_id, inference_id, slot_id) DO UPDATE SET
+		   required_validations = required_validations + excluded.required_validations,
+		   completed_validations = completed_validations + excluded.completed_validations`,
+		escrowID, inferenceID, slotID, requiredDelta, completedDelta,
+	)
+	if err != nil {
+		return fmt.Errorf("incr inference validation obs: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	tx, err := p.writeDB.Begin()
+	if err != nil {
+		return fmt.Errorf("drain inference validation obs begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(
+		`SELECT slot_id, required_validations, completed_validations
+		   FROM inference_validation_obs
+		  WHERE escrow_id = ? AND inference_id = ?`,
+		escrowID, inferenceID,
+	)
+	if err != nil {
+		return fmt.Errorf("drain inference validation obs select: %w", err)
+	}
+	type row struct {
+		slotID               uint32
+		required, completed uint32
+	}
+	var live []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.slotID, &r.required, &r.completed); err != nil {
+			rows.Close()
+			return err
+		}
+		live = append(live, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range live {
+		if _, err := tx.Exec(
+			`INSERT INTO sealed_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(escrow_id, inference_id, slot_id) DO UPDATE SET
+			   required_validations = sealed_validation_obs.required_validations + excluded.required_validations,
+			   completed_validations = sealed_validation_obs.completed_validations + excluded.completed_validations`,
+			escrowID, inferenceID, r.slotID, r.required, r.completed,
+		); err != nil {
+			return fmt.Errorf("drain inference validation obs insert: %w", err)
+		}
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM inference_validation_obs WHERE escrow_id = ? AND inference_id = ?`,
+		escrowID, inferenceID,
+	); err != nil {
+		return fmt.Errorf("drain inference validation obs delete: %w", err)
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.readDB.Query(
+		`SELECT slot_id,
+		        SUM(required_validations) AS required_validations,
+		        SUM(completed_validations) AS completed_validations
+		   FROM (
+		     SELECT slot_id, required_validations, completed_validations
+		       FROM inference_validation_obs
+		      WHERE escrow_id = ?
+		     UNION ALL
+		     SELECT slot_id, required_validations, completed_validations
+		       FROM sealed_validation_obs
+		      WHERE escrow_id = ?
+		   )
+		  GROUP BY slot_id
+		  ORDER BY slot_id`,
+		escrowID, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get validation observability: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SlotValidationObs
+	for rows.Next() {
+		var obs SlotValidationObs
+		if err := rows.Scan(&obs.SlotID, &obs.RequiredValidations, &obs.CompletedValidations); err != nil {
+			return nil, err
+		}
+		out = append(out, obs)
+	}
+	return out, rows.Err()
 }
 
 // PruneEpoch closes the pool for epochID, removes the database file and its

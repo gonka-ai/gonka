@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 	"devshard/types"
 )
 
@@ -239,7 +238,7 @@ func TestSQLite_ConcurrentSessions(t *testing.T) {
 			params := CreateSessionParams{
 				EscrowID:       escrowID,
 				EpochID:        7,
-				Version:        testutil.RuntimeTestVersion,
+				Version:        storageTestVersion,
 				CreatorAddr:    "creator",
 				Config:         types.SessionConfig{},
 				Group:          defaultGroup(),
@@ -527,7 +526,7 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 		params := CreateSessionParams{
 			EscrowID:       escrowID,
 			EpochID:        uint64(s % 2),
-			Version:        testutil.RuntimeTestVersion,
+			Version:        storageTestVersion,
 			CreatorAddr:    fmt.Sprintf("creator-%d", s),
 			Config:         types.SessionConfig{TokenPrice: 1},
 			Group:          defaultGroup(),
@@ -711,7 +710,7 @@ func TestSQLite_MetaIndex_DuplicateEscrowAcrossEpochFiles(t *testing.T) {
 	_, err = p.writeDB.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		"dup", testutil.RuntimeTestVersion, "creator", `{}`, `[]`, 1000,
+		"dup", storageTestVersion, "creator", `{}`, `[]`, 1000,
 	)
 	require.NoError(t, err)
 	require.NoError(t, p.close())

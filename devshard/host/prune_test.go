@@ -92,8 +92,7 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 		Group:          group,
 		InitialBalance: 1_000_000,
 	}))
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,
-		state.WithInferenceStore(store),
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store,
 	)
 	require.NoError(t, err)
 
@@ -406,8 +405,7 @@ func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
 		EscrowID: "escrow-1", EpochID: 7, Version: testutil.RuntimeTestVersion,
 		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 1_000_000,
 	}))
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier,
-		state.WithInferenceStore(store),
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store,
 	)
 	require.NoError(t, err)
 
@@ -497,7 +495,8 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 		VoteThreshold: 2, ValidationRate: 0,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier)
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store)
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
 		WithEpochID(7),
@@ -526,7 +525,7 @@ func TestHost_ValidateAsync_SkippedDoesNotEnqueueValidation(t *testing.T) {
 		VoteThreshold: 1, ValidationRate: 10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
 	require.NoError(t, err)
 
 	skipper := &skippingValidator{}

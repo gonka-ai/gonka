@@ -184,13 +184,8 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
 		sm.sealedNonces[id] = sealNonce
 		delete(sm.committedEntries, id)
-		if sm.inferenceStore != nil {
-			if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, sealNonce)); err != nil {
-				// Storage is auxiliary; sealed_acc is the canonical commitment.
-				// Mirror SealInference's behaviour and surface the error so the
-				// caller can roll back via mutableSnapshot.
-				return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
-			}
+		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
+			return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
 		}
 		delete(sm.state.Inferences, id)
 	}
@@ -221,22 +216,27 @@ func (sm *StateMachine) SealInference(id uint64) error {
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	delete(sm.committedEntries, id)
 
-	if sm.inferenceStore != nil {
-		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, sealedNonce)); err != nil {
-			return err
-		}
+	if err := sm.upsertInferenceObsLocked(id, sealedNonce, rec); err != nil {
+		return err
 	}
 	delete(sm.state.Inferences, id)
 	return nil
+}
+
+// LookupSealedInference returns the inference record persisted at seal time
+// (observability only; not part of the state root).
+func (sm *StateMachine) LookupSealedInference(id uint64) (types.InferenceRecord, bool) {
+	row, ok, err := sm.inferenceStore.GetSealedInference(sm.state.EscrowID, id)
+	if err != nil || !ok || !row.ObsPresent {
+		return types.InferenceRecord{}, false
+	}
+	return inferenceRecordFromObsRow(row), true
 }
 
 func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if sm.inferenceStore == nil {
-		return nil
-	}
 	if err := sm.inferenceStore.DeleteSealedInferences(sm.state.EscrowID); err != nil {
 		return err
 	}
@@ -253,16 +253,63 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 		if !ok {
 			nonce = sm.state.LatestNonce
 		}
-		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceRow(id, nonce)); err != nil {
+		row := storage.InferenceRow{InferenceID: id, SealedNonce: nonce}
+		if cached, ok := sm.committedEntries[id]; ok {
+			if entryID, rec, err := unmarshalInferenceEntry(cached); err == nil && entryID == id {
+				row = inferenceObsRow(id, nonce, rec)
+			}
+		}
+		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, row); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func inferenceRow(id, sealedNonce uint64) storage.InferenceRow {
-	return storage.InferenceRow{
-		InferenceID: id,
-		SealedNonce: sealedNonce,
+// persistLiveInferenceObsLocked upserts the current live inference snapshot
+// (e.g. on StatusChallenged) before RAM prune. Caller must hold sm.mu.
+func (sm *StateMachine) persistLiveInferenceObsLocked(id uint64, rec *types.InferenceRecord) error {
+	sealNonce, _ := sm.sealedNonces[id]
+	return sm.upsertInferenceObsLocked(id, sealNonce, rec)
+}
+
+// upsertInferenceObsLocked writes or updates the observability row for an inference.
+// On seal, DrainInferenceValidationObs moves live validation counters into sealed storage.
+// Caller must hold sm.mu.
+func (sm *StateMachine) upsertInferenceObsLocked(id, sealedNonce uint64, rec *types.InferenceRecord) error {
+	if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceObsRow(id, sealedNonce, rec)); err != nil {
+		return err
+	}
+	if sealedNonce > 0 {
+		if err := sm.inferenceStore.DrainInferenceValidationObs(sm.state.EscrowID, id); err != nil {
+			return fmt.Errorf("drain validation obs: %w", err)
+		}
+	}
+	return nil
+}
+
+func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage.InferenceRow {
+	row := storage.InferenceRow{
+		InferenceID:        id,
+		SealedNonce:        sealedNonce,
+		ObsPresent:         true,
+		SealedStatus:       uint32(rec.Status),
+		SealedExecutorSlot: rec.ExecutorSlot,
+		SealedVotesValid:   rec.VotesValid,
+		SealedVotesInvalid: rec.VotesInvalid,
+	}
+	if vb := rec.ValidatedBy.Bytes(); len(vb) > 0 {
+		row.SealedValidatedBy = vb
+	}
+	return row
+}
+
+func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
+	return types.InferenceRecord{
+		Status:       types.InferenceStatus(row.SealedStatus),
+		ExecutorSlot: row.SealedExecutorSlot,
+		VotesValid:   row.SealedVotesValid,
+		VotesInvalid: row.SealedVotesInvalid,
+		ValidatedBy:  types.Bitmap128FromBytes(row.SealedValidatedBy),
 	}
 }

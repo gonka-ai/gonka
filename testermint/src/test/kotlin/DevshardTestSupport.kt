@@ -1,3 +1,4 @@
+import com.github.kittinunf.fuel.Fuel
 import com.productscience.*
 import com.productscience.data.*
 import kotlin.test.assertNotNull
@@ -28,6 +29,17 @@ val devshardAlwaysValidateSpec = spec<AppState> {
             }
             this[InferenceParams::bandwidthLimitsParams] = spec<BandwidthLimitsParams> {
                 this[BandwidthLimitsParams::minimumConcurrentInvalidations] = 100L
+            }
+        }
+    }
+}
+
+/** 100% devshard validation sampling (basis points). Distinct from legacy ValidationParams above. */
+val devshardEscrowAlwaysValidateSpec = spec<AppState> {
+    this[AppState::inference] = spec<InferenceState> {
+        this[InferenceState::params] = spec<InferenceParams> {
+            this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
+                this[DevshardEscrowParams::validationRate] = 10_000L
             }
         }
     }
@@ -124,9 +136,6 @@ fun LocalInferencePair.waitForDevshardPreFinalize(delay: Duration = devshardPreF
     Thread.sleep(delay.toMillis())
 }
 
-private fun devshardChatResponse(content: String): String =
-    """{"id":"test","object":"chat.completion","created":0,"model":"$defaultModel","choices":[{"index":0,"message":{"role":"assistant","content":"$content"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"""
-
 fun IInferenceMock.stubDevshardResponseForAllSegments(
     response: String,
     delay: Duration = Duration.ZERO,
@@ -169,9 +178,10 @@ fun LocalCluster.stubDevshardChatResponse(
     content: String = "hello",
     streamDelay: Duration = Duration.ZERO,
 ) {
+    val response = defaultInferenceResponseObject.withResponse(content)
     allPairs.forEach { pair ->
         pair.mock?.stubDevshardResponseForAllSegments(
-            response = devshardChatResponse(content),
+            response = response,
             streamDelay = streamDelay,
         )
     }
@@ -237,8 +247,8 @@ fun LocalInferencePair.assertDevshardSettlement(
     escrowId: Long,
     user: DevshardTestUser,
     escrowAmount: Long,
-    requireCompletedValidations: Boolean = true,
-    expectedVersion: String? = null,
+    requireCompletedValidations: Boolean = false,
+    expectedStateRootProtocolVersion: String = devshardStateRootProtocolVersion(),
 ): LocalInferencePair.DevshardctlResult {
     waitForDevshardPreFinalize()
     logSection("Finalizing via proxy")
@@ -247,9 +257,7 @@ fun LocalInferencePair.assertDevshardSettlement(
 
     logSection("Verifying settlement data")
     assertThat(result.parsed.escrowId).isEqualTo(escrowId.toString())
-    if (expectedVersion != null) {
-        assertThat(result.parsed.version).isEqualTo(expectedVersion)
-    }
+    assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(expectedStateRootProtocolVersion)
     assertThat(result.parsed.nonce).isGreaterThan(0)
     assertThat(result.parsed.hostStats).isNotEmpty()
     assertThat(result.parsed.signatures).isNotEmpty()
@@ -281,10 +289,9 @@ fun LocalInferencePair.assertDevshardSettlement(
         .isEqualTo(result.parsed.fees.toString())
     assertThat(settleEvent.attributes.firstOrNull { it.key == "remainder" }?.value)
         .isEqualTo(expectedRemainder.toString())
-    if (expectedVersion != null) {
-        assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-            .isEqualTo(expectedVersion)
-    }
+    assertThat(
+        settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
+    ).isEqualTo(expectedStateRootProtocolVersion)
 
     logSection("Verifying escrow settled")
     val escrow = node.queryDevshardEscrow(escrowId)
@@ -296,6 +303,51 @@ fun LocalInferencePair.assertDevshardSettlement(
 
     return result
 }
+
+fun LocalInferencePair.getDevshardShardStatsDetail(
+    escrowId: Long,
+    routePrefix: String = "/v1/devshard",
+): DevshardShardStatsDetail {
+    val normalizedPrefix = routePrefix.trimEnd('/')
+    val path = "$normalizedPrefix/stats/shards/$escrowId"
+    val raw = if (normalizedPrefix.startsWith("/devshard/")) {
+        val url = "${api.getPublicUrl().trimEnd('/')}$path"
+        val (_, response, result) = Fuel.get(url).timeoutRead(10_000).responseString()
+        check(response.statusCode == 200) {
+            "GET $url returned ${response.statusCode}: $result"
+        }
+        result.get()
+    } else {
+        curlFromApiNetwork("${apiContainerPublicUrl()}$path")
+    }
+    return cosmosJson.fromJson(raw, DevshardShardStatsDetail::class.java)
+}
+
+fun LocalInferencePair.waitForDevshardValidationObservability(
+    escrowId: Long,
+    minCompleted: Int = 1,
+    timeoutMs: Long = 120_000L,
+    pollIntervalMs: Long = 2_000L,
+    routePrefix: String = "/v1/devshard",
+) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val stats = getDevshardShardStatsDetail(escrowId, routePrefix)
+        if (stats.validationObservability.totals.completedValidations >= minCompleted) {
+            return
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    val last = getDevshardShardStatsDetail(escrowId, routePrefix)
+    error(
+        "timed out waiting for validation observability completed >= $minCompleted " +
+            "(got ${last.validationObservability.totals.completedValidations})",
+    )
+}
+
+/** True when validation challenged the inference and/or quorum invalidated it. */
+fun DevshardInferencePayload.hasChallengedOutcome(): Boolean =
+    status == DevshardInferenceStatus.CHALLENGED || status == DevshardInferenceStatus.INVALIDATED
 
 fun LocalInferencePair.findChallengedDevshardInference(
     handle: LocalInferencePair.DevshardProxyHandle,
@@ -310,6 +362,6 @@ fun LocalInferencePair.findChallengedDevshardInference(
                 getDevshardInferenceState(handle.proxyUrl, inferenceId),
                 DevshardInferencePayload::class.java,
             )
-        }.getOrNull()?.takeIf { it.status == DevshardInferenceStatus.CHALLENGED }
+        }.getOrNull()?.takeIf { it.hasChallengedOutcome() }
     }
 }

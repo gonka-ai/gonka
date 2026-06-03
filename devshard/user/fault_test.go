@@ -77,7 +77,7 @@ func runFault(t *testing.T, failPct int) {
 	killables := make([]*KillableClient, faultNumHosts)
 	clients := make([]HostClient, faultNumHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-fault", config, group, faultBalance, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-fault", config, group, faultBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fault", userKey.Address(), config, group, faultBalance))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-fault", group, nil, host.WithGrace(grace))
@@ -87,7 +87,7 @@ func runFault(t *testing.T, failPct int) {
 		clients[i] = kc
 	}
 
-	userSM, err := state.NewStateMachine("escrow-fault", config, group, faultBalance, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-fault", config, group, faultBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fault", userKey.Address(), config, group, faultBalance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-fault", group, clients, verifier)
 	require.NoError(t, err)
