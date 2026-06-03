@@ -1,4 +1,4 @@
-.PHONY: build test e2e e2e-clean-results e2e-build e2e-standard e2e-reconcile e2e-report testapp build-docker docker-push release
+.PHONY: build test e2e e2e-clean-results e2e-build e2e-run e2e-report testapp build-docker docker-push release
 
 include ../scripts/blst-portable.mk
 
@@ -37,7 +37,7 @@ testapp:
 	go build -o build/testapp ./e2e/testapp
 	go build -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" -o build/testapp2 ./e2e/testapp
 
-e2e: e2e-clean-results e2e-build e2e-standard e2e-reconcile e2e-report
+e2e: e2e-clean-results e2e-build e2e-run e2e-report
 
 e2e-clean-results:
 	rm -rf build/test-results
@@ -46,16 +46,15 @@ e2e-clean-results:
 e2e-build:
 	docker compose -f e2e/docker-compose.yml build
 
-e2e-standard:
+e2e-run:
 	docker compose -f e2e/docker-compose.yml up --no-build --abort-on-container-exit --exit-code-from tests
-
-e2e-reconcile:
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml up --no-build -d oracle versiond
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml stop versiond
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml run --rm --no-deps -e REGISTER_STARTUP_VERSION=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-register-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestRegisterStartupVersion$$'
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml start versiond
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml run --rm --no-deps -e EXPECT_INITIAL_V1=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-on-start-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestStartupFromExistingOracleState$$'
-	docker compose -p versioned-e2e-reconcile -f e2e/docker-compose.yml down -v
+	docker compose -f e2e/docker-compose.yml down -v
+	docker compose -f e2e/docker-compose.yml up --no-build -d oracle versiond
+	docker compose -f e2e/docker-compose.yml stop versiond
+	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e REGISTER_STARTUP_VERSION=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-register-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestRegisterStartupVersion$$'
+	docker compose -f e2e/docker-compose.yml start versiond
+	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e EXPECT_INITIAL_V1=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-on-start-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestStartupFromExistingOracleState$$'
+	docker compose -f e2e/docker-compose.yml down -v
 
 e2e-report:
 	uvx junitparser merge --glob 'build/test-results/*-junit.xml' build/test-results/e2e-junit.xml
