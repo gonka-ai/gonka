@@ -184,19 +184,16 @@ class UpgradeRehearsalTests : TestermintTest() {
             ?.let(::File)
             ?: File(manifestFile().parentFile, "completion-manifest.json")
         output.parentFile.mkdirs()
-        output.writeText(
-            """
-                {
-                  "schema": 1,
-                  "phase": "completed",
-                  "completedAt": "${escapeJson(Instant.now().toString())}",
-                  "targetUpgrade": "${escapeJson(targetUpgrade)}",
-                  "upgradeHeight": $upgradeHeight,
-                  "postUpgradeInferenceId": "${escapeJson(postInferenceId)}",
-                  "postUpgradeDevshardEscrowId": $postDevshardEscrowId
-                }
-            """.trimIndent()
+        val manifest = mapOf(
+            "schema" to 1,
+            "phase" to "completed",
+            "completedAt" to Instant.now().toString(),
+            "targetUpgrade" to targetUpgrade,
+            "upgradeHeight" to upgradeHeight,
+            "postUpgradeInferenceId" to postInferenceId,
+            "postUpgradeDevshardEscrowId" to postDevshardEscrowId,
         )
+        output.writeText(cosmosJson.toJson(manifest))
         Logger.info("Wrote upgrade rehearsal completion manifest to {}", output.absolutePath)
     }
 
@@ -356,11 +353,4 @@ class UpgradeRehearsalTests : TestermintTest() {
     private fun requiredEnv(name: String): String =
         System.getenv(name)?.takeIf { it.isNotBlank() }
             ?: error("Required environment variable $name is not set")
-
-    private fun escapeJson(value: String): String =
-        value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
 }

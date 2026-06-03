@@ -45,6 +45,20 @@ The workflow applies that patch to the old checkout before running the prep test
 
 The workflow must not tear the cluster down after this phase. The live Docker containers and volumes are the upgrade subject.
 
+### Maintaining The Prep Patch
+
+`previous-release-prep.patch` is intentionally version-coupled to the previous release's Testermint harness. When the previous canonical release changes, refresh the patch against that release instead of assuming the old patch still applies.
+
+Recommended refresh loop:
+
+1. Check out the new previous release tag in a scratch worktree, for example `git worktree add /tmp/gonka-prev release/v0.2.14`.
+2. Add or update `testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt` in that scratch checkout.
+3. Run the prep test locally or in a temporary workflow run until it creates the expected manifest and leaves the cluster running.
+4. From the scratch checkout, regenerate the patch with `git diff -- testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt > /path/to/current/testermint/upgrade-rehearsal/previous-release-prep.patch`.
+5. Re-run `testermint-upgrade-rehearsal.yml` with explicit `target_upgrade` and `previous_release` overrides before relying on the default discovery path.
+
+Keep the patch narrow. It should add only the old-checkout prep test and should not alter cluster teardown, Docker image naming, or production chain code in the old release.
+
 ## Phase 2: Build Candidate Upgrade Archives
 
 The candidate checkout builds the upgrade archives with:
