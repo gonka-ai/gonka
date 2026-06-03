@@ -294,15 +294,18 @@ class UpgradeRehearsalTests : TestermintTest() {
         }
 
     private fun verifyUpgradeWithLocalApiRecovery(cluster: LocalCluster, genesis: LocalInferencePair) {
+        fun pairHealthFailure(pair: LocalInferencePair): Throwable? =
+            runCatching { verifyPairHealthy(pair) }.exceptionOrNull()
+
         fun failedPairs(): List<LocalInferencePair> =
-            cluster.allPairs.filter { pair -> runCatching { verifyPairHealthy(pair) }.isFailure }
+            cluster.allPairs.filter { pair -> pairHealthFailure(pair) != null }
 
         val initialFailures = failedPairs()
         if (initialFailures.isEmpty()) {
             return
         }
 
-        val firstFailure = runCatching { verifyPairHealthy(initialFailures.first()) }.exceptionOrNull()
+        val firstFailure = pairHealthFailure(initialFailures.first())
         if (firstFailure == null || !isBadGatewayFailure(firstFailure)) {
             throw firstFailure ?: IllegalStateException("Upgrade verification failed for unknown reason")
         }
@@ -313,16 +316,21 @@ class UpgradeRehearsalTests : TestermintTest() {
         )
         initialFailures.forEach { it.restartApiContainer() }
 
-        genesis.waitForBlock(20) {
-            cluster.allPairs.all { pair ->
-                runCatching {
-                    verifyPairHealthy(pair)
-                    true
-                }.getOrDefault(false)
+        val startBlock = genesis.getCurrentBlockHeight()
+        val targetBlock = startBlock + 40
+        while (genesis.getCurrentBlockHeight() < targetBlock) {
+            val remainingFailures = failedPairs()
+            if (remainingFailures.isEmpty()) {
+                return
             }
+            Logger.info(
+                "Waiting for restarted API containers to recover: {}",
+                remainingFailures.joinToString(", ") { it.name },
+            )
+            genesis.node.waitForNextBlock(2)
         }
 
-        cluster.allPairs.forEach(::verifyPairHealthy)
+        error("API containers did not recover from post-upgrade 502 by block $targetBlock")
     }
 
     private fun rehearsalBinaryPath(path: String): String {
