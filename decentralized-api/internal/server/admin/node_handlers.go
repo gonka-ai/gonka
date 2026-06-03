@@ -128,15 +128,15 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 		SecondsUntilNextPoC: seconds,
 	})
 
-	// Lead with the MLnode-level message when the participant is active
-	// OR when there is a test signal to report — a test in progress or a
-	// failed test matters even before the participant joins the active
-	// set. Otherwise lead with participant-level onboarding guidance.
+	// Lead with test signals first. An assigned active node should show the
+	// participant-active message, never the "safe to be offline" waiting copy.
 	shouldBeOnline := timing != nil && timing.ShouldBeOnline
 	var userMsg, guidance string
-	if active || mlState == MLNodeState_TESTING || mlState == MLNodeState_TEST_FAILED {
+	if mlState == MLNodeState_TESTING || mlState == MLNodeState_TEST_FAILED {
 		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel, validated, shouldBeOnline)
 		guidance = BuildParticipantMessage(participantState)
+	} else if active {
+		userMsg = BuildParticipantMessage(participantState)
 	} else {
 		userMsg = BuildParticipantMessage(participantState)
 		guidance = BuildInactiveGuidance(seconds)

@@ -325,11 +325,18 @@ func TestComputeOnboarding_BrokerFailedIsNotTestFailed(t *testing.T) {
 	}
 }
 
-// TestComputeOnboarding_ActiveIsValidated checks that an active
-// participant's node is treated as validated — it must not be shown as
-// "not yet validated", since it is already serving in the epoch.
-func TestComputeOnboarding_ActiveIsValidated(t *testing.T) {
+// TestComputeOnboarding_ActiveAssignedNodeUsesParticipantMessage checks that
+// an assigned active node never gets the inactive waiting copy ("safe to be
+// offline"), even when the next PoC is far away.
+func TestComputeOnboarding_ActiveAssignedNodeUsesParticipantMessage(t *testing.T) {
 	s, _, _ := setupTestServer(t)
+	s.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "h"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
 	n := broker.NodeResponse{
 		Node: broker.Node{Id: "active-node"},
 		State: broker.NodeState{
@@ -340,6 +347,8 @@ func TestComputeOnboarding_ActiveIsValidated(t *testing.T) {
 	ob := s.computeOnboarding(n)
 	if assert.NotNil(t, ob) {
 		assert.Equal(t, string(ParticipantState_ACTIVE_PARTICIPATING), ob.ParticipantState)
+		assert.Equal(t, "Participant is in active set and participating", ob.UserMessage)
+		assert.NotContains(t, ob.UserMessage, "safe to be offline")
 		assert.NotContains(t, ob.UserMessage, "not yet validated")
 	}
 }
