@@ -141,7 +141,7 @@ devshardd-build:
 	@$(_DEVSHARDD_BUILD_CMD) --platform $(DOCKER_PLATFORM) --target builder \
 		--build-arg GOOS=$(DOCKER_GOOS) \
 		--build-arg GOARCH=$(DOCKER_GOARCH) \
-		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
+		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		--build-arg DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
 		-f decentralized-api/Dockerfile . \
