@@ -22,8 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
-
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -119,10 +117,6 @@ func NewEventListener(
 		opt(el)
 	}
 	return el
-}
-
-func (el *EventListener) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
-	el.dispatcher.SetAvailabilityTracker(tracker)
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
