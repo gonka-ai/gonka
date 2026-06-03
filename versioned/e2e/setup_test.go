@@ -125,6 +125,23 @@ func deleteVersion(t *testing.T, name string) {
 	resp.Body.Close()
 }
 
+// deleteAllVersions removes every version from the mock oracle.
+func deleteAllVersions(t *testing.T) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, oracleURL+"/versions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete all versions: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete all versions status: %d", resp.StatusCode)
+	}
+}
+
 // setOracleFailure toggles the mock oracle's failure mode for version metadata.
 func setOracleFailure(t *testing.T, enabled bool) {
 	t.Helper()

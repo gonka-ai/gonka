@@ -52,14 +52,30 @@ func main() {
 	}
 
 	http.HandleFunc("/versions", func(w http.ResponseWriter, r *http.Request) {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		if s.fail {
-			http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
-			return
+		switch r.Method {
+		case http.MethodGet:
+			s.mu.RLock()
+			fail := s.fail
+			versions := append([]Version(nil), s.versions...)
+			s.mu.RUnlock()
+			if fail {
+				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(VersionConfig{Versions: versions})
+		case http.MethodDelete:
+			if s.failureEnabled() {
+				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
+				return
+			}
+			s.mu.Lock()
+			s.versions = nil
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VersionConfig{Versions: s.versions})
 	})
 
 	http.HandleFunc("/versions/", func(w http.ResponseWriter, r *http.Request) {

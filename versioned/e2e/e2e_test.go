@@ -179,6 +179,26 @@ func TestOracleTemporaryFailureKeepsVersionsRunning(t *testing.T) {
 	}
 }
 
+func TestEmptyOracleResponseKeepsVersionsRunning(t *testing.T) {
+	setOracleFailure(t, false)
+	deleteAllVersions(t)
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "empty-oracle-v1.zip", zipData)
+	putVersion(t, "v1", fmt.Sprintf("%s/binaries/empty-oracle-v1.zip", oracleURL), hash, 9001)
+	waitForVersion(t, "v1", 90*time.Second)
+
+	deleteVersion(t, "v1")
+	time.Sleep(12 * time.Second)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/v1/", versiondURL), &resp)
+	if resp["prefix"] != "v1" {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], "v1")
+	}
+}
+
 func TestHashMismatch(t *testing.T) {
 	zipData, _ := buildTestappZip(t)
 
