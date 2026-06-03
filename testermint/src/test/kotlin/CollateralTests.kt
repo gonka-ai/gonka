@@ -42,11 +42,23 @@ class CollateralTests : TestermintTest() {
         }
     }
 
+    /** Stream vesting credits [initial_epoch_reward] at CLAIM_REWARDS; settle through epoch 2 before balance checks. */
+    private fun LocalInferencePair.waitThroughEpochRewardClaim(targetEpoch: Long) {
+        logSection("Waiting through CLAIM_REWARDS until epoch $targetEpoch rewards are settled")
+        while (getEpochData().latestEpoch.index < targetEpoch) {
+            waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        }
+        waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        node.waitForNextBlock(2)
+    }
+
     @Test
     fun `a participant can deposit collateral and withdraw it`() {
         val (cluster, genesis) = initCluster(reboot = true)
         val participant = cluster.genesis
         val participantAddress = participant.node.getColdAddress()
+
+        participant.waitThroughEpochRewardClaim(targetEpoch = 2)
 
         logSection("Despositing collateral")
 
