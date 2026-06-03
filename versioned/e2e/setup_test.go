@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	oracleURL   = envOrDefault("ORACLE_URL", "http://oracle:8080")
-	versiondURL = envOrDefault("VERSIOND_URL", "http://versiond:8080")
+	oracleURL            = envOrDefault("ORACLE_URL", "http://oracle:8080")
+	versiondURL          = envOrDefault("VERSIOND_URL", "http://versiond:8080")
+	versiondPollInterval = durationEnvOrDefault("VERSIOND_POLL_INTERVAL", 5*time.Second)
 )
 
 func envOrDefault(key, fallback string) string {
@@ -26,6 +27,18 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func durationEnvOrDefault(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // buildTestappZip creates a zip archive containing the pre-built testapp binary
@@ -199,6 +212,11 @@ func waitForVersionUnavailable(t *testing.T, version string, timeout time.Durati
 	t.Fatalf("version %s did not become temporarily unavailable after %v", version, timeout)
 }
 
+// waitForPollCycles waits long enough for versiond to observe oracle state changes.
+func waitForPollCycles(cycles int) {
+	time.Sleep(time.Duration(cycles)*versiondPollInterval + 2*time.Second)
+}
+
 // waitForVersionGone polls versiond until the given version is no longer proxied.
 func waitForVersionGone(t *testing.T, version string, timeout time.Duration) {
 	t.Helper()
@@ -216,6 +234,32 @@ func waitForVersionGone(t *testing.T, version string, timeout time.Duration) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("version %s still available after %v", version, timeout)
+}
+
+// assertHealthStatus verifies that versiond reports the expected status for a version.
+func assertHealthStatus(t *testing.T, version, wantStatus string) {
+	t.Helper()
+	resp, err := http.Get(fmt.Sprintf("%s/healthz", versiondURL))
+	if err != nil {
+		t.Fatalf("GET healthz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var statuses []map[string]interface{}
+	if err := json.Unmarshal(body, &statuses); err != nil {
+		t.Fatalf("decode healthz: %v, body: %s", err, string(body))
+	}
+
+	for _, s := range statuses {
+		if s["name"] == version {
+			if s["status"] != wantStatus {
+				t.Errorf("%s status = %q, want %s", version, s["status"], wantStatus)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s not found in healthz response: %s", version, string(body))
 }
 
 // getJSON does a GET and decodes the JSON response into out.

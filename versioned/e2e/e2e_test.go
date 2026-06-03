@@ -170,7 +170,7 @@ func TestOracleTemporaryFailureKeepsVersionsRunning(t *testing.T) {
 	waitForVersion(t, version, 90*time.Second)
 
 	setOracleFailure(t, true)
-	time.Sleep(12 * time.Second)
+	waitForPollCycles(2)
 
 	var resp map[string]string
 	getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, version), &resp)
@@ -190,13 +190,35 @@ func TestEmptyOracleResponseKeepsVersionsRunning(t *testing.T) {
 	waitForVersion(t, "v1", 90*time.Second)
 
 	deleteVersion(t, "v1")
-	time.Sleep(12 * time.Second)
+	waitForPollCycles(2)
 
 	var resp map[string]string
 	getJSON(t, fmt.Sprintf("%s/v1/", versiondURL), &resp)
 	if resp["prefix"] != "v1" {
 		t.Errorf("prefix = %q, want %q", resp["prefix"], "v1")
 	}
+}
+
+func TestFailedSameVersionUpdateKeepsOldChildRunning(t *testing.T) {
+	setOracleFailure(t, false)
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "failed-update-v1.zip", zipData)
+	putVersion(t, "v1", fmt.Sprintf("%s/binaries/failed-update-v1.zip", oracleURL), hash, 9001)
+	waitForVersion(t, "v1", 90*time.Second)
+
+	uploadBinary(t, "failed-update-v1-bad.zip", zipData)
+	putVersion(t, "v1", fmt.Sprintf("%s/binaries/failed-update-v1-bad.zip", oracleURL), "wrong_hash", 9001)
+
+	waitForPollCycles(2)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/v1/", versiondURL), &resp)
+	if resp["prefix"] != "v1" {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], "v1")
+	}
+	assertHealthStatus(t, "v1", "running")
 }
 
 func TestHashMismatch(t *testing.T) {
