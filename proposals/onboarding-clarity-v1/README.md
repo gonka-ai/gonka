@@ -39,7 +39,7 @@ This proposal addresses critical user experience issues during node onboarding b
 **Better Restart Handling:**
 - When API node restarts, check if participant is actually in active set
 - Don't show confusing error messages if participant isn't active yet
-- Instead of: Error "there is no model for ml node" 
+- Instead of: Error "there is no model for ml node"
 - Show: Info message "Participant not yet active - model assignment pending (normal for new participants)"
 
 ### Enhanced State Management System
@@ -126,7 +126,7 @@ The same `WAITING_FOR_POC` state provides different user messages based on timin
 
 **New Components for Admin Server** (`decentralized-api/internal/server/admin/`):
 - `OnboardingStateManager` - Centralized state tracking for onboarding process
-- `MLnodeTestingOrchestrator` - Manages pre-PoC testing workflows  
+- `MLnodeTestingOrchestrator` - Manages pre-PoC testing workflows
 - `TimingCalculator` - Computes PoC schedules and safe offline windows
 - `StatusReporter` - Generates user-friendly status messages
 
