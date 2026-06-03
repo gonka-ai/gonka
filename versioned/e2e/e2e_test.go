@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,84 @@ func TestBasicFlow(t *testing.T) {
 	if resp["prefix"] != "testapp" {
 		t.Errorf("prefix = %q, want %q", resp["prefix"], "testapp")
 	}
+}
+
+func TestChildProcessCrashRecovery(t *testing.T) {
+	zipData, hash := buildTestappZip(t)
+	version := "child-crash-recovery"
+
+	uploadBinary(t, version+".zip", zipData)
+	putVersion(t, version, fmt.Sprintf("%s/binaries/%s.zip", oracleURL, version), hash, 9005)
+	waitForVersion(t, version, 90*time.Second)
+
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/exit", versiondURL, version), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request child exit: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("child exit status = %d, want 204", resp.StatusCode)
+	}
+
+	waitForVersionUnavailable(t, version, 10*time.Second)
+	waitForVersion(t, version, 90*time.Second)
+
+	var recovered map[string]string
+	getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, version), &recovered)
+	if recovered["prefix"] != version {
+		t.Errorf("prefix = %q, want %q", recovered["prefix"], version)
+	}
+}
+
+func TestRegisterStartupVersion(t *testing.T) {
+	if os.Getenv("REGISTER_STARTUP_VERSION") == "" {
+		t.Skip("startup version registration is enabled only by the startup scenario")
+	}
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "startup-v1.zip", zipData)
+	putVersion(t, "v1", fmt.Sprintf("%s/binaries/startup-v1.zip", oracleURL), hash, 9001)
+}
+
+func TestStartupFromExistingOracleState(t *testing.T) {
+	if os.Getenv("EXPECT_INITIAL_V1") == "" {
+		t.Skip("startup oracle state scenario is enabled only after versiond restart")
+	}
+
+	waitForVersion(t, "v1", 90*time.Second)
+
+	var proxied map[string]string
+	getJSON(t, fmt.Sprintf("%s/v1/", versiondURL), &proxied)
+	if proxied["prefix"] != "v1" {
+		t.Errorf("prefix = %q, want %q", proxied["prefix"], "v1")
+	}
+
+	resp, err := http.Get(fmt.Sprintf("%s/healthz", versiondURL))
+	if err != nil {
+		t.Fatalf("GET healthz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var statuses []map[string]interface{}
+	if err := json.Unmarshal(body, &statuses); err != nil {
+		t.Fatalf("decode healthz: %v, body: %s", err, string(body))
+	}
+
+	for _, s := range statuses {
+		if s["name"] == "v1" {
+			if s["status"] != "running" {
+				t.Errorf("v1 status = %q, want running", s["status"])
+			}
+			return
+		}
+	}
+	t.Fatalf("v1 not found in healthz response: %s", string(body))
 }
 
 func TestAddVersion(t *testing.T) {
@@ -74,6 +153,29 @@ func TestRemoveVersion(t *testing.T) {
 	getJSON(t, fmt.Sprintf("%s/testapp2/", versiondURL), &resp)
 	if resp["prefix"] != "testapp2" {
 		t.Errorf("testapp2 prefix = %q", resp["prefix"])
+	}
+}
+
+func TestOracleTemporaryFailureKeepsVersionsRunning(t *testing.T) {
+	setOracleFailure(t, false)
+	t.Cleanup(func() {
+		setOracleFailure(t, false)
+	})
+
+	zipData, hash := buildTestappZip(t)
+	version := "oracle-failure"
+
+	uploadBinary(t, version+".zip", zipData)
+	putVersion(t, version, fmt.Sprintf("%s/binaries/%s.zip", oracleURL, version), hash, 9004)
+	waitForVersion(t, version, 90*time.Second)
+
+	setOracleFailure(t, true)
+	time.Sleep(12 * time.Second)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, version), &resp)
+	if resp["prefix"] != version {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], version)
 	}
 }
 

@@ -125,6 +125,24 @@ func deleteVersion(t *testing.T, name string) {
 	resp.Body.Close()
 }
 
+// setOracleFailure toggles the mock oracle's failure mode for version metadata.
+func setOracleFailure(t *testing.T, enabled bool) {
+	t.Helper()
+	url := fmt.Sprintf("%s/fail?enabled=%t", oracleURL, enabled)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("set oracle failure: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set oracle failure status: %d", resp.StatusCode)
+	}
+}
+
 // waitForVersion polls versiond until the given version responds through the proxy.
 func waitForVersion(t *testing.T, version string, timeout time.Duration) {
 	t.Helper()
@@ -142,6 +160,26 @@ func waitForVersion(t *testing.T, version string, timeout time.Duration) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("version %s not available after %v", version, timeout)
+}
+
+// waitForVersionUnavailable polls until the version stops returning 200.
+func waitForVersionUnavailable(t *testing.T, version string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("%s/%s/", versiondURL, version)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err != nil {
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return
+		}
+		resp.Body.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("version %s did not become temporarily unavailable after %v", version, timeout)
 }
 
 // waitForVersionGone polls versiond until the given version is no longer proxied.

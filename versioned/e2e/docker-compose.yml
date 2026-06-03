@@ -1,5 +1,6 @@
 services:
   oracle:
+    image: versioned-e2e-oracle:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile.mockoracle
@@ -10,6 +11,7 @@ services:
       - oracle-data:/data
 
   versiond:
+    image: versioned-e2e-versiond:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -23,6 +25,7 @@ services:
       - oracle
 
   tests:
+    image: versioned-e2e-tests:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile.tests
@@ -31,6 +34,8 @@ services:
       VERSIOND_URL: http://versiond:8080
       TESTAPP_PATH: /app/build/testapp
       TESTAPP2_PATH: /app/build/testapp2
+    volumes:
+      - ../build/test-results:/app/test-results
     depends_on:
       - oracle
       - versiond

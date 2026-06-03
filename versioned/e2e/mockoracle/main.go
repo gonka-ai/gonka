@@ -27,6 +27,7 @@ type store struct {
 	mu       sync.RWMutex
 	versions []Version
 	binDir   string
+	fail     bool
 }
 
 func main() {
@@ -53,6 +54,10 @@ func main() {
 	http.HandleFunc("/versions", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
+		if s.fail {
+			http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(VersionConfig{Versions: s.versions})
 	})
@@ -65,6 +70,10 @@ func main() {
 		}
 		switch r.Method {
 		case http.MethodPut:
+			if s.failureEnabled() {
+				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
+				return
+			}
 			var v Version
 			if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -87,6 +96,10 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(v)
 		case http.MethodDelete:
+			if s.failureEnabled() {
+				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
+				return
+			}
 			s.mu.Lock()
 			for i, v := range s.versions {
 				if v.Name == name {
@@ -99,6 +112,18 @@ func main() {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	http.HandleFunc("/fail", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		enabled := r.URL.Query().Get("enabled") == "true"
+		s.mu.Lock()
+		s.fail = enabled
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	http.HandleFunc("/binaries/", func(w http.ResponseWriter, r *http.Request) {
@@ -128,4 +153,10 @@ func main() {
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("mock oracle listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func (s *store) failureEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fail
 }

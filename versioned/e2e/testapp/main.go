@@ -59,6 +59,19 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	http.HandleFunc("/exit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			os.Exit(42)
+		}()
+	})
+
 	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -91,8 +104,8 @@ func main() {
 		conn, err := grpc.NewClient(nmAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{
-				"error":             fmt.Sprintf("grpc dial failed: %v", err),
-				"nodemanager_addr":  nmAddr,
+				"error":            fmt.Sprintf("grpc dial failed: %v", err),
+				"nodemanager_addr": nmAddr,
 			})
 			return
 		}
