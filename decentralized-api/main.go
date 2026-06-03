@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/selfcheck"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -63,6 +64,10 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "selfcheck" {
+		runSelfcheck()
+		return
 	}
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
@@ -111,6 +116,11 @@ func main() {
 		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
+	// Background tracker for "is this participant in the current
+	// active set?" — admin handlers read its cached answer so they
+	// don't trigger N+1 chain RPCs per request. Started below once
+	// the cancellable context is available.
+	activityTracker := participant.NewActivityTracker(recorder, participantInfo.GetAddress(), 30*time.Second)
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, configManager.GetChainNodeConfig().Url)
 	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{}, configManager)
 
@@ -157,6 +167,10 @@ func main() {
 
 	// Start periodic config auto-flush of dynamic data to DB
 	configManager.StartAutoFlush(ctx, 60*time.Second)
+
+	// Start the participant activity tracker so admin handlers can
+	// answer "is this participant active?" without a per-request RPC.
+	activityTracker.Start(ctx)
 
 	// Optional off-chain inference stats storage (PostgreSQL-backed when PGHOST is configured).
 	statsStore, err := statsstorage.NewStatsStorage(ctx)
@@ -301,8 +315,17 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore, chainPhaseTracker, activityTracker, &mlnodeclient.HttpClientFactory{})
 	adminServer.Start(addr)
+	// Event-driven pre-PoC validation: the block dispatcher invokes
+	// adminServer.OnEpochState after each synced epoch update, so registered
+	// nodes (including ones loaded from config at startup) get retried for
+	// testing without polling, and only once chain state is synced. Wiring
+	// after listener.Start is safe — the hook is stored atomically.
+	listener.SetOnEpochState(adminServer.OnEpochState)
+	// Surface a periodic "waiting for PoC" status while onboarding so the
+	// most visible log during the wait is the onboarding state.
+	adminServer.StartOnboardingStatusLogger(ctx, 5*time.Minute)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
 	if nmGrpcPort == 0 {
@@ -341,6 +364,27 @@ func main() {
 	}
 
 	os.Exit(1) // Exit with an error for cosmovisor to restart the process
+}
+
+// runSelfcheck drives a one-shot assertion suite that checks the broker's
+// intended-state transitions across PoC phases, against a fresh broker
+// backed by a mocked chain. Prints the report to stderr and exits 0 on
+// PASS, 1 on FAIL. Intended for operator confidence before joining the
+// network: "does my participant binary react to epoch events as expected?"
+// (intended-state level; it does not exercise a real MLnode.)
+func runSelfcheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := selfcheck.Run(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "selfcheck: setup error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprint(os.Stderr, report.String())
+	if !report.Pass {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func returnStatus(configManager *apiconfig.ConfigManager) {
