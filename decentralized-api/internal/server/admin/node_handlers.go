@@ -339,15 +339,33 @@ func shouldAutoTest(secondsUntilNextPoC int64) bool {
 // surfaces through GET /nodes via computeOnboarding — nothing is written
 // back to the broker. No-op when the schedule is unknown, PoC is near,
 // or a test for this node is already running.
+// nodeIsServing reports whether the given node is currently assigned to
+// serve in the active epoch (it has epoch MLnode assignments). Such a node
+// must not be disrupted by a validation test. Per-node, not participant-
+// wide, so idle/spare nodes remain testable.
+func (s *Server) nodeIsServing(nodeId string) bool {
+	nodes, err := s.nodeBroker.GetNodes()
+	if err != nil {
+		return false
+	}
+	for _, n := range nodes {
+		if n.Node.Id == nodeId {
+			return len(n.State.EpochMLNodes) > 0
+		}
+	}
+	return false
+}
+
 func (s *Server) maybeAutoTest(nodeId string) {
 	if s.tester == nil || s.phaseTracker == nil {
 		return
 	}
-	// Never auto-test while the participant is active: such a node is
-	// serving inference, and the test would reload + Stop it outside the
-	// broker's knowledge, briefly taking it out of service. Pre-PoC
-	// validation is for onboarding (inactive) nodes only.
-	if s.activityTracker != nil && s.activityTracker.IsActive() {
+	// Never auto-test a node that is already assigned/serving in the
+	// current epoch: the test would reload + Stop it outside the broker's
+	// knowledge, briefly taking it out of service. This is per-node, so an
+	// idle/spare node still gets tested even when the participant has other
+	// active nodes.
+	if s.nodeIsServing(nodeId) {
 		return
 	}
 	timing := ComputeTiming(s.phaseTracker.GetCurrentEpochState())
@@ -384,7 +402,7 @@ func (s *Server) maybeAutoTest(nodeId string) {
 // Status codes:
 //   200 — test completed (body contains TestResult, possibly with status=FAILED)
 //   404 — node id not in configManager
-//   409 — a test is already running for this node
+//   409 — a test is already running, or the node is serving in the epoch
 func (s *Server) postNodeTest(c echo.Context) error {
 	nodeId := c.Param("id")
 	if nodeId == "" {
@@ -392,6 +410,16 @@ func (s *Server) postNodeTest(c echo.Context) error {
 	}
 	if s.tester == nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "tester not initialized"})
+	}
+
+	// Refuse to test a node that is assigned/serving in the current epoch:
+	// the test reloads models and then stops the node outside the broker's
+	// state machine, taking it out of service. Operators must drain it first.
+	if s.nodeIsServing(nodeId) {
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error":   "node is assigned and serving in the current epoch; testing would take it out of service",
+			"node_id": nodeId,
+		})
 	}
 
 	// Per-call timeout: model load + health probe is expected to

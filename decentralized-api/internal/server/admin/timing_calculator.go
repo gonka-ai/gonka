@@ -26,7 +26,14 @@ func ComputeTiming(es *chainphase.EpochState) *TimingInfo {
 		return nil
 	}
 	currentHeight := es.CurrentBlock.Height
-	nextPoC := es.LatestEpoch.NextPoCStart()
+	// The imminent PoC is this epoch's PoC start while we are still before
+	// it (pre-PoC inference phase); only once we're past it does the next
+	// PoC become the following epoch's. Using NextPoCStart() unconditionally
+	// would overcount by an epoch and miss the real online-alert window.
+	nextPoC := es.LatestEpoch.StartOfPoC()
+	if currentHeight >= nextPoC {
+		nextPoC = es.LatestEpoch.NextPoCStart()
+	}
 	blocks := nextPoC - currentHeight
 	if blocks < 0 {
 		blocks = 0
