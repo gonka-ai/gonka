@@ -290,6 +290,33 @@ func TestResolveNodeModelID_RejectsMultipleEpochEntries(t *testing.T) {
 	assert.Equal(t, "", modelID)
 }
 
+func TestBuildConfiguredModelLaunchPlans(t *testing.T) {
+	plans, err := BuildConfiguredModelLaunchPlans(
+		[]types.Model{
+			{Id: "model-b", ModelArgs: []string{"--gov", "b"}},
+			{Id: "model-a", ModelArgs: []string{"--shared", "gov"}},
+		},
+		map[string]ModelArgs{
+			"model-b": {Args: []string{"--local", "b"}},
+			"model-a": {Args: []string{"--shared", "local", "--local", "a"}},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, plans, 2)
+	assert.Equal(t, "model-a", plans[0].ModelID)
+	assert.Equal(t, []string{"--shared", "gov", "--local", "a"}, plans[0].Args)
+	assert.Equal(t, "model-b", plans[1].ModelID)
+	assert.Equal(t, []string{"--gov", "b", "--local", "b"}, plans[1].Args)
+}
+
+func TestBuildConfiguredModelLaunchPlans_RejectsMissingGovernanceModel(t *testing.T) {
+	_, err := BuildConfiguredModelLaunchPlans(
+		[]types.Model{{Id: "model-a"}},
+		map[string]ModelArgs{"model-b": {}},
+	)
+	require.ErrorContains(t, err, `configured model "model-b" not found in governance models`)
+}
+
 func TestResolveSupportedNodeModelID_FiltersConfiguredFallbackAgainstPoCParams(t *testing.T) {
 	broker := NewTestBroker()
 	require.NoError(t, broker.configManager.SetPoCParams(apiconfig.PoCParamsCache{

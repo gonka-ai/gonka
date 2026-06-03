@@ -171,25 +171,19 @@ type Node struct {
 }
 
 func (n *Node) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
+	return apiconfig.MLNodeURL(n.Host, n.InferencePort, n.InferenceSegment, "")
 }
 
 func (n *Node) InferenceUrlWithVersion(version string) string {
-	if version == "" {
-		return n.InferenceUrl()
-	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, version, n.InferenceSegment)
+	return apiconfig.MLNodeURL(n.Host, n.InferencePort, n.InferenceSegment, version)
 }
 
 func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+	return apiconfig.MLNodeURL(n.Host, n.PoCPort, n.PoCSegment, "")
 }
 
 func (n *Node) PoCUrlWithVersion(version string) string {
-	if version == "" {
-		return n.PoCUrl()
-	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+	return apiconfig.MLNodeURL(n.Host, n.PoCPort, n.PoCSegment, version)
 }
 
 type NodeWithState struct {
@@ -1640,12 +1634,16 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 // if that model exists in the current epoch subgroup set.
 func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 	if b.phaseTracker == nil {
-		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: only happens during early startup before the
+		// phase tracker is wired — expected, not an error.
+		logging.Info("Cannot populate node epoch data yet: phase tracker not initialized (normal during startup)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("phase tracker not initialized")
 	}
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || epochState.IsNilOrNotSynced() {
-		logging.Warn("Cannot populate node epoch data: epoch state not synced", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: normal while the node is still syncing the chain
+		// during onboarding — epoch data is populated once it is synced.
+		logging.Info("Cannot populate node epoch data yet: epoch state not synced (normal until the chain syncs)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("epoch state not synced")
 	}
 
@@ -1755,7 +1753,17 @@ func (b *Broker) populateNodeWithConfiguredModel(nodeId string) error {
 // MergeModelArgs combines model arguments from the epoch snapshot with locally
 // configured arguments, with epoch arguments taking precedence.
 // It understands arguments as --key or --key value pairs.
+// MergeModelArgs delegates to the package-level MergeModelArgs so callers
+// holding a *Broker keep working.
 func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string {
+	return MergeModelArgs(epochArgs, localArgs)
+}
+
+// MergeModelArgs merges epoch/governance model args with local config args,
+// epoch args taking precedence. It is pure, so callers outside the broker
+// (e.g. the pre-PoC node tester) can launch a model with exactly the same
+// arguments the broker will use at PoC.
+func MergeModelArgs(epochArgs []string, localArgs []string) []string {
 	// The final merged arguments, preserving the order from epochArgs, then localArgs.
 	mergedArgs := make([]string, 0, len(epochArgs)+len(localArgs))
 	// A set to store the keys from epochArgs to check for precedence.
