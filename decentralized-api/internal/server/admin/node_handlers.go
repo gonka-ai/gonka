@@ -113,10 +113,11 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 			}
 		}
 	}
-	// An active participant's node is already proven (selected and serving
-	// in the current epoch), so treat it as validated for the user-facing
-	// wording rather than showing "not yet validated".
-	if active {
+	// A node that is itself assigned/serving in the current epoch is already
+	// proven, so treat it as validated. Use node-specific evidence only —
+	// participant-wide activity must NOT validate a spare/untested node, or
+	// a broken node could show "validated, safe to be offline".
+	if len(n.State.EpochMLNodes) > 0 {
 		validated = true
 	}
 

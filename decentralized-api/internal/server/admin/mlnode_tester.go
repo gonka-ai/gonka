@@ -166,20 +166,28 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 		_ = client.Stop(stopCtx)
 	}()
 
-	// Iterate models in a stable (sorted) order so FailingModel and the
-	// per-model load sequence are deterministic across runs — Go map
-	// iteration order is randomized.
+	// Iterate models in a stable (sorted) order so FailingModel is
+	// deterministic. Each configured model is fully validated
+	// (load -> health -> inference) and the node is stopped before the next
+	// model, because the MLnode rejects a second /inference/up while one is
+	// already running with HTTP 409 ("VLLM is already running").
 	modelIds := make([]string, 0, len(cfg.Models))
 	for modelId := range cfg.Models {
 		modelIds = append(modelIds, modelId)
 	}
 	sort.Strings(modelIds)
 
-	lastModel := ""
-	for _, modelId := range modelIds {
-		modelCfg := cfg.Models[modelId]
+	for i, modelId := range modelIds {
+		// Stop the previously-loaded model so the next InferenceUp is not
+		// rejected with 409.
+		if i > 0 {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = client.Stop(stopCtx)
+			cancel()
+		}
+
 		modelStart := time.Now()
-		if err := client.InferenceUp(ctx, modelId, modelCfg.Args); err != nil {
+		if err := client.InferenceUp(ctx, modelId, cfg.Models[modelId].Args); err != nil {
 			result.Status = TestFailed
 			result.FailingModel = modelId
 			result.Error = err.Error()
@@ -187,32 +195,29 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			return result
 		}
 		result.LoadMs[modelId] = time.Since(modelStart).Milliseconds()
-		lastModel = modelId
-	}
 
-	healthStart := time.Now()
-	ok, err := client.InferenceHealth(ctx)
-	result.HealthMs = time.Since(healthStart).Milliseconds()
-	if err != nil {
-		result.Status = TestFailed
-		result.Error = "health check error: " + err.Error()
-		return result
-	}
-	if !ok {
-		result.Status = TestFailed
-		result.Error = "health check returned not ok"
-		return result
-	}
-
-	// Response validation: send one real inference request against the
-	// loaded model and validate the response, recording response time.
-	// (Uses the existing host:port URL construction; see #717 follow-up
-	// in proposals/onboarding-clarity-v1/README.md.)
-	if lastModel != "" {
-		respStart := time.Now()
-		if err := client.Inference(ctx, lastModel); err != nil {
+		healthStart := time.Now()
+		ok, err := client.InferenceHealth(ctx)
+		result.HealthMs = time.Since(healthStart).Milliseconds()
+		if err != nil {
 			result.Status = TestFailed
-			result.FailingModel = lastModel
+			result.FailingModel = modelId
+			result.Error = "health check error: " + err.Error()
+			return result
+		}
+		if !ok {
+			result.Status = TestFailed
+			result.FailingModel = modelId
+			result.Error = "health check returned not ok"
+			return result
+		}
+
+		// Response validation: send a real inference request for THIS model
+		// and validate the response, recording response time.
+		respStart := time.Now()
+		if err := client.Inference(ctx, modelId); err != nil {
+			result.Status = TestFailed
+			result.FailingModel = modelId
 			result.Error = "inference request error: " + err.Error()
 			result.RespMs = time.Since(respStart).Milliseconds()
 			return result

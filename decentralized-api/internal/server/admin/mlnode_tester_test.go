@@ -112,6 +112,45 @@ func TestMLNodeTester_ModelLoadFailure(t *testing.T) {
 	}
 }
 
+func TestMLNodeTester_MultipleModels(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models: map[string]apiconfig.ModelConfig{
+			"model-a": {},
+			"model-b": {},
+		},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+
+	tester := NewMLNodeTester(cm, factory)
+	result, err := tester.Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestSuccess {
+		t.Fatalf("status=%q error=%q", result.Status, result.Error)
+	}
+	// Each configured model must be loaded AND inference-probed, with a
+	// Stop between them (the MLnode 409s a second /inference/up otherwise).
+	if len(result.LoadMs) != 2 {
+		t.Errorf("LoadMs=%v, want both models loaded", result.LoadMs)
+	}
+	if mockClient.InferenceUpCalled != 2 {
+		t.Errorf("InferenceUp called %d times, want 2", mockClient.InferenceUpCalled)
+	}
+	if mockClient.InferenceCalled != 2 {
+		t.Errorf("inference probed %d times, want 2 (one per model)", mockClient.InferenceCalled)
+	}
+	if mockClient.StopCalled < 1 {
+		t.Errorf("Stop called %d times, want >=1 (between models)", mockClient.StopCalled)
+	}
+}
+
 func TestVersionedURL(t *testing.T) {
 	if got := versionedURL("h", 8080, "/seg", ""); got != "http://h:8080/seg" {
 		t.Errorf("unversioned = %q", got)

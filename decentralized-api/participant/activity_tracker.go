@@ -51,12 +51,14 @@ func (t *ActivityTracker) IsActive() bool {
 	return t.active.Load()
 }
 
-// Start launches a goroutine that refreshes IsActive() every interval
-// until ctx is cancelled. Performs one immediate refresh before
-// returning so IsActive() is meaningful for the first admin request.
+// Start launches a goroutine that refreshes IsActive() immediately and
+// then every interval until ctx is cancelled. Start returns without
+// blocking: the initial refresh runs inside the goroutine so a slow or
+// unresponsive chain RPC can't hold up API startup (IsActive() stays
+// false until the first successful refresh).
 func (t *ActivityTracker) Start(ctx context.Context) {
-	t.refresh(ctx)
 	go func() {
+		t.refresh(ctx)
 		ticker := time.NewTicker(t.interval)
 		defer ticker.Stop()
 		for {
