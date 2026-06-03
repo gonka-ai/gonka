@@ -58,7 +58,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier,
 		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
-		state.WithVersion(version),
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create state machine: %w", err)

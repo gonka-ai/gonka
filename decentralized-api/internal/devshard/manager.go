@@ -300,7 +300,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
 		state.WithInferenceStore(m.store),
-		state.WithVersion(m.boundVersion),
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -436,7 +436,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		meta.CreatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
 		state.WithInferenceStore(m.store),
-		state.WithVersion(recoveredVersion),
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)

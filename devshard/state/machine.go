@@ -174,7 +174,7 @@ func NewStateMachine(
 	sm := &StateMachine{
 		state: &types.EscrowState{
 			EscrowID:   escrowID,
-			StateRootAndProtocolVersion: types.DevshardStateRootAndProtocolVersion,
+			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
 			Config:     config,
 			Group:      groupCopy,
 			Balance:    initialBalance,
