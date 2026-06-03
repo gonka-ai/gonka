@@ -753,6 +753,16 @@ func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rec, ok := p.sm.LookupSealedInference(parsedID); ok {
+		writeInferenceLookup(inferenceLookupResponse{
+			Sealed:          true,
+			InferenceID:     parsedID,
+			SealNonce:       sealNonce,
+			InferenceRecord: rec,
+		})
+		return
+	}
+
 	writeInferenceLookup(inferenceLookupResponse{
 		Sealed:      true,
 		InferenceID: parsedID,

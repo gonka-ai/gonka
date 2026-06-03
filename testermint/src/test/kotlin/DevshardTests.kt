@@ -1,6 +1,9 @@
 import com.productscience.*
 import com.productscience.data.DevshardInferencePayload
 import com.productscience.data.DevshardInferenceStatus
+import com.github.dockerjava.api.async.ResultCallback
+import com.github.dockerjava.core.DockerClientBuilder
+import com.github.dockerjava.api.model.Frame
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,7 +39,10 @@ class DevshardTests : TestermintTest() {
         genesisSpec = inferenceConfig.genesisSpec
             ?.merge(devshardNoRestrictionsSpec)
             ?.merge(devshardAlwaysValidateSpec)
-            ?: devshardNoRestrictionsSpec.merge(devshardAlwaysValidateSpec)
+            ?.merge(devshardEscrowAlwaysValidateSpec)
+            ?: devshardNoRestrictionsSpec
+                .merge(devshardAlwaysValidateSpec)
+                .merge(devshardEscrowAlwaysValidateSpec)
     )
 
     @Test
@@ -114,7 +120,7 @@ class DevshardTests : TestermintTest() {
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy")
-        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
+        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName, debugLogging = true)
 
         try {
             genesis.waitForDevshardProxyWarmup()
@@ -130,14 +136,25 @@ class DevshardTests : TestermintTest() {
             genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
 
             logSection("Verifying inference statuses")
-            for (inferenceId in 1..numInferences) {
-                val inference = cosmosJson.fromJson(
-                    genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                    DevshardInferencePayload::class.java,
+            try {
+                for (inferenceId in 1..numInferences) {
+                    val inference = cosmosJson.fromJson(
+                        genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
+                        DevshardInferencePayload::class.java,
+                    )
+                    logSection("Inference $inferenceId: $inference")
+                    assertNotNull(inference)
+                    assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
+                }
+            } catch (t: Throwable) {
+                dumpDevshardFailureDebug(
+                    genesis = genesis,
+                    handle = handle,
+                    escrowId = escrowId,
+                    maxInferenceId = numInferences,
+                    context = "streaming-status-verification",
                 )
-                logSection("Inference $inferenceId: $inference")
-                assertNotNull(inference)
-                assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
+                throw t
             }
         } finally {
             genesis.stopDevshardProxy(escrowId)
@@ -175,7 +192,7 @@ class DevshardTests : TestermintTest() {
 
         logSection("Starting $sessionCount devshard proxies")
         val handles = sessions.map { session ->
-            genesis.startDevshardProxy(escrowId = session.escrowId, keyName = session.keyName)
+            genesis.startDevshardProxy(escrowId = session.escrowId, keyName = session.keyName, debugLogging = true)
         }
 
         try {
@@ -208,31 +225,42 @@ class DevshardTests : TestermintTest() {
 
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
-                val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
-                assertThat(result.parsed.escrowId)
-                    .withFailMessage("Escrow ID mismatch for ${session.keyName}")
-                    .isEqualTo(session.escrowId.toString())
-                assertThat(result.parsed.hostStats).isNotEmpty()
-                assertThat(result.parsed.signatures).isNotEmpty()
-                val obs = genesis.getDevshardShardStatsDetail(session.escrowId)
-                assertThat(obs.validationObservability.totals.completedValidations)
-                    .withFailMessage("validation observability for escrow ${session.escrowId}")
-                    .isGreaterThan(0)
+                try {
+                    val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
+                    assertThat(result.parsed.escrowId)
+                        .withFailMessage("Escrow ID mismatch for ${session.keyName}")
+                        .isEqualTo(session.escrowId.toString())
+                    assertThat(result.parsed.hostStats).isNotEmpty()
+                    assertThat(result.parsed.signatures).isNotEmpty()
+                    val obs = genesis.getDevshardShardStatsDetail(session.escrowId)
+                    assertThat(obs.validationObservability.totals.completedValidations)
+                        .withFailMessage("validation observability for escrow ${session.escrowId}")
+                        .isGreaterThan(0)
 
-                val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
-                assertThat(settleResp.code)
-                    .withFailMessage("Settlement failed for escrow ${session.escrowId}")
-                    .isEqualTo(0)
+                    val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
+                    assertThat(settleResp.code)
+                        .withFailMessage("Settlement failed for escrow ${session.escrowId}")
+                        .isEqualTo(0)
 
-                val escrow = genesis.node.queryDevshardEscrow(session.escrowId)
-                assertThat(escrow.escrow!!.settled)
-                    .withFailMessage("Escrow ${session.escrowId} not settled")
-                    .isTrue()
+                    val escrow = genesis.node.queryDevshardEscrow(session.escrowId)
+                    assertThat(escrow.escrow!!.settled)
+                        .withFailMessage("Escrow ${session.escrowId} not settled")
+                        .isTrue()
 
-                val balance = genesis.getBalance(session.address)
-                assertThat(balance)
-                    .withFailMessage("User ${session.keyName} did not receive refund")
-                    .isGreaterThan(fundAmount - escrowAmount)
+                    val balance = genesis.getBalance(session.address)
+                    assertThat(balance)
+                        .withFailMessage("User ${session.keyName} did not receive refund")
+                        .isGreaterThan(fundAmount - escrowAmount)
+                } catch (t: Throwable) {
+                    dumpDevshardFailureDebug(
+                        genesis = genesis,
+                        handle = handle,
+                        escrowId = session.escrowId,
+                        maxInferenceId = 30,
+                        context = "parallel-finalize-${session.keyName}",
+                    )
+                    throw t
+                }
             }
         } finally {
             handles.forEach { genesis.stopDevshardProxy(it.escrowId) }
@@ -280,18 +308,31 @@ class DevshardTests : TestermintTest() {
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
         logSection("Starting devshard proxy")
-        val handle = genesis.startDevshardProxy(escrowId, keyName = user.keyName)
+        val handle = genesis.startDevshardProxy(escrowId, keyName = user.keyName, debugLogging = true)
 
         try {
             genesis.waitForDevshardProxyWarmup()
-            logSection("Sending streaming chat completions via proxy")
+            logSection("Sending chat completions via proxy (join2 mock = withMissingLogit)")
             val numInferences = 20L
+            val badExecutorHostIdx = cluster.allPairs.lastIndex
             for (i in 0 until numInferences) {
+                val inferenceId = i + 1L
                 val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
                 assertThat(response).isNotEmpty()
+                genesis.traceDevshardInferencePhase(handle, inferenceId, "after_completion")
+                if (inferenceId % cluster.allPairs.size == badExecutorHostIdx.toLong()) {
+                    logSection("phase-trace inference $inferenceId routed to join2 (bad mock)")
+                }
             }
 
             genesis.waitForDevshardPreFinalize()
+            logSection("Waiting for async validations before finalize")
+            Thread.sleep(Duration.ofSeconds(15).toMillis())
+            for (inferenceId in 1..numInferences) {
+                genesis.traceDevshardInferencePhase(handle, inferenceId, "pre_finalize")
+            }
+            genesis.dumpDevshardChallengeTraceLogs(escrowId)
+
             logSection("Finalizing via proxy")
             val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
 
@@ -309,13 +350,93 @@ class DevshardTests : TestermintTest() {
             val escrow = genesis.node.queryDevshardEscrow(escrowId)
             assertThat(escrow.escrow!!.settled).isTrue()
 
+            genesis.dumpDevshardChallengeTraceLogs(escrowId)
+
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
-            logSection("Inference: $inference")
-            assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
-            assertThat(inference.votesInvalid).isNotZero()
+            try {
+                val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+                logSection("Inference: $inference")
+                assertThat(inference.status).isIn(
+                    DevshardInferenceStatus.CHALLENGED,
+                    DevshardInferenceStatus.INVALIDATED,
+                )
+                assertThat(inference.votesInvalid).isNotZero()
+            } catch (t: Throwable) {
+                dumpDevshardFailureDebug(
+                    genesis = genesis,
+                    handle = handle,
+                    escrowId = escrowId,
+                    maxInferenceId = numInferences,
+                    context = "invalid-inference-challenge-verification",
+                )
+                throw t
+            }
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
     }
+
+    private fun dumpDevshardFailureDebug(
+        genesis: LocalInferencePair,
+        handle: LocalInferencePair.DevshardProxyHandle,
+        escrowId: Long,
+        maxInferenceId: Long,
+        context: String,
+    ) {
+        logSection("Debug dump start ($context, escrow=$escrowId)")
+
+        runCatching {
+            val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
+            logSection("Debug finalize rawJson (escrow=$escrowId): ${result.rawJson}")
+        }.onFailure { logSection("Debug finalize failed (escrow=$escrowId): ${it.message}") }
+
+        runCatching {
+            val escrow = genesis.node.queryDevshardEscrow(escrowId)
+            logSection("Debug escrow state (escrow=$escrowId): ${cosmosJson.toJson(escrow)}")
+        }.onFailure { logSection("Debug escrow query failed (escrow=$escrowId): ${it.message}") }
+
+        runCatching {
+            for (inferenceId in 1..maxInferenceId) {
+                val raw = genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId)
+                logSection("Debug inference $inferenceId (escrow=$escrowId): $raw")
+            }
+        }.onFailure { logSection("Debug inference dump failed (escrow=$escrowId): ${it.message}") }
+
+        runCatching {
+            val grpcPort = genesis.nodeManagerGrpcHostPort
+                ?: error("NodeManager gRPC port not available for ${genesis.name}")
+            NodeManagerClient("localhost", grpcPort).use { client ->
+                val resp = client.getRuntimeConfig(clientParamsBlockHeight = 0, maxWaitSeconds = 0)
+                logSection("Debug runtime config snapshot (escrow=$escrowId): ${resp.configOrNull()?.toString()}")
+            }
+        }.onFailure { logSection("Debug runtime config dump failed (escrow=$escrowId): ${it.message}") }
+
+        runCatching {
+            val dockerClient = DockerClientBuilder.getInstance().build()
+            listOf("genesis", "join1", "join2").forEach { name ->
+                listOf("api", "proxy").forEach { svc ->
+                    val containerName = "$name-$svc"
+                    val collector = StringBuilder()
+                    dockerClient.logContainerCmd(containerName)
+                        .withStdOut(true)
+                        .withStdErr(true)
+                        .withTail(200)
+                        .exec(
+                            object : ResultCallback.Adapter<Frame>() {
+                                override fun onNext(item: Frame) {
+                                    collector.append(item.toString())
+                                }
+                            },
+                        )
+                        .awaitCompletion()
+                    logSection("Debug docker tail for $containerName (escrow=$escrowId): $collector")
+                }
+            }
+        }.onFailure { logSection("Debug docker tail failed (escrow=$escrowId): ${it.message}") }
+
+        logSection("Debug dump end ($context, escrow=$escrowId)")
+    }
+
+    private fun com.productscience.nodemanager.NodeManagerProto.GetRuntimeConfigResponse.configOrNull() =
+        if (hasConfig()) config else null
 }

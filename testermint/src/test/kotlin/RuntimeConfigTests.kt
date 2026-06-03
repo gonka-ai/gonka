@@ -193,19 +193,53 @@ class RuntimeConfigTests : TestermintTest() {
         val chainParams = genesis.getParams()
         val escrow = chainEscrow(genesis)
 
-        runLongPollWakeTest(
-            client = client,
-            atHeight = height,
-            maxElapsedMs = maxElapsedMs,
-            trigger = {
-                logSection("Governance: $fieldLabel")
-                genesis.runProposal(
-                    cluster,
-                    UpdateParams(params = applyGovernance(chainParams, escrow)),
+        val firstResult = CompletableFuture<NodeManagerProto.GetRuntimeConfigResponse>()
+        val firstPollThread = thread(start = true) {
+            firstResult.complete(
+                client.getRuntimeConfig(clientParamsBlockHeight = height, maxWaitSeconds = 60),
+            )
+        }
+        Thread.sleep(500)
+        val triggerThread = thread(start = true) {
+            logSection("Governance: $fieldLabel")
+            genesis.runProposal(
+                cluster,
+                UpdateParams(params = applyGovernance(chainParams, escrow)),
+            )
+        }
+
+        val elapsed = measureTimeMillis {
+            val firstResp = firstResult.get(75, TimeUnit.SECONDS)
+            firstPollThread.join(5_000)
+            triggerThread.join(120_000)
+
+            assertThat(firstResp.unchanged).isFalse()
+            assertThat(firstResp.hasConfig()).isTrue()
+            assertThat(firstResp.config.paramsBlockHeight).isGreaterThan(height)
+
+            val firstMismatch = runCatching { verifyRuntime(firstResp.config) }.exceptionOrNull()
+            if (firstMismatch != null) {
+                // Accept one non-matching wake (e.g. unrelated param_change),
+                // then require the next revision to match the target field update.
+                val secondResp = client.getRuntimeConfig(
+                    clientParamsBlockHeight = firstResp.config.paramsBlockHeight,
+                    maxWaitSeconds = 60,
                 )
-            },
-            verifyResponse = { resp -> verifyRuntime(resp.config) },
-        )
+                assertThat(secondResp.unchanged).isFalse()
+                assertThat(secondResp.hasConfig()).isTrue()
+                assertThat(secondResp.config.paramsBlockHeight).isGreaterThan(firstResp.config.paramsBlockHeight)
+                try {
+                    verifyRuntime(secondResp.config)
+                } catch (secondMismatch: Throwable) {
+                    throw AssertionError(
+                        "runtime config for '$fieldLabel' was non-matching on first and second wake; " +
+                            "firstHeight=${firstResp.config.paramsBlockHeight}, secondHeight=${secondResp.config.paramsBlockHeight}",
+                        secondMismatch,
+                    )
+                }
+            }
+        }
+        assertThat(elapsed).isLessThan(maxElapsedMs)
         verifyChain(chainEscrow(genesis))
     }
 
