@@ -18,6 +18,7 @@ import (
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/poc/earlyshare"
+	"decentralized-api/selfcheck"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -86,6 +87,10 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "selfcheck" {
+		runSelfcheck()
+		return
 	}
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
@@ -324,6 +329,27 @@ func main() {
 	}
 
 	os.Exit(1) // Exit with an error for cosmovisor to restart the process
+}
+
+// runSelfcheck drives a one-shot assertion suite that checks the broker's
+// intended-state transitions across PoC phases, against a fresh broker
+// backed by a mocked chain. Prints the report to stderr and exits 0 on
+// PASS, 1 on FAIL. Intended for operator confidence before joining the
+// network: "does my participant binary react to epoch events as expected?"
+// (intended-state level; it does not exercise a real MLnode.)
+func runSelfcheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := selfcheck.Run(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "selfcheck: setup error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprint(os.Stderr, report.String())
+	if !report.Pass {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func returnStatus(configManager *apiconfig.ConfigManager) {
