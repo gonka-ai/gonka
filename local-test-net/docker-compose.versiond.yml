@@ -7,12 +7,11 @@ services:
   versiond:
     container_name: ${KEY_NAME}-versiond
     image: versiond:latest
-    platform: linux/amd64
+    # Must match `make devshardd-build` / `make versiond-build-docker` (see scripts/blst-portable.sh).
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     build:
       context: ./versioned
       dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
     environment:
       VERSIOND_ORACLE_URL: http://${KEY_NAME}-api:9100/versions
       VERSIOND_POLL_INTERVAL: "5s"

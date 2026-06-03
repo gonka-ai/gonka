@@ -88,11 +88,13 @@ build: download-linux-deps
 		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
 		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
+include ../scripts/blst-portable.mk
+
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/amd64)
-	$(eval GOOS=linux)
-	$(eval GOARCH=amd64)
+	$(eval PLATFORM=$(DOCKER_PLATFORM))
+	$(eval GOOS=$(DOCKER_GOOS))
+	$(eval GOARCH=$(DOCKER_GOARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)

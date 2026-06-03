@@ -7,6 +7,7 @@ import com.productscience.devshardVersionedRoutePrefix
 import com.productscience.LocalInferencePair
 import com.productscience.NodeManagerClient
 import com.productscience.versiondOverrideEnv
+import com.productscience.waitForVersiondOverrideReady
 import com.productscience.createSpec
 import com.productscience.data.AppState
 import com.productscience.data.EpochPhase
@@ -99,6 +100,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         val (c, g) = initCluster(joinCount = 0, config = versiondDevsharddConfig, reboot = true)
         cluster = c
         genesis = g
+        genesis.waitForVersiondOverrideReady(standaloneTestVersionName)
         cluster.stubDevshardChatResponse()
         nodeManagerClient(genesis).use { waitForSyncedRuntimeConfig(it) }
     }

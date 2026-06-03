@@ -87,7 +87,12 @@ class DevshardStandaloneTests : TestermintTest() {
         env = overrideVersiondEnv,
     )
 
-    private val overrideLongEpochConfig = versiondConfig(
+    private val streamingLongEpochConfig = versiondConfig(
+        genesisSpec = createSpec(epochLength = 20, epochShift = 10).merge(devshardNoRestrictionsSpec),
+        env = overrideVersiondEnv,
+    )
+
+    private val parallelLongEpochConfig = versiondConfig(
         genesisSpec = createSpec(epochLength = 40, epochShift = 10).merge(devshardNoRestrictionsSpec),
         env = overrideVersiondEnv,
     )
@@ -197,6 +202,7 @@ class DevshardStandaloneTests : TestermintTest() {
     fun `devshard inference e2e with settlement via devshardd`() {
         val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
         genesis.waitForNextEpoch()
+        waitForOverrideVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -237,7 +243,7 @@ class DevshardStandaloneTests : TestermintTest() {
 
     @Test
     fun `devshard streaming inference e2e with settlement via devshardd`() {
-        val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = streamingLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
         waitForOverrideVersionedHealth(genesis)
 
@@ -295,7 +301,7 @@ class DevshardStandaloneTests : TestermintTest() {
     @Test
     fun `parallel devshard sessions with isolated settlement via devshardd`() {
         val sessionCount = 6
-        val (cluster, genesis) = initCluster(config = overrideLongEpochConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = parallelLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
         cluster.stubDevshardChatResponse()
