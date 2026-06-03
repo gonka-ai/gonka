@@ -232,6 +232,11 @@ fun attachDockerLogs(
     }
 }
 
+// Admin bearer the test proxies start with. A fresh single-escrow gateway has no
+// configured model access, so the gateway 401s normal traffic; sending this admin
+// key bypasses model-access control (see modelAccessError in devshardctl).
+const val devshardAdminApiKey = "sk-admin-test"
+
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
@@ -845,6 +850,7 @@ data class LocalInferencePair(
                 "DEVSHARD_PRIVATE_KEY='$privateKey'" +
                     " DEVSHARD_ESCROW_ID=$escrowId" +
                     " DEVSHARD_MODEL='$model'" +
+                    " DEVSHARD_ADMIN_API_KEY='$devshardAdminApiKey'" +
                     " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
                     " DEVSHARD_PORT=$port" +
                     " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
@@ -897,6 +903,7 @@ data class LocalInferencePair(
             "curl --silent --show-error --fail --connect-timeout 5 --max-time $maxTimeSeconds " +
                 "-X POST $proxyUrl/v1/chat/completions " +
                 "-H 'Content-Type: application/json' " +
+                "-H 'Authorization: Bearer $devshardAdminApiKey' " +
                 "-d '${body.replace("'", "'\\''")}'"
         ), null)
         return result.joinToString("")
