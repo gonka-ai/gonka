@@ -149,6 +149,12 @@ func NewEventListener(
 	return el
 }
 
+// SetOnEpochState registers a hook invoked on every synced new-block epoch
+// update. Safe to call after Start; the hook is stored atomically.
+func (el *EventListener) SetOnEpochState(hook EpochStateHook) {
+	el.dispatcher.SetOnEpochState(hook)
+}
+
 func (el *EventListener) openWsConnAndSubscribe() {
 	websocketUrl := getWebsocketUrl(el.configManager.GetChainNodeConfig().Url)
 	logging.Info("Connecting to websocket at", types.EventProcessing, "url", websocketUrl)

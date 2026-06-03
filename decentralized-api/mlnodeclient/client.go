@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -14,10 +15,11 @@ import (
 )
 
 const (
-	stopPath        = "/api/v1/stop"
-	nodeStatePath   = "/api/v1/state"
-	powStatusPath   = "/api/v1/pow/status"
-	inferenceUpPath = "/api/v1/inference/up"
+	stopPath            = "/api/v1/stop"
+	nodeStatePath       = "/api/v1/state"
+	powStatusPath       = "/api/v1/pow/status"
+	inferenceUpPath     = "/api/v1/inference/up"
+	chatCompletionsPath = "/v1/chat/completions"
 )
 
 type Client struct {
@@ -148,6 +150,65 @@ func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
 	}
 
 	return true, nil
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatCompletionRequest struct {
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens"`
+}
+
+type chatCompletionResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+}
+
+// Inference sends a minimal OpenAI-compatible chat-completion request to
+// the MLnode's inference endpoint (the same /v1/chat/completions path the
+// public handler proxies to) and validates that a usable response comes
+// back. Returns an error if the request fails or the response carries no
+// choices. Used by the pre-PoC validation test as the "send a test
+// inference request and validate the response" step.
+func (api *Client) Inference(ctx context.Context, model string) error {
+	requestURL, err := url.JoinPath(api.inferenceUrl, chatCompletionsPath)
+	if err != nil {
+		return err
+	}
+
+	req := chatCompletionRequest{
+		Model:     model,
+		Messages:  []chatMessage{{Role: "user", Content: "ping"}},
+		MaxTokens: 1,
+	}
+
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("inference request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var parsed chatCompletionResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("invalid inference response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return fmt.Errorf("inference response contained no choices")
+	}
+	return nil
 }
 
 type inferenceUpDto struct {

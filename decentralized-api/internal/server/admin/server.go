@@ -3,9 +3,12 @@ package admin
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
 	"decentralized-api/payloadstorage"
 	"net/http"
 	_ "net/http/pprof"
@@ -27,13 +30,16 @@ import (
 )
 
 type Server struct {
-	e              *echo.Echo
-	nodeBroker     *broker.Broker
-	configManager  *apiconfig.ConfigManager
-	recorder       cosmos_client.CosmosMessageClient
-	cdc            *codec.ProtoCodec
-	blockQueue     *pserver.BridgeQueue
-	payloadStorage payloadstorage.PayloadStorage
+	e               *echo.Echo
+	nodeBroker      *broker.Broker
+	configManager   *apiconfig.ConfigManager
+	recorder        cosmos_client.CosmosMessageClient
+	cdc             *codec.ProtoCodec
+	blockQueue      *pserver.BridgeQueue
+	payloadStorage  payloadstorage.PayloadStorage
+	phaseTracker    *chainphase.ChainPhaseTracker
+	activityTracker *participant.ActivityTracker
+	tester          *MLNodeTester
 }
 
 func NewServer(
@@ -41,19 +47,25 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	phaseTracker *chainphase.ChainPhaseTracker,
+	activityTracker *participant.ActivityTracker,
+	mlnodeFactory mlnodeclient.ClientFactory) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:               e,
+		nodeBroker:      nodeBroker,
+		configManager:   configManager,
+		recorder:        recorder,
+		cdc:             cdc,
+		blockQueue:      blockQueue,
+		payloadStorage:  payloadStorage,
+		phaseTracker:    phaseTracker,
+		activityTracker: activityTracker,
+		tester:          NewMLNodeTester(configManager, mlnodeFactory, nodeBroker.GetChainBridge()),
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -66,6 +78,7 @@ func NewServer(
 	g.PUT("nodes/:id", s.createNewNode)
 	g.GET("nodes/upgrade-status", s.getUpgradeStatus)
 	g.POST("nodes/version-status", s.postVersionStatus)
+	g.POST("nodes/:id/test", s.postNodeTest)
 	g.GET("nodes", s.getNodes)
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)

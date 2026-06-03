@@ -17,6 +17,7 @@ type MLNodeClient interface {
 	// Inference operations
 	InferenceHealth(ctx context.Context) (bool, error)
 	InferenceUp(ctx context.Context, model string, args []string) error
+	Inference(ctx context.Context, model string) error
 	GetLoadedModels(ctx context.Context) ([]string, error)
 
 	// GPU operations

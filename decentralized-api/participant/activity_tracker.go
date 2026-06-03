@@ -3,7 +3,7 @@ package participant
 import (
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
+	"common/logging"
 	"sync/atomic"
 	"time"
 

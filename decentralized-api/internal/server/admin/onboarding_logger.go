@@ -2,7 +2,7 @@ package admin
 
 import (
 	"context"
-	"decentralized-api/logging"
+	"common/logging"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
