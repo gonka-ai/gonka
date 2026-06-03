@@ -56,10 +56,12 @@ func (s *Server) logOnboardingStatus(prevActive bool) bool {
 		return true
 	}
 	seconds := SecondsUntilPoCUnknown
+	shouldBeOnline := false
 	if timing := ComputeTiming(s.phaseTracker.GetCurrentEpochState()); timing != nil {
 		seconds = timing.SecondsUntilNextPoC
+		shouldBeOnline = timing.ShouldBeOnline
 	}
-	logging.Info(BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, seconds, "", s.allNodesValidated()), types.Nodes)
+	logging.Info(BuildMLNodeMessage(MLNodeState_WAITING_FOR_POC, seconds, "", s.allNodesValidated(), shouldBeOnline), types.Nodes)
 	return false
 }
 

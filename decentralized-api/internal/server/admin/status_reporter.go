@@ -8,11 +8,12 @@ import (
 // operator for the MLnode's current onboarding state.
 //
 // failingModel is included in the TEST_FAILED message when non-empty.
-// validated gates the reassuring "waiting for PoC" wording: per the
-// proposal, the calm "validated, safe to be offline" message is only
-// shown once a test has passed; until then we say the MLnode is not yet
-// validated (it still tells the operator to be online when PoC is near).
-func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, failingModel string, validated bool) string {
+// validated gates the reassuring "safe to be offline" wording (only shown
+// once a test has passed). shouldBeOnline reflects the current PoC window
+// (it honors the phase, so during an active PoC it is true even though the
+// countdown points to the next epoch) — when true we never tell the
+// operator it is safe to be offline.
+func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, failingModel string, validated, shouldBeOnline bool) string {
 	switch state {
 	case MLNodeState_TESTING:
 		return "Testing MLnode configuration - model loading in progress"
@@ -22,6 +23,19 @@ func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, 
 		}
 		return "MLnode test failed: model '" + failingModel + "' could not be loaded"
 	case MLNodeState_WAITING_FOR_POC:
+		if shouldBeOnline {
+			// In or approaching the PoC window — must be online now,
+			// regardless of the countdown (which points to the next epoch's
+			// PoC once the current one has started).
+			when := "PoC window active"
+			if secondsUntilNextPoC >= 0 && secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds {
+				when = "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) + ")"
+			}
+			if validated {
+				return when + " - MLnode must be online now"
+			}
+			return when + " - MLnode not yet validated, bring it online now"
+		}
 		switch {
 		case secondsUntilNextPoC < 0 && validated:
 			// Schedule not yet known (chain phase tracker not synced):
@@ -29,12 +43,6 @@ func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, 
 			return "Waiting for next PoC cycle (schedule syncing)"
 		case secondsUntilNextPoC < 0:
 			return "MLnode not yet validated - it will be tested before the next PoC"
-		case secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds && validated:
-			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) +
-				") - MLnode must be online now"
-		case secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds:
-			return "PoC starting soon (in " + formatShortDuration(secondsUntilNextPoC) +
-				") - MLnode not yet validated, bring it online now"
 		case validated:
 			return "Waiting for next PoC cycle (starts in " + formatShortDuration(secondsUntilNextPoC) +
 				") - validated, safe to be offline until " + formatShortDuration(apiconfig.OnlineAlertLeadSeconds) + " before PoC"

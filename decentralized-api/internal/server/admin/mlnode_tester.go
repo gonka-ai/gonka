@@ -77,6 +77,15 @@ func (t *MLNodeTester) LastResult(nodeId string) *TestResult {
 	return nil
 }
 
+// Invalidate drops any recorded result for nodeId, so a stale pass from a
+// previous configuration is not reported as validated after the node is
+// changed.
+func (t *MLNodeTester) Invalidate(nodeId string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.lastTests, nodeId)
+}
+
 // IsRunning reports whether a test is currently in flight for nodeId.
 func (t *MLNodeTester) IsRunning(nodeId string) bool {
 	t.mu.Lock()

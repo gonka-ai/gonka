@@ -100,7 +100,13 @@ func (t *ActivityTracker) query(ctx context.Context) (bool, error) {
 			EpochIndex: epochIndex,
 			ModelId:    modelId,
 		})
-		if err != nil || subResp == nil {
+		if err != nil {
+			// Transient RPC failure: surface the error so refresh keeps the
+			// previous value instead of flipping an active participant to
+			// inactive on a missing subgroup.
+			return false, err
+		}
+		if subResp == nil {
 			continue
 		}
 		for _, w := range subResp.EpochGroupData.ValidationWeights {

@@ -132,9 +132,10 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 	// OR when there is a test signal to report — a test in progress or a
 	// failed test matters even before the participant joins the active
 	// set. Otherwise lead with participant-level onboarding guidance.
+	shouldBeOnline := timing != nil && timing.ShouldBeOnline
 	var userMsg, guidance string
 	if active || mlState == MLNodeState_TESTING || mlState == MLNodeState_TEST_FAILED {
-		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel, validated)
+		userMsg = BuildMLNodeMessage(mlState, seconds, failingModel, validated, shouldBeOnline)
 		guidance = BuildParticipantMessage(participantState)
 	} else {
 		userMsg = BuildParticipantMessage(participantState)
@@ -358,7 +359,14 @@ func (s *Server) nodeIsServing(nodeId string) bool {
 }
 
 func (s *Server) maybeAutoTest(nodeId string) {
-	if s.tester == nil || s.phaseTracker == nil {
+	if s.tester == nil {
+		return
+	}
+	// The config may have just changed: drop any prior test result so a
+	// stale pass from the old configuration can't keep showing the node as
+	// validated (a retest is scheduled below when conditions allow).
+	s.tester.Invalidate(nodeId)
+	if s.phaseTracker == nil {
 		return
 	}
 	// Never auto-test a node that is already assigned/serving in the
