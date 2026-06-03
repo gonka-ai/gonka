@@ -831,6 +831,7 @@ data class LocalInferencePair(
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
         routePrefix: String? = null,
+        model: String = defaultModel,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
@@ -843,6 +844,7 @@ data class LocalInferencePair(
                 "sh", "-c",
                 "DEVSHARD_PRIVATE_KEY='$privateKey'" +
                     " DEVSHARD_ESCROW_ID=$escrowId" +
+                    " DEVSHARD_MODEL='$model'" +
                     " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
                     " DEVSHARD_PORT=$port" +
                     " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
