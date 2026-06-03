@@ -6,7 +6,7 @@ Use this document to bring up a new host from scratch and join **gonka-testnet**
 
 | Resource | URL |
 |----------|-----|
-| Validator dashboard (seed) | http://89.169.111.79:8000/dashboard/gonka/validator |
+| Validator dashboard (seed) | http://89.169.110.250:8000/dashboard/gonka/validator |
 | Chain binary (on-chain) | [inferenced v0.2.13](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.13) |
 | CLI for keygen (off-chain) | [inferenced v0.2.12](https://github.com/gonka-ai/gonka/releases/tag/release/v0.2.12) |
 | Official quickstart | https://gonka.ai/docs/host/quickstart/ |
