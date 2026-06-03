@@ -105,7 +105,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	// Redeploy: stop and start with correct model
 
 	// Stop node first
-	if err := worker.GetClient().Stop(ctx); err != nil {
+	if err := StopBeforeModelLaunch(ctx, worker.GetClient()); err != nil {
 		logging.Error("Failed to stop node for inference up", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -135,7 +135,12 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			result.Succeeded = false
 			result.Error = "No epoch models available for this node"
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+			// Info, not Error (per proposal): this state is normal when the
+			// participant has not yet joined the active set for the current
+			// epoch — not a misconfiguration the operator needs to act on.
+			// A genuine problem still surfaces downstream via the node's
+			// FAILED status, so visibility is not lost.
+			logging.Info("Participant not yet active - model assignment pending (normal for new participants)", types.Nodes, "node_id", worker.nodeId)
 			return result
 		}
 
@@ -167,14 +172,16 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 
 	logging.Info("Selected model for inference", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
 
-	// Merge epoch model args with local ones
-	var localArgs []string
-	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
-		localArgs = localModelConfig.Args
+	launchPlan, err := BuildModelLaunchPlan(*selectedModel, worker.node.Node.Models)
+	if err != nil {
+		result.Succeeded = false
+		result.Error = "Could not build model launch plan: " + err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+		return result
 	}
-	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
 
-	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
+	if err := worker.GetClient().InferenceUp(ctx, launchPlan.ModelID, launchPlan.Args); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()

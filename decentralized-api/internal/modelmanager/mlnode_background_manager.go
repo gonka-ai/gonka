@@ -223,11 +223,11 @@ func getInferenceUrlVersioned(node apiconfig.InferenceNodeConfig, version string
 }
 
 func formatURL(host string, port int, segment string) string {
-	return fmt.Sprintf("http://%s:%d%s", host, port, segment)
+	return apiconfig.MLNodeURL(host, port, segment, "")
 }
 
 func formatURLWithVersion(host string, port int, version string, segment string) string {
-	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+	return apiconfig.MLNodeURL(host, port, segment, version)
 }
 
 // checkAndUpdateGPUs fetches GPU info from all nodes and updates hardware
