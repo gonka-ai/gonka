@@ -28,14 +28,14 @@ This document describes the Ethereum smart contract that serves as the bridge en
 
 - Utilizes Ethereum's native BLS12-381 curve support for signature verification
 - Implements threshold signature validation using precompiled contracts
-- Group public keys stored as G2 points (96 bytes compressed format)
-- Signatures verified as G1 points (48 bytes compressed format)
+- Group public keys stored as uncompressed G2 points (256 bytes)
+- Signatures verified as uncompressed G1 points (128 bytes)
 
 **Signature Verification Process:**
 
 ```text
-1. Parse withdrawal command: (epoch_id, request_id, recipient, token, amount)
-2. Encode data using abi.encodePacked for consistent hashing
+1. Parse bridge command and operation context
+2. Encode data using the contract's exact `abi.encodePacked` field order
 3. Compute message hash: keccak256(encoded_data)
 4. Retrieve group public key for specified epoch_id
 5. Verify BLS signature against group public key using precompiled contract (with operation domain separation)
@@ -306,17 +306,20 @@ struct WithdrawalCommand {
     uint64 epochId;           // 8 bytes - epoch for signature validation
     bytes32 requestId;        // 32 bytes - unique request identifier from source chain
     address recipient;        // 20 bytes - Ethereum address to receive tokens
-    address tokenContract;    // 20 bytes - ERC-20 contract address
+    address tokenContract;    // 20 bytes - ERC-20 contract address (or address(this) for ETH)
     uint256 amount;          // 32 bytes - token amount to withdraw
-    bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
+    bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
 }
 ```
 
 **Validation Flow:**
 
-1. **Epoch Validation**: Verify group key exists for specified `epochId` (`epochGroupKeys[epochId].length > 0`)
+1. **Epoch Validation**: Verify a non-empty group key exists for specified `epochId`
 2. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, WITHDRAW_OPERATION, recipient, tokenContract, amount)`
+3. **Signature Verification**: Validate BLS signature against epoch's group public key using message:
+   ```solidity
+   abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, WITHDRAW_OPERATION, recipient, address(this), tokenContract, amount)
+   ```
 4. **Balance Check**: Ensure contract has sufficient token or ETH balance
 5. **Execution**: Transfer tokens or ETH to recipient address
    - **ETH withdrawals**: When `tokenContract == address(this)`, transfer ETH using `call{value:}`
@@ -456,7 +459,7 @@ struct MintCommand {
     bytes32 requestId;        // 32 bytes - unique request identifier from source chain
     address recipient;        // 20 bytes - Ethereum address to receive WGNK
     uint256 amount;          // 32 bytes - WGNK amount to mint
-    bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
+    bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
 }
 
 function mintWithSignature(MintCommand calldata cmd) external;
@@ -467,7 +470,10 @@ function mintWithSignature(MintCommand calldata cmd) external;
 1. **State Check**: Only allowed in `NORMAL_OPERATION` state
 2. **Epoch Validation**: Verify group key exists for specified `epochId`
 3. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, MINT_OPERATION, recipient, amount, )`
+4. **Signature Verification**: Validate BLS signature against epoch's group public key using message:
+   ```solidity
+   abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, MINT_OPERATION, recipient, address(this), amount)
+   ```
 5. **Execution**: Mint WGNK tokens to recipient's balance, increase total supply
 6. **Record Processing**: Mark `requestId` as processed for this `epochId`
 

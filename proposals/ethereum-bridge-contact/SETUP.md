@@ -167,8 +167,10 @@ bridge.on("AdminControlActivated", (timestamp, reason) => {
 - Check latest epoch ID: `bridge.getLatestEpochInfo()`
 
 **"InvalidSignature" Error**
-- Verify BLS signature format (48 bytes, G1 point)
-- Check message encoding: `abi.encodePacked(epochId, requestId, recipient, token, amount)`
+- Verify BLS signature format (128-byte uncompressed G1 point)
+- Check message encoding matches the operation:
+  - Withdrawal: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, WITHDRAW_OPERATION, recipient, address(this), tokenContract, amount)`
+  - Mint: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, MINT_OPERATION, recipient, address(this), amount)`
 - Ensure group public key is correct for the epoch
 
 **"BridgeNotOperational" Error**
