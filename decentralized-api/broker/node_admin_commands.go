@@ -161,9 +161,16 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
-	// Populate epoch data for the newly registered node
+	// Populate epoch data for the newly registered node. While the chain
+	// has not synced yet (normal during onboarding) this is expected, so
+	// log it at Info; once the chain is synced, a failure here is a
+	// genuine problem and stays at Warn.
 	if err := b.PopulateSingleNodeEpochData(c.Node.Id); err != nil {
-		logging.Warn("RegisterNode. Failed to populate epoch data", types.Nodes, "node_id", c.Node.Id, "error", err)
+		if b.phaseTracker == nil || b.phaseTracker.GetCurrentEpochState().IsNilOrNotSynced() {
+			logging.Info("RegisterNode. Epoch data not available yet; will populate after the chain syncs", types.Nodes, "node_id", c.Node.Id)
+		} else {
+			logging.Warn("RegisterNode. Failed to populate epoch data", types.Nodes, "node_id", c.Node.Id, "error", err)
+		}
 	}
 
 	// Trigger a status check for the newly added node.
