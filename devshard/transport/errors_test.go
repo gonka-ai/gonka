@@ -57,6 +57,49 @@ func TestIsFatalHTTPError_UnwrapsViaErrorsAs(t *testing.T) {
 	require.False(t, IsFatalHTTPError(nil))
 }
 
+func TestHTTPStatusError_IsFailFast(t *testing.T) {
+	cases := []struct {
+		name         string
+		statusCode   int
+		devshardErr  string
+		wantFailFast bool
+	}{
+		{"403 is fail-fast via fatal", http.StatusForbidden, "", true},
+		{"501 is fail-fast", http.StatusNotImplemented, "", true},
+		{"503 without header is not fail-fast", http.StatusServiceUnavailable, "", false},
+		{"503 requests_disabled header", http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, true},
+		{"503 initializing header", http.StatusServiceUnavailable, DevshardErrorInitializing, true},
+		{"502 is not fail-fast", http.StatusBadGateway, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &HTTPStatusError{
+				StatusCode:    tc.statusCode,
+				Path:          "/test",
+				DevshardError: tc.devshardErr,
+			}
+			require.Equal(t, tc.wantFailFast, e.IsFailFast())
+		})
+	}
+}
+
+func TestIsFailFastHTTPError_Unwraps(t *testing.T) {
+	root := &HTTPStatusError{
+		StatusCode:    http.StatusServiceUnavailable,
+		DevshardError: DevshardErrorRequestsDisabled,
+	}
+	require.True(t, IsFailFastHTTPError(fmt.Errorf("host rejected inference: %w", root)))
+}
+
+func TestClientHTTPStatusFromError(t *testing.T) {
+	err := fmt.Errorf("host rejected inference: %w", &HTTPStatusError{
+		StatusCode:    http.StatusServiceUnavailable,
+		DevshardError: DevshardErrorRequestsDisabled,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, ClientHTTPStatusFromError(err))
+	require.Equal(t, http.StatusBadGateway, ClientHTTPStatusFromError(fmt.Errorf("timeout")))
+}
+
 func TestHTTPStatusError_ErrorIncludesStatusAndBody(t *testing.T) {
 	e := &HTTPStatusError{
 		Method:     http.MethodPost,

@@ -140,7 +140,8 @@ func MigrateLegacySQLite(legacyPath string, dest Storage, resolveEpoch EpochReso
 
 		version := ls.version
 		if version == "" {
-			version = types.DevshardStateRootAndProtocolVersion
+			// Empty legacy version → embedded dapi runtime bind ("v1"), not protocol tag ("v2").
+			version = types.LegacyRouteSessionVersion
 		}
 		if err := dest.CreateSession(CreateSessionParams{
 			EscrowID:       ls.escrowID,

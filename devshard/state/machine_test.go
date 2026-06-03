@@ -19,7 +19,8 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance)
+	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, store)
 	require.NoError(t, err)
 	return sm, user
 }
@@ -35,7 +36,7 @@ func TestNewStateMachine_NormalizesSealGraceNonces(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	config := types.SessionConfig{TokenPrice: 1, VoteThreshold: 1}
 
-	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1000))
 	require.NoError(t, err)
 
 	st := sm.SnapshotState()
@@ -530,7 +531,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{3, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 5/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Start inference. Executor slot = group[1%5].SlotID = 1 (owned by signer0).
@@ -1156,7 +1157,7 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 	config := types.SessionConfig{TokenPrice: 3, VoteThreshold: 1}
 	group := testutil.MakeGroup(hosts)
 	verifier := signing.NewSecp256k1Verifier()
-	smHigh, err := NewStateMachine("escrow-1", config, group, math.MaxUint64, user.Address(), verifier)
+	smHigh, err := NewStateMachine("escrow-1", config, group, math.MaxUint64, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, math.MaxUint64))
 	require.NoError(t, err)
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1215,7 +1216,7 @@ func TestNewStateMachine_DeductsCreateDevshardFee(t *testing.T) {
 	config.CreateDevshardFee = 25
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100))
 	require.NoError(t, err)
 
 	st := sm.SnapshotState()
@@ -1231,7 +1232,7 @@ func TestNewStateMachine_CreateDevshardFeeInsufficientBalance(t *testing.T) {
 	config.CreateDevshardFee = 101
 	verifier := signing.NewSecp256k1Verifier()
 
-	_, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier)
+	_, err := NewStateMachine("escrow-1", config, group, 100, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100))
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 }
 
@@ -1242,7 +1243,7 @@ func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
 	config := testutil.DefaultConfig(len(group))
 	config.FeePerNonce = 7
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1270,7 +1271,7 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1302,7 +1303,7 @@ func TestApplyDiff_FeePerNonce_NotChargedDuringFinalization(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Initialize the state machine and capture the pre-finalization balances.
-	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 1000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1000))
 	require.NoError(t, err)
 	stateBefore := sm.SnapshotState()
 
@@ -1326,7 +1327,7 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
 	require.NoError(t, err)
 
 	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1421,7 +1422,7 @@ func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
 	config := testutil.DefaultConfig(len(group))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
@@ -1454,7 +1455,7 @@ func TestApplyDiff_ValidationVote_MultiSlotWeight(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 4/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
@@ -1497,7 +1498,7 @@ func TestApplyDiff_ValidationVote_MultiSlotDedup(t *testing.T) {
 	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 6/2 = 3
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[0]).
@@ -1577,7 +1578,7 @@ func TestApplyDiff_PostStateRoot_Valid(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
-	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	txs := []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1950,7 +1951,7 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Session A: escrow-A.
-	smA, err := NewStateMachine("escrow-A", config, group, 10000, user.Address(), verifier)
+	smA, err := NewStateMachine("escrow-A", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-A", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Start + confirm + finish in session A.
@@ -1981,7 +1982,7 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Session B: escrow-B, same hosts.
-	smB, err := NewStateMachine("escrow-B", config, group, 10000, user.Address(), verifier)
+	smB, err := NewStateMachine("escrow-B", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-B", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	diff = testutil.SignDiff(t, user, "escrow-B", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -2299,7 +2300,7 @@ func newTestSMWithWarmKey(t *testing.T, hosts []*signing.Secp256k1Signer, balanc
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, WithWarmKeyResolver(resolver))
+	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance), WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 	return sm, user
 }
@@ -2651,7 +2652,7 @@ func TestApplyLocal_WithInjectedWarmKeys(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
 	// Inject the warm keys that were captured from SM1.

@@ -80,8 +80,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 		InitialBalance: 10000,
 	}))
 
-	leader, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier,
-		WithInferenceStore(leaderStore))
+	leader, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier, leaderStore)
 	require.NoError(t, err)
 
 	executorSlotIdx := uint64(1) % uint64(len(hosts))
@@ -138,8 +137,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	}))
 	copyDiffJournal(t, leaderStore, followerStore, escrowID, 1, meta.LatestNonce)
 
-	follower, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier,
-		WithInferenceStore(followerStore))
+	follower, err := NewStateMachine(escrowID, config, group, 10000, user.Address(), verifier, followerStore)
 	require.NoError(t, err)
 
 	records, err := followerStore.GetDiffs(escrowID, 1, meta.LatestNonce)

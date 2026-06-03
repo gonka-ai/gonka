@@ -1096,6 +1096,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 		validatorSlot := h.sortedSlots[0]
 
 		h.validating[infID] = struct{}{}
+		storage.RecordValidationRequired(h.store, h.escrowID, infID, validatorSlot)
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
 			validatorSlot:   validatorSlot,
@@ -1310,6 +1311,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
+	storage.RecordValidationCompleted(h.store, h.escrowID, job.inferenceID, job.validatorSlot)
 	observability.IncValidation(observability.StageVotePublished, observability.MetricStatusOK)
 	fields := []any{
 		"inference_id", job.inferenceID,

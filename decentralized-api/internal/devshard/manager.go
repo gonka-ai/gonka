@@ -93,14 +93,16 @@ type statsShardSummary struct {
 }
 
 type statsShardDetailResponse struct {
-	EscrowID        string                    `json:"escrow_id"`
-	EpochID         uint64                    `json:"epoch_id"`
-	Nonce           uint64                    `json:"nonce"`
-	Version         string                    `json:"version"`
-	CachedAt        int64                     `json:"cached_at"`
-	CacheTTLSeconds int64                     `json:"cache_ttl_seconds"`
-	HostStats       map[uint32]statsHostStats `json:"host_stats"`
-	Group           []types.SlotAssignment    `json:"group"`
+	EscrowID                    string                       `json:"escrow_id"`
+	EpochID                     uint64                       `json:"epoch_id"`
+	Nonce                       uint64                       `json:"nonce"`
+	Version                     string                       `json:"version"` // versiond runtime bind (m.boundVersion)
+	StateRootAndProtocolVersion string                       `json:"state_root_and_protocol_version"`
+	CachedAt                    int64                        `json:"cached_at"`
+	CacheTTLSeconds             int64                        `json:"cache_ttl_seconds"`
+	HostStats                   map[uint32]statsHostStats    `json:"host_stats"`
+	ValidationObservability     statsValidationObservability `json:"validation_observability"`
+	Group                       []types.SlotAssignment       `json:"group"`
 }
 
 type statsHostStats struct {
@@ -109,6 +111,13 @@ type statsHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+}
+
+// statsValidationObservability exposes validation counters persisted outside the
+// state root (survives host restart; not used for settlement).
+type statsValidationObservability struct {
+	BySlot map[uint32]statsHostStats `json:"by_slot"`
+	Totals statsHostStats            `json:"totals"`
 }
 
 func NewHostManager(
@@ -297,10 +306,9 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		config = types.NormalizeSessionConfig(config, len(group))
 	}
 
-	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
+	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithInferenceStore(m.store),
-		state.WithVersion(m.boundVersion),
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -427,16 +435,14 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	if meta.Version != "" && meta.Version != m.boundVersion {
 		return nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
 	}
-	recoveredVersion := meta.Version
-	if recoveredVersion == "" {
-		recoveredVersion = m.boundVersion
+	if meta.Version == "" {
+		meta.Version = m.boundVersion
 	}
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, m.verifier,
+		meta.CreatorAddr, m.verifier, m.store,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithInferenceStore(m.store),
-		state.WithVersion(recoveredVersion),
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -631,14 +637,16 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 	st := srv.Host().SnapshotState()
 
 	resp := &statsShardDetailResponse{
-		EscrowID:        escrowID,
-		EpochID:         sess.EpochID,
-		Nonce:           st.LatestNonce,
-		Version:         st.StateRootAndProtocolVersion,
-		CachedAt:        now.Unix(),
-		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
-		HostStats:       statsHostStatsFromState(st.HostStats),
-		Group:           append([]types.SlotAssignment(nil), st.Group...),
+		EscrowID:                    escrowID,
+		EpochID:                     sess.EpochID,
+		Nonce:                       st.LatestNonce,
+		Version:                     m.boundVersion,
+		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
+		CachedAt:                    now.Unix(),
+		CacheTTLSeconds:             int64(statsCacheTTL / time.Second),
+		HostStats:                   statsHostStatsFromState(st.HostStats),
+		ValidationObservability:     validationObservabilityFromStore(m.store, escrowID),
+		Group:                       append([]types.SlotAssignment(nil), st.Group...),
 	}
 
 	m.statsMu.Lock()
@@ -703,6 +711,32 @@ func statsHostStatsFromState(src map[uint32]*types.HostStats) map[uint32]statsHo
 		}
 	}
 	return dst
+}
+
+func validationObservabilityFromStore(store storage.Storage, escrowID string) statsValidationObservability {
+	out := statsValidationObservability{
+		BySlot: make(map[uint32]statsHostStats),
+	}
+	if store == nil {
+		return out
+	}
+	rows, err := store.GetValidationObservability(escrowID)
+	if err != nil {
+		logging.Warn("validation observability read failed", inferenceTypes.System,
+			"escrow_id", escrowID,
+			"error", err,
+		)
+		return out
+	}
+	for _, row := range rows {
+		out.BySlot[row.SlotID] = statsHostStats{
+			RequiredValidations:  row.RequiredValidations,
+			CompletedValidations: row.CompletedValidations,
+		}
+		out.Totals.RequiredValidations += row.RequiredValidations
+		out.Totals.CompletedValidations += row.CompletedValidations
+	}
+	return out
 }
 
 func statsHTTPError(err error) error {

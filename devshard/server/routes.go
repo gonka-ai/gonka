@@ -54,7 +54,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadH
 			srv, err := resolver.SessionServer(c.Param("id"))
 			if err != nil {
 				recordSessionResolution(c, err, false)
-				return sessionHTTPError(err)
+				return sessionHTTPError(c, err)
 			}
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
@@ -70,7 +70,7 @@ func withSession(
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
 			recordSessionResolution(c, err, false)
-			return sessionHTTPError(err)
+			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		return pick(srv)(c)
@@ -86,7 +86,7 @@ func withSessionAuth(
 		srv, err := resolver.SessionServer(c.Param("id"))
 		if err != nil {
 			recordSessionResolution(c, err, recordChatTerminal)
-			return sessionHTTPError(err)
+			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		return srv.AuthMiddleware(pick(srv))(c)
@@ -149,9 +149,9 @@ func routeLabel(c echo.Context) string {
 	}
 }
 
-func sessionHTTPError(err error) error {
+func sessionHTTPError(c echo.Context, err error) error {
 	if errors.Is(err, ErrInitializing) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorInitializing, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

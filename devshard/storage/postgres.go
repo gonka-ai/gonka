@@ -37,12 +37,15 @@ type Postgres struct {
 }
 
 const (
-	pgSessionsParent   = "devshard_sessions"
-	pgDiffsParent      = "devshard_diffs"
-	pgSignaturesParent = "devshard_signatures"
-	pgSnapshotsParent  = "devshard_snapshots"
-	pgInferencesParent = "devshard_sealed_inferences"
-	pgSessionIndex     = "devshard_session_index"
+	pgSessionsParent               = "devshard_sessions"
+	pgDiffsParent                  = "devshard_diffs"
+	pgSignaturesParent             = "devshard_signatures"
+	pgSnapshotsParent              = "devshard_snapshots"
+	pgInferencesParent             = "devshard_sealed_inferences"
+	pgValidationObsParent          = "devshard_slot_validation_obs"
+	pgInferenceValidationObsParent = "devshard_inference_validation_obs"
+	pgSealedValidationObsParent    = "devshard_sealed_validation_obs"
+	pgSessionIndex                 = "devshard_session_index"
 )
 
 func pgSessionsPartition(epochID uint64) string {
@@ -59,6 +62,15 @@ func pgSnapshotsPartition(epochID uint64) string {
 }
 func pgInferencesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgInferencesParent, epochID)
+}
+func pgValidationObsPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgValidationObsParent, epochID)
+}
+func pgInferenceValidationObsPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgInferenceValidationObsParent, epochID)
+}
+func pgSealedValidationObsPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgSealedValidationObsParent, epochID)
 }
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
@@ -164,7 +176,7 @@ func (s *Postgres) Close() error {
 	return nil
 }
 
-// ensurePartition creates per-epoch partitions for all five partitioned parents
+// ensurePartition creates per-epoch partitions for all partitioned parents
 // on first touch. This is the only site that may issue CREATE TABLE ... PARTITION OF
 // for devshard Postgres; write paths must call ensurePartition instead of inline DDL.
 // The check + create is racy across multiple writers, but PG returns 42P07 (table
@@ -206,6 +218,15 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return err
 	}
 	if err := create(pgInferencesParent, pgInferencesPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgValidationObsParent, pgValidationObsPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgInferenceValidationObsParent, pgInferenceValidationObsPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgSealedValidationObsParent, pgSealedValidationObsPartition(epochID)); err != nil {
 		return err
 	}
 
@@ -672,9 +693,22 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 		return err
 	}
 	_, err = s.pool.Exec(context.Background(),
-		`INSERT INTO devshard_sealed_inferences (epoch_id, escrow_id, inference_id, sealed_nonce)
-		 VALUES ($1, $2, $3, $4)`,
-		epochID, escrowID, row.InferenceID, row.SealedNonce,
+		`INSERT INTO devshard_sealed_inferences (
+			epoch_id, escrow_id, inference_id, sealed_nonce,
+			obs_present, sealed_status, sealed_executor_slot,
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
+			sealed_nonce = EXCLUDED.sealed_nonce,
+			obs_present = EXCLUDED.obs_present,
+			sealed_status = EXCLUDED.sealed_status,
+			sealed_executor_slot = EXCLUDED.sealed_executor_slot,
+			sealed_votes_valid = EXCLUDED.sealed_votes_valid,
+			sealed_votes_invalid = EXCLUDED.sealed_votes_invalid,
+			sealed_validated_by = EXCLUDED.sealed_validated_by`,
+		epochID, escrowID, row.InferenceID, row.SealedNonce, row.ObsPresent,
+		row.SealedStatus, row.SealedExecutorSlot,
+		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -688,12 +722,17 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		return InferenceRow{}, false, err
 	}
 	row := s.pool.QueryRow(context.Background(),
-		`SELECT sealed_nonce FROM devshard_sealed_inferences
+		`SELECT sealed_nonce, obs_present, sealed_status, sealed_executor_slot,
+		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		   FROM devshard_sealed_inferences
 		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
 		epochID, escrowID, inferenceID,
 	)
 	out := InferenceRow{InferenceID: inferenceID}
-	if err := row.Scan(&out.SealedNonce); err != nil {
+	if err := row.Scan(
+		&out.SealedNonce, &out.ObsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
+		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil
 		}
@@ -713,7 +752,136 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 	); err != nil {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
+	if _, err := s.pool.Exec(context.Background(),
+		`DELETE FROM devshard_sealed_validation_obs WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	); err != nil {
+		return fmt.Errorf("delete sealed validation obs: %w", err)
+	}
 	return nil
+}
+
+func (s *Postgres) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx,
+		`INSERT INTO devshard_inference_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
+		   required_validations = devshard_inference_validation_obs.required_validations + EXCLUDED.required_validations,
+		   completed_validations = devshard_inference_validation_obs.completed_validations + EXCLUDED.completed_validations`,
+		epochID, escrowID, inferenceID, slotID, requiredDelta, completedDelta,
+	)
+	if err != nil {
+		return fmt.Errorf("incr inference validation obs: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("drain inference validation obs begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx,
+		`SELECT slot_id, required_validations, completed_validations
+		   FROM devshard_inference_validation_obs
+		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+		epochID, escrowID, inferenceID,
+	)
+	if err != nil {
+		return fmt.Errorf("drain inference validation obs select: %w", err)
+	}
+	type row struct {
+		slotID              uint32
+		required, completed uint32
+	}
+	var live []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.slotID, &r.required, &r.completed); err != nil {
+			rows.Close()
+			return err
+		}
+		live = append(live, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range live {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO devshard_sealed_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
+			   required_validations = devshard_sealed_validation_obs.required_validations + EXCLUDED.required_validations,
+			   completed_validations = devshard_sealed_validation_obs.completed_validations + EXCLUDED.completed_validations`,
+			epochID, escrowID, inferenceID, r.slotID, r.required, r.completed,
+		); err != nil {
+			return fmt.Errorf("drain inference validation obs insert: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM devshard_inference_validation_obs WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+		epochID, escrowID, inferenceID,
+	); err != nil {
+		return fmt.Errorf("drain inference validation obs delete: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(context.Background(),
+		`SELECT slot_id,
+		        SUM(required_validations)::int AS required_validations,
+		        SUM(completed_validations)::int AS completed_validations
+		   FROM (
+		     SELECT slot_id, required_validations, completed_validations
+		       FROM devshard_inference_validation_obs
+		      WHERE epoch_id = $1 AND escrow_id = $2
+		     UNION ALL
+		     SELECT slot_id, required_validations, completed_validations
+		       FROM devshard_sealed_validation_obs
+		      WHERE epoch_id = $1 AND escrow_id = $2
+		   ) AS combined
+		  GROUP BY slot_id
+		  ORDER BY slot_id`,
+		epochID, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get validation observability: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SlotValidationObs
+	for rows.Next() {
+		var obs SlotValidationObs
+		if err := rows.Scan(&obs.SlotID, &obs.RequiredValidations, &obs.CompletedValidations); err != nil {
+			return nil, err
+		}
+		out = append(out, obs)
+	}
+	return out, rows.Err()
 }
 
 // PruneEpoch drops all per-epoch partitions for epochID and forgets every
@@ -726,6 +894,9 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 		pgSignaturesPartition(epochID),
 		pgSnapshotsPartition(epochID),
 		pgInferencesPartition(epochID),
+		pgValidationObsPartition(epochID),
+		pgInferenceValidationObsPartition(epochID),
+		pgSealedValidationObsPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))

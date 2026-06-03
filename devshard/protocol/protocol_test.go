@@ -43,7 +43,7 @@ func setupEnv(t *testing.T, numHosts int, balance, grace uint64, engines ...devs
 	hosts := make([]*host.Host, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 		require.NoError(t, err)
 		var engine devshard.InferenceEngine
 		if len(engines) > 0 {
@@ -57,7 +57,7 @@ func setupEnv(t *testing.T, numHosts int, balance, grace uint64, engines ...devs
 		clients[i] = &user.InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestProtocol_SignatureWithholding(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Create host at slot 1 with grace=2.
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm, hostSigners[1], engine, "escrow-1", group, nil, host.WithGrace(2))
@@ -272,7 +272,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	config := testutil.DefaultConfig(3)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm, hostSigners[1], engine, "escrow-1", group, nil, host.WithGrace(2))
@@ -367,7 +367,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	}
 
 	// Replay diffs through a fresh StateMachine to get state roots at each nonce.
-	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier)
+	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", env.user.Address(), env.config, env.group, 100000))
 	require.NoError(t, err)
 	roots := make(map[uint64][]byte)
 	for _, diff := range env.session.Diffs() {
@@ -442,7 +442,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	// Create all hosts.
 	hosts := make([]*host.Host, 5)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, host.WithGrace(100))
@@ -486,7 +486,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify via a fresh state machine.
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	_, err = sm.ApplyDiff(diff1)
 	require.NoError(t, err)

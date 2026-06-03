@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 )
 
 func TestNewStorage_postgresWhenPGHOSTAndEmptyMeta(t *testing.T) {
@@ -161,7 +160,7 @@ func TestNewStorage_postgresModeNoForkWhenPGDownAfterSessionInPG(t *testing.T) {
 	require.NoError(t, err)
 
 	params := paramsForEpoch("pg-escrow", 10)
-	params.Version = testutil.RuntimeTestVersion
+	params.Version = storageTestVersion
 	require.NoError(t, store.CreateSession(params))
 	require.NoError(t, store.Close())
 

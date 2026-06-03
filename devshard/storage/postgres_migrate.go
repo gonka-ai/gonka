@@ -101,7 +101,54 @@ CREATE TABLE IF NOT EXISTS devshard_sealed_inferences (
 ) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
-		ID:         8,
+		ID:   8,
+		Name: "devshard_slot_validation_obs_parent",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_slot_validation_obs (
+    epoch_id               BIGINT NOT NULL,
+    escrow_id              TEXT   NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, escrow_id, slot_id)
+) PARTITION BY RANGE (epoch_id)`},
+	},
+	{
+		ID:   9,
+		Name: "devshard_sealed_inferences_obs_snapshot",
+		Statements: []string{`
+ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS obs_present BOOLEAN NOT NULL DEFAULT FALSE`,
+			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_status INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_executor_slot INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_votes_valid INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_votes_invalid INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_validated_by BYTEA`},
+	},
+	{
+		ID:   11,
+		Name: "devshard_inference_validation_obs_parent",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
+    epoch_id               BIGINT NOT NULL,
+    escrow_id              TEXT NOT NULL,
+    inference_id           BIGINT NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id, slot_id)
+) PARTITION BY RANGE (epoch_id)`,
+			`CREATE TABLE IF NOT EXISTS devshard_sealed_validation_obs (
+    epoch_id               BIGINT NOT NULL,
+    escrow_id              TEXT NOT NULL,
+    inference_id           BIGINT NOT NULL,
+    slot_id                INTEGER NOT NULL,
+    required_validations   INTEGER NOT NULL DEFAULT 0,
+    completed_validations  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id, slot_id)
+) PARTITION BY RANGE (epoch_id)`},
+	},
+	{
+		ID:         12,
 		Name:       "noop",
 		Statements: []string{`SELECT 1`},
 	},

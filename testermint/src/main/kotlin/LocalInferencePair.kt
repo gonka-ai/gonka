@@ -70,6 +70,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val mocks = containers.filter { it.image == config.mockImageName }
     var foundPairs = 0
     if (nodes.size != apis.size) {
+        logClusterPairMismatch(config, nodes, apis, "getLocalInferencePairs")
         Logger.error("Number of nodes (${nodes.size}) does not match number of APIs (${apis.size}). Tearing down containers")
         nodes.forEach{
             dockerClient.stopContainerCmd(it.id).exec()
@@ -290,6 +291,9 @@ data class LocalInferencePair(
     fun execInVersiond(args: List<String>, stdin: String? = null): List<String> = wrapLog("execInVersiond", false) {
         DockerExecutor(siblingContainerId("versiond"), config).exec(args, stdin)
     }
+
+    /** Public dAPI base URL reachable from inside the api container (not the host-mapped proxy). */
+    fun apiContainerPublicUrl(): String = "http://localhost:9000"
 
     fun curlFromApiNetwork(url: String): String = wrapLog("curlFromApiNetwork", false) {
         api.executor.exec(listOf("sh", "-c", "curl -sf '$url'"), null).joinToString("").trim()

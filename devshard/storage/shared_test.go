@@ -6,9 +6,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 	"devshard/types"
 )
+
+const storageTestVersion = "v1"
 
 func makeDiffRecord(nonce uint64) types.DiffRecord {
 	return types.DiffRecord{
@@ -32,7 +33,7 @@ func defaultParams() CreateSessionParams {
 	return CreateSessionParams{
 		EscrowID:       "escrow-1",
 		EpochID:        7,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        storageTestVersion,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          defaultGroup(),
@@ -57,7 +58,7 @@ func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, storageTestVersion, meta.Version)
 	require.Equal(t, types.DefaultSealGraceNonces(len(meta.Group)), meta.Config.SealGraceNonces)
 	require.Equal(t, uint32(types.DefaultInferenceClearGraceSeconds), meta.Config.InferenceClearGraceSeconds)
 	require.Equal(t, "creator", meta.CreatorAddr)
@@ -82,7 +83,7 @@ func runCreateSession_Idempotent(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", meta.EscrowID)
 	require.Equal(t, uint64(7), meta.EpochID)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, storageTestVersion, meta.Version)
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 }
 
@@ -103,13 +104,13 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 
 	require.NoError(t, store.CreateSession(defaultParams()))
 	p := defaultParams()
-	p.Version = types.DevshardStateRootAndProtocolVersion
+	p.Version = "other-runtime"
 	err := store.CreateSession(p)
 	require.ErrorIs(t, err, ErrSessionVersionConflict)
 
 	meta, metaErr := store.GetSessionMeta("escrow-1")
 	require.NoError(t, metaErr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, storageTestVersion, meta.Version)
 }
 
 // runCreateSession_EmptyVersionRejected pins the storage-boundary contract:
@@ -272,10 +273,13 @@ func runSealedInferenceLifecycle(t *testing.T, store Storage) {
 	require.True(t, ok)
 	require.Equal(t, row, got)
 
-	// A second InsertSealedInference for the same id must fail: the row is a
-	// "this id was sealed" marker and is meant to be written exactly once.
-	err = store.InsertSealedInference("escrow-1", row)
-	require.Error(t, err)
+	// Upsert updates the same inference id (e.g. challenged before seal, then sealed).
+	row.SealedStatus = 5
+	require.NoError(t, store.InsertSealedInference("escrow-1", row))
+	got, ok, err = store.GetSealedInference("escrow-1", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, uint32(5), got.SealedStatus)
 
 	require.NoError(t, store.DeleteSealedInferences("escrow-1"))
 	_, ok, err = store.GetSealedInference("escrow-1", 1)

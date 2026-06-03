@@ -120,11 +120,6 @@ func WithVersion(version string) SMOption {
 	return WithStateRootAndProtocolVersion(version)
 }
 
-// WithInferenceStore enables Phase 0 sealed-inference persistence.
-func WithInferenceStore(store storage.Storage) SMOption {
-	return func(sm *StateMachine) { sm.inferenceStore = store }
-}
-
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
 // state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
@@ -138,8 +133,12 @@ func NewStateMachine(
 	balance uint64,
 	userAddress string,
 	verifier signing.Verifier,
+	store storage.Storage,
 	opts ...SMOption,
 ) (*StateMachine, error) {
+	if store == nil {
+		return nil, fmt.Errorf("inference store is required")
+	}
 	slotToAddr := make(map[uint32]string, len(group))
 	addrToSlotCount := make(map[string]uint32, len(group))
 	for _, s := range group {
@@ -174,7 +173,7 @@ func NewStateMachine(
 	sm := &StateMachine{
 		state: &types.EscrowState{
 			EscrowID:   escrowID,
-			StateRootAndProtocolVersion: types.DevshardStateRootAndProtocolVersion,
+			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
 			Config:     config,
 			Group:      groupCopy,
 			Balance:    initialBalance,
@@ -191,6 +190,7 @@ func NewStateMachine(
 		totalSlots:         uint32(len(group)),
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
+		inferenceStore:     store,
 	}
 	for _, o := range opts {
 		o(sm)
@@ -837,6 +837,9 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			if err := sm.persistLiveInferenceObsLocked(msg.InferenceId, rec); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -920,6 +923,12 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		sm.state.Balance += rec.ActualCost
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
+	}
+
+	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
+		if err := sm.persistLiveInferenceObsLocked(msg.InferenceId, rec); err != nil {
+			return err
+		}
 	}
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)

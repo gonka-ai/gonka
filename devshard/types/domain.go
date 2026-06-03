@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // DevshardStateRootAndProtocolVersion is the devshard state-root and settlement
 // protocol version for this binary. It is stamped into EscrowState and settlement
@@ -10,6 +13,18 @@ import "fmt"
 // (which binaries may run). Bump this constant and ship a new binary when state-root
 // composition or settlement wire/verification changes. See devshard/docs/protocol-version.md.
 const DevshardStateRootAndProtocolVersion = "v2"
+
+// DefaultStateRootVersion is the tag used when no explicit bind version is provided.
+const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
+
+// NormalizeVersion returns the state-root / settlement protocol tag, defaulting when empty.
+// It is not used for storage session bind (CreateSessionParams.Version); see LegacyRouteSessionVersion.
+func NormalizeVersion(version string) string {
+	if strings.TrimSpace(version) == "" {
+		return DefaultStateRootVersion
+	}
+	return version
+}
 
 // LegacyRouteSessionVersion is the session/storage bind tag for the historical
 // /v1/devshard HTTP mount and embedded dapi hosts (HostManager boundVersion).

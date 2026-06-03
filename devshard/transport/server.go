@@ -337,6 +337,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
 		if errors.Is(err, devshard.ErrRequestsDisabled) {
 			logging.Debug("HandleInference: devshard_requests_enabled=false", "subsystem", "server")
+			c.Response().Header().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
 			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
 		}
@@ -483,7 +484,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	}
 	if !s.host.CompletionRequestsEnabled() {
 		logging.Debug("HandleVerifyTimeout: devshard_requests_enabled=false", "subsystem", "server")
-		return echo.NewHTTPError(http.StatusServiceUnavailable, devshard.ErrRequestsDisabled.Error())
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
 	}
 
 	body, err := getBody(c)

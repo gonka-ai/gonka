@@ -10,6 +10,7 @@ import (
 	"devshard/host"
 	"devshard/signing"
 	"devshard/state"
+	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
 
@@ -45,7 +46,11 @@ func testHostWithAvailability(t *testing.T, hostIdx int, avail devshardpkg.Avail
 	group := makeSlotGroup(hosts)
 	config := defaultSessionConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier)
+	infStore := storage.NewMemory()
+	require.NoError(t, infStore.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: runtimeTestVersion, CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 10000,
+	}))
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, infStore)
 	require.NoError(t, err)
 	h, err := host.NewHost(sm, hosts[hostIdx], stub.NewInferenceEngine(), "escrow-1", group, nil,
 		host.WithGrace(10),

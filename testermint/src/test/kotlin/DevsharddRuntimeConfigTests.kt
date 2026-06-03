@@ -7,6 +7,7 @@ import com.productscience.devshardVersionedRoutePrefix
 import com.productscience.LocalInferencePair
 import com.productscience.NodeManagerClient
 import com.productscience.versiondOverrideEnv
+import com.productscience.waitForVersiondOverrideReady
 import com.productscience.createSpec
 import com.productscience.data.AppState
 import com.productscience.data.EpochPhase
@@ -59,6 +60,12 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
     /** Wall-clock budget after governance proposal until completions must return 503. */
     private val propagationSlaMs = 60_000L
 
+    /**
+     * Re-enable path: voting (~12s) + blocks, long-poll param apply, and
+     * [LocalInferencePair.waitForNextInferenceWindow] near epoch end (~45s).
+     */
+    private val governanceReEnableSlaMs = 120_000L
+
     /** After dapi container restart, allow NodeManager + versiond proxy to recover. */
     private val postRestartWarmupDelay = Duration.ofSeconds(10)
 
@@ -93,6 +100,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         val (c, g) = initCluster(joinCount = 0, config = versiondDevsharddConfig, reboot = true)
         cluster = c
         genesis = g
+        genesis.waitForVersiondOverrideReady(standaloneTestVersionName)
         cluster.stubDevshardChatResponse()
         nodeManagerClient(genesis).use { waitForSyncedRuntimeConfig(it) }
     }
@@ -278,7 +286,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                     waitForRuntimeConfigDevshardRequests(it, enabled = true)
                 }
                 genesis.waitForNextInferenceWindow()
-                val deadline = System.currentTimeMillis() + propagationSlaMs
+                val deadline = System.currentTimeMillis() + governanceReEnableSlaMs
                 var accepted = false
                 while (System.currentTimeMillis() < deadline && !accepted) {
                     val resp = try {
@@ -301,7 +309,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                     .describedAs("devshardd must accept completions again after runtime config re-enables requests")
                     .isTrue()
             }
-            assertThat(enableElapsed).isLessThan(propagationSlaMs)
+            assertThat(enableElapsed).isLessThan(governanceReEnableSlaMs)
             assertThat(chainEscrow(genesis).devshardRequestsEnabled).isTrue()
         } finally {
             genesis.stopDevshardProxy(escrowId)

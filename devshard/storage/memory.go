@@ -53,7 +53,9 @@ type sessionData struct {
 	lastFinalized uint64
 	status        string // "active", "settled"
 	snapshot      *snapshotData
-	inferences    map[uint64]InferenceRow
+	inferences              map[uint64]InferenceRow
+	inferenceValidationObs  map[uint64]map[uint32]SlotValidationObs
+	sealedValidationObs     map[uint64]map[uint32]SlotValidationObs
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -99,7 +101,9 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 		balance:      params.InitialBalance,
 		nonceToIndex: make(map[uint64]int),
 		status:       "active",
-		inferences:   make(map[uint64]InferenceRow),
+		inferences:             make(map[uint64]InferenceRow),
+		inferenceValidationObs: make(map[uint64]map[uint32]SlotValidationObs),
+		sealedValidationObs:    make(map[uint64]map[uint32]SlotValidationObs),
 	}
 	return nil
 }
@@ -282,9 +286,6 @@ func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error 
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
-	if _, exists := s.inferences[row.InferenceID]; exists {
-		return fmt.Errorf("sealed inference %d already exists for session %s", row.InferenceID, escrowID)
-	}
 	s.inferences[row.InferenceID] = row
 	return nil
 }
@@ -313,7 +314,90 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
 	s.inferences = make(map[uint64]InferenceRow)
+	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	return nil
+}
+
+func (m *Memory) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	if s.inferenceValidationObs == nil {
+		s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	}
+	bySlot := s.inferenceValidationObs[inferenceID]
+	if bySlot == nil {
+		bySlot = make(map[uint32]SlotValidationObs)
+		s.inferenceValidationObs[inferenceID] = bySlot
+	}
+	obs := bySlot[slotID]
+	obs.SlotID = slotID
+	obs.RequiredValidations += requiredDelta
+	obs.CompletedValidations += completedDelta
+	bySlot[slotID] = obs
+	return nil
+}
+
+func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	bySlot := s.inferenceValidationObs[inferenceID]
+	if len(bySlot) == 0 {
+		return nil
+	}
+	if s.sealedValidationObs == nil {
+		s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	}
+	sealed := s.sealedValidationObs[inferenceID]
+	if sealed == nil {
+		sealed = make(map[uint32]SlotValidationObs)
+		s.sealedValidationObs[inferenceID] = sealed
+	}
+	for slotID, obs := range bySlot {
+		cur := sealed[slotID]
+		cur.SlotID = slotID
+		cur.RequiredValidations += obs.RequiredValidations
+		cur.CompletedValidations += obs.CompletedValidations
+		sealed[slotID] = cur
+	}
+	delete(s.inferenceValidationObs, inferenceID)
+	return nil
+}
+
+func (m *Memory) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	return mergeValidationObsBySlot(
+		flattenInferenceValidationObs(s.inferenceValidationObs),
+		flattenInferenceValidationObs(s.sealedValidationObs),
+	), nil
+}
+
+func flattenInferenceValidationObs(src map[uint64]map[uint32]SlotValidationObs) []SlotValidationObs {
+	if len(src) == 0 {
+		return nil
+	}
+	var out []SlotValidationObs
+	for _, bySlot := range src {
+		for _, obs := range bySlot {
+			out = append(out, obs)
+		}
+	}
+	return out
 }
 
 func (m *Memory) PruneEpoch(epochID uint64) error {

@@ -72,6 +72,18 @@ func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
+func (r *recordingStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	r.lastMethod = "IncrInferenceValidationObs"
+	return nil
+}
+func (r *recordingStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	r.lastMethod = "DrainInferenceValidationObs"
+	return nil
+}
+func (r *recordingStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	r.lastMethod = "GetValidationObservability"
+	return nil, nil
+}
 func (r *recordingStorage) PruneEpoch(epochID uint64) error {
 	r.lastMethod = "PruneEpoch"
 	return nil

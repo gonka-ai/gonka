@@ -18,11 +18,18 @@ class DevshardTests : TestermintTest() {
         genesisSpec = inferenceConfig.genesisSpec?.merge(devshardNoRestrictionsSpec) ?: devshardNoRestrictionsSpec
     )
 
-    private val noRestrictionsLongEpochConfig = inferenceConfig.copy(
+    private val streamingLongEpochConfig = inferenceConfig.copy(
+        genesisSpec = createSpec(
+            epochLength = 20,
+            epochShift = 10,
+        ).merge(devshardNoRestrictionsSpec),
+    )
+
+    private val parallelLongEpochConfig = inferenceConfig.copy(
         genesisSpec = createSpec(
             epochLength = 40,
-            epochShift = 10
-        ).merge(devshardNoRestrictionsSpec)
+            epochShift = 10,
+        ).merge(devshardNoRestrictionsSpec),
     )
 
     private val noRestrictionsAlwaysValidateConfig = inferenceConfig.copy(
@@ -94,7 +101,7 @@ class DevshardTests : TestermintTest() {
 
     @Test
     fun `devshard streaming inference e2e with settlement`() {
-        val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = streamingLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
         cluster.stubDevshardChatResponse(content = "hello from stream", streamDelay = Duration.ofMillis(50))
@@ -140,7 +147,7 @@ class DevshardTests : TestermintTest() {
     @Test
     fun `parallel devshard sessions with isolated settlement`() {
         val sessionCount = 6
-        val (cluster, genesis) = initCluster(config = noRestrictionsLongEpochConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = parallelLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
         cluster.stubDevshardChatResponse()
@@ -194,6 +201,11 @@ class DevshardTests : TestermintTest() {
                 }.awaitAll()
             }
 
+            logSection("Waiting for validation observability on active escrows")
+            sessions.forEach { session ->
+                genesis.waitForDevshardValidationObservability(session.escrowId, minCompleted = 1)
+            }
+
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
                 val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
@@ -202,7 +214,10 @@ class DevshardTests : TestermintTest() {
                     .isEqualTo(session.escrowId.toString())
                 assertThat(result.parsed.hostStats).isNotEmpty()
                 assertThat(result.parsed.signatures).isNotEmpty()
-                assertThat(result.parsed.hostStats.sumOf { it.completedValidations }).isGreaterThan(0)
+                val obs = genesis.getDevshardShardStatsDetail(session.escrowId)
+                assertThat(obs.validationObservability.totals.completedValidations)
+                    .withFailMessage("validation observability for escrow ${session.escrowId}")
+                    .isGreaterThan(0)
 
                 val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
                 assertThat(settleResp.code)

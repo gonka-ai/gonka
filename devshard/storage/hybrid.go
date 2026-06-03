@@ -78,6 +78,18 @@ func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
 	return h.backend.DeleteSealedInferences(escrowID)
 }
 
+func (h *HybridStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	return h.backend.IncrInferenceValidationObs(escrowID, inferenceID, slotID, requiredDelta, completedDelta)
+}
+
+func (h *HybridStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	return h.backend.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	return h.backend.GetValidationObservability(escrowID)
+}
+
 func (h *HybridStorage) PruneEpoch(epochID uint64) error {
 	return h.backend.PruneEpoch(epochID)
 }

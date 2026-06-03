@@ -32,7 +32,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	escrowID := "escrow-integration"
 	initialBalance := uint64(100000)
 
-	sm, err := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier)
+	sm, err := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier, testutil.MustMemoryStore(t, escrowID, user.Address(), config, group, initialBalance))
 	require.NoError(t, err)
 
 	// Track pending operations from previous diffs that need to be included.

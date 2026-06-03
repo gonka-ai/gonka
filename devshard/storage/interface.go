@@ -53,18 +53,34 @@ type Storage interface {
 	LastFinalized(escrowID string) (uint64, error)
 	SaveSnapshot(escrowID string, nonce uint64, data []byte) error
 	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
+	// InsertSealedInference upserts the per-inference observability snapshot
+	// (insert or update on conflict).
 	InsertSealedInference(escrowID string, row InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
+	// IncrInferenceValidationObs tracks per-inference validation counters (not in state root).
+	IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error
+	// DrainInferenceValidationObs moves live counters for an inference into sealed storage (called on seal).
+	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
+	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
+	GetValidationObservability(escrowID string) ([]SlotValidationObs, error)
 	PruneEpoch(epochID uint64) error
 	Close() error
+}
+
+// SlotValidationObs holds per-slot validation counters for observability APIs only.
+// These are persisted across host restarts but are not part of settlement host_stats.
+type SlotValidationObs struct {
+	SlotID               uint32
+	RequiredValidations  uint32
+	CompletedValidations uint32
 }
 
 // CreateSessionParams holds all parameters for creating a new session.
 type CreateSessionParams struct {
 	EscrowID       string
 	EpochID        uint64
-	Version        string
+	Version        string // versiond runtime bind tag (HostManager boundVersion, VersionForRoutePrefix); not state-root protocol
 	CreatorAddr    string
 	Config         types.SessionConfig
 	Group          []types.SlotAssignment
@@ -75,7 +91,7 @@ type CreateSessionParams struct {
 type SessionMeta struct {
 	EscrowID       string
 	EpochID        uint64
-	Version        string
+	Version        string // versiond runtime bind tag; must match peer hosts' boundVersion
 	CreatorAddr    string
 	Config         types.SessionConfig
 	Group          []types.SlotAssignment
@@ -94,13 +110,17 @@ type ActiveSession struct {
 }
 
 // InferenceRow is the durable sealed-inference marker used by Phase 0 RAM
-// pruning. It only records that an inference id was sealed and the nonce at
-// which the seal happened. Cold-path validation (late MsgValidation /
-// MsgValidationVote on an evicted record) reads the full per-record state
-// from the in-memory committed-entries map, which is itself rebuilt from the
-// host snapshot and the diff log on recovery; this row is purely the durable
-// "this id was sealed" signal.
+// pruning. It records the inference id and seal nonce. When ObsPresent is true,
+// the sealed_* fields are an observability snapshot at seal time (not in the
+// state root) for GET /v1/inference after RAM prune. Late MsgValidation on
+// sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
 	InferenceID uint64
 	SealedNonce uint64
+	ObsPresent         bool
+	SealedStatus       uint32
+	SealedExecutorSlot uint32
+	SealedVotesValid   uint32
+	SealedVotesInvalid uint32
+	SealedValidatedBy  []byte // up to 16 bytes (ValidatedBy bitmap)
 }

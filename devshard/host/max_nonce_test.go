@@ -20,7 +20,7 @@ func newTestHostWithMaxNonce(t *testing.T, hostIdx int, hosts []*signing.Secp256
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100_000, user.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100_000))
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[hostIdx], stub.NewInferenceEngine(), "escrow-1", group, nil,
 		WithMaxNonceProvider(devshard.StaticMaxNonce(maxNonce)),

@@ -217,6 +217,18 @@ func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
 }
 
+func (m *ManagedStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+	return m.inner.IncrInferenceValidationObs(escrowID, inferenceID, slotID, requiredDelta, completedDelta)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	return m.inner.GetValidationObservability(escrowID)
+}
+
 // PruneEpoch is exposed so callers can trigger an explicit drop. PruneOnce uses
 // this path when the inner store does not implement rangePruner.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {

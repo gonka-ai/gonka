@@ -117,12 +117,21 @@ func TestMetaDrainTimeoutFromEnv_InvalidFallsBack(t *testing.T) {
 // KillFatal simulates a non-retryable HTTP 4xx response from the host
 // (for example a 403 "sender not in group" from the auth layer).
 type killableClient struct {
-	inner  user.HostClient
-	killed atomic.Bool
-	fatal  atomic.Bool
+	inner       user.HostClient
+	killed      atomic.Bool
+	fatal       atomic.Bool
+	failFast503 atomic.Bool
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
+	if c.failFast503.Load() {
+		return nil, &transport.HTTPStatusError{
+			StatusCode:    http.StatusServiceUnavailable,
+			Path:          "/sessions/escrow-proxy/chat/completions",
+			Body:          "devshard completion and timeout requests are disabled",
+			DevshardError: transport.DevshardErrorRequestsDisabled,
+		}
+	}
 	if c.fatal.Load() {
 		return nil, &transport.HTTPStatusError{
 			StatusCode: http.StatusForbidden,
@@ -136,9 +145,10 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest) (*host.
 	return c.inner.Send(ctx, req)
 }
 
-func (c *killableClient) Kill()      { c.killed.Store(true) }
-func (c *killableClient) Revive()    { c.killed.Store(false) }
-func (c *killableClient) KillFatal() { c.fatal.Store(true) }
+func (c *killableClient) Kill()           { c.killed.Store(true) }
+func (c *killableClient) Revive()         { c.killed.Store(false) }
+func (c *killableClient) KillFatal()      { c.fatal.Store(true) }
+func (c *killableClient) KillFailFast503() { c.failFast503.Store(true) }
 
 // verifierClient wraps killableClient and implements user.TimeoutVerifier.
 // This allows session.TimeoutVerifiers() to discover it.
@@ -206,7 +216,7 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 	killables := make([]*killableClient, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-proxy", userKey.Address(), config, group, 1_000_000))
 		require.NoError(t, err)
 		var engine devshard.InferenceEngine
 		if engines != nil {
@@ -227,7 +237,7 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 		}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-proxy", userKey.Address(), config, group, 1_000_000))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier)
 	require.NoError(t, err)
@@ -384,12 +394,33 @@ func TestRunInference_FatalHTTPErrorReturnsImmediately(t *testing.T) {
 	require.NotContains(t, err.Error(), "timed out")
 	require.NotContains(t, err.Error(), "insufficient votes")
 	require.True(t, transport.IsFatalHTTPError(err))
+	require.True(t, transport.IsFailFastHTTPError(err))
 	require.Less(t, elapsed, 500*time.Millisecond)
 
 	st := env.sm.SnapshotState()
 	rec, ok := st.Inferences[1]
 	require.True(t, ok)
 	require.Equal(t, types.StatusPending, rec.Status)
+}
+
+func TestRunInference_FailFast503ReturnsImmediately(t *testing.T) {
+	zeroTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	ctx := context.Background()
+
+	env.killables[1].KillFailFast503()
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.runInference(ctx, defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "host rejected inference")
+	require.True(t, transport.IsFailFastHTTPError(err))
+	require.False(t, transport.IsFatalHTTPError(err))
+	require.NotContains(t, err.Error(), "timed out")
+	require.Less(t, elapsed, 500*time.Millisecond)
 }
 
 type stubInferenceTimeouts struct {

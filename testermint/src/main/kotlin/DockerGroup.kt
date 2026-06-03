@@ -24,6 +24,26 @@ const val GENESIS_KEY_NAME = "genesis"
 
 private const val VERSIOND_COMPOSE_FILE = "docker-compose.versiond.yml"
 
+/**
+ * Docker platform for versiond + devshardd override binaries.
+ * Mirrors [scripts/blst-portable.sh] so Apple Silicon runs linux/arm64 everywhere.
+ */
+internal fun resolveDockerPlatform(): String {
+    System.getenv("DOCKER_PLATFORM")?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) {
+        return "linux/amd64"
+    }
+    return runCatching {
+        val proc =
+            ProcessBuilder("sysctl", "-n", "hw.optional.arm64")
+                .redirectErrorStream(true)
+                .start()
+        val arm64 = proc.inputStream.bufferedReader().readText().trim()
+        proc.waitFor()
+        if (proc.exitValue() == 0 && arm64 == "1") "linux/arm64" else "linux/amd64"
+    }.getOrDefault("linux/amd64")
+}
+
 /** True when this pair's compose stack includes the versiond overlay (devshardd / VersiondTests). */
 private fun DockerGroup.usesVersiondOverlay(): Boolean =
     composeFiles.any { it.endsWith(VERSIOND_COMPOSE_FILE) }
@@ -209,11 +229,19 @@ data class DockerGroup(
                 // This will allow us to get our consensus key and add the participant BEFORE we launch the API
                 composeArgs.add("chain-node")
             }
-            val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
-            val process = dockerProcess.start()
-            process.inputStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
-            process.errorStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
-            process.waitFor()
+            if (!isGenesis) {
+                val exitCode = runComposeLogged("join-chain-node-up", *composeArgs.toTypedArray())
+                if (exitCode != 0) {
+                    logComposeProjectState("after-failed-chain-node-up")
+                    logInferenceStackContainers(pairName, "after-failed-chain-node-up")
+                }
+            } else {
+                val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
+                val process = dockerProcess.start()
+                process.inputStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
+                process.errorStream.bufferedReader().use { it.lines().forEach { line -> Logger.info(line, "") } }
+                process.waitFor()
+            }
         }
         if (!isGenesis) {
             Thread.sleep(Duration.ofSeconds(10))
@@ -248,10 +276,40 @@ data class DockerGroup(
             if (additionalForPair.any { it.contains("versiond") }) {
                 joinServices.add("versiond")
             }
-            val startRemainingArgs = baseArgs + joinServices
+            val startRemainingArgs = baseArgs + listOf("up", "-d") + joinServices
             this.coldAccountPubkey = node.getColdPubKey()
-            dockerProcess(*startRemainingArgs.toTypedArray()).start().waitFor()
+            Logger.info(
+                "[{}] Starting join inference stack after registration: {}",
+                pairName,
+                joinServices.joinToString(),
+            )
+            val stackExit = runComposeLogged(
+                "join-inference-stack-up",
+                *startRemainingArgs.toTypedArray(),
+            )
+            logComposeProjectState("after-inference-stack-up")
+            logInferenceStackContainers(pairName, "after-inference-stack-up")
+            val apiContainer = "$pairName-api"
+            if (stackExit != 0 || !dockerContainerRunning(apiContainer)) {
+                Logger.error(
+                    "[{}] {} not running after compose up (exit={}); dumping logs",
+                    pairName,
+                    apiContainer,
+                    stackExit,
+                )
+                tailDockerLogs(apiContainer, lines = 150, context = "join-api-not-running")
+                tailDockerLogs("$pairName-postgres", lines = 80, context = "join-postgres")
+                tailDockerLogs("$pairName-proxy", lines = 40, context = "join-proxy")
+            }
             Thread.sleep(Duration.ofSeconds(10))
+            if (!dockerContainerRunning(apiContainer)) {
+                logComposeProjectState("after-wait-api-still-down")
+                logInferenceStackContainers(pairName, "after-wait-api-still-down")
+                error(
+                    "$apiContainer not running after join stack up (compose exit=$stackExit). " +
+                        "See testermint/logs for compose + docker log output.",
+                )
+            }
         }
         if (isGenesis && usesVersiondOverlay()) {
             ensureGenesisApiRunning()
@@ -259,6 +317,9 @@ data class DockerGroup(
         // Just register the log events. Skip while versiond genesis is still settling —
         // initializeCluster will discover pairs after RPC readiness.
         if (!(isGenesis && usesVersiondOverlay())) {
+            if (!isGenesis) {
+                logInferenceStackContainers(pairName, "before-getLocalInferencePairs")
+            }
             getLocalInferencePairs(config)
         }
         print(
@@ -336,14 +397,7 @@ data class DockerGroup(
         error("$apiContainer did not stay running (check: docker logs $apiContainer)")
     }
 
-    private fun dockerContainerRunning(containerName: String): Boolean {
-        val proc = ProcessBuilder("docker", "inspect", "-f", "{{.State.Running}}", containerName)
-            .redirectErrorStream(true)
-            .start()
-        val out = proc.inputStream.bufferedReader().use { it.readText().trim() }
-        proc.waitFor()
-        return proc.exitValue() == 0 && out == "true"
-    }
+    private fun dockerContainerRunning(containerName: String): Boolean = isDockerContainerRunning(containerName)
 
     fun tearDownExisting() {
         Logger.info("Tearing down existing docker group with keyName={}", pairName)
@@ -362,6 +416,8 @@ data class DockerGroup(
 
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
         return buildMap {
+            // Align versiond service platform with host-built devshardd (see docker-compose.versiond.yml).
+            put("DOCKER_PLATFORM", resolveDockerPlatform())
             put("KEY_NAME", coldKeyName)
             put("VERSIOND_SIGNER_KEY_NAME", if (isGenesis) coldKeyName else warmKeyName)
             // Per-pair keyring backend. Genesis api creates its key inside the
@@ -558,6 +614,64 @@ fun createDockerGroup(
     )
 }
 
+private fun isDockerContainerRunning(containerName: String): Boolean {
+    val proc = ProcessBuilder("docker", "inspect", "-f", "{{.State.Running}}", containerName)
+        .redirectErrorStream(true)
+        .start()
+    val out = proc.inputStream.bufferedReader().use { it.readText().trim() }
+    proc.waitFor()
+    return proc.exitValue() == 0 && out == "true"
+}
+
+private fun pairRpcSynced(pair: LocalInferencePair, minHeight: Long = 1): Boolean =
+    runCatching {
+        val status = pair.node.getStatus()
+        status.syncInfo.latestBlockHeight >= minHeight && !status.syncInfo.catchingUp
+    }.getOrDefault(false)
+
+private fun pairApiResponding(pair: LocalInferencePair): Boolean {
+    val apiContainer = "${pair.name.trimStart('/')}-api"
+    if (!isDockerContainerRunning(apiContainer)) {
+        return false
+    }
+    return runCatching {
+        pair.getParams()
+        true
+    }.getOrDefault(false)
+}
+
+private fun waitForClusterReadyBeforeInitialize(
+    cluster: LocalCluster,
+    timeout: Duration = Duration.ofSeconds(90),
+) {
+    Logger.info("Waiting for cluster readiness (RPC synced, APIs up)", "")
+    val deadline = System.nanoTime() + timeout.toNanos()
+    while (System.nanoTime() < deadline) {
+        if (!pairRpcSynced(cluster.genesis) || !pairApiResponding(cluster.genesis)) {
+            Thread.sleep(1000)
+            continue
+        }
+        val genesisHeight = runCatching { cluster.genesis.getCurrentBlockHeight() }.getOrNull()
+        val joinsReady = cluster.joinPairs.all { join ->
+            pairRpcSynced(join) &&
+                pairApiResponding(join) &&
+                (genesisHeight == null || runCatching {
+                    kotlin.math.abs(join.getCurrentBlockHeight() - genesisHeight) <= 2
+                }.getOrDefault(false))
+        }
+        if (joinsReady) {
+            Logger.info(
+                "Cluster ready for initialize (genesis block {}, {} join(s))",
+                genesisHeight,
+                cluster.joinPairs.size,
+            )
+            return
+        }
+        Thread.sleep(1000)
+    }
+    error("Cluster not ready for initialize within ${timeout.seconds} seconds")
+}
+
 fun getRepoRoot(): String {
     // Allow an explicit override so worktrees / additional checkouts (e.g.
     // gonka-2) can run tests without renaming their directory.
@@ -624,7 +738,22 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
             ?: error("Could not find local inference pair for keyName=${genesisGroup.pairName}")
         Logger.info("Waiting for genesis API and ML nodes readiness", "")
         genesisPair.waitForMlNodesToLoad(maxWaitAttempts = 18)
-        joinGroups.forEach { it.init() }
+        if (joinGroups.isNotEmpty()) {
+            val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+            joinGroups.map { group ->
+                Thread {
+                    try {
+                        group.init()
+                    } catch (e: Throwable) {
+                        failures.add(e)
+                    }
+                }.apply {
+                    name = "join-init-${group.pairName}"
+                    start()
+                }
+            }.forEach { it.join() }
+            failures.firstOrNull()?.let { throw it }
+        }
         return allGroups
     } finally {
         TestState.rebooting = false
@@ -645,7 +774,7 @@ fun initCluster(
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
     val cluster = try {
         val c = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
-        Thread.sleep(50000)
+        waitForClusterReadyBeforeInitialize(c)
         logSection("Found cluster, initializing")
         initialize(c.allPairs, resetMlNodes = resetMlNodes)
         c

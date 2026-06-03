@@ -24,27 +24,9 @@ func newSealTestSMVersion(t *testing.T, escrowID string, hosts []*signing.Secp25
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 
-	var storeOpt SMOption
-	var store *storage.Memory
-	if withStore {
-		store = storage.NewMemory()
-		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-			EscrowID:       escrowID,
-			EpochID:        7,
-			Version:        sessionVersion,
-			CreatorAddr:    user.Address(),
-			Config:         config,
-			Group:          group,
-			InitialBalance: 100000,
-		}))
-		storeOpt = WithInferenceStore(store)
-	}
-
+	store := testutil.MustMemoryStore(t, escrowID, user.Address(), config, group, 100000)
 	opts := []SMOption{WithVersion(sessionVersion)}
-	if storeOpt != nil {
-		opts = append(opts, storeOpt)
-	}
-	sm, err := NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, opts...)
+	sm, err := NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store, opts...)
 	require.NoError(t, err)
 	return sm, store, user, group
 }
@@ -171,4 +153,37 @@ func TestSeal_BuildSettlement_RestHashMatchesAfterSeal(t *testing.T) {
 	rootActivePhase := ComputeStateRootFromRestHash(hostStatsHashActive, restFromState, st.Fees, st.Phase, st.StateRootAndProtocolVersion)
 	require.Equal(t, rootActivePhase, rootFromSM, "intra-session root uses active phase")
 	require.NotEqual(t, rootFromPayload, rootFromSM, "settlement phase byte differs from active")
+}
+
+func TestChallengedInferencePersistedBeforeSeal(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	escrowID := "escrow-challenged"
+	sm, store, _, _ := newSealTestSM(t, escrowID, hosts, true)
+	driveSealInferenceToFinished(t, sm, escrowID, hosts)
+
+	valMsg := &types.MsgValidation{
+		InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: escrowID,
+	}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], valMsg)
+	_, err := sm.ApplyLocal(4, []*types.DevshardTx{txValidation(valMsg)})
+	require.NoError(t, err)
+
+	row, ok, err := store.GetSealedInference(escrowID, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, row.ObsPresent)
+	require.Equal(t, uint32(types.StatusChallenged), row.SealedStatus)
+	require.Equal(t, uint64(0), row.SealedNonce, "not sealed yet")
+
+	require.NoError(t, sm.SealInference(1))
+	row, ok, err = store.GetSealedInference(escrowID, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Greater(t, row.SealedNonce, uint64(0))
 }

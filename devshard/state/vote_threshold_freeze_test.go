@@ -34,7 +34,7 @@ func TestNewStateMachine_BindVoteThreshold_GovernanceFactor67(t *testing.T) {
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", cfg, group, 10_000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", cfg, group, 10_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 10_000))
 	require.NoError(t, err)
 	require.Equal(t, uint32(4), sm.VoteThreshold())
 }
@@ -57,7 +57,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 		types.LiveSessionBindParams{VoteThresholdFactor: 67},
 	)
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", cfg, group, 100_000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", cfg, group, 100_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 100_000))
 	require.NoError(t, err)
 
 	require.Equal(t, voteThreshold, sm.VoteThreshold())
@@ -107,7 +107,7 @@ func TestNewStateMachine_LegacyZeroFeePerNonceUsesCompiledDefault(t *testing.T) 
 	require.Equal(t, types.DefaultSessionConfig(len(group)).FeePerNonce, cfg.FeePerNonce)
 
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := NewStateMachine("escrow-1", cfg, group, 10_000, user.Address(), verifier)
+	sm, err := NewStateMachine("escrow-1", cfg, group, 10_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 10_000))
 	require.NoError(t, err)
 	require.Equal(t, uint64(1_000), sm.SnapshotState().Config.FeePerNonce)
 }

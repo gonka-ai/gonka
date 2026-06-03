@@ -170,8 +170,8 @@ func TestEnsurePartition_AllFiveParents(t *testing.T) {
 	require.NoError(t, MigratePostgres(ctx, pool))
 
 	require.NoError(t, pg.ensurePartition(ctx, 77))
-	require.Equal(t, 5, tracer.partitionDDLCount(), "first ensurePartition should create five child partitions")
+	require.Equal(t, 8, tracer.partitionDDLCount(), "first ensurePartition should create eight child partitions")
 
 	require.NoError(t, pg.ensurePartition(ctx, 77))
-	require.Equal(t, 5, tracer.partitionDDLCount(), "second ensurePartition must not issue partition DDL")
+	require.Equal(t, 8, tracer.partitionDDLCount(), "second ensurePartition must not issue partition DDL")
 }
