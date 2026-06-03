@@ -31,7 +31,7 @@ if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
 fi
 
 echo "Starting genesis node"
-docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml up -d
+docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml -f docker-compose.postgres.yml up -d
 sleep 40
 
 # seed node parameters for both joining nodes

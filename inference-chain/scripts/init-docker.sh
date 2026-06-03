@@ -226,6 +226,8 @@ kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
 # Disable IAVL fast node: cause failed state sync
 kv app iavl-disable-fastnode true
 
+# Query gas limit (protects from expensive read queries)
+kv app query-gas-limit "${QUERY_GAS_LIMIT:-10000000}"
 
 # CONFIG_* environment overrides ----------------------------------------------
 (
