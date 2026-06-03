@@ -112,6 +112,18 @@ func TestMLNodeTester_ModelLoadFailure(t *testing.T) {
 	}
 }
 
+func TestVersionedURL(t *testing.T) {
+	if got := versionedURL("h", 8080, "/seg", ""); got != "http://h:8080/seg" {
+		t.Errorf("unversioned = %q", got)
+	}
+	if got := versionedURL("h", 8080, "/seg", "v1.2.3"); got != "http://h:8080/v1.2.3/seg" {
+		t.Errorf("versioned = %q", got)
+	}
+	if got := versionedURL("h", 5000, "", "v1"); got != "http://h:5000/v1" {
+		t.Errorf("versioned no-segment = %q", got)
+	}
+}
+
 func TestMLNodeTester_InferenceRequestFailure(t *testing.T) {
 	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
 		Id:            "node1",

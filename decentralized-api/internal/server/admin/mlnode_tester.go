@@ -117,6 +117,17 @@ func (t *MLNodeTester) Run(ctx context.Context, nodeId string) (*TestResult, err
 	return result, nil
 }
 
+// versionedURL builds an MLnode URL, inserting the node version into the
+// path when non-empty — matching broker.Node.PoCUrlWithVersion /
+// InferenceUrlWithVersion so the tester reaches the same routes the broker
+// uses in versioned (rolling-upgrade) deployments.
+func versionedURL(host string, port int, segment, version string) string {
+	if version == "" {
+		return fmt.Sprintf("http://%s:%d%s", host, port, segment)
+	}
+	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+}
+
 func (t *MLNodeTester) findNode(nodeId string) (apiconfig.InferenceNodeConfig, bool) {
 	for _, n := range t.configManager.GetNodes() {
 		if n.Id == nodeId {
@@ -138,8 +149,13 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 		result.DurationMs = time.Since(started).Milliseconds()
 	}()
 
-	pocUrl := fmt.Sprintf("http://%s:%d%s", cfg.Host, cfg.PoCPort, cfg.PoCSegment)
-	inferenceUrl := fmt.Sprintf("http://%s:%d%s", cfg.Host, cfg.InferencePort, cfg.InferenceSegment)
+	// Build URLs the same way the broker does for versioned (rolling-
+	// upgrade) deployments: insert the current node version into the path
+	// when set, so the test hits the same MLnode routes the broker uses
+	// (an unversioned URL would hit the wrong endpoint and falsely fail).
+	version := t.configManager.GetCurrentNodeVersion()
+	pocUrl := versionedURL(cfg.Host, cfg.PoCPort, cfg.PoCSegment, version)
+	inferenceUrl := versionedURL(cfg.Host, cfg.InferencePort, cfg.InferenceSegment, version)
 	client := t.factory.CreateClient(pocUrl, inferenceUrl)
 
 	// Best-effort cleanup at the end so a successful test leaves the

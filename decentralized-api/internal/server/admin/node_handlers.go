@@ -113,6 +113,12 @@ func (s *Server) computeOnboarding(n broker.NodeResponse) *OnboardingStatus {
 			}
 		}
 	}
+	// An active participant's node is already proven (selected and serving
+	// in the current epoch), so treat it as validated for the user-facing
+	// wording rather than showing "not yet validated".
+	if active {
+		validated = true
+	}
 
 	mlState, _ := DeriveMLNodeState(OnboardingStateInputs{
 		ParticipantActive:   active,
@@ -335,6 +341,13 @@ func shouldAutoTest(secondsUntilNextPoC int64) bool {
 // or a test for this node is already running.
 func (s *Server) maybeAutoTest(nodeId string) {
 	if s.tester == nil || s.phaseTracker == nil {
+		return
+	}
+	// Never auto-test while the participant is active: such a node is
+	// serving inference, and the test would reload + Stop it outside the
+	// broker's knowledge, briefly taking it out of service. Pre-PoC
+	// validation is for onboarding (inactive) nodes only.
+	if s.activityTracker != nil && s.activityTracker.IsActive() {
 		return
 	}
 	timing := ComputeTiming(s.phaseTracker.GetCurrentEpochState())

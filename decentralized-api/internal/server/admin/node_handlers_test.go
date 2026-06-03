@@ -215,6 +215,25 @@ func TestComputeOnboarding_BrokerFailedIsNotTestFailed(t *testing.T) {
 	}
 }
 
+// TestComputeOnboarding_ActiveIsValidated checks that an active
+// participant's node is treated as validated — it must not be shown as
+// "not yet validated", since it is already serving in the epoch.
+func TestComputeOnboarding_ActiveIsValidated(t *testing.T) {
+	s, _, _ := setupTestServer(t)
+	n := broker.NodeResponse{
+		Node: broker.Node{Id: "active-node"},
+		State: broker.NodeState{
+			// A populated epoch-MLnodes map marks the participant active.
+			EpochMLNodes: map[string]types.MLNodeInfo{"m": {}},
+		},
+	}
+	ob := s.computeOnboarding(n)
+	if assert.NotNil(t, ob) {
+		assert.Equal(t, string(ParticipantState_ACTIVE_PARTICIPATING), ob.ParticipantState)
+		assert.NotContains(t, ob.UserMessage, "not yet validated")
+	}
+}
+
 // TestGetNodesOnboarding verifies the GET /nodes response shape (the
 // existing node fields plus the new optional onboarding envelope) and
 // that a failed manual test surfaces as TEST_FAILED — the gap #1 wiring
