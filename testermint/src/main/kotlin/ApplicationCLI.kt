@@ -161,7 +161,12 @@ data class ApplicationCLI(
     }
 
     fun getLastUpgradeHeight(): LastUpgradeHeightQueryResponse = wrapLog("getLastUpgradeHeight", infoLevel = false) {
-        execAndParse(listOf("query", "inference", "last-upgrade-height"))
+        val canonicalExecName = "${config.stateDirName}/cosmovisor/current/bin/${config.appName}"
+        val command = "$canonicalExecName query inference last-upgrade-height --output json"
+        Logger.debug("Executing shell command for last-upgrade-height: {}", command)
+        val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+        Logger.debug("Output: {}", output)
+        cosmosJson.fromJson(output, LastUpgradeHeightQueryResponse::class.java)
     }
 
     var coldAccountKey: Validator? = null
@@ -420,7 +425,11 @@ data class ApplicationCLI(
         return cosmosJson.fromJson(output, T::class.java)
     }
 
-    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn: String? = null): String {
+    fun execCli(
+        args: List<String>,
+        includeOutputFlag: Boolean = true,
+        stdIn: String? = null
+    ): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))

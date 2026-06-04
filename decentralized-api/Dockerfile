@@ -95,7 +95,7 @@ FROM scratch AS binary-exporter
 # Copy all required files to a flat structure
 COPY --from=builder /app/decentralized-api/build/dapi /build_output/decentralized-api
 COPY --from=builder /app/inference-chain/build/inferenced /build_output/inferenced
-COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
+COPY --from=builder /lib/libwasmvm_muslc.*.a /build_output/
 COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
 ################################################################################
