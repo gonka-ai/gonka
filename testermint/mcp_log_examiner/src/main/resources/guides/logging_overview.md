@@ -39,7 +39,7 @@ Subsystem is especially useful. It represents the specific subsystem inside of t
 - Nodes - related to updating ML nodes for an API
 - Config - related to updating or retrieving config values
 - EventProcessing - related to processing events coming from the chain to the API
-- Upgrades - related to upgrading components of the systen
+- Upgrades - related to upgrading components of the system
 - Server - related to the API server (requests, responses, etc)
 - Training - related to AI training
 - Stages - related to moving between stages of an Epoch

@@ -231,5 +231,5 @@ From this point on, you will gain a lot of additional functionality when opening
 - Most Log lines are tagged with `subsystem=` identifiers
 - Example: `subsystem=Stages` shows all epoch transition logs
 - Find subsystem definitions in: `inference-chain/x/inference/types/logging.go`
-You can also use the consts in `logging.go` to see exactly where specific subsytems are used.
+You can also use the consts in `logging.go` to see exactly where specific subsystems are used.
 ---

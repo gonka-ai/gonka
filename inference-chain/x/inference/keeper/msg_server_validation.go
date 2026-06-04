@@ -420,7 +420,7 @@ func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference typ
 		// This would be before IsStartOfPocStage
 		return true, "Validation during inference epoch"
 	}
-	// Somewhere inbetween StartOfPocStage and SetNewValidatorsStage
+	// Somewhere in between StartOfPocStage and SetNewValidatorsStage
 	// ActiveParticipants are set during EndOfPoCValidationStage, which is also when we set claims
 	_, found = k.GetActiveParticipants(ctx, upcomingEpoch.Index)
 	if found {

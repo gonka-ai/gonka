@@ -557,7 +557,7 @@ fun initCluster(
             Logger.error(e, "Failed to initialize cluster, rebooting")
             throw e
         }
-        Logger.error(e, "Error initializing cluser, retrying")
+        Logger.error(e, "Error initializing cluster, retrying")
         logSection("Exception during cluster initialization, retrying")
         return initCluster(joinCount, finalConfig, reboot = true)
     }

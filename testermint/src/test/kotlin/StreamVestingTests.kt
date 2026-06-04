@@ -240,7 +240,7 @@ class StreamVestingTests : TestermintTest() {
         logHighlight("Total aggregated vesting amount: $aggregatedTotalAmount ngonka")
         
         // The aggregated amount should be greater than a single reward
-        // TODO: unfortunatelly, it's not true, because we can't guarantee that the rewards are equal each time to the same validator
+        // TODO: unfortunately, it's not true, because we can't guarantee that the rewards are equal each time to the same validator
         // assertThat(aggregatedTotalAmount).isGreaterThan(totalVestingAmount)
 
         logSection("=== LEGACY REWARD SYSTEM VESTING TEST COMPLETED ===")

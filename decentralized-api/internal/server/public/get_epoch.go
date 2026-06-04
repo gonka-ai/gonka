@@ -18,7 +18,7 @@ type EpochResponse struct {
 	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent    `json:"active_confirmation_poc_event,omitempty"`
 }
 
-// LatestEpochDto, had to indroduced it, because types.Epoch doesn't serialize when
+// LatestEpochDto, had to introduce it, because types.Epoch doesn't serialize when
 // Index and PocStartBlockHeight are 0
 type LatestEpochDto struct {
 	Index               uint64 `json:"index"`

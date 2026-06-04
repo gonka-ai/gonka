@@ -20,7 +20,7 @@ func NewMsgRegisterModel(authority string, proposedBy string, id string, unitsOf
 func (msg *MsgRegisterModel) ValidateBasic() error {
 	_, err := sdk.AccAddressFromBech32(msg.Authority)
 	if err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid authrority address (%s)", err)
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid authority address (%s)", err)
 	}
 	_, err = sdk.AccAddressFromBech32(msg.ProposedBy)
 	if err != nil {

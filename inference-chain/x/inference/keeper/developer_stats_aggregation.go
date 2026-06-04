@@ -245,7 +245,7 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 			if val := byTimeStore.Get(timeKey); val != nil {
 				err := k.cdc.Unmarshal(val, &statsByTime)
 				if err != nil {
-					k.LogError("unabled to unmarhsal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
+					k.LogError("unable to unmarshal DeveloperStatsByTime", types.Participants, "key", iterator.Key(), "error", err)
 					continue
 				}
 				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)

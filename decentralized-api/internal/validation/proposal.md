@@ -49,7 +49,7 @@ The nodes might be unavailable and we will lose the validation request.
 
 1. Create a `InferenceValidationTaskStorage` interface and it's first implementation: `InMemoryInferenceValidationTaskStorage`
 2. In `event_listener.go` instead of immediately spawning a goroutine, we will store the validation request in the `InferenceValidationTaskStorage`
-3. `InferenceValidator` now will spawn a woker pool that will periodically check the tasks in the storage and execute them when nodes are available
+3. `InferenceValidator` now will spawn a worker pool that will periodically check the tasks in the storage and execute them when nodes are available
 
 # 3. Persistent validation task storage
 

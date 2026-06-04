@@ -84,7 +84,7 @@ class CollateralTests : TestermintTest() {
         participant.withdrawCollateral(depositAmount)
         participant.node.waitForNextBlock(2)
 
-        logSection("Verifying withdrawl")
+        logSection("Verifying withdrawal")
         val activeCollateral = participant.queryCollateral(participantAddress)
         assertThat(activeCollateral.amount).isNull()
         val balanceAfterWithdraw = participant.getBalance(participantAddress)
