@@ -1,8 +1,6 @@
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.createSpec
 import com.productscience.LocalInferencePair
-import com.productscience.inferenceConfig
 import com.productscience.data.*
 import com.productscience.getRawContainers
 import com.productscience.initCluster
@@ -83,6 +81,30 @@ class MaintenanceWindowTests : TestermintTest() {
         assertThat(finalCometValidators)
             .describedAs("Comet validator powers should converge before taking a validator offline")
             .containsAllEntriesOf(expectedVotingPowerByPubKey)
+    }
+
+    private fun assertRemainingValidatorsCanMaintainQuorum(
+        genesis: LocalInferencePair,
+        offlineValidatorPubKey: String,
+    ) {
+        val cometValidators = genesis.node.getCometValidators().validators
+        val powersByPubKey = cometValidators.associate { validator ->
+            validator.pubKey.key to checkNotNull(validator.votingPower.toLongOrNull()) {
+                "Unexpected non-numeric voting power for ${validator.pubKey.key}: ${validator.votingPower}"
+            }
+        }
+        val totalPower = powersByPubKey.values.sum()
+        val remainingPower = powersByPubKey
+            .filterKeys { it != offlineValidatorPubKey }
+            .values
+            .sum()
+
+        assertThat(remainingPower * 3)
+            .describedAs(
+                "Remaining validator power should stay above two-thirds before taking a validator offline. " +
+                    "Current powers=$powersByPubKey"
+            )
+            .isGreaterThan(totalPower * 2)
     }
 
     /**
@@ -339,13 +361,7 @@ class MaintenanceWindowTests : TestermintTest() {
     @Test
     @Tag("maintenance")
     fun `maintenance lifecycle survives offline validator during maintenance`() {
-        val maintenanceLifecycleConfig = inferenceConfig.copy(
-            genesisSpec = createSpec(
-                epochLength = 25,
-                epochShift = 10
-            ),
-        )
-        val (cluster, genesis) = initCluster(config = maintenanceLifecycleConfig, reboot = true)
+        val (cluster, genesis) = initCluster(joinCount = 3, reboot = true)
 
         val params = getMaintenanceParams(genesis)
         assertThat(params.maintenanceEnabled).isTrue()
@@ -356,6 +372,7 @@ class MaintenanceWindowTests : TestermintTest() {
 
         val join1 = cluster.joinPairs[0]
         val join2 = cluster.joinPairs[1]
+        val join3 = cluster.joinPairs[2]
         val join1Address = join1.node.getColdAddress()
         val join1DefaultNode = join1.api.getNodes().first {
             it.node.host == "ml-0000.${join1.name.trimStart('/')}.test"
@@ -363,6 +380,7 @@ class MaintenanceWindowTests : TestermintTest() {
         val genesisValidatorPubKey = genesis.node.getValidatorInfo().key
         val validatorPubKey = join1.node.getValidatorInfo().key
         val join2ValidatorPubKey = join2.node.getValidatorInfo().key
+        val join3ValidatorPubKey = join3.node.getValidatorInfo().key
         val requiredCredit = 10L
         val creditBlocks = awaitMinimumCredit(genesis, join1Address, requiredCredit)
         assertThat(creditBlocks).isGreaterThanOrEqualTo(requiredCredit)
@@ -391,6 +409,7 @@ class MaintenanceWindowTests : TestermintTest() {
                 genesisValidatorPubKey to "10",
                 validatorPubKey to "5",
                 join2ValidatorPubKey to "10",
+                join3ValidatorPubKey to "10",
             )
         )
 
@@ -448,6 +467,7 @@ class MaintenanceWindowTests : TestermintTest() {
         assertThat(currentHeightBeforeStop)
             .describedAs("Maintenance window should still have runway left before taking join1 offline")
             .isLessThan(endHeight - 1)
+        assertRemainingValidatorsCanMaintainQuorum(genesis, validatorPubKey)
 
         logSection("Stopping join1 chain node during active maintenance")
         stopNodeContainer(join1)
