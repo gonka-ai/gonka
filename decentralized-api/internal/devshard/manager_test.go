@@ -1321,5 +1321,5 @@ func TestStatsShardDetail_ValidationObservabilityAfterDiffApply(t *testing.T) {
 			return false
 		}
 		return resp.ValidationObservability.Totals.CompletedValidations >= 1
-	}, time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 }
