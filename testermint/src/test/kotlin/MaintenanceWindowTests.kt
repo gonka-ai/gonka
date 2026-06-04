@@ -1,13 +1,14 @@
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.LocalCluster
+import com.productscience.createSpec
 import com.productscience.LocalInferencePair
+import com.productscience.inferenceConfig
 import com.productscience.data.*
 import com.productscience.getRawContainers
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.EpochStage
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
@@ -15,9 +16,10 @@ import org.tinylog.kotlin.Logger
 /**
  * End-to-end tests for the Maintenance Windows feature.
  *
- * These tests verify that maintenance windows work correctly in a real
- * multi-node blockchain environment: scheduling, activation, liveness
- * exemption (no jailing), duty suppression, and normal resume behavior.
+ * These tests verify the two highest-signal maintenance behaviors in a real
+ * multi-node blockchain environment:
+ * 1. scheduling semantics (rejection, scheduling, cancellation, credit)
+ * 2. lifecycle behavior (activation and offline exemption without jailing)
  */
 class MaintenanceWindowTests : TestermintTest() {
 
@@ -53,34 +55,34 @@ class MaintenanceWindowTests : TestermintTest() {
         return final.creditBlocks
     }
 
-    /**
-     * Default maintenance params used by most tests. Individual tests can
-     * override fields via `enableMaintenance(..., overrides = { copy(...) })`.
-     */
-    private val defaultMaintenanceParams = MaintenanceParams(
-        maintenanceEnabled = true,
-        maintenanceMinScheduleLeadBlocks = 5,
-        maintenanceMaxWindowBlocks = 50,
-        maintenanceMaxConcurrentValidators = 3L,
-        maintenanceMaxConcurrentPowerBps = 5000L, // 50%
-        maintenanceCreditCapBlocks = 200,
-        maintenanceCreditEarnPerSuccessfulEpochBlocks = 50,
-    )
+    private fun getMaintenanceParams(genesis: LocalInferencePair): MaintenanceParams {
+        return checkNotNull(genesis.getParams().maintenanceParams) {
+            "maintenanceParams was null in Testermint chain params"
+        }
+    }
 
-    /**
-     * Submit a governance proposal that enables maintenance with the given
-     * params (defaults to [defaultMaintenanceParams]). Returns the resulting
-     * params for downstream assertions/inspection.
-     */
-    private fun enableMaintenance(
-        cluster: LocalCluster,
+    private fun waitForCometValidatorPowers(
         genesis: LocalInferencePair,
-        params: MaintenanceParams = defaultMaintenanceParams,
-    ): InferenceParams {
-        val current = genesis.getParams()
-        val modified = current.copy(maintenanceParams = params)
-        genesis.runProposal(cluster, UpdateParams(params = modified))
-        return genesis.getParams()
+        expectedVotingPowerByPubKey: Map<String, String>,
+        maxBlocks: Int = 6,
+    ) {
+        repeat(maxBlocks) { attempt ->
+            val cometValidators = genesis.node.getCometValidators().validators.associateBy({ it.pubKey.key }, { it.votingPower })
+            val matches = expectedVotingPowerByPubKey.all { (pubKey, expectedVotingPower) ->
+                cometValidators[pubKey] == expectedVotingPower
+            }
+            if (matches) return
+            Logger.info(
+                "Comet validator powers not settled yet (attempt ${attempt + 1}/$maxBlocks). " +
+                    "Expected=$expectedVotingPowerByPubKey Actual=$cometValidators"
+            )
+            genesis.node.waitForNextBlock(1)
+        }
+
+        val finalCometValidators = genesis.node.getCometValidators().validators.associateBy({ it.pubKey.key }, { it.votingPower })
+        assertThat(finalCometValidators)
+            .describedAs("Comet validator powers should converge before taking a validator offline")
+            .containsAllEntriesOf(expectedVotingPowerByPubKey)
     }
 
     /**
@@ -101,277 +103,182 @@ class MaintenanceWindowTests : TestermintTest() {
     }
 
     /**
-     * Restart a previously stopped chain node container.
+     * Find a future maintenance window that is safely inside inference and far
+     * enough from the next PoC transition to avoid phase-overlap rejections.
      */
-    private fun startNodeContainer(pair: LocalInferencePair) {
-        val container = nodeContainerFor(pair)
-        if (container.state != "running") {
-            dockerClient.startContainerCmd(container.id).exec()
+    private fun findSchedulableWindowStart(
+        genesis: LocalInferencePair,
+        participantAddress: String,
+        durationBlocks: Long,
+        extraLeadBuffer: Long = 1,
+        maxBlockAttempts: Int = 80,
+        maxExtraOffset: Long = extraLeadBuffer,
+    ): Long {
+        val params = getMaintenanceParams(genesis)
+        repeat(maxBlockAttempts) {
+            val epochData = genesis.getEpochData()
+            for (offset in extraLeadBuffer..maxExtraOffset) {
+                val startHeight = epochData.blockHeight + params.maintenanceMinScheduleLeadBlocks + offset
+
+                Logger.info(
+                    "Evaluating maintenance window candidate: start=$startHeight duration=$durationBlocks " +
+                        "currentHeight=${epochData.blockHeight} phase=${epochData.phase} offset=$offset"
+                )
+
+                val schedulability: MaintenanceSchedulabilityResponse? = try {
+                    querySchedulability(genesis, participantAddress, startHeight, durationBlocks)
+                } catch (e: Exception) {
+                    Logger.warn(e) { "Transient failure while querying schedulability for start=$startHeight duration=$durationBlocks" }
+                    null
+                }
+
+                if (schedulability?.schedulable == true) {
+                    return startHeight
+                }
+                if (schedulability == null) {
+                    Logger.info("Candidate schedulability unavailable yet, retrying on next block")
+                } else {
+                    Logger.info("Candidate rejected: ${schedulability.rejectionReason}")
+                }
+            }
+
+            waitForObservedBlockAdvance(genesis, epochData.blockHeight)
         }
-        Logger.info("Started node container for ${pair.name}")
+
+        error("Unable to find a schedulable maintenance window for duration=$durationBlocks")
+    }
+
+    private fun waitForObservedBlockAdvance(
+        genesis: LocalInferencePair,
+        previousHeight: Long,
+        maxPollAttempts: Int = 30,
+    ) {
+        repeat(maxPollAttempts) {
+            try {
+                val currentHeight = genesis.getCurrentBlockHeight()
+                if (currentHeight > previousHeight) {
+                    return
+                }
+            } catch (e: Exception) {
+                Logger.warn(e) { "Transient failure while waiting for block advance after height $previousHeight" }
+            }
+            Thread.sleep(1000)
+        }
+
+        error("Observed block height did not advance past $previousHeight")
     }
 
     /**
-     * Test 1: Enable maintenance via governance and verify params are updated.
+     * Find a future window that deliberately overlaps the next PoC boundary.
      */
-    @Test
-    @Tag("maintenance")
-    fun `enable maintenance windows via governance proposal`() {
-        val (cluster, genesis) = initCluster()
+    private fun findPocOverlapWindowStart(
+        genesis: LocalInferencePair,
+        durationBlocks: Long,
+        maxBlockAttempts: Int = 80,
+    ): Long {
+        val params = getMaintenanceParams(genesis)
+        repeat(maxBlockAttempts) {
+            val epochData = genesis.getEpochData()
+            val nextPocStart = genesis.getNextStage(EpochStage.START_OF_POC)
+            val earliestAllowedStart = epochData.blockHeight + params.maintenanceMinScheduleLeadBlocks
+            val overlapStart = maxOf(earliestAllowedStart, nextPocStart - durationBlocks + 1)
 
-        logSection("Submitting governance proposal to enable maintenance")
-        val newParams = enableMaintenance(cluster, genesis)
+            Logger.info(
+                "Evaluating PoC-overlap window candidate: start=$overlapStart duration=$durationBlocks " +
+                    "currentHeight=${epochData.blockHeight} nextPoC=$nextPocStart"
+            )
 
-        logSection("Verifying maintenance params are updated")
-        val mp = checkNotNull(newParams.maintenanceParams) { "maintenanceParams was null after governance update" }
-        assertThat(mp.maintenanceEnabled).isTrue()
-        assertThat(mp.maintenanceMinScheduleLeadBlocks).isEqualTo(defaultMaintenanceParams.maintenanceMinScheduleLeadBlocks)
-        Logger.info("Maintenance successfully enabled via governance")
+            if (overlapStart < nextPocStart && overlapStart + durationBlocks > nextPocStart) {
+                return overlapStart
+            }
 
-        genesis.markNeedsReboot()
+            genesis.node.waitForNextBlock(1)
+        }
+
+        error("Unable to find a deterministic PoC-overlap maintenance window")
     }
 
     /**
-     * Test 2: Full maintenance window lifecycle — schedule, activate, verify
-     * no jailing during offline period, verify resume after window ends.
-     *
-     * This is the core E2E test for the maintenance windows feature.
+     * Query schedulability for a proposed maintenance window.
      */
-    @Test
-    @Tag("maintenance")
-    fun `maintenance window prevents jailing during offline period`() {
-        val (cluster, genesis) = initCluster()
-
-        // Step 1: Enable maintenance with test-friendly params via governance
-        logSection("Step 1: Enable maintenance via governance")
-        val updatedParams = enableMaintenance(cluster, genesis)
-        assertThat(updatedParams.maintenanceParams?.maintenanceEnabled).isTrue()
-
-        // Step 2: Earn maintenance credit by completing epochs
-        logSection("Step 2: Earning maintenance credit through epochs")
-        val join1 = cluster.joinPairs[0]
-        val join1Address = join1.node.getColdAddress()
-        Logger.info("Join1 address: $join1Address")
-
-        // Wait for enough epochs to accumulate sufficient credit
-        genesis.waitForNextEpoch()
-        genesis.waitForNextEpoch()
-        val creditBlocks = awaitMinimumCredit(genesis, join1Address, minCredit = 15)
-        Logger.info("Join1 maintenance credit: $creditBlocks blocks")
-
-        // Step 3: Schedule a maintenance window for join1
-        logSection("Step 3: Scheduling maintenance window for join1")
-        val epochData = genesis.getEpochData()
-        val currentHeight = epochData.blockHeight
-
-        // Schedule maintenance with lead time derived from params
-        val leadBlocks = defaultMaintenanceParams.maintenanceMinScheduleLeadBlocks
-        val startHeight = currentHeight + leadBlocks + 5
-        val durationBlocks = 15L
-        Logger.info("Scheduling maintenance: start=$startHeight, duration=$durationBlocks, currentHeight=$currentHeight")
-
-        // Check schedulability first
-        val schedulabilityResponse: MaintenanceSchedulabilityResponse = genesis.node.execAndParse(
+    private fun querySchedulability(
+        genesis: LocalInferencePair,
+        participantAddress: String,
+        startHeight: Long,
+        durationBlocks: Long,
+    ): MaintenanceSchedulabilityResponse? {
+        return genesis.node.execAndParse(
             listOf(
                 "query", "inference", "maintenance-schedulability",
-                join1Address,
+                participantAddress,
                 startHeight.toString(),
                 durationBlocks.toString()
             )
         )
-        Logger.info("Schedulability check: schedulable=${schedulabilityResponse.schedulable}, reason=${schedulabilityResponse.rejectionReason}")
+    }
 
-        assumeTrue(schedulabilityResponse.schedulable) {
-            genesis.markNeedsReboot()
-            "Window not schedulable: ${schedulabilityResponse.rejectionReason} — likely PoC/DKG phase overlap or insufficient credit"
-        }
-
-        // Schedule the maintenance window
-        val scheduleTx = join1.submitTransaction(
-            listOf(
-                "inference", "schedule-maintenance",
-                "--participant", join1Address,
-                "--start-height", startHeight.toString(),
-                "--duration-blocks", durationBlocks.toString(),
-            )
-        )
-        Logger.info("Schedule tx result: code=${scheduleTx.code}, hash=${scheduleTx.txhash}")
-        assertThat(scheduleTx.code).isEqualTo(0)
-
-        // Verify reservation was created
-        val statusResponse: MaintenanceStatusResponse = genesis.node.execAndParse(
-            listOf("query", "inference", "maintenance-status", join1Address)
-        )
-        assertThat(statusResponse.found).isTrue()
-        assertThat(statusResponse.scheduledReservation).isNotNull
-        Logger.info("Reservation created: id=${statusResponse.scheduledReservation?.reservationId}, status=${statusResponse.scheduledReservation?.status}")
-
-        // Step 4: Verify join1 validator is BONDED before maintenance
-        logSection("Step 4: Verify join1 is BONDED before maintenance")
-        val validatorsBefore = genesis.node.getValidators()
-        val join1ValPubKey = join1.node.getValidatorInfo().key
-        val join1ValBefore = checkNotNull(
-            validatorsBefore.validators.find { it.consensusPubkey.value == join1ValPubKey }
-        ) { "join1 validator not found in validator set before maintenance" }
-        assertThat(join1ValBefore.statusEnum).isEqualTo(StakeValidatorStatus.BONDED)
-        Logger.info("Join1 validator status before maintenance: ${join1ValBefore.status}")
-
-        // Step 5: Wait for maintenance window to activate
-        logSection("Step 5: Waiting for maintenance window to activate at height $startHeight")
-        genesis.node.waitForMinimumBlock(startHeight + 1, "maintenance activation")
-
-        // Verify maintenance is now active
-        val activeResponse: MaintenanceActiveResponse = genesis.node.execAndParse(
-            listOf("query", "inference", "maintenance-active")
-        )
-        Logger.info("Active maintenance windows: ${activeResponse.reservations.size}")
-
-        // Step 6: Stop join1's chain node to simulate being offline during maintenance
-        // This causes join1's validator to stop signing blocks (missed signatures).
-        logSection("Step 6: Stopping join1 chain node (simulating offline maintenance)")
-        stopNodeContainer(join1)
-        Logger.info("Join1 chain node stopped — validator will miss signatures")
-
-        // Step 7: Wait through the maintenance window while join1 is offline
-        logSection("Step 7: Waiting through maintenance window (${durationBlocks} blocks)")
-        // Wait for blocks to pass — join1 is missing signatures during this time
-        val endHeight = startHeight + durationBlocks
-        genesis.node.waitForMinimumBlock(endHeight + 2, "maintenance window end")
-        Logger.info("Maintenance window should now be completed")
-
-        // Step 8: Verify join1 is NOT jailed (the key assertion!)
-        logSection("Step 8: Verifying join1 was NOT jailed during maintenance")
-        val validatorsAfter = genesis.node.getValidators()
-        val join1ValAfter = checkNotNull(
-            validatorsAfter.validators.find { it.consensusPubkey.value == join1ValPubKey }
-        ) { "join1 validator not found in validator set after maintenance" }
-        assertThat(join1ValAfter.statusEnum)
-            .describedAs("Join1 should remain BONDED — maintenance window should have prevented jailing")
+    /**
+     * Assert that the given validator is still bonded in the active validator set.
+     */
+    private fun assertValidatorBonded(genesis: LocalInferencePair, validatorPubKey: String, message: String) {
+        val validator = checkNotNull(
+            genesis.node.getValidators().validators.find { it.consensusPubkey.value == validatorPubKey }
+        ) { "Validator with pubkey $validatorPubKey not found in validator set" }
+        assertThat(validator.statusEnum)
+            .describedAs(message)
             .isEqualTo(StakeValidatorStatus.BONDED)
-        Logger.info("SUCCESS: Join1 validator is still BONDED after being offline during maintenance window!")
-
-        // Verify maintenance window completed
-        val statusAfter: MaintenanceStatusResponse = genesis.node.execAndParse(
-            listOf("query", "inference", "maintenance-status", join1Address)
-        )
-        Logger.info("Join1 maintenance state after window: active=${statusAfter.activeReservation}, scheduled=${statusAfter.scheduledReservation}")
-
-        genesis.markNeedsReboot()
     }
 
-    /**
-     * Test 3: Verify that maintenance scheduling is rejected when it overlaps
-     * with restricted PoC or DKG phases.
-     */
     @Test
     @Tag("maintenance")
-    fun `maintenance window scheduling rejected during epoch-critical phases`() {
+    fun `maintenance scheduling semantics are deterministic`() {
         val (cluster, genesis) = initCluster()
 
-        // Enable maintenance with longer-window/larger-credit settings to make
-        // the PoC overlap window easy to construct.
-        logSection("Enabling maintenance via governance")
-        enableMaintenance(
-            cluster, genesis,
-            params = defaultMaintenanceParams.copy(
-                maintenanceMinScheduleLeadBlocks = 2,
-                maintenanceMaxWindowBlocks = 100,
-                maintenanceCreditCapBlocks = 500,
-                maintenanceCreditEarnPerSuccessfulEpochBlocks = 100,
-            )
-        )
+        val params = getMaintenanceParams(genesis)
+        assertThat(params.maintenanceEnabled).isTrue()
 
-        // Earn some credit
+        logSection("Earning maintenance credit")
         genesis.waitForNextEpoch()
         genesis.waitForNextEpoch()
 
         val join1 = cluster.joinPairs[0]
         val join1Address = join1.node.getColdAddress()
+        val requiredCredit = 20L
+        val availableCredit = awaitMinimumCredit(genesis, join1Address, requiredCredit)
+        assertThat(availableCredit).isGreaterThanOrEqualTo(requiredCredit)
 
-        // Get epoch stages to find PoC phase
-        logSection("Getting epoch stages to target PoC phase")
-        val epochData = genesis.getEpochData()
-        val pocStart = epochData.nextEpochStages.pocStart
-        Logger.info("Next PoC start: $pocStart, current height: ${epochData.blockHeight}")
-
-        // Try to schedule a maintenance window that overlaps with PoC start
-        // Use a window that covers pocStart
-        val overlapStart = pocStart - 5
-        val overlapDuration = 20L
-
-        assumeTrue(overlapStart > epochData.blockHeight + 2) {
-            genesis.markNeedsReboot()
-            "Cannot test PoC overlap — PoC start too close to current height"
-        }
-
-        logSection("Checking schedulability for PoC-overlapping window")
-        val schedulabilityResponse: MaintenanceSchedulabilityResponse = genesis.node.execAndParse(
-            listOf(
-                "query", "inference", "maintenance-schedulability",
-                join1Address,
-                overlapStart.toString(),
-                overlapDuration.toString()
-            )
+        logSection("Verifying zero concurrency before any maintenance is active")
+        val initialConcurrency: MaintenanceConcurrencyResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-concurrency", genesis.getCurrentBlockHeight().toString())
         )
-        Logger.info("Schedulability for PoC-overlapping window: schedulable=${schedulabilityResponse.schedulable}, reason=${schedulabilityResponse.rejectionReason}")
+        assertThat(initialConcurrency.concurrentCount).isEqualTo(0)
 
-        // The window should be rejected due to PoC/DKG phase overlap
-        assertThat(schedulabilityResponse.schedulable)
-            .describedAs("Window overlapping PoC phase should not be schedulable")
+        logSection("Verifying PoC-overlapping window is rejected")
+        val overlapDuration = 3L
+        val overlapStart = findPocOverlapWindowStart(genesis, overlapDuration)
+        val overlapSchedulability = checkNotNull(
+            querySchedulability(genesis, join1Address, overlapStart, overlapDuration)
+        ) { "overlap schedulability query returned null" }
+        assertThat(overlapSchedulability.schedulable)
+            .describedAs("Window overlapping the next PoC transition should be rejected")
             .isFalse()
-        assertThat(schedulabilityResponse.rejectionReason).isNotEmpty()
-        Logger.info("SUCCESS: Scheduling correctly rejected for epoch-critical phase overlap")
+        assertThat(overlapSchedulability.rejectionReason).isNotBlank()
 
-        genesis.markNeedsReboot()
-    }
-
-    /**
-     * Test 4: Verify maintenance cancellation restores credit.
-     */
-    @Test
-    @Tag("maintenance")
-    fun `cancel scheduled maintenance restores credit`() {
-        val (cluster, genesis) = initCluster()
-
-        // Enable maintenance
-        logSection("Enabling maintenance via governance")
-        enableMaintenance(cluster, genesis)
-
-        // Earn credit
-        genesis.waitForNextEpoch()
-        genesis.waitForNextEpoch()
-
-        val join1 = cluster.joinPairs[0]
-        val join1Address = join1.node.getColdAddress()
-
-        // Schedule a maintenance window far in the future
-        val epochData = genesis.getEpochData()
-        val leadBlocks = defaultMaintenanceParams.maintenanceMinScheduleLeadBlocks
-        val startHeight = epochData.blockHeight + leadBlocks + 45
-        val durationBlocks = 10L
-
-        // Check credit before scheduling
-        val creditBefore: MaintenanceCreditResponse = genesis.node.execAndParse(
+        logSection("Finding a schedulable future window")
+        val durationBlocks = 3L
+        val startHeight = findSchedulableWindowStart(
+            genesis,
+            join1Address,
+            durationBlocks,
+            extraLeadBuffer = 3,
+        )
+        val creditBeforeSchedule: MaintenanceCreditResponse = genesis.node.execAndParse(
             listOf("query", "inference", "maintenance-credit", join1Address)
         )
-        Logger.info("Credit before scheduling: ${creditBefore.creditBlocks}")
-
-        assumeTrue(creditBefore.creditBlocks >= durationBlocks) {
-            genesis.markNeedsReboot()
-            "Insufficient credit (${creditBefore.creditBlocks}) for test duration ($durationBlocks)"
-        }
-
-        // Check schedulability
-        val schedulability: MaintenanceSchedulabilityResponse = genesis.node.execAndParse(
-            listOf(
-                "query", "inference", "maintenance-schedulability",
-                join1Address, startHeight.toString(), durationBlocks.toString()
-            )
-        )
-        assumeTrue(schedulability.schedulable) {
-            genesis.markNeedsReboot()
-            "Window not schedulable: ${schedulability.rejectionReason}"
-        }
+        val schedulability = checkNotNull(
+            querySchedulability(genesis, join1Address, startHeight, durationBlocks)
+        ) { "schedulability query returned null for chosen future window" }
+        assertThat(schedulability.schedulable).isTrue()
 
         logSection("Scheduling maintenance window")
         val scheduleTx = join1.submitTransaction(
@@ -384,15 +291,13 @@ class MaintenanceWindowTests : TestermintTest() {
         )
         assertThat(scheduleTx.code).isEqualTo(0)
 
-        // Check credit after scheduling (should be reduced by durationBlocks)
         val creditAfterSchedule: MaintenanceCreditResponse = genesis.node.execAndParse(
             listOf("query", "inference", "maintenance-credit", join1Address)
         )
-        Logger.info("Credit after scheduling: ${creditAfterSchedule.creditBlocks}")
         assertThat(creditAfterSchedule.creditBlocks)
-            .isLessThan(creditBefore.creditBlocks)
+            .describedAs("Scheduling should reserve credit equal to the window duration")
+            .isEqualTo(creditBeforeSchedule.creditBlocks - durationBlocks)
 
-        // Get reservation ID for cancellation
         val status: MaintenanceStatusResponse = genesis.node.execAndParse(
             listOf("query", "inference", "maintenance-status", join1Address)
         )
@@ -410,35 +315,168 @@ class MaintenanceWindowTests : TestermintTest() {
         )
         assertThat(cancelTx.code).isEqualTo(0)
 
-        // Check credit after cancellation (should be restored)
         val creditAfterCancel: MaintenanceCreditResponse = genesis.node.execAndParse(
             listOf("query", "inference", "maintenance-credit", join1Address)
         )
-        Logger.info("Credit after cancellation: ${creditAfterCancel.creditBlocks}")
         assertThat(creditAfterCancel.creditBlocks)
             .describedAs("Credit should be restored after cancellation")
-            .isGreaterThanOrEqualTo(creditAfterSchedule.creditBlocks + durationBlocks)
+            .isGreaterThanOrEqualTo(creditBeforeSchedule.creditBlocks)
 
-        Logger.info("SUCCESS: Credit correctly restored after maintenance cancellation")
+        val statusAfterCancel: MaintenanceStatusResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-status", join1Address)
+        )
+        assertThat(statusAfterCancel.scheduledReservation).isNull()
+        assertThat(statusAfterCancel.activeReservation).isNull()
+
+        val finalConcurrency: MaintenanceConcurrencyResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-concurrency", genesis.getCurrentBlockHeight().toString())
+        )
+        assertThat(finalConcurrency.concurrentCount).isEqualTo(0)
+
         genesis.markNeedsReboot()
     }
 
-    /**
-     * Test 5: Verify maintenance concurrency query returns correct data.
-     */
     @Test
     @Tag("maintenance")
-    fun `maintenance concurrency query returns correct count`() {
-        val (cluster, genesis) = initCluster()
-
-        // Verify concurrency with no active maintenance
-        logSection("Querying maintenance concurrency with no active maintenance")
-        val epochData = genesis.getEpochData()
-        val concurrency: MaintenanceConcurrencyResponse = genesis.node.execAndParse(
-            listOf("query", "inference", "maintenance-concurrency", epochData.blockHeight.toString())
+    fun `maintenance lifecycle survives offline validator during maintenance`() {
+        val maintenanceLifecycleConfig = inferenceConfig.copy(
+            genesisSpec = createSpec(
+                epochLength = 25,
+                epochShift = 10
+            ),
         )
-        assertThat(concurrency.concurrentCount).isEqualTo(0)
-        Logger.info("Concurrent maintenance count (none active): ${concurrency.concurrentCount}")
-        Logger.info("SUCCESS: Concurrency query correctly reports zero when no maintenance is active")
+        val (cluster, genesis) = initCluster(config = maintenanceLifecycleConfig, reboot = true)
+
+        val params = getMaintenanceParams(genesis)
+        assertThat(params.maintenanceEnabled).isTrue()
+
+        logSection("Earning maintenance credit")
+        genesis.waitForNextEpoch()
+        genesis.waitForNextEpoch()
+
+        val join1 = cluster.joinPairs[0]
+        val join2 = cluster.joinPairs[1]
+        val join1Address = join1.node.getColdAddress()
+        val join1DefaultNode = join1.api.getNodes().first {
+            it.node.host == "ml-0000.${join1.name.trimStart('/')}.test"
+        }.node
+        val genesisValidatorPubKey = genesis.node.getValidatorInfo().key
+        val validatorPubKey = join1.node.getValidatorInfo().key
+        val join2ValidatorPubKey = join2.node.getValidatorInfo().key
+        val requiredCredit = 10L
+        val creditBlocks = awaitMinimumCredit(genesis, join1Address, requiredCredit)
+        assertThat(creditBlocks).isGreaterThanOrEqualTo(requiredCredit)
+
+        logSection("Reducing join1 voting power so the cluster stays live while join1 is offline")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        join1.setPocWeight(5, join1DefaultNode)
+        join1.waitForNextEpoch()
+        join1.node.waitForNextBlock(1)
+        val reducedJoin1Validator = join1.node.getValidators().validators.first {
+            it.consensusPubkey.value == validatorPubKey
+        }
+        assertThat(reducedJoin1Validator.tokens)
+            .describedAs("join1 voting power should be reduced before taking it offline")
+            .isEqualTo(5)
+        join1.node.waitForNextBlock(1)
+        val reducedJoin1CometValidator = genesis.node.getCometValidators().validators.first {
+            it.pubKey.key == validatorPubKey
+        }
+        assertThat(reducedJoin1CometValidator.votingPower)
+            .describedAs("join1 comet voting power should be reduced before taking it offline")
+            .isEqualTo("5")
+        waitForCometValidatorPowers(
+            genesis,
+            mapOf(
+                genesisValidatorPubKey to "10",
+                validatorPubKey to "5",
+                join2ValidatorPubKey to "10",
+            )
+        )
+
+        val durationBlocks = 6L
+        logSection("Scheduling a future maintenance window")
+        val startHeight = findSchedulableWindowStart(
+            genesis,
+            join1Address,
+            durationBlocks,
+            extraLeadBuffer = 5,
+            maxBlockAttempts = 200,
+            maxExtraOffset = 80,
+        )
+        val scheduleTx = join1.submitTransaction(
+            listOf(
+                "inference", "schedule-maintenance",
+                "--participant", join1Address,
+                "--start-height", startHeight.toString(),
+                "--duration-blocks", durationBlocks.toString(),
+            )
+        )
+        assertThat(scheduleTx.code).isEqualTo(0)
+
+        val scheduledStatus: MaintenanceStatusResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-status", join1Address)
+        )
+        val scheduledReservation = checkNotNull(scheduledStatus.scheduledReservation) {
+            "Scheduled reservation missing after maintenance scheduling"
+        }
+        assertThat(scheduledReservation.startHeight).isEqualTo(startHeight)
+        assertThat(scheduledReservation.durationBlocks).isEqualTo(durationBlocks)
+
+        assertValidatorBonded(
+            genesis,
+            validatorPubKey,
+            "Validator should be bonded before maintenance activation"
+        )
+
+        logSection("Waiting for maintenance activation")
+        genesis.node.waitForMinimumBlock(startHeight + 1, "maintenance activation")
+
+        val activeResponse: MaintenanceActiveResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-active")
+        )
+        assertThat(activeResponse.reservations).hasSize(1)
+        assertThat(activeResponse.reservations.single().participant).isEqualTo(join1Address)
+
+        val activeConcurrency: MaintenanceConcurrencyResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-concurrency", genesis.getCurrentBlockHeight().toString())
+        )
+        assertThat(activeConcurrency.concurrentCount).isEqualTo(1)
+
+        val endHeight = startHeight + durationBlocks
+        val currentHeightBeforeStop = genesis.getCurrentBlockHeight()
+        assertThat(currentHeightBeforeStop)
+            .describedAs("Maintenance window should still have runway left before taking join1 offline")
+            .isLessThan(endHeight - 1)
+
+        logSection("Stopping join1 chain node during active maintenance")
+        stopNodeContainer(join1)
+
+        logSection("Waiting for the maintenance window to complete")
+        genesis.node.waitForMinimumBlock(endHeight + 2, "maintenance completion")
+
+        assertValidatorBonded(
+            genesis,
+            validatorPubKey,
+            "Validator should remain bonded after being offline during maintenance"
+        )
+
+        val statusAfterMaintenance: MaintenanceStatusResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-status", join1Address)
+        )
+        assertThat(statusAfterMaintenance.activeReservation).isNull()
+        assertThat(statusAfterMaintenance.scheduledReservation).isNull()
+
+        val activeAfterMaintenance: MaintenanceActiveResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-active")
+        )
+        assertThat(activeAfterMaintenance.reservations.none { it.participant == join1Address }).isTrue()
+
+        val concurrencyAfterMaintenance: MaintenanceConcurrencyResponse = genesis.node.execAndParse(
+            listOf("query", "inference", "maintenance-concurrency", genesis.getCurrentBlockHeight().toString())
+        )
+        assertThat(concurrencyAfterMaintenance.concurrentCount).isEqualTo(0)
+
+        genesis.markNeedsReboot()
     }
 }
