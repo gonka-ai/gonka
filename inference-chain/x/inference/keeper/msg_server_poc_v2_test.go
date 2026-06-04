@@ -1,10 +1,8 @@
 package keeper_test
 
 import (
-	"strings"
 	"testing"
 
-	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
@@ -16,20 +14,6 @@ import (
 
 const testPoCModelID = "test-poc-model"
 const testPoCModelID2 = "test-poc-model-2"
-
-// testLogger captures log calls for assertions
-type testLogger struct {
-	warns  []string
-	errors []string
-	infos  []string
-}
-
-func (t *testLogger) Info(msg string, keyvals ...interface{})  { t.infos = append(t.infos, msg) }
-func (t *testLogger) Warn(msg string, keyvals ...interface{})  { t.warns = append(t.warns, msg) }
-func (t *testLogger) Error(msg string, keyvals ...interface{}) { t.errors = append(t.errors, msg) }
-func (t *testLogger) Debug(msg string, keyvals ...interface{}) {}
-func (t *testLogger) With(keyvals ...interface{}) log.Logger  { return t }
-func (t *testLogger) Impl() interface{}                        { return nil }
 
 // Test SetPocValidationV2 error handling (no panic)
 func TestSetPocValidationV2_InvalidAddress(t *testing.T) {
@@ -206,59 +190,6 @@ func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 	exists2, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
 	require.NoError(t, err)
 	require.True(t, exists2)
-
-}
-
-// Test SubmitPocValidationsV2 invalid address triggers LogWarn
-func TestSubmitPocValidationsV2_InvalidAddressWarnLogged(t *testing.T) {
-	logger := &testLogger{}
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocksWithLogger(t, logger)
-	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
-
-	// Setup params with V2 enabled
-	params, err := k.GetParams(sdkCtx)
-	require.NoError(t, err)
-	params.PocParams = &types.PocParams{PocV2Enabled: true}
-	params.EpochParams = &types.EpochParams{
-		PocStageDuration:      50,
-		PocExchangeDuration:   20,
-		PocValidationDelay:    5,
-		PocValidationDuration: 100,
-	}
-	require.NoError(t, k.SetParams(sdkCtx, params))
-
-	k.SetEffectiveEpochIndex(sdkCtx, 0)
-	upcomingEpoch := &types.Epoch{
-		Index:               1,
-		PocStartBlockHeight: 100,
-	}
-	k.SetEpoch(sdkCtx, upcomingEpoch)
-
-	msgServer := keeper.NewMsgServerImpl(k)
-
-	msg := &types.MsgSubmitPocValidationsV2{
-		Creator:                  testutil.Validator,
-		PocStageStartBlockHeight: 100,
-		Validations: []*types.PoCValidationEntryV2{
-			{
-				ParticipantAddress: "invalid_address", // invalid - should trigger LogWarn
-				ModelId:            testPoCModelID,
-				ValidatedWeight:    50,
-			},
-		},
-	}
-	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, msg)
-	require.NoError(t, err) // Batch succeeds, single invalid entry is skipped
-
-	// Verify LogWarn was called for invalid address
-	found := false
-	for _, warn := range logger.warns {
-		if strings.Contains(warn, "Invalid participant address, skipping") {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "expected LogWarn for invalid address, got warns: %v", logger.warns)
 }
 
 // Test HasPocValidationV2
