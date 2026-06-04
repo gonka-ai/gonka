@@ -629,6 +629,74 @@ func TestQueryCachePruning_KeepsLastNHeights(t *testing.T) {
 	}
 }
 
+func TestQueryCache_EvictsByEntryLimit(t *testing.T) {
+	cache := NewQueryCacheWithLimits(3, 0)
+
+	for i := 0; i < 5; i++ {
+		cache.store(100, "k"+strconv.Itoa(i), []byte("v"))
+	}
+
+	stats := cache.SnapshotStats()
+	require.Equal(t, 3, stats.Entries, "entry count must be bounded by maxEntries")
+	require.Equal(t, uint64(2), stats.CacheEvictTotal)
+
+	_, ok := cache.lookup(100, "k0")
+	require.False(t, ok)
+	_, ok = cache.lookup(100, "k1")
+	require.False(t, ok)
+	for i := 2; i < 5; i++ {
+		_, ok := cache.lookup(100, "k"+strconv.Itoa(i))
+		require.Truef(t, ok, "key k%d must remain", i)
+	}
+}
+
+func TestQueryCache_EvictsByByteLimit(t *testing.T) {
+	cache := NewQueryCacheWithLimits(0, 10)
+
+	cache.store(100, "a", []byte("12345"))
+	cache.store(100, "b", []byte("12345"))
+	require.Equal(t, int64(10), cache.SnapshotStats().TotalBytes)
+
+	cache.store(100, "c", []byte("12345"))
+
+	stats := cache.SnapshotStats()
+	require.Equal(t, int64(10), stats.TotalBytes)
+	require.Equal(t, 2, stats.Entries)
+	require.GreaterOrEqual(t, stats.CacheEvictTotal, uint64(1))
+
+	_, ok := cache.lookup(100, "a")
+	require.False(t, ok, "least-recently-used entry must be evicted")
+}
+
+func TestQueryCache_LookupBumpsRecency(t *testing.T) {
+	cache := NewQueryCacheWithLimits(2, 0)
+
+	cache.store(100, "a", []byte("v"))
+	cache.store(100, "b", []byte("v"))
+	_, ok := cache.lookup(100, "a")
+	require.True(t, ok)
+
+	cache.store(100, "c", []byte("v"))
+
+	_, ok = cache.lookup(100, "a")
+	require.True(t, ok, "recently used entry must survive")
+	_, ok = cache.lookup(100, "b")
+	require.False(t, ok, "least-recently-used entry must be evicted")
+}
+
+func TestQueryCache_HeightPruneReleasesBytes(t *testing.T) {
+	cache := NewQueryCache()
+
+	for h := int64(1); h <= int64(defaultKeepLastHeights+2); h++ {
+		cache.store(h, "k", []byte("payload"))
+	}
+
+	stats := cache.SnapshotStats()
+	require.Equal(t, defaultKeepLastHeights, stats.Heights)
+	require.Equal(t, defaultKeepLastHeights, stats.Entries, "pruned heights must release their entries")
+	require.Equal(t, int64(defaultKeepLastHeights*len("payload")), stats.TotalBytes)
+}
+
 func TestPinHeight_DoesNotStackDuplicateValues(t *testing.T) {
 	ctx := PinHeight(context.Background(), 100)
 	ctx = PinHeight(ctx, 100)

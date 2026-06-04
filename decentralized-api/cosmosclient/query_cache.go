@@ -1,6 +1,7 @@
 package cosmosclient
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,11 @@ import (
 	googleproto "google.golang.org/protobuf/proto"
 )
 
-const defaultKeepLastHeights = 3
+const (
+	defaultKeepLastHeights = 3
+	defaultMaxEntries = 10000
+	defaultMaxBytes   = 64 << 20
+)
 
 type queryCacheBypassKey struct{}
 
@@ -40,6 +45,9 @@ type QueryCacheStats struct {
 	HeightHint                   int64  `json:"height_hint"`
 	Heights                      int    `json:"heights"`
 	Entries                      int    `json:"entries"`
+	TotalBytes                   int64  `json:"total_bytes"`
+	MaxEntries                   int    `json:"max_entries"`
+	MaxBytes                     int64  `json:"max_bytes"`
 	RequestsTotal                uint64 `json:"requests_total"`
 	CacheHitTotal                uint64 `json:"cache_hit_total"`
 	CacheCorruptHitTotal         uint64 `json:"cache_corrupt_hit_total"`
@@ -47,6 +55,7 @@ type QueryCacheStats struct {
 	BackendInvokeTotal           uint64 `json:"backend_invoke_total"`
 	CacheWriteTotal              uint64 `json:"cache_write_total"`
 	CacheWriteSkippedHeightTotal uint64 `json:"cache_write_skipped_height_total"`
+	CacheEvictTotal              uint64 `json:"cache_evict_total"`
 	InvokeErrorTotal             uint64 `json:"invoke_error_total"`
 }
 
@@ -58,24 +67,50 @@ type queryCacheCounters struct {
 	backendInvokeTotal           atomic.Uint64
 	cacheWriteTotal              atomic.Uint64
 	cacheWriteSkippedHeightTotal atomic.Uint64
+	cacheEvictTotal              atomic.Uint64
 	invokeErrorTotal             atomic.Uint64
+}
+
+type lruKey struct {
+	height int64
+	key    string
+}
+
+type lruEntry struct {
+	height int64
+	key    string
+	size   int
 }
 
 type QueryCache struct {
 	hint atomic.Int64
 
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	byHeight map[int64]map[string][]byte
 	keepLast int
+
+	lru        *list.List
+	lruIndex   map[lruKey]*list.Element
+	totalBytes int64
+	maxEntries int
+	maxBytes   int64
 
 	sfGroup singleflight.Group
 	stats   queryCacheCounters
 }
 
 func NewQueryCache() *QueryCache {
+	return NewQueryCacheWithLimits(defaultMaxEntries, defaultMaxBytes)
+}
+
+func NewQueryCacheWithLimits(maxEntries int, maxBytes int64) *QueryCache {
 	return &QueryCache{
-		byHeight: make(map[int64]map[string][]byte),
-		keepLast: defaultKeepLastHeights,
+		byHeight:   make(map[int64]map[string][]byte),
+		keepLast:   defaultKeepLastHeights,
+		lru:        list.New(),
+		lruIndex:   make(map[lruKey]*list.Element),
+		maxEntries: maxEntries,
+		maxBytes:   maxBytes,
 	}
 }
 
@@ -97,18 +132,21 @@ func (c *QueryCache) SetHeightHint(h int64) {
 func (c *QueryCache) HeightHint() int64 { return c.hint.Load() }
 
 func (c *QueryCache) SnapshotStats() QueryCacheStats {
-	c.mu.RLock()
+	c.mu.Lock()
 	heights := len(c.byHeight)
-	entries := 0
-	for _, bucket := range c.byHeight {
-		entries += len(bucket)
-	}
-	c.mu.RUnlock()
+	entries := len(c.lruIndex)
+	totalBytes := c.totalBytes
+	maxEntries := c.maxEntries
+	maxBytes := c.maxBytes
+	c.mu.Unlock()
 
 	return QueryCacheStats{
 		HeightHint:                   c.hint.Load(),
 		Heights:                      heights,
 		Entries:                      entries,
+		TotalBytes:                   totalBytes,
+		MaxEntries:                   maxEntries,
+		MaxBytes:                     maxBytes,
 		RequestsTotal:                c.stats.requestsTotal.Load(),
 		CacheHitTotal:                c.stats.cacheHitTotal.Load(),
 		CacheCorruptHitTotal:         c.stats.cacheCorruptHitTotal.Load(),
@@ -116,6 +154,7 @@ func (c *QueryCache) SnapshotStats() QueryCacheStats {
 		BackendInvokeTotal:           c.stats.backendInvokeTotal.Load(),
 		CacheWriteTotal:              c.stats.cacheWriteTotal.Load(),
 		CacheWriteSkippedHeightTotal: c.stats.cacheWriteSkippedHeightTotal.Load(),
+		CacheEvictTotal:              c.stats.cacheEvictTotal.Load(),
 		InvokeErrorTotal:             c.stats.invokeErrorTotal.Load(),
 	}
 }
@@ -128,34 +167,67 @@ func (c *QueryCache) ResetStats() {
 	c.stats.backendInvokeTotal.Store(0)
 	c.stats.cacheWriteTotal.Store(0)
 	c.stats.cacheWriteSkippedHeightTotal.Store(0)
+	c.stats.cacheEvictTotal.Store(0)
 	c.stats.invokeErrorTotal.Store(0)
 }
 
 func (c *QueryCache) lookup(height int64, key string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if bucket, ok := c.byHeight[height]; ok {
-		v, hit := bucket[key]
-		return v, hit
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	bucket, ok := c.byHeight[height]
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	v, hit := bucket[key]
+	if !hit {
+		return nil, false
+	}
+	if el, ok := c.lruIndex[lruKey{height: height, key: key}]; ok {
+		c.lru.MoveToFront(el)
+	}
+	return v, true
 }
 
 func (c *QueryCache) store(height int64, key string, data []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	lk := lruKey{height: height, key: key}
+	if el, ok := c.lruIndex[lk]; ok {
+		ent := el.Value.(*lruEntry)
+		c.totalBytes += int64(len(data)) - int64(ent.size)
+		ent.size = len(data)
+		c.lru.MoveToFront(el)
+	} else {
+		ent := &lruEntry{height: height, key: key, size: len(data)}
+		c.lruIndex[lk] = c.lru.PushFront(ent)
+		c.totalBytes += int64(ent.size)
+	}
+
 	bucket, ok := c.byHeight[height]
 	if !ok {
 		bucket = make(map[string][]byte)
 		c.byHeight[height] = bucket
 	}
 	bucket[key] = data
+
 	c.pruneLocked()
+	c.evictLocked()
 }
 
 func (c *QueryCache) deleteEntry(height int64, key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.removeEntryLocked(height, key)
+}
+
+func (c *QueryCache) removeEntryLocked(height int64, key string) {
+	lk := lruKey{height: height, key: key}
+	if el, ok := c.lruIndex[lk]; ok {
+		c.totalBytes -= int64(el.Value.(*lruEntry).size)
+		c.lru.Remove(el)
+		delete(c.lruIndex, lk)
+	}
 	if bucket, ok := c.byHeight[height]; ok {
 		delete(bucket, key)
 		if len(bucket) == 0 {
@@ -177,8 +249,46 @@ func (c *QueryCache) pruneLocked() {
 				first = false
 			}
 		}
-		delete(c.byHeight, oldest)
+		c.dropHeightLocked(oldest)
 	}
+}
+
+func (c *QueryCache) dropHeightLocked(height int64) {
+	bucket, ok := c.byHeight[height]
+	if !ok {
+		return
+	}
+	for key := range bucket {
+		lk := lruKey{height: height, key: key}
+		if el, ok := c.lruIndex[lk]; ok {
+			c.totalBytes -= int64(el.Value.(*lruEntry).size)
+			c.lru.Remove(el)
+			delete(c.lruIndex, lk)
+		}
+	}
+	delete(c.byHeight, height)
+}
+
+func (c *QueryCache) evictLocked() {
+	for c.overLimitLocked() {
+		el := c.lru.Back()
+		if el == nil {
+			return
+		}
+		ent := el.Value.(*lruEntry)
+		c.removeEntryLocked(ent.height, ent.key)
+		c.stats.cacheEvictTotal.Add(1)
+	}
+}
+
+func (c *QueryCache) overLimitLocked() bool {
+	if c.maxEntries > 0 && len(c.lruIndex) > c.maxEntries {
+		return true
+	}
+	if c.maxBytes > 0 && c.totalBytes > c.maxBytes {
+		return true
+	}
+	return false
 }
 
 type CachingConn struct {

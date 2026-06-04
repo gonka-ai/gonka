@@ -223,8 +223,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 
 	var queryCache *QueryCache
 	if nodeConfig.QueryCacheEnabled {
-		queryCache = NewQueryCache()
-		log.Printf("Query cache enabled")
+		queryCache = NewQueryCacheWithLimits(nodeConfig.QueryCacheMaxEntries, nodeConfig.QueryCacheMaxBytes)
+		log.Printf("Query cache enabled (max_entries=%d, max_bytes=%d)", nodeConfig.QueryCacheMaxEntries, nodeConfig.QueryCacheMaxBytes)
 	}
 
 	client := &InferenceCosmosClient{

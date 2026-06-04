@@ -88,6 +88,8 @@ type ChainNodeConfig struct {
 	KeyringDir        string `koanf:"keyring_dir" json:"keyring_dir"`
 	KeyringPassword   string `json:"-"`
 	QueryCacheEnabled bool   `koanf:"query_cache_enabled" json:"query_cache_enabled"`
+	QueryCacheMaxEntries int `koanf:"query_cache_max_entries" json:"query_cache_max_entries"`
+	QueryCacheMaxBytes int64 `koanf:"query_cache_max_bytes" json:"query_cache_max_bytes"`
 	// MinGasPriceNgonka is the gas price in ngonka used for transaction fee calculation.
 	//
 	// When set to a non-zero value, the DAPI uses it as-is (this is an override
