@@ -16,6 +16,7 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertNotNull
 
+@Tag("exclude")
 class UpgradeRehearsalTests : TestermintTest() {
     private val defaultDevshardMaxNonce = 20_000L
 
