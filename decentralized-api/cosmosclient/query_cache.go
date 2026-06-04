@@ -21,8 +21,8 @@ import (
 
 const (
 	defaultKeepLastHeights = 3
-	defaultMaxEntries = 10000
-	defaultMaxBytes   = 64 << 20
+	defaultMaxEntries = 200000
+	defaultMaxBytes   = 1 << 30 // 1 GiB
 )
 
 type queryCacheBypassKey struct{}
