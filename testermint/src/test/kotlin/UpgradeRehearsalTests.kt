@@ -1,6 +1,8 @@
+import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.productscience.*
+import com.productscience.data.OpenAIResponse
 import com.productscience.data.UpdateParams
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
@@ -79,7 +81,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         waitForClusterOperational(cluster, genesis)
         genesis.waitForNextInferenceWindow()
-        val postInference = genesis.makeInferenceRequest(inferenceRequest)
+        val postInference = makeInferenceRequestWhenRoutable(genesis, inferenceRequest)
         assertThat(postInference.choices.first().message.content).isNotEmpty()
 
         logSection("Running post-upgrade devshard settlement")
@@ -92,6 +94,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
         try {
             genesis.waitForDevshardProxyWarmup()
+            makeInferenceRequestWhenRoutable(genesis, inferenceRequest)
             repeat(5) { index ->
                 val responseText = genesis.sendChatCompletion(
                     handle.proxyUrl,
@@ -238,6 +241,54 @@ class UpgradeRehearsalTests : TestermintTest() {
         pair.api.getParticipants()
         pair.api.getNodes()
         pair.node.getColdAddress()
+    }
+
+    private fun makeInferenceRequestWhenRoutable(
+        pair: LocalInferencePair,
+        request: String,
+        maxBlocks: Int = 25,
+    ): OpenAIResponse {
+        val startBlock = pair.getCurrentBlockHeight()
+        val deadlineBlock = startBlock + maxBlocks
+        var lastFailure: Throwable? = null
+
+        while (pair.getCurrentBlockHeight() <= deadlineBlock) {
+            try {
+                return pair.makeInferenceRequest(request)
+            } catch (e: Exception) {
+                if (!isTransientInferenceRoutingFailure(e)) {
+                    throw e
+                }
+                lastFailure = e
+                Logger.warn(e) {
+                    "Inference routing is not ready at block ${pair.getCurrentBlockHeight()}; waiting for next block"
+                }
+                pair.node.waitForNextBlock(1)
+            }
+        }
+
+        throw IllegalStateException("Inference routing did not become ready by block $deadlineBlock", lastFailure)
+    }
+
+    private fun isTransientInferenceRoutingFailure(t: Throwable): Boolean {
+        val transientMessages = listOf(
+            "503",
+            "Service Unavailable",
+            "Active participants found, but length is 0",
+            "After filtering participants the length is 0",
+            "epoch group data not found",
+        )
+        val causeMatches = generateSequence(t) { it.cause }.any { cause ->
+            transientMessages.any { message -> cause.message?.contains(message) == true }
+        }
+        val fuelMatches = generateSequence(t) { it.cause }.filterIsInstance<FuelError>().any { fuel ->
+            fuel.response.statusCode == 503 ||
+                transientMessages.any { message ->
+                    fuel.response.data.toString(Charsets.UTF_8).contains(message)
+                }
+        }
+
+        return causeMatches || fuelMatches
     }
 
     private fun pairIsOperational(pair: LocalInferencePair): Boolean =
