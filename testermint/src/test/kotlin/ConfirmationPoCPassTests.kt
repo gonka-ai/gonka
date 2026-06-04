@@ -19,7 +19,8 @@ class ConfirmationPoCPassTests : TestermintTest() {
         val (cluster, genesis) = initCluster(
             joinCount = 2,
             mergeSpec = confirmationSpec,  // Merge with defaults instead of replacing
-            reboot = true
+            reboot = true,
+            resetMlNodes = false,
         )
 
         logSection("✅ Cluster Initialized Successfully!")
