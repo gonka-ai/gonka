@@ -440,8 +440,8 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 				CompletedValidations uint32 `json:"completed_validations"`
 			} `json:"by_slot"`
 			Totals struct {
-				RequiredValidations  uint32 `json:"required_validations"`
-				CompletedValidations uint32 `json:"completed_validations"`
+				RequiredValidations  uint64 `json:"required_validations"`
+				CompletedValidations uint64 `json:"completed_validations"`
 			} `json:"totals"`
 		} `json:"validation_observability"`
 		Group []types.SlotAssignment `json:"group"`
@@ -1323,10 +1323,10 @@ func TestStatsShardDetail_ValidationObservabilityAfterDiffApply(t *testing.T) {
 	var resp struct {
 		ValidationObservability struct {
 			Totals struct {
-				CompletedValidations uint32 `json:"completed_validations"`
+				CompletedValidations uint64 `json:"completed_validations"`
 			} `json:"totals"`
 		} `json:"validation_observability"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.GreaterOrEqual(t, resp.ValidationObservability.Totals.CompletedValidations, uint32(1))
+	require.GreaterOrEqual(t, resp.ValidationObservability.Totals.CompletedValidations, uint64(1))
 }

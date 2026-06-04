@@ -8,6 +8,8 @@ import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 
+// Keep resetMlNodes=false: production nodes are never reset mid-run; default true swaps
+// wiremock for wiremock2@ml-0000.*.test (STOPPED) and breaks confirmation PoC validation.
 class ConfirmationPoCFailTests : TestermintTest() {
     // 12m
     @Test

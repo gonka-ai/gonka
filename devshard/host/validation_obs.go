@@ -69,18 +69,16 @@ func (h *Host) recordValidationObsFromAppliedDiff(txs []*types.DevshardTx) {
 	if h.validationObsInFlight.Add(1) > validationObsInFlightCap {
 		h.validationObsInFlight.Add(-1)
 		// Backpressure: too many async obs writes already in flight (a slow or
-		// stalled store). Fall back to a synchronous write rather than spawning
-		// unbounded goroutines or dropping data. This runs under h.mu and so
-		// re-serializes the hot path. If this warning shows up in practice,
-		// replace this fallback with a bounded worker queue or a drop-with-warn
-		// policy.
-		logging.Warn("validation obs async cap reached; writing synchronously under host lock",
+		// stalled store). Drop this batch rather than writing synchronously under
+		// h.mu, which would re-serialize the hot path onto a slow store.
+		// Observability is best-effort: diff replay re-records it idempotently on
+		// the next boot via INSERT ... ON CONFLICT DO NOTHING.
+		logging.Warn("validation obs async cap reached; dropping batch (best-effort, replay re-records)",
 			"subsystem", "host",
 			"escrow_id", escrowID,
 			"in_flight_cap", validationObsInFlightCap,
 			"entries", len(entries),
 		)
-		writeValidationObsBatch(store, escrowID, entries)
 		return
 	}
 
