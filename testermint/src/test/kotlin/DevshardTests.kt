@@ -123,16 +123,10 @@ class DevshardTests : TestermintTest() {
             val result = genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
 
             logSection("Verifying inference statuses")
-            val finished = (1..result.parsed.nonce).mapNotNull { inferenceId ->
-                runCatching {
-                    cosmosJson.fromJson(
-                        genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                        DevshardInferencePayload::class.java,
-                    )
-                }.getOrNull()
-            }.count { it.status == DevshardInferenceStatus.FINISHED }
+            val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+                .values.count { it.status == DevshardInferenceStatus.FINISHED }
             assertThat(finished)
-                .describedAs("finished devshard inferences within finalized nonce range")
+                .describedAs("finished devshard inferences")
                 .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
             genesis.stopDevshardProxy(escrowId)
@@ -297,7 +291,7 @@ class DevshardTests : TestermintTest() {
             assertThat(escrow.escrow!!.settled).isTrue()
 
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, result.parsed.nonce))
+            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle))
             logSection("Inference: $inference")
             assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
             assertThat(inference.votesInvalid).isNotZero()

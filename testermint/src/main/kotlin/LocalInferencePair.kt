@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
@@ -899,12 +900,24 @@ data class LocalInferencePair(
         } catch (_: Exception) { /* ignore */ }
     }
 
-    fun getDevshardInferenceState(proxyUrl: String, inferenceId: Long): String {
-        val result = api.executor.exec(listOf(
+    // Returns every inference the gateway knows about, keyed by inference id.
+    // Uses /v1/state (the per-runtime full state snapshot) which carries status and
+    // votes per inference. Replaces the removed /v1/inference per-id endpoint.
+    fun getDevshardProxyInferences(proxyUrl: String): Map<Long, DevshardInferencePayload> {
+        val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf $proxyUrl/v1/inference -H 'X-Inference-Id: $inferenceId'"
-        ), null)
-        return result.joinToString("")
+            "curl -sf $proxyUrl/v1/state -H 'Authorization: Bearer $devshardAdminApiKey'"
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("state returned no JSON object. raw:\n$raw")
+        }
+        val root = JsonParser.parseString(raw.substring(start, end + 1)).asJsonObject
+        val inferences = root.getAsJsonObject("inferences") ?: return emptyMap()
+        return inferences.entrySet().associate { (id, value) ->
+            id.toLong() to cosmosJson.fromJson(value, DevshardInferencePayload::class.java)
+        }
     }
 
     fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {

@@ -197,16 +197,7 @@ fun LocalInferencePair.assertDevshardSettlement(
 
 fun LocalInferencePair.findChallengedDevshardInference(
     handle: LocalInferencePair.DevshardProxyHandle,
-    maxNonceToScan: Long,
 ): DevshardInferencePayload? {
-    // Redundancy can consume extra nonces for secondary attempts or ghost probes,
-    // so scan the finalized nonce range instead of assuming request N == nonce N.
-    return (0..maxNonceToScan).firstNotNullOfOrNull { inferenceId ->
-        runCatching {
-            cosmosJson.fromJson(
-                getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                DevshardInferencePayload::class.java,
-            )
-        }.getOrNull()?.takeIf { it.status == DevshardInferenceStatus.CHALLENGED }
-    }
+    return getDevshardProxyInferences(handle.proxyUrl)
+        .values.firstOrNull { it.status == DevshardInferenceStatus.CHALLENGED }
 }
