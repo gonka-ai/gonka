@@ -594,16 +594,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		previousEpochIndex = previousEpoch.Index
 	}
 
-	// SettleAccounts must run before the collateral module's AdvanceEpoch.
-	// Settlement evaluates participant performance for the just-completed epoch
-	// and can transition a participant to INACTIVE/INVALID, which slashes both
-	// active and unbonding collateral via SetParticipant -> UpdateParticipantStatus.
-	// AdvanceEpoch processes the unbonding queue and releases any entries whose
-	// completion_epoch equals the completed epoch back to the participant. If
-	// the release ran first, those entries would be paid out and removed before
-	// slashing could reach them, allowing a participant to time their unbonding
-	// to mature exactly at the slash epoch and shield that collateral from the
-	// slash.
+	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
 	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
@@ -617,9 +608,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	// Signal to the collateral module that the epoch has advanced.
-	// This will trigger its internal unbonding queue processing. It runs after
-	// SettleAccounts so any slashing applied during settlement can still reach
-	// unbonding entries that mature at this epoch (see comment above).
+	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
 		am.LogInfo("onEndOfPoCValidationStage: Advancing collateral epoch", types.Tokenomics, "effectiveEpoch.Index", effectiveEpoch.Index)
 		if err := am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
