@@ -1304,22 +1304,29 @@ func TestStatsShardDetail_ValidationObservabilityAfterDiffApply(t *testing.T) {
 	valDiff := signDiffWithRoot(t, user, escrowID, 4, []*types.DevshardTx{valTx}, nil)
 	_, err = srv.Host().HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{valDiff}})
 	require.NoError(t, err)
-
+	// Observability is persisted asynchronously after apply; wait before the first
+	// stats request so the 60s shard-detail cache is not populated with zeros.
 	require.Eventually(t, func() bool {
-		rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/"+escrowID)
-		if rec.Code != http.StatusOK {
+		rows, err := base.GetValidationObservability(escrowID)
+		if err != nil {
 			return false
 		}
-		var resp struct {
-			ValidationObservability struct {
-				Totals struct {
-					CompletedValidations uint32 `json:"completed_validations"`
-				} `json:"totals"`
-			} `json:"validation_observability"`
+		var total uint32
+		for _, row := range rows {
+			total += row.CompletedValidations
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			return false
-		}
-		return resp.ValidationObservability.Totals.CompletedValidations >= 1
-	}, 10*time.Second, 10*time.Millisecond)
+		return total >= 1
+	}, time.Second, 10*time.Millisecond)
+
+	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/"+escrowID)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		ValidationObservability struct {
+			Totals struct {
+				CompletedValidations uint32 `json:"completed_validations"`
+			} `json:"totals"`
+		} `json:"validation_observability"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.GreaterOrEqual(t, resp.ValidationObservability.Totals.CompletedValidations, uint32(1))
 }
