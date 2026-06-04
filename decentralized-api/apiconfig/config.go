@@ -91,8 +91,8 @@ type ChainNodeConfig struct {
 	// When unset (zero), the DAPI auto-discovers the correct value at startup
 	// by querying the chain for FeeParams.MinGasPriceNgonka (see
 	// NewInferenceCosmosClient in cosmosclient/cosmosclient.go). This means
-	// hosts upgrading from v0.2.11 to v0.2.12 do not need to update their
-	// config.env — the DAPI picks up the on-chain default automatically when
+	// hosts upgrading between releases do not need to update their config.env —
+	// the DAPI picks up the on-chain default automatically when
 	// cosmovisor restarts it with the new binary.
 	MinGasPriceNgonka int64 `koanf:"min_gas_price_ngonka" json:"min_gas_price_ngonka"`
 }

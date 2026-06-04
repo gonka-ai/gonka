@@ -19,7 +19,7 @@ class PromptHashingTests {
         println("KOTLIN_UNIT_PROMPT_HASH=$hash")
 
         // NOTE: keep this hash in sync with decentralized-api/internal/server/public/post_chat_handler_test.go
-        val expectedHash = "c48e1cf4b71fc2a6620d28c61a4bab660a5c4ead680c27528a41ef2550645de4"
+        val expectedHash = "8956540596acd0ff60a29ed0d510e70e81934a7fe6dbf833b1e90767971af3f7"
         assertThat(hash).isEqualTo(expectedHash)
     }
 

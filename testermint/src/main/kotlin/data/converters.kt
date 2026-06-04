@@ -193,10 +193,11 @@ class DevshardInferenceStatusDeserializer : JsonDeserializer<DevshardInferenceSt
         context: JsonDeserializationContext?
     ): DevshardInferenceStatus {
         return DevshardInferenceStatus.fromAny(
-            if (json.isJsonPrimitive && json.asJsonPrimitive.isNumber) {
-                json.asInt
-            } else {
-                null
+            when {
+                !json.isJsonPrimitive -> null
+                json.asJsonPrimitive.isNumber -> json.asInt
+                json.asJsonPrimitive.isString -> json.asString
+                else -> null
             }
         )
     }

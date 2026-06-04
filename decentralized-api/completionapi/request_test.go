@@ -131,6 +131,25 @@ func TestModifyRequestBody_NullLogprobsPreserved(t *testing.T) {
 	require.Nil(t, r.OriginalTopLogprobsValue)
 }
 
+func TestModifyRequestBody_ForcesReturnTokenIds(t *testing.T) {
+	r, err := ModifyRequestBody([]byte(jsonBody), 7)
+	require.NoError(t, err)
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	v, ok := requestMap["return_token_ids"].(bool)
+	require.True(t, ok, "return_token_ids must be a bool")
+	require.True(t, v, "return_token_ids must be forced true")
+}
+
+func TestModifyRequestBody_OverwritesClientReturnTokenIdsFalse(t *testing.T) {
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"return_token_ids":false}`
+	r, err := ModifyRequestBody([]byte(body), 7)
+	require.NoError(t, err)
+	var requestMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
+	require.True(t, requestMap["return_token_ids"].(bool), "client false must be overwritten to true")
+}
+
 func TestStreamOptions_NoOptions(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyStreamNoStreamOptions), 7)
 	require.NoError(t, err)

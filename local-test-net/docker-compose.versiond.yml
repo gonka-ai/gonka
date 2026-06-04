@@ -10,14 +10,10 @@ services:
       VERSIOND_POLL_INTERVAL: "5s"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
-      # Default binary is testapp (VersiondTests). DevshardStandaloneTests
-      # exports VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=v0.2.11,
-      # VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd before bringing up
-      # the cluster, switching this versiond to run the locally-built
-      # devshardd binary instead.
+      # DevshardStandaloneTests sets these to run devshardd as v1; default is testapp.
       VERSIOND_BINARY_NAME: ${VERSIOND_BINARY_NAME:-testapp}
       VERSIOND_FORCE: ${VERSIOND_FORCE:-}
-      VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
+      VERSIOND_OVERRIDE_v1: ${VERSIOND_OVERRIDE_v1:-}
       NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
       # Inherited by child binaries (devshardd reads these). Same env
       # surface dapi's init-docker.sh uses.
@@ -35,11 +31,8 @@ services:
       PGUSER: ${PGUSER:-payloads}
       PGPASSWORD: ${PGPASSWORD:-}
     volumes:
-      # Locally-built devshardd binary, served as version "v0.2.11" via the
-      # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if
-      # VERSIOND_FORCE is empty (versiond never references it).
-      # Path is relative to --project-directory (repo root), not the
-      # compose file location.
+      # Locally-built devshardd, served as v1 via VERSIOND_OVERRIDE_v1; inert if
+      # VERSIOND_FORCE is empty. Path is relative to repo root (--project-directory).
       - ./build/devshardd:/opt/overrides/devshardd:ro
       # Same keyring dapi uses, read-only. Devshardd signs devshard
       # protocol messages with the same identity dapi registered on chain.

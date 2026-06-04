@@ -721,7 +721,7 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 		},
 	}
 
-	const standaloneVersion = "v0.2.11"
+	const standaloneVersion = "v1"
 	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), standaloneVersion, br, nil, nil)
 	_, err := mgr.getOrCreate("escrow-1")
 	require.NoError(t, err)

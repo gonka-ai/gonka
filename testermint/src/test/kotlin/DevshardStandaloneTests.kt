@@ -26,12 +26,12 @@ import kotlin.test.assertNotNull
  *
  *  - docker-compose.versiond.yml is included for every pair so each pair runs
  *    a versiond container that boots the locally-built devshardd binary as
- *    version "v0.2.11" (via VERSIOND_OVERRIDE_v0_2_11 + VERSIOND_FORCE).
+ *    version "v1" (via VERSIOND_OVERRIDE_v1 + VERSIOND_FORCE).
  *  - VERSIOND_SERVICE_NAME=versiond is exported so each pair's proxy emits a
  *    /devshard/ -> versiond_backend location.
- *  - startDevshardProxy is launched with routePrefix="/devshard/v0.2.11" so
- *    devshardctl builds host URLs as proxy/devshard/v0.2.11/sessions/:id/...
- *    nginx strips /devshard/, versiond strips /v0.2.11/, devshardd handles
+ *  - startDevshardProxy is launched with routePrefix="/devshard/v1" so
+ *    devshardctl builds host URLs as proxy/devshard/v1/sessions/:id/...
+ *    nginx strips /devshard/, versiond strips /v1/, devshardd handles
  *    /sessions/:id/...
  *  - DAPI's in-process HostManager is still mounted on /v1/devshard for the
  *    legacy path; the new test does not exercise it.
@@ -40,7 +40,7 @@ import kotlin.test.assertNotNull
  *    overrides for the tested version.
  */
 class DevshardStandaloneTests : TestermintTest() {
-    private val standaloneTestVersionName = "v0.2.11"
+    private val standaloneTestVersionName = "v1"
     private val devshardEscrowModel = defaultModel
 
     private data class PreparedDevsharddArtifact(
@@ -58,14 +58,14 @@ class DevshardStandaloneTests : TestermintTest() {
 
     // Switches the test cluster from "default" to "devshardd via versiond":
     //  - VERSIOND_BINARY_NAME selects the binary versiond launches per child
-    //  - VERSIOND_OVERRIDE_v0_2_11 points at the bind-mounted host binary
+    //  - VERSIOND_OVERRIDE_v1 points at the bind-mounted host binary
     //  - VERSIOND_FORCE makes versiond run that version even though it is
     //    not in the chain's approved_versions list
     //  - VERSIOND_SERVICE_NAME enables the proxy's /devshard/ -> versiond
     //    upstream block
     private val overrideVersiondEnv = mapOf(
         "VERSIOND_BINARY_NAME" to "devshardd",
-        "VERSIOND_OVERRIDE_v0_2_11" to "/opt/overrides/devshardd",
+        "VERSIOND_OVERRIDE_v1" to "/opt/overrides/devshardd",
         "VERSIOND_FORCE" to standaloneTestVersionName,
         "VERSIOND_SERVICE_NAME" to "versiond",
     )
@@ -273,7 +273,7 @@ class DevshardStandaloneTests : TestermintTest() {
                 assertThat(response).contains("data:")
             }
 
-            genesis.assertDevshardSettlement(
+            val result = genesis.assertDevshardSettlement(
                 handle,
                 escrowId,
                 user,
@@ -283,15 +283,11 @@ class DevshardStandaloneTests : TestermintTest() {
             )
 
             logSection("Verifying inference statuses")
-            for (inferenceId in 1..numInferences) {
-                val inference = cosmosJson.fromJson(
-                    genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                    DevshardInferencePayload::class.java,
-                )
-                logSection("Inference $inferenceId: $inference")
-                assertNotNull(inference)
-                assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
-            }
+            val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+                .values.count { it.status == DevshardInferenceStatus.FINISHED }
+            assertThat(finished)
+                .describedAs("finished devshardd inferences")
+                .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
@@ -453,7 +449,7 @@ class DevshardStandaloneTests : TestermintTest() {
             assertThat(escrow.escrow!!.settled).isTrue()
 
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle))
             logSection("Inference: $inference")
             assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
             assertThat(inference.votesInvalid).isNotZero()

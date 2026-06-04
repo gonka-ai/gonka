@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
@@ -231,6 +232,11 @@ fun attachDockerLogs(
         logOutput
     }
 }
+
+// Admin bearer the test proxies start with. A fresh single-escrow gateway has no
+// configured model access, so the gateway 401s normal traffic; sending this admin
+// key bypasses model-access control (see modelAccessError in devshardctl).
+const val devshardAdminApiKey = "sk-admin-test"
 
 data class LocalInferencePair(
     val node: ApplicationCLI,
@@ -831,6 +837,7 @@ data class LocalInferencePair(
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
         routePrefix: String? = null,
+        model: String = defaultModel,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
@@ -843,9 +850,23 @@ data class LocalInferencePair(
                 "sh", "-c",
                 "DEVSHARD_PRIVATE_KEY='$privateKey'" +
                     " DEVSHARD_ESCROW_ID=$escrowId" +
+                    " DEVSHARD_MODEL='$model'" +
+                    " DEVSHARD_ADMIN_API_KEY='$devshardAdminApiKey'" +
                     " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
                     " DEVSHARD_PORT=$port" +
-                    " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
+                    // Lift gateway rate limits for tests. The dynamic cap is
+                    // floor(weight * per10000 / 10000); tiny test PoC weight rounds it to 0.
+                    // Per10000=0 does not disable it -- WithTuningDefaults resets 0 to the
+                    // default 5/10 -- so set it high instead to keep the cap large.
+                    " GATEWAY_MAX_CONCURRENT_REQUESTS=0" +
+                    " GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0" +
+                    " GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=1000000" +
+                    " GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=1000000" +
+                    // Isolate each escrow's gateway store in its own dir. The gateway
+                    // bootstraps DEVSHARD_ESCROW_ID from env only when no gateway.db
+                    // exists in the base dir; a shared base dir makes a second escrow's
+                    // proxy load the first escrow's persisted state instead.
+                    " DEVSHARD_STORAGE_DIR=/tmp/devshardctl-proxy-${escrowId}" +
                     routePrefixEnv +
                     " nohup devshardctl >$stderrFile 2>&1 &" +
                     " echo \$!"
@@ -879,12 +900,24 @@ data class LocalInferencePair(
         } catch (_: Exception) { /* ignore */ }
     }
 
-    fun getDevshardInferenceState(proxyUrl: String, inferenceId: Long): String {
-        val result = api.executor.exec(listOf(
+    // Returns every inference the gateway knows about, keyed by inference id.
+    // Uses /v1/state (the per-runtime full state snapshot) which carries status and
+    // votes per inference. Replaces the removed /v1/inference per-id endpoint.
+    fun getDevshardProxyInferences(proxyUrl: String): Map<Long, DevshardInferencePayload> {
+        val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf $proxyUrl/v1/inference -H 'X-Inference-Id: $inferenceId'"
-        ), null)
-        return result.joinToString("")
+            "curl -sf $proxyUrl/v1/state -H 'Authorization: Bearer $devshardAdminApiKey'"
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("state returned no JSON object. raw:\n$raw")
+        }
+        val root = JsonParser.parseString(raw.substring(start, end + 1)).asJsonObject
+        val inferences = root.getAsJsonObject("inferences") ?: return emptyMap()
+        return inferences.entrySet().associate { (id, value) ->
+            id.toLong() to cosmosJson.fromJson(value, DevshardInferencePayload::class.java)
+        }
     }
 
     fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
@@ -895,6 +928,7 @@ data class LocalInferencePair(
             "curl --silent --show-error --fail --connect-timeout 5 --max-time $maxTimeSeconds " +
                 "-X POST $proxyUrl/v1/chat/completions " +
                 "-H 'Content-Type: application/json' " +
+                "-H 'Authorization: Bearer $devshardAdminApiKey' " +
                 "-d '${body.replace("'", "'\\''")}'"
         ), null)
         return result.joinToString("")
@@ -917,7 +951,7 @@ data class LocalInferencePair(
     fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf -X POST $proxyUrl/v1/finalize"
+            "curl -sf -X POST $proxyUrl/v1/finalize -H 'Authorization: Bearer $devshardAdminApiKey'"
         ), null).joinToString("")
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')

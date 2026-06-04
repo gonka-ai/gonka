@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const LegacySessionVersion = "v1"
 
@@ -60,6 +63,24 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+}
+
+// ProtocolVersion identifies the devshard protocol version for compatibility.
+type ProtocolVersion string
+
+const (
+	ProtocolV1 ProtocolVersion = "1"
+)
+
+// ParseProtocolVersion parses a string into a ProtocolVersion.
+// Empty string defaults to ProtocolV1.
+func ParseProtocolVersion(s string) (ProtocolVersion, error) {
+	switch strings.TrimSpace(s) {
+	case "", string(ProtocolV1), "v1":
+		return ProtocolV1, nil
+	default:
+		return "", fmt.Errorf("unknown protocol version %q", s)
+	}
 }
 
 // SessionConfig holds session-level parameters.

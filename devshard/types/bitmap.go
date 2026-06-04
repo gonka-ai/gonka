@@ -1,6 +1,9 @@
 package types
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math/bits"
+)
 
 // MaxGroupSize is the maximum number of slots in a session group.
 const MaxGroupSize = 128
@@ -32,6 +35,21 @@ func (b Bitmap128) Bytes() []byte {
 	binary.LittleEndian.PutUint64(buf[:8], b[0])
 	binary.LittleEndian.PutUint64(buf[8:], b[1])
 	return buf
+}
+
+// SetBits returns the sorted positions of all set bits.
+func (b Bitmap128) SetBits() []uint32 {
+	var out []uint32
+	for w := 0; w < 2; w++ {
+		word := b[w]
+		base := uint32(w * 64)
+		for word != 0 {
+			tz := bits.TrailingZeros64(word)
+			out = append(out, base+uint32(tz))
+			word &= word - 1
+		}
+	}
+	return out
 }
 
 // Bitmap128FromBytes reconstructs a Bitmap128 from a 16-byte little-endian slice.

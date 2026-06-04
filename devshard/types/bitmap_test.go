@@ -48,6 +48,29 @@ func TestBitmap128_Bytes_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestBitmap128_SetBits(t *testing.T) {
+	var b Bitmap128
+	if got := b.SetBits(); got != nil {
+		t.Fatalf("zero bitmap SetBits: want nil, got %v", got)
+	}
+
+	b.Set(0)
+	b.Set(5)
+	b.Set(63)
+	b.Set(64)
+	b.Set(127)
+	want := []uint32{0, 5, 63, 64, 127}
+	got := b.SetBits()
+	if len(got) != len(want) {
+		t.Fatalf("SetBits length: want %d, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SetBits[%d]: want %d, got %d", i, want[i], got[i])
+		}
+	}
+}
+
 func TestBitmap128_OutOfBounds(t *testing.T) {
 	var b Bitmap128
 	// Set and IsSet should be safe for out-of-range bits.

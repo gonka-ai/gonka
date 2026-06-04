@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+func TestParseProtocolVersion_DefaultsToV1(t *testing.T) {
+	got, err := ParseProtocolVersion("")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV1 {
+		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV1, got)
+	}
+}
+
+func TestParseProtocolVersion_AcceptsRouteStyleV1(t *testing.T) {
+	got, err := ParseProtocolVersion("v1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV1 {
+		t.Fatalf("expected v1 to normalize to %s, got %s", ProtocolV1, got)
+	}
+}
+
+func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
+	if _, err := ParseProtocolVersion("0.2.11"); err == nil {
+		t.Fatal("expected old protocol to be rejected")
+	}
+}
+
 func TestValidateGroup(t *testing.T) {
 	tests := []struct {
 		name    string
