@@ -58,8 +58,12 @@ type Storage interface {
 	InsertSealedInference(escrowID string, row InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
-	// IncrInferenceValidationObs tracks per-inference validation counters (not in state root).
-	IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error
+	// RecordValidationsAppliedOnce records required+completed=1 for each
+	// (inference_id, slot_id) entry at most once per escrow epoch, reusing the
+	// devshard_inference_validation_obs unique key as the dedup ledger via
+	// INSERT ... ON CONFLICT DO NOTHING. Duplicate entries within the batch are
+	// idempotent.
+	RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error
 	// DrainInferenceValidationObs moves live counters for an inference into sealed storage (called on seal).
 	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
 	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
@@ -68,8 +72,16 @@ type Storage interface {
 	Close() error
 }
 
+// ValidationObsEntry identifies one validation or validation-vote application
+// to record in observability storage.
+type ValidationObsEntry struct {
+	InferenceID uint64
+	SlotID      uint32
+}
+
 // SlotValidationObs holds per-slot validation counters for observability APIs only.
-// These are persisted across host restarts but are not part of settlement host_stats.
+// Counters are populated when hosts apply signed diffs (RecordValidationsAppliedOnce).
+// They are persisted across host restarts but are not part of settlement host_stats.
 type SlotValidationObs struct {
 	SlotID               uint32
 	RequiredValidations  uint32
@@ -111,9 +123,9 @@ type ActiveSession struct {
 
 // InferenceRow is the durable sealed-inference marker used by Phase 0 RAM
 // pruning. It records the inference id and seal nonce. When ObsPresent is true,
-// the sealed_* fields are an observability snapshot at seal time (not in the
-// state root) for GET /v1/inference after RAM prune. Late MsgValidation on
-// sealed ids still returns ErrInferenceSealed and does not read this snapshot.
+// the sealed_* fields are an observability snapshot (not in the state root) for
+// GET /v1/inference after RAM prune. Late MsgValidation on sealed ids still
+// returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
 	InferenceID uint64
 	SealedNonce uint64
@@ -123,4 +135,16 @@ type InferenceRow struct {
 	SealedVotesValid   uint32
 	SealedVotesInvalid uint32
 	SealedValidatedBy  []byte // up to 16 bytes (ValidatedBy bitmap)
+	// Statistics snapshot for API lookup after live record eviction.
+	SealedModel        string
+	SealedPromptHash   []byte
+	SealedResponseHash []byte
+	SealedInputLength  uint64
+	SealedMaxTokens    uint64
+	SealedInputTokens  uint64
+	SealedOutputTokens uint64
+	SealedReservedCost uint64
+	SealedActualCost   uint64
+	SealedStartedAt    int64
+	SealedConfirmedAt  int64
 }

@@ -93,10 +93,27 @@ CREATE TABLE IF NOT EXISTS devshard_snapshots (
 		Name: "devshard_sealed_inferences_parent",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_sealed_inferences (
-    epoch_id     BIGINT NOT NULL,
-    escrow_id    TEXT   NOT NULL,
-    inference_id BIGINT NOT NULL,
-    sealed_nonce BIGINT NOT NULL,
+    epoch_id             BIGINT  NOT NULL,
+    escrow_id            TEXT    NOT NULL,
+    inference_id         BIGINT  NOT NULL,
+    sealed_nonce         BIGINT  NOT NULL,
+    obs_present          BOOLEAN NOT NULL DEFAULT FALSE,
+    sealed_status        INTEGER NOT NULL DEFAULT 0,
+    sealed_executor_slot INTEGER NOT NULL DEFAULT 0,
+    sealed_votes_valid   INTEGER NOT NULL DEFAULT 0,
+    sealed_votes_invalid INTEGER NOT NULL DEFAULT 0,
+    sealed_validated_by  BYTEA,
+    sealed_model         TEXT    NOT NULL DEFAULT '',
+    sealed_prompt_hash   BYTEA,
+    sealed_response_hash BYTEA,
+    sealed_input_length  BIGINT  NOT NULL DEFAULT 0,
+    sealed_max_tokens    BIGINT  NOT NULL DEFAULT 0,
+    sealed_input_tokens  BIGINT  NOT NULL DEFAULT 0,
+    sealed_output_tokens BIGINT  NOT NULL DEFAULT 0,
+    sealed_reserved_cost BIGINT  NOT NULL DEFAULT 0,
+    sealed_actual_cost   BIGINT  NOT NULL DEFAULT 0,
+    sealed_started_at    BIGINT  NOT NULL DEFAULT 0,
+    sealed_confirmed_at  BIGINT  NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id, inference_id)
 ) PARTITION BY RANGE (epoch_id)`},
 	},
@@ -115,17 +132,6 @@ CREATE TABLE IF NOT EXISTS devshard_slot_validation_obs (
 	},
 	{
 		ID:   9,
-		Name: "devshard_sealed_inferences_obs_snapshot",
-		Statements: []string{`
-ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS obs_present BOOLEAN NOT NULL DEFAULT FALSE`,
-			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_status INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_executor_slot INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_votes_valid INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_votes_invalid INTEGER NOT NULL DEFAULT 0`,
-			`ALTER TABLE devshard_sealed_inferences ADD COLUMN IF NOT EXISTS sealed_validated_by BYTEA`},
-	},
-	{
-		ID:   11,
 		Name: "devshard_inference_validation_obs_parent",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
@@ -146,11 +152,6 @@ CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
     completed_validations  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id, inference_id, slot_id)
 ) PARTITION BY RANGE (epoch_id)`},
-	},
-	{
-		ID:         12,
-		Name:       "noop",
-		Statements: []string{`SELECT 1`},
 	},
 }
 

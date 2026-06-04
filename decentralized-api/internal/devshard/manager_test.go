@@ -440,8 +440,8 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 				CompletedValidations uint32 `json:"completed_validations"`
 			} `json:"by_slot"`
 			Totals struct {
-				RequiredValidations  uint32 `json:"required_validations"`
-				CompletedValidations uint32 `json:"completed_validations"`
+				RequiredValidations  uint64 `json:"required_validations"`
+				CompletedValidations uint64 `json:"completed_validations"`
 			} `json:"totals"`
 		} `json:"validation_observability"`
 		Group []types.SlotAssignment `json:"group"`
@@ -1158,4 +1158,175 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 	_, ok := mgr.sessions["escrow-1"]
 	mgr.mu.RUnlock()
 	require.False(t, ok, "corrupt session should be skipped, not recovered")
+}
+
+func TestRecoverSessions_ValidationObs_NotReincremented(t *testing.T) {
+	store := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, store, 3)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+
+	require.NoError(t, store.RecordValidationsAppliedOnce("escrow-1", []storage.ValidationObsEntry{
+		{InferenceID: 1, SlotID: 0},
+	}))
+	before, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	require.Equal(t, uint32(1), before[0].CompletedValidations)
+
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+
+	after, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func signProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
+	t.Helper()
+	cloned := proto.Clone(msg)
+	if s, ok := cloned.(interface{ SetProposerSig([]byte) }); ok {
+		s.SetProposerSig(nil)
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(cloned)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return sig
+}
+
+func signExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64) []byte {
+	t.Helper()
+	content := &types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  promptHash,
+		Model:       model,
+		InputLength: inputLength,
+		MaxTokens:   maxTokens,
+		StartedAt:   startedAt,
+		EscrowId:    escrowID,
+		ConfirmedAt: confirmedAt,
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return sig
+}
+
+func TestStatsShardDetail_ValidationObservabilityAfterDiffApply(t *testing.T) {
+	const escrowID = "escrow-obs"
+	const epochID uint64 = 7
+
+	base := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	config.ValidationRate = 0
+	verifier := signing.NewSecp256k1Verifier()
+	engine := stub.NewInferenceEngine()
+
+	require.NoError(t, base.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		EpochID:        epochID,
+		Version:        runtimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100_000,
+	}))
+
+	sm, err := state.NewStateMachine(escrowID, config, group, 100_000, user.Address(), verifier, base,
+		state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion),
+	)
+	require.NoError(t, err)
+
+	appendDiff := func(nonce uint64, txs []*types.DevshardTx) {
+		root, err := sm.ApplyLocal(nonce, txs)
+		require.NoError(t, err)
+		require.NoError(t, base.AppendDiff(escrowID, types.DiffRecord{
+			Diff:      signDiffWithRoot(t, user, escrowID, nonce, txs, root),
+			StateHash: root,
+		}))
+	}
+
+	appendDiff(1, []*types.DevshardTx{startTx(1)})
+	execSig := signExecutorReceipt(t, hosts[1], escrowID, 1, nil, "llama", 100, 50, 1000, 2000)
+	appendDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}})
+	finishMsg := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		ExecutorSlot: 1, EscrowId: escrowID,
+	}
+	finishMsg.ProposerSig = signProposerTx(t, hosts[1], finishMsg)
+	appendDiff(3, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}})
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: escrowID}
+	valMsg.ProposerSig = signProposerTx(t, hosts[0], valMsg)
+	valTx := &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: valMsg}}
+
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       escrowID,
+			EpochID:        epochID,
+			Amount:         100_000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+
+	store := currentEpochStore{Storage: base, epoch: epochID}
+	mgr := NewHostManager(store, hosts[0], engine, stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetReady()
+	require.NoError(t, mgr.RecoverSessions())
+
+	srv, err := mgr.SessionServer(escrowID)
+	require.NoError(t, err)
+	valDiff := signDiffWithRoot(t, user, escrowID, 4, []*types.DevshardTx{valTx}, nil)
+	_, err = srv.Host().HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{valDiff}})
+	require.NoError(t, err)
+	// Observability is persisted asynchronously after apply; wait before the first
+	// stats request so the 60s shard-detail cache is not populated with zeros.
+	require.Eventually(t, func() bool {
+		rows, err := base.GetValidationObservability(escrowID)
+		if err != nil {
+			return false
+		}
+		var total uint32
+		for _, row := range rows {
+			total += row.CompletedValidations
+		}
+		return total >= 1
+	}, time.Second, 10*time.Millisecond)
+
+	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/"+escrowID)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		ValidationObservability struct {
+			Totals struct {
+				CompletedValidations uint64 `json:"completed_validations"`
+			} `json:"totals"`
+		} `json:"validation_observability"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.GreaterOrEqual(t, resp.ValidationObservability.Totals.CompletedValidations, uint64(1))
 }

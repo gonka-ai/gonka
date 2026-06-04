@@ -480,6 +480,14 @@ data class LocalInferencePair(
     }
 
     fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5): WaitForStageResult? {
+        if (!haveJoinValidatorsBeenSet()) {
+            logSection(
+                "Join validators (join1/join2) not yet on chain; " +
+                    "waiting past SET_NEW_VALIDATORS before inference routing"
+            )
+            return waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
+        }
+
         val epochData = getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
         val currentPhase = epochData.phase
@@ -500,6 +508,39 @@ data class LocalInferencePair(
             Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
             return null
         }
+    }
+
+    /**
+     * Returns true once join nodes are comet validators, or when the cluster is
+     * genesis-only (no join validators to wait for).
+     *
+     * Before the first [EpochStage.SET_NEW_VALIDATORS], only genesis is in the
+     * comet validator set while join participants may already be registered.
+     * [GetRandomExecutor] then applies the preserved-node PoC filter with an
+     * empty set, so inference routing fails until join validators are set.
+     */
+    private fun haveJoinValidatorsBeenSet(): Boolean {
+        val cometValidatorCount = node.getCometValidators().validators.size
+        if (cometValidatorCount > 1) {
+            Logger.info {
+                "Join validators appear set: cometValidatorCount=$cometValidatorCount"
+            }
+            return true
+        }
+
+        val activeParticipantCount = try {
+            api.getActiveParticipants().activeParticipants.participants.size
+        } catch (e: Exception) {
+            Logger.warn(e) { "Failed to query active participants for join validator check" }
+            return false
+        }
+
+        val soloCluster = activeParticipantCount <= 1
+        Logger.info {
+            "Join validator check: cometValidatorCount=$cometValidatorCount, " +
+                "activeParticipantCount=$activeParticipantCount, soloCluster=$soloCluster"
+        }
+        return soloCluster
     }
 
     fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
@@ -836,6 +877,7 @@ data class LocalInferencePair(
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
         routePrefix: String? = null,
+        debugLogging: Boolean = false,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
@@ -844,6 +886,7 @@ data class LocalInferencePair(
             // devshardctl's release-default routing choice.
             val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
             val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
+            val logLevelEnv = if (debugLogging) " DEVSHARD_LOG_LEVEL=debug" else ""
             val startCommand = listOf(
                 "sh", "-c",
                 "DEVSHARD_PRIVATE_KEY='$privateKey'" +
@@ -852,6 +895,7 @@ data class LocalInferencePair(
                     " DEVSHARD_PORT=$port" +
                     " DEVSHARD_STORAGE_PATH=/tmp/devshardctl-proxy-${escrowId}.db" +
                     routePrefixEnv +
+                    logLevelEnv +
                     " nohup devshardctl >$stderrFile 2>&1 &" +
                     " echo \$!"
             )

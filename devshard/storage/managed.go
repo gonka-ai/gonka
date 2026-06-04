@@ -217,8 +217,8 @@ func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
 }
 
-func (m *ManagedStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
-	return m.inner.IncrInferenceValidationObs(escrowID, inferenceID, slotID, requiredDelta, completedDelta)
+func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	return m.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }
 
 func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {

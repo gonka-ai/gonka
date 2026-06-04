@@ -72,8 +72,8 @@ func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
-func (r *recordingStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
-	r.lastMethod = "IncrInferenceValidationObs"
+func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	r.lastMethod = "RecordValidationsAppliedOnce"
 	return nil
 }
 func (r *recordingStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {

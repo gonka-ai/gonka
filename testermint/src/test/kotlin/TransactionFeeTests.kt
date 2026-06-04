@@ -59,7 +59,9 @@ class TransactionFeeTests : TestermintTest() {
     fun `inference succeeds before fee enablement`() {
         logHighlight("Testing that inference works before fee enforcement is enabled")
 
-        genesis.waitForNextInferenceWindow()
+        // Past set_new_validators so GetRandomExecutor uses all participants, not the
+        // preserved-node PoC filter (which is empty right at that boundary).
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         val response = genesis.makeInferenceRequest(inferenceRequest)
 
         assertThat(response.choices).isNotEmpty

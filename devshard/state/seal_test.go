@@ -187,3 +187,40 @@ func TestChallengedInferencePersistedBeforeSeal(t *testing.T) {
 	require.True(t, ok)
 	require.Greater(t, row.SealedNonce, uint64(0))
 }
+
+func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	escrowID := "escrow-stats"
+	sm, _, _, _ := newSealTestSM(t, escrowID, hosts, true)
+	driveSealInferenceToFinished(t, sm, escrowID, hosts)
+
+	live, ok := sm.GetInference(1)
+	require.True(t, ok)
+
+	require.NoError(t, sm.SealInference(1))
+	_, ok = sm.GetInference(1)
+	require.False(t, ok)
+
+	got, ok := sm.LookupSealedInference(1)
+	require.True(t, ok)
+	require.Equal(t, live.Status, got.Status)
+	require.Equal(t, live.ExecutorSlot, got.ExecutorSlot)
+	require.Equal(t, live.Model, got.Model)
+	require.Equal(t, live.PromptHash, got.PromptHash)
+	require.Equal(t, live.ResponseHash, got.ResponseHash)
+	require.Equal(t, live.InputLength, got.InputLength)
+	require.Equal(t, live.MaxTokens, got.MaxTokens)
+	require.Equal(t, live.InputTokens, got.InputTokens)
+	require.Equal(t, live.OutputTokens, got.OutputTokens)
+	require.Equal(t, live.ReservedCost, got.ReservedCost)
+	require.Equal(t, live.ActualCost, got.ActualCost)
+	require.Equal(t, live.StartedAt, got.StartedAt)
+	require.Equal(t, live.ConfirmedAt, got.ConfirmedAt)
+	require.Greater(t, got.ActualCost, uint64(0))
+}

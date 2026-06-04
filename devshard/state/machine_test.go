@@ -8,6 +8,7 @@ import (
 
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -2842,4 +2843,38 @@ func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
 	st = sm.SnapshotState()
 	require.Equal(t, types.StatusInvalidated, st.Inferences[1].Status)
 	require.Equal(t, uint64(0), st.HostStats[1].Cost)
+}
+
+type recordObsTrackingStore struct {
+	*storage.Memory
+	recordCalls int
+}
+
+func (s *recordObsTrackingStore) RecordValidationsAppliedOnce(escrowID string, entries []storage.ValidationObsEntry) error {
+	s.recordCalls++
+	return s.Memory.RecordValidationsAppliedOnce(escrowID, entries)
+}
+
+func TestApplyDiff_DoesNotIncrementValidationObs(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	mem := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)
+	track := &recordObsTrackingStore{Memory: mem}
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, track)
+	require.NoError(t, err)
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, 0, track.recordCalls, "SM must not record validation obs; host records via RecordValidationsAppliedOnce")
 }

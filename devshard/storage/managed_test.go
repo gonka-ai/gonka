@@ -116,8 +116,8 @@ func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint
 func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
 	return s.inner.DeleteSealedInferences(escrowID)
 }
-func (s *legacyOnlyStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
-	return s.inner.IncrInferenceValidationObs(escrowID, inferenceID, slotID, requiredDelta, completedDelta)
+func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }
 func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return s.inner.DrainInferenceValidationObs(escrowID, inferenceID)

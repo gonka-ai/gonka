@@ -78,8 +78,8 @@ func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
 	return h.backend.DeleteSealedInferences(escrowID)
 }
 
-func (h *HybridStorage) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
-	return h.backend.IncrInferenceValidationObs(escrowID, inferenceID, slotID, requiredDelta, completedDelta)
+func (h *HybridStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	return h.backend.RecordValidationsAppliedOnce(escrowID, entries)
 }
 
 func (h *HybridStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {

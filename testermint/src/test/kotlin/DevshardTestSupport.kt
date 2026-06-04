@@ -1,3 +1,6 @@
+import com.github.dockerjava.api.async.ResultCallback
+import com.github.dockerjava.api.model.Frame
+import com.github.dockerjava.core.DockerClientBuilder
 import com.github.kittinunf.fuel.Fuel
 import com.productscience.*
 import com.productscience.data.*
@@ -42,6 +45,71 @@ val devshardEscrowAlwaysValidateSpec = spec<AppState> {
                 this[DevshardEscrowParams::validationRate] = 10_000L
             }
         }
+    }
+}
+
+fun LocalInferencePair.traceDevshardInferencePhase(
+    handle: LocalInferencePair.DevshardProxyHandle,
+    inferenceId: Long,
+    label: String,
+) {
+    runCatching {
+        val raw = getDevshardInferenceState(handle.proxyUrl, inferenceId)
+        logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=$raw")
+    }.onFailure {
+        logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=unavailable (${it.message})")
+    }
+}
+
+fun LocalInferencePair.dumpDevshardChallengeTraceLogs(escrowId: Long) {
+    val patterns = listOf(
+        "execute_ml_",
+        "validation_ml_",
+        "validation_enqueued",
+        "apply_validation",
+        "proxy_inference_",
+        "validation started",
+        "validation_result",
+        "validation_vote",
+    )
+    val grepExpr = patterns.joinToString("|") { Regex.escape(it) }
+    logSection("phase-trace docker logs (escrow=$escrowId, patterns=$grepExpr)")
+    runCatching {
+        val dockerClient = DockerClientBuilder.getInstance().build()
+        listOf("genesis", "join1", "join2").forEach { name ->
+            listOf("api", "proxy").forEach { svc ->
+                val containerName = "$name-$svc"
+                val collector = StringBuilder()
+                dockerClient.logContainerCmd(containerName)
+                    .withStdOut(true)
+                    .withStdErr(true)
+                    .withTail(800)
+                    .exec(
+                        object : ResultCallback.Adapter<Frame>() {
+                            override fun onNext(item: Frame) {
+                                collector.append(item.toString())
+                            }
+                        },
+                    )
+                    .awaitCompletion()
+                val filtered = collector.lines()
+                    .filter { line -> patterns.any { p -> line.contains(p) } }
+                    .joinToString("\n")
+                logSection("phase-trace $containerName (${filtered.lines().size} matching lines):\n$filtered")
+            }
+        }
+        val proxyLog = "/tmp/devshardctl-proxy-${escrowId}.log"
+        runCatching {
+            val lines = api.executor.exec(
+                listOf("sh", "-c", "grep -E '$grepExpr' $proxyLog 2>/dev/null | tail -200 || true"),
+                null,
+            )
+            logSection("phase-trace devshardctl ($proxyLog):\n${lines.joinToString("\n")}")
+        }.onFailure {
+            logSection("phase-trace devshardctl log unavailable: ${it.message}")
+        }
+    }.onFailure {
+        logSection("phase-trace docker dump failed: ${it.message}")
     }
 }
 

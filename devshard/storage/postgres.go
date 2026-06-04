@@ -37,6 +37,20 @@ type Postgres struct {
 }
 
 const (
+	// postgresConnectTimeout bounds establishing a new connection.
+	postgresConnectTimeout = 5 * time.Second
+	// postgresStatementTimeout aborts any single query server-side. It is the
+	// primary guard against a stalled backend hanging a caller indefinitely.
+	postgresStatementTimeout = 5 * time.Second
+	// postgresLockTimeout bounds waits on row/table locks server-side.
+	postgresLockTimeout = 3 * time.Second
+	// postgresOpTimeout bounds each storage operation Go-side. Unlike
+	// statement_timeout it also covers the time spent acquiring a pooled
+	// connection (pool exhaustion), which the server-side timeout cannot.
+	postgresOpTimeout = 8 * time.Second
+)
+
+const (
 	pgSessionsParent               = "devshard_sessions"
 	pgDiffsParent                  = "devshard_diffs"
 	pgSignaturesParent             = "devshard_signatures"
@@ -77,7 +91,18 @@ func pgSealedValidationObsPartition(epochID uint64) string {
 // vars (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD). Schema is created
 // idempotently and the escrow index is rebuilt by scanning devshard_sessions.
 func NewPostgres(ctx context.Context) (*Postgres, error) {
-	pool, err := pgxpool.New(ctx, "")
+	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+	cfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	// Server-side per-query bounds applied to every pooled connection.
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
@@ -246,6 +271,14 @@ func (s *Postgres) lookupEpoch(escrowID string) (uint64, error) {
 	return epochID, nil
 }
 
+// opCtx returns a context bounding a single storage operation. It caps both the
+// pooled-connection acquire wait and total query time Go-side; statement_timeout
+// and lock_timeout provide the matching server-side bounds. Callers must defer
+// the returned cancel.
+func (s *Postgres) opCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), postgresOpTimeout)
+}
+
 func (s *Postgres) CreateSession(params CreateSessionParams) error {
 	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
 	configJSON, err := json.Marshal(params.Config)
@@ -261,7 +294,8 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 		return err
 	}
 
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	if err := s.ensurePartition(ctx, params.EpochID); err != nil {
 		return err
 	}
@@ -349,7 +383,9 @@ func (s *Postgres) MarkSettled(escrowID string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE devshard_sessions SET status = 'settled', settled_at = $1
 		 WHERE epoch_id = $2 AND escrow_id = $3`,
 		time.Now().Unix(), epochID, escrowID,
@@ -364,7 +400,9 @@ func (s *Postgres) MarkSettled(escrowID string) error {
 }
 
 func (s *Postgres) ListActiveSessions() ([]ActiveSession, error) {
-	rows, err := s.pool.Query(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
 		`SELECT epoch_id, escrow_id FROM devshard_sessions WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
@@ -403,7 +441,8 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		warmJSON = &str
 	}
 
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -449,7 +488,9 @@ func (s *Postgres) AddSignature(escrowID string, nonce uint64, slotID uint32, si
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO devshard_signatures (epoch_id, escrow_id, nonce, slot_id, sig)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (epoch_id, escrow_id, nonce, slot_id) DO UPDATE SET sig = EXCLUDED.sig`,
@@ -463,7 +504,9 @@ func (s *Postgres) GetSignatures(escrowID string, nonce uint64) (map[uint32][]by
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
 		`SELECT slot_id, sig FROM devshard_signatures
 		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce = $3`,
 		epochID, escrowID, nonce,
@@ -489,7 +532,9 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := s.pool.QueryRow(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	row := s.pool.QueryRow(ctx,
 		`SELECT escrow_id, version, creator_addr, config_json, group_json,
 		        initial_balance, latest_nonce, last_finalized, status
 		 FROM devshard_sessions
@@ -531,7 +576,9 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 		return nil, err
 	}
 
-	rows, err := s.pool.Query(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
 		`SELECT d.nonce, d.txs_proto, d.user_sig, d.post_state_root, d.state_hash,
 		        d.warm_keys_json, d.created_at, s.slot_id, s.sig
 		 FROM devshard_diffs d
@@ -614,7 +661,9 @@ func (s *Postgres) MarkFinalized(escrowID string, nonce uint64) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE devshard_sessions SET last_finalized = GREATEST(last_finalized, $1)
 		 WHERE epoch_id = $2 AND escrow_id = $3`,
 		nonce, epochID, escrowID,
@@ -633,7 +682,9 @@ func (s *Postgres) LastFinalized(escrowID string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	row := s.pool.QueryRow(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	row := s.pool.QueryRow(ctx,
 		`SELECT last_finalized FROM devshard_sessions WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
 	)
@@ -652,7 +703,8 @@ func (s *Postgres) SaveSnapshot(escrowID string, nonce uint64, data []byte) erro
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
@@ -672,7 +724,9 @@ func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	row := s.pool.QueryRow(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	row := s.pool.QueryRow(ctx,
 		`SELECT nonce, state_data FROM devshard_snapshots WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
 	)
@@ -692,12 +746,19 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO devshard_sealed_inferences (
 			epoch_id, escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
-			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+			sealed_model, sealed_prompt_hash, sealed_response_hash,
+			sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens,
+			sealed_reserved_cost, sealed_actual_cost,
+			sealed_started_at, sealed_confirmed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = EXCLUDED.sealed_nonce,
 			obs_present = EXCLUDED.obs_present,
@@ -705,10 +766,26 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 			sealed_executor_slot = EXCLUDED.sealed_executor_slot,
 			sealed_votes_valid = EXCLUDED.sealed_votes_valid,
 			sealed_votes_invalid = EXCLUDED.sealed_votes_invalid,
-			sealed_validated_by = EXCLUDED.sealed_validated_by`,
+			sealed_validated_by = EXCLUDED.sealed_validated_by,
+			sealed_model = EXCLUDED.sealed_model,
+			sealed_prompt_hash = EXCLUDED.sealed_prompt_hash,
+			sealed_response_hash = EXCLUDED.sealed_response_hash,
+			sealed_input_length = EXCLUDED.sealed_input_length,
+			sealed_max_tokens = EXCLUDED.sealed_max_tokens,
+			sealed_input_tokens = EXCLUDED.sealed_input_tokens,
+			sealed_output_tokens = EXCLUDED.sealed_output_tokens,
+			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
+			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
+			sealed_started_at = EXCLUDED.sealed_started_at,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`,
 		epochID, escrowID, row.InferenceID, row.SealedNonce, row.ObsPresent,
 		row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
+		row.SealedModel, row.SealedPromptHash, row.SealedResponseHash,
+		row.SealedInputLength, row.SealedMaxTokens,
+		row.SealedInputTokens, row.SealedOutputTokens,
+		row.SealedReservedCost, row.SealedActualCost,
+		row.SealedStartedAt, row.SealedConfirmedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -721,9 +798,16 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 	if err != nil {
 		return InferenceRow{}, false, err
 	}
-	row := s.pool.QueryRow(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	row := s.pool.QueryRow(ctx,
 		`SELECT sealed_nonce, obs_present, sealed_status, sealed_executor_slot,
-		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by
+		        sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+		        sealed_model, sealed_prompt_hash, sealed_response_hash,
+		        sealed_input_length, sealed_max_tokens,
+		        sealed_input_tokens, sealed_output_tokens,
+		        sealed_reserved_cost, sealed_actual_cost,
+		        sealed_started_at, sealed_confirmed_at
 		   FROM devshard_sealed_inferences
 		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
 		epochID, escrowID, inferenceID,
@@ -732,6 +816,11 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 	if err := row.Scan(
 		&out.SealedNonce, &out.ObsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
 		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
+		&out.SealedModel, &out.SealedPromptHash, &out.SealedResponseHash,
+		&out.SealedInputLength, &out.SealedMaxTokens,
+		&out.SealedInputTokens, &out.SealedOutputTokens,
+		&out.SealedReservedCost, &out.SealedActualCost,
+		&out.SealedStartedAt, &out.SealedConfirmedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil
@@ -746,13 +835,15 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if _, err := s.pool.Exec(ctx,
 		`DELETE FROM devshard_sealed_inferences WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
 	); err != nil {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
-	if _, err := s.pool.Exec(context.Background(),
+	if _, err := s.pool.Exec(ctx,
 		`DELETE FROM devshard_sealed_validation_obs WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
 	); err != nil {
@@ -761,25 +852,34 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 	return nil
 }
 
-func (s *Postgres) IncrInferenceValidationObs(escrowID string, inferenceID uint64, slotID uint32, requiredDelta, completedDelta uint32) error {
+func (s *Postgres) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
+	inferenceIDs := make([]int64, len(entries))
+	slotIDs := make([]int32, len(entries))
+	for i, e := range entries {
+		inferenceIDs[i] = int64(e.InferenceID)
+		slotIDs[i] = int32(e.SlotID)
+	}
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO devshard_inference_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
-		   required_validations = devshard_inference_validation_obs.required_validations + EXCLUDED.required_validations,
-		   completed_validations = devshard_inference_validation_obs.completed_validations + EXCLUDED.completed_validations`,
-		epochID, escrowID, inferenceID, slotID, requiredDelta, completedDelta,
+		 SELECT $1, $2, t.inference_id, t.slot_id, 1, 1
+		 FROM unnest($3::bigint[], $4::int[]) AS t(inference_id, slot_id)
+		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO NOTHING`,
+		epochID, escrowID, inferenceIDs, slotIDs,
 	)
 	if err != nil {
-		return fmt.Errorf("incr inference validation obs: %w", err)
+		return fmt.Errorf("record validations applied once: %w", err)
 	}
 	return nil
 }
@@ -789,7 +889,8 @@ func (s *Postgres) DrainInferenceValidationObs(escrowID string, inferenceID uint
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
@@ -851,7 +952,9 @@ func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidation
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(context.Background(),
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
 		`SELECT slot_id,
 		        SUM(required_validations)::int AS required_validations,
 		        SUM(completed_validations)::int AS completed_validations
@@ -888,7 +991,8 @@ func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidation
 // escrow index entry that pointed at it. Other epochs are not touched.
 // No-op if the partitions do not exist.
 func (s *Postgres) PruneEpoch(epochID uint64) error {
-	ctx := context.Background()
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	for _, partition := range []string{
 		pgDiffsPartition(epochID),
 		pgSignaturesPartition(epochID),
@@ -924,7 +1028,9 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		return nil
 	}
 
-	rows, err := s.pool.Query(context.Background(), `
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx, `
 		SELECT c.relname
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
@@ -950,7 +1056,6 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		return err
 	}
 
-	ctx := context.Background()
 	for _, partition := range partitions {
 		if _, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition)); err != nil {
 			return fmt.Errorf("drop %s: %w", partition, err)

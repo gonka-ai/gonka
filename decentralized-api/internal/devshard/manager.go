@@ -113,11 +113,18 @@ type statsHostStats struct {
 	CompletedValidations uint32 `json:"completed_validations"`
 }
 
+// statsValidationTotals aggregates per-slot observability rows; uint64 avoids wrap
+// when summing many slots (per-slot counters remain uint32).
+type statsValidationTotals struct {
+	RequiredValidations  uint64 `json:"required_validations"`
+	CompletedValidations uint64 `json:"completed_validations"`
+}
+
 // statsValidationObservability exposes validation counters persisted outside the
 // state root (survives host restart; not used for settlement).
 type statsValidationObservability struct {
 	BySlot map[uint32]statsHostStats `json:"by_slot"`
-	Totals statsHostStats            `json:"totals"`
+	Totals statsValidationTotals     `json:"totals"`
 }
 
 func NewHostManager(
@@ -733,8 +740,8 @@ func validationObservabilityFromStore(store storage.Storage, escrowID string) st
 			RequiredValidations:  row.RequiredValidations,
 			CompletedValidations: row.CompletedValidations,
 		}
-		out.Totals.RequiredValidations += row.RequiredValidations
-		out.Totals.CompletedValidations += row.CompletedValidations
+		out.Totals.RequiredValidations += uint64(row.RequiredValidations)
+		out.Totals.CompletedValidations += uint64(row.CompletedValidations)
 	}
 	return out
 }
