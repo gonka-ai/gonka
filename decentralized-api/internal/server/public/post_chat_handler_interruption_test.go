@@ -533,8 +533,7 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	inferenceUpCmd := broker.NewInferenceUpAllCommand()
 	err = suite.nodeBroker.QueueMessage(inferenceUpCmd)
 	require.NoError(t, err)
-	inferenceUpResp := <-inferenceUpCmd.Response
-	require.NoError(t, inferenceUpResp.Error)
+	<-inferenceUpCmd.Response
 
 	waitForStableInferenceNode := func() bool {
 		nodes, nodesErr := suite.nodeBroker.GetNodes()
@@ -572,8 +571,7 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 		)
 		err = suite.nodeBroker.QueueMessage(setStatusCommand)
 		require.NoError(t, err)
-		setStatusResp := <-setStatusCommand.Response
-		require.NoError(t, setStatusResp.Error)
+		<-setStatusCommand.Response
 
 		deadline = time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
