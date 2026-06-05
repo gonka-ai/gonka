@@ -88,15 +88,15 @@ The attach test:
 - waits for the upgrade height and cosmovisor restart;
 - verifies `last-upgrade-height` on every node after the candidate binary is running;
 - verifies basic API/node health;
-- waits for a post-upgrade `START_OF_POC` and then the matching `SET_NEW_VALIDATORS` stage so a full candidate-binary PoC cycle has completed;
-- verifies every prepared miner is still active, not excluded, has non-zero PoC power, and has no dramatic power change compared with the pre-PoC post-upgrade snapshot;
+- waits for a post-upgrade `START_OF_POC`, the matching `SET_NEW_VALIDATORS` stage, and then `CLAIM_REWARDS` so the candidate binary has completed PoC and crossed into the new epoch flow;
+- verifies every prepared miner is still active, not excluded, has non-zero PoC power, and has no dramatic power change after both `SET_NEW_VALIDATORS` and `CLAIM_REWARDS`;
 - runs a post-upgrade normal inference;
 - enables devshard request handling with a governance params proposal if the upgraded chain reports it disabled;
 - creates and settles a post-upgrade devshard escrow.
 
 By default, the power-stability check allows at most a 50% per-miner and total-power change across that post-upgrade PoC cycle. Use `UPGRADE_REHEARSAL_MAX_POWER_CHANGE_PERCENT` only for debugging a known intentional power-model change; do not loosen it to hide unexpected miner removal or cPoC fallout.
 
-The completion manifest records the post-upgrade PoC start block, `SET_NEW_VALIDATORS` block, pre-upgrade baseline epoch/weights, and post-upgrade epoch/weights so a failed or suspicious run can be compared without replaying the full logs first.
+The completion manifest records the post-upgrade PoC start block, `SET_NEW_VALIDATORS` block, `CLAIM_REWARDS` block, pre-upgrade baseline epoch/weights, post-PoC epoch/weights, and new-epoch weights so a failed or suspicious run can be compared without replaying the full logs first.
 
 ## Running In GitHub Actions
 
@@ -146,6 +146,6 @@ If the node downloads the candidate binary and restarts, but the new binary stil
 
 If post-upgrade inference fails with versioned endpoint routing, check that the test stubs mock-server responses for the target upgrade segment as well as the default segment.
 
-If the post-upgrade PoC/power check fails, inspect whether the prepared miners disappeared from active participants, appeared in `excluded_participants`, reported zero PoC weight, or crossed the configured power-change threshold. This check is meant to catch upgrades that technically resume blocks but break the next epoch's miner set or cPoC/PoC accounting.
+If the post-upgrade PoC/power check fails, inspect whether the prepared miners disappeared from active participants, appeared in `excluded_participants`, reported zero PoC weight, failed to remain available after `CLAIM_REWARDS`, or crossed the configured power-change threshold. This check is meant to catch upgrades that technically resume blocks but break the next epoch's miner set or cPoC/PoC accounting.
 
 If post-upgrade devshard settlement fails with `devshard completion and timeout requests are disabled`, query inference params and confirm `devshard_escrow_params.devshard_requests_enabled` is true. The rehearsal completion test enables this through a normal governance params proposal because older state or operational settings can carry a disabled value across the upgrade. When building that params proposal, preserve the existing `devshard_escrow_params.max_nonce` value, or repair a missing/zero value to the chain default, because a full `MsgUpdateParams` proposal with `max_nonce: 0` is rejected during proposal validation.

@@ -129,10 +129,13 @@ class UpgradeRehearsalTests : TestermintTest() {
     private data class PostUpgradePocResult(
         val beforeEpochId: Long,
         val afterEpochId: Long,
+        val newEpochId: Long,
         val pocStartBlock: Long,
         val setNewValidatorsBlock: Long,
+        val claimRewardsBlock: Long,
         val beforeWeights: Map<String, Long>,
         val afterWeights: Map<String, Long>,
+        val newEpochWeights: Map<String, Long>,
     )
 
     private fun assertPostUpgradePocSucceeded(
@@ -154,13 +157,24 @@ class UpgradeRehearsalTests : TestermintTest() {
             .isGreaterThan(before.epochId)
         assertMinerPowerStable(before, after)
 
+        val claimRewards = genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        waitForClusterOperational(cluster, genesis)
+        val newEpoch = captureActivePocPowerSnapshot(genesis, participantIds, "after post-upgrade new epoch")
+        assertThat(newEpoch.epochId)
+            .describedAs("post-upgrade active participant epoch should remain advanced after CLAIM_REWARDS")
+            .isGreaterThanOrEqualTo(after.epochId)
+        assertMinerPowerStable(before, newEpoch)
+
         return PostUpgradePocResult(
             beforeEpochId = before.epochId,
             afterEpochId = after.epochId,
+            newEpochId = newEpoch.epochId,
             pocStartBlock = pocStart.stageBlock,
             setNewValidatorsBlock = setNewValidators.stageBlock,
+            claimRewardsBlock = claimRewards.stageBlock,
             beforeWeights = before.weights,
             afterWeights = after.weights,
+            newEpochWeights = newEpoch.weights,
         )
     }
 
@@ -354,10 +368,13 @@ class UpgradeRehearsalTests : TestermintTest() {
             "postUpgradeDevshardEscrowId" to postDevshardEscrowId,
             "postUpgradePocBeforeEpoch" to postUpgradePocResult.beforeEpochId,
             "postUpgradePocAfterEpoch" to postUpgradePocResult.afterEpochId,
+            "postUpgradeNewEpoch" to postUpgradePocResult.newEpochId,
             "postUpgradePocStartBlock" to postUpgradePocResult.pocStartBlock,
             "postUpgradeSetNewValidatorsBlock" to postUpgradePocResult.setNewValidatorsBlock,
+            "postUpgradeClaimRewardsBlock" to postUpgradePocResult.claimRewardsBlock,
             "postUpgradePocBeforeWeights" to postUpgradePocResult.beforeWeights,
             "postUpgradePocAfterWeights" to postUpgradePocResult.afterWeights,
+            "postUpgradeNewEpochWeights" to postUpgradePocResult.newEpochWeights,
         )
         output.writeText(cosmosJson.toJson(manifest))
         Logger.info("Wrote upgrade rehearsal completion manifest to {}", output.absolutePath)
