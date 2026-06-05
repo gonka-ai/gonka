@@ -5,6 +5,7 @@ package user
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"sync/atomic"
@@ -27,11 +28,11 @@ type KillableClient struct {
 	killed atomic.Bool
 }
 
-func (c *KillableClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
+func (c *KillableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
-	return c.inner.Send(ctx, req)
+	return c.inner.Send(ctx, req, stream, receiptHandler)
 }
 
 func (c *KillableClient) Kill() { c.killed.Store(true) }
