@@ -419,17 +419,18 @@ fun DevshardInferencePayload.hasChallengedOutcome(): Boolean =
 
 fun LocalInferencePair.findChallengedDevshardInference(
     handle: LocalInferencePair.DevshardProxyHandle,
-    numInferences: Long,
+    maxInferenceId: Long = 20,
 ): DevshardInferencePayload? {
     // Some flows expose inference IDs starting at 0, others are observed as 1-based.
     // Scan the full inclusive range and ignore missing IDs so the test checks the
     // challenged outcome rather than the local indexing scheme.
-    return (0..numInferences).firstNotNullOfOrNull { inferenceId ->
+    return (0..maxInferenceId).firstNotNullOfOrNull { inferenceId ->
         runCatching {
             cosmosJson.fromJson(
                 getDevshardInferenceState(handle.proxyUrl, inferenceId),
                 DevshardInferencePayload::class.java,
             )
         }.getOrNull()?.takeIf { it.hasChallengedOutcome() }
-    }
+    } ?: getDevshardProxyInferences(handle.proxyUrl)
+        .values.firstOrNull { it.hasChallengedOutcome() }
 }

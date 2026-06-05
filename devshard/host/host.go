@@ -66,6 +66,7 @@ type HostResponse struct {
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
 	ExecutionExpected  bool
+	StreamBytesRead    int64 // total bytes read from the host HTTP response body (SSE streams only)
 }
 
 type receiptOutcome struct {

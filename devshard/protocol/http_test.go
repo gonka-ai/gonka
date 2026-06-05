@@ -209,7 +209,7 @@ func TestHTTP_Auth_Rejected(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "403")
 }
@@ -230,7 +230,7 @@ func TestHTTP_GossipPropagation(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -259,7 +259,7 @@ func TestHTTP_EquivocationDetection(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateHash)
 
@@ -557,7 +557,7 @@ func TestHTTP_GossipAmplification(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp.StateSig)
 	require.NotEmpty(t, resp.StateHash)
@@ -722,7 +722,7 @@ func TestHTTP_GossipIntegration(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp.StateSig)
 	require.NotEmpty(t, resp.StateHash)
@@ -748,7 +748,7 @@ func TestHTTP_EquivocationViaGossipHTTP(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 
 	// First gossip with real hash+sig.
@@ -778,7 +778,7 @@ func TestHTTP_LazyTxGossipHTTP(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 
 	// Host 1 is executor, so it has mempool txs (finish msg).
@@ -901,7 +901,7 @@ func TestAttack_GossipUnverifiedNonce(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateHash)
 
@@ -933,7 +933,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 			MaxTokens:   50,
 			StartedAt:   1000,
 		},
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateHash)
 

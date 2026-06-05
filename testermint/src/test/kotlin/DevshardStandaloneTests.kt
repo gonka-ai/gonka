@@ -273,7 +273,7 @@ class DevshardStandaloneTests : TestermintTest() {
                 assertThat(response).contains("data:")
             }
 
-            genesis.assertDevshardSettlement(
+            val result = genesis.assertDevshardSettlement(
                 handle,
                 escrowId,
                 user,
@@ -282,15 +282,11 @@ class DevshardStandaloneTests : TestermintTest() {
             )
 
             logSection("Verifying inference statuses")
-            for (inferenceId in 1..numInferences) {
-                val inference = cosmosJson.fromJson(
-                    genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                    DevshardInferencePayload::class.java,
-                )
-                logSection("Inference $inferenceId: $inference")
-                assertNotNull(inference)
-                assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
-            }
+            val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+                .values.count { it.status == DevshardInferenceStatus.FINISHED }
+            assertThat(finished)
+                .describedAs("finished devshardd inferences")
+                .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
@@ -466,7 +462,7 @@ class DevshardStandaloneTests : TestermintTest() {
             assertThat(escrow.escrow!!.settled).isTrue()
 
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle))
             logSection("Inference: $inference")
             assertThat(inference.status).isIn(
                 DevshardInferenceStatus.CHALLENGED,
