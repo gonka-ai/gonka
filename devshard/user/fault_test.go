@@ -224,13 +224,15 @@ func runFault(t *testing.T, failPct int) {
 		votes, err := session.CollectTimeoutVotes(ctx, infID,
 			types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
 		require.NoError(t, err, "collect timeout votes for inference %d", infID)
-		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{
-			TimeoutInference: &types.MsgTimeoutInference{
-				InferenceId: infID,
-				Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
-				Votes:       votes,
-			},
-		}})
+		session.AddPendingTimeoutTx(infID, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
+		if err := session.SendPendingDiff(ctx); err != nil {
+			// composeDiffLocked applies locally before send; a dead routed host
+			// only means catch-up/signatures were skipped for that slot.
+			require.Contains(t, err.Error(), "host killed", "inference %d", infID)
+		}
+		rec, ok := session.StateMachine().GetInference(infID)
+		require.True(t, ok, "inference %d should remain live before finalize", infID)
+		require.Equal(t, types.StatusTimedOut, rec.Status, "inference %d", infID)
 	}
 
 	// --- Phase 4: Finalize (tolerates dead hosts if quorum is met) ---
@@ -285,15 +287,13 @@ func runFault(t *testing.T, failPct int) {
 	}
 
 	// --- Timeout assertions ---
-	// All pending dead-host inferences should now be timed out.
-	timedOutCount := statusCounts[types.StatusTimedOut]
-	require.Equal(t, len(pendingDeadIDs), timedOutCount,
-		"timed out inferences: expected %d, got %d", len(pendingDeadIDs), timedOutCount)
-
+	// v2 drains live Inferences into SealedAcc at settlement, so post-finalize
+	// st.Inferences no longer carries TimedOut records. Timeouts were verified
+	// before finalize; here we only check executor miss accounting survived drain.
 	// Dead executor slots with pending inferences should have missed > 0.
 	deadSlotsWithMissed := make(map[uint32]bool)
 	for _, infID := range pendingDeadIDs {
-		rec := st.Inferences[infID]
+		rec := stPre.Inferences[infID]
 		deadSlotsWithMissed[rec.ExecutorSlot] = true
 	}
 	totalMissed := 0
@@ -314,6 +314,13 @@ func runFault(t *testing.T, failPct int) {
 		"balance should increase by at least timeout refund: pre=%d post=%d refund=%d",
 		expectedBalance, st.Balance, timedOutRefund)
 
+	aliveWithReqVal := 0
+	for slot := uint32(0); slot < faultNumHosts; slot++ {
+		if !deadSlots[slot] && st.HostStats[slot].RequiredValidations > 0 {
+			aliveWithReqVal++
+		}
+	}
+
 	for slot := uint32(0); slot < faultNumHosts; slot++ {
 		hs := st.HostStats[slot]
 		require.Zero(t, hs.RequiredValidations,
@@ -333,13 +340,13 @@ func runFault(t *testing.T, failPct int) {
 	t.Logf("  failures: expected=%d actual=%d", expectedFailures, degradedFail)
 	t.Logf("  pre_finalize:  pending=%d started=%d finished=%d",
 		statusCountsPre[types.StatusPending], statusCountsPre[types.StatusStarted], statusCountsPre[types.StatusFinished])
-	t.Logf("  post_finalize: pending=%d started=%d finished=%d timed_out=%d",
+	t.Logf("  post_finalize: pending=%d started=%d finished=%d timed_out=%d (live map drained at settlement)",
 		statusCounts[types.StatusPending], statusCounts[types.StatusStarted],
-		statusCounts[types.StatusFinished], timedOutCount)
+		statusCounts[types.StatusFinished], statusCounts[types.StatusTimedOut])
 	t.Logf("")
 	t.Logf("timeouts:")
 	t.Logf("  dead-host pending inferences: %d", len(pendingDeadIDs))
-	t.Logf("  timed out: %d", timedOutCount)
+	t.Logf("  timed out (pre-finalize): %d", len(pendingDeadIDs))
 	t.Logf("  total missed: %d", totalMissed)
 	t.Logf("")
 	t.Logf("state:")
