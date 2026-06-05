@@ -2,6 +2,7 @@ import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.productscience.*
+import com.productscience.data.ActiveParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.UpdateParams
 import org.assertj.core.api.Assertions.assertThat
@@ -77,9 +78,11 @@ class UpgradeRehearsalTests : TestermintTest() {
         assertLastUpgradeHeight(cluster, upgradeHeight)
         waitForClusterOperational(cluster, genesis)
 
+        logSection("Verifying post-upgrade epoch transition and PoC miner power")
+        val postUpgradePocResult = assertPostUpgradePocSucceeded(cluster, genesis, manifest)
+
         logSection("Running post-upgrade normal inference")
         configureInferenceMocks(cluster, targetUpgrade, "upgrade rehearsal post-upgrade normal inference")
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         waitForClusterOperational(cluster, genesis)
         genesis.waitForNextInferenceWindow()
         val postInference = makeInferenceRequestWhenRoutable(genesis, inferenceRequest)
@@ -115,7 +118,132 @@ class UpgradeRehearsalTests : TestermintTest() {
             genesis.stopDevshardProxy(escrowId)
         }
 
-        writeCompletionManifest(targetUpgrade, upgradeHeight, postInference.id, escrowId)
+        writeCompletionManifest(targetUpgrade, upgradeHeight, postInference.id, escrowId, postUpgradePocResult)
+    }
+
+    private data class PocPowerSnapshot(
+        val epochId: Long,
+        val weights: Map<String, Long>,
+    )
+
+    private data class PostUpgradePocResult(
+        val beforeEpochId: Long,
+        val afterEpochId: Long,
+        val pocStartBlock: Long,
+        val setNewValidatorsBlock: Long,
+        val beforeWeights: Map<String, Long>,
+        val afterWeights: Map<String, Long>,
+    )
+
+    private fun assertPostUpgradePocSucceeded(
+        cluster: LocalCluster,
+        genesis: LocalInferencePair,
+        manifest: JsonObject,
+    ): PostUpgradePocResult {
+        val participantIds = manifest.getAsJsonArray("participantIds").map { it.asString }
+        assertThat(participantIds).describedAs("prepared participant ids").isNotEmpty()
+
+        val before = capturePocPowerSnapshot(genesis, participantIds, "before post-upgrade PoC")
+        val pocStart = genesis.waitForStage(EpochStage.START_OF_POC, offset = 1)
+        val setNewValidators = genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
+        waitForClusterOperational(cluster, genesis)
+        val after = capturePocPowerSnapshot(genesis, participantIds, "after post-upgrade PoC")
+
+        assertThat(after.epochId)
+            .describedAs("post-upgrade PoC should advance the active participant epoch")
+            .isGreaterThan(before.epochId)
+        assertMinerPowerStable(before, after)
+
+        return PostUpgradePocResult(
+            beforeEpochId = before.epochId,
+            afterEpochId = after.epochId,
+            pocStartBlock = pocStart.stageBlock,
+            setNewValidatorsBlock = setNewValidators.stageBlock,
+            beforeWeights = before.weights,
+            afterWeights = after.weights,
+        )
+    }
+
+    private fun capturePocPowerSnapshot(
+        genesis: LocalInferencePair,
+        participantIds: List<String>,
+        label: String,
+    ): PocPowerSnapshot {
+        val activeResponse = genesis.api.getActiveParticipants()
+        val activeById = activeResponse.activeParticipants.participants.associateBy { it.index }
+        val missingParticipants = participantIds.filterNot(activeById::containsKey)
+        assertThat(missingParticipants)
+            .describedAs("$label missing prepared miners from active participants")
+            .isEmpty()
+
+        val excludedIds = activeResponse.excludedParticipants.map { it.address }.toSet()
+        val excludedPreparedParticipants = participantIds.filter { it in excludedIds }
+        assertThat(excludedPreparedParticipants)
+            .describedAs("$label excluded prepared miners")
+            .isEmpty()
+
+        val weights = participantIds.associateWith { participantId ->
+            val participant = activeById.getValue(participantId)
+            assertParticipantHasPocPower(participant, label)
+            participant.weight
+        }
+
+        Logger.info(
+            "{} PoC power snapshot: epoch={}, weights={}",
+            label,
+            activeResponse.activeParticipants.epochId,
+            weights,
+        )
+
+        return PocPowerSnapshot(
+            epochId = activeResponse.activeParticipants.epochId,
+            weights = weights,
+        )
+    }
+
+    private fun assertParticipantHasPocPower(participant: ActiveParticipant, label: String) {
+        assertThat(participant.weight)
+            .describedAs("$label participant ${participant.index} aggregate PoC power")
+            .isPositive()
+
+        val nodeWeights = participant.mlNodes.flatMap { group -> group.mlNodes }.map { node -> node.pocWeight }
+        assertThat(nodeWeights)
+            .describedAs("$label participant ${participant.index} ML node PoC weights")
+            .isNotEmpty()
+        assertThat(nodeWeights.any { it > 0L })
+            .describedAs("$label participant ${participant.index} should have at least one positive ML node PoC weight")
+            .isTrue()
+    }
+
+    private fun assertMinerPowerStable(before: PocPowerSnapshot, after: PocPowerSnapshot) {
+        val maxChangePercent = System.getenv("UPGRADE_REHEARSAL_MAX_POWER_CHANGE_PERCENT")
+            ?.toLongOrNull()
+            ?: 50L
+        require(maxChangePercent >= 0) {
+            "UPGRADE_REHEARSAL_MAX_POWER_CHANGE_PERCENT must be non-negative, got $maxChangePercent"
+        }
+
+        before.weights.forEach { (participantId, beforeWeight) ->
+            val afterWeight = after.weights[participantId]
+                ?: error("Missing post-upgrade PoC weight for prepared miner $participantId")
+            val delta = if (afterWeight >= beforeWeight) afterWeight - beforeWeight else beforeWeight - afterWeight
+            assertThat(delta * 100)
+                .describedAs(
+                    "post-upgrade PoC power change for $participantId " +
+                        "(before=$beforeWeight, after=$afterWeight, maxChangePercent=$maxChangePercent)",
+                )
+                .isLessThanOrEqualTo(beforeWeight * maxChangePercent)
+        }
+
+        val beforeTotal = before.weights.values.sum()
+        val afterTotal = after.weights.values.sum()
+        val totalDelta = if (afterTotal >= beforeTotal) afterTotal - beforeTotal else beforeTotal - afterTotal
+        assertThat(totalDelta * 100)
+            .describedAs(
+                "post-upgrade total miner power change " +
+                    "(before=$beforeTotal, after=$afterTotal, maxChangePercent=$maxChangePercent)",
+            )
+            .isLessThanOrEqualTo(beforeTotal * maxChangePercent)
     }
 
     private fun ensureDevshardRequestsEnabled(cluster: LocalCluster, genesis: LocalInferencePair) {
@@ -182,6 +310,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         upgradeHeight: Long,
         postInferenceId: String,
         postDevshardEscrowId: Long,
+        postUpgradePocResult: PostUpgradePocResult,
     ) {
         val output = System.getenv("UPGRADE_REHEARSAL_COMPLETE_MANIFEST")
             ?.takeIf { it.isNotBlank() }
@@ -196,6 +325,12 @@ class UpgradeRehearsalTests : TestermintTest() {
             "upgradeHeight" to upgradeHeight,
             "postUpgradeInferenceId" to postInferenceId,
             "postUpgradeDevshardEscrowId" to postDevshardEscrowId,
+            "postUpgradePocBeforeEpoch" to postUpgradePocResult.beforeEpochId,
+            "postUpgradePocAfterEpoch" to postUpgradePocResult.afterEpochId,
+            "postUpgradePocStartBlock" to postUpgradePocResult.pocStartBlock,
+            "postUpgradeSetNewValidatorsBlock" to postUpgradePocResult.setNewValidatorsBlock,
+            "postUpgradePocBeforeWeights" to postUpgradePocResult.beforeWeights,
+            "postUpgradePocAfterWeights" to postUpgradePocResult.afterWeights,
         )
         output.writeText(cosmosJson.toJson(manifest))
         Logger.info("Wrote upgrade rehearsal completion manifest to {}", output.absolutePath)
