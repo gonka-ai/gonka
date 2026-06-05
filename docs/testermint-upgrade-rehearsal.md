@@ -42,7 +42,7 @@ The workflow applies that patch to the old checkout before running the prep test
 - runs a normal inference;
 - creates and settles a devshard escrow;
 - waits into another epoch;
-- writes an upgrade rehearsal manifest with heights, epoch indexes, participant ids, inference id, and devshard escrow id.
+- writes an upgrade rehearsal manifest with heights, epoch indexes, participant ids, baseline participant weights, inference id, and devshard escrow id.
 
 The workflow must not tear the cluster down after this phase. The live Docker containers and volumes are the upgrade subject.
 
@@ -96,7 +96,7 @@ The attach test:
 
 By default, the power-stability check allows at most a 50% per-miner and total-power change across that post-upgrade PoC cycle. Use `UPGRADE_REHEARSAL_MAX_POWER_CHANGE_PERCENT` only for debugging a known intentional power-model change; do not loosen it to hide unexpected miner removal or cPoC fallout.
 
-The completion manifest records the post-upgrade PoC start block, `SET_NEW_VALIDATORS` block, before/after epoch ids, and miner weights so a failed or suspicious run can be compared without replaying the full logs first.
+The completion manifest records the post-upgrade PoC start block, `SET_NEW_VALIDATORS` block, pre-upgrade baseline epoch/weights, and post-upgrade epoch/weights so a failed or suspicious run can be compared without replaying the full logs first.
 
 ## Running In GitHub Actions
 

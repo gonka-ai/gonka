@@ -143,11 +143,11 @@ class UpgradeRehearsalTests : TestermintTest() {
         val participantIds = manifest.getAsJsonArray("participantIds").map { it.asString }
         assertThat(participantIds).describedAs("prepared participant ids").isNotEmpty()
 
-        val before = capturePocPowerSnapshot(genesis, participantIds, "before post-upgrade PoC")
+        val before = prepPocPowerSnapshot(manifest, participantIds)
         val pocStart = genesis.waitForStage(EpochStage.START_OF_POC, offset = 1)
         val setNewValidators = genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         waitForClusterOperational(cluster, genesis)
-        val after = capturePocPowerSnapshot(genesis, participantIds, "after post-upgrade PoC")
+        val after = captureActivePocPowerSnapshot(genesis, participantIds, "after post-upgrade PoC")
 
         assertThat(after.epochId)
             .describedAs("post-upgrade PoC should advance the active participant epoch")
@@ -164,7 +164,33 @@ class UpgradeRehearsalTests : TestermintTest() {
         )
     }
 
-    private fun capturePocPowerSnapshot(
+    private fun prepPocPowerSnapshot(manifest: JsonObject, participantIds: List<String>): PocPowerSnapshot {
+        val weightsObject = manifest.getAsJsonObject("participantWeights")
+        val weights = participantIds.associateWith { participantId ->
+            require(weightsObject.has(participantId)) {
+                "Prepared manifest is missing PoC weight for participant $participantId"
+            }
+            weightsObject.get(participantId).asLong
+        }
+        weights.forEach { (participantId, weight) ->
+            assertThat(weight)
+                .describedAs("prepared participant $participantId PoC power")
+                .isPositive()
+        }
+
+        Logger.info(
+            "prepared pre-upgrade PoC power snapshot: epoch={}, weights={}",
+            manifest.get("finalEpoch").asLong,
+            weights,
+        )
+
+        return PocPowerSnapshot(
+            epochId = manifest.get("finalEpoch").asLong,
+            weights = weights,
+        )
+    }
+
+    private fun captureActivePocPowerSnapshot(
         genesis: LocalInferencePair,
         participantIds: List<String>,
         label: String,
@@ -290,6 +316,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         assertThat(manifest.get("devshardEscrowId").asLong).isGreaterThan(0)
         assertThat(manifest.get("devshardRequests").asInt).isGreaterThan(0)
         assertThat(manifest.getAsJsonArray("participantIds")).isNotEmpty()
+        assertThat(manifest.getAsJsonObject("participantWeights").entrySet()).isNotEmpty()
         assertThat(manifest.get("finalHeight").asLong).isGreaterThan(manifest.get("startingHeight").asLong)
     }
 
