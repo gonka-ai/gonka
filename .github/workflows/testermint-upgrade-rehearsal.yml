@@ -19,6 +19,10 @@ on:
         type: string
         default: ''
 
+  push:
+    branches:
+      - upgrade-v*
+
 concurrency:
   group: testermint-upgrade-rehearsal-${{ github.ref }}
   cancel-in-progress: false
