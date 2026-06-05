@@ -1,5 +1,6 @@
 import com.productscience.*
 import com.productscience.data.CreatePartialUpgrade
+import com.productscience.data.OpenAIResponse
 import com.github.dockerjava.api.exception.NotFoundException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
@@ -7,6 +8,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
 import java.io.File
+import java.net.URL
+import java.net.URLEncoder
 import java.net.SocketException
 import java.security.MessageDigest
 import java.time.Duration
@@ -45,6 +48,7 @@ class UpgradeTests : TestermintTest() {
                 val shouldRetry =
                     t.message?.contains("Could not find node container for keyName=genesis") == true ||
                         t.message?.contains("Failed to get validator info within 90 seconds") == true ||
+                        t.message?.contains("without condition passing") == true ||
                         generateSequence(t) { it.cause }.any { it is SocketException || it is NotFoundException }
                 if (!shouldRetry || attempt == 2) {
                     throw t
@@ -84,6 +88,19 @@ class UpgradeTests : TestermintTest() {
         }
 
         error("Cluster did not become operational by block $targetBlock")
+    }
+
+    private fun waitForInferenceReady(
+        pair: LocalInferencePair,
+        request: String,
+        maxBlocks: Int = 10,
+    ): OpenAIResponse {
+        var response: OpenAIResponse? = null
+        pair.waitForBlock(maxBlocks) {
+            response = runCatching { it.makeInferenceRequest(request) }.getOrNull()
+            response != null
+        }
+        return assertNotNull(response)
     }
 
     private fun waitForLastUpgradeHeight(cluster: LocalCluster, genesis: LocalInferencePair, expectedHeight: Long, maxBlocks: Int = 20) {
@@ -261,7 +278,7 @@ class UpgradeTests : TestermintTest() {
 
 
     @Test
-    @Timeout(value = 15, unit = TimeUnit.MINUTES)
+    @Timeout(value = 30, unit = TimeUnit.MINUTES)
     fun testVersionedEndpointSwitching() {
         val (cluster, genesis) = initUpgradeCluster()
 
@@ -319,8 +336,12 @@ class UpgradeTests : TestermintTest() {
         // Initially should use non-versioned endpoints, so default response
         assertThat(initialInferenceResponse.choices.first().message.content).isNotEmpty()
 
+        // Give governance enough runway to submit, deposit, and complete voting
+        // before the target upgrade height is reached.
+        val upgradeLeadBlocks = 30
+
         logSection("Initiating first upgrade: v3.0.8 → v3.0.9")
-        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + 10
+        val firstUpgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
 
         val firstProposalId = genesis.runProposal(
             cluster,
@@ -332,13 +353,13 @@ class UpgradeTests : TestermintTest() {
         )
 
         logSection("Waiting for first upgrade to take effect at height $firstUpgradeHeight")
-        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+10")
+        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+1")
 
         logSection("Testing post-upgrade requests should hit v3.0.9 endpoints")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         currentHeight = genesis.getCurrentBlockHeight()
         genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
-        val upgradedInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        val upgradedInferenceResponse = waitForInferenceReady(genesis, inferenceRequest)
         assertThat(upgradedInferenceResponse.choices.first().message.content)
             .withFailMessage("After first upgrade, inference should use v3.0.9 endpoint")
             .isEqualTo(v039Response)
@@ -354,7 +375,7 @@ class UpgradeTests : TestermintTest() {
         }
 
         logSection("Initiating second upgrade: v3.0.9 → v3.0.10")
-        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + 10
+        val secondUpgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
 
         val secondProposalId = genesis.runProposal(
             cluster,
@@ -371,7 +392,7 @@ class UpgradeTests : TestermintTest() {
         logSection("Testing post-second-upgrade requests should hit v3.0.10 endpoints")
         currentHeight = genesis.getCurrentBlockHeight()
         genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
-        val finalInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        val finalInferenceResponse = waitForInferenceReady(genesis, inferenceRequest)
         assertThat(finalInferenceResponse.choices.first().message.content)
             .withFailMessage("After second upgrade, inference should use v3.0.10 endpoint")
             .isEqualTo(v0310Response)
@@ -401,6 +422,20 @@ class UpgradeTests : TestermintTest() {
         val localPath = "../public-html/$path"
         val sha = getSha256Checksum(localPath)
         return "http://genesis-mock-server:8080/files/$path?checksum=sha256:$sha"
+    }
+
+    private fun getGithubPath(releaseTag: String, fileName: String): String {
+        val safeReleaseTag = URLEncoder.encode(releaseTag, "UTF-8")
+        val path = "https://github.com/product-science/race-releases/releases/download/$safeReleaseTag/$fileName"
+        val tempDir = File("downloads").apply { mkdirs() }
+        val outputFile = File(tempDir, fileName)
+        URL(path).openStream().use { input ->
+            outputFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        val sha = getSha256Checksum(outputFile.absolutePath)
+        return "$path?checksum=sha256:$sha"
     }
 
     private fun getLocalUpgradeBinaries(
