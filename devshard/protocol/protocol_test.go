@@ -597,12 +597,15 @@ func TestProtocol_Finalize_SignaturesFromAllHosts(t *testing.T) {
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
-	// All 5 hosts must sign at the final nonce (Phase B collects all signatures).
+	// Phase B collects signatures until 2/3+1 quorum is reached (then early-exits).
+	// With 5 hosts, threshold is 4, so at least 4 hosts must sign.
 	finalNonce := env.session.Nonce()
 	sigs := env.session.Signatures()
 	latestSigs, ok := sigs[finalNonce]
 	require.True(t, ok, "no signatures at final nonce %d", finalNonce)
-	require.Len(t, latestSigs, 5, "all 5 hosts should sign the final nonce")
+	threshold := 2*len(env.group)/3 + 1
+	require.GreaterOrEqual(t, len(latestSigs), threshold,
+		"at least %d hosts should sign the final nonce, got %d", threshold, len(latestSigs))
 }
 
 func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
