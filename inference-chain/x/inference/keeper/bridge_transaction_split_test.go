@@ -51,7 +51,7 @@ func TestSetBridgeTransaction_StripsAndSyncsValidators(t *testing.T) {
 	require.True(t, found)
 	require.ElementsMatch(t, []string{"valA", "valB", "valC"}, got.Validators)
 
-	// Delete every KeySet entry and verify Get's Validators is now empty.
+	// Delete every KeySet entry and verify Gets Validators is now empty.
 	// If Validators had been stored inline in the base, deleting the
 	// KeySet wouldn't clear them — catching a regression that leaves
 	// inline entries behind.
