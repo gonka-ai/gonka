@@ -238,6 +238,72 @@ func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
 	require.True(t, rt.active.Load())
 }
 
+func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// One request in flight → settlement must NOT fire yet, but escrow is
+	// deactivated and marked pending (in-memory + persisted).
+	g.reserveRuntime(rt, 1)
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.False(t, rt.active.Load())
+	require.True(t, rt.settlementPending.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+	require.EqualValues(t, 0, settled.Load())
+
+	// Draining the last request triggers exactly one settlement, which
+	// clears the marker.
+	g.releaseRuntime(rt, 1)
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+
+	state, _, err = g.store.LoadState()
+	require.NoError(t, err)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
+func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// No active requests → settle right away.
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.active.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSettlesDrainedEscrow(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Simulate a marker left behind by a pre-restart drain.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSkipsActiveOrUnflagged(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Active escrow, no pending marker → nothing to do.
+	g.reconcilePendingSettlements()
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
 func TestParseDevshardPath(t *testing.T) {
 	id, inner, ok := parseDevshardPath("/devshard/12/v1/debug/perf")
 	require.True(t, ok)
