@@ -111,6 +111,11 @@ func (v ResponseFormatValidator) validateJSONSchemaWrapper(rf map[string]any) er
 	if !ok {
 		return fmt.Errorf("%w: must be an object", ErrResponseFormatSchemaShape)
 	}
+	schema, err := DereferenceLocalSchemaRefs(schema, v.MaxNodes)
+	if err != nil {
+		return fmt.Errorf("response_format.json_schema.schema: %w", err)
+	}
+	wrapper["schema"] = schema
 	bounds := SchemaBounds{
 		MaxDepth:      v.MaxDepth,
 		MaxSize:       v.MaxSize,

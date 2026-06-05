@@ -50,6 +50,9 @@ func TestResponseFormatValidatorAccepts(t *testing.T) {
 		{name: "schema type as array of primitives", body: jsonSchemaResponseFormatBody(`{"type":["string","null"]}`)},
 		// A reasonable regex pattern under the length cap compiles and is accepted.
 		{name: "schema with valid pattern", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"^[a-zA-Z0-9_-]+$"}`)},
+		{name: "schema with local $defs ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/x"}},"$defs":{"x":{"type":"string"}}}`)},
+		{name: "schema with local definitions ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}`)},
+		{name: "unused definition containers are stripped", body: jsonSchemaResponseFormatBody(`{"type":"object","$defs":{"x":{"type":"string"}},"definitions":{"y":{"type":"number"}}}`)},
 		// Co-boundary: hit MaxDepth=16 and MaxNodes=128 simultaneously. 15 chain levels
 		// + 113 leaf properties = 128 nodes, leaves sit at depth 16.
 		{name: "depth and nodes both at limit", body: jsonSchemaResponseFormatBody(coBoundarySchema(15, 113))},
@@ -91,8 +94,6 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		// Node boundary: manyPropertiesSchema(128) = 1 root + 128 children = 129 nodes, one over.
 		{name: "node count one over limit", body: jsonSchemaResponseFormatBody(manyPropertiesSchema(128)), wantErr: ErrSchemaNodes},
 		{name: "ref not allowed", body: jsonSchemaResponseFormatBody(`{"$ref":"#/foo"}`), wantErr: ErrSchemaRef},
-		{name: "defs not allowed", body: jsonSchemaResponseFormatBody(`{"$defs":{"x":{}}}`), wantErr: ErrSchemaRef},
-		{name: "definitions not allowed", body: jsonSchemaResponseFormatBody(`{"definitions":{"x":{}}}`), wantErr: ErrSchemaRef},
 		{name: "anyOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"anyOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "oneOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"oneOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "allOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"allOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
@@ -112,7 +113,6 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "ref hidden under contains", body: jsonSchemaResponseFormatBody(`{"contains":{"$ref":"#/x"}}`), wantErr: ErrSchemaRef},
 		{name: "ref hidden under not", body: jsonSchemaResponseFormatBody(`{"not":{"$ref":"#/x"}}`), wantErr: ErrSchemaRef},
 		{name: "ref hidden under dependentSchemas", body: jsonSchemaResponseFormatBody(`{"dependentSchemas":{"x":{"$ref":"#/y"}}}`), wantErr: ErrSchemaRef},
-		{name: "defs hidden under then", body: jsonSchemaResponseFormatBody(`{"then":{"$defs":{"x":{}}}}`), wantErr: ErrSchemaRef},
 		// CVE-2025-48944: bad `type` value crashes xgrammar's C++ grammar compiler.
 		{name: "bad schema type string", body: jsonSchemaResponseFormatBody(`{"type":"something"}`), wantErr: ErrSchemaType},
 		{name: "bad schema type array entry", body: jsonSchemaResponseFormatBody(`{"type":["string","weird"]}`), wantErr: ErrSchemaType},

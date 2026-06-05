@@ -108,6 +108,12 @@ func TestStructuredOutputsValidatorJSONAcceptsBoundedSchema(t *testing.T) {
 	require.NoError(t, v.Validate(ValidatorContext{Document: parseDocument(t, body)}))
 }
 
+func TestStructuredOutputsValidatorJSONAcceptsLocalRef(t *testing.T) {
+	v := defaultStructuredOutputsValidator()
+	body := `{"structured_outputs":{"json":{"type":"object","properties":{"x":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}}}`
+	require.NoError(t, v.Validate(ValidatorContext{Document: parseDocument(t, body)}))
+}
+
 func TestStructuredOutputsValidatorJSONRejectsStringForm(t *testing.T) {
 	v := defaultStructuredOutputsValidator()
 	body := `{"structured_outputs":{"json":"{\"type\":\"object\"}"}}`
