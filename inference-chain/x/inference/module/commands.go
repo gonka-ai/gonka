@@ -106,8 +106,9 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 }
 
 type settlementFileJSON struct {
-	EscrowID                    string                    `json:"escrow_id"`
-	StateRootAndProtocolVersion string                    `json:"state_root_and_protocol_version"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string                    `json:"version"`
 	StateRoot                   string                    `json:"state_root"`
 	Nonce                       uint64                    `json:"nonce"`
 	Fees                        uint64                    `json:"fees"`

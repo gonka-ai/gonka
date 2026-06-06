@@ -166,7 +166,8 @@ jobs:
           USE_REGISTRY_CACHE: "1"
         run: |
           make build-docker
-          make devshardd-build
+          # devshardd self-checks build_version == the version versiond forces (v1 in DevshardStandaloneTests).
+          DEVSHARD_VERSION=v1 make devshardd-build
           echo "=== devshard version (make DEVSHARD_VERSION / build/devshard-version) ==="
           make -s print-devshard-version
           cat build/devshard-version

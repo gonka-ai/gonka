@@ -2105,8 +2105,11 @@ func (m *DelegationParams) GetMaxModelVotingPowerPercentage() *Decimal {
 
 // DevshardApprovedVersion describes a single approved devshard binary.
 type DevshardApprovedVersion struct {
-	Name   string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// State root and devshard protocol version
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Binary version
 	Binary string `protobuf:"bytes,2,opt,name=binary,proto3" json:"binary,omitempty"`
+	// Hash of binary to check if update is already installed
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 }
 

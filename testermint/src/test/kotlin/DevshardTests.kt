@@ -133,19 +133,15 @@ class DevshardTests : TestermintTest() {
                 assertThat(response).contains("data:")
             }
 
-            genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
+            val result = genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
 
             logSection("Verifying inference statuses")
             try {
-                for (inferenceId in 1..numInferences) {
-                    val inference = cosmosJson.fromJson(
-                        genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                        DevshardInferencePayload::class.java,
-                    )
-                    logSection("Inference $inferenceId: $inference")
-                    assertNotNull(inference)
-                    assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
-                }
+                val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+                    .values.count { it.status == DevshardInferenceStatus.FINISHED }
+                assertThat(finished)
+                    .describedAs("finished devshard inferences")
+                    .isGreaterThanOrEqualTo(numInferences.toInt())
             } catch (t: Throwable) {
                 dumpDevshardFailureDebug(
                     genesis = genesis,
@@ -354,7 +350,7 @@ class DevshardTests : TestermintTest() {
 
             logSection("Verifying inference status")
             try {
-                val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+                val inference = assertNotNull(genesis.findChallengedDevshardInference(handle))
                 logSection("Inference: $inference")
                 assertThat(inference.status).isIn(
                     DevshardInferenceStatus.CHALLENGED,
@@ -396,9 +392,10 @@ class DevshardTests : TestermintTest() {
         }.onFailure { logSection("Debug escrow query failed (escrow=$escrowId): ${it.message}") }
 
         runCatching {
+            val inferences = genesis.getDevshardProxyInferences(handle.proxyUrl)
             for (inferenceId in 1..maxInferenceId) {
-                val raw = genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId)
-                logSection("Debug inference $inferenceId (escrow=$escrowId): $raw")
+                val inference = inferences[inferenceId]
+                logSection("Debug inference $inferenceId (escrow=$escrowId): ${inference?.let { cosmosJson.toJson(it) } ?: "missing"}")
             }
         }.onFailure { logSection("Debug inference dump failed (escrow=$escrowId): ${it.message}") }
 

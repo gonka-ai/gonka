@@ -73,13 +73,14 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := types.SessionConfig{
-		RefusalTimeout:   60,
-		ExecutionTimeout: 1200,
-		TokenPrice:       1,
-		VoteThreshold:    uint32(numHosts) / 2,
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              uint32(numHosts) / 2,
+		ValidationRate:             0,
+		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
 		// ValidationRate=0 + no WithValidator means no async validation
 		// will sneak in and emit unrelated mempool entries.
-		ValidationRate: 0,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
@@ -396,8 +397,12 @@ func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := types.SessionConfig{
-		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1,
-		VoteThreshold: 2, ValidationRate: 0,
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              2,
+		ValidationRate:             0,
+		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	store := storage.NewMemory()
@@ -491,8 +496,12 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := types.SessionConfig{
-		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1,
-		VoteThreshold: 2, ValidationRate: 0,
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              2,
+		ValidationRate:             0,
+		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)

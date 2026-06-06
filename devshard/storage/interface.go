@@ -123,9 +123,9 @@ type ActiveSession struct {
 
 // InferenceRow is the durable sealed-inference marker used by Phase 0 RAM
 // pruning. It records the inference id and seal nonce. When ObsPresent is true,
-// the sealed_* fields are an observability snapshot (not in the state root) for
-// GET /v1/inference after RAM prune. Late MsgValidation on sealed ids still
-// returns ErrInferenceSealed and does not read this snapshot.
+// the sealed_* fields are an observability snapshot at seal time (not in the
+// state root) for GET /v1/state after RAM prune. Late MsgValidation on
+// sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
 	InferenceID uint64
 	SealedNonce uint64

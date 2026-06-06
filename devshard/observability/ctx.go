@@ -189,7 +189,8 @@ func SetRuntime(binary, version, mode string) {
 }
 
 func BindRequestID(ctx context.Context, inboundID string) context.Context {
-	return logging.WithRequestID(ctx, inboundID)
+	ctx, _ = logging.WithRequestID(ctx, inboundID)
+	return ctx
 }
 
 func SetRequestIDHeader(ctx context.Context, header http.Header) {

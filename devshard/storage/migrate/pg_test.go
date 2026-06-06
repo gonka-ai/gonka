@@ -35,9 +35,11 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 			postgres.WithUsername("testuser"),
 			postgres.WithPassword("testpass"),
 			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(60*time.Second),
+				wait.ForAll(
+					wait.ForLog("database system is ready to accept connections").
+						WithOccurrence(2),
+					wait.ForListeningPort("5432/tcp"),
+				).WithStartupTimeout(60*time.Second),
 			),
 		)
 		require.NoError(t, err)
@@ -45,7 +47,7 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 
 		host, err := container.Host(ctx)
 		require.NoError(t, err)
-		port, err := container.MappedPort(ctx, "5432")
+		port, err := container.MappedPort(ctx, "5432/tcp")
 		require.NoError(t, err)
 
 		dsn = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())

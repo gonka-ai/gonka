@@ -5,14 +5,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"devshard/storage/migrate"
 )
@@ -56,17 +54,13 @@ func setupDevshardPostgresPool(t *testing.T, tracer pgx.QueryTracer) (*pgxpool.P
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
+		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
 	)
 	require.NoError(t, err)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, "5432")
+	port, err := container.MappedPort(ctx, "5432/tcp")
 	require.NoError(t, err)
 
 	t.Setenv("PGHOST", host)

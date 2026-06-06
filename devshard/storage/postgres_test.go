@@ -19,6 +19,14 @@ import (
 
 )
 
+func postgresContainerWaitStrategy() wait.Strategy {
+	return wait.ForAll(
+		wait.ForLog("database system is ready to accept connections").
+			WithOccurrence(2),
+		wait.ForListeningPort("5432/tcp"),
+	).WithStartupTimeout(60 * time.Second)
+}
+
 // setupPostgresContainer spins a fresh PG container per test and points the
 // pgx env vars at it. Mirrors the pattern from
 // decentralized-api/payloadstorage/postgres_storage_test.go so dapi-side
@@ -35,17 +43,13 @@ func setupPostgresContainer(t *testing.T) func() {
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
+		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
 	)
 	require.NoError(t, err)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, "5432")
+	port, err := container.MappedPort(ctx, "5432/tcp")
 	require.NoError(t, err)
 
 	t.Setenv("PGHOST", host)

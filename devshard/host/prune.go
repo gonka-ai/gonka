@@ -67,9 +67,10 @@ func (f PruneEventSinkFunc) OnInferencePrunable(event InferencePruneEvent) {
 	}
 }
 
-// defaultInferenceClearGrace is the host fallback when SessionConfig does not
-// pin InferenceClearGraceSeconds (NormalizeSessionConfig defaults to 120s).
-const defaultInferenceClearGrace = 2 * time.Minute
+// defaultInferenceClearGrace is the host fallback when SessionConfig leaves
+// InferenceClearGraceSeconds unset and NormalizeSessionConfig did not run.
+// Normal paths always normalize (production default 3600s); this is a safety net.
+const defaultInferenceClearGrace = 60 * time.Minute
 
 // isTerminalStatus returns true for inference statuses that no longer require
 // payload retention (validated, invalidated, or timed out).

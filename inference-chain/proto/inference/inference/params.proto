@@ -365,8 +365,11 @@ message DelegationParams {
 // DevshardApprovedVersion describes a single approved devshard binary.
 message DevshardApprovedVersion {
   option (gogoproto.equal) = true;
+  // State root and devshard protocol version
   string name = 1;
+  // Binary version
   string binary = 2;
+  // Hash of binary to check if update is already installed
   string sha256 = 3;
 }
 

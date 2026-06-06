@@ -41,6 +41,39 @@ func CanonicalPromptHash(prompt []byte) ([]byte, error) {
 	return h[:], nil
 }
 
+// JSONNumericUint64 converts a JSON-decoded numeric value to uint64. Accepts
+// float64 (only when integer-valued and non-negative), int / int64 / uint64,
+// and json.Number. Returns (0, false) for any other type or out-of-range value.
+func JSONNumericUint64(value any) (uint64, bool) {
+	switch v := value.(type) {
+	case float64:
+		if v < 0 || v != float64(uint64(v)) {
+			return 0, false
+		}
+		return uint64(v), true
+	case uint64:
+		return v, true
+	case int:
+		if v < 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	case int64:
+		if v < 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return uint64(n), true
+	default:
+		return 0, false
+	}
+}
+
 func encodeCanonical(enc *json.Encoder, v interface{}) error {
 	switch val := v.(type) {
 	case map[string]interface{}:

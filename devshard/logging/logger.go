@@ -3,7 +3,9 @@ package logging
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -65,12 +67,15 @@ func (p *prefixedSlogLogger) Error(msg string, kv ...any) { slog.Error(msg, p.me
 func (p *prefixedSlogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, p.merge(kv)...) }
 func (p *prefixedSlogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, p.merge(kv)...) }
 
-func WithRequestID(ctx context.Context, ids ...string) context.Context {
+// WithRequestID attaches a request ID to the context. If one already exists
+// it is preserved. Optional ids[0] supplies an explicit ID (e.g. validate-*).
+// Returns the (possibly new) context and the request ID.
+func WithRequestID(ctx context.Context, ids ...string) (context.Context, string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if id, ok := RequestID(ctx); ok && id != "" {
-		return ctx
+	if id, ok := RequestID(ctx); ok {
+		return ctx, id
 	}
 	id := ""
 	if len(ids) > 0 {
@@ -80,7 +85,7 @@ func WithRequestID(ctx context.Context, ids ...string) context.Context {
 		seq := atomic.AddUint64(&requestSeq, 1)
 		id = fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), seq)
 	}
-	return context.WithValue(ctx, requestIDKey{}, id)
+	return context.WithValue(ctx, requestIDKey{}, id), id
 }
 
 func RequestID(ctx context.Context) (string, bool) {
@@ -91,9 +96,47 @@ func RequestID(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
+// PropagateRequestID copies the request ID from src into dst.
+// Returns dst unchanged if src has no request ID.
 func PropagateRequestID(dst, src context.Context) context.Context {
 	if id, ok := RequestID(src); ok {
-		return WithRequestID(dst, id)
+		return context.WithValue(dst, requestIDKey{}, id)
 	}
 	return dst
+}
+
+// Stage emits a structured log line in the canonical format:
+//
+//	request=req-... stage=some_stage key1=val1 key2=val2
+//
+// All layers (Proxy, Redundancy, Session) should use this so that logs
+// are uniform and grepable by request ID.
+func Stage(ctx context.Context, stage string, kv ...any) {
+	fields := make([]string, 0, 2+len(kv)/2)
+	if id, ok := RequestID(ctx); ok {
+		fields = append(fields, "request="+id)
+	}
+	fields = append(fields, "stage="+stage)
+	for i := 0; i < len(kv); i += 2 {
+		key := fmt.Sprintf("field_%d", i)
+		if s, ok := kv[i].(string); ok && s != "" {
+			key = s
+		}
+		value := "<missing>"
+		if i+1 < len(kv) {
+			value = fmt.Sprint(kv[i+1])
+		}
+		fields = append(fields, key+"="+sanitize(value))
+	}
+	log.Print(strings.Join(fields, " "))
+}
+
+func sanitize(v string) string {
+	if v == "" {
+		return `""`
+	}
+	if strings.ContainsAny(v, " \t\n\r\"") {
+		return fmt.Sprintf("%q", v)
+	}
+	return v
 }

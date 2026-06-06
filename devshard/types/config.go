@@ -3,7 +3,7 @@ package types
 const (
 	defaultSealGraceMultiplier        = 10
 	minSealGraceNonces                = 20
-	DefaultInferenceClearGraceSeconds = 120 // 2 minutes
+	DefaultInferenceClearGraceSeconds = 3600 // 1 hour (give time for long validations)
 )
 
 // DefaultSealGraceNonces returns the canonical seal grace for a session group.
