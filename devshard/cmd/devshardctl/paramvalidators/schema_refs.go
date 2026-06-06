@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// DereferenceLocalSchemaRefs returns a deep copy of schema with local JSON Pointer $refs
-// inlined and definition containers stripped. vLLM's grammar compiler does not accept
-// $ref/$defs/definitions directly, so the gateway normalizes common OpenAI-compatible
-// tool/JSON-schema payloads before applying the usual bounds checks and forwarding.
+// DereferenceLocalSchemaRefs returns a copy of schema with local JSON Pointer $refs
+// inlined and definition containers stripped. JSON-Schema data keyword values are
+// preserved as-is because callers use the result to validate the effective schema;
+// each caller decides whether to forward the normalized copy or the original request.
 func DereferenceLocalSchemaRefs(schema map[string]any, maxNodes int) (map[string]any, error) {
 	state := dereferenceState{
 		stack:    map[string]struct{}{},
