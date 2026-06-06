@@ -114,6 +114,19 @@ func TestStructuredOutputsValidatorJSONAcceptsLocalRef(t *testing.T) {
 	require.NoError(t, v.Validate(ValidatorContext{Document: parseDocument(t, body)}))
 }
 
+func TestStructuredOutputsValidatorJSONDoesNotRewriteLocalRef(t *testing.T) {
+	v := defaultStructuredOutputsValidator()
+	doc := parseDocument(t, `{"structured_outputs":{"json":{"type":"object","properties":{"x":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}}}`)
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	so := doc["structured_outputs"].(map[string]any)
+	schema := so["json"].(map[string]any)
+	require.Contains(t, schema, "definitions")
+	x := schema["properties"].(map[string]any)["x"].(map[string]any)
+	require.Equal(t, "#/definitions/x", x["$ref"])
+}
+
 func TestStructuredOutputsValidatorJSONRejectsStringForm(t *testing.T) {
 	v := defaultStructuredOutputsValidator()
 	body := `{"structured_outputs":{"json":"{\"type\":\"object\"}"}}`
