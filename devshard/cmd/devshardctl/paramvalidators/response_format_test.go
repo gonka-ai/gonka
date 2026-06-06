@@ -93,7 +93,7 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "schema node count exceeds 128", body: jsonSchemaResponseFormatBody(manyPropertiesSchema(200)), wantErr: ErrSchemaNodes},
 		// Node boundary: manyPropertiesSchema(128) = 1 root + 128 children = 129 nodes, one over.
 		{name: "node count one over limit", body: jsonSchemaResponseFormatBody(manyPropertiesSchema(128)), wantErr: ErrSchemaNodes},
-		{name: "ref not allowed", body: jsonSchemaResponseFormatBody(`{"$ref":"#/foo"}`), wantErr: ErrSchemaRef},
+		{name: "unresolved local ref", body: jsonSchemaResponseFormatBody(`{"$ref":"#/foo"}`), wantErr: ErrSchemaRef},
 		{name: "anyOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"anyOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "oneOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"oneOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "allOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"allOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
