@@ -31,8 +31,9 @@ const (
 )
 
 type SettlementJSON struct {
-	EscrowID                    string `json:"escrow_id"`
-	StateRootAndProtocolVersion string `json:"state_root_and_protocol_version"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string `json:"version"`
 	StateRoot                   string `json:"state_root"`
 	Nonce                       uint64 `json:"nonce"`
 	// Fees is the total fee amount deducted during session execution.
