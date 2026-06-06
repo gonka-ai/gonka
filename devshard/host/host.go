@@ -1444,6 +1444,13 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 	return h.signer.Sign(sigData)
 }
 
+// VerifyGossipedTx delegates to the state machine to verify the proposer
+// signature on a gossiped tx before the transport layer hands it to the
+// mempool. See StateMachine.VerifyGossipedTx for the rationale.
+func (h *Host) VerifyGossipedTx(tx *types.DevshardTx) error {
+	return h.sm.VerifyGossipedTx(tx)
+}
+
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 	data, err := proto.Marshal(msg)

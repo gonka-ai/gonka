@@ -732,7 +732,16 @@ func (s *Server) HandleGossipTxs(c echo.Context) (err error) {
 			return echo.NewHTTPError(http.StatusBadRequest, "decode txs: "+err.Error())
 		}
 		observability.Request.SetGossipTxsCount(op, len(txs))
-		s.gossip.OnTxsReceived(txs)
+		verified := txs[:0]
+		for _, tx := range txs {
+			if vErr := s.host.VerifyGossipedTx(tx); vErr != nil {
+				logging.Warn("rejected gossiped tx with invalid proposer signature",
+					"subsystem", "server", "escrow", s.host.EscrowID(), "error", vErr)
+				continue
+			}
+			verified = append(verified, tx)
+		}
+		s.gossip.OnTxsReceived(verified)
 	}
 
 	return c.NoContent(http.StatusOK)

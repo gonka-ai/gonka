@@ -1171,6 +1171,81 @@ func (sm *StateMachine) ResolveWarmKey(slotID uint32, recovered, expected string
 	return true
 }
 
+// VerifyGossipedTx returns nil if the proposer signature on tx recovers to the
+// claimed slot's address (with warm-key fallback), so a peer cannot inject a
+// forged validation/vote tx into the mempool to poison the suppression oracle in
+// collectValidationJobs (hasMempoolValidationOrVote). MsgRevealSeed is not checked
+// here: the seed-revealing stage is removed in devshard v2 (applyRevealSeed is a
+// no-op), so a forged reveal-seed tx is inert. Tx types other than MsgValidation
+// and MsgValidationVote pass through unverified.
+//
+// The expensive signature recovery runs WITHOUT the state-machine lock; sm.mu is
+// held only briefly to read slotToAddress and, on mismatch, the warm-key map, so a
+// gossip flood cannot serialize the main lock through the crypto.
+func (sm *StateMachine) VerifyGossipedTx(tx *types.DevshardTx) error {
+	if tx == nil || tx.Tx == nil {
+		return fmt.Errorf("nil gossiped tx")
+	}
+
+	var (
+		cloned proto.Message
+		sig    []byte
+		slotID uint32
+	)
+	switch inner := tx.Tx.(type) {
+	case *types.DevshardTx_Validation:
+		msg := inner.Validation
+		if msg == nil {
+			return fmt.Errorf("nil Validation in gossiped tx")
+		}
+		slotID = msg.ValidatorSlot
+		c := proto.Clone(msg).(*types.MsgValidation)
+		c.ProposerSig = nil
+		cloned, sig = c, msg.ProposerSig
+	case *types.DevshardTx_ValidationVote:
+		msg := inner.ValidationVote
+		if msg == nil {
+			return fmt.Errorf("nil ValidationVote in gossiped tx")
+		}
+		slotID = msg.VoterSlot
+		c := proto.Clone(msg).(*types.MsgValidationVote)
+		c.ProposerSig = nil
+		cloned, sig = c, msg.ProposerSig
+	default:
+		return nil
+	}
+
+	// Resolve the expected signer under the lock, then release it before the
+	// expensive signature recovery so a gossip flood can't serialize on sm.mu.
+	sm.mu.Lock()
+	expected, ok := sm.slotToAddress[slotID]
+	sm.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slotID)
+	}
+
+	data, err := deterministicMarshal.Marshal(cloned)
+	if err != nil {
+		return fmt.Errorf("marshal for proposer sig: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(data, sig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
+	}
+	if recovered == expected {
+		return nil
+	}
+
+	// Warm-key fallback touches sm state -> brief re-lock.
+	sm.mu.Lock()
+	warmOK := slotID != math.MaxUint32 && sm.ResolveWarmKey(slotID, recovered, expected)
+	sm.mu.Unlock()
+	if warmOK {
+		return nil
+	}
+	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+}
+
 // InjectWarmKeys adds warm key bindings to state without calling the resolver.
 // Used during replay to restore bindings that were discovered during the original run.
 // Existing bindings are not overwritten.
