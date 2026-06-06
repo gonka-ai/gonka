@@ -61,7 +61,7 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		delete(c.entries, key)
 		return cachedChatResponse{}, false
 	}
-	if responseBodyHasRetriableCapabilityError(entry.Body) {
+	if responseBodyHasNonCacheableError(entry.Body) {
 		delete(c.entries, key)
 		return cachedChatResponse{}, false
 	}
@@ -73,7 +73,7 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
 		return
 	}
-	if responseBodyHasRetriableCapabilityError(entry.Body) {
+	if !cacheableResponse(entry.StatusCode, entry.Body) {
 		return
 	}
 	if entry.ExpiresAt.IsZero() {
@@ -151,15 +151,16 @@ func (w *gatewayChatCacheCapture) statusCode() int {
 	return w.status
 }
 
-func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string) (cachedChatResponse, bool) {
+func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string, requestErr error) (cachedChatResponse, bool) {
 	if w == nil || w.writeErr != nil || w.body.Len() == 0 {
 		return cachedChatResponse{}, false
 	}
-	statusCode := w.statusCode()
-	if statusCode < 200 {
+	if requestErr != nil {
 		return cachedChatResponse{}, false
 	}
-	if responseBodyHasRetriableCapabilityError(w.body.Bytes()) {
+	statusCode := w.statusCode()
+	body := w.body.Bytes()
+	if !cacheableResponse(statusCode, body) {
 		return cachedChatResponse{}, false
 	}
 	return cachedChatResponse{
@@ -167,9 +168,36 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourc
 		Stream:          stream,
 		StatusCode:      statusCode,
 		ContentType:     w.Header().Get("Content-Type"),
-		Body:            append([]byte(nil), w.body.Bytes()...),
+		Body:            append([]byte(nil), body...),
 		SourceRequestID: sourceRequestID,
 	}, true
+}
+
+func cacheableResponse(statusCode int, body []byte) bool {
+	if len(body) == 0 || responseBodyHasNonCacheableError(body) {
+		return false
+	}
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	if statusCode >= 200 && statusCode < 300 {
+		return true
+	}
+	if statusCode == http.StatusBadRequest {
+		details, ok := jsonErrorPayloadDetails(body)
+		return ok && isCacheableOpenAIErrorDetails(details)
+	}
+	return false
+}
+
+func responseBodyHasNonCacheableError(body []byte) bool {
+	if details, ok := sseChunkErrorDetails(body); ok {
+		return !isCacheableOpenAIErrorDetails(details)
+	}
+	if details, ok := jsonErrorPayloadDetails(body); ok {
+		return !isCacheableOpenAIErrorDetails(details)
+	}
+	return false
 }
 
 func responseBodyHasRetriableCapabilityError(body []byte) bool {
@@ -180,4 +208,40 @@ func responseBodyHasRetriableCapabilityError(body []byte) bool {
 		return isRetriableCapabilityErrorMessage(details.Message)
 	}
 	return false
+}
+
+func isCacheableOpenAIErrorDetails(details sseErrorDetails) bool {
+	msg := strings.ToLower(details.Message)
+	typ := strings.ToLower(details.Type)
+	code := strings.ToLower(details.Code)
+	if strings.TrimSpace(msg) == "" {
+		return false
+	}
+	if isRetriableCapabilityErrorMessage(details.Message) {
+		return false
+	}
+	for _, marker := range []string{
+		"context canceled",
+		"context cancelled",
+		"client disconnected",
+		"request canceled",
+		"request cancelled",
+		"timeout",
+		"timed out",
+		"rate limit",
+		"overloaded",
+		"temporarily unavailable",
+		"service unavailable",
+		"internal server error",
+		"unsupported model",
+		"model not found",
+		"model_not_found",
+		"does not exist",
+		"not supported on this model",
+	} {
+		if strings.Contains(msg, marker) || strings.Contains(typ, marker) || strings.Contains(code, marker) {
+			return false
+		}
+	}
+	return true
 }

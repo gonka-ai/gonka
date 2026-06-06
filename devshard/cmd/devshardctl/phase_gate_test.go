@@ -341,11 +341,19 @@ func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
 	require.Equal(t, map[string]float64{
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
@@ -383,6 +391,9 @@ func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
 	require.Equal(t, map[string]float64{
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 110,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 110,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 50,
@@ -391,6 +402,14 @@ func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 50,
+		},
+		"Model/B": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestChainPhaseGateUsesPreservedSnapshotDuringPoC(t *testing.T) {
@@ -464,12 +483,22 @@ func TestChainPhaseGateUsesPreservedSnapshotDuringPoC(t *testing.T) {
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 70,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 			"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+			"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 70,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestShouldRefreshPoCPreservedParticipantsOnConfirmationGenerationTransition(t *testing.T) {

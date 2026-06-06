@@ -393,13 +393,12 @@ func (g *ChainPhaseGate) refresh() {
 				g.logPreservedParticipantsLoaded(snapshot, state.preserved, state.excluded)
 			}
 			if capacityState != nil {
-				// pocActive routes the observation: outside PoC it
-				// updates both fullWeights (steady-state baseline) and
-				// currentWeights, inside PoC it only nudges
-				// currentWeights so the live W_tot reflects PoC's
-				// transient drop while W_ref keeps the pre-PoC baseline.
-				capacityState.SetHostWeights(state.weights, active)
-				capacityState.SetHostWeightsByModel(state.weightsByModel, active)
+				// The participants response has enough ML-node data to compute
+				// both views on every poll: current is PoC/CPoC-filtered,
+				// full is the all-node steady-state baseline. Updating both
+				// prevents cold starts during PoC from falling back to unknown
+				// baseline capacity.
+				capacityState.SetHostWeightViews(state.weights, state.fullWeights, state.weightsByModel, state.fullWeightsByModel)
 				if active && relaxedPoCModeEnabled() {
 					capacityState.SetPoCPreserved(state.preserved)
 				} else {
@@ -457,11 +456,13 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 // outside PoC every ML node contributes, while during active PoC only
 // preserved ML nodes contribute.
 type participantsState struct {
-	preserved        []string
-	preservedByModel map[string][]string
-	excluded         []string
-	weights          map[string]float64
-	weightsByModel   map[string]map[string]float64
+	preserved          []string
+	preservedByModel   map[string][]string
+	excluded           []string
+	weights            map[string]float64
+	weightsByModel     map[string]map[string]float64
+	fullWeights        map[string]float64
+	fullWeightsByModel map[string]map[string]float64
 }
 
 func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
@@ -504,9 +505,11 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 	}
 
 	state := &participantsState{
-		preservedByModel: make(map[string][]string),
-		weights:          make(map[string]float64, len(payload.ActiveParticipants.Participants)),
-		weightsByModel:   make(map[string]map[string]float64),
+		preservedByModel:   make(map[string][]string),
+		weights:            make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		weightsByModel:     make(map[string]map[string]float64),
+		fullWeights:        make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		fullWeightsByModel: make(map[string]map[string]float64),
 	}
 	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
 	seenPreservedByModel := make(map[string]map[string]struct{})
@@ -522,11 +525,20 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 			continue
 		}
 		state.weights[key] = participantWeight(participant, pocActive, preservedSnapshot, preservation)
+		state.fullWeights[key] = participantWeight(participant, false, nil, preservationModeAll)
 		for model, weight := range participantWeightsByModel(participant, pocActive, preservedSnapshot, preservation) {
 			modelWeights := state.weightsByModel[model]
 			if modelWeights == nil {
 				modelWeights = map[string]float64{}
 				state.weightsByModel[model] = modelWeights
+			}
+			modelWeights[key] = weight
+		}
+		for model, weight := range participantWeightsByModel(participant, false, nil, preservationModeAll) {
+			modelWeights := state.fullWeightsByModel[model]
+			if modelWeights == nil {
+				modelWeights = map[string]float64{}
+				state.fullWeightsByModel[model] = modelWeights
 			}
 			modelWeights[key] = weight
 		}

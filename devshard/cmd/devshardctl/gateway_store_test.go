@@ -225,6 +225,39 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 	}}, state.Settings.ModelLimits)
 }
 
+func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+
+	hosts, err := store.UpsertSuspiciousHosts([]string{" host-a ", "host-b", "host-a"}, "bad output")
+	require.NoError(t, err)
+	require.Len(t, hosts, 2)
+	require.Equal(t, "host-a", hosts[0].ParticipantKey)
+	require.Equal(t, "bad output", hosts[0].Note)
+	require.Equal(t, "host-b", hosts[1].ParticipantKey)
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, state.SuspiciousHosts, 2)
+
+	hosts, err = store.DeleteSuspiciousHosts([]string{"host-a"})
+	require.NoError(t, err)
+	require.Len(t, hosts, 1)
+	require.Equal(t, "host-b", hosts[0].ParticipantKey)
+}
+
 func TestValidateGatewaySettingsRequiresRotationModels(t *testing.T) {
 	settings := GatewaySettings{
 		ChainREST:               "http://node:1317",

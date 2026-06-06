@@ -252,7 +252,7 @@ func mustLoadParticipantThrottleState(store *GatewayStore) {
 		return
 	}
 	for _, t := range throttles {
-		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.EmptyStreamStreak, t.EOFTransportFailureStreak)
+		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.ModelIDs, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.FailureStrikes)
 	}
 	if len(throttles) > 0 {
 		log.Printf("loaded %d persisted participant throttle state(s)", len(throttles))

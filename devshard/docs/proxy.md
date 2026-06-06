@@ -243,11 +243,15 @@ curl http://localhost:8080/v1/admin/devshards/42/participants \
 ```
 
 Each participant entry includes `participant_key`, `slot_count`, `tracked`,
-`quarantined`, `blocked`, `request_allowed`, `available_for_capacity`, `tokens`,
-`burst`, and, when quarantined, `quarantine_until` and
-`quarantine_remaining_ms`. `blocked` means the gateway would reject a request to
-that host now; `available_for_capacity` is stricter and only becomes true once
-the host is fully recovered for capacity-weighted routing.
+`quarantined`, `quarantine_mode`, `model_ids`, `shadow_quarantined`,
+`probe_quarantined`, `probationary`, `blocked`, `request_allowed`,
+`available_for_capacity`, `tokens`, `burst`, `failure_strikes`, and, when quarantined,
+`quarantine_until` and `quarantine_remaining_ms`. `blocked` means probe
+quarantine or token exhaustion would reject a real host call now. Shadow
+quarantine and probation still send real attempts, but the host is treated as
+no-winner for the affected model. `model_ids` lists the models affected by the
+automatic quarantine row; an empty list means legacy/global state.
+`failure_strikes` is the unified per-model soft-failure/probation counter.
 
 ### POST /v1/admin/devshards/{id}/settle
 
