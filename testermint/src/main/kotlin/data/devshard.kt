@@ -54,7 +54,8 @@ data class DevshardSessionConfig(
 data class DevshardSettlementData(
     @SerializedName("escrow_id")
     val escrowId: String,
-    val version: String,
+    @SerializedName("state_root_and_protocol_version")
+    val stateRootAndProtocolVersion: String,
     @SerializedName("state_root")
     val stateRoot: String,
     val nonce: Long,
@@ -177,4 +178,24 @@ data class DevshardPayloadJSON(
     val maxTokens: Long,
     @SerializedName("started_at")
     val startedAt: Long,
+)
+
+data class DevshardShardStatsDetail(
+    @SerializedName("escrow_id")
+    val escrowId: String,
+    @SerializedName("validation_observability")
+    val validationObservability: DevshardValidationObservability,
+)
+
+data class DevshardValidationObservability(
+    @SerializedName("by_slot")
+    val bySlot: Map<String, DevshardObservabilitySlotStats> = emptyMap(),
+    val totals: DevshardObservabilitySlotStats = DevshardObservabilitySlotStats(),
+)
+
+data class DevshardObservabilitySlotStats(
+    @SerializedName("required_validations")
+    val requiredValidations: Int = 0,
+    @SerializedName("completed_validations")
+    val completedValidations: Int = 0,
 )

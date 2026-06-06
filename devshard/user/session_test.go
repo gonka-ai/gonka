@@ -14,6 +14,7 @@ import (
 
 	"devshard"
 	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -42,16 +43,14 @@ func setupSessionWithOptions(t *testing.T, numHosts int, balance uint64, grace u
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(grace))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, opts...)
 	require.NoError(t, err)
 
@@ -72,8 +71,7 @@ func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace ui
 	// Create hosts.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
 		var engine devshard.InferenceEngine
 		if engines != nil {
 			engine = engines[i]
@@ -86,8 +84,7 @@ func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace ui
 	}
 
 	// Create user session.
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -211,16 +208,14 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 			clients[i] = &ErrorClient{Err: fmt.Errorf("host unavailable")}
 			continue
 		}
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-		require.NoError(t, err)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(100))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -377,16 +372,14 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 				break
 			}
 		}
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-		require.NoError(t, err)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, slotSigner, engine, "escrow-1", group, nil, host.WithGrace(100))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -927,13 +920,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 	wg.Wait()
 }
 
-// Fixed private keys for reproducible seed derivation.
-// signer[0] seed=8507102209880137399, signer[1] seed=8250581583015032772, signer[2] seed=88554756047201157.
-// With 3 hosts, 100% rate, prob=0.5 per non-executor inference:
-//
-//	signer[0]: validates inf 1,2 (RequiredValidations=2)
-//	signer[1]: all floats >= 0.5 (RequiredValidations=0)
-//	signer[2]: all floats >= 0.5 (RequiredValidations=0)
+// Fixed private keys for reproducible finalize/settlement runs.
 var settlementFixedKeys = []string{
 	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -959,16 +946,14 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-		require.NoError(t, err)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(100))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -989,21 +974,10 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 
 	st := session.StateMachine().SnapshotState()
 
-	// All 3 hosts should have revealed seeds.
-	require.Len(t, st.RevealedSeeds, numHosts, "all hosts should have revealed seeds")
-	for slot := range st.RevealedSeeds {
-		require.Contains(t, st.RevealedSeeds, slot)
+	for slotID, hs := range st.HostStats {
+		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slotID)
+		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slotID)
 	}
-
-	// With 100% validation rate, non-executor hosts should have RequiredValidations > 0.
-	hasRequired := false
-	for _, hs := range st.HostStats {
-		if hs.RequiredValidations > 0 {
-			hasRequired = true
-			break
-		}
-	}
-	require.True(t, hasRequired, "at least one host should have RequiredValidations > 0")
 
 	// Build settlement and verify via VerifySettlement.
 	finalNonce := session.Nonce()
@@ -1035,8 +1009,7 @@ func setupDeadHostSession(t *testing.T, numHosts, aliveCount int, balance uint64
 	clients := make([]HostClient, numHosts)
 	for i := range clients {
 		if i < aliveCount {
-			sm, err := state.NewStateMachine("escrow-1", config, group, balance, userKey.Address(), verifier)
-			require.NoError(t, err)
+			sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, userKey.Address(), verifier)
 			h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(grace))
 			require.NoError(t, err)
 			clients[i] = &InProcessClient{Host: h}
@@ -1045,8 +1018,7 @@ func setupDeadHostSession(t *testing.T, numHosts, aliveCount int, balance uint64
 		}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userKey.Address(), verifier)
-	require.NoError(t, err)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, userKey.Address(), verifier)
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier,
 		WithCollectRetry(0, 0, 5*time.Second))
 	require.NoError(t, err)

@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -794,13 +795,21 @@ func (m *manager) GetJetStream() nats.JetStreamContext {
 	return m.natsJetStream
 }
 
-func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
+func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (resp *sdk.TxResponse, ts time.Time, err error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
 	if len(msgs) == 1 {
 		return m.broadcastMessage(id, msgs[0])
 	}
+
+	_, op := observability.Chain.StartTxBroadcast(context.Background(), sdk.MsgTypeURL(msgs[0]), len(msgs))
+	defer func() {
+		if resp != nil {
+			observability.Chain.SetTxResult(op, resp.TxHash, resp.Code)
+		}
+		op.FinishErr(&err)
+	}()
 
 	factory, err := m.getFactory(id)
 	if err != nil {
@@ -829,7 +838,7 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 		return nil, time.Time{}, err
 	}
 
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	resp, err = m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -878,14 +887,23 @@ func containsAny(s string, substrs ...string) bool {
 	return false
 }
 
-func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (resp *sdk.TxResponse, ts time.Time, err error) {
+	originalMsgType := sdk.MsgTypeURL(rawTx)
+	_, op := observability.Chain.StartTxBroadcast(context.Background(), originalMsgType, 0)
+	defer func() {
+		if resp != nil {
+			observability.Chain.SetTxResult(op, resp.TxHash, resp.Code)
+		}
+		op.FinishErr(&err)
+	}()
+
 	factory, err := m.getFactory(id)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 
 	var finalMsg sdk.Msg = rawTx
-	originalMsgType := sdk.MsgTypeURL(rawTx)
+	originalMsgTypeForExec := originalMsgType
 	if !m.apiAccount.IsSignerTheMainAccount() {
 		granteeAddress, err := m.apiAccount.SignerAddress()
 		if err != nil {
@@ -894,7 +912,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 
 		execMsg := authztypes.NewMsgExec(granteeAddress, []sdk.Msg{rawTx})
 		finalMsg = &execMsg
-		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", originalMsgType)
+		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "originalMsgType", originalMsgTypeForExec)
 	}
 
 	unsignedTx, err := factory.BuildUnsignedTx(finalMsg)
@@ -906,14 +924,14 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, t
 		return nil, time.Time{}, err
 	}
 
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	resp, err = m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	if resp.Code != 0 {
-		logging.Error("Broadcast failed immediately", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "originalMsgType", originalMsgType)
+		logging.Error("Broadcast failed immediately", types.Messages, "code", resp.Code, "rawLog", resp.RawLog, "tx_id", id, "originalMsgType", originalMsgTypeForExec)
 	} else {
-		logging.Debug("Broadcast successful", types.Messages, "tx_id", id, "originalMsgType", originalMsgType, "resp", resp)
+		logging.Debug("Broadcast successful", types.Messages, "tx_id", id, "originalMsgType", originalMsgTypeForExec, "resp", resp)
 	}
 	return resp, timestamp, nil
 }

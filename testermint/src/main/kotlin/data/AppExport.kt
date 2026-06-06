@@ -302,6 +302,24 @@ data class DevshardEscrowParams(
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
     @SerializedName("max_nonce")
     val maxNonce: Long = 0,
+    @SerializedName("default_seal_grace_nonces")
+    val defaultSealGraceNonces: Long = 0,
+    @SerializedName("default_inference_clear_grace_seconds")
+    val defaultInferenceClearGraceSeconds: Long = 0,
+    @SerializedName("devshard_requests_enabled")
+    val devshardRequestsEnabled: Boolean = true,
+    @SerializedName("create_devshard_fee")
+    val createDevshardFee: Long = 0,
+    @SerializedName("fee_per_nonce")
+    val feePerNonce: Long = 0,
+    @SerializedName("refusal_timeout")
+    val refusalTimeout: Long = 0,
+    @SerializedName("execution_timeout")
+    val executionTimeout: Long = 0,
+    @SerializedName("validation_rate")
+    val validationRate: Long = 0,
+    @SerializedName("vote_threshold_factor")
+    val voteThresholdFactor: Long = 0,
 )
 
 data class PocParams(

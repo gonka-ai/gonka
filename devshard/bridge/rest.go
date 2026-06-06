@@ -53,7 +53,9 @@ type escrowResponse struct {
 		EpochIndex uint64   `json:"epoch_index,string"`
 		AppHash    string   `json:"app_hash"`
 		Settled    bool     `json:"settled"`
-		TokenPrice uint64   `json:"token_price,string"`
+		TokenPrice        uint64 `json:"token_price,string"`
+		CreateDevshardFee uint64 `json:"create_devshard_fee,string"`
+		FeePerNonce       uint64 `json:"fee_per_nonce,string"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -80,6 +82,16 @@ type epochGroupDataResponse struct {
 			ValidationThreshold *Decimal `json:"validation_threshold"`
 		} `json:"model_snapshot"`
 	} `json:"epoch_group_data"`
+}
+
+// paramsResponse matches grpc-gateway JSON for QueryParams (inference module).
+type paramsResponse struct {
+	Params *struct {
+		DevshardEscrowParams *struct {
+			DefaultSealGraceNonces              uint32 `json:"default_seal_grace_nonces"`
+			DefaultInferenceClearGraceSeconds uint32 `json:"default_inference_clear_grace_seconds"`
+		} `json:"devshard_escrow_params"`
+	} `json:"params"`
 }
 
 // -- helper --
@@ -125,13 +137,15 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	}
 
 	return &EscrowInfo{
-		EscrowID:       escrowID,
-		Amount:         resp.Escrow.Amount,
-		CreatorAddress: resp.Escrow.Creator,
-		AppHash:        appHash,
-		Slots:          resp.Escrow.Slots,
-		TokenPrice:     resp.Escrow.TokenPrice,
-		EpochID:        resp.Escrow.EpochIndex,
+		EscrowID:          escrowID,
+		Amount:            resp.Escrow.Amount,
+		CreatorAddress:    resp.Escrow.Creator,
+		AppHash:           appHash,
+		Slots:             resp.Escrow.Slots,
+		TokenPrice:        resp.Escrow.TokenPrice,
+		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
+		FeePerNonce:       resp.Escrow.FeePerNonce,
+		EpochID:           resp.Escrow.EpochIndex,
 	}, nil
 }
 

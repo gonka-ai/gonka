@@ -12,7 +12,7 @@ class PruningTests : TestermintTest() {
     @Test
     fun `prune inferences`() {
         val (_, genesis) = initCluster(reboot = true)
-        genesis.waitForNextInferenceWindow()
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         logSection("Making Inference")
         val inferenceResult = genesis.makeInferenceRequest(inferenceRequest)
         genesis.node.waitForNextBlock(2)
