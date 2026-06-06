@@ -61,7 +61,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -1179,7 +1180,7 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // another host challenged the inference while this validator was running.
 // Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
-	ctx = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
+	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
 		"inference_id", job.inferenceID,

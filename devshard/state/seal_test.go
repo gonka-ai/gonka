@@ -224,3 +224,34 @@ func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
 	require.Equal(t, live.ConfirmedAt, got.ConfirmedAt)
 	require.Greater(t, got.ActualCost, uint64(0))
 }
+
+func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, store, _, _ := newSealTestSM(t, "escrow-export", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-export", hosts)
+
+	require.NoError(t, sm.SealInference(1))
+	_, live := sm.SnapshotState().Inferences[1]
+	require.False(t, live)
+
+	records := sm.ExportAllInferenceRecords()
+	require.Len(t, records, 1)
+	rec, ok := records[1]
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, rec.Status)
+	require.Equal(t, "llama", rec.Model)
+	require.Equal(t, uint64(10), rec.InputTokens)
+	require.Equal(t, uint64(20), rec.OutputTokens)
+
+	row, ok, err := store.GetSealedInference("escrow-export", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, row.ObsPresent)
+	require.Equal(t, uint32(types.StatusFinished), row.SealedStatus)
+}

@@ -21,6 +21,27 @@ func TestResolveVersionedRoutePrefix(t *testing.T) {
 	}
 }
 
+func TestResolveHostRoutePrefix(t *testing.T) {
+	if got := ResolveHostRoutePrefix(types.ProtocolV1, ""); got != LegacyRoutePrefix {
+		t.Fatalf("ResolveHostRoutePrefix(v1) = %q, want %q", got, LegacyRoutePrefix)
+	}
+	if got := ResolveHostRoutePrefix(types.ProtocolV1, LegacyRoutePrefix); got != LegacyRoutePrefix {
+		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
+	}
+}
+
+func TestProtocolSessionVersion(t *testing.T) {
+	if got := ProtocolSessionVersion(types.ProtocolV1); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(v1) = %q, want %q", got, "v1")
+	}
+	if got := ProtocolSessionVersion("v1"); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(route-style v1) = %q, want %q", got, "v1")
+	}
+	if got := ProtocolSessionVersion(""); got != "v1" {
+		t.Fatalf("ProtocolSessionVersion(\"\") = %q, want %q", got, "v1")
+	}
+}
+
 func TestVersionForRoutePrefix(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -29,24 +50,24 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "empty defaults to legacy bind v1",
+			name:        "default legacy",
 			routePrefix: "",
-			want:        types.LegacyRouteSessionVersion,
+			want:        "v1",
 		},
 		{
-			name:        "explicit legacy bind v1",
+			name:        "explicit legacy",
 			routePrefix: LegacyRoutePrefix,
-			want:        types.LegacyRouteSessionVersion,
+			want:        "v1",
 		},
 		{
-			name:        "versioned path uses versiond runtime name from URL",
+			name:        "old subnet host route rejected",
+			routePrefix: "/v1/subnet",
+			wantErr:     true,
+		},
+		{
+			name:        "versioned",
 			routePrefix: VersionedRoutePrefix("v2.1.0"),
 			want:        "v2.1.0",
-		},
-		{
-			name:        "versioned v1 segment is runtime bind not protocol v1",
-			routePrefix: VersionedRoutePrefix("v1"),
-			want:        "v1",
 		},
 		{
 			name:        "invalid",

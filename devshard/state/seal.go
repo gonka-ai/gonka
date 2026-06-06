@@ -225,6 +225,37 @@ func (sm *StateMachine) SealInference(id uint64) error {
 // LookupSealedInference returns the inference record persisted at seal time
 // (observability only; not part of the state root).
 func (sm *StateMachine) LookupSealedInference(id uint64) (types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.lookupSealedInferenceLocked(id)
+}
+
+// ExportAllInferenceRecords returns live RAM records plus DB-backed snapshots
+// for pruned sealed ids. Live records take precedence when both exist.
+func (sm *StateMachine) ExportAllInferenceRecords() map[uint64]types.InferenceRecord {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	out := make(map[uint64]types.InferenceRecord, len(sm.state.Inferences)+len(sm.sealedNonces))
+	for id, rec := range sm.state.Inferences {
+		out[id] = *rec
+	}
+	for id := range sm.sealedNonces {
+		if _, live := out[id]; live {
+			continue
+		}
+		if rec, ok := sm.lookupSealedInferenceLocked(id); ok {
+			out[id] = rec
+			continue
+		}
+		if rec, err := sm.hydrateCommittedInferenceLocked(id); err == nil && rec != nil {
+			out[id] = *rec
+		}
+	}
+	return out
+}
+
+func (sm *StateMachine) lookupSealedInferenceLocked(id uint64) (types.InferenceRecord, bool) {
 	row, ok, err := sm.inferenceStore.GetSealedInference(sm.state.EscrowID, id)
 	if err != nil || !ok || !row.ObsPresent {
 		return types.InferenceRecord{}, false

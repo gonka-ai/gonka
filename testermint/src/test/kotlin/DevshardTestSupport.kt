@@ -54,8 +54,8 @@ fun LocalInferencePair.traceDevshardInferencePhase(
     label: String,
 ) {
     runCatching {
-        val raw = getDevshardInferenceState(handle.proxyUrl, inferenceId)
-        logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=$raw")
+        val inference = getDevshardProxyInferences(handle.proxyUrl)[inferenceId]
+        logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=${inference?.let { cosmosJson.toJson(it) } ?: "missing"}")
     }.onFailure {
         logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=unavailable (${it.message})")
     }
@@ -419,17 +419,7 @@ fun DevshardInferencePayload.hasChallengedOutcome(): Boolean =
 
 fun LocalInferencePair.findChallengedDevshardInference(
     handle: LocalInferencePair.DevshardProxyHandle,
-    numInferences: Long,
 ): DevshardInferencePayload? {
-    // Some flows expose inference IDs starting at 0, others are observed as 1-based.
-    // Scan the full inclusive range and ignore missing IDs so the test checks the
-    // challenged outcome rather than the local indexing scheme.
-    return (0..numInferences).firstNotNullOfOrNull { inferenceId ->
-        runCatching {
-            cosmosJson.fromJson(
-                getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                DevshardInferencePayload::class.java,
-            )
-        }.getOrNull()?.takeIf { it.hasChallengedOutcome() }
-    }
+    return getDevshardProxyInferences(handle.proxyUrl)
+        .values.firstOrNull { it.hasChallengedOutcome() }
 }
