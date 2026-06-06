@@ -3401,6 +3401,16 @@ func (g *Gateway) reconcilePendingSettlements() {
 		}
 		return
 	}
+	// Honor the operator's config: when settlement is disabled, never settle on
+	// startup. Leave the marker intact so a later re-enable still settles it.
+	if !state.Settings.EscrowRotation.SettlementEnabled {
+		for _, devshard := range state.Devshards {
+			if !devshard.Active && devshard.SettlementPending {
+				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
+			}
+		}
+		return
+	}
 	for _, devshard := range state.Devshards {
 		if devshard.Active || !devshard.SettlementPending {
 			continue

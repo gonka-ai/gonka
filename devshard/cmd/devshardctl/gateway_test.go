@@ -304,6 +304,27 @@ func TestReconcilePendingSettlementsSkipsActiveOrUnflagged(t *testing.T) {
 	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
 }
 
+func TestReconcilePendingSettlementsSkipsWhenSettlementDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+	})
+
+	// Inactive escrow flagged pending, but settlement is disabled → reconcile
+	// must not settle, and the marker is preserved for a later re-enable.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
 func TestParseDevshardPath(t *testing.T) {
 	id, inner, ok := parseDevshardPath("/devshard/12/v1/debug/perf")
 	require.True(t, ok)
