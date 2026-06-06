@@ -156,6 +156,17 @@ Most Testermint tests begin by calling the `initCluster` method. This method is 
 
     - If the live Docker environment doesn’t match the config, the cluster is rebuilt from scratch.
 
+#### Fast Exploratory Attach with `fastInitCluster`
+
+For exploratory work, Testermint also exposes `fastInitCluster(...)`.
+
+- Reuses an already-running cluster when possible
+- Skips the unconditional 50-second sleep in `initCluster(...)`
+- Skips full participant/bootstrap normalization and ML-node resets
+- Waits only for minimal node/API readiness
+
+This is useful for manual probing and ad hoc experiments, but it intentionally provides weaker guarantees than `initCluster(...)`. Avoid using it for ordinary regression tests that need a normalized, deterministic cluster state.
+
 ### Node and Network Setup
 
 - Nodes are initialized and connected

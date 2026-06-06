@@ -14,6 +14,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.time.Duration
+import java.time.Instant
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
@@ -568,6 +569,42 @@ fun initCluster(
     return cluster to cluster.genesis
 }
 
+data class FastInitClusterOptions(
+    val readinessTimeout: Duration = Duration.ofSeconds(20),
+    val pollInterval: Duration = Duration.ofMillis(500),
+    val requireMlNodes: Boolean = false,
+)
+
+/**
+ * Fast exploratory attach path for a local cluster.
+ *
+ * This is intentionally weaker than [initCluster]:
+ * - it may reuse a dirty cluster
+ * - it skips the unconditional 50s sleep
+ * - it skips participant/bootstrap validation and ML node resets
+ *
+ * Use this for exploratory/manual probing where quick attachment matters more
+ * than a fully normalized cluster state.
+ */
+fun fastInitCluster(
+    joinCount: Int = 2,
+    config: ApplicationConfig = inferenceConfig,
+    reboot: Boolean = false,
+    mergeSpec: Spec<AppState>? = null,
+    options: FastInitClusterOptions = FastInitClusterOptions(),
+): Pair<LocalCluster, LocalInferencePair> {
+    logSection("Fast Cluster Discovery")
+    val finalConfig = mergeSpec?.let {
+        config.copy(genesisSpec = config.genesisSpec?.merge(mergeSpec))
+    } ?: config
+    val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
+    val cluster = setupLocalCluster(joinCount, finalConfig, reboot || rebootFlagOn)
+    logSection("Fast cluster readiness")
+    waitForExploratoryClusterReadiness(cluster, options)
+    logSection("Fast Cluster Ready")
+    return cluster to cluster.genesis
+}
+
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = try {
         getLocalCluster(config)
@@ -588,6 +625,35 @@ fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean
         initializeCluster(joinCount, config, currentCluster)
         return getLocalCluster(config) ?: error("Local cluster not initialized")
     }
+}
+
+private fun waitForExploratoryClusterReadiness(
+    cluster: LocalCluster,
+    options: FastInitClusterOptions,
+) {
+    val deadline = Instant.now().plus(options.readinessTimeout)
+    var lastError: Exception? = null
+    while (Instant.now().isBefore(deadline)) {
+        try {
+            cluster.allPairs.forEach { pair ->
+                pair.node.getStatus()
+                pair.mostRecentEpochData = pair.api.getLatestEpoch()
+                if (options.requireMlNodes) {
+                    pair.api.getNodes()
+                }
+            }
+            return
+        } catch (e: Exception) {
+            lastError = e
+            Logger.info("Fast cluster not ready yet, retrying: {}", e.message ?: e::class.simpleName)
+            Thread.sleep(options.pollInterval.toMillis())
+        }
+    }
+
+    throw IllegalStateException(
+        "Fast cluster did not become minimally ready within ${options.readinessTimeout.seconds}s",
+        lastError
+    )
 }
 
 @OptIn(ExperimentalContracts::class)
