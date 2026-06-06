@@ -72,59 +72,34 @@ func (app *App) setupUpgradeHandlers() {
 }
 
 func (app *App) registerMigrations() {
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 4, func(ctx sdk.Context) error {
-		return nil
-	})
+	registerMigration := func(moduleName string, fromVersion uint64, handler func(ctx sdk.Context) error) {
+		if err := app.Configurator().RegisterMigration(moduleName, fromVersion, handler); err != nil {
+			app.Logger().Error("failed to register module migration", "module", moduleName, "fromVersion", fromVersion, "error", err)
+		}
+	}
 
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 5, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 6, func(ctx sdk.Context) error {
-		return nil
-	})
+	registerMigration(inferencetypes.ModuleName, 4, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 5, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 6, func(ctx sdk.Context) error { return nil })
 
 	// v0.2.5 upgrade migrations
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 7, func(ctx sdk.Context) error {
+	registerMigration(inferencetypes.ModuleName, 7, func(ctx sdk.Context) error {
 		if err := app.InferenceKeeper.MigrateLegacyBridgeState(ctx); err != nil {
 			return err
 		}
 		return app.InferenceKeeper.MigrateConfirmationWeights(ctx)
 	})
 
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 8, func(ctx sdk.Context) error {
-		return nil
-	})
+	registerMigration(inferencetypes.ModuleName, 8, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 9, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 10, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error { return nil })
 
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 9, func(ctx sdk.Context) error {
-		return nil
-	})
+	registerMigration(districutiontypes.ModuleName, 3, func(ctx sdk.Context) error { return nil })
+	registerMigration(slashingtypes.ModuleName, 4, func(ctx sdk.Context) error { return nil })
+	registerMigration(stakingtypes.ModuleName, 5, func(ctx sdk.Context) error { return nil })
 
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 10, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(districutiontypes.ModuleName, 3, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(slashingtypes.ModuleName, 4, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(stakingtypes.ModuleName, 5, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error {
-		return nil
-	})
-
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 12, func(ctx sdk.Context) error { return nil })
-
-	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 13, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 11, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 12, func(ctx sdk.Context) error { return nil })
+	registerMigration(inferencetypes.ModuleName, 13, func(ctx sdk.Context) error { return nil })
 }

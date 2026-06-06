@@ -89,6 +89,7 @@ func TestPruningBasic(t *testing.T) {
 func TestPruningEpochThreshold(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
 
 	// Create inferences with different epoch IDs
 	inferences := []types.Inference{
@@ -141,6 +142,7 @@ func TestPruningEpochThreshold(t *testing.T) {
 func TestPruningStatusPreservation(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
 
 	// Create inferences with different statuses
 	inferences := []types.Inference{
@@ -186,6 +188,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 func TestPruningMultipleEpochs(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
 
 	// Create inferences for 10 epochs
 	inferences := []types.Inference{}

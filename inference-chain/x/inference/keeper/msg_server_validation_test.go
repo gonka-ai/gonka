@@ -110,6 +110,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 		ValueDecimal: types.DecimalFromFloat(0.80),
 		Revalidation: true,
 	})
+	require.NoError(t, err)
 	inference, found = k.GetInference(ctx, expected.InferenceId)
 
 	require.True(t, found)

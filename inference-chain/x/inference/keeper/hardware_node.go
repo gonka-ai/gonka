@@ -19,9 +19,7 @@ func HardwareNodesKey(participantId string) []byte {
 func (k Keeper) SetHardwareNodes(ctx context.Context, hardwareNodes *types.HardwareNodes) error {
 	key := HardwareNodesKey(hardwareNodes.Participant)
 
-	SetValue(k, ctx, hardwareNodes, []byte(HardwareNodesKeysPrefix), key)
-
-	return nil
+	return SetValue(k, ctx, hardwareNodes, []byte(HardwareNodesKeysPrefix), key)
 }
 
 func (k Keeper) GetHardwareNodes(ctx context.Context, participantId string) (*types.HardwareNodes, bool) {

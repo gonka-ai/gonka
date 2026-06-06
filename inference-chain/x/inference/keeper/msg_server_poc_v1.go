@@ -77,7 +77,9 @@ func (k msgServer) submitPocBatchV1(goCtx context.Context, msg *types.MsgSubmitP
 			NodeId:                   msg.NodeId,
 		}
 
-		k.SetPocBatch(ctx, storedBatch)
+		if err := k.SetPocBatch(ctx, storedBatch); err != nil {
+			return nil, err
+		}
 		k.LogInfo("[SubmitPocBatch] Confirmation PoC batch stored", types.PoC,
 			"participant", msg.Creator,
 			"triggerHeight", activeEvent.TriggerHeight,
@@ -135,7 +137,9 @@ func (k msgServer) submitPocBatchV1(goCtx context.Context, msg *types.MsgSubmitP
 		NodeId:                   msg.NodeId,
 	}
 
-	k.SetPocBatch(ctx, storedBatch)
+	if err := k.SetPocBatch(ctx, storedBatch); err != nil {
+		return nil, err
+	}
 
 	return &types.MsgSubmitPocBatchResponse{}, nil
 }

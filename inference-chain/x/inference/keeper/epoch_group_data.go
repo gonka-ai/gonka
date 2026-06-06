@@ -9,7 +9,9 @@ import (
 
 // SetEpochGroupData set a specific epochGroupData in the store from its index
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
-	k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), epochGroupData)
+	if err := k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), epochGroupData); err != nil {
+		k.LogError("SetEpochGroupData: failed to persist epoch group data", types.EpochGroup, "epochIndex", epochGroupData.EpochIndex, "modelId", epochGroupData.ModelId, "error", err)
+	}
 }
 
 // GetEpochGroupData returns a epochGroupData from its index
@@ -32,7 +34,9 @@ func (k Keeper) RemoveEpochGroupData(
 	epochIndex uint64,
 	modelId string,
 ) {
-	k.EpochGroupDataMap.Remove(ctx, collections.Join(epochIndex, modelId))
+	if err := k.EpochGroupDataMap.Remove(ctx, collections.Join(epochIndex, modelId)); err != nil {
+		k.LogError("RemoveEpochGroupData: failed to delete epoch group data", types.EpochGroup, "epochIndex", epochIndex, "modelId", modelId, "error", err)
+	}
 }
 
 // GetAllEpochGroupData returns all epochGroupData

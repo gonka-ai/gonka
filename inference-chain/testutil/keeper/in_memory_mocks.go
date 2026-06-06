@@ -63,35 +63,6 @@ func (keeper *InMemoryEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Con
 	return allData
 }
 
-func main() {
-	// Example usage
-	ctx := context.Background()
-	keeper := NewInMemoryEpochGroupDataKeeper()
-
-	data1 := types.EpochGroupData{PocStartBlockHeight: 100, ModelId: ""}
-	data2 := types.EpochGroupData{PocStartBlockHeight: 200, ModelId: "model1"}
-
-	keeper.SetEpochGroupData(ctx, data1)
-	keeper.SetEpochGroupData(ctx, data2)
-
-	// Retrieve data
-	if val, found := keeper.GetEpochGroupData(ctx, 100, ""); found {
-		println("Found EpochGroupData with PocStartBlockHeight:", val.PocStartBlockHeight)
-	}
-
-	// Get all data
-	allData := keeper.GetAllEpochGroupData(ctx)
-	println("Total EpochGroupData count:", len(allData))
-
-	// Remove data
-	keeper.RemoveEpochGroupData(ctx, 100, "")
-
-	// Verify removal
-	if _, found := keeper.GetEpochGroupData(ctx, 100, ""); !found {
-		println("EpochGroupData with PocStartBlockHeight 100 not found")
-	}
-}
-
 // InMemoryParticipantKeeper is an in-memory implementation of ParticipantKeeper.
 type InMemoryParticipantKeeper struct {
 	data map[string]types.Participant

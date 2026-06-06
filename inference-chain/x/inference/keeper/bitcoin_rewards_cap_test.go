@@ -81,7 +81,7 @@ func RunCapTest(weights []int64, maxPercentage float64) string {
 	cappedParticipants, newTotalPower, wasCapped := CalculateOptimalCap(participants, totalPower, maxPercentageDecimal)
 
 	// Format results
-	result := fmt.Sprintf("\n=== Power Capping Test ===\n")
+	result := "\n=== Power Capping Test ===\n"
 	result += fmt.Sprintf("Input Weights: %v\n", weights)
 	result += fmt.Sprintf("Max Percentage: %.2f%%\n", maxPercentage*100)
 	result += fmt.Sprintf("Total Power (before): %d\n", totalPower)

@@ -30,7 +30,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	InitHoldingAccounts(ctx, k, genState)
 
 	// Init empty TokenomicsData
-	k.SetTokenomicsData(ctx, types.TokenomicsData{})
+	if err := k.SetTokenomicsData(ctx, types.TokenomicsData{}); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
 	err := k.PruningState.Set(ctx, types.PruningState{})
 	if err != nil {
 		//nolint:forbidigo // genesis code
@@ -39,10 +42,16 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// Set MLNode version with default if not defined
 	if genState.MlnodeVersion != nil {
-		k.SetMLNodeVersion(ctx, *genState.MlnodeVersion)
+		if err := k.SetMLNodeVersion(ctx, *genState.MlnodeVersion); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
 	} else {
 		// Set default MLNode version
-		k.SetMLNodeVersion(ctx, types.MLNodeVersion{CurrentVersion: "v3.0.8"})
+		if err := k.SetMLNodeVersion(ctx, types.MLNodeVersion{CurrentVersion: "v3.0.8"}); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
 	}
 
 	// Set genesis only params from configuration
@@ -53,7 +62,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.LogInfo("No genesis guardian addresses configured - genesis guardian enhancement will be disabled", types.System)
 	}
 
-	k.SetGenesisOnlyParams(ctx, &genesisOnlyParams)
+	if err := k.SetGenesisOnlyParams(ctx, &genesisOnlyParams); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
 
 	// Import participants provided in genesis
 	for _, p := range genState.ParticipantList {
@@ -88,11 +100,14 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge token metadata from genesis
 		for _, elem := range genState.Bridge.TokenMetadata {
-			k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
+			if err := k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
 				Name:     elem.Name,
 				Symbol:   elem.Symbol,
 				Decimals: uint8(elem.Decimals),
-			})
+			}); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
 		}
 
 		// Set all bridge trade approved tokens from genesis
@@ -158,7 +173,10 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 		Index:               0,
 		PocStartBlockHeight: 0,
 	}
-	k.SetEpoch(ctx, genesisEpoch)
+	if err := k.SetEpoch(ctx, genesisEpoch); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
 	if err := k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)

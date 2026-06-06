@@ -1,4 +1,6 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto \
+	lint-chain-local lint-chain-forbidigo lint-chain-govet lint-chain-gosimple lint-chain-staticcheck \
+	lint-chain-errcheck lint-chain-unused lint-chain-ineffassign lint-chain-gosec
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -7,6 +9,23 @@ VERSION ?= $(shell git describe --always)
 BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+
+GOLANGCI_LINT ?= go tool golangci-lint
+GOLANGCI_COMMON_ARGS := \
+	--config=/dev/null \
+	--timeout=5m \
+	--tests=false \
+	--exclude-generated=strict \
+	--exclude-dirs='(^|/)(testutil|api|proto)($|/)'
+CHAIN_LOCAL_LINT_CHECKS := \
+	lint-chain-forbidigo \
+	lint-chain-govet \
+	lint-chain-gosimple \
+	lint-chain-staticcheck \
+	lint-chain-errcheck \
+	lint-chain-unused \
+	lint-chain-ineffassign \
+	lint-chain-gosec
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
@@ -40,6 +59,41 @@ endif
 install:
 	@echo "Installing locally with ldflags..."
 	@go install -ldflags "$(ldflags)" -mod=readonly ./cmd/inferenced/main.go
+
+lint-chain-local:
+	@failed=0; \
+	for check in $(CHAIN_LOCAL_LINT_CHECKS); do \
+		echo "==> $$check"; \
+		if ! $(MAKE) --no-print-directory $$check; then \
+			failed=1; \
+		fi; \
+		echo; \
+	done; \
+	exit $$failed
+
+lint-chain-forbidigo:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=forbidigo ./...
+
+lint-chain-govet:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=govet ./...
+
+lint-chain-gosimple:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=gosimple ./...
+
+lint-chain-staticcheck:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=staticcheck ./...
+
+lint-chain-errcheck:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=errcheck ./...
+
+lint-chain-unused:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=unused ./...
+
+lint-chain-ineffassign:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=ineffassign ./...
+
+lint-chain-gosec:
+	@$(GOLANGCI_LINT) run $(GOLANGCI_COMMON_ARGS) --disable-all --enable=gosec ./...
 
 _build-macos:
 	@echo "Building macOS binary with static wasmvm library..."

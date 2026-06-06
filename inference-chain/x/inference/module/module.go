@@ -400,9 +400,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			if pu.NodeVersion != "" {
 				am.LogInfo("PartialUpgradeActive - updating current MLNode version", types.Upgrades,
 					"partialUpgradeHeight", pu.Height, "blockHeight", blockHeight, "nodeVersion", pu.NodeVersion)
-				am.keeper.SetMLNodeVersion(ctx, types.MLNodeVersion{
+				if err := am.keeper.SetMLNodeVersion(ctx, types.MLNodeVersion{
 					CurrentVersion: pu.NodeVersion,
-				})
+				}); err != nil {
+					am.LogError("Failed to update current MLNode version", types.Upgrades, "error", err)
+				}
 			}
 
 			// Track last upgrade height
@@ -526,7 +528,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
 		}
-		currentEpochGroup.MarkUnchanged(ctx)
+		if err := currentEpochGroup.MarkUnchanged(ctx); err != nil {
+			return err
+		}
 	}
 
 	return nil

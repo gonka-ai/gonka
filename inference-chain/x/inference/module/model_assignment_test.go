@@ -2719,7 +2719,8 @@ func TestGetForParticipantReturnsCopy(t *testing.T) {
 		"source order mutated by GetForParticipant in-place sort")
 
 	// Appending to the returned slice must not mutate the source.
-	out = append(out, &types.MLNodeInfo{NodeId: "c"})
+	outWithAppend := append(out, &types.MLNodeInfo{NodeId: "c"})
+	require.Len(t, outWithAppend, 3)
 	require.Len(t, e.data["m1"]["p1"], 2, "source slice grew via GetForParticipant")
 }
 

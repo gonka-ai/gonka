@@ -83,16 +83,8 @@ func (k Keeper) IsModuleAccount(ctx sdk.Context, addr sdk.AccAddress) bool {
 	// Check using AccountKeeper - this is the definitive method
 	// This works for all module accounts regardless of how they were created
 	account := k.accountKeeper.GetAccount(ctx, addr)
-	if account != nil {
-		// Check if it's a module account type
-		if _, isModuleAccount := account.(*authtypes.ModuleAccount); isModuleAccount {
-			return true
-		}
-	}
-
-	// If AccountKeeper doesn't have the account or it's not a ModuleAccount type,
-	// then it's not a module account
-	return false
+	_, isModuleAccount := account.(*authtypes.ModuleAccount)
+	return isModuleAccount
 }
 
 // MatchesEmergencyExemption checks if a transfer matches any active emergency exemption

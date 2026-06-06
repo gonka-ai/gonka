@@ -4,6 +4,11 @@
 
 **Testermint** is our custom end-to-end and integration testing framework for the blockchain and decentralized API (DAPI) components of the project. It simulates realistic environments with multiple nodes, enabling deep testing of interactions that can’t be captured with isolated unit or component tests.
 
+Additional guides:
+
+- [Reviewing Testermint Tests](./REVIEWING_TESTS.md)
+- [Parallel Local Testing](./parallel-local.md)
+
 Testermint handles the orchestration of:
 
 - **Docker containers** containing running versions of the blockchain node and the API binary

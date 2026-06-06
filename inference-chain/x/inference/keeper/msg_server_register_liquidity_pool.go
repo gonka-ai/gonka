@@ -86,7 +86,9 @@ func (k msgServer) RegisterLiquidityPool(goCtx context.Context, msg *types.MsgRe
 		BlockHeight: uint64(ctx.BlockHeight()),
 	}
 
-	k.SetLiquidityPool(ctx, pool)
+	if err := k.SetLiquidityPool(ctx, pool); err != nil {
+		return nil, err
+	}
 
 	k.LogInfo("Successfully registered liquidity pool", types.System,
 		"authority", msg.Authority,

@@ -56,6 +56,10 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	aiOperationalAddress sdk.AccAddress,
 	expiration *time.Time,
 ) error {
+	printStatus := func(format string, args ...interface{}) error {
+		return clientCtx.PrintString(fmt.Sprintf(format, args...))
+	}
+
 	operatorInfo, err := clientCtx.Keyring.Key(operatorKeyName)
 	if err != nil {
 		return fmt.Errorf("failed to get operator key info: %w", err)
@@ -109,7 +113,9 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	// allowance, hosts must first run `inferenced tx feegrant revoke`.
 	hasExistingAllowance, err := checkFeegrantExists(ctx, clientCtx, operatorAddress, aiOperationalAddress)
 	if err != nil {
-		fmt.Printf("Warning: could not check existing feegrant allowance: %v\n", err)
+		if printErr := printStatus("Warning: could not check existing feegrant allowance: %v\n", err); printErr != nil {
+			return printErr
+		}
 		// Continue and let the chain reject the duplicate if necessary.
 	}
 	if !hasExistingAllowance {
@@ -126,10 +132,13 @@ func GrantMLOperationalKeyPermissionsToAccount(
 			return fmt.Errorf("failed to create MsgGrantAllowance: %w", err)
 		}
 		grantMsgs = append(grantMsgs, feeGrantMsg)
-		fmt.Println("Including new feegrant allowance from cold to warm in this transaction.")
+		if err := printStatus("Including new feegrant allowance from cold to warm in this transaction.\n"); err != nil {
+			return err
+		}
 	} else {
-		fmt.Println("Existing feegrant allowance from cold to warm detected; skipping MsgGrantAllowance. " +
-			"Run `inferenced tx feegrant revoke <warm-address>` first if you want to refresh it.")
+		if err := printStatus("Existing feegrant allowance from cold to warm detected; skipping MsgGrantAllowance. Run `inferenced tx feegrant revoke <warm-address>` first if you want to refresh it.\n"); err != nil {
+			return err
+		}
 	}
 
 	// This command bypasses GenerateOrBroadcastTxCLI, so we replicate its
@@ -142,7 +151,9 @@ func GrantMLOperationalKeyPermissionsToAccount(
 			return fmt.Errorf("failed to simulate gas: %w", err)
 		}
 		txFactory = txFactory.WithGas(adjusted)
-		fmt.Printf("gas estimate: %d\n", adjusted)
+		if err := printStatus("gas estimate: %d\n", adjusted); err != nil {
+			return err
+		}
 	}
 
 	txb, err := txFactory.BuildUnsignedTx(grantMsgs...)
@@ -170,8 +181,12 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	}
 
 	txHash := res.TxHash
-	fmt.Printf("Transaction sent with hash: %s\n", txHash)
-	fmt.Println("Waiting for transaction to be included in a block...")
+	if err := printStatus("Transaction sent with hash: %s\n", txHash); err != nil {
+		return err
+	}
+	if err := printStatus("Waiting for transaction to be included in a block...\n"); err != nil {
+		return err
+	}
 
 	for i := 0; i < 20; i++ {
 		time.Sleep(3 * time.Second)
@@ -184,21 +199,29 @@ func GrantMLOperationalKeyPermissionsToAccount(
 		txResponse, err := clientCtx.Client.Tx(ctx, txHashBytes, false)
 
 		if err != nil {
-			fmt.Print(".")
+			if printErr := printStatus("."); printErr != nil {
+				return printErr
+			}
 			continue
 		}
 
 		if txResponse.Height > 0 {
 			if txResponse.TxResult.Code == 0 {
-				fmt.Println("\nTransaction confirmed successfully!")
-				fmt.Printf("Block height: %d\n", txResponse.Height)
+				if err := printStatus("\nTransaction confirmed successfully!\n"); err != nil {
+					return err
+				}
+				if err := printStatus("Block height: %d\n", txResponse.Height); err != nil {
+					return err
+				}
 				return nil
 			} else {
 				return fmt.Errorf("\nTransaction %s included in block %d but failed with code %d: %s", txHash, txResponse.Height, txResponse.TxResult.Code, txResponse.TxResult.Log)
 			}
 		}
 
-		fmt.Print("+")
+		if err := printStatus("+"); err != nil {
+			return err
+		}
 	}
 
 	return fmt.Errorf("\nTimed out waiting for transaction %s to be confirmed in a block", txHash)

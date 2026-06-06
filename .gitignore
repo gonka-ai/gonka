@@ -44,8 +44,10 @@ run-parallel-tests/
 **/target/
 /tmp
 .worklog
+testermint/run-archives/
 
 # Generated proto artifacts (buf output in wrong location)
 inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
+/build/devshardd

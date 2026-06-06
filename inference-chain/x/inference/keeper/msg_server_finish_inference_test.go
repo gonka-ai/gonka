@@ -202,14 +202,14 @@ func TestMsgServer_FinishInference_ParamsCacheDoesNotLeakAcrossCalls(t *testing.
 
 	err := k.SetEffectiveEpochIndex(ctx, 1) // Set to non-zero epoch to avoid epoch not found error
 	require.NoError(t, err)
-	err = k.SetActiveParticipants(ctx, types.ActiveParticipants{
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId: 1,
 		Participants: []*types.ActiveParticipant{
 			{
 				Index: testutil.Creator,
 			},
 		},
-	})
+	}))
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.DeveloperAccessParams = &types.DeveloperAccessParams{

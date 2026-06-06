@@ -321,7 +321,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
 			// Clean up validation snapshot
-			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
+			if err := am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight); err != nil {
+				return fmt.Errorf("failed to delete confirmation PoC validation snapshot: %w", err)
+			}
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -454,7 +456,9 @@ func (am AppModule) evaluateConfirmation(
 			continue
 		}
 		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
-		am.keeper.SetParticipant(ctx, participant)
+		if err := am.keeper.SetParticipant(ctx, participant); err != nil {
+			return err
+		}
 	}
 
 	if updated {

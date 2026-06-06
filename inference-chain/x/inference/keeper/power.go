@@ -48,18 +48,16 @@ func (k Keeper) GetEpochGroup(ctx context.Context, epochIndex uint64, modelId st
 }
 
 func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epochIndex uint64) (*epochgroup.EpochGroup, error) {
-	data, found := k.GetEpochGroupData(ctx, epochIndex, "")
-	if found {
+	if _, found := k.GetEpochGroupData(ctx, epochIndex, ""); found {
 		k.LogError("CreateEpochGroup: Root epoch group data already exists", types.EpochGroup, "epochIndex", epochIndex)
 		return nil, types.ErrEpochGroupDataAlreadyExists
-	} else {
-		data = types.EpochGroupData{
-			PocStartBlockHeight: pocStartHeight,
-			ModelId:             "",
-			EpochIndex:          epochIndex,
-		}
-		k.SetEpochGroupData(ctx, data)
 	}
+	data := types.EpochGroupData{
+		PocStartBlockHeight: pocStartHeight,
+		ModelId:             "",
+		EpochIndex:          epochIndex,
+	}
+	k.SetEpochGroupData(ctx, data)
 
 	return k.epochGroupFromData(data), nil
 }
