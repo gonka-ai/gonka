@@ -1,0 +1,48 @@
+name: Simulation Smoke (manual)
+
+# Manual trigger only; simulation runs add ~5-15 min to CI cost.
+# Maintainers may add `pull_request` / `push` triggers when sim coverage is
+# considered worth gating on. See docs/simulation.md for context.
+#
+# To activate auto-triggers, replace the `workflow_dispatch:` block below with:
+#
+#   pull_request:
+#     branches:
+#       - '**'
+#   push:
+#     branches:
+#       - main
+#
+# Or keep manual-only and trigger via the Actions tab / `gh workflow run`.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sim-smoke:
+    runs-on: ubuntu-24.04
+    name: Run sim-smoke-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('inference-chain/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run sim-smoke-test
+        working-directory: inference-chain
+        run: make sim-smoke-test

@@ -43,6 +43,12 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	stakingMock := NewMockStakingKeeper(ctrl)
+	// BuildEpochSubstrate (x/inference/simulation/substrate.go, called by
+	// the op factories) invokes GetAllValidators; tolerate it with an
+	// empty set so substrate short-circuits before any SetComputeValidators
+	// round-trip in unit tests that don't wire a real x/staking keeper.
+	stakingMock.EXPECT().GetAllValidators(gomock.Any()).
+		Return([]stakingtypes.Validator{}, nil).AnyTimes()
 	collateralMock := NewMockCollateralKeeper(ctrl)
 	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
 	authzKeeper := NewMockAuthzKeeper(ctrl)

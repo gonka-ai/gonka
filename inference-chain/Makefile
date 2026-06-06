@@ -1,4 +1,4 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy proto sim-smoke-test sim-full-test
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
@@ -310,3 +310,32 @@ mock-expected-keepers:
 
 proto:
 	ignite generate proto-go
+
+#################################################
+# SIMULATION SECTION (issue #982 Phase 1)
+#################################################
+# Targets are no-ops until TestFullAppSimulation lands in Phase 1 item 1.A (sim_test.go migration).
+
+SIM_PKG := ./app/
+
+# -GenesisTime is pinned: gonka-ai/cosmos-sdk registers it with a
+# time.Now() default (x/simulation/client/cli/flags.go:62), so an unpinned
+# run is reproducible only within a single process. Pinning it alongside
+# -Seed makes the AppHash reproducible across machines and CI runs.
+SIM_GENESIS_TIME := 1700000000
+
+sim-smoke-test:
+	@echo "--> Running smoke simulation: 50 blocks x 20 ops/block (~10 s)"
+	@go test -mod=readonly -tags "sims muslc" $(SIM_PKG) \
+		-run 'TestFullAppSimulation|TestFullSimulation_x_Inference_Integrated' \
+		-Enabled=true -Commit=true \
+		-NumBlocks=50 -BlockSize=20 -Seed=99 -GenesisTime=$(SIM_GENESIS_TIME) \
+		-v -timeout 30m
+
+sim-full-test:
+	@echo "--> Running full simulation: 500 blocks x 200 ops/block"
+	@go test -mod=readonly -tags "sims muslc" $(SIM_PKG) \
+		-run 'TestFullAppSimulation|TestFullSimulation_x_Inference_Integrated' \
+		-Enabled=true -Commit=true \
+		-NumBlocks=500 -BlockSize=200 -Seed=99 -GenesisTime=$(SIM_GENESIS_TIME) \
+		-v -timeout 180m

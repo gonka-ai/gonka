@@ -56,7 +56,16 @@ func NewEpochMemberFromStakingValidator(
 		return nil, err
 	}
 
-	pubKey := validator.ConsensusPubkey.String()
+	// EpochMember.Pubkey is stored as the x/group member Metadata and read back
+	// by GetComputeResults via base64.StdEncoding.DecodeString to reconstruct the
+	// ed25519 validator key. Any.String() yields a "&Any{TypeUrl:...}" debug
+	// string that is not valid base64; encode the raw consensus key bytes the
+	// same way NewEpochMemberFromActiveParticipant does (ActiveParticipant.ValidatorKey).
+	consPubKey, err := validator.ConsPubKey()
+	if err != nil {
+		return nil, err
+	}
+	pubKey := base64.StdEncoding.EncodeToString(consPubKey.Bytes())
 
 	return &EpochMember{
 		Address:       accAddr,

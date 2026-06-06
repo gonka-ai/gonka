@@ -1,18 +1,16 @@
+//go:build sims || simsbench
+
 package app_test
 
 import (
+	"bytes"
 	"encoding/json"
-	"flag"
-	"fmt"
-	"math/rand"
-	"os"
-	"runtime/debug"
+	"io"
 	"strings"
 	"testing"
-	"time"
 
 	"cosmossdk.io/log"
-	"cosmossdk.io/store"
+	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/feegrant"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
@@ -20,191 +18,393 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
-	"github.com/cosmos/cosmos-sdk/client/flags"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/server"
+	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
-	simulationtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	"github.com/cosmos/cosmos-sdk/testutil/simsx"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/kv"
+	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	"github.com/cosmos/cosmos-sdk/x/simulation"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	simcli "github.com/cosmos/cosmos-sdk/x/simulation/client/cli"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app"
+	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
-const (
-	SimAppChainID = "inference-simapp"
-)
+// Compile-time check that *app.App satisfies simsx.SimulationApp.
+var _ simsx.SimulationApp = (*app.App)(nil)
 
-var FlagEnableStreamingValue bool
+// defaultSimSeeds is the canonical seed triplet shared by
+// TestAppStateDeterminism (full sweep) and BenchmarkFullAppSimulation
+// (uses [0] as the single-seed default).
+var defaultSimSeeds = []int64{1, 32, 123}
 
-// Get flags every time the simulator is run
 func init() {
 	simcli.GetSimulatorFlags()
-	flag.BoolVar(&FlagEnableStreamingValue, "EnableStreaming", false, "Enable streaming service")
+	app.InitSDKConfig()
 }
 
-// fauxMerkleModeOpt returns a BaseApp option to use a dbStoreAdapter instead of
-// an IAVLStore for faster simulation speed.
-func fauxMerkleModeOpt(bapp *baseapp.BaseApp) {
-	bapp.SetFauxMerkleMode()
-}
-
-// interBlockCacheOpt returns a BaseApp option function that sets the persistent
-// inter-block write-through cache.
-func interBlockCacheOpt() func(*baseapp.BaseApp) {
-	return baseapp.SetInterBlockCache(store.NewCommitKVStoreCacheManager())
-}
-
-// BenchmarkSimulation run the chain simulation
-// Running using starport command:
-// `ignite chain simulate -v --numBlocks 200 --blockSize 50`
-// Running as go benchmark test:
-// `go test -benchmem -run=^$ -bench ^BenchmarkSimulation ./app -NumBlocks=200 -BlockSize 50 -Commit=true -Verbose=true -Enabled=true`
-func BenchmarkSimulation(b *testing.B) {
-	simcli.FlagSeedValue = time.Now().Unix()
-	simcli.FlagVerboseValue = true
-	simcli.FlagCommitValue = true
-	simcli.FlagEnabledValue = true
-
-	config := simcli.NewConfigFromFlags()
-	config.ChainID = SimAppChainID
-
-	db, dir, logger, skip, err := simtestutil.SetupSimulation(config, "leveldb-app-sim", "Simulation", simcli.FlagVerboseValue, simcli.FlagEnabledValue)
-	if skip {
-		b.Skip("skipping application simulation")
+// NewSimApp adapts app.New to the simsx.Run appFactory signature by hiding the
+// wasmd opts argument required by gonka's constructor.
+func NewSimApp(
+	logger log.Logger,
+	db dbm.DB,
+	traceStore io.Writer,
+	loadLatest bool,
+	appOpts servertypes.AppOptions,
+	baseAppOptions ...func(*baseapp.BaseApp),
+) *app.App {
+	// Force per-block crisis-module invariant checks for sim runs so a
+	// broken invariant halts the sim at the offending block instead of
+	// only surfacing post-run. The simsx runner passes an AppOptionsMap;
+	// inject InvCheckPeriod=1 before app.New consumes it.
+	if m, ok := appOpts.(simtestutil.AppOptionsMap); ok {
+		m[server.FlagInvCheckPeriod] = uint(1)
 	}
-	require.NoError(b, err, "simulation setup failed")
-
-	defer func() {
-		require.NoError(b, db.Close())
-		require.NoError(b, os.RemoveAll(dir))
-	}()
-
-	appOptions := make(simtestutil.AppOptionsMap, 0)
-	appOptions[flags.FlagHome] = app.DefaultNodeHome
-	appOptions[server.FlagInvCheckPeriod] = simcli.FlagPeriodValue
-
-	var emptyWasmOpts []wasmkeeper.Option
-
-	bApp, err := app.New(logger, db, nil, true, appOptions, emptyWasmOpts, fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
-	require.NoError(b, err)
-	require.Equal(b, app.Name, bApp.Name())
-
-	// run randomized simulation
-	_, simParams, simErr := simulation.SimulateFromSeed(
-		b,
-		os.Stdout,
-		bApp.BaseApp,
-		simtestutil.AppStateFn(bApp.AppCodec(), bApp.SimulationManager(), bApp.DefaultGenesis()),
-		simulationtypes.RandomAccounts,
-		simtestutil.SimulationOperations(bApp, bApp.AppCodec(), config),
-		app.BlockedAddresses(),
-		config,
-		bApp.AppCodec(),
-	)
-
-	// export state and simParams before the simulation error is checked
-	err = simtestutil.CheckExportSimulation(bApp, config, simParams)
-	require.NoError(b, err)
-	require.NoError(b, simErr)
-
-	if config.Commit {
-		simtestutil.PrintStats(db)
-	}
-}
-
-func TestAppImportExport(t *testing.T) {
-	config := simcli.NewConfigFromFlags()
-	config.ChainID = SimAppChainID
-
-	db, dir, logger, skip, err := simtestutil.SetupSimulation(config, "leveldb-app-sim", "Simulation", simcli.FlagVerboseValue, simcli.FlagEnabledValue)
-	if skip {
-		t.Skip("skipping application import/export simulation")
-	}
-	require.NoError(t, err, "simulation setup failed")
-
-	defer func() {
-		require.NoError(t, db.Close())
-		require.NoError(t, os.RemoveAll(dir))
-	}()
-
-	appOptions := make(simtestutil.AppOptionsMap, 0)
-	appOptions[flags.FlagHome] = app.DefaultNodeHome
-	appOptions[server.FlagInvCheckPeriod] = simcli.FlagPeriodValue
-
-	var emptyWasmOpts []wasmkeeper.Option
-
-	bApp, err := app.New(logger, db, nil, true, appOptions, emptyWasmOpts, fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
-	require.NoError(t, err)
-	require.Equal(t, app.Name, bApp.Name())
-
-	// Run randomized simulation
-	_, simParams, simErr := simulation.SimulateFromSeed(
-		t,
-		os.Stdout,
-		bApp.BaseApp,
-		simtestutil.AppStateFn(bApp.AppCodec(), bApp.SimulationManager(), bApp.DefaultGenesis()),
-		simulationtypes.RandomAccounts,
-		simtestutil.SimulationOperations(bApp, bApp.AppCodec(), config),
-		app.BlockedAddresses(),
-		config,
-		bApp.AppCodec(),
-	)
-
-	// export state and simParams before the simulation error is checked
-	err = simtestutil.CheckExportSimulation(bApp, config, simParams)
-	require.NoError(t, err)
-	require.NoError(t, simErr)
-
-	if config.Commit {
-		simtestutil.PrintStats(db)
-	}
-
-	fmt.Printf("exporting genesis...\n")
-
-	exported, err := bApp.ExportAppStateAndValidators(false, []string{}, []string{})
-	require.NoError(t, err)
-
-	fmt.Printf("importing genesis...\n")
-
-	newDB, newDir, _, _, err := simtestutil.SetupSimulation(config, "leveldb-app-sim-2", "Simulation-2", simcli.FlagVerboseValue, simcli.FlagEnabledValue)
-	require.NoError(t, err, "simulation setup failed")
-
-	defer func() {
-		require.NoError(t, newDB.Close())
-		require.NoError(t, os.RemoveAll(newDir))
-	}()
-
-	newApp, err := app.New(logger, newDB, nil, true, appOptions, emptyWasmOpts, fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
-	require.NoError(t, err)
-	require.Equal(t, app.Name, newApp.Name())
-
-	var genesisState app.GenesisState
-	err = json.Unmarshal(exported.AppState, &genesisState)
-	require.NoError(t, err)
-
-	ctxA := bApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
-	ctxB := newApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
-	_, err = newApp.ModuleManager.InitGenesis(ctxB, bApp.AppCodec(), genesisState)
-
+	bApp, err := app.New(logger, db, traceStore, loadLatest, appOpts, []wasmkeeper.Option{}, baseAppOptions...)
 	if err != nil {
-		if strings.Contains(err.Error(), "validator set is empty after InitGenesis") {
-			logger.Info("Skipping simulation as all validators have been unbonded")
-			logger.Info("err", err, "stacktrace", string(debug.Stack()))
-			return
+		panic(err)
+	}
+	return bApp
+}
+
+// setupStateFactory builds the SimStateFactory consumed by simsx.Run for each
+// seed. AccountKeeper satisfies simsx.AccountSourceX (AccountSource +
+// ModuleAccountSource); BankKeeper satisfies simsx.BalanceSource.
+//
+// AppStateFnWithExtendedCb (rather than plain AppStateFn) lets fixBankGenesisState
+// patch the randomized rawState before InitGenesis runs.
+func setupStateFactory(bApp *app.App) simsx.SimStateFactory {
+	return simsx.SimStateFactory{
+		Codec: bApp.AppCodec(),
+		AppStateFn: simtestutil.AppStateFnWithExtendedCb(
+			bApp.AppCodec(),
+			bApp.SimulationManager(),
+			bApp.DefaultGenesis(),
+			func(rawState map[string]json.RawMessage) {
+				shrinkUpstreamStakingValidators(bApp, rawState)
+				fixBankGenesisState(bApp, rawState)
+			},
+		),
+		BlockedAddr:   app.BlockedAddresses(),
+		AccountSource: bApp.AccountKeeper,
+		BalanceSource: bApp.BankKeeper,
+	}
+}
+
+// shrinkUpstreamStakingValidators reduces every upstream-generated staking
+// validator's Tokens and matching DelegatorShares/Delegation.Shares to 1
+// (in BondDenom), so that EpochGroup.ValidationWeights[].Weight (sourced
+// from Tokens via epochgroup.NewEpochMemberFromStakingValidator,
+// epoch_group.go:103) does not dominate over sim genesis participants
+// (each at simValidatorPower=1_000_000 from x/inference/simulation/
+// bootstrap.go).
+//
+// Background: cosmos-sdk's RandomizedGenState (x/staking/simulation/
+// genesis.go) generates 1-299 random Unbonded validators with Tokens=
+// InitialStake ≈ 10^12 each. x/inference's InitGenesisEpoch
+// (module/genesis.go:186) iterates ALL staking validators via
+// GetAllValidators and adds them to EpochGroup.ValidationWeights with
+// Weight=Tokens. Without this shrink:
+//   - totalNetworkWeight ≈ N × 10^12 (often ~10^13–10^14)
+//   - validWeight max = NumSimGenesisParticipants × simValidatorPower
+//     = 5 × 10^6
+//   - Calculate's 2/3-of-total threshold (chainvalidation.go:327) is
+//     unreachable → ComputeNewWeights yields nil active set → no
+//     SetComputeValidators → cometbft set drains → SKIP "empty
+//     validator set" (cosmos-sdk x/simulation/simulate.go:266).
+//
+// We keep all validators (so staking.InitGenesis still bonds ≥1 and
+// InitChain doesn't panic on empty validator set per
+// cosmos-sdk types/module/module.go:524) but shrink their Tokens.
+// NotBondedPool balance is adjusted to mirror the new sum, preserving
+// the upstream invariant (state_helpers.go:132-139) that
+// NotBondedPool == sum(Status==Unbonded).Tokens.
+func shrinkUpstreamStakingValidators(bApp *app.App, rawState map[string]json.RawMessage) {
+	stakingBz, ok := rawState[stakingtypes.ModuleName]
+	if !ok {
+		panic("staking genesis state missing from randomized state")
+	}
+	var stakingState stakingtypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(stakingBz, &stakingState)
+
+	originalNotBonded := sdkmath.ZeroInt()
+	for _, v := range stakingState.Validators {
+		if v.Status == stakingtypes.Unbonded {
+			originalNotBonded = originalNotBonded.Add(v.Tokens)
 		}
 	}
-	require.NoError(t, err)
-	err = newApp.StoreConsensusParams(ctxB, exported.ConsensusParams)
-	require.NoError(t, err)
-	fmt.Printf("comparing stores...\n")
 
-	// skip certain prefixes
-	skipPrefixes := map[string][][]byte{
+	oneToken := sdkmath.OneInt()
+	oneShares := sdkmath.LegacyOneDec()
+	for i := range stakingState.Validators {
+		operAddr := stakingState.Validators[i].OperatorAddress
+		valAddr, err := sdk.ValAddressFromBech32(operAddr)
+		if err != nil {
+			panic(err)
+		}
+		accAddr := sdk.AccAddress(valAddr).String()
+		// Derivation mirrors x/inference/simulation.SimValidatorKey
+		// (genesis.go:17) so sim genesis EpochMember.Pubkey ==
+		// staking.Validator.ConsensusPubkey for the same account. Without
+		// this alignment, the GON-191 stale-consensus-key filter in our
+		// cosmos-sdk fork (x/staking/keeper/compute.go:358) removes sim
+		// genesis validators from the bonded set on the first
+		// SetComputeValidators call from EnsureSimActiveParticipantsSeeded.
+		pubKey := ed25519.GenPrivKeyFromSecret([]byte("gonka-sim-validator:" + accAddr)).PubKey()
+		pkAny, err := codectypes.NewAnyWithValue(pubKey)
+		if err != nil {
+			panic(err)
+		}
+		stakingState.Validators[i].ConsensusPubkey = pkAny
+		stakingState.Validators[i].Tokens = oneToken
+		stakingState.Validators[i].DelegatorShares = oneShares
+	}
+	for i := range stakingState.Delegations {
+		stakingState.Delegations[i].Shares = oneShares
+	}
+	for i := range stakingState.LastValidatorPowers {
+		stakingState.LastValidatorPowers[i].Power = 1
+	}
+	rawState[stakingtypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&stakingState)
+
+	numUnbonded := sdkmath.ZeroInt()
+	for _, v := range stakingState.Validators {
+		if v.Status == stakingtypes.Unbonded {
+			numUnbonded = numUnbonded.AddRaw(1)
+		}
+	}
+	delta := originalNotBonded.Sub(numUnbonded)
+	if delta.IsZero() || delta.IsNegative() {
+		return
+	}
+
+	bankBz, ok := rawState[banktypes.ModuleName]
+	if !ok {
+		panic("bank genesis state missing from randomized state")
+	}
+	var bankState banktypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(bankBz, &bankState)
+
+	notBondedAddr := authtypes.NewModuleAddress(stakingtypes.NotBondedPoolName).String()
+	bondDenom := stakingState.Params.BondDenom
+	for i := range bankState.Balances {
+		if bankState.Balances[i].Address == notBondedAddr {
+			bankState.Balances[i].Coins = bankState.Balances[i].Coins.Sub(
+				sdk.NewCoin(bondDenom, delta))
+			break
+		}
+	}
+	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
+}
+
+// fixBankGenesisState patches the randomized sim genesis so InitGenesis succeeds:
+//
+//  1. Add Gonka denom metadata, required by inference module init
+//     (app.initializeDenomMetadata reads BankKeeper.GetDenomMetaData(BaseCoin)).
+//  2. Fund every sim account with ngonka: upstream
+//     simsx hardwires simState.BondDenom = sdk.DefaultBondDenom = "stake"
+//     (testutil/simsx/runner.go:286), so the randomized bank GenesisState
+//     funds accounts with `stake` but not the `ngonka` BaseCoin that
+//     StartInference's escrow flow requires (payment_handler.go).
+//     Without this, every StartInference fails at PutPaymentInEscrow with
+//     "insufficient spendable funds" and routes through failedStart — so
+//     no Inferences ever land in keeper and the rest of the first-wave
+//     ops never see paired state. We give each account simAccountNgonka
+//     coins of ngonka (~10^15 ≈ 10^6 GNK), well above the per-inference
+//     escrow even for the full-test 100K-op run.
+//  3. Recompute bank Supply from Balances. The randomized genesis sets
+//     Supply based on NumBonded staking validators, but with staking ops
+//     disabled the bonded pool is never funded, so the default Supply
+//     would fail the supply-vs-balance invariant at InitGenesis. Same
+//     recompute keeps Supply in sync after the ngonka top-up.
+//
+// The denom-metadata + Supply-recompute steps are ported from hleb-albau
+// PR gonka-ai/gonka#995; the ngonka top-up is added on top.
+func fixBankGenesisState(bApp *app.App, rawState map[string]json.RawMessage) {
+	bankStateBz, ok := rawState[banktypes.ModuleName]
+	if !ok {
+		panic("bank genesis state missing from randomized state")
+	}
+	var bankState banktypes.GenesisState
+	bApp.AppCodec().MustUnmarshalJSON(bankStateBz, &bankState)
+
+	bankState.DenomMetadata = append(bankState.DenomMetadata, banktypes.Metadata{
+		Description: "Coins for the Gonka network.",
+		Base:        inferencetypes.BaseCoin,
+		Display:     inferencetypes.NativeCoin,
+		Name:        "Gonka",
+		Symbol:      "GNK",
+		DenomUnits: []*banktypes.DenomUnit{
+			{Denom: inferencetypes.BaseCoin, Exponent: 0, Aliases: []string{"nanogonka"}},
+			{Denom: "ugonka", Exponent: 3, Aliases: []string{"microgonka"}},
+			{Denom: "mgonka", Exponent: 6, Aliases: []string{"milligonka"}},
+			{Denom: inferencetypes.NativeCoin, Exponent: 9},
+		},
+	})
+
+	// Build the set of module-account addresses so we DON'T top them up
+	// with ngonka — staking InitGenesis verifies notBondedPool balance ==
+	// declared NotBondedCoins (stake only); adding ngonka there panics
+	// «not bonded pool balance is different from not bonded coins»
+	// (cosmos-sdk x/staking/keeper/genesis.go:174).
+	moduleAddrs := make(map[string]bool, 16)
+	for name := range app.GetMaccPerms() {
+		moduleAddrs[authtypes.NewModuleAddress(name).String()] = true
+	}
+
+	ngonkaTopUp := sdk.NewCoin(inferencetypes.BaseCoin, simAccountNgonka)
+	for i := range bankState.Balances {
+		if moduleAddrs[bankState.Balances[i].Address] {
+			continue
+		}
+		bankState.Balances[i].Coins = bankState.Balances[i].Coins.Add(ngonkaTopUp)
+	}
+
+	var actualSupply sdk.Coins
+	for _, balance := range bankState.Balances {
+		actualSupply = actualSupply.Add(balance.Coins...)
+	}
+	bankState.Supply = actualSupply
+
+	rawState[banktypes.ModuleName] = bApp.AppCodec().MustMarshalJSON(&bankState)
+}
+
+// simAccountNgonka is the per-sim-account ngonka top-up amount applied by
+// fixBankGenesisState. 10^15 ngonka = 10^6 GNK — comfortable buffer
+// above the per-inference escrow (~6.3 × 10^5 ngonka in current sim) even
+// at the make sim-full-test scale of 500 blocks × 200 ops/block.
+var simAccountNgonka = sdkmath.NewInt(1_000_000_000_000_000)
+
+// TestFullAppSimulation is the simsx entry point for `make sim-smoke-test`
+// and `make sim-full-test`. CLI flags (-NumBlocks, -BlockSize, -Seed,
+// -Enabled) come from simcli.GetSimulatorFlags() in init().
+//
+// Requires -Enabled=true. simsx does not gate on it the way legacy
+// simulation.SimulateFromSeed did; this test restores that gate so a
+// raw `go test -tags sims ./app/...` skips fast.
+//
+// With user-supplied -Seed=N (Make targets), dispatches to
+// simsx.RunWithSeed for a single-seed run. Without it, falls through to
+// simsx.Run which fans out the framework's defaultSeeds list (37 seeds
+// in this fork) as parallel subtests.
+func TestFullAppSimulation(t *testing.T) {
+	if !simcli.FlagEnabledValue {
+		t.Skip("pass -Enabled=true to run this; e.g. via make sim-smoke-test")
+	}
+	cfg := simcli.NewConfigFromFlags()
+	cfg.ChainID = simsx.SimAppChainID
+
+	if cfg.Seed != simcli.DefaultSeedValue {
+		simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, cfg.Seed, nil, checkInferenceInvariants)
+		return
+	}
+	simsx.Run(t, NewSimApp, setupStateFactory, checkInferenceInvariants)
+}
+
+// checkInferenceInvariants runs every x/inference invariant against the
+// final sim state and fails the test on any breakage. Used as a post-run
+// callback so a violation prints the specific invariant name +
+// descriptive message even when per-block crisis checks miss the final
+// EndBlocker (e.g. when sim halts mid-tx on an unrelated failure).
+func checkInferenceInvariants(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
+	tb.Helper()
+	bApp := ti.App
+	ctx := bApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
+	msg, broken := inferencekeeper.AllInvariants(bApp.InferenceKeeper)(ctx)
+	if broken {
+		tb.Fatalf("x/inference invariant broken on post-run check: %s", msg)
+	}
+}
+
+// TestAppImportExport_Postrun is t.Skip'd because InitGenesis on the
+// re-imported state panics at gonka-ai/cosmos-sdk@v0.53.3-ps17
+// x/staking/keeper/genesis.go:157-158 ("bonded pool balance is different
+// from bonded coins").
+//
+// The fork's PoC architecture (gonka/docs/cosmos_changes.md) disables
+// token bonding: SetComputeValidators creates bonded validators without
+// bank transfers, pool.go iterates manually, and delegation.go +
+// val_state_change.go skip the transfers. genesis.go:157 was not updated
+// to mirror that skip, so its upstream invariant bondedBalance.Equal(
+// bondedCoins) no longer holds against live state.
+//
+// Production sidesteps this by using x/upgrade in-place handlers (see
+// app/upgrades/v0_2_12) instead of `inferenced export -> init`. Funding
+// the bonded pool here to make the test green would mask the
+// inconsistency, so it stays skipped.
+//
+// Re-enable once gonka-ai/cosmos-sdk genesis.go applies the same
+// PoC-validator skip already in delegation.go. Fork fix proposal:
+// gonka-ai/gonka#1153. Broader Phase 1 work: gonka-ai/gonka#982.
+func TestAppImportExport_Postrun(t *testing.T) {
+	t.Skip("blocked on gonka-ai/cosmos-sdk genesis.go:157; see gonka-ai/gonka#1153 for the fork fix proposal")
+	simsx.Run(t, NewSimApp, setupStateFactory, checkImportExport)
+}
+
+func checkImportExport(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
+	tb.Helper()
+	bApp := ti.App
+
+	tb.Logf("exporting genesis...")
+	exported, err := bApp.ExportAppStateAndValidators(false, []string{}, []string{})
+	require.NoError(tb, err)
+
+	tb.Logf("importing genesis into fresh app...")
+	newTI := simsx.NewSimulationAppInstance(tb, ti.Cfg, NewSimApp)
+	newApp := newTI.App
+	defer func() { _ = newApp.Close() }()
+
+	var genesisState app.GenesisState
+	require.NoError(tb, json.Unmarshal(exported.AppState, &genesisState))
+
+	header := cmtproto.Header{Height: bApp.LastBlockHeight()}
+	ctxA := bApp.NewContextLegacy(true, header)
+	ctxB := newApp.NewContextLegacy(true, header)
+	if _, err := newApp.ModuleManager.InitGenesis(ctxB, newApp.AppCodec(), genesisState); err != nil {
+		// Defensive: even with disabledOpsSimModule on staking we keep the
+		// upstream-known skip path for the rare case of an empty validator set.
+		if strings.Contains(err.Error(), "validator set is empty after InitGenesis") {
+			tb.Skip("import-export comparison skipped: validator set empty")
+		}
+		tb.Fatalf("InitGenesis on newApp: %v", err)
+	}
+	require.NoError(tb, newApp.StoreConsensusParams(ctxB, exported.ConsensusParams))
+
+	tb.Logf("comparing stores...")
+	skipPrefixes := importExportSkipPrefixes()
+	storeKeys := bApp.GetStoreKeys()
+	require.NotEmpty(tb, storeKeys)
+	for _, appKeyA := range storeKeys {
+		if _, ok := appKeyA.(*storetypes.KVStoreKey); !ok {
+			continue
+		}
+		keyName := appKeyA.Name()
+		appKeyB := newApp.GetKey(keyName)
+		storeA := ctxA.KVStore(appKeyA)
+		storeB := ctxB.KVStore(appKeyB)
+		failedKVAs, failedKVBs := simtestutil.DiffKVStores(storeA, storeB, skipPrefixes[keyName])
+		require.Equalf(tb, len(failedKVAs), len(failedKVBs), "unequal failure sets for %s", keyName)
+		if len(failedKVAs) != 0 {
+			tb.Fatalf("KV diff for %s:\n%s", keyName,
+				simtestutil.GetSimulationLog(keyName, bApp.SimulationManager().StoreDecoders, failedKVAs, failedKVBs))
+		}
+	}
+}
+
+// importExportSkipPrefixes mirrors upstream cosmos-sdk simapp's skip set:
+// transient queues populated by runtime hooks, not by InitGenesis.
+func importExportSkipPrefixes() map[string][][]byte {
+	return map[string][][]byte{
 		stakingtypes.StoreKey: {
 			stakingtypes.UnbondingQueueKey, stakingtypes.RedelegationQueueKey, stakingtypes.ValidatorQueueKey,
 			stakingtypes.HistoricalInfoKey, stakingtypes.UnbondingIDKey, stakingtypes.UnbondingIndexKey,
@@ -214,224 +414,181 @@ func TestAppImportExport(t *testing.T) {
 		feegrant.StoreKey:      {feegrant.FeeAllowanceQueueKeyPrefix},
 		slashingtypes.StoreKey: {slashingtypes.ValidatorMissedBlockBitmapKeyPrefix},
 	}
-
-	storeKeys := bApp.GetStoreKeys()
-	require.NotEmpty(t, storeKeys)
-
-	for _, appKeyA := range storeKeys {
-		// only compare kvstores
-		if _, ok := appKeyA.(*storetypes.KVStoreKey); !ok {
-			continue
-		}
-
-		keyName := appKeyA.Name()
-		appKeyB := newApp.GetKey(keyName)
-
-		storeA := ctxA.KVStore(appKeyA)
-		storeB := ctxB.KVStore(appKeyB)
-
-		failedKVAs, failedKVBs := simtestutil.DiffKVStores(storeA, storeB, skipPrefixes[keyName])
-		require.Equal(t, len(failedKVAs), len(failedKVBs), "unequal sets of key-values to compare %s", keyName)
-
-		fmt.Printf("compared %d different key/value pairs between %s and %s\n", len(failedKVAs), appKeyA, appKeyB)
-
-		require.Equal(t, 0, len(failedKVAs), simtestutil.GetSimulationLog(keyName, bApp.SimulationManager().StoreDecoders, failedKVAs, failedKVBs))
-	}
 }
 
-func TestAppSimulationAfterImport(t *testing.T) {
-	config := simcli.NewConfigFromFlags()
-	config.ChainID = SimAppChainID
+// TestAppSimulationAfterImport_Postrun is t.Skip'd. Two things must be
+// done before re-enabling, in order:
+//
+//  1. gonka-ai/cosmos-sdk genesis.go:157 bonded-pool fix per
+//     gonka-ai/gonka#1153 (InitChain on the imported state currently
+//     panics on the same fork asymmetry as TestAppImportExport_Postrun).
+//  2. Wire SimulateFromSeedX into checkSimulationAfterImport. The current
+//     body only verifies InitChain succeeds; the test name promises a
+//     second simulation step that is not yet implemented (TODO in the
+//     body).
+//
+// Removing t.Skip with only (1) cleared would make the test pass while
+// never exercising the second simulation step. Both must land first.
+func TestAppSimulationAfterImport_Postrun(t *testing.T) {
+	t.Skip("blocked on (1) gonka-ai/cosmos-sdk genesis.go:157 fix per gonka-ai/gonka#1153, and (2) wiring SimulateFromSeedX for the after-import simulation step")
+	simsx.Run(t, NewSimApp, setupStateFactory, checkSimulationAfterImport)
+}
 
-	db, dir, logger, skip, err := simtestutil.SetupSimulation(config, "leveldb-app-sim", "Simulation", simcli.FlagVerboseValue, simcli.FlagEnabledValue)
-	if skip {
-		t.Skip("skipping application simulation after import")
-	}
-	require.NoError(t, err, "simulation setup failed")
+func checkSimulationAfterImport(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
+	tb.Helper()
+	bApp := ti.App
 
-	defer func() {
-		require.NoError(t, db.Close())
-		require.NoError(t, os.RemoveAll(dir))
-	}()
-
-	appOptions := make(simtestutil.AppOptionsMap, 0)
-	appOptions[flags.FlagHome] = app.DefaultNodeHome
-	appOptions[server.FlagInvCheckPeriod] = simcli.FlagPeriodValue
-
-	var emptyWasmOpts []wasmkeeper.Option
-
-	bApp, err := app.New(logger, db, nil, true, appOptions, emptyWasmOpts, fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
-	require.NoError(t, err)
-	require.Equal(t, app.Name, bApp.Name())
-
-	// Run randomized simulation
-	stopEarly, simParams, simErr := simulation.SimulateFromSeed(
-		t,
-		os.Stdout,
-		bApp.BaseApp,
-		simtestutil.AppStateFn(bApp.AppCodec(), bApp.SimulationManager(), bApp.DefaultGenesis()),
-		simulationtypes.RandomAccounts,
-		simtestutil.SimulationOperations(bApp, bApp.AppCodec(), config),
-		app.BlockedAddresses(),
-		config,
-		bApp.AppCodec(),
-	)
-
-	// export state and simParams before the simulation error is checked
-	err = simtestutil.CheckExportSimulation(bApp, config, simParams)
-	require.NoError(t, err)
-	require.NoError(t, simErr)
-
-	if config.Commit {
-		simtestutil.PrintStats(db)
-	}
-
-	if stopEarly {
-		fmt.Println("can't export or import a zero-validator genesis, exiting test...")
-		return
-	}
-
-	fmt.Printf("exporting genesis...\n")
-
+	tb.Logf("exporting genesis (forZeroHeight=true)...")
 	exported, err := bApp.ExportAppStateAndValidators(true, []string{}, []string{})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
-	fmt.Printf("importing genesis...\n")
-
-	newDB, newDir, _, _, err := simtestutil.SetupSimulation(config, "leveldb-app-sim-2", "Simulation-2", simcli.FlagVerboseValue, simcli.FlagEnabledValue)
-	require.NoError(t, err, "simulation setup failed")
-
-	defer func() {
-		require.NoError(t, newDB.Close())
-		require.NoError(t, os.RemoveAll(newDir))
-	}()
-
-	newApp, err := app.New(logger, newDB, nil, true, appOptions, emptyWasmOpts, fauxMerkleModeOpt, baseapp.SetChainID(SimAppChainID))
-	require.NoError(t, err)
-	require.Equal(t, app.Name, newApp.Name())
+	tb.Logf("importing genesis into fresh app via InitChain...")
+	newTI := simsx.NewSimulationAppInstance(tb, ti.Cfg, NewSimApp)
+	newApp := newTI.App
+	defer func() { _ = newApp.Close() }()
 
 	_, err = newApp.InitChain(&abci.RequestInitChain{
 		AppStateBytes: exported.AppState,
-		ChainId:       SimAppChainID,
+		ChainId:       ti.Cfg.ChainID,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
-	_, _, err = simulation.SimulateFromSeed(
-		t,
-		os.Stdout,
-		newApp.BaseApp,
-		simtestutil.AppStateFn(bApp.AppCodec(), bApp.SimulationManager(), bApp.DefaultGenesis()),
-		simulationtypes.RandomAccounts,
-		simtestutil.SimulationOperations(newApp, newApp.AppCodec(), config),
-		app.BlockedAddresses(),
-		config,
-		bApp.AppCodec(),
-	)
-	require.NoError(t, err)
+	// TODO: once import unblocks, run SimulateFromSeedX on newApp. Needs
+	// either a copy of simsx's unexported prepareWeightedOps or a minimal
+	// ops registry.
+	tb.Log("import succeeded; second-simulation step deferred (see TODO)")
 }
 
+// TestAppStateDeterminism asserts that running the same seed N times
+// produces an identical AppHash. Uses simsx.RunWithSeed directly because
+// simsx.Run fans out distinct seeds in parallel; determinism wants the
+// same seed sequentially. PoC-state determinism beyond AppHash
+// (EffectiveIndex, epoch-state collections) is Phase 3 territory per the
+// issue body.
 func TestAppStateDeterminism(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
 	if !simcli.FlagEnabledValue {
-		t.Skip("skipping application simulation")
+		t.Skip("pass -Enabled=true to run this; simsx does not gate on it")
 	}
+	cfg := simcli.NewConfigFromFlags()
+	cfg.ChainID = simsx.SimAppChainID
 
-	config := simcli.NewConfigFromFlags()
-	config.InitialBlockHeight = 1
-	config.ExportParamsPath = ""
-	config.OnOperation = true
-	config.AllInvariants = true
-
-	numSeeds := 3
-	numTimesToRunPerSeed := 3 // This used to be set to 5, but we've temporarily reduced it to 3 for the sake of faster CI.
-	appHashList := make([]json.RawMessage, numTimesToRunPerSeed)
-
-	// We will be overriding the random seed and just run a single simulation on the provided seed value
-	if config.Seed != simcli.DefaultSeedValue {
-		numSeeds = 1
+	// Block counts inherit from simcli flags.
+	// Honor user-supplied -Seed=N for single-seed reproduction of a failure.
+	seeds := defaultSimSeeds
+	if cfg.Seed != simcli.DefaultSeedValue {
+		seeds = []int64{cfg.Seed}
 	}
+	const attempts = 3
 
-	appOptions := viper.New()
-	if FlagEnableStreamingValue {
-		m := make(map[string]interface{})
-		m["streaming.abci.keys"] = []string{"*"}
-		m["streaming.abci.plugin"] = "abci_v1"
-		m["streaming.abci.stop-node-on-err"] = true
-		for key, value := range m {
-			appOptions.SetDefault(key, value)
+	for _, seed := range seeds {
+		// Pre-allocated indexed slots so a failure points at the specific
+		// attempt rather than a generic count mismatch. RunWithSeed invokes
+		// capture synchronously, so hashes[attempt] is populated before the
+		// next iteration.
+		hashes := make([][]byte, attempts)
+		// Snapshot KV state per attempt so a divergence prints decoded
+		// proto state via the modules' RegisterStoreDecoder registry,
+		// instead of an opaque AppHash mismatch.
+		snapshots := make([]storeSnapshot, attempts)
+		var decoders simtypes.StoreDecoderRegistry
+		for attempt := range attempts {
+			capture := func(tb testing.TB, ti simsx.TestInstance[*app.App], _ []simtypes.Account) {
+				hashes[attempt] = ti.App.LastCommitID().Hash
+				snapshots[attempt] = snapshotStores(ti.App)
+				decoders = ti.App.SimulationManager().StoreDecoders
+			}
+			simsx.RunWithSeed(t, cfg, NewSimApp, setupStateFactory, seed, nil, capture)
+			require.NotEmptyf(t, hashes[attempt],
+				"capture callback was not invoked for seed %d attempt %d", seed, attempt)
+		}
+		for i := 1; i < attempts; i++ {
+			if !bytes.Equal(hashes[0], hashes[i]) {
+				dumpKVDivergence(t, seed, i, snapshots[0], snapshots[i], decoders)
+			}
+			require.Equalf(t, hashes[0], hashes[i],
+				"non-determinism in seed %d: attempt 0 vs %d", seed, i)
 		}
 	}
-	appOptions.SetDefault(flags.FlagHome, app.DefaultNodeHome)
-	appOptions.SetDefault(server.FlagInvCheckPeriod, simcli.FlagPeriodValue)
-	if simcli.FlagVerboseValue {
-		appOptions.SetDefault(flags.FlagLogLevel, "debug")
-	}
+}
 
-	for i := 0; i < numSeeds; i++ {
-		if config.Seed == simcli.DefaultSeedValue {
-			config.Seed = rand.Int63()
+// storeSnapshot is the captured KV state of every IAVL store at the end
+// of one simulation attempt. Used by TestAppStateDeterminism's divergence
+// dump so a regression prints decoded proto state instead of raw hash.
+type storeSnapshot map[string][]kv.Pair
+
+// snapshotStores iterates every IAVL store on the app and returns a deep
+// copy of every (key, value) pair. Run only after a sim completes — uses
+// a legacy context against the last block height.
+func snapshotStores(bApp *app.App) storeSnapshot {
+	snap := make(storeSnapshot)
+	ctx := bApp.NewContextLegacy(true, cmtproto.Header{Height: bApp.LastBlockHeight()})
+	for _, storeKey := range bApp.GetStoreKeys() {
+		kvKey, ok := storeKey.(*storetypes.KVStoreKey)
+		if !ok {
+			continue
 		}
-		fmt.Println("config.Seed: ", config.Seed)
+		name := kvKey.Name()
+		kvStore := ctx.KVStore(kvKey)
+		iter := kvStore.Iterator(nil, nil)
+		var pairs []kv.Pair
+		for ; iter.Valid(); iter.Next() {
+			pairs = append(pairs, kv.Pair{
+				Key:   append([]byte{}, iter.Key()...),
+				Value: append([]byte{}, iter.Value()...),
+			})
+		}
+		iter.Close()
+		snap[name] = pairs
+	}
+	return snap
+}
 
-		for j := 0; j < numTimesToRunPerSeed; j++ {
-			var logger log.Logger
-			if simcli.FlagVerboseValue {
-				logger = log.NewTestLogger(t)
-			} else {
-				logger = log.NewNopLogger()
-			}
-			chainID := fmt.Sprintf("chain-id-%d-%d", i, j)
-			config.ChainID = chainID
+// dumpKVDivergence diffs two captured snapshots store-by-store and emits
+// a readable diff via the per-module store decoders. The diff is only
+// emitted for stores whose KV pairs disagree.
+func dumpKVDivergence(t *testing.T, seed int64, attempt int, a, b storeSnapshot, decoders simtypes.StoreDecoderRegistry) {
+	t.Helper()
+	for name, pairsA := range a {
+		pairsB := b[name]
+		failedA, failedB := diffCapturedPairs(pairsA, pairsB)
+		if len(failedA) == 0 {
+			continue
+		}
+		t.Logf("KV divergence in store %q (seed %d, attempt 0 vs %d):\n%s",
+			name, seed, attempt,
+			simtestutil.GetSimulationLog(name, decoders, failedA, failedB))
+	}
+}
 
-			db := dbm.NewMemDB()
-			var emptyWasmOpts []wasmkeeper.Option
-
-			bApp, err := app.New(
-				logger,
-				db,
-				nil,
-				true,
-				appOptions,
-				emptyWasmOpts,
-				interBlockCacheOpt(),
-				baseapp.SetChainID(chainID),
-			)
-			require.NoError(t, err)
-
-			fmt.Printf(
-				"running non-determinism simulation; seed %d: %d/%d, attempt: %d/%d\n",
-				config.Seed, i+1, numSeeds, j+1, numTimesToRunPerSeed,
-			)
-
-			_, _, err = simulation.SimulateFromSeed(
-				t,
-				os.Stdout,
-				bApp.BaseApp,
-				simtestutil.AppStateFn(
-					bApp.AppCodec(),
-					bApp.SimulationManager(),
-					bApp.DefaultGenesis(),
-				),
-				simulationtypes.RandomAccounts,
-				simtestutil.SimulationOperations(bApp, bApp.AppCodec(), config),
-				app.BlockedAddresses(),
-				config,
-				bApp.AppCodec(),
-			)
-			require.NoError(t, err)
-
-			if config.Commit {
-				simtestutil.PrintStats(db)
-			}
-
-			appHash := bApp.LastCommitID().Hash
-			appHashList[j] = appHash
-
-			if j != 0 {
-				require.Equal(
-					t, string(appHashList[0]), string(appHashList[j]),
-					"non-determinism in seed %d: %d/%d, attempt: %d/%d\n", config.Seed, i+1, numSeeds, j+1, numTimesToRunPerSeed,
-				)
-			}
+// diffCapturedPairs returns aligned slices of pairs that differ between
+// the two captures. Missing keys on one side become nil-value placeholders.
+func diffCapturedPairs(a, b []kv.Pair) (failedA, failedB []kv.Pair) {
+	indexB := make(map[string]int, len(b))
+	for i, p := range b {
+		indexB[string(p.Key)] = i
+	}
+	seenA := make(map[string]struct{}, len(a))
+	for _, pa := range a {
+		seenA[string(pa.Key)] = struct{}{}
+		j, ok := indexB[string(pa.Key)]
+		if !ok {
+			failedA = append(failedA, pa)
+			failedB = append(failedB, kv.Pair{Key: pa.Key, Value: nil})
+			continue
+		}
+		if !bytes.Equal(pa.Value, b[j].Value) {
+			failedA = append(failedA, pa)
+			failedB = append(failedB, b[j])
 		}
 	}
+	for _, pb := range b {
+		if _, ok := seenA[string(pb.Key)]; !ok {
+			failedA = append(failedA, kv.Pair{Key: pb.Key, Value: nil})
+			failedB = append(failedB, pb)
+		}
+	}
+	return
 }

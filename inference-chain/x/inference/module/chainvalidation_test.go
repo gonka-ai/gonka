@@ -9,6 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/utils"
 
 	"cosmossdk.io/math"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,17 @@ import (
 
 var validatorOperatorAddress1 = "gonkavaloper1gcrlrhvw8kd7zr6pl92rxnc6j20chatkcx6w4t"
 var validatorOperatorAddress2 = "gonkavaloper1xk89s4ymj9y20aym3xa0mz4jhdx40hewckhw0u"
+
+// validatorConsPubAny returns an Any-wrapped ed25519 pubkey derived from
+// operatorAddr. Empty &codectypes.Any{} fails Validator.ConsPubKey() — the
+// path InitGenesis takes for staking validators.
+func validatorConsPubAny(t *testing.T, operatorAddr string) *codectypes.Any {
+	t.Helper()
+	pk := ed25519.GenPrivKeyFromSecret([]byte("test:" + operatorAddr)).PubKey()
+	a, err := codectypes.NewAnyWithValue(pk)
+	require.NoError(t, err)
+	return a
+}
 
 func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
@@ -42,12 +54,12 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress1,
-			ConsensusPubkey: &codectypes.Any{},
+			ConsensusPubkey: validatorConsPubAny(t, validatorOperatorAddress1),
 			Tokens:          math.NewInt(100),
 		},
 		{
 			OperatorAddress: validatorOperatorAddress2,
-			ConsensusPubkey: &codectypes.Any{},
+			ConsensusPubkey: validatorConsPubAny(t, validatorOperatorAddress2),
 			Tokens:          math.NewInt(201),
 		},
 	}
@@ -340,7 +352,7 @@ func TestComputeNewWeights(t *testing.T) {
 				validators := []stakingtypes.Validator{
 					{
 						OperatorAddress: validatorOperatorAddress,
-						ConsensusPubkey: &codectypes.Any{},
+						ConsensusPubkey: validatorConsPubAny(t, validatorOperatorAddress),
 						Tokens:          math.NewInt(100),
 					},
 				}
@@ -659,7 +671,7 @@ func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress2,
-			ConsensusPubkey: &codectypes.Any{},
+			ConsensusPubkey: validatorConsPubAny(t, validatorOperatorAddress2),
 			Tokens:          math.NewInt(200),
 		},
 	}

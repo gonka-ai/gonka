@@ -51,12 +51,14 @@ import (
 	crisiskeeper "github.com/cosmos/cosmos-sdk/x/crisis/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/distribution" // import for side-effects
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	"github.com/cosmos/cosmos-sdk/x/gov"
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	group "github.com/cosmos/cosmos-sdk/x/group"
 	groupkeeper "github.com/cosmos/cosmos-sdk/x/group/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
 	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
@@ -69,6 +71,7 @@ import (
 	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	_ "github.com/cosmos/ibc-go/modules/capability" // import for side-effects
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
@@ -322,8 +325,27 @@ func New(
 	// create the simulation manager and define the order of the modules for deterministic simulations
 	//
 	// NOTE: this is not required apps that don't use the simulator for fuzz testing transactions
+	//
+	// staking/distribution/wasmd/group weighted ops are disabled - see
+	// app/simulation.go for rationale. Genesis state generation is preserved
+	// via Go embedding.
+	mustSimMod := func(name string) module.AppModuleSimulation {
+		sm, ok := app.ModuleManager.Modules[name].(module.AppModuleSimulation)
+		if !ok {
+			panic(fmt.Sprintf("module %q is missing or does not implement module.AppModuleSimulation: cannot wrap with disabledOpsSimModule", name))
+		}
+		return sm
+	}
+	stakingSimMod := mustSimMod(stakingtypes.ModuleName)
+	distrSimMod := mustSimMod(distrtypes.ModuleName)
+	wasmSimMod := mustSimMod(wasmtypes.ModuleName)
+	groupSimMod := mustSimMod(group.ModuleName)
 	overrideModules := map[string]module.AppModuleSimulation{
-		authtypes.ModuleName: auth.NewAppModule(app.appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, app.GetSubspace(authtypes.ModuleName)),
+		authtypes.ModuleName:    auth.NewAppModule(app.appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, app.GetSubspace(authtypes.ModuleName)),
+		stakingtypes.ModuleName: disabledOpsSimModule{stakingSimMod},
+		distrtypes.ModuleName:   disabledOpsSimModule{distrSimMod},
+		wasmtypes.ModuleName:    disabledOpsSimModule{wasmSimMod},
+		group.ModuleName:        disabledOpsSimModule{groupSimMod},
 	}
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
@@ -434,6 +456,18 @@ func (app *App) GetCapabilityScopedKeeper(moduleName string) capabilitykeeper.Sc
 // SimulationManager implements the SimulationApp interface.
 func (app *App) SimulationManager() *module.SimulationManager {
 	return app.sm
+}
+
+// TxConfig returns the App's TxConfig.
+// Implements simsx.SimulationApp interface required by simsx.Run.
+func (app *App) TxConfig() client.TxConfig {
+	return app.txConfig
+}
+
+// GetBaseApp returns the underlying *baseapp.BaseApp.
+// Implements simsx.SimulationApp interface required by simsx.Run.
+func (app *App) GetBaseApp() *baseapp.BaseApp {
+	return app.BaseApp
 }
 
 // RegisterAPIRoutes registers all application module routes with the provided
