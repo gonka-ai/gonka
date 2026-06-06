@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"math/rand/v2"
+	"strconv"
 	"testing"
 	"time"
 
@@ -49,7 +51,8 @@ func TestSseRaceWriterAllChunkSizes(t *testing.T) {
 	chunkSizes := []int{1, 64, 256, 1024, 4096, 8192}
 	for _, fx := range sseEmbeddedFixtures {
 		for _, sz := range chunkSizes {
-			t.Run(fx.name+"/chunk="+itoa(sz), func(t *testing.T) {
+			t.Run(fx.name+"/chunk="+strconv.Itoa(sz), func(t *testing.T) {
+				t.Parallel()
 				inf := mkRaceWriterInflight(t)
 				rw := mkRaceWriter(t, inf)
 				body := []byte(fx.body)
@@ -83,14 +86,16 @@ func TestSseRaceWriterClassifyCapDrops(t *testing.T) {
 
 // Realistic transport shape: arbitrary chunk boundaries from TLS/proxy flushes.
 func TestSseRaceWriterRandomChunking(t *testing.T) {
-	rng := pseudoRandSeed(42)
-	for _, fx := range sseEmbeddedFixtures {
+	for fxIndex, fx := range sseEmbeddedFixtures {
 		t.Run(fx.name, func(t *testing.T) {
+			t.Parallel()
+			// Own rng per subtest: *rand.Rand is not safe for concurrent use.
+			rng := rand.New(rand.NewPCG(42, uint64(fxIndex)))
 			inf := mkRaceWriterInflight(t)
 			rw := mkRaceWriter(t, inf)
 			body := []byte(fx.body)
 			for i := 0; i < len(body); {
-				sz := 1 + rng()%64
+				sz := 1 + rng.IntN(64)
 				end := i + sz
 				if end > len(body) {
 					end = len(body)
@@ -105,42 +110,6 @@ func TestSseRaceWriterRandomChunking(t *testing.T) {
 			require.Equal(t, fx.wantSource, inf.contentSource)
 		})
 	}
-}
-
-// pseudoRandSeed is a deterministic xorshift32.
-func pseudoRandSeed(seed int64) func() int {
-	state := uint32(seed)
-	if state == 0 {
-		state = 1
-	}
-	return func() int {
-		state ^= state << 13
-		state ^= state >> 17
-		state ^= state << 5
-		return int(state)
-	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }
 
 func mkRaceWriterInflight(t testing.TB) *inflight {

@@ -1387,7 +1387,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 					rw.inf.errorCode = details.Code
 					rw.inf.errorType = details.Type
 					rw.inf.errorMessage = details.Message
-					rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
+					rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
 				}
 			}
 		}
