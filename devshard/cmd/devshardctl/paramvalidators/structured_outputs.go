@@ -184,6 +184,8 @@ func (v StructuredOutputsValidator) validateJSON(value any) error {
 	if !ok {
 		return fmt.Errorf("%w", ErrStructuredOutputsJSONShape)
 	}
+	// Resolve local refs for validation only. Keep the forwarded request unchanged;
+	// vLLM remains responsible for parsing the user-provided schema.
 	schema, err := DereferenceLocalSchemaRefs(schema, v.MaxNodes)
 	if err != nil {
 		return fmt.Errorf("structured_outputs.json: %w", err)
