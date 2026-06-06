@@ -17,7 +17,7 @@ For the inference the test split (1000 images) of the [Flickr8K dataset](https:/
 | Validation Data | [link](https://drive.google.com/drive/folders/1Yk-ORRE51jv2Apv5x2yCic8w6QBdU7_r?usp=share_link) | [link](https://drive.google.com/drive/folders/12qjW2eW5_R9KOb4mBCVZU-LkIAqw2kel?usp=share_link)|
 | Model Len |128000| 32768 |
 | Top-K Logprobs | 20 / 10 / 5 | 20 / 10 / 5 |
-| Validation Thresholds |  (0,0169;0,0179) / (0.0232;0,0242) / (0,0323;0,0333) | (0,0033;0,0044) / (0,0047;0,0057) / (0,0062;0,0072) |
+| Validation Threshold (Lower) |  0,0169 / 0.0232 / 0,0323 | 0,0033 / 0,0047 / 0,0062 |
 | Fraud Accuracy | 100% / 100% / 100%  | 100% / 100% / 100% |
 | Tested Against | [Qwen3-VL-235B-A22B-Instruct-AWQ](https://huggingface.co/QuantTrio/Qwen3-VL-235B-A22B-Instruct-AWQ) |  [Qwen/Qwen2-VL-2B-Instruct-GPTQ-INT4](https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GPTQ-Int4)|
 | VRAM (example setup) |~320GB (4xA100 or 4xH100 GPUs)| ~20GB (0,5xA100 GPU) |

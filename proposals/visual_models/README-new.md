@@ -16,13 +16,17 @@ For the inference the test split (1000 images) of the [Flickr8K dataset](https:/
 | Validation Data | [link](https://drive.google.com/file/d/1aIi0RQDArmaP_68I_yG_X5l-BJUfCXmI/view?usp=share_link) |
 | Model Len |128000|
 | Top-K Logprobs | 5 |
-| Validation Thresholds |  0,0214 / 0,0224 |
+| Validation Threshold (Lower) |  0,0214 |
 | Fraud Accuracy | 99%  |
 | Tested Against | [Qwen3-VL-235B-A22B-Instruct-AWQ](https://huggingface.co/QuantTrio/Qwen3-VL-235B-A22B-Instruct-AWQ) | 
 | VRAM (example setup) |~320GB (4xA100 or 4xH100 GPUs)|
 
 
-All experiments were conducted using MLNode v0.1.0
+All experiments were conducted using MLNode v0.1.0 and vLLM version `0.8.2.dev8106+g9a6d76e05`
+
+**Important Note**: The validation threshold provided was obtained on the flikr8 dataset for the image description task, meaning the generated sequences have a length threshold. Other tasks, such as text recognition and others that generate long sequences, may require recalibration.
+
+**Important Note**: The results were obtained for the value `top_k = 5`. A different value will require recalibration.
 
 **Qwen3-VL-235B-Instruct** is suggested to be deployed with with the following parameters:
 ```python

@@ -36,7 +36,7 @@ def export_parquet_images_to_files(
     *,
     jpeg_quality: int = 95,
 ) -> None:
-    """Сохраняет раскодированные картинки из Dataset/DatasetDict в файлы."""
+    """Saves decoded images from Dataset/DatasetDict to files."""
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
 

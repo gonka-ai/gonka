@@ -164,12 +164,24 @@ def _extract_check_fields(inference_cfg: Optional[Dict[str, Any]]) -> Dict[str, 
     }
 
 
+def _diffs_only_model_info_url(expected: Dict[str, Any], actual: Dict[str, Any], diff_keys: List[str]) -> bool:
+    if diff_keys != ["model_info"]:
+        return False
+    exp_mi = expected.get("model_info")
+    act_mi = actual.get("model_info")
+    if not isinstance(exp_mi, dict) or not isinstance(act_mi, dict):
+        return False
+    exp_without_url = {k: v for k, v in exp_mi.items() if k != "url"}
+    act_without_url = {k: v for k, v in act_mi.items() if k != "url"}
+    return exp_without_url == act_without_url and exp_mi.get("url") != act_mi.get("url")
+
+
 def _compare_configs(
     inference_cfg: Optional[Dict[str, Any]],
     validation_model_info: ModelInfo,
     validation_request_params: RequestParams,
     validation_probe: VllmProbe,
-) -> Tuple[bool, List[str]]:
+) -> Tuple[bool, List[str], bool]:
     expected = _extract_check_fields(inference_cfg)
     actual = {
         "model_info": validation_model_info.model_dump(),
@@ -181,7 +193,8 @@ def _compare_configs(
     for k in expected.keys():
         if expected.get(k) != actual.get(k):
             diffs.append(k)
-    return len(diffs) == 0, diffs
+    url_only_diff = _diffs_only_model_info_url(expected, actual, diffs)
+    return len(diffs) == 0, diffs, url_only_diff
 
 
 def main() -> None:
@@ -238,9 +251,13 @@ def main() -> None:
     )
 
     inference_cfg = _load_inference_config(exp_dir)
-    same, diff_keys = _compare_configs(inference_cfg, validation_model, request_params, probe)
+    same, diff_keys, url_only_diff = _compare_configs(inference_cfg, validation_model, request_params, probe)
     if same:
         print("[config-check] inference and validation configs look the same.")
+    elif url_only_diff:
+        print("[config-check] INFO: inference and validation configs differ only by model URL (continuing):")
+        for key in diff_keys:
+            print(f"  - {key}")
     else:
         print("[config-check] WARNING: inference and validation configs differ (continuing):")
         for key in diff_keys:
