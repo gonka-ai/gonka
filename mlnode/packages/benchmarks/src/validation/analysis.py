@@ -5,7 +5,7 @@ from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from collections.abc import Hashable, Mapping, Sequence
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from validation.utils import distance2
 from validation import stats
@@ -132,7 +132,189 @@ def evaluate_bound(lower, upper_candidates, distances_val, distances_quant):
     return lower, optimal_upper, best_f1
 
 
-def find_optimal_bounds_parallel(distances_val, distances_quant, step=0.0001, n_jobs=-1):
+def compute_threshold_metrics(
+    distances_honest: Union[Sequence[float], np.ndarray],
+    distances_fraud: Union[Sequence[float], np.ndarray],
+    lower_bound: float,
+) -> Dict[str, Any]:
+    """Classification metrics for a fixed lower bound (production rule: distance < lower => honest)."""
+    distances_honest = np.asarray(distances_honest, dtype=float)
+    distances_fraud = np.asarray(distances_fraud, dtype=float)
+
+    honest_classes = classify_data(distances_honest, lower_bound, lower_bound)
+    fraud_classes = classify_data(distances_fraud, lower_bound, lower_bound)
+
+    n_honest = int(len(distances_honest))
+    n_fraud = int(len(distances_fraud))
+    n_honest_flagged = sum(c == "fraud" for c in honest_classes)
+    n_fraud_detected = sum(c == "fraud" for c in fraud_classes)
+
+    metrics: Dict[str, Any] = {
+        "n_honest": n_honest,
+        "n_fraud": n_fraud,
+        "honest_accept_rate": None,
+        "honest_false_positive_rate": None,
+        "fraud_detection_rate": None,
+        "f1": None,
+    }
+    if n_honest:
+        metrics["honest_accept_rate"] = float((n_honest - n_honest_flagged) / n_honest)
+        metrics["honest_false_positive_rate"] = float(n_honest_flagged / n_honest)
+    if n_fraud:
+        metrics["fraud_detection_rate"] = float(n_fraud_detected / n_fraud)
+
+    if n_honest or n_fraud:
+        all_distances = np.concatenate([distances_honest, distances_fraud])
+        labels_true = np.array([0] * n_honest + [1] * n_fraud)
+        labels_pred = np.where(all_distances < lower_bound, 0, 1)
+        metrics["f1"] = float(f1_score(labels_true, labels_pred))
+
+    return metrics
+
+
+def _random_train_test_split(
+    values: np.ndarray,
+    train_fraction: float,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    n = len(values)
+    if n == 0:
+        return values, values
+    if n == 1:
+        return values, values[:0]
+
+    indices = rng.permutation(n)
+    n_train = int(round(n * train_fraction))
+    n_train = max(1, min(n_train, n - 1))
+    train_idx = indices[:n_train]
+    test_idx = indices[n_train:]
+    return values[train_idx], values[test_idx]
+
+
+def _mean_std(values: Sequence[float]) -> Dict[str, float]:
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return {"mean": float("nan"), "std": float("nan")}
+    if arr.size == 1:
+        return {"mean": float(arr[0]), "std": 0.0}
+    return {"mean": float(arr.mean()), "std": float(arr.std(ddof=1))}
+
+
+def held_out_threshold_evaluation(
+    distances_honest: Union[Sequence[float], np.ndarray],
+    distances_fraud: Union[Sequence[float], np.ndarray],
+    *,
+    train_fraction: float = 0.8,
+    n_repeats: int = 5,
+    step: float = 0.0001,
+    n_jobs: int = -1,
+    random_seed: int = 42,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """Repeated train/test splits to estimate out-of-sample threshold performance.
+
+    Fits bounds on ``train_fraction`` of honest and fraud distances, evaluates
+    classification metrics on the held-out remainder. Also reports in-sample
+    bounds/metrics on the full calibration set for comparison.
+    """
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError(f"train_fraction must be in (0, 1), got {train_fraction}")
+    if n_repeats < 1:
+        raise ValueError(f"n_repeats must be >= 1, got {n_repeats}")
+
+    distances_honest = np.asarray(distances_honest, dtype=float)
+    distances_fraud = np.asarray(distances_fraud, dtype=float)
+    if len(distances_honest) == 0 or len(distances_fraud) == 0:
+        raise ValueError("Both honest and fraud distance arrays must be non-empty")
+
+    rng = np.random.default_rng(random_seed)
+    folds: List[Dict[str, Any]] = []
+
+    for repeat in range(n_repeats):
+        split_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
+        train_honest, test_honest = _random_train_test_split(distances_honest, train_fraction, split_rng)
+        train_fraud, test_fraud = _random_train_test_split(distances_fraud, train_fraction, split_rng)
+
+        lower, upper = find_optimal_bounds_parallel(
+            train_honest,
+            train_fraud,
+            step=step,
+            n_jobs=n_jobs,
+            verbose=verbose,
+        )
+        folds.append(
+            {
+                "repeat": repeat,
+                "n_train_honest": int(len(train_honest)),
+                "n_test_honest": int(len(test_honest)),
+                "n_train_fraud": int(len(train_fraud)),
+                "n_test_fraud": int(len(test_fraud)),
+                "lower_bound": float(lower),
+                "upper_bound": float(upper),
+                "train_metrics": compute_threshold_metrics(train_honest, train_fraud, lower),
+                "test_metrics": compute_threshold_metrics(test_honest, test_fraud, lower),
+            }
+        )
+
+    metric_keys = [
+        "lower_bound",
+        "upper_bound",
+        "test_metrics.honest_false_positive_rate",
+        "test_metrics.honest_accept_rate",
+        "test_metrics.fraud_detection_rate",
+        "test_metrics.f1",
+        "train_metrics.honest_false_positive_rate",
+        "train_metrics.fraud_detection_rate",
+        "train_metrics.f1",
+    ]
+
+    def _fold_value(fold: Dict[str, Any], key: str) -> float:
+        if key in {"lower_bound", "upper_bound"}:
+            return float(fold[key])
+        section, field = key.split(".", 1)
+        value = fold[section][field]
+        if value is None:
+            return float("nan")
+        return float(value)
+
+    holdout_summary: Dict[str, Dict[str, float]] = {}
+    for key in metric_keys:
+        holdout_summary[key] = _mean_std([_fold_value(fold, key) for fold in folds])
+
+    in_sample_lower, in_sample_upper = find_optimal_bounds_parallel(
+        distances_honest,
+        distances_fraud,
+        step=step,
+        n_jobs=n_jobs,
+        verbose=verbose,
+    )
+
+    return {
+        "parameters": {
+            "train_fraction": train_fraction,
+            "n_repeats": n_repeats,
+            "step": step,
+            "random_seed": random_seed,
+            "n_honest": int(len(distances_honest)),
+            "n_fraud": int(len(distances_fraud)),
+        },
+        "in_sample": {
+            "lower_bound": float(in_sample_lower),
+            "upper_bound": float(in_sample_upper),
+            "metrics": compute_threshold_metrics(distances_honest, distances_fraud, in_sample_lower),
+        },
+        "holdout_folds": folds,
+        "holdout_summary": holdout_summary,
+    }
+
+
+def find_optimal_bounds_parallel(
+    distances_val,
+    distances_quant,
+    step=0.0001,
+    n_jobs=-1,
+    verbose: bool = True,
+):
     all_distances = np.concatenate([distances_val, distances_quant])
     min_dist, max_dist = all_distances.min(), all_distances.max()
     search_space = np.arange(min_dist, max_dist, step)
@@ -144,7 +326,7 @@ def find_optimal_bounds_parallel(distances_val, distances_quant, step=0.0001, n_
             distances_val,
             distances_quant
         )
-        for lower in tqdm(search_space, desc="Searching optimal bounds")
+        for lower in tqdm(search_space, desc="Searching optimal bounds", disable=not verbose)
     )
 
     # Remove None results that violate the constraint
@@ -155,8 +337,9 @@ def find_optimal_bounds_parallel(distances_val, distances_quant, step=0.0001, n_
 
     optimal_lower, optimal_upper, best_f1 = max(results, key=lambda x: x[2])
 
-    print(f"Optimal Lower Bound: {optimal_lower:.6f}")
-    print(f"Best F1-Score: {best_f1:.4f}")
+    if verbose:
+        print(f"Optimal Lower Bound: {optimal_lower:.6f}")
+        print(f"Best F1-Score: {best_f1:.4f}")
 
     return optimal_lower, optimal_upper
 
