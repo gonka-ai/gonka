@@ -54,7 +54,8 @@ data class DevshardSessionConfig(
 data class DevshardSettlementData(
     @SerializedName("escrow_id")
     val escrowId: String,
-    @SerializedName("state_root_and_protocol_version")
+    // devshardctl finalize emits "version" (v1 wire compat); inferenced reads the same key.
+    @SerializedName("version")
     val stateRootAndProtocolVersion: String,
     @SerializedName("state_root")
     val stateRoot: String,
