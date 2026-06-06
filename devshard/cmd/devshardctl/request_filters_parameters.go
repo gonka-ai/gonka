@@ -425,7 +425,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("seed").
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}),
 			newParameter("n").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Max: MaxChatRequestChoices}}).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Min: 1, Max: MaxChatRequestChoices}}).
 				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
 					Validator: paramvalidators.GreedySamplingValidator{},
 				}),
