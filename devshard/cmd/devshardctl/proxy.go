@@ -979,6 +979,36 @@ func (p *Proxy) handleCollectSignatures(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, resp)
 }
 
+func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := p.session.SyncHosts(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	var phaseStr string
+	switch p.sm.Phase() {
+	case types.PhaseActive:
+		phaseStr = "active"
+	case types.PhaseFinalizing:
+		phaseStr = "finalizing"
+	case types.PhaseSettlement:
+		phaseStr = "settlement"
+	default:
+		phaseStr = fmt.Sprintf("unknown(%d)", p.sm.Phase())
+	}
+
+	writeJSON(w, map[string]any{
+		"escrow_id": p.escrowID,
+		"nonce":     p.session.Nonce(),
+		"phase":     phaseStr,
+	})
+}
+
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 	st := p.sm.SnapshotState()
 

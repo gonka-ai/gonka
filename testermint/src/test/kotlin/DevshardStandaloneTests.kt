@@ -93,7 +93,7 @@ class DevshardStandaloneTests : TestermintTest() {
     )
 
     private val parallelLongEpochConfig = versiondConfig(
-        genesisSpec = createSpec(epochLength = 40, epochShift = 10).merge(devshardNoRestrictionsSpec),
+        genesisSpec = createSpec(epochLength = 25, epochShift = 10).merge(devshardNoRestrictionsSpec),
         env = overrideVersiondEnv,
     )
 
@@ -351,6 +351,11 @@ class DevshardStandaloneTests : TestermintTest() {
                         }
                     }
                 }.awaitAll()
+            }
+
+            logSection("Syncing devshard hosts before validation observability")
+            handles.forEach { handle ->
+                genesis.syncDevshardProxyHosts(handle.proxyUrl)
             }
 
             logSection("Waiting for validation observability on active escrows")

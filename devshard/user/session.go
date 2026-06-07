@@ -947,6 +947,71 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 	return nil
 }
 
+type physicalHost struct {
+	idx  int
+	addr string
+}
+
+func (s *Session) uniquePhysicalHosts() []physicalHost {
+	n := len(s.group)
+	seen := make(map[string]bool)
+	hosts := make([]physicalHost, 0, n)
+	for i := 0; i < n; i++ {
+		addr := s.group[i].ValidatorAddress
+		if seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		hosts = append(hosts, physicalHost{idx: i, addr: addr})
+	}
+	return hosts
+}
+
+// SyncHosts propagates signed diffs to every unique physical host and drains
+// host-proposed mempool txs (validations, finishes) into new diffs. This is
+// finalize Phase B-style catch-up without entering PhaseFinalizing — use before
+// observability checks when validators on join nodes may be ahead of genesis.
+func (s *Session) SyncHosts(ctx context.Context) error {
+	if s.sm.Phase() != types.PhaseActive {
+		return fmt.Errorf("sync hosts: session phase %d, want active", s.sm.Phase())
+	}
+
+	hosts := s.uniquePhysicalHosts()
+	startNonce := s.Nonce()
+	logging.Info("sync hosts started", "subsystem", "sync", "escrow", s.escrowID,
+		"nonce", startNonce, "unique_hosts", len(hosts))
+
+	const syncCycles = 2
+	for cycle := 0; cycle < syncCycles; cycle++ {
+		for _, h := range hosts {
+			if err := s.sendCatchUp(ctx, h.idx); err != nil {
+				return fmt.Errorf("sync hosts cycle %d catch-up host %d: %w", cycle+1, h.idx, err)
+			}
+		}
+		for i := 0; i < len(s.group); i++ {
+			s.mu.Lock()
+			hasPending := len(s.pendingTxs) > 0
+			s.mu.Unlock()
+			if !hasPending {
+				break
+			}
+			if err := s.sendDiffRound(ctx, nil); err != nil {
+				return fmt.Errorf("sync hosts cycle %d diff round: %w", cycle+1, err)
+			}
+		}
+	}
+
+	for _, h := range hosts {
+		if err := s.sendCatchUp(ctx, h.idx); err != nil {
+			return fmt.Errorf("sync hosts final catch-up host %d: %w", h.idx, err)
+		}
+	}
+
+	logging.Info("sync hosts complete", "subsystem", "sync", "escrow", s.escrowID,
+		"start_nonce", startNonce, "end_nonce", s.Nonce())
+	return nil
+}
+
 // Finalize completes the round in three phases.
 //
 // Phase A (N iterations): The first diff carries MsgFinalizeRound plus any

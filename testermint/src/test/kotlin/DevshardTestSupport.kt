@@ -204,6 +204,24 @@ fun LocalInferencePair.waitForDevshardPreFinalize(delay: Duration = devshardPreF
     Thread.sleep(delay.toMillis())
 }
 
+/** Propagate signed diffs to all physical hosts before observability/finalize. */
+fun LocalInferencePair.syncDevshardProxyHosts(proxyUrl: String) {
+    logSection("Syncing devshard proxy hosts")
+    val raw = api.executor.exec(
+        listOf(
+            "sh", "-c",
+            "curl -sf -X POST $proxyUrl/v1/debug/sync-hosts " +
+                "-H 'Authorization: Bearer $devshardAdminApiKey'",
+        ),
+        null,
+    ).joinToString("")
+    val start = raw.indexOf('{')
+    val end = raw.lastIndexOf('}')
+    check(start >= 0 && end >= 0) {
+        "sync-hosts returned no JSON object. raw:\n$raw"
+    }
+}
+
 fun IInferenceMock.stubDevshardResponseForAllSegments(
     response: String,
     delay: Duration = Duration.ZERO,

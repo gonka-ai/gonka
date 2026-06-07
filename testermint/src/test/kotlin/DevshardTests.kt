@@ -30,7 +30,7 @@ class DevshardTests : TestermintTest() {
 
     private val parallelLongEpochConfig = inferenceConfig.copy(
         genesisSpec = createSpec(
-            epochLength = 40,
+            epochLength = 25,
             epochShift = 10,
         ).merge(devshardNoRestrictionsSpec),
     )
@@ -212,6 +212,11 @@ class DevshardTests : TestermintTest() {
                         }
                     }
                 }.awaitAll()
+            }
+
+            logSection("Syncing devshard hosts before validation observability")
+            handles.forEach { handle ->
+                genesis.syncDevshardProxyHosts(handle.proxyUrl)
             }
 
             logSection("Waiting for validation observability on active escrows")
