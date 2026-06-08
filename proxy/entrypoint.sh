@@ -17,7 +17,10 @@ export JAEGER_ENABLED=${JAEGER_ENABLED:-false}
 export JAEGER_SERVICE_NAME=${JAEGER_SERVICE_NAME:-jaeger}
 export JAEGER_PORT=${JAEGER_PORT:-16686}
 export JAEGER_BASE_PATH=${JAEGER_BASE_PATH:-/jaeger}
+export JAEGER_BASIC_AUTH_USER=${JAEGER_BASIC_AUTH_USER:-}
+export JAEGER_BASIC_AUTH_PASSWORD=${JAEGER_BASIC_AUTH_PASSWORD:-}
 export GRAFANA_ENABLED=${GRAFANA_ENABLED:-false}
+export GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
 export GRAFANA_SERVICE_NAME=${GRAFANA_SERVICE_NAME:-grafana}
 export GRAFANA_PORT=${GRAFANA_PORT:-3000}
 export GRAFANA_BASE_PATH=${GRAFANA_BASE_PATH:-/grafana}
@@ -146,18 +149,41 @@ else
     export VERSIOND_UPSTREAM="# devshard proxy disabled"
 fi
 
+is_placeholder_password() {
+    case "$1" in
+        ""|admin1|YourSecretPasswordHere|changeme|<FILLIN>)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 if [ "${JAEGER_ENABLED}" = "true" ]; then
-    echo "   Jaeger Service: $FINAL_JAEGER_SERVICE:$JAEGER_PORT (base path: $JAEGER_BASE_PATH)"
+    if [ -z "${JAEGER_BASIC_AUTH_USER}" ] || is_placeholder_password "${JAEGER_BASIC_AUTH_PASSWORD}"; then
+        echo "ERROR: JAEGER_ENABLED=true requires JAEGER_BASIC_AUTH_USER and a non-default JAEGER_BASIC_AUTH_PASSWORD."
+        echo "       Set credentials in config.env before enabling Jaeger UI proxying."
+        exit 1
+    fi
+
+    htpasswd -bc /etc/nginx/jaeger.htpasswd "${JAEGER_BASIC_AUTH_USER}" "${JAEGER_BASIC_AUTH_PASSWORD}"
+
+    echo "   Jaeger Service: $FINAL_JAEGER_SERVICE:$JAEGER_PORT (base path: $JAEGER_BASE_PATH, basic auth enabled)"
     export JAEGER_UPSTREAM="upstream jaeger_backend {
         zone jaeger_backend 64k;
         server ${FINAL_JAEGER_SERVICE}:${JAEGER_PORT} resolve;
     }"
 
     export JAEGER_LOCATION="location = ${JAEGER_BASE_PATH} {
+            auth_basic \"Jaeger\";
+            auth_basic_user_file /etc/nginx/jaeger.htpasswd;
             return 301 ${JAEGER_BASE_PATH}/;
         }
 
         location ${JAEGER_BASE_PATH}/ {
+            auth_basic \"Jaeger\";
+            auth_basic_user_file /etc/nginx/jaeger.htpasswd;
             proxy_pass http://jaeger_backend;
             proxy_set_header Host \$\$host;
             proxy_set_header X-Real-IP \$\$remote_addr;
@@ -170,6 +196,12 @@ else
 fi
 
 if [ "${GRAFANA_ENABLED}" = "true" ]; then
+    if is_placeholder_password "${GRAFANA_ADMIN_PASSWORD}"; then
+        echo "ERROR: GRAFANA_ENABLED=true requires a non-default GRAFANA_ADMIN_PASSWORD."
+        echo "       Set GRAFANA_ADMIN_PASSWORD in config.env before enabling Grafana UI proxying."
+        exit 1
+    fi
+
     echo "   Grafana Service: $FINAL_GRAFANA_SERVICE:$GRAFANA_PORT (base path: $GRAFANA_BASE_PATH)"
     export GRAFANA_UPSTREAM="upstream grafana_backend {
         zone grafana_backend 64k;
