@@ -304,6 +304,8 @@ data class DevshardEscrowParams(
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
     @SerializedName("max_nonce")
     val maxNonce: Long = 0,
+    @SerializedName("devshard_requests_enabled")
+    val devshardRequestsEnabled: Boolean? = null,
 )
 
 data class PocParams(
@@ -515,7 +517,6 @@ data class ExemptionUsageEntry(
     @SerializedName("usage_count")
     val usageCount: Long,
 )
-
 // -----------------------
 // Maintenance Window Parameters
 // -----------------------

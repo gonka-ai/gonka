@@ -533,6 +533,56 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	inferenceUpCmd := broker.NewInferenceUpAllCommand()
 	err = suite.nodeBroker.QueueMessage(inferenceUpCmd)
 	require.NoError(t, err)
+	<-inferenceUpCmd.Response
+
+	waitForStableInferenceNode := func() bool {
+		nodes, nodesErr := suite.nodeBroker.GetNodes()
+		require.NoError(t, nodesErr)
+		for _, n := range nodes {
+			if n.Node.Id == nodeConfig.Id &&
+				n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+				n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+				n.State.ReconcileInfo == nil {
+				return true
+			}
+		}
+		return false
+	}
+
+	nodeReady := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if waitForStableInferenceNode() {
+			nodeReady = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !nodeReady {
+		setStatusCommand := broker.NewSetNodesActualStatusCommand(
+			[]broker.StatusUpdate{
+				{
+					NodeId:     nodeConfig.Id,
+					PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+					NewStatus:  types.HardwareNodeStatus_INFERENCE,
+					Timestamp:  time.Now(),
+				},
+			},
+		)
+		err = suite.nodeBroker.QueueMessage(setStatusCommand)
+		require.NoError(t, err)
+		<-setStatusCommand.Response
+
+		deadline = time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if waitForStableInferenceNode() {
+				nodeReady = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	require.True(t, nodeReady, "node did not reach stable INFERENCE status before test start")
 
 	// 7. Create the public server
 	payloadStorage := newMockPayloadStorage()

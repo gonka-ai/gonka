@@ -83,6 +83,7 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 
 	nodeCounter := 0
 	result := v.validateParticipant(
+		context.Background(),
 		0, work, stub,
 		[]broker.NodeResponse{testNode}, &nodeCounter,
 		1000, "sampling-hash", "start-hash",
