@@ -19,11 +19,11 @@ The join deployment now has an optional observability overlay in `deploy/join/do
 
 | Component | Purpose | Default internal endpoint | External/local binding |
 | --- | --- | --- | --- |
-| Jaeger | OTLP trace receiver and trace UI | `jaeger:4317`, `jaeger:16686/jaeger` | proxied at `/jaeger/` when enabled |
+| Jaeger | OTLP trace receiver and trace UI | `jaeger:4317`, `jaeger:16686/jaeger` | proxied at `/jaeger/` when enabled (nginx basic auth) |
 | Prometheus | Metrics scraping and storage | `prometheus:9090` | `127.0.0.1:9099` |
 | Loki | Log storage | `loki:3100` | `127.0.0.1:3101` |
 | Promtail | Docker log discovery and shipping to Loki | n/a | n/a |
-| Grafana | Dashboards and data exploration | `grafana:3000` | `127.0.0.1:3000`, proxied at `/grafana/` when enabled |
+| Grafana | Dashboards and data exploration | `grafana:3000` | `127.0.0.1:3000`, proxied at `/grafana/` when enabled (Grafana login) |
 | cAdvisor | Container CPU, memory, network, and filesystem metrics | `cadvisor:8080` | `127.0.0.1:8088` |
 
 Grafana datasources are provisioned automatically:
@@ -36,14 +36,45 @@ Loki has a derived field that extracts `trace_id` from JSON/logfmt log bodies an
 
 ## Enabling The Stack
 
-The template `deploy/join/config.env.template` includes the main switches:
+The template `deploy/join/config.env.template` ships with **Jaeger and Grafana UIs disabled by default** (`JAEGER_ENABLED=false`, `GRAFANA_ENABLED=false`). Metrics, logs, and trace export to Jaeger OTLP still work when the observability overlay is running; only the **public proxy UI routes** stay off until you opt in.
+
+### Security prerequisites (set before enabling UIs)
+
+Jaeger has **no built-in login**. When you expose `/jaeger/` through the nginx proxy, protect it with **nginx HTTP basic auth**:
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `JAEGER_BASIC_AUTH_USER` | `JAEGER_ENABLED=true` | Basic auth username for `/jaeger/` |
+| `JAEGER_BASIC_AUTH_PASSWORD` | `JAEGER_ENABLED=true` | Basic auth password for `/jaeger/` |
+
+Grafana has its own admin login. Set a **strong admin password before** enabling public UI proxying:
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `GRAFANA_ADMIN_USER` | recommended | Grafana admin username (default `admin`) |
+| `GRAFANA_ADMIN_PASSWORD` | `GRAFANA_ENABLED=true` | Grafana admin password; must not be left at defaults |
+
+The proxy **refuses to start** if `JAEGER_ENABLED=true` without Jaeger basic auth credentials, or if `GRAFANA_ENABLED=true` with a missing/placeholder password (`admin1`, `<FILLIN>`, etc.).
+
+### Example configuration
+
+Copy `config.env.template` to `config.env`, set secrets, then enable UIs:
 
 ```bash
-export JAEGER_ENABLED=true
-export GRAFANA_ENABLED=true
+# 1. Set credentials first
+export JAEGER_BASIC_AUTH_USER=jaeger
+export JAEGER_BASIC_AUTH_PASSWORD='your-jaeger-basic-auth-secret'
+export GRAFANA_ADMIN_USER=admin
+export GRAFANA_ADMIN_PASSWORD='your-grafana-admin-secret'
+
+# 2. Enable trace/log export (can stay on even when UIs are disabled)
 export DAPI_OTEL_ENABLED=true
 export DEVSHARD_OTEL_ENABLED=true
 export OTEL_ENDPOINT=http://jaeger:4317
+
+# 3. Enable public UI routes only when credentials above are set
+export JAEGER_ENABLED=true
+export GRAFANA_ENABLED=true
 ```
 
 Use the overlay when starting the join stack:
@@ -56,8 +87,10 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 
 The proxy exposes UI paths only when the matching flags are enabled:
 
-- `http://<host>:<API_PORT>/grafana/`
-- `http://<host>:<API_PORT>/jaeger/`
+- `http://<host>:<API_PORT>/grafana/` — Grafana login (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`)
+- `http://<host>:<API_PORT>/jaeger/` — nginx basic auth (`JAEGER_BASIC_AUTH_USER` / `JAEGER_BASIC_AUTH_PASSWORD`), then Jaeger UI
+
+OTLP trace ingest (`jaeger:4317`) and Loki log push (`loki:3100`) are **not** proxied on the public API port; they remain on the Docker internal network.
 
 For local-only access, Grafana is also bound on `127.0.0.1:3000`, Prometheus on `127.0.0.1:9099`, Loki on `127.0.0.1:3101`, and cAdvisor on `127.0.0.1:8088`.
 
@@ -427,10 +460,11 @@ If a log line has `trace_id`, Grafana should show a `View trace` derived field l
 
 Check:
 
-1. `GRAFANA_ENABLED=true` is present in `deploy/join/config.env`.
-2. The stack was started with both compose files.
-3. `grafana` is healthy: `docker compose ps grafana`.
-4. `proxy` was recreated after changing the environment.
+1. `GRAFANA_ADMIN_PASSWORD` is set to a strong, non-placeholder value in `deploy/join/config.env`.
+2. `GRAFANA_ENABLED=true` is present in `deploy/join/config.env`.
+3. The stack was started with both compose files.
+4. `grafana` is healthy: `docker compose ps grafana`.
+5. `proxy` was recreated after changing the environment (proxy validates the password at startup).
 
 Common fix:
 
@@ -442,9 +476,11 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d -
 
 Check:
 
-1. `JAEGER_ENABLED=true` is present.
-2. `jaeger` is running and listening on `16686` internally.
-3. Proxy logs include the Jaeger location block during startup.
+1. `JAEGER_BASIC_AUTH_USER` and `JAEGER_BASIC_AUTH_PASSWORD` are set in `deploy/join/config.env`.
+2. `JAEGER_ENABLED=true` is present.
+3. `jaeger` is running and listening on `16686` internally.
+4. Proxy logs include the Jaeger location block and "basic auth enabled" during startup.
+5. Your browser prompt uses the Jaeger basic auth credentials (Jaeger itself has no login screen).
 
 Common fix:
 
@@ -657,8 +693,8 @@ Useful URLs:
 
 | Tool | URL |
 | --- | --- |
-| Grafana through proxy | `http://<host>:<API_PORT>/grafana/` |
-| Jaeger through proxy | `http://<host>:<API_PORT>/jaeger/` |
+| Grafana through proxy | `http://<host>:<API_PORT>/grafana/` (set `GRAFANA_ADMIN_PASSWORD` before enabling) |
+| Jaeger through proxy | `http://<host>:<API_PORT>/jaeger/` (set `JAEGER_BASIC_AUTH_*` before enabling) |
 | Grafana local bind | `http://127.0.0.1:3000` |
 | Prometheus local bind | `http://127.0.0.1:9099` |
 | Prometheus targets | `http://127.0.0.1:9099/targets` |

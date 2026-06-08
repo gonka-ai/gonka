@@ -2,14 +2,17 @@ services:
   # Extend the existing services with Jaeger environment variables
   proxy:
     environment:
-      # Optional Jaeger UI proxying
+      # Optional Jaeger UI proxying (requires JAEGER_BASIC_AUTH_* when enabled)
       - JAEGER_ENABLED=${JAEGER_ENABLED:-false}
       - JAEGER_PORT=${JAEGER_PORT:-16686}
       - JAEGER_BASE_PATH=${JAEGER_BASE_PATH:-/jaeger}
-      # Grafana UI proxying
-      - GRAFANA_ENABLED=${GRAFANA_ENABLED:-true}
+      - JAEGER_BASIC_AUTH_USER=${JAEGER_BASIC_AUTH_USER:-}
+      - JAEGER_BASIC_AUTH_PASSWORD=${JAEGER_BASIC_AUTH_PASSWORD:-}
+      # Grafana UI proxying (requires GRAFANA_ADMIN_PASSWORD when enabled)
+      - GRAFANA_ENABLED=${GRAFANA_ENABLED:-false}
       - GRAFANA_PORT=${GRAFANA_PORT:-3000}
       - GRAFANA_BASE_PATH=${GRAFANA_BASE_PATH:-/grafana}
+      - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
 
   jaeger:
     container_name: jaeger
