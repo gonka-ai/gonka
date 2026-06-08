@@ -92,7 +92,7 @@ http {
     # Dashboard upstream - only included if DASHBOARD_PORT is set
     ${DASHBOARD_UPSTREAM}
 
-    # Jaeger upstream - only included if JAEGER_SERVICE_NAME is set
+    # Jaeger upstream - only included if JAEGER_ENABLED is set
     ${JAEGER_UPSTREAM}
 
     # Grafana upstream - only included if GRAFANA_ENABLED is set
