@@ -38,6 +38,9 @@ services:
           printf '%s {\n' "$${DEVSHARD_GATEWAY_DOMAIN}"
           printf '  @metrics path /metrics*\n'
           printf '  respond @metrics 404\n\n'
+          printf '  handle /grafana* {\n'
+          printf '    reverse_proxy grafana:3000\n'
+          printf '  }\n\n'
           printf '  reverse_proxy devshard-gateway:8080\n'
           printf '}\n'
         } > /tmp/Caddyfile
