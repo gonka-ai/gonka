@@ -28,8 +28,14 @@ type DiffContent struct {
 	Txs           []*DevshardTx          `protobuf:"bytes,2,rep,name=txs,proto3" json:"txs,omitempty"`
 	EscrowId      string                 `protobuf:"bytes,3,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	PostStateRoot []byte                 `protobuf:"bytes,4,opt,name=post_state_root,json=postStateRoot,proto3" json:"post_state_root,omitempty"` // state root AFTER applying this diff's txs
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// sealed_inference_ids lists the inference ids the sequencer folds into the
+	// sealed accumulator at this nonce. The fold runs (identically on user and
+	// host) after txs are applied and before post_state_root is computed, so the
+	// seal is part of the signed root rather than an off-log, host-local side
+	// effect. Ascending, deduplicated.
+	SealedInferenceIds []uint64 `protobuf:"varint,5,rep,packed,name=sealed_inference_ids,json=sealedInferenceIds,proto3" json:"sealed_inference_ids,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *DiffContent) Reset() {
@@ -86,6 +92,13 @@ func (x *DiffContent) GetEscrowId() string {
 func (x *DiffContent) GetPostStateRoot() []byte {
 	if x != nil {
 		return x.PostStateRoot
+	}
+	return nil
+}
+
+func (x *DiffContent) GetSealedInferenceIds() []uint64 {
+	if x != nil {
+		return x.SealedInferenceIds
 	}
 	return nil
 }
@@ -505,12 +518,13 @@ var File_devshard_v1_diff_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
-	"\x16devshard/v1/diff.proto\x12\vdevshard.v1\x1a\x14devshard/v1/tx.proto\"\x93\x01\n" +
+	"\x16devshard/v1/diff.proto\x12\vdevshard.v1\x1a\x14devshard/v1/tx.proto\"\xc5\x01\n" +
 	"\vDiffContent\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12)\n" +
 	"\x03txs\x18\x02 \x03(\v2\x17.devshard.v1.DevshardTxR\x03txs\x12\x1b\n" +
 	"\tescrow_id\x18\x03 \x01(\tR\bescrowId\x12&\n" +
-	"\x0fpost_state_root\x18\x04 \x01(\fR\rpostStateRoot\"\xd1\x04\n" +
+	"\x0fpost_state_root\x18\x04 \x01(\fR\rpostStateRoot\x120\n" +
+	"\x14sealed_inference_ids\x18\x05 \x03(\x04R\x12sealedInferenceIds\"\xd1\x04\n" +
 	"\n" +
 	"DevshardTx\x12I\n" +
 	"\x0fstart_inference\x18\x01 \x01(\v2\x1e.devshard.v1.MsgStartInferenceH\x00R\x0estartInference\x12C\n" +

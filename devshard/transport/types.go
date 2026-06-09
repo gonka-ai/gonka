@@ -13,7 +13,7 @@ import (
 // Proto-serialized fields travel as base64 to preserve signature integrity.
 type DiffJSON struct {
 	Nonce         uint64 `json:"nonce"`
-	Txs           []byte `json:"txs"`                        // proto bytes of DiffContent.Txs wrapper
+	Txs           []byte `json:"txs"`                        // proto bytes of DiffContent (txs + sealed_inference_ids)
 	UserSig       []byte `json:"user_sig"`                   // raw sig bytes
 	PostStateRoot []byte `json:"post_state_root,omitempty"`  // state root after applying txs
 }
@@ -92,9 +92,11 @@ type SignaturesResponse struct {
 
 // DiffToJSON converts a domain Diff to its JSON wire format.
 func DiffToJSON(d types.Diff) (DiffJSON, error) {
-	// Serialize the txs as a DiffContent proto (nonce + txs together)
-	// to preserve the exact bytes that were signed.
-	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs}
+	// Serialize the txs and sealed-inference ids as a DiffContent proto to
+	// preserve the exact bytes that were signed. Sealed ids are part of the
+	// signed content, so they must travel inside this proto wrapper (not as a
+	// separate JSON field) to keep signature and state-root verification intact.
+	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs, SealedInferenceIds: d.SealedInferenceIDs}
 	txsBytes, err := proto.Marshal(content)
 	if err != nil {
 		return DiffJSON{}, fmt.Errorf("marshal diff content: %w", err)
@@ -114,10 +116,11 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 		return types.Diff{}, fmt.Errorf("unmarshal diff content: %w", err)
 	}
 	return types.Diff{
-		Nonce:         dj.Nonce,
-		Txs:           content.Txs,
-		UserSig:       dj.UserSig,
-		PostStateRoot: dj.PostStateRoot,
+		Nonce:              dj.Nonce,
+		Txs:                content.Txs,
+		UserSig:            dj.UserSig,
+		PostStateRoot:      dj.PostStateRoot,
+		SealedInferenceIDs: content.SealedInferenceIds,
 	}, nil
 }
 

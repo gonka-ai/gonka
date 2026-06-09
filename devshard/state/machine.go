@@ -235,8 +235,8 @@ func NewStateMachine(
 // ApplyDiff validates user signature and post_state_root, then applies the diff.
 // Returns the computed state root.
 func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
-	// 1. Verify user signature (covers nonce, txs, escrow_id, post_state_root).
-	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
+	// 1. Verify user signature (covers nonce, txs, escrow_id, sealed ids, post_state_root).
+	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.SealedInferenceIDs, diff.PostStateRoot)
 	data, err := deterministicMarshal.Marshal(diffContent)
 	if err != nil {
 		return nil, fmt.Errorf("marshal diff content: %w", err)
@@ -250,24 +250,36 @@ func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 		return nil, fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
 	}
 
-	// 2. Apply txs and verify post_state_root atomically.
+	// 2. Apply txs, fold explicit seals, and verify post_state_root atomically.
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot)
+	return sm.applyCore(diff.Nonce, diff.Txs, diff.SealedInferenceIDs, diff.PostStateRoot)
 }
 
-// ApplyLocal applies txs without signature verification. Used by the user
-// to compute the post_state_root before signing the diff.
+// ApplyLocal applies txs without signature verification (no explicit seals).
+// Used by the user to compute the post_state_root before signing the diff and
+// by tests that do not exercise sealing.
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.applyCore(nonce, txs, nil)
+	return sm.applyCore(nonce, txs, nil, nil)
 }
 
-// ApplyLocalBestEffort applies txs one by one, skipping any that fail.
-// Returns the post-state root and the subset of txs that were applied.
-// Used by the user to compose diffs from pending txs that may be stale.
-func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
+// ApplyLocalSealed applies txs and folds sealedIDs without signature
+// verification. Used by recovery replay to reconstruct SealedAcc deterministically
+// from persisted diffs (which carry their seal set).
+func (sm *StateMachine) ApplyLocalSealed(nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64) ([]byte, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.applyCore(nonce, txs, sealedIDs, nil)
+}
+
+// ApplyLocalBestEffort applies txs one by one, skipping any that fail, then
+// folds sealedIDs into the accumulator before computing the root. Returns the
+// post-state root and the subset of txs that were applied. Used by the user to
+// compose diffs from pending txs that may be stale; sealedIDs is the seal set
+// the sequencer has decided to commit at this nonce (ascending, deduplicated).
+func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64) ([]byte, []*types.DevshardTx, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -327,6 +339,16 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
 		sm.state.FinalizeNonce = nonce
 	}
+
+	// Fold explicitly-sealed inferences into the accumulator before the root is
+	// computed, so the seal is part of the signed post_state_root. Runs before
+	// the settlement drain so any remaining live records drain afterward in a
+	// deterministic, identical order on user and host.
+	if err := sm.foldSealedIDsLocked(sealedIDs, nonce); err != nil {
+		sm.restoreMutable(snap)
+		return nil, nil, fmt.Errorf("fold sealed ids: %w", err)
+	}
+
 	if sm.state.Phase == types.PhaseFinalizing {
 		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
 		if deadlinePassed {
@@ -355,10 +377,13 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	return root, applied, nil
 }
 
-// applyCore validates nonce, applies txs, updates nonce, and returns the state root.
-// If postStateRoot is non-nil, the computed root must match; on mismatch the entire
-// operation is rolled back (including nonce) and an error is returned.
-func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte) ([]byte, error) {
+// applyCore validates nonce, applies txs, folds sealedIDs, updates nonce, and
+// returns the state root. The seal fold runs after txs are applied and before
+// the root is computed, so explicit seals are committed into post_state_root.
+// If postStateRoot is non-nil, the computed root must match; on mismatch the
+// entire operation is rolled back (including nonce and seals) and an error is
+// returned.
+func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64, postStateRoot []byte) ([]byte, error) {
 	// 1. Validate nonce.
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
@@ -406,6 +431,15 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// Track FinalizeNonce: the nonce at which finalization started.
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
 		sm.state.FinalizeNonce = nonce
+	}
+
+	// 6b. Fold explicitly-sealed inferences into the accumulator before the
+	// root is computed, so the seal is part of the signed post_state_root. Runs
+	// before the settlement drain so the fold order is deterministic and
+	// identical on user and host.
+	if err := sm.foldSealedIDsLocked(sealedIDs, nonce); err != nil {
+		sm.restoreMutable(snap)
+		return nil, fmt.Errorf("fold sealed ids: %w", err)
 	}
 
 	if sm.state.Phase == types.PhaseFinalizing {
@@ -1103,13 +1137,16 @@ func (sm *StateMachine) applyFinalizeRound() error {
 	return nil
 }
 
-// BuildDiffContent creates the proto DiffContent from nonce, txs, escrowID, and postStateRoot for signing.
-func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, postStateRoot []byte) *types.DiffContent {
+// BuildDiffContent creates the proto DiffContent from nonce, txs, escrowID,
+// sealedIDs, and postStateRoot for signing. sealedIDs must be ascending and
+// deduplicated so the signed bytes are deterministic across user and host.
+func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64, postStateRoot []byte) *types.DiffContent {
 	return &types.DiffContent{
-		Nonce:         nonce,
-		Txs:           txs,
-		EscrowId:      escrowID,
-		PostStateRoot: postStateRoot,
+		Nonce:              nonce,
+		Txs:                txs,
+		EscrowId:           escrowID,
+		PostStateRoot:      postStateRoot,
+		SealedInferenceIds: sealedIDs,
 	}
 }
 
@@ -1210,6 +1247,37 @@ func (sm *StateMachine) GetInference(id uint64) (types.InferenceRecord, bool) {
 // VoteThreshold returns the session's vote threshold.
 func (sm *StateMachine) VoteThreshold() uint32 {
 	return sm.state.Config.VoteThreshold
+}
+
+// SealGraceNonces returns the frozen nonce gate before an inference may be
+// sealed. Read by the user sequencer to decide the per-diff seal set.
+func (sm *StateMachine) SealGraceNonces() uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.Config.SealGraceNonces
+}
+
+// InferenceClearGraceSeconds returns the frozen wall-clock grace (seconds)
+// before an inference may be sealed. Read by the user sequencer to decide the
+// per-diff seal set.
+func (sm *StateMachine) InferenceClearGraceSeconds() uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.Config.InferenceClearGraceSeconds
+}
+
+// LiveInferenceStatuses returns a snapshot of id -> status for every inference
+// still live in the state machine. The live set is bounded (in-flight plus
+// in-grace), so this is cheap. Used by the user sequencer to find seal-eligible
+// inferences without deep-copying the full state.
+func (sm *StateMachine) LiveInferenceStatuses() map[uint64]types.InferenceStatus {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	out := make(map[uint64]types.InferenceStatus, len(sm.state.Inferences))
+	for id, rec := range sm.state.Inferences {
+		out[id] = rec.Status
+	}
+	return out
 }
 
 func SortedSlotIDs(group []types.SlotAssignment) []uint32 {

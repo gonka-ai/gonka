@@ -1338,7 +1338,7 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 		InputLength: 100,
 		MaxTokens:   50,
 		StartedAt:   1000,
-	})})
+	})}, nil)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 	require.Nil(t, applied)
 

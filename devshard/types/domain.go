@@ -102,11 +102,11 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout             int64  // seconds before reason=refused timeout
-	ExecutionTimeout           int64  // seconds before reason=execution timeout
-	TokenPrice                 uint64 // price per input / output token (flat per session)
-	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	RefusalTimeout    int64  // seconds before reason=refused timeout
+	ExecutionTimeout  int64  // seconds before reason=execution timeout
+	TokenPrice        uint64 // price per input / output token (flat per session)
+	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
@@ -125,16 +125,16 @@ type EscrowState struct {
 	// session must use the same tag. Storage CreateSessionParams.Version is the
 	// separate runtime/bind version for versiond routing, not this field.
 	StateRootAndProtocolVersion string
-	Config        SessionConfig
-	Group         []SlotAssignment
-	Balance       uint64
-	Fees          uint64 // total fees collected (devshard create + per-nonce)
-	Phase         SessionPhase
-	FinalizeNonce uint64
-	Inferences    map[uint64]*InferenceRecord
-	HostStats     map[uint32]*HostStats
-	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce   uint64
+	Config                      SessionConfig
+	Group                       []SlotAssignment
+	Balance                     uint64
+	Fees                        uint64 // total fees collected (devshard create + per-nonce)
+	Phase                       SessionPhase
+	FinalizeNonce               uint64
+	Inferences                  map[uint64]*InferenceRecord
+	HostStats                   map[uint32]*HostStats
+	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
+	LatestNonce                 uint64
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`
@@ -145,10 +145,11 @@ type EscrowState struct {
 // Txs uses the proto-generated DevshardTx with its oneof discriminator,
 // which structurally guarantees exactly one tx type per entry.
 type Diff struct {
-	Nonce         uint64
-	Txs           []*DevshardTx
-	UserSig       []byte
-	PostStateRoot []byte
+	Nonce              uint64
+	Txs                []*DevshardTx
+	UserSig            []byte
+	PostStateRoot      []byte
+	SealedInferenceIDs []uint64
 }
 
 // DiffRecord is the storage representation: Diff + computed metadata.

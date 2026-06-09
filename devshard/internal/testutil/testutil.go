@@ -87,6 +87,29 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 	return types.Diff{Nonce: nonce, Txs: txs, UserSig: sig, PostStateRoot: postStateRoot}
 }
 
+// SignDiffSealed signs a diff that carries an explicit seal set. The signed
+// DiffContent includes sealed_inference_ids so the host's ApplyDiff signature
+// check and deterministic fold both see them. post_state_root is left empty so
+// the state machine skips root verification (the host recomputes it).
+func SignDiffSealed(t *testing.T, signer signing.Signer, escrowID string, nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64) types.Diff {
+	t.Helper()
+	return SignDiffSealedWithRoot(t, signer, escrowID, nonce, txs, sealedIDs, nil)
+}
+
+// SignDiffSealedWithRoot signs a seal-bearing diff that also commits to an
+// explicit post_state_root, mirroring what the user sequencer produces: the
+// signed content covers txs, sealed_inference_ids, and the root, so the host's
+// ApplyDiff both verifies the signature and asserts its recomputed root matches.
+func SignDiffSealedWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64, postStateRoot []byte) types.Diff {
+	t.Helper()
+	content := &types.DiffContent{Nonce: nonce, Txs: txs, EscrowId: escrowID, SealedInferenceIds: sealedIDs, PostStateRoot: postStateRoot}
+	data, err := deterministicMarshal.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return types.Diff{Nonce: nonce, Txs: txs, UserSig: sig, SealedInferenceIDs: sealedIDs, PostStateRoot: postStateRoot}
+}
+
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
 	data, err := deterministicMarshal.Marshal(msg)

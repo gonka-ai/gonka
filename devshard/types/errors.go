@@ -42,4 +42,6 @@ var (
 	ErrInvalidGroup          = errors.New("invalid group")
 	ErrEscrowIDMismatch      = errors.New("escrow_id does not match session")
 	ErrNonceLimitExceeded    = errors.New("nonce exceeds chain max_nonce limit")
+	ErrSealNotEligible       = errors.New("sealed inference is not in a seal-eligible status")
+	ErrSealTooEarly          = errors.New("sealed inference has not cleared the seal grace window")
 )

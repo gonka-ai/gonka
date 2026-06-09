@@ -72,6 +72,14 @@ func (f PruneEventSinkFunc) OnInferencePrunable(event InferencePruneEvent) {
 // Normal paths always normalize (production default 3600s); this is a safety net.
 const defaultInferenceClearGrace = 60 * time.Minute
 
+// sealAdmissionClockTolerance is the wall-clock slack the host grants the
+// sequencer when admitting Finished seals. The sequencer freezes its own clock
+// into the signed diff; this host may read a slightly earlier clock, so we
+// treat a Finished inference as past its grace window if it is within this much
+// of the deadline. This only loosens the live-only admission sanity check; it
+// never affects the deterministic fold or the state root.
+const sealAdmissionClockTolerance = 10 * time.Second
+
 // isTerminalStatus returns true for inference statuses that no longer require
 // payload retention (validated, invalidated, or timed out).
 func isTerminalStatus(s types.InferenceStatus) bool {

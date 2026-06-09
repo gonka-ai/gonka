@@ -234,6 +234,8 @@ func migrateLegacyDiffs(src *sql.DB, dest Storage, escrowID string, copiedThroug
 	}
 
 	for _, d := range diffs {
+		// Legacy single-file stores predate the new storage layout (and thus the
+		// sealed_inference_ids feature), so these diffs never carry sealed ids.
 		txs, err := unmarshalTxs(d.txsProto)
 		if err != nil {
 			return fmt.Errorf("unmarshal txs nonce %d: %w", d.nonce, err)

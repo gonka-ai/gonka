@@ -112,6 +112,10 @@ func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }
 
+func TestSQLite_AppendDiff_SealedInferenceIDs(t *testing.T) {
+	runAppendDiff_SealedInferenceIDs(t, newTestSQLite(t))
+}
+
 func TestSQLite_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestSQLite(t))
 }

@@ -14,6 +14,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
+	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
 )
@@ -54,6 +55,32 @@ func sumHostStatsInvalid(st types.EscrowState) uint32 {
 		n += hs.Invalid
 	}
 	return n
+}
+
+// sealedRecords returns the sealed (SealedNonce>0) inference snapshots from the
+// obs store for ids 1..maxID. Terminal inferences (Validated/Invalidated/
+// TimedOut) seal mid-session under the terminal-immediate rule, so their final
+// status and vote tallies live here rather than in the live Inferences map.
+// Rows with SealedNonce==0 are live snapshots (e.g. Challenged) that still sit
+// in the live map and are skipped here to avoid double counting.
+func sealedRecords(t *testing.T, store *storage.Memory, escrowID string, maxID int) map[uint64]types.InferenceRecord {
+	t.Helper()
+	out := make(map[uint64]types.InferenceRecord)
+	for id := 1; id <= maxID; id++ {
+		row, ok, err := store.GetSealedInference(escrowID, uint64(id))
+		require.NoError(t, err)
+		if !ok || !row.ObsPresent || row.SealedNonce == 0 {
+			continue
+		}
+		out[uint64(id)] = types.InferenceRecord{
+			Status:       types.InferenceStatus(row.SealedStatus),
+			ExecutorSlot: row.SealedExecutorSlot,
+			VotesValid:   row.SealedVotesValid,
+			VotesInvalid: row.SealedVotesInvalid,
+			ValidatedBy:  types.Bitmap128FromBytes(row.SealedValidatedBy),
+		}
+	}
+	return out
 }
 
 func TestSession_Validation_InvalidationConverges(t *testing.T) {
@@ -99,7 +126,8 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
+	userStore := testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance)
+	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, userStore)
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-validation", group, clients, verifier)
 	require.NoError(t, err)
@@ -139,19 +167,27 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 
 	// Snapshot before finalize: v2 drains state.Inferences into SealedAcc at settlement.
 	preFinalize := session.StateMachine().SnapshotState()
-	var finished, challenged, invalidated, validated, other int
+	var liveFinished, liveChallenged, liveOther int
 	for _, rec := range preFinalize.Inferences {
 		switch rec.Status {
 		case types.StatusFinished:
-			finished++
+			liveFinished++
 		case types.StatusChallenged:
-			challenged++
-		case types.StatusInvalidated:
-			invalidated++
-		case types.StatusValidated:
-			validated++
+			liveChallenged++
 		default:
-			other++
+			liveOther++
+		}
+	}
+	// Terminal inferences seal mid-session under the terminal-immediate rule, so
+	// their final status lives in the sealed obs store, not the live map.
+	sealed := sealedRecords(t, userStore, "escrow-validation", numInferences)
+	var sealedInvalidated, sealedValidated int
+	for _, rec := range sealed {
+		switch rec.Status {
+		case types.StatusInvalidated:
+			sealedInvalidated++
+		case types.StatusValidated:
+			sealedValidated++
 		}
 	}
 	totalHostStatsInvalid := sumHostStatsInvalid(preFinalize)
@@ -160,14 +196,14 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		totalCalls += v.calls.Load()
 	}
 	hist := fmt.Sprintf(
-		"histogram: live=%d finished=%d challenged=%d invalidated=%d validated=%d other=%d host_stats_invalid=%d validate_calls=%d",
-		len(preFinalize.Inferences), finished, challenged, invalidated, validated, other,
-		totalHostStatsInvalid, totalCalls,
+		"histogram: live=%d live_finished=%d live_challenged=%d live_other=%d sealed_invalidated=%d sealed_validated=%d host_stats_invalid=%d validate_calls=%d",
+		len(preFinalize.Inferences), liveFinished, liveChallenged, liveOther,
+		sealedInvalidated, sealedValidated, totalHostStatsInvalid, totalCalls,
 	)
 	t.Log(hist)
 
-	require.Greater(t, challenged+invalidated, 0, "validators never produced any MsgValidation; %s", hist)
-	require.GreaterOrEqual(t, invalidated, 10, hist)
+	require.Greater(t, sealedInvalidated, 0, "validators never produced any invalidation; %s", hist)
+	require.GreaterOrEqual(t, sealedInvalidated, 10, hist)
 	require.Greater(t, totalHostStatsInvalid, uint32(0), hist)
 
 	require.NoError(t, session.Finalize(ctx))
@@ -236,7 +272,8 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		require.NotNil(t, clients[i], "no client for slot %d", i)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
+	userStore := testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance)
+	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, userStore)
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-multi", group, clients, verifier)
 	require.NoError(t, err)
@@ -274,21 +311,29 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 
 	preFinalize := session.StateMachine().SnapshotState()
 	megaSlots := []uint32{1, 2, 3}
+	megaParticipated := func(vb types.Bitmap128) bool {
+		for _, slot := range megaSlots {
+			if vb.IsSet(slot) {
+				return true
+			}
+		}
+		return false
+	}
 
+	// Terminal inferences seal mid-session, so combine the live map with the
+	// sealed obs snapshots to see every inference mega participated in. The two
+	// sets are disjoint: a sealed (SealedNonce>0) inference is no longer live.
 	megaParticipations := 0
 	invalidated := 0
 	for _, rec := range preFinalize.Inferences {
-		participated := false
-		for _, slot := range megaSlots {
-			if rec.ValidatedBy.IsSet(slot) {
-				participated = true
-				break
-			}
-		}
-		if participated {
+		if megaParticipated(rec.ValidatedBy) {
 			megaParticipations++
 		}
-
+	}
+	for _, rec := range sealedRecords(t, userStore, "escrow-multi", numInferences) {
+		if megaParticipated(rec.ValidatedBy) {
+			megaParticipations++
+		}
 		// Invalidation requires VotesInvalid > VoteThreshold(2), i.e. >= 3.
 		// host0 + host2 together have weight 1+1 = 2 (mega excluded as
 		// executor). So every Invalidated inference must include mega's

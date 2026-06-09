@@ -426,7 +426,7 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
-	txsProto, err := marshalTxs(rec.Txs)
+	txsProto, err := marshalDiffContent(rec.Txs, rec.SealedInferenceIDs)
 	if err != nil {
 		return err
 	}
@@ -615,17 +615,18 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 				result = append(result, *current)
 			}
 
-			txs, err := unmarshalTxs(txsProto)
+			txs, sealedIDs, err := unmarshalDiffContent(txsProto)
 			if err != nil {
 				return nil, err
 			}
 
 			rec := types.DiffRecord{
 				Diff: types.Diff{
-					Nonce:         nonce,
-					Txs:           txs,
-					UserSig:       userSig,
-					PostStateRoot: postStateRoot,
+					Nonce:              nonce,
+					Txs:                txs,
+					UserSig:            userSig,
+					PostStateRoot:      postStateRoot,
+					SealedInferenceIDs: sealedIDs,
 				},
 				StateHash: stateHash,
 				CreatedAt: createdAt,

@@ -26,6 +26,11 @@ import (
 // passed their own deadline before the proxy fires the timeout.
 var TimeoutBuffer = 5 * time.Second
 
+// defaultUserInferenceClearGrace is the wall-clock seal grace the sequencer
+// falls back to when the session config leaves InferenceClearGraceSeconds unset.
+// Mirrors the host fallback; normal sessions always carry a normalized value.
+const defaultUserInferenceClearGrace = 60 * time.Minute
+
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
 // proxy may have open against the same verifier host. When many in-flight
 // nonces time out around the same time (e.g. one executor host stops
@@ -237,6 +242,17 @@ type Session struct {
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
 
+	// Seal ledger: when an inference first becomes seal-eligible (status
+	// Finished or terminal and still live), the sequencer records when it
+	// observed that. The seal set for each new diff is derived from this ledger:
+	// terminal inferences (Validated/Invalidated/TimedOut) are final and seal
+	// immediately (next diff, no grace), while Finished inferences wait the
+	// nonce floor + wall-clock grace so a late challenge can still arrive.
+	// Entries are dropped once the id is sealed. This is the single source of
+	// the nondeterministic wall clock; it is consumed only here, at
+	// composition, and frozen into the signed diff.
+	sealable map[uint64]sealMarker
+
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
@@ -321,6 +337,7 @@ func NewSession(
 		pendingTxKeys:   make(map[string]struct{}),
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
+		sealable:        make(map[uint64]sealMarker),
 		verifierQueue:   SharedVerifierQueue,
 		//TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
@@ -603,11 +620,17 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	if s.store != nil {
 		warmBefore = s.sm.WarmKeys()
 	}
-	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
+
+	// Decide which inferences to seal at this nonce from the seal ledger
+	// (wall-clock grace + nonce floor). The clock is read only here and frozen
+	// into the signed diff, so the host applies the same seal deterministically.
+	sealIDs := s.computeSealIDsLocked(nonce, time.Now())
+
+	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates, sealIDs)
 	if err != nil {
 		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 	}
-	diff, err := s.signDiff(nonce, applied, postStateRoot)
+	diff, err := s.signDiff(nonce, applied, sealIDs, postStateRoot)
 	if err != nil {
 		return types.Diff{}, 0, err
 	}
@@ -615,6 +638,12 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+
+	// Update the seal ledger from the txs that just applied: drop ids sealed at
+	// this nonce and (un)mark seal-eligibility for the inferences those txs
+	// touched. Event-driven (only the diff's txs), mirroring the host's
+	// finishedAt/terminalAt tracking -- no full live-set scan.
+	s.observeSealEventsLocked(nonce, applied, sealIDs, time.Now())
 
 	if s.store != nil {
 		warmAfter := s.sm.WarmKeys()
@@ -630,6 +659,135 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	}
 
 	return diff, hostIdx, nil
+}
+
+// sealMarker records when an inference became seal-eligible. immediate is set
+// for terminal inferences (Validated/Invalidated/TimedOut), which are final and
+// seal without waiting any grace; for Finished inferences it is false and the
+// nonce floor + wall-clock grace gates apply.
+type sealMarker struct {
+	sinceNonce uint64
+	sinceTime  time.Time
+	immediate  bool
+}
+
+// sealEligibleStatus reports whether an inference in this status may be sealed
+// into the accumulator: Finished (stale-finished, Tier C) or terminal (Tier A).
+// Challenged is mid-vote and not yet sealable.
+func sealEligibleStatus(s types.InferenceStatus) bool {
+	switch s {
+	case types.StatusFinished, types.StatusValidated, types.StatusInvalidated, types.StatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// sealTerminalStatus reports whether an inference status is terminal (final, no
+// further transition possible). Terminal inferences seal immediately, with no
+// grace, since there is nothing left to wait for. Finished is not terminal: it
+// can still be challenged within the grace window.
+func sealTerminalStatus(s types.InferenceStatus) bool {
+	switch s {
+	case types.StatusValidated, types.StatusInvalidated, types.StatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// userInferenceClearGrace returns the wall-clock grace before an inference may
+// be sealed, from the frozen session config (with a safety fallback).
+func (s *Session) userInferenceClearGrace() time.Duration {
+	secs := s.sm.InferenceClearGraceSeconds()
+	if secs == 0 {
+		return defaultUserInferenceClearGrace
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// computeSealIDsLocked returns the ascending set of ledger inference ids that
+// are due for sealing as of (nonce, now). Terminal inferences (immediate) seal
+// with no grace; Finished inferences must clear both the nonce floor
+// (nonce >= sinceNonce + sealGraceNonces) and the wall-clock grace
+// (now - sinceTime >= inferenceClearGrace). The ledger only ever holds live,
+// seal-eligible ids (maintained by observeSealEventsLocked), so no live state
+// scan is needed here. Only meaningful in the Active phase; during finalization
+// the settlement drain seals the remainder, so we return nil to keep the drain
+// order deterministic. Caller holds s.mu.
+func (s *Session) computeSealIDsLocked(nonce uint64, now time.Time) []uint64 {
+	if s.sm.Phase() != types.PhaseActive {
+		return nil
+	}
+	if len(s.sealable) == 0 {
+		return nil
+	}
+	grace := s.userInferenceClearGrace()
+	sealGraceNonces := uint64(s.sm.SealGraceNonces())
+
+	var ids []uint64
+	for id, m := range s.sealable {
+		if !m.immediate {
+			if nonce < m.sinceNonce+sealGraceNonces {
+				continue
+			}
+			if now.Sub(m.sinceTime) < grace {
+				continue
+			}
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// observeSealEventsLocked maintains the seal ledger from the txs that just
+// applied. It drops ids sealed at this nonce, then for each inference touched
+// by an applied finish/validation/vote/timeout tx it (re)marks seal-eligibility
+// from that inference's post-apply status: Finished is recorded with grace,
+// terminal is recorded as immediate, and a regression out of a sealable status
+// (e.g. Finished -> Challenged) or a vanished record clears the marker. A
+// Finished marker that later goes terminal is upgraded to immediate. This
+// mirrors the host's event-driven finishedAt/terminalAt tracking and avoids
+// scanning the full live set. Caller holds s.mu.
+func (s *Session) observeSealEventsLocked(nonce uint64, applied []*types.DevshardTx, sealedIDs []uint64, now time.Time) {
+	for _, id := range sealedIDs {
+		delete(s.sealable, id)
+	}
+
+	for _, tx := range applied {
+		var id uint64
+		switch {
+		case tx.GetFinishInference() != nil:
+			id = tx.GetFinishInference().InferenceId
+		case tx.GetValidation() != nil:
+			id = tx.GetValidation().InferenceId
+		case tx.GetValidationVote() != nil:
+			id = tx.GetValidationVote().InferenceId
+		case tx.GetTimeoutInference() != nil:
+			id = tx.GetTimeoutInference().InferenceId
+		default:
+			continue
+		}
+
+		rec, ok := s.sm.GetInference(id)
+		if !ok || !sealEligibleStatus(rec.Status) {
+			// Sealed/drained, or regressed out of a sealable status: ensure no
+			// stale marker lingers.
+			delete(s.sealable, id)
+			continue
+		}
+		terminal := sealTerminalStatus(rec.Status)
+		existing, tracked := s.sealable[id]
+		if !tracked {
+			s.sealable[id] = sealMarker{sinceNonce: nonce, sinceTime: now, immediate: terminal}
+		} else if terminal && !existing.immediate {
+			// Finished -> terminal (validated/invalidated/timed out): upgrade to
+			// immediate sealing; a now-final inference has no reason to wait.
+			existing.immediate = true
+			s.sealable[id] = existing
+		}
+	}
 }
 
 // maybeSaveSnapshotLocked schedules an asynchronous snapshot save when
@@ -1102,9 +1260,11 @@ func (s *Session) Finalize(ctx context.Context) error {
 	return nil
 }
 
-// signDiff builds and signs a diff with the given nonce, txs, and post_state_root.
-func (s *Session) signDiff(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte) (types.Diff, error) {
-	content := state.BuildDiffContent(s.escrowID, nonce, txs, postStateRoot)
+// signDiff builds and signs a diff with the given nonce, txs, sealed ids, and
+// post_state_root. sealedIDs must be ascending and deduplicated so the signed
+// bytes match what the host reconstructs.
+func (s *Session) signDiff(nonce uint64, txs []*types.DevshardTx, sealedIDs []uint64, postStateRoot []byte) (types.Diff, error) {
+	content := state.BuildDiffContent(s.escrowID, nonce, txs, sealedIDs, postStateRoot)
 	data, err := proto.Marshal(content)
 	if err != nil {
 		return types.Diff{}, fmt.Errorf("marshal diff content: %w", err)
@@ -1113,7 +1273,7 @@ func (s *Session) signDiff(nonce uint64, txs []*types.DevshardTx, postStateRoot 
 	if err != nil {
 		return types.Diff{}, fmt.Errorf("sign diff: %w", err)
 	}
-	return types.Diff{Nonce: nonce, Txs: txs, UserSig: sig, PostStateRoot: postStateRoot}, nil
+	return types.Diff{Nonce: nonce, Txs: txs, UserSig: sig, PostStateRoot: postStateRoot, SealedInferenceIDs: sealedIDs}, nil
 }
 
 // devshardTxKey returns a dedup key for host-proposed txs.

@@ -574,7 +574,7 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
-	txsProto, err := marshalTxs(rec.Txs)
+	txsProto, err := marshalDiffContent(rec.Txs, rec.SealedInferenceIDs)
 	if err != nil {
 		return err
 	}
@@ -748,17 +748,18 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 				result = append(result, *current)
 			}
 
-			txs, err := unmarshalTxs(txsProto)
+			txs, sealedIDs, err := unmarshalDiffContent(txsProto)
 			if err != nil {
 				return nil, err
 			}
 
 			rec := types.DiffRecord{
 				Diff: types.Diff{
-					Nonce:         nonce,
-					Txs:           txs,
-					UserSig:       userSig,
-					PostStateRoot: postStateRoot,
+					Nonce:              nonce,
+					Txs:                txs,
+					UserSig:            userSig,
+					PostStateRoot:      postStateRoot,
+					SealedInferenceIDs: sealedIDs,
 				},
 				StateHash: stateHash,
 				CreatedAt: createdAt,
@@ -1209,25 +1210,43 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
-// marshalTxs serializes a slice of DevshardTx into a single proto blob
-// by wrapping them in DiffContent (reusing the existing proto message).
-func marshalTxs(txs []*types.DevshardTx) ([]byte, error) {
-	wrapper := &types.DiffContent{Txs: txs}
+// marshalDiffContent serializes a diff's txs and sealed-inference ids into a
+// single proto blob by wrapping them in DiffContent (reusing the existing proto
+// message). Sealed ids are part of the signed diff content, so they must
+// survive storage to reconstruct SealedAcc deterministically on replay.
+func marshalDiffContent(txs []*types.DevshardTx, sealedIDs []uint64) ([]byte, error) {
+	wrapper := &types.DiffContent{Txs: txs, SealedInferenceIds: sealedIDs}
 	data, err := proto.Marshal(wrapper)
 	if err != nil {
-		return nil, fmt.Errorf("marshal txs: %w", err)
+		return nil, fmt.Errorf("marshal diff content: %w", err)
 	}
 	return data, nil
 }
 
-// unmarshalTxs deserializes a proto blob back into DevshardTx slice.
-func unmarshalTxs(data []byte) ([]*types.DevshardTx, error) {
+// unmarshalDiffContent deserializes a proto blob back into the txs slice and
+// sealed-inference ids.
+func unmarshalDiffContent(data []byte) ([]*types.DevshardTx, []uint64, error) {
 	if len(data) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	wrapper := &types.DiffContent{}
 	if err := proto.Unmarshal(data, wrapper); err != nil {
-		return nil, fmt.Errorf("unmarshal txs: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal diff content: %w", err)
 	}
-	return wrapper.Txs, nil
+	return wrapper.Txs, wrapper.SealedInferenceIds, nil
+}
+
+// marshalTxs serializes a slice of DevshardTx into a single proto blob
+// by wrapping them in DiffContent (reusing the existing proto message).
+func marshalTxs(txs []*types.DevshardTx) ([]byte, error) {
+	return marshalDiffContent(txs, nil)
+}
+
+// unmarshalTxs deserializes a proto blob back into DevshardTx slice.
+func unmarshalTxs(data []byte) ([]*types.DevshardTx, error) {
+	txs, _, err := unmarshalDiffContent(data)
+	if err != nil {
+		return nil, err
+	}
+	return txs, nil
 }

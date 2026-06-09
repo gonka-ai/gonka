@@ -26,6 +26,10 @@ func TestMemory_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, NewMemory())
 }
 
+func TestMemory_AppendDiff_SealedInferenceIDs(t *testing.T) {
+	runAppendDiff_SealedInferenceIDs(t, NewMemory())
+}
+
 func TestMemory_GetSignatures(t *testing.T) {
 	runGetSignatures(t, NewMemory())
 }

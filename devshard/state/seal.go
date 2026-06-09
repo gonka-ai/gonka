@@ -192,6 +192,58 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	return nil
 }
 
+// foldSealedIDsLocked folds the given inference ids into SealedAcc at sealNonce,
+// in ascending order, deduplicated, skipping any id that is not currently live
+// (already sealed, drained, or never created). It is the deterministic,
+// diff-driven seal: both the user (when composing a diff) and the host (when
+// applying it) run this before computing post_state_root, so the seal is part
+// of the signed root rather than an off-log, host-local side effect. Because
+// both sides replay the same diffs in the same order, the skip behavior and the
+// accumulator fold order are identical. Caller must hold sm.mu.
+func (sm *StateMachine) foldSealedIDsLocked(ids []uint64, sealNonce uint64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	sorted := make([]uint64, 0, len(ids))
+	seen := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		sorted = append(sorted, id)
+	}
+	slices.Sort(sorted)
+
+	if sm.sealedNonces == nil {
+		sm.sealedNonces = make(map[uint64]uint64, len(sorted))
+	}
+	cur := sealedAccBytes32(sm.state.SealedAcc)
+
+	for _, id := range sorted {
+		rec, ok := sm.state.Inferences[id]
+		if !ok {
+			// Not live: already sealed/drained or unknown. Skipping keeps the
+			// fold idempotent and identical across user and host.
+			continue
+		}
+		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
+			return fmt.Errorf("fold sealed inference %d: %w", id, err)
+		}
+		entry := append([]byte(nil), sm.committedEntries[id]...)
+		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
+		sm.sealedNonces[id] = sealNonce
+		delete(sm.committedEntries, id)
+		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
+			return fmt.Errorf("persist sealed inference %d during fold: %w", id, err)
+		}
+		delete(sm.state.Inferences, id)
+	}
+	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
+	return nil
+}
+
 func (sm *StateMachine) SealInference(id uint64) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

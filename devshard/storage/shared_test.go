@@ -155,6 +155,36 @@ func runAppendDiff_GetDiffs(t *testing.T, store Storage) {
 	require.Equal(t, uint64(5), meta.LatestNonce)
 }
 
+// runAppendDiff_SealedInferenceIDs verifies a diff's seal set survives the
+// storage round-trip. Sealed ids are part of the signed diff content and must be
+// reconstructed on replay/recovery so sealed_acc is rebuilt deterministically.
+func runAppendDiff_SealedInferenceIDs(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	sealed := []uint64{2, 5, 9}
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff: types.Diff{
+			Nonce:              1,
+			UserSig:            []byte("sig"),
+			SealedInferenceIDs: sealed,
+		},
+		StateHash: []byte{0x01},
+	}))
+	// A diff that seals nothing must round-trip without sealed ids.
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      types.Diff{Nonce: 2, UserSig: []byte("sig")},
+		StateHash: []byte{0x02},
+	}))
+
+	got, err := store.GetDiffs("escrow-1", 1, 2)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, sealed, got[0].SealedInferenceIDs, "sealed ids must survive the storage round-trip")
+	require.Empty(t, got[1].SealedInferenceIDs, "no-seal diff must round-trip without sealed ids")
+}
+
 func runGetSignatures(t *testing.T, store Storage) {
 	t.Helper()
 

@@ -113,24 +113,17 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-func (r *obsTestRig) awaitTerminalPrune(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
+// sealDiff applies a seal-bearing diff that folds inferenceID and asserts the
+// host emitted exactly one terminal prune for it. Returns the next nonce.
+func (r *obsTestRig) sealDiff(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
 	r.t.Helper()
-	time.Sleep(20 * time.Millisecond)
-	limit := int(r.host.sealGraceNonces) + 3
-	if limit < 3 {
-		limit = 3
-	}
-	for i := 0; i < limit; i++ {
-		if events := sink.findFor(inferenceID); len(events) == 1 {
-			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
-			return nonce
-		}
-		r.applyDiff(nonce, nil)
-		nonce++
-	}
-	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
-		inferenceID, len(sink.findFor(inferenceID)))
-	return nonce
+	d := testutil.SignDiffSealed(r.t, r.user, r.escrowID, nonce, nil, []uint64{inferenceID})
+	_, err := r.host.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d}})
+	require.NoError(r.t, err)
+	events := sink.findFor(inferenceID)
+	require.Len(r.t, events, 1)
+	require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+	return nonce + 1
 }
 
 func (r *obsTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uint64 {
@@ -391,7 +384,7 @@ func TestHost_ApplyAndPersist_ValidationObs_NoRecordOnUserLocalCompose(t *testin
 		_, err := userSM.ApplyLocal(rec.Nonce, rec.Txs)
 		require.NoError(t, err)
 	}
-	_, _, err = userSM.ApplyLocalBestEffort(next, []*types.DevshardTx{valTx})
+	_, _, err = userSM.ApplyLocalBestEffort(next, []*types.DevshardTx{valTx}, nil)
 	require.NoError(t, err)
 	require.Equal(t, uint32(0), obsCompletedForSlot(t, r.store, r.escrowID, 0))
 
@@ -611,7 +604,7 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
 	waitObsRowCount(t, r.store, r.escrowID, 2)
 
-	next = r.awaitTerminalPrune(inferenceID, next, sink)
+	next = r.sealDiff(inferenceID, next, sink)
 	r.inferenceMissing(inferenceID)
 	require.NotZero(t, r.sealedRow(inferenceID).SealedNonce)
 
