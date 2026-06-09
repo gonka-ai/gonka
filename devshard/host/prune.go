@@ -14,8 +14,8 @@ const (
 	// StatusTimedOut). No further protocol step needs the payload.
 	PruneReasonTerminal PruneReason = iota
 	// PruneReasonStaleFinished is fired for inferences that linger in
-	// StatusFinished after the local validation window expired (nonce gate
-	// plus wall-clock gate). A late validator that arrives after this prune
+	// StatusFinished after both seal gates clear (nonce gate plus state-clock
+	// grace). A late validator that arrives after this prune
 	// will get a 404 and is expected to skip silently via ErrValidationSkipped.
 	PruneReasonStaleFinished
 )

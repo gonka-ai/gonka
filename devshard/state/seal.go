@@ -211,6 +211,18 @@ func sealEligibleStatus(s types.InferenceStatus) bool {
 	}
 }
 
+// terminalAutoSealStatus reports terminal outcomes that may seal as soon as the
+// nonce gate clears, without waiting for the state-clock grace. Finished
+// (stale-finished) still requires both the nonce and clock gates.
+func terminalAutoSealStatus(s types.InferenceStatus) bool {
+	switch s {
+	case types.StatusValidated, types.StatusInvalidated, types.StatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
 // stateClockLocked derives a deterministic "current time" purely from state:
 // the max ConfirmedAt over the latest N*stateClockWindowFactor live inferences
 // (N = group size). ConfirmedAt is executor-signed and committed to the state
@@ -254,9 +266,12 @@ func (sm *StateMachine) stateClockLocked() int64 {
 // (applying it) and replay all seal the identical set at the identical nonce
 // and agree on the post_state_root.
 //
-// Per live, seal-eligible inference, both gates must clear:
-//   - nonce gate:  sealNonce >= id + SealGraceNonces   (id == start nonce)
-//   - clock gate:  stateClock - ConfirmedAt >= InferenceClearGraceSeconds
+// Per live, seal-eligible inference:
+//   - nonce gate (always):  sealNonce >= id + SealGraceNonces   (id == start nonce)
+//   - clock gate (Finished only): stateClock - ConfirmedAt >= InferenceClearGraceSeconds
+//
+// Terminal statuses (Validated/Invalidated/TimedOut) skip the clock gate and
+// seal as soon as the nonce gate clears on the diff that made them terminal.
 //
 // The obs-store write is best-effort (logged, never fatal) so a transient
 // storage error on one node cannot diverge the deterministic seal. Caller must
@@ -278,7 +293,7 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
 		if sealNonce < id+sealGraceNonces {
 			continue
 		}
-		if stateClock-rec.ConfirmedAt < graceSeconds {
+		if !terminalAutoSealStatus(rec.Status) && stateClock-rec.ConfirmedAt < graceSeconds {
 			continue
 		}
 		eligible = append(eligible, id)

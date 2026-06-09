@@ -280,8 +280,8 @@ func (r *pruneTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 }
 
 // driveToValidated brings inference 1 (executor slot 1) to StatusValidated with
-// 3 valid votes (threshold=2). It does NOT advance the state clock, so the
-// inference stays live until a later confirm bumps the clock. Returns next nonce.
+// 3 valid votes (threshold=2). Terminal statuses seal on the validating diff
+// once the nonce gate clears (no state-clock grace). Returns next nonce.
 func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 	r.t.Helper()
 	nonce := r.driveStartConfirmFinish(1, startNonce)
@@ -292,27 +292,18 @@ func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 	r.applyDiff(nonce, []*types.DevshardTx{r.signValidationVote(1, 3, true)})
 	nonce++
 	r.applyDiff(nonce, []*types.DevshardTx{r.signValidationVote(1, 4, true)})
-	nonce++
-	require.Equal(r.t, types.StatusValidated, r.inferenceStatus(1))
-	return nonce
+	return nonce + 1
 }
 
-// The seal is now a deterministic function of state: an inference is folded
-// into SealedAcc (and its payload pruned) once nonce >= id+SealGraceNonces AND
-// the state clock (max ConfirmedAt over recent live inferences) has advanced
-// >= InferenceClearGraceSeconds past the inference's own ConfirmedAt. Tests
-// advance the clock by confirming a newer inference (bumpClock), never by
-// sleeping on the wall clock.
+// The seal is a deterministic function of state. Terminal statuses
+// (Validated/Invalidated/TimedOut) seal once nonce >= id+SealGraceNonces on
+// the diff that made them terminal. Finished (stale-finished) also requires the
+// state clock to advance >= InferenceClearGraceSeconds past ConfirmedAt;
+// those tests use bumpClock to advance the clock without wall-clock sleeps.
 
 func TestHost_PruneSink_SealsTerminal_Validated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
-	nonce := rig.driveToValidated(1) // inference 1 Validated, ConfirmedAt=2001.
-
-	// No prune yet: the state clock has not advanced past ConfirmedAt+grace.
-	require.Empty(t, rig.sink.findFor(1), "terminal inference must wait for the clock gate")
-
-	// Confirm a newer inference far enough ahead to clear the clock gate.
-	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds+5)
+	_ = rig.driveToValidated(1) // inference 1 Validated; seals on last vote diff.
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
@@ -332,11 +323,6 @@ func TestHost_PruneSink_SealsTerminal_Invalidated(t *testing.T) {
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, false)})
 	nonce++
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
-	nonce++
-	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1))
-
-	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds+5)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
@@ -354,11 +340,10 @@ func TestHost_PruneSink_SealsTerminal_TimedOut(t *testing.T) {
 	timeoutTx := rig.signTimeoutInference(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, []uint32{0, 2, 3})
 	rig.applyDiff(2, []*types.DevshardTx{timeoutTx})
 	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "no clock yet -> cannot seal")
+	require.Empty(t, rig.sink.findFor(1), "nonce gate not yet cleared at timeout diff")
 
-	// Any confirmed inference makes stateClock >> grace; ConfirmedAt=0 then seals
-	// as soon as the nonce gate (id 1 + 2 = 3) is also cleared.
-	rig.bumpClock(3, pruneTestBaseConfirmedAt)
+	// Terminal short path: no clock grace; advance nonce to clear id+SealGraceNonces.
+	rig.applyDiff(3, nil)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)

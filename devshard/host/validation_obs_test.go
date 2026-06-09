@@ -43,10 +43,7 @@ func newObsRig(t *testing.T, store storage.Storage, opts ...HostOption) *obsTest
 		TokenPrice:       1,
 		VoteThreshold:    uint32(len(hosts)) / 2,
 		ValidationRate:   0,
-		// Small, explicit seal gates drive the deterministic state-clock seal.
-		// With a single live inference the state clock equals that inference's
-		// own ConfirmedAt (gap 0 < grace), so sealing only fires once a test
-		// advances the clock via bumpClock.
+		// Small, explicit seal gates for deterministic auto-seal in tests.
 		SealGraceNonces:            pruneTestSealGraceNonces,
 		InferenceClearGraceSeconds: pruneTestClearGraceSeconds,
 	}
@@ -119,42 +116,26 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-// startConfirm brings inferenceID through Pending -> Started with the given
-// executor-signed ConfirmedAt, leaving it live (Started). Consumes startNonce
-// (start) and startNonce+1 (confirm).
-func (r *obsTestRig) startConfirm(inferenceID, startNonce uint64, confirmedAt int64) {
+// awaitTerminalSeal waits for the terminal short-path seal (nonce gate only).
+// If the terminalizing diff already sealed the inference, this returns
+// immediately; otherwise it advances empty diffs until the nonce gate clears.
+func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
 	r.t.Helper()
-	executorSlot := uint32(inferenceID % uint64(len(r.group)))
-	executorSigner := r.hosts[executorSlot]
-	r.applyDiff(startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
-	execSig := testutil.SignExecutorReceipt(r.t, executorSigner, r.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
-	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
-	}}}
-	r.applyDiff(startNonce+1, []*types.DevshardTx{confirmTx})
-}
-
-// bumpClock confirms a fresh inference (id == startNonce) with a high
-// ConfirmedAt, advancing the deterministic state clock so any older eligible
-// inference is auto-sealed on the confirm diff. The new inference stays in
-// StatusStarted (not seal-eligible). Returns the next free nonce.
-func (r *obsTestRig) bumpClock(startNonce uint64, confirmedAt int64) uint64 {
-	r.t.Helper()
-	r.startConfirm(startNonce, startNonce, confirmedAt)
-	return startNonce + 2
-}
-
-// sealViaClock advances the state clock past inferenceID's ConfirmedAt+grace so
-// the deterministic auto-seal folds it into SealedAcc, then asserts exactly one
-// terminal prune fired. Returns the next free nonce.
-func (r *obsTestRig) sealViaClock(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
-	r.t.Helper()
-	next := r.bumpClock(nonce, pruneTestBaseConfirmedAt+int64(inferenceID)+pruneTestClearGraceSeconds+5)
-	events := sink.findFor(inferenceID)
-	require.Len(r.t, events, 1, "expected exactly one terminal prune for inference %d", inferenceID)
-	require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
-	return next
+	limit := int(pruneTestSealGraceNonces) + 3
+	if limit < 3 {
+		limit = 3
+	}
+	for i := 0; i < limit; i++ {
+		if events := sink.findFor(inferenceID); len(events) == 1 {
+			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+			return nonce
+		}
+		r.applyDiff(nonce, nil)
+		nonce++
+	}
+	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
+		inferenceID, len(sink.findFor(inferenceID)))
+	return nonce
 }
 
 func (r *obsTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uint64 {
@@ -630,11 +611,10 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 
 	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(inferenceID, 1, false)})
 	next++
-	require.Equal(t, types.StatusInvalidated, r.host.SnapshotState().Inferences[inferenceID].Status)
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
 	waitObsRowCount(t, r.store, r.escrowID, 2)
 
-	next = r.sealViaClock(inferenceID, next, sink)
+	next = r.awaitTerminalSeal(inferenceID, next, sink)
 	r.inferenceMissing(inferenceID)
 	require.NotZero(t, r.sealedRow(inferenceID).SealedNonce)
 

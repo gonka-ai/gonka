@@ -137,10 +137,12 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
-	// Snapshot before finalize: v2 drains state.Inferences into SealedAcc at settlement.
+	// Snapshot before finalize. Terminal outcomes may already be auto-sealed
+	// out of the live map; ExportAllInferenceRecords includes those snapshots.
 	preFinalize := session.StateMachine().SnapshotState()
+	allRecords := session.StateMachine().ExportAllInferenceRecords()
 	var finished, challenged, invalidated, validated, other int
-	for _, rec := range preFinalize.Inferences {
+	for _, rec := range allRecords {
 		switch rec.Status {
 		case types.StatusFinished:
 			finished++
@@ -160,8 +162,8 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		totalCalls += v.calls.Load()
 	}
 	hist := fmt.Sprintf(
-		"histogram: live=%d finished=%d challenged=%d invalidated=%d validated=%d other=%d host_stats_invalid=%d validate_calls=%d",
-		len(preFinalize.Inferences), finished, challenged, invalidated, validated, other,
+		"histogram: live=%d records=%d finished=%d challenged=%d invalidated=%d validated=%d other=%d host_stats_invalid=%d validate_calls=%d",
+		len(preFinalize.Inferences), len(allRecords), finished, challenged, invalidated, validated, other,
 		totalHostStatsInvalid, totalCalls,
 	)
 	t.Log(hist)
@@ -272,12 +274,14 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
-	preFinalize := session.StateMachine().SnapshotState()
+	// Terminal invalidations are auto-sealed out of the live map before
+	// finalize; ExportAllInferenceRecords includes sealed snapshots.
+	allRecords := session.StateMachine().ExportAllInferenceRecords()
 	megaSlots := []uint32{1, 2, 3}
 
 	megaParticipations := 0
 	invalidated := 0
-	for _, rec := range preFinalize.Inferences {
+	for _, rec := range allRecords {
 		participated := false
 		for _, slot := range megaSlots {
 			if rec.ValidatedBy.IsSet(slot) {
