@@ -78,7 +78,7 @@ const defaultInferenceClearGrace = 60 * time.Minute
 // treat a Finished inference as past its grace window if it is within this much
 // of the deadline. This only loosens the live-only admission sanity check; it
 // never affects the deterministic fold or the state root.
-const sealAdmissionClockTolerance = 10 * time.Second
+const sealAdmissionClockTolerance = 120 * time.Second // 2 minutes
 
 // isTerminalStatus returns true for inference statuses that no longer require
 // payload retention (validated, invalidated, or timed out).

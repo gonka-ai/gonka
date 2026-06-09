@@ -10,11 +10,6 @@ message DiffContent {
   repeated DevshardTx txs = 2;
   string escrow_id = 3;
   bytes post_state_root = 4;  // state root AFTER applying this diff's txs
-  // sealed_inference_ids lists the inference ids the sequencer folds into the
-  // sealed accumulator at this nonce. The fold runs (identically on user and
-  // host) after txs are applied and before post_state_root is computed, so the
-  // seal is part of the signed root rather than an off-log, host-local side
-  // effect. Ascending, deduplicated.
   repeated uint64 sealed_inference_ids = 5;
 }
 
