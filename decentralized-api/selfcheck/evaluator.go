@@ -161,6 +161,47 @@ func (e *Evaluator) AssertNodeIntendedStatus(name string, wantHW types.HardwareN
 	}
 }
 
+// AssertNodeActualStatus waits until the broker has driven the synthetic
+// node's ACTUAL (current) status to the expected value — i.e. the worker
+// reconciliation completed, not merely that the intended target was set. It
+// also fails if the broker recorded a FailureReason for the node, so a
+// rejected/failed transition during the synthetic run turns the report red
+// instead of passing on intended state alone. wantPoC is only checked when
+// non-empty.
+func (e *Evaluator) AssertNodeActualStatus(name string, wantHW types.HardwareNodeStatus, wantPoC broker.PocStatus) CheckResult {
+	deadline := time.Now().Add(e.Timeout)
+	var lastHW types.HardwareNodeStatus
+	var lastPoC broker.PocStatus
+	var lastFailure string
+	for time.Now().Before(deadline) {
+		nodes, err := e.Broker.GetNodes()
+		if err != nil {
+			return CheckResult{Name: name, Pass: false, Details: err.Error()}
+		}
+		for _, n := range nodes {
+			if n.Node.Id != e.NodeId {
+				continue
+			}
+			lastHW, lastPoC, lastFailure = n.State.CurrentStatus, n.State.PocCurrentStatus, n.State.FailureReason
+			if lastFailure == "" && lastHW == wantHW && (wantPoC == "" || lastPoC == wantPoC) {
+				return CheckResult{Name: name, Pass: true}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if lastFailure != "" {
+		return CheckResult{
+			Name: name, Pass: false,
+			Details: fmt.Sprintf("broker recorded failure: %s (last actual %v/%v)", lastFailure, lastHW, lastPoC),
+		}
+	}
+	return CheckResult{
+		Name: name, Pass: false,
+		Details: fmt.Sprintf("actual status never reached %v/%v within timeout (last seen %v/%v)",
+			wantHW, wantPoC, lastHW, lastPoC),
+	}
+}
+
 // Combine aggregates stage results into a final Report.
 func (e *Evaluator) Combine(stages ...CheckResult) Report {
 	r := Report{Pass: true, Stages: stages}

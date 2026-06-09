@@ -61,6 +61,8 @@ func BuildParticipantMessage(state ParticipantState) string {
 		return "Participant is in active set and participating"
 	case ParticipantState_INACTIVE_WAITING:
 		return "Participant not yet active - model assignment will occur after joining active set"
+	case ParticipantState_UNKNOWN:
+		return "Participant activity status unavailable - syncing with chain"
 	}
 	return ""
 }

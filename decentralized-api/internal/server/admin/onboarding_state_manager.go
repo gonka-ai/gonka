@@ -23,6 +23,12 @@ type ParticipantState string
 const (
 	ParticipantState_INACTIVE_WAITING     ParticipantState = "INACTIVE_WAITING"
 	ParticipantState_ACTIVE_PARTICIPATING ParticipantState = "ACTIVE_PARTICIPATING"
+	// ParticipantState_UNKNOWN is reported when the activity tracker has not
+	// yet had a successful chain refresh, so we genuinely do not know whether
+	// the participant is active. It is distinct from INACTIVE_WAITING (a known
+	// "not active") so the UI never presents "not active" when the truth is
+	// "not yet known".
+	ParticipantState_UNKNOWN ParticipantState = "UNKNOWN"
 )
 
 // SecondsUntilPoCUnknown is the sentinel SecondsUntilNextPoC value used

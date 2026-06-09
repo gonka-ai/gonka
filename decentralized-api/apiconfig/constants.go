@@ -19,4 +19,11 @@ const (
 	// which we switch UX guidance from "safe to be offline" to
 	// "must be online now".
 	OnlineAlertLeadSeconds int64 = 600
+
+	// AutoTestRetryBackoffSeconds is the minimum gap between auto-test
+	// attempts after a transient (retryable) failure. Auto-test is
+	// re-evaluated on every synced block, so this backoff prevents a
+	// retry-storm while still letting a transient MLnode hiccup self-heal
+	// without an operator manually re-testing or editing config.
+	AutoTestRetryBackoffSeconds int64 = 300
 )

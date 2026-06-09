@@ -117,6 +117,16 @@ func (m *MockChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	return &types.QueryParamsResponse{
 		Params: types.Params{
 			EpochParams: m.epochParams(),
+			// PoC params must advertise the model so the broker can resolve a
+			// PoC model for the node and actually dispatch generation. Without
+			// it the broker logs "Skipping PoC scheduling without resolvable
+			// model" and the node never leaves STOPPED — which would make the
+			// PoC-phase selfcheck stages vacuous.
+			PocParams: &types.PocParams{
+				Models: []*types.PoCModelConfig{
+					{ModelId: m.ModelId, SeqLen: 1024},
+				},
+			},
 		},
 	}, nil
 }
