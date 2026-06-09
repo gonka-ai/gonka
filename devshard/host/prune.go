@@ -1,8 +1,6 @@
 package host
 
 import (
-	"time"
-
 	"devshard/types"
 )
 
@@ -66,11 +64,6 @@ func (f PruneEventSinkFunc) OnInferencePrunable(event InferencePruneEvent) {
 		f(event)
 	}
 }
-
-// defaultInferenceClearGrace is the host fallback when SessionConfig leaves
-// InferenceClearGraceSeconds unset and NormalizeSessionConfig did not run.
-// Normal paths always normalize (production default 3600s); this is a safety net.
-const defaultInferenceClearGrace = 60 * time.Minute
 
 // isTerminalStatus returns true for inference statuses that no longer require
 // payload retention (validated, invalidated, or timed out).

@@ -17,6 +17,17 @@ import (
 	"devshard/types"
 )
 
+const (
+	// pruneTestSealGraceNonces is the nonce gate used by prune tests: an
+	// inference id may be sealed only once nonce >= id + this.
+	pruneTestSealGraceNonces = 2
+	// pruneTestClearGraceSeconds is the clock gate: an inference may be sealed
+	// only once stateClock - ConfirmedAt >= this many "seconds".
+	pruneTestClearGraceSeconds = 5
+	// pruneTestBaseConfirmedAt anchors the ConfirmedAt values the helpers use.
+	pruneTestBaseConfirmedAt = 2000
+)
+
 // recordingPruneSink captures all InferencePruneEvent emissions for assertions.
 type recordingPruneSink struct {
 	mu     sync.Mutex
@@ -65,6 +76,13 @@ type pruneTestRig struct {
 // which group member runs locally; pickng a non-executor avoids interference
 // from the executor receipt path.
 func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *pruneTestRig {
+	return newPruneRigGrace(t, observerIdx, numHosts, pruneTestSealGraceNonces, pruneTestClearGraceSeconds, opts...)
+}
+
+// newPruneRigGrace is newPruneRig with explicit seal-grace gates, replacing the
+// old host-local WithPruneTuning: the gates now live in SessionConfig and drive
+// the deterministic state-machine seal.
+func newPruneRigGrace(t *testing.T, observerIdx, numHosts int, sealGraceNonces, clearGraceSeconds uint32, opts ...HostOption) *pruneTestRig {
 	t.Helper()
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hosts {
@@ -72,13 +90,18 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 	}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
+	// Small, explicit seal gates so tests can deterministically drive the
+	// state-clock seal: nonce gate = id+2, clock gate = +5 "seconds" of
+	// ConfirmedAt progress. ConfirmedAt values in the helpers below advance in
+	// steps larger than 5 so a single newer confirmed inference clears the gate.
 	config := types.SessionConfig{
 		RefusalTimeout:             60,
 		ExecutionTimeout:           1200,
 		TokenPrice:                 1,
 		VoteThreshold:              uint32(numHosts) / 2,
 		ValidationRate:             0,
-		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
+		SealGraceNonces:            sealGraceNonces,
+		InferenceClearGraceSeconds: clearGraceSeconds,
 		// ValidationRate=0 + no WithValidator means no async validation
 		// will sneak in and emit unrelated mempool entries.
 	}
@@ -104,8 +127,6 @@ func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *p
 		WithPruneSink(sink),
 		WithEpochID(epochID),
 		WithGrace(0),
-		// v2 defers terminal prune until grace gates clear; tests override as needed.
-		WithPruneTuning(1, 10*time.Millisecond),
 	}
 	allOpts = append(allOpts, opts...)
 	h, err := NewHost(sm, hosts[observerIdx], stubEngine, "escrow-1", group, nil, allOpts...)
@@ -133,24 +154,21 @@ func (r *pruneTestRig) applyDiff(nonce uint64, txs []*types.DevshardTx) {
 	require.NoError(r.t, err)
 }
 
-// driveStartConfirmFinish brings inferenceID through Pending -> Started -> Finished.
-// startNonce is consumed for MsgStartInference; the next two diffs use startNonce+1
-// and startNonce+2.
+// driveStartConfirmFinish brings inferenceID through Pending -> Started ->
+// Finished using a default ConfirmedAt of base+inferenceID. startNonce is
+// consumed for MsgStartInference; the next two diffs use startNonce+1/+2.
 func (r *pruneTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uint64 {
+	return r.driveStartConfirmFinishAt(inferenceID, startNonce, pruneTestBaseConfirmedAt+int64(inferenceID))
+}
+
+// driveStartConfirmFinishAt is driveStartConfirmFinish with an explicit
+// executor-signed ConfirmedAt, which is what advances the deterministic state
+// clock for seal gating.
+func (r *pruneTestRig) driveStartConfirmFinishAt(inferenceID, startNonce uint64, confirmedAt int64) uint64 {
 	r.t.Helper()
+	r.startConfirm(inferenceID, startNonce, confirmedAt)
+
 	executorSlot := uint32(inferenceID % uint64(len(r.group)))
-	executorSigner := r.hosts[executorSlot]
-	confirmedAt := int64(2000) + int64(inferenceID)
-
-	r.applyDiff(startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
-
-	execSig := testutil.SignExecutorReceipt(r.t, executorSigner, r.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
-	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
-	}}}
-	r.applyDiff(startNonce+1, []*types.DevshardTx{confirmTx})
-
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
 		ResponseHash: r.stub.ResponseHash,
@@ -159,11 +177,37 @@ func (r *pruneTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) u
 		ExecutorSlot: executorSlot,
 		EscrowId:     r.escrowID,
 	}
-	finishMsg.ProposerSig = testutil.SignProposerTx(r.t, executorSigner, finishMsg)
+	finishMsg.ProposerSig = testutil.SignProposerTx(r.t, r.hosts[executorSlot], finishMsg)
 	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}
 	r.applyDiff(startNonce+2, []*types.DevshardTx{finishTx})
 
 	return startNonce + 3
+}
+
+// startConfirm brings inferenceID through Pending -> Started with the given
+// executor-signed ConfirmedAt, leaving it live (Started). Consumes startNonce
+// (start) and startNonce+1 (confirm).
+func (r *pruneTestRig) startConfirm(inferenceID, startNonce uint64, confirmedAt int64) {
+	r.t.Helper()
+	executorSlot := uint32(inferenceID % uint64(len(r.group)))
+	r.applyDiff(startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	execSig := testutil.SignExecutorReceipt(r.t, r.hosts[executorSlot], r.escrowID, inferenceID,
+		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
+	}}}
+	r.applyDiff(startNonce+1, []*types.DevshardTx{confirmTx})
+}
+
+// bumpClock starts and confirms a fresh inference (id == startNonce) with a high
+// ConfirmedAt, advancing the deterministic state clock to confirmedAt. The new
+// inference is left in StatusStarted (not seal-eligible), so it only serves to
+// move the clock forward. The confirm diff (startNonce+1) is the nonce at which
+// any now-eligible older inference will be auto-sealed. Returns the next nonce.
+func (r *pruneTestRig) bumpClock(startNonce uint64, confirmedAt int64) uint64 {
+	r.t.Helper()
+	r.startConfirm(startNonce, startNonce, confirmedAt)
+	return startNonce + 2
 }
 
 // signValidation builds a MsgValidation tx signed by validatorSlot's owner.
@@ -235,55 +279,44 @@ func (r *pruneTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-// awaitTerminalPrune advances nonces until the v2 terminal grace gates clear
-// and asserts exactly one PruneReasonTerminal event was emitted.
-func (r *pruneTestRig) awaitTerminalPrune(inferenceID uint64, nonce uint64) []InferencePruneEvent {
+// driveToValidated brings inference 1 (executor slot 1) to StatusValidated with
+// 3 valid votes (threshold=2). It does NOT advance the state clock, so the
+// inference stays live until a later confirm bumps the clock. Returns next nonce.
+func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 	r.t.Helper()
-	time.Sleep(20 * time.Millisecond)
-	limit := int(r.host.sealGraceNonces) + 3
-	if limit < 3 {
-		limit = 3
-	}
-	for i := 0; i < limit; i++ {
-		if events := r.sink.findFor(inferenceID); len(events) == 1 {
-			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
-			return events
-		}
-		r.applyDiff(nonce, nil)
-		nonce++
-	}
-	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
-		inferenceID, len(r.sink.findFor(inferenceID)))
-	return nil
+	nonce := r.driveStartConfirmFinish(1, startNonce)
+	r.applyDiff(nonce, []*types.DevshardTx{r.signValidation(1, 2, false)})
+	nonce++
+	r.applyDiff(nonce, []*types.DevshardTx{r.signValidationVote(1, 0, true)})
+	nonce++
+	r.applyDiff(nonce, []*types.DevshardTx{r.signValidationVote(1, 3, true)})
+	nonce++
+	r.applyDiff(nonce, []*types.DevshardTx{r.signValidationVote(1, 4, true)})
+	nonce++
+	require.Equal(r.t, types.StatusValidated, r.inferenceStatus(1))
+	return nonce
 }
 
-func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
+// The seal is now a deterministic function of state: an inference is folded
+// into SealedAcc (and its payload pruned) once nonce >= id+SealGraceNonces AND
+// the state clock (max ConfirmedAt over recent live inferences) has advanced
+// >= InferenceClearGraceSeconds past the inference's own ConfirmedAt. Tests
+// advance the clock by confirming a newer inference (bumpClock), never by
+// sleeping on the wall clock.
+
+func TestHost_PruneSink_SealsTerminal_Validated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
+	nonce := rig.driveToValidated(1) // inference 1 Validated, ConfirmedAt=2001.
 
-	// Inference 1: executor=slot 1; validators slot 0,2,3,4. Threshold=2.
-	nonce := rig.driveStartConfirmFinish(1, 1)
+	// No prune yet: the state clock has not advanced past ConfirmedAt+grace.
+	require.Empty(t, rig.sink.findFor(1), "terminal inference must wait for the clock gate")
 
-	// Validation flips Finished -> Challenged with one invalid vote.
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
-	nonce++
-	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "no Tier A while still Challenged")
+	// Confirm a newer inference far enough ahead to clear the clock gate.
+	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds+5)
 
-	// Two valid votes are not enough (threshold=2, need >2).
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, true)})
-	nonce++
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, true)})
-	nonce++
-	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1))
-
-	// Third valid vote pushes VotesValid=3 > threshold=2 -> StatusValidated.
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 4, true)})
-	nonce++
-	require.Equal(t, types.StatusValidated, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "v2 defers terminal prune until gates clear")
-
-	events := rig.awaitTerminalPrune(1, nonce)
+	events := rig.sink.findFor(1)
+	require.Len(t, events, 1)
+	require.Equal(t, PruneReasonTerminal, events[0].Reason)
 	require.Equal(t, rig.escrowID, events[0].EscrowID)
 	require.Equal(t, rig.epochID, events[0].PayloadEpoch)
 	require.True(t, events[0].PayloadEpochKnown)
@@ -291,67 +324,60 @@ func TestHost_PruneSink_Terminal_OnValidated(t *testing.T) {
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
 }
 
-func TestHost_PruneSink_Terminal_OnInvalidated(t *testing.T) {
+func TestHost_PruneSink_SealsTerminal_Invalidated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
-
 	nonce := rig.driveStartConfirmFinish(1, 1)
-
-	// Validation injects 1 invalid vote -> Challenged.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
 	nonce++
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, false)})
 	nonce++
-	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1))
-
-	// Third invalid vote: VotesInvalid=3 > threshold=2 -> StatusInvalidated.
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
 	nonce++
 	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
-	events := rig.awaitTerminalPrune(1, nonce)
-	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	_ = events
+	require.Empty(t, rig.sink.findFor(1))
+
+	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds+5)
+
+	events := rig.sink.findFor(1)
+	require.Len(t, events, 1)
+	require.Equal(t, PruneReasonTerminal, events[0].Reason)
 	rig.inferenceMissing(1)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
 }
 
-func TestHost_PruneSink_Terminal_OnTimedOut(t *testing.T) {
+func TestHost_PruneSink_SealsTerminal_TimedOut(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
 
-	// Start inference 1, then timeout from Pending (no ConfirmStart).
+	// Start inference 1, then timeout from Pending (no ConfirmStart -> ConfirmedAt=0).
 	rig.applyDiff(1, []*types.DevshardTx{testutil.StartTx(1)})
 	require.Equal(t, types.StatusPending, rig.inferenceStatus(1))
-
-	// Threshold=2 -> need >2 accept votes; collect 3 from non-executor slots.
 	timeoutTx := rig.signTimeoutInference(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, []uint32{0, 2, 3})
 	rig.applyDiff(2, []*types.DevshardTx{timeoutTx})
 	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
-	events := rig.awaitTerminalPrune(1, 3)
-	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	_ = events
+	require.Empty(t, rig.sink.findFor(1), "no clock yet -> cannot seal")
+
+	// Any confirmed inference makes stateClock >> grace; ConfirmedAt=0 then seals
+	// as soon as the nonce gate (id 1 + 2 = 3) is also cleared.
+	rig.bumpClock(3, pruneTestBaseConfirmedAt)
+
+	events := rig.sink.findFor(1)
+	require.Len(t, events, 1)
+	require.Equal(t, PruneReasonTerminal, events[0].Reason)
 	rig.inferenceMissing(1)
+	require.NotZero(t, rig.sealedRow(1).SealedNonce)
 }
 
-func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
-	rig := newPruneRig(t, 0, 5,
-		WithPruneTuning(2, 10*time.Millisecond),
-	)
+func TestHost_PruneSink_SealsStaleFinished(t *testing.T) {
+	rig := newPruneRig(t, 0, 5)
 
-	// Finish inference 1 at nonce 3 (Start=1, Confirm=2, Finish=3).
+	// Finish inference 1 (ConfirmedAt=2001). Finishing alone never prunes.
 	nonce := rig.driveStartConfirmFinish(1, 1)
 	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "Finish itself does not emit Tier A")
+	require.Empty(t, rig.sink.findFor(1), "Finish itself does not prune")
 
-	// Wall-clock gate: wait past the configured grace.
-	time.Sleep(20 * time.Millisecond)
+	// Advance the clock just past ConfirmedAt + grace; nonce gate (1+2=3) is met.
+	nonce = rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds)
 
-	// Nonce gate not yet met: nonce=4 < finishNonce(3)+grace(2)=5.
-	rig.applyDiff(nonce, nil)
-	nonce++
-	require.Empty(t, rig.sink.findFor(1), "nonce gate should still hold")
-
-	// Crossing the gate (nonce=5 >= 5) should fire exactly one Tier C.
-	rig.applyDiff(nonce, nil)
-	nonce++
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
 	require.Equal(t, PruneReasonStaleFinished, events[0].Reason)
@@ -359,133 +385,35 @@ func TestHost_PruneSink_StaleFinished_TierC(t *testing.T) {
 	rig.inferenceMissing(1)
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
 
-	// Subsequent diffs must not re-emit for the same inference.
+	// Later diffs must not re-emit for the same inference.
 	rig.applyDiff(nonce, nil)
-	require.Len(t, rig.sink.findFor(1), 1, "Tier C must dedupe across later diffs")
+	require.Len(t, rig.sink.findFor(1), 1, "prune must dedupe across later diffs")
 }
 
-func TestHost_PruneSink_TierC_DoesNotFireWhenNonceGateUnmet(t *testing.T) {
-	rig := newPruneRig(t, 0, 5,
-		WithPruneTuning(50, 1*time.Microsecond),
-	)
+func TestHost_PruneSink_DoesNotSealWhenNonceGateUnmet(t *testing.T) {
+	// Large nonce gate, tiny clock gate: the clock advances freely but the nonce
+	// floor (id + 50) is never reached, so the inference must not seal.
+	rig := newPruneRigGrace(t, 0, 5, 50, 1)
 	nonce := rig.driveStartConfirmFinish(1, 1)
-	time.Sleep(2 * time.Millisecond) // wall-clock gate easily satisfied.
+	// Advance the clock well past the grace several times.
 	for i := 0; i < 5; i++ {
-		rig.applyDiff(nonce, nil)
-		nonce++
+		nonce = rig.bumpClock(nonce, pruneTestBaseConfirmedAt+100+int64(i)*10)
 	}
 	require.Empty(t, rig.sink.findFor(1), "nonce gate not yet crossed")
+	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
 }
 
-func TestHost_PruneSink_TierC_DoesNotFireWhenWallClockGateUnmet(t *testing.T) {
-	rig := newPruneRig(t, 0, 5,
-		WithPruneTuning(2, time.Hour),
-	)
+func TestHost_PruneSink_DoesNotSealWhenClockGateUnmet(t *testing.T) {
+	// Tiny nonce gate, large clock gate: nonces advance but ConfirmedAt never
+	// moves far enough ahead, so the clock gate keeps the inference live.
+	rig := newPruneRigGrace(t, 0, 5, 2, 100_000)
 	nonce := rig.driveStartConfirmFinish(1, 1)
 	for i := 0; i < 4; i++ {
-		rig.applyDiff(nonce, nil)
-		nonce++
+		// Bump the clock by only +1 each time: well under the 100000 grace.
+		nonce = rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+int64(i)+1)
 	}
-	require.Empty(t, rig.sink.findFor(1), "wall-clock gate prevents Tier C")
-}
-
-func TestHost_PruneSink_V2_TerminalDelayed(t *testing.T) {
-	hosts := make([]*signing.Secp256k1Signer, 5)
-	for i := range hosts {
-		hosts[i] = testutil.MustGenerateKey(t)
-	}
-	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeGroup(hosts)
-	config := types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              2,
-		ValidationRate:             0,
-		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
-	}
-	verifier := signing.NewSecp256k1Verifier()
-	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-		EscrowID: "escrow-1", EpochID: 7, Version: testutil.RuntimeTestVersion,
-		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 1_000_000,
-	}))
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store,
-	)
-	require.NoError(t, err)
-
-	sink := &recordingPruneSink{}
-	rig := &pruneTestRig{
-		t: t, hosts: hosts, user: user, group: group, config: config,
-		host: nil, sink: sink, stub: stub.NewInferenceEngine(),
-		store: store, escrowID: "escrow-1", epochID: 7,
-	}
-	h, err := NewHost(sm, hosts[0], rig.stub, "escrow-1", group, nil,
-		WithPruneSink(sink), WithEpochID(7), WithGrace(0),
-		WithPruneTuning(2, 10*time.Millisecond),
-	)
-	require.NoError(t, err)
-	rig.host = h
-
-	nonce := rig.driveStartConfirmFinish(1, 1)
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
-	nonce++
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, true)})
-	nonce++
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, true)})
-	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "v2 defers terminal prune until gates clear")
-
-	time.Sleep(20 * time.Millisecond)
-	rig.applyDiff(nonce, nil)
-	nonce++
-	require.Empty(t, rig.sink.findFor(1), "nonce gate should still hold")
-
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 4, true)})
-	nonce++
-	require.Equal(t, types.StatusValidated, rig.inferenceStatus(1))
-	require.Empty(t, rig.sink.findFor(1), "terminal recorded but gates not yet cleared")
-
-	time.Sleep(20 * time.Millisecond)
-	rig.applyDiff(nonce, nil)
-	nonce++
-	require.Empty(t, rig.sink.findFor(1), "nonce gate should still hold after terminal")
-
-	rig.applyDiff(nonce, nil)
-	events := rig.sink.findFor(1)
-	require.Len(t, events, 1)
-	require.Equal(t, PruneReasonTerminal, events[0].Reason)
-	rig.inferenceMissing(1)
-	require.NotZero(t, rig.sealedRow(1).SealedNonce)
-	sealed, ok := rig.host.sm.ExportSealedNonces()[1]
-	require.True(t, ok, "v2 seal should record sealed nonce")
-	require.NotZero(t, sealed)
-}
-
-func TestHost_PruneSink_TerminalFlipPreemptsTierC(t *testing.T) {
-	// If an inference terminalizes before the Tier C gates expire, only one
-	// terminal prune should fire (after v2 grace) and the Tier C ledger cleared.
-	// Default tuning (1 nonce, 10ms wall) is enough: status leaves Finished before Tier C fires.
-	rig := newPruneRig(t, 0, 5)
-	nonce := rig.driveStartConfirmFinish(1, 1)
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidation(1, 2, false)})
-	nonce++
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, false)})
-	nonce++
-	require.Equal(t, types.StatusChallenged, rig.inferenceStatus(1))
-	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
-	nonce++
-	require.Equal(t, types.StatusInvalidated, rig.inferenceStatus(1))
-
-	events := rig.awaitTerminalPrune(1, nonce)
-	require.Equal(t, PruneReasonTerminal, events[0].Reason)
-
-	rig.host.mu.Lock()
-	_, stillFinished := rig.host.finishedAt[1]
-	_, stillTerminal := rig.host.terminalAt[1]
-	rig.host.mu.Unlock()
-	require.False(t, stillFinished, "Tier C ledger must drop terminalized inference")
-	require.False(t, stillTerminal, "terminal ledger cleared after prune")
+	require.Empty(t, rig.sink.findFor(1), "clock gate prevents seal")
+	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
 }
 
 func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
@@ -501,7 +429,8 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 		TokenPrice:                 1,
 		VoteThreshold:              2,
 		ValidationRate:             0,
-		InferenceClearGraceSeconds: testutil.TestInferenceClearGraceSeconds,
+		SealGraceNonces:            pruneTestSealGraceNonces,
+		InferenceClearGraceSeconds: pruneTestClearGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
@@ -513,14 +442,17 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Drive a full Finish without panicking. Sink is nil so this exercises the
-	// processPruneEventsLocked early-return path.
+	// Drive a full Finish, then seal via the deterministic state clock. The sink
+	// is nil, so this exercises the emitSealPrunes early-return path while the
+	// state machine still folds the inference into SealedAcc.
 	rig := &pruneTestRig{
 		t: t, hosts: hosts, user: user, group: group, config: config,
-		host: h, stub: stub.NewInferenceEngine(), escrowID: "escrow-1", epochID: 7,
+		host: h, stub: stub.NewInferenceEngine(), store: store, escrowID: "escrow-1", epochID: 7,
 	}
-	_ = rig.driveStartConfirmFinish(1, 1)
+	nonce := rig.driveStartConfirmFinish(1, 1)
 	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
+	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds)
+	rig.inferenceMissing(1)
 }
 
 func TestHost_ValidateAsync_SkippedDoesNotEnqueueValidation(t *testing.T) {

@@ -121,18 +121,13 @@ type Host struct {
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
 
-	// Payload prune tracking. All fields below are host-local off-state and
-	// must NOT participate in the state root or snapshot. They drive Tier A
-	// (terminal-status) and Tier C (stale-finished) pruning emission only.
-	pruneSink             PruneEventSink
-	prunedFired           map[uint64]struct{}  // inference IDs we've already emitted a prune for
-	finishedAt            map[uint64]uint64    // inference ID -> nonce of MsgFinishInference
-	finishedAtTime        map[uint64]time.Time // inference ID -> wall clock when this host saw the finish
-	terminalAt            map[uint64]uint64    // inference ID -> nonce when status became terminal (v2)
-	terminalAtTime        map[uint64]time.Time // inference ID -> wall clock at terminal (v2)
-	sealGraceNonces       uint64               // nonce gate from SessionConfig.SealGraceNonces
-	inferenceClearGrace   time.Duration        // wall-clock gate from SessionConfig
-	maxNonce              devshard.MaxNonceProvider // nil = do not enforce
+	// Payload prune tracking. These fields are host-local off-state and must
+	// NOT participate in the state root or snapshot. The deterministic seal now
+	// lives in the state machine (autoSealLocked); the host only emits a
+	// payload-prune event for each inference that the applied diff sealed.
+	pruneSink   PruneEventSink
+	prunedFired map[uint64]struct{}       // inference IDs we've already emitted a prune for
+	maxNonce    devshard.MaxNonceProvider // nil = do not enforce
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -197,14 +192,6 @@ func NewHost(
 		return nil, fmt.Errorf("derive seed: %w", err)
 	}
 
-	st := sm.SnapshotState()
-	cfg := types.NormalizeSessionConfig(st.Config, len(group))
-	sealGraceNonces := uint64(cfg.SealGraceNonces)
-	clearGrace := time.Duration(cfg.InferenceClearGraceSeconds) * time.Second
-	if clearGrace <= 0 {
-		clearGrace = defaultInferenceClearGrace
-	}
-
 	h := &Host{
 		sm:                    sm,
 		signer:                signer,
@@ -222,12 +209,6 @@ func NewHost(
 		completedResponses:    make(map[uint64][]byte),
 		ownSeed:               ownSeed,
 		prunedFired:           make(map[uint64]struct{}),
-		finishedAt:          make(map[uint64]uint64),
-		finishedAtTime:      make(map[uint64]time.Time),
-		terminalAt:          make(map[uint64]uint64),
-		terminalAtTime:      make(map[uint64]time.Time),
-		sealGraceNonces:     sealGraceNonces,
-		inferenceClearGrace: clearGrace,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -303,19 +284,6 @@ func WithGrace(grace uint64) HostOption {
 // emits nothing and behaves exactly as before.
 func WithPruneSink(s PruneEventSink) HostOption {
 	return func(h *Host) { h.pruneSink = s }
-}
-
-// WithPruneTuning overrides seal grace gating. Used by tests to drive
-// deterministic stale-payload behavior without waiting on real wall-clock time.
-func WithPruneTuning(graceNonces uint64, graceTime time.Duration) HostOption {
-	return func(h *Host) {
-		if graceNonces > 0 {
-			h.sealGraceNonces = graceNonces
-		}
-		if graceTime > 0 {
-			h.inferenceClearGrace = graceTime
-		}
-	}
 }
 
 func (h *Host) StateRoot() ([]byte, error) {
@@ -553,6 +521,13 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	if h.store != nil {
 		warmBefore = h.sm.WarmKeys()
 	}
+	// Capture the live inference ids before applying so we can detect which
+	// ones the deterministic seal (state machine autoSeal) folds out of live
+	// state during this diff. Only needed when a prune sink is wired.
+	var liveBefore map[uint64]struct{}
+	if h.pruneSink != nil {
+		liveBefore = h.sm.LiveInferenceIDs()
+	}
 	root, err := h.sm.ApplyDiff(diff)
 	if err != nil {
 		return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
@@ -569,11 +544,14 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		}
 	}
 
-	// Emit prune events for payloads we no longer need. Tier A fires on
-	// terminal-status flips driven by txs in this diff; Tier C fires when
-	// the local nonce + wall-clock gates have both elapsed for inferences
-	// stuck in Finished. Both run under h.mu so the sink contract holds.
-	h.processPruneEventsLocked(diff)
+	// Emit one payload-prune event per inference this diff sealed. The seal is
+	// the deterministic state-machine fold; here we only react to it. Pruning
+	// is host-local off-state, carries no clock, and never mutates the root.
+	// Restricted to seals that happened in the Active phase (autoSeal); the
+	// settlement drain tears the whole session down and is handled elsewhere.
+	if h.pruneSink != nil && phaseBefore == types.PhaseActive {
+		h.emitSealPrunesLocked(liveBefore)
+	}
 
 	if h.store != nil {
 		warmAfter := h.sm.WarmKeys()
@@ -594,153 +572,40 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	return nil
 }
 
-// processPruneEventsLocked walks the diff's txs to track Finish observations
-// (Tier C ledger) and to fire Tier A prune events for inferences that just
-// terminalized. After the per-tx pass it scans the Tier C ledger for entries
-// whose nonce + wall-clock grace have elapsed and fires those too.
-// Caller must hold h.mu. No-op when no sink is configured.
-func (h *Host) processPruneEventsLocked(diff types.Diff) {
-	if h.pruneSink == nil {
+// emitSealPrunesLocked dispatches one payload-prune event per inference that
+// the just-applied diff sealed: an id that was live before the apply and is no
+// longer live afterwards (the state machine's deterministic autoSeal folded it
+// into SealedAcc). Pruning is host-local off-state -- it carries no clock and
+// never mutates the root, so it cannot diverge state. The PayloadEpoch carries
+// h.epochID (the only epoch the executor stored under for this session, set via
+// WithEpochID). Dedupe via prunedFired tolerates the same id appearing twice.
+// Caller must hold h.mu and must have verified h.pruneSink is non-nil.
+func (h *Host) emitSealPrunesLocked(liveBefore map[uint64]struct{}) {
+	if len(liveBefore) == 0 {
 		return
 	}
-	now := time.Now()
-	currentNonce := diff.Nonce
-
-	for _, tx := range diff.Txs {
-		switch {
-		case tx.GetFinishInference() != nil:
-			id := tx.GetFinishInference().InferenceId
-			if _, fired := h.prunedFired[id]; fired {
-				continue
-			}
-			// Only record if the apply actually transitioned to Finished:
-			// applyFinishInference can fail (e.g. wrong executor slot) without
-			// flipping status, in which case applyCore rolls back, so the
-			// status check protects us against that race.
-			rec, ok := h.sm.GetInference(id)
-			if !ok || rec.Status != types.StatusFinished {
-				continue
-			}
-			h.finishedAt[id] = currentNonce
-			h.finishedAtTime[id] = now
-		case tx.GetTimeoutInference() != nil:
-			id := tx.GetTimeoutInference().InferenceId
-			h.maybeEmitTerminalLocked(id, currentNonce, now)
-		case tx.GetValidation() != nil:
-			id := tx.GetValidation().InferenceId
-			h.maybeEmitTerminalLocked(id, currentNonce, now)
-		case tx.GetValidationVote() != nil:
-			id := tx.GetValidationVote().InferenceId
-			h.maybeEmitTerminalLocked(id, currentNonce, now)
-		}
-	}
-
-	h.emitTerminalTierLocked(currentNonce, now)
-	h.emitTierCLocked(currentNonce, now)
-}
-
-// maybeEmitTerminalLocked records or emits a terminal prune for an inference
-// whose post-apply status is terminal. Under v2 composition the event is
-// deferred until sealGraceNonces and inferenceClearGrace have both elapsed.
-// Caller must hold h.mu and must have already verified h.pruneSink is non-nil.
-func (h *Host) maybeEmitTerminalLocked(inferenceID uint64, currentNonce uint64, now time.Time) {
-	if _, fired := h.prunedFired[inferenceID]; fired {
-		return
-	}
-	rec, ok := h.sm.GetInference(inferenceID)
-	if !ok || !isTerminalStatus(rec.Status) {
-		return
-	}
-	if h.sm.EffectiveV2Composition() {
-		if _, tracked := h.terminalAt[inferenceID]; !tracked {
-			h.terminalAt[inferenceID] = currentNonce
-			h.terminalAtTime[inferenceID] = now
-			delete(h.finishedAt, inferenceID)
-			delete(h.finishedAtTime, inferenceID)
-		}
-		return
-	}
-	h.emitPruneLocked(inferenceID, PruneReasonTerminal)
-}
-
-// emitTerminalTierLocked fires deferred terminal prunes under v2 composition
-// once both the nonce and wall-clock gates have cleared.
-func (h *Host) emitTerminalTierLocked(currentNonce uint64, now time.Time) {
-	if !h.sm.EffectiveV2Composition() || len(h.terminalAt) == 0 {
-		return
-	}
-	for id, termNonce := range h.terminalAt {
-		if currentNonce < termNonce+h.sealGraceNonces {
+	for id := range liveBefore {
+		if _, stillLive := h.sm.GetInference(id); stillLive {
 			continue
 		}
-		ts, hasTs := h.terminalAtTime[id]
-		if !hasTs || now.Before(ts.Add(h.inferenceClearGrace)) {
+		if _, fired := h.prunedFired[id]; fired {
 			continue
 		}
-		rec, ok := h.sm.GetInference(id)
-		if !ok || !isTerminalStatus(rec.Status) {
-			delete(h.terminalAt, id)
-			delete(h.terminalAtTime, id)
-			continue
+		// Label terminal vs stale-finished from the sealed snapshot (metrics
+		// only). Fall back to terminal if the obs lookup is unavailable.
+		reason := PruneReasonTerminal
+		if rec, ok := h.sm.LookupSealedInference(id); ok && !isTerminalStatus(rec.Status) {
+			reason = PruneReasonStaleFinished
 		}
-		h.emitPruneLocked(id, PruneReasonTerminal)
+		h.prunedFired[id] = struct{}{}
+		h.pruneSink.OnInferencePrunable(InferencePruneEvent{
+			EscrowID:          h.escrowID,
+			InferenceID:       id,
+			Reason:            reason,
+			PayloadEpoch:      h.epochID,
+			PayloadEpochKnown: h.epochID != 0,
+		})
 	}
-}
-
-// emitTierCLocked walks the Tier C ledger and emits prune events for entries
-// where both gates have cleared. Inferences that are no longer in
-// StatusFinished (e.g. moved to Challenged/Validated/Invalidated under a
-// different path) drop out of the ledger silently. Caller must hold h.mu.
-func (h *Host) emitTierCLocked(currentNonce uint64, now time.Time) {
-	if len(h.finishedAt) == 0 {
-		return
-	}
-	for id, finNonce := range h.finishedAt {
-		if currentNonce < finNonce+h.sealGraceNonces {
-			continue
-		}
-		ts, hasTs := h.finishedAtTime[id]
-		if !hasTs || now.Before(ts.Add(h.inferenceClearGrace)) {
-			continue
-		}
-		rec, ok := h.sm.GetInference(id)
-		if !ok || rec.Status != types.StatusFinished {
-			delete(h.finishedAt, id)
-			delete(h.finishedAtTime, id)
-			continue
-		}
-		h.emitPruneLocked(id, PruneReasonStaleFinished)
-	}
-}
-
-// emitPruneLocked dispatches one InferencePruneEvent and updates the dedupe
-// ledger. The PayloadEpoch carries h.epochID, which is the only epoch the
-// executor stored under for this session (set via WithEpochID); when the
-// host was constructed without an epoch the manager falls back to a global
-// supplier.
-func (h *Host) emitPruneLocked(inferenceID uint64, reason PruneReason) {
-	if err := h.sm.SealInference(inferenceID); err != nil {
-		logging.Warn("failed to seal inference before prune",
-			"subsystem", "host",
-			"escrow_id", h.escrowID,
-			"inference_id", inferenceID,
-			"reason", reason.String(),
-			"error", err,
-		)
-		return
-	}
-	h.prunedFired[inferenceID] = struct{}{}
-	delete(h.finishedAt, inferenceID)
-	delete(h.finishedAtTime, inferenceID)
-	delete(h.terminalAt, inferenceID)
-	delete(h.terminalAtTime, inferenceID)
-	h.pruneSink.OnInferencePrunable(InferencePruneEvent{
-		EscrowID:          h.escrowID,
-		InferenceID:       inferenceID,
-		Reason:            reason,
-		PayloadEpoch:      h.epochID,
-		PayloadEpochKnown: h.epochID != 0,
-	})
 }
 
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.

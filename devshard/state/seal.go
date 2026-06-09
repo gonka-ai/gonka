@@ -9,6 +9,12 @@ import (
 	"devshard/types"
 )
 
+// stateClockWindowFactor sets how many recent live inferences the deterministic
+// state clock scans, as a multiple of the group size N. Concurrency is bounded
+// by the number of slots, so N*factor comfortably covers the in-flight window
+// whose ConfirmedAt timestamps approximate "now".
+const stateClockWindowFactor = 3
+
 func cloneCommittedInferenceEntries(src map[uint64][]byte) map[uint64][]byte {
 	if len(src) == 0 {
 		return make(map[uint64][]byte)
@@ -190,6 +196,124 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	return nil
+}
+
+// sealEligibleStatus reports whether an inference in this status may be folded
+// into the sealed accumulator by the deterministic auto-seal sweep: Finished
+// (stale-finished tier) or terminal (Validated/Invalidated/TimedOut). Pending,
+// Started and Challenged are still in-flight or mid-vote and are not sealable.
+func sealEligibleStatus(s types.InferenceStatus) bool {
+	switch s {
+	case types.StatusFinished, types.StatusValidated, types.StatusInvalidated, types.StatusTimedOut:
+		return true
+	default:
+		return false
+	}
+}
+
+// stateClockLocked derives a deterministic "current time" purely from state:
+// the max ConfirmedAt over the latest N*stateClockWindowFactor live inferences
+// (N = group size). ConfirmedAt is executor-signed and committed to the state
+// root, so every node computes the identical clock without reading any wall
+// clock -- which is what lets the auto-seal decision agree across user, host
+// and replay. Returns 0 before any inference has confirmed. Caller holds sm.mu.
+func (sm *StateMachine) stateClockLocked() int64 {
+	if len(sm.state.Inferences) == 0 {
+		return 0
+	}
+	window := len(sm.state.Group) * stateClockWindowFactor
+	if window <= 0 {
+		window = stateClockWindowFactor
+	}
+
+	ids := make([]uint64, 0, len(sm.state.Inferences))
+	for id := range sm.state.Inferences {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	// Inference id == start nonce, so the highest ids are the most recently
+	// started. Scan the tail window and take the max ConfirmedAt.
+	start := 0
+	if len(ids) > window {
+		start = len(ids) - window
+	}
+	var maxConfirmed int64
+	for _, id := range ids[start:] {
+		if c := sm.state.Inferences[id].ConfirmedAt; c > maxConfirmed {
+			maxConfirmed = c
+		}
+	}
+	return maxConfirmed
+}
+
+// autoSealLocked folds every live inference that has cleared both seal gates
+// into SealedAcc, in ascending id order, and returns the ids it sealed. It is
+// the deterministic replacement for the old host-local, wall-clock prune/seal:
+// both gates read only state, so the user (composing a diff), the host
+// (applying it) and replay all seal the identical set at the identical nonce
+// and agree on the post_state_root.
+//
+// Per live, seal-eligible inference, both gates must clear:
+//   - nonce gate:  sealNonce >= id + SealGraceNonces   (id == start nonce)
+//   - clock gate:  stateClock - ConfirmedAt >= InferenceClearGraceSeconds
+//
+// The obs-store write is best-effort (logged, never fatal) so a transient
+// storage error on one node cannot diverge the deterministic seal. Caller must
+// hold sm.mu and should invoke this only in the Active phase (settlement uses
+// drainLiveIntoSealedAccLocked).
+func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
+	if len(sm.state.Inferences) == 0 {
+		return nil, nil
+	}
+	sealGraceNonces := uint64(sm.state.Config.SealGraceNonces)
+	graceSeconds := int64(sm.state.Config.InferenceClearGraceSeconds)
+	stateClock := sm.stateClockLocked()
+
+	var eligible []uint64
+	for id, rec := range sm.state.Inferences {
+		if !sealEligibleStatus(rec.Status) {
+			continue
+		}
+		if sealNonce < id+sealGraceNonces {
+			continue
+		}
+		if stateClock-rec.ConfirmedAt < graceSeconds {
+			continue
+		}
+		eligible = append(eligible, id)
+	}
+	if len(eligible) == 0 {
+		return nil, nil
+	}
+	slices.Sort(eligible)
+
+	if sm.sealedNonces == nil {
+		sm.sealedNonces = make(map[uint64]uint64, len(eligible))
+	}
+	cur := sealedAccBytes32(sm.state.SealedAcc)
+	for _, id := range eligible {
+		rec := sm.state.Inferences[id]
+		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
+			return nil, fmt.Errorf("auto-seal inference %d: %w", id, err)
+		}
+		entry := append([]byte(nil), sm.committedEntries[id]...)
+		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
+		sm.sealedNonces[id] = sealNonce
+		delete(sm.committedEntries, id)
+		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
+			// Observability only; never block or diverge the deterministic seal.
+			logging.Warn("failed to persist sealed inference obs during auto-seal",
+				"subsystem", "state",
+				"escrow_id", sm.state.EscrowID,
+				"inference_id", id,
+				"error", err,
+			)
+		}
+		delete(sm.state.Inferences, id)
+	}
+	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
+	return eligible, nil
 }
 
 func (sm *StateMachine) SealInference(id uint64) error {
