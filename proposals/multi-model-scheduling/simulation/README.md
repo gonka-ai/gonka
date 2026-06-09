@@ -119,13 +119,13 @@ The key metrics:
 ## Headline results
 
 At GIP defaults (`threshold = 0.70, smoothness = 0.15, lookback = 20,
-switch_threshold = 0.05, min_dwell = 5`):
+switch_threshold = 0.05, switch_cooldown = 5`):
 
 - **System is robust to parameter choice.** Within wide ranges of every
   individual parameter, earnings vary by <2% across configurations.
   Operators can tune within reason and won't hurt themselves.
-- **Extreme values break things.** `min_dwell = 30` drops earnings ~10%.
-  Other parameters degrade gracefully at extremes.
+- **Extreme values break things.** `switch_cooldown = 30` (~1 month) drops
+  earnings ~3%. Other parameters degrade gracefully at extremes.
 - **Population-optimal lying rate is L = 0** (perfect honesty maximizes
   collective welfare).
 - **Nash equilibrium L under realistic friction is ~10-20%** —

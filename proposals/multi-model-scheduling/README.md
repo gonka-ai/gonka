@@ -486,14 +486,31 @@ new-participant default)** is specified above and SHOULD NOT be varied
 across implementations. The `switch_threshold` (§3.2) and the agent's
 own lying rate are operator-tunable; the reputation formula is not.
 
-#### 3.6. Default behavior for lazy operators
+#### 3.6. Operator temperament knobs and lazy-operator defaults
 
-A DAPI with default configuration runs the rational agent automatically.
-Operators who don't tune any parameters get sensible behavior:
+The agent exposes two first-class **operator temperament dials** that
+shape how aggressively it reallocates. Neither is a security or
+anti-herding mechanism; they're personal preferences for how the
+operator wants their nodes to behave.
+
+- **`switch_threshold` (aggressiveness)** — how much better next-epoch EV
+  must be before the agent commits to a switch, on top of the projected
+  switching cost. Default `0.05` (5%). Lower → more eagerly chase
+  marginal EV gains; higher → more inertia, only switches when the
+  signal is large.
+- **`switch_cooldown` (stability)** — minimum number of epochs an MLNode
+  waits after a switch before it can switch again. Default `5` epochs
+  (~5 days at the current ~23-hour mainnet epoch). Lower → more responsive
+  to demand shifts; higher → more stable operation. Some operators will
+  run `1`; some will run `14`. The simulation finds the system robust
+  across the full `0–15` range.
+
+A DAPI with default configuration runs the agent automatically with
+these defaults. Operators who don't tune anything get sensible behavior:
 
 - Capability set = whatever models have weights present on disk and
   whose hardware floors the operator's MLNodes satisfy.
-- `switch_threshold = 0.05`.
+- `switch_threshold = 0.05`, `switch_cooldown = 5`.
 - Switching-cost prior per §3.3.
 - INTENT submitted automatically when the agent decides to switch.
 - Reputation tracked locally; no operator action needed.
@@ -503,8 +520,8 @@ Operators who want manual control can override:
 - **Pin to a specific model.** Reduces the capability set to size 1.
   Equivalent to disabling the agent for that MLNode; the operator has
   decided.
-- **Adjust `switch_threshold`.** Lower for aggressive arbitrage; higher
-  for stability.
+- **Adjust `switch_threshold` or `switch_cooldown`.** Per the temperament
+  dials above.
 - **Disable the agent entirely.** No auto-switching, no INTENT
   submission. Useful for operators who manage scheduling externally
   (e.g. via their own ops tooling).
@@ -538,18 +555,31 @@ The agent SHOULD reduce its observed switching-cost estimate for the
 target model based on its own actual switch times. Self-observation
 complements peer-observation in §3.3.
 
-#### 3.8. Minimum dwell
+#### 3.8. Switch cooldown
 
-To prevent operational thrashing, an MLNode that has switched models at
-epoch boundary `E → E+1` SHOULD NOT be switched again before epoch
-`E + 1 + min_dwell` (default `min_dwell = 5` epochs). The agent enforces
-this locally; it is not a chain-level constraint.
+An MLNode that switched models at epoch boundary `E → E+1` does not
+switch again before epoch `E + 1 + switch_cooldown` (default `5` epochs,
+~5 days on mainnet given the current ~23-hour epoch). The agent enforces
+this locally; it is not a chain-level constraint and operators are free
+to tune it.
 
-Combined with the EV-margin + switch-cost criterion in §3.2, `min_dwell`
-gives the agent two independent stability mechanisms. The criterion
-prevents single-step oscillation under noisy EV signals; `min_dwell`
-caps the long-term switching frequency even under pathological signal
-drift.
+`switch_cooldown` is an **operator stability preference**, not a
+protocol-enforced anti-herding mechanism. The anti-herding work is done
+by the announcement layer + EV math (§3.4–§3.5). Aggressive operators may
+set `switch_cooldown = 1` and accept frequent reallocation; conservative
+operators may set `switch_cooldown = 14` (~2 weeks) and accept slower
+response to demand shifts. The simulation finds both extremes (and
+everything in between, up to `switch_cooldown = 15`) give equivalent
+earnings within noise — operators pick whatever fits their operational
+temperament.
+
+Note: `switch_cooldown` is a per-MLNode constraint, not a per-participant
+one. An operator running multiple MLNodes can effectively rotate models
+across the fleet at any cadence by spinning new nodes onto new models
+rather than reconfiguring existing ones. That is intentional — operators
+with more hardware naturally have more agility, and the EV math +
+reputation system still constrain the fleet as a whole through its
+visible PoC supply and announced intents.
 
 #### 3.9. PoC validation interaction
 
@@ -725,7 +755,7 @@ A `RETIRED` model is removed from PoC entirely; its `effective_coeff` is
 `0`, it is excluded from `EpochModelDemandSummary` aggregation going
 forward, and rational agents MUST drop it from their capability sets.
 DAPIs SHOULD switch any MLNode currently serving a RETIRED model off it
-within `min_dwell` epochs.
+within `switch_cooldown` epochs.
 
 #### 5.5. Governance overrides
 
@@ -1248,9 +1278,9 @@ is largely insensitive to parameter choice within reasonable ranges**:
   `lookback ∈ [3, 100]`, `switch_threshold ∈ [0.001, 0.5]`,
   `late_credit ∈ [0, 1]`, `new_participant_default ∈ [0, 1]` — mean
   per-operator earnings vary by under 1% across the entire range.
-- Only `min_dwell` at extreme values (≥30 epochs) clearly degrades
-  performance (~3% earnings drop), because it locks operators into the
-  wrong model for too long when conditions change.
+- Only `switch_cooldown` at extreme values (≥30 epochs, ~1 month) clearly
+  degrades performance (~3% earnings drop), because it locks operators
+  into the wrong model for too long when conditions change.
 - Under a fully-dishonest population (`pop_lying_rate = 1.0`), earnings
   hold steady (within noise of baseline). The reputation system
   gracefully degrades to "use current supply only" rather than
@@ -1259,8 +1289,9 @@ is largely insensitive to parameter choice within reasonable ranges**:
 This is the property the design aims for. The defaults are chosen as
 sensible round numbers in the robust zone, not magic values that the
 system is sensitive to. Operators tuning their own DAPI within the
-expected ranges (e.g., `switch_threshold ∈ [0.02, 0.10]`, or `min_dwell
-∈ [3, 10]`) won't hurt themselves; only obviously-extreme values do.
+expected ranges (e.g., `switch_threshold ∈ [0.02, 0.10]`, or
+`switch_cooldown ∈ [3, 10]`) won't hurt themselves; only obviously-extreme
+values do.
 
 Reviewers MAY propose alternative defaults by running
 [`defaults_sweep.py`](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-scheduling/simulation/defaults_sweep.py)
@@ -1281,7 +1312,7 @@ behaviorally.
    new DAPI releases) is required to drive adoption. A future GIP MAY
    introduce on-chain incentives for running the agent if adoption stalls.
 
-3. **Default parameter values** (`D`, `s_ref`, `min_dwell`,
+3. **Default parameter values** (`D`, `s_ref`, `switch_cooldown`,
    deprecation/recovery thresholds, band widths, reputation parameters)
    given in this spec are starting points. Final values SHOULD be set
    after testnet observation and MAY be revised post-deployment via the

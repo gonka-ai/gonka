@@ -34,7 +34,7 @@ DEFAULT = {
     'lookback_window': 20,
     'switch_threshold': 0.05,
     'switch_cost_fraction': 0.02,
-    'min_dwell': 5,
+    'switch_cooldown': 5,
     'late_credit': 0.5,
     'new_participant_default': 0.5,
     'pop_lying_rate': 0.10,
@@ -106,7 +106,11 @@ def run_sim(params, rng_seed=42):
     earnings_history = []  # mean per-operator earnings per epoch
     switch_history = []
     truth_history = []
-    last_switch_epoch = {op.id: -100 for op in operators}
+    # Scatter the "last switched" phase across [-2*switch_cooldown, 0] so
+    # operators aren't all eligible to switch on the same epoch. Reflects
+    # real-world operator-by-operator cooldown variance.
+    init_window = max(params['switch_cooldown'] * 2, 1)
+    last_switch_epoch = {op.id: -int(rng.integers(0, init_window)) for op in operators}
 
     for epoch in range(params['n_epochs']):
         demand = demand_at(epoch, base_demand, rng)
@@ -134,7 +138,7 @@ def run_sim(params, rng_seed=42):
             for op in operators:
                 if op.id not in update_set:
                     continue
-                if epoch - last_switch_epoch[op.id] < params['min_dwell']:
+                if epoch - last_switch_epoch[op.id] < params['switch_cooldown']:
                     continue
 
                 # Partial info: sample K others
@@ -259,8 +263,8 @@ def main():
         ('lookback_window', [3, 5, 10, 20, 30, 50, 100]),
         # Switch threshold: oscillation-promoting low to never-switch high
         ('switch_threshold', [0.001, 0.01, 0.02, 0.03, 0.05, 0.10, 0.20, 0.50]),
-        # Min dwell: no protection vs absurd lock-in
-        ('min_dwell', [0, 1, 2, 3, 5, 8, 15, 30]),
+        # Switch cooldown: no constraint vs absurd lock-in
+        ('switch_cooldown', [0, 1, 2, 3, 5, 8, 15, 30]),
         ('late_credit', [0.0, 0.25, 0.5, 0.75, 1.0]),
         ('new_participant_default', [0.0, 0.25, 0.5, 0.75, 1.0]),
         ('pop_lying_rate', [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.70, 0.90, 1.0]),
