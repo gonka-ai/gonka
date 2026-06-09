@@ -1,0 +1,703 @@
+{
+  "defaults": {
+    "threshold": 0.7,
+    "smoothness": 0.15,
+    "lookback_window": 20,
+    "switch_threshold": 0.05,
+    "switch_cost_fraction": 0.02,
+    "late_credit": 0.5,
+    "new_participant_default": 0.5,
+    "pop_lying_rate": 0.1,
+    "partial_info_k": 5,
+    "switch_cooldown": 5
+  },
+  "sweeps": {
+    "threshold": {
+      "values": [
+        0.1,
+        0.3,
+        0.5,
+        0.6,
+        0.65,
+        0.7,
+        0.75,
+        0.8,
+        0.9,
+        0.99
+      ],
+      "curve": [
+        {
+          "value": 0.1,
+          "efficiency": 0.9990718495640357,
+          "efficiency_std": 2.4873097491204844e-05,
+          "earnings": 3.8635892099127793,
+          "earnings_std": 0.008595787340650555,
+          "switches": 22.80044444444444,
+          "truth_rate": 0.9000410590277778
+        },
+        {
+          "value": 0.3,
+          "efficiency": 0.9990634869571418,
+          "efficiency_std": 5.347605818532079e-05,
+          "earnings": 3.854092569419505,
+          "earnings_std": 0.017969832256426788,
+          "switches": 22.89911111111111,
+          "truth_rate": 0.8999496527777776
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990220032590768,
+          "efficiency_std": 1.4098880413200991e-05,
+          "earnings": 3.851888834265988,
+          "earnings_std": 0.0015991650996491074,
+          "switches": 23.034666666666666,
+          "truth_rate": 0.899745486111111
+        },
+        {
+          "value": 0.6,
+          "efficiency": 0.99915901321105,
+          "efficiency_std": 5.840324373094373e-05,
+          "earnings": 3.863901012798775,
+          "earnings_std": 0.010742703772836981,
+          "switches": 22.76311111111111,
+          "truth_rate": 0.9001171874999999
+        },
+        {
+          "value": 0.65,
+          "efficiency": 0.9991092851148,
+          "efficiency_std": 0.00012239794727026307,
+          "earnings": 3.855419749111333,
+          "earnings_std": 0.01571329658159355,
+          "switches": 22.919555555555558,
+          "truth_rate": 0.900136501736111
+        },
+        {
+          "value": 0.7,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.75,
+          "efficiency": 0.9990307458564264,
+          "efficiency_std": 6.85047897616709e-05,
+          "earnings": 3.861213048360499,
+          "earnings_std": 0.01038792704656294,
+          "switches": 22.968,
+          "truth_rate": 0.8998059461805554
+        },
+        {
+          "value": 0.8,
+          "efficiency": 0.9990483227755432,
+          "efficiency_std": 1.036468043753133e-05,
+          "earnings": 3.837338738225236,
+          "earnings_std": 0.014680784529622192,
+          "switches": 22.91622222222222,
+          "truth_rate": 0.9004322482638889
+        },
+        {
+          "value": 0.9,
+          "efficiency": 0.9990916671651275,
+          "efficiency_std": 4.496967347360304e-05,
+          "earnings": 3.8606856806985803,
+          "earnings_std": 0.008613756949738224,
+          "switches": 23.132444444444445,
+          "truth_rate": 0.9003887586805556
+        },
+        {
+          "value": 0.99,
+          "efficiency": 0.9990463148954283,
+          "efficiency_std": 4.374836330523186e-05,
+          "earnings": 3.857693398585919,
+          "earnings_std": 0.025358873254425648,
+          "switches": 22.998,
+          "truth_rate": 0.9000182725694444
+        }
+      ],
+      "default": 0.7
+    },
+    "smoothness": {
+      "values": [
+        0.01,
+        0.03,
+        0.05,
+        0.1,
+        0.15,
+        0.2,
+        0.3,
+        0.5,
+        1.0
+      ],
+      "curve": [
+        {
+          "value": 0.01,
+          "efficiency": 0.9990847667522251,
+          "efficiency_std": 4.65977919697715e-05,
+          "earnings": 3.846152631446701,
+          "earnings_std": 0.012102095358435568,
+          "switches": 22.850444444444445,
+          "truth_rate": 0.9001070746527778
+        },
+        {
+          "value": 0.03,
+          "efficiency": 0.9990730931894056,
+          "efficiency_std": 3.3227858178284815e-05,
+          "earnings": 3.8439160177044838,
+          "earnings_std": 0.0038046249029951964,
+          "switches": 22.935333333333332,
+          "truth_rate": 0.9001335503472222
+        },
+        {
+          "value": 0.05,
+          "efficiency": 0.9990906236309712,
+          "efficiency_std": 3.8383113463359925e-05,
+          "earnings": 3.854536845273612,
+          "earnings_std": 0.00394629221362663,
+          "switches": 22.836444444444442,
+          "truth_rate": 0.9000786458333332
+        },
+        {
+          "value": 0.1,
+          "efficiency": 0.999029988012611,
+          "efficiency_std": 4.0781233619761375e-05,
+          "earnings": 3.8398333960588804,
+          "earnings_std": 0.012276530855761636,
+          "switches": 23.094666666666665,
+          "truth_rate": 0.8997531684027776
+        },
+        {
+          "value": 0.15,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.2,
+          "efficiency": 0.9990543247437188,
+          "efficiency_std": 4.610057215306872e-05,
+          "earnings": 3.856606143128873,
+          "earnings_std": 0.007395090419366296,
+          "switches": 22.98,
+          "truth_rate": 0.8999516493055556
+        },
+        {
+          "value": 0.3,
+          "efficiency": 0.9990529906999935,
+          "efficiency_std": 4.996106000039914e-05,
+          "earnings": 3.8497852370139474,
+          "earnings_std": 0.006856764636315391,
+          "switches": 22.941333333333333,
+          "truth_rate": 0.8996091579861111
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990987901795364,
+          "efficiency_std": 1.6867051562504473e-05,
+          "earnings": 3.8613530774414198,
+          "earnings_std": 0.015986999412989915,
+          "switches": 22.982222222222223,
+          "truth_rate": 0.8997484375
+        },
+        {
+          "value": 1.0,
+          "efficiency": 0.9990409066907325,
+          "efficiency_std": 2.89974269818362e-05,
+          "earnings": 3.8451022913146153,
+          "earnings_std": 0.022543188612615332,
+          "switches": 22.899777777777782,
+          "truth_rate": 0.8998033854166666
+        }
+      ],
+      "default": 0.15
+    },
+    "lookback_window": {
+      "values": [
+        3,
+        5,
+        10,
+        20,
+        30,
+        50,
+        100
+      ],
+      "curve": [
+        {
+          "value": 3,
+          "efficiency": 0.9990350358688741,
+          "efficiency_std": 1.731377535882254e-05,
+          "earnings": 3.852092298590355,
+          "earnings_std": 0.007117678947371773,
+          "switches": 22.998666666666665,
+          "truth_rate": 0.8999062499999999
+        },
+        {
+          "value": 5,
+          "efficiency": 0.9990117356385729,
+          "efficiency_std": 4.336013177865432e-05,
+          "earnings": 3.845477163664748,
+          "earnings_std": 0.008375967906968172,
+          "switches": 23.117777777777775,
+          "truth_rate": 0.899953125
+        },
+        {
+          "value": 10,
+          "efficiency": 0.9990724738766471,
+          "efficiency_std": 3.652945082162328e-05,
+          "earnings": 3.86181742039137,
+          "earnings_std": 0.011042468230855348,
+          "switches": 22.968,
+          "truth_rate": 0.9000713541666668
+        },
+        {
+          "value": 20,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 30,
+          "efficiency": 0.998946097370159,
+          "efficiency_std": 0.00013825170946364654,
+          "earnings": 3.8590753317154145,
+          "earnings_std": 0.010568266235062919,
+          "switches": 22.71488888888889,
+          "truth_rate": 0.8999399594907409
+        },
+        {
+          "value": 50,
+          "efficiency": 0.9990243790468668,
+          "efficiency_std": 7.231150744809338e-05,
+          "earnings": 3.8455099895992872,
+          "earnings_std": 0.002619219948220565,
+          "switches": 23.034444444444446,
+          "truth_rate": 0.8998570312499999
+        },
+        {
+          "value": 100,
+          "efficiency": 0.9989639588195378,
+          "efficiency_std": 0.00020580271627645313,
+          "earnings": 3.8434335584271024,
+          "earnings_std": 0.00699263890976624,
+          "switches": 22.936444444444444,
+          "truth_rate": 0.8996726562499999
+        }
+      ],
+      "default": 20
+    },
+    "switch_threshold": {
+      "values": [
+        0.001,
+        0.01,
+        0.02,
+        0.03,
+        0.05,
+        0.1,
+        0.2,
+        0.5
+      ],
+      "curve": [
+        {
+          "value": 0.001,
+          "efficiency": 0.9990417400097877,
+          "efficiency_std": 3.138315230807989e-05,
+          "earnings": 3.837512145230038,
+          "earnings_std": 0.01628602901194701,
+          "switches": 23.87911111111111,
+          "truth_rate": 0.8999345052083333
+        },
+        {
+          "value": 0.01,
+          "efficiency": 0.9990083892472491,
+          "efficiency_std": 2.7452161109298133e-06,
+          "earnings": 3.861290905553965,
+          "earnings_std": 0.019961398007055167,
+          "switches": 23.816222222222223,
+          "truth_rate": 0.8999913194444443
+        },
+        {
+          "value": 0.02,
+          "efficiency": 0.9991119170504014,
+          "efficiency_std": 4.726616802287409e-05,
+          "earnings": 3.843066060286319,
+          "earnings_std": 0.011308997124976941,
+          "switches": 23.49377777777778,
+          "truth_rate": 0.9001358940972223
+        },
+        {
+          "value": 0.03,
+          "efficiency": 0.9990303012747673,
+          "efficiency_std": 5.70639892140662e-05,
+          "earnings": 3.8427271784689263,
+          "earnings_std": 0.0118900375047879,
+          "switches": 23.15444444444444,
+          "truth_rate": 0.8999073784722222
+        },
+        {
+          "value": 0.05,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.1,
+          "efficiency": 0.9989569904527255,
+          "efficiency_std": 0.00016040649614651876,
+          "earnings": 3.863342040835296,
+          "earnings_std": 0.005624542122475329,
+          "switches": 21.664,
+          "truth_rate": 0.8999529513888889
+        },
+        {
+          "value": 0.2,
+          "efficiency": 0.9989580999583305,
+          "efficiency_std": 0.00013716028609952343,
+          "earnings": 3.845801772972177,
+          "earnings_std": 0.015415837948575385,
+          "switches": 19.27288888888889,
+          "truth_rate": 0.8998705729166666
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990466003206966,
+          "efficiency_std": 8.694132094642081e-05,
+          "earnings": 3.8542678550666465,
+          "earnings_std": 0.008801365988895743,
+          "switches": 12.569333333333333,
+          "truth_rate": 0.9002069444444444
+        }
+      ],
+      "default": 0.05
+    },
+    "late_credit": {
+      "values": [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0
+      ],
+      "curve": [
+        {
+          "value": 0.0,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.25,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.75,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 1.0,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        }
+      ],
+      "default": 0.5
+    },
+    "new_participant_default": {
+      "values": [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0
+      ],
+      "curve": [
+        {
+          "value": 0.0,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.25,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.75,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 1.0,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        }
+      ],
+      "default": 0.5
+    },
+    "pop_lying_rate": {
+      "values": [
+        0.0,
+        0.05,
+        0.1,
+        0.15,
+        0.2,
+        0.3,
+        0.5,
+        0.7,
+        0.9,
+        1.0
+      ],
+      "curve": [
+        {
+          "value": 0.0,
+          "efficiency": 0.9991599053480371,
+          "efficiency_std": 8.981542261290373e-05,
+          "earnings": 3.8611164446557797,
+          "earnings_std": 0.011984402634893592,
+          "switches": 22.77333333333333,
+          "truth_rate": 1.0
+        },
+        {
+          "value": 0.05,
+          "efficiency": 0.9990691898046508,
+          "efficiency_std": 4.333884972659803e-05,
+          "earnings": 3.8584900439573793,
+          "earnings_std": 0.006880707456087942,
+          "switches": 22.71155555555556,
+          "truth_rate": 0.9502052083333332
+        },
+        {
+          "value": 0.1,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 0.15,
+          "efficiency": 0.9990684033287648,
+          "efficiency_std": 4.1230973712394165e-05,
+          "earnings": 3.853739388843644,
+          "earnings_std": 0.010288346503529744,
+          "switches": 23.002,
+          "truth_rate": 0.8497184461805557
+        },
+        {
+          "value": 0.2,
+          "efficiency": 0.999057075893656,
+          "efficiency_std": 1.8359605855130792e-05,
+          "earnings": 3.849196906588535,
+          "earnings_std": 0.012652297403978526,
+          "switches": 23.118444444444446,
+          "truth_rate": 0.7998814236111111
+        },
+        {
+          "value": 0.3,
+          "efficiency": 0.9990561815929174,
+          "efficiency_std": 1.6047223716719467e-05,
+          "earnings": 3.8562291182968464,
+          "earnings_std": 0.013497515756353107,
+          "switches": 23.039555555555555,
+          "truth_rate": 0.6998123263888889
+        },
+        {
+          "value": 0.5,
+          "efficiency": 0.9990020470604416,
+          "efficiency_std": 0.00011899523594771018,
+          "earnings": 3.850668068019322,
+          "earnings_std": 0.01175593448408611,
+          "switches": 23.22711111111111,
+          "truth_rate": 0.49965733506944443
+        },
+        {
+          "value": 0.7,
+          "efficiency": 0.9989455658677816,
+          "efficiency_std": 0.00015929198382171866,
+          "earnings": 3.8606542328864237,
+          "earnings_std": 0.00814363634941693,
+          "switches": 23.25711111111111,
+          "truth_rate": 0.3006008680555556
+        },
+        {
+          "value": 0.9,
+          "efficiency": 0.9989982971104098,
+          "efficiency_std": 6.0168736031591575e-05,
+          "earnings": 3.8613230024985783,
+          "earnings_std": 0.008298334231761769,
+          "switches": 23.282,
+          "truth_rate": 0.1002255642361111
+        },
+        {
+          "value": 1.0,
+          "efficiency": 0.9991036715528537,
+          "efficiency_std": 6.141797287702784e-05,
+          "earnings": 3.8603689732147104,
+          "earnings_std": 0.01371209573096176,
+          "switches": 23.354222222222223,
+          "truth_rate": 0.0
+        }
+      ],
+      "default": 0.1
+    },
+    "switch_cooldown": {
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        5,
+        8,
+        15,
+        30
+      ],
+      "curve": [
+        {
+          "value": 0,
+          "efficiency": 0.9990060505336037,
+          "efficiency_std": 0.00010709046425302949,
+          "earnings": 3.8412287022861,
+          "earnings_std": 0.0053665869701463205,
+          "switches": 57.96888888888889,
+          "truth_rate": 0.9000983940972221
+        },
+        {
+          "value": 1,
+          "efficiency": 0.998984859703465,
+          "efficiency_std": 2.9743797579067284e-05,
+          "earnings": 3.85154599685024,
+          "earnings_std": 0.016811247745514336,
+          "switches": 57.92155555555556,
+          "truth_rate": 0.900354470486111
+        },
+        {
+          "value": 2,
+          "efficiency": 0.9990718144476566,
+          "efficiency_std": 7.73197486358298e-05,
+          "earnings": 3.849129674825342,
+          "earnings_std": 0.021730377164426537,
+          "switches": 39.693555555555555,
+          "truth_rate": 0.8996660590277777
+        },
+        {
+          "value": 3,
+          "efficiency": 0.9990822372765994,
+          "efficiency_std": 4.8731146734057906e-05,
+          "earnings": 3.8544167479707627,
+          "earnings_std": 0.0007849017644197001,
+          "switches": 31.724444444444444,
+          "truth_rate": 0.8996519965277777
+        },
+        {
+          "value": 5,
+          "efficiency": 0.9990441762258854,
+          "efficiency_std": 3.75948622287578e-05,
+          "earnings": 3.857401869760403,
+          "earnings_std": 0.006615424893290115,
+          "switches": 23.051555555555556,
+          "truth_rate": 0.8997201388888888
+        },
+        {
+          "value": 8,
+          "efficiency": 0.9986792028906897,
+          "efficiency_std": 0.0004299964812224956,
+          "earnings": 3.843398974450834,
+          "earnings_std": 0.011594857533021447,
+          "switches": 16.666888888888888,
+          "truth_rate": 0.8996862847222222
+        },
+        {
+          "value": 15,
+          "efficiency": 0.9916898713485246,
+          "efficiency_std": 0.003287969641611128,
+          "earnings": 3.8424180121593885,
+          "earnings_std": 0.012525053901307677,
+          "switches": 10.442444444444446,
+          "truth_rate": 0.899810329861111
+        },
+        {
+          "value": 30,
+          "efficiency": 0.963553223238824,
+          "efficiency_std": 0.009590357764238763,
+          "earnings": 3.716962493225432,
+          "earnings_std": 0.03615436315098362,
+          "switches": 6.307333333333333,
+          "truth_rate": 0.9004291666666667
+        }
+      ],
+      "default": 5
+    }
+  },
+  "config": {
+    "n_operators": 256,
+    "n_models": 5,
+    "n_epochs": 2000,
+    "warmup": 500,
+    "seeds": [
+      42,
+      43,
+      44
+    ]
+  }
+}
