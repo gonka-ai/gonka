@@ -20,7 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import numpy as np
-from sim import (Operator, MODELS_DEF, can_run, TIERS, TIER_DIST, WSF)
+from sim import (Operator, MODELS_DEF, can_run, TIERS, TIER_DIST,
+                 BASE_PRICE, BASE_DEMAND, PRICE_ELASTICITY, PRICE_CAP)
 
 N_OPERATORS_SIM = 256
 N_MODELS_SIM = 5
@@ -43,18 +44,15 @@ DEFAULT = {
 
 
 def demand_at(epoch, base, rng):
-    """Aggressive volatility — wide swings + frequent shocks so the optimal
-    allocation moves enough each epoch that switching decisions matter."""
-    phase = epoch / 22.0
-    wave = np.array([
-        1.0 + 0.80 * np.sin(phase * (1 + i * 0.35) + i * 1.7)
-            + 0.40 * np.sin(phase * 2.1 + i * 0.9)
-        for i in range(N_MODELS_SIM)
-    ])
-    shocks = np.where(rng.random(N_MODELS_SIM) < 0.08,
-                      rng.uniform(0.3, 1.8, N_MODELS_SIM), 1.0)
-    noise = rng.normal(0, 0.08, N_MODELS_SIM)
-    return np.maximum(base * wave * shocks * (1.0 + noise), 0.1)
+    """Mostly-static demand with 20% drift on ~100-epoch timescale + small
+    noise — within-tier demand baselines (15% apart) cross each other as
+    drift phases diverge, creating real switching opportunities. The sweep
+    needs the same demand dynamics as the live sim so the parameter
+    sensitivity it measures is what operators will actually see."""
+    slow = np.array([1.0 + 0.20 * np.sin(epoch / 100.0 + i * 1.7)
+                     for i in range(N_MODELS_SIM)])
+    noise = rng.normal(0, 0.05, N_MODELS_SIM)
+    return np.maximum(base * slow * (1.0 + noise), 0.1)
 
 
 def reputation_weight(truth_rate, threshold, smoothness, new_default):
@@ -76,18 +74,27 @@ def truth_rate_partial(op, current_epoch, lookback, late_credit):
     return matches / len(verified)
 
 
+def _earnings_at(throughput, model_idx, supply_at, demand):
+    dem = demand[model_idx]
+    if dem <= 0 or supply_at <= 0:
+        return 0.0
+    served = min(dem, supply_at)
+    unmet = max(0.0, (dem - supply_at) / dem)
+    price_mult = min(PRICE_CAP, 1.0 + PRICE_ELASTICITY * unmet)
+    return float((throughput / supply_at) * served * BASE_PRICE[model_idx] * price_mult)
+
+
 def ev_per_op_bounded(throughput, model_idx, supply, demand):
-    pot = demand[model_idx] * WSF[model_idx]
-    return float(throughput / max(supply[model_idx], throughput) * pot)
+    eff_supply = max(supply[model_idx], throughput)
+    return _earnings_at(throughput, model_idx, eff_supply, demand)
 
 
 def ev_for_switch(throughput, current_model, target_model, predicted_supply, demand):
-    pot = demand[target_model] * WSF[target_model]
     if target_model == current_model:
         eff_supply = max(predicted_supply[target_model], throughput)
     else:
         eff_supply = predicted_supply[target_model] + throughput
-    return float(throughput / eff_supply * pot)
+    return _earnings_at(throughput, target_model, eff_supply, demand)
 
 
 def run_sim(params, rng_seed=42):
@@ -95,12 +102,12 @@ def run_sim(params, rng_seed=42):
     operators = []
     for i in range(N_OPERATORS_SIM):
         tier = TIERS[int(rng.choice(3, p=TIER_DIST))]
-        capable = [j for j, (_, mt, _) in enumerate(MODELS_DEF) if can_run(tier, mt)]
+        capable = [j for j, (_, mt, _, _) in enumerate(MODELS_DEF) if can_run(tier, mt)]
         current = int(rng.choice(capable))
         operators.append(Operator(id=i, tier=tier, current_model=current,
                                   lying_rate=params['pop_lying_rate']))
 
-    base_demand = np.array([d for _, _, d in MODELS_DEF])
+    base_demand = BASE_DEMAND
     eps = 1e-3
     eff_history = []
     earnings_history = []  # mean per-operator earnings per epoch
@@ -207,11 +214,10 @@ def run_sim(params, rng_seed=42):
             if len(op.log) > params['lookback_window'] * 3:
                 op.log = op.log[-params['lookback_window'] * 3:]
 
-        # Metrics
-        captured = float(sum(demand[m] * WSF[m] for m in range(N_MODELS_SIM)
-                             if supply[m] > 0))
-        total = float(np.sum(demand * WSF))
-        eff_history.append(captured / max(total, eps))
+        # Metrics: efficiency = fraction of demand actually served
+        served = float(sum(min(demand[m], supply[m]) for m in range(N_MODELS_SIM)))
+        total = float(np.sum(demand))
+        eff_history.append(served / max(total, eps))
         earnings_history.append(float(np.mean(per_op_earnings)))
         switch_history.append(switches_this_epoch)
         tr_means = [truth_rate_partial(op, epoch, params['lookback_window'],

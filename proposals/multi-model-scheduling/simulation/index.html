@@ -212,13 +212,13 @@ footer a { color: var(--accent); text-decoration: none; }
 
         <div class="panel">
           <h3>Supply per model</h3>
-          <p class="subtle">Total throughput on each model over time. Watch herding (sudden spikes) and recovery.</p>
+          <p class="subtle">Total operator throughput on each model. Should converge to roughly match demand per model — gaps trigger price multipliers that pull operators in or out.</p>
           <canvas id="supplyCanvas" width="500" height="180"></canvas>
         </div>
 
         <div class="panel">
           <h3>Demand per model</h3>
-          <p class="subtle">Fluctuating model demand (the price signal the agents react to).</p>
+          <p class="subtle">Real user inference traffic, mostly static (small drift + noise). Flagship is undersupplied by hardware constraint and stays that way — operators on it earn elevated prices.</p>
           <canvas id="demandCanvas" width="500" height="180"></canvas>
         </div>
 
@@ -237,7 +237,7 @@ footer a { color: var(--accent); text-decoration: none; }
     <p>Each chart sweeps a single parameter across a wide range — including deliberately bad values — while holding the other parameters at their GIP defaults. The teal dashed line marks the GIP default. Y-axis is mean per-operator earnings (the metric operators actually care about); ribbon is std across 3 seeds.</p>
     <p class="subtle"><strong>The result the simulation gives:</strong> within reasonable ranges, the system is essentially flat. Honest operators can tune any of these parameters within a wide band around the default and earnings barely change — the design is robust by construction. Where curves <em>do</em> show structure, it's at extreme values that obviously break things (e.g. <code>switch_cooldown=30</code> ≈ 1 month, locks an operator into the wrong model for too long, dropping earnings ~3%).</p>
     <p class="subtle">This is the property we want. Operators who set defaults get good behavior. Operators who tweak don't hurt themselves unless they pick extreme values. The defaults are chosen as round numbers in the robust zone, not magic numbers.</p>
-    <p class="subtle">Conditions: <strong>256 operators</strong> across 3 hardware tiers, 5 models, <strong>2000 epochs per run</strong> (500-epoch warmup discarded), aggressive demand volatility, each operator sees only 5 random others' announcements per iteration (limited info / gossip-latency model). Run the sweeps yourself with <code>python3 defaults_sweep.py</code>.</p>
+    <p class="subtle">Conditions: <strong>256 operators</strong> across 3 hardware tiers, 5 models, <strong>2000 epochs per run</strong> (500-epoch warmup discarded), mostly-static per-model demand with small drift + noise (realistic user traffic), capacity-vs-demand pricing (price ratchets up on under-served models), each operator sees only 5 random others' announcements per iteration (limited info / gossip-latency model). Run the sweeps yourself with <code>python3 defaults_sweep.py</code>.</p>
   </div>
   <div class="sweeps" id="sweep-grid">
     <div class="sweep-panel" style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-dim);">
@@ -254,7 +254,7 @@ footer a { color: var(--accent); text-decoration: none; }
     <ol style="margin: 4px 0 10px 0; padding-left: 22px;">
       <li>Reads current per-model supply and demand from the chain.</li>
       <li>Reads other operators' switching-intent announcements, weighted by their honesty reputation (a sigmoid of their past announcement fulfillment rate).</li>
-      <li>Computes expected value per candidate model: <code>EV(m) = demand(m) × coefficient(m) × throughput / predicted_supply(m)</code>.</li>
+      <li>Computes expected value per candidate model based on capacity-vs-demand pricing: <code>EV(m) = (throughput/supply) × min(demand, supply) × basePrice × (1 + 4 × max(0, (demand-supply)/demand))</code>. Under-served models pay more per inference, attracting operators until supply catches up to demand.</li>
       <li>Switches if a candidate beats the current model by at least <code>switch_threshold + switch_cost_fraction</code>.</li>
       <li>Announces the new plan (honestly, or with a small probability of bluffing).</li>
     </ol>
@@ -264,7 +264,8 @@ footer a { color: var(--accent); text-decoration: none; }
     <ul style="margin: 4px 0 0 0; padding-left: 22px;">
       <li><strong>256 operators</strong> across 3 hardware tiers (small/mid/flagship at throughput 1×/4×/10×, 50%/35%/15% of the population).</li>
       <li>5 models with tier requirements and per-model base demand.</li>
-      <li>Demand fluctuates via overlapping sine waves plus shocks.</li>
+      <li>Per-model demand is mostly static (represents real user inference traffic; small noise + slow drift, no dramatic swings).</li>
+      <li>Pricing is capacity-vs-demand: when supply &lt; demand the per-inference price ratchets up (1 + 4 × unmet_ratio, capped at 5×). This is what makes under-served models attractive and drives equilibrium.</li>
       <li>Per epoch: 2 iterations of asynchronous cheap-talk decision-making (each iteration, 30% of operators randomly update their plan).</li>
       <li>Honesty reputation uses a sigmoid discount with the GIP's specified canonical parameters.</li>
       <li>"Why these defaults?" data is from <strong>2000-epoch runs (500-epoch warmup discarded)</strong> with 3 random seeds per parameter value.</li>
@@ -306,12 +307,17 @@ function rngNormal(rng) {
 // ============================================================
 // Model and operator definitions
 // ============================================================
+// `basePrice` is per-inference revenue (effectively Layer 2's coefficient at base).
+// `baseDemand` is inferences/epoch the model receives from real users (mostly static).
+// Within-tier demands are kept close so demand drift produces visible crossings on
+// the chart — the kind of dynamics operators have to react to. Total demand (~870)
+// ≈ total throughput at 256 ops (50/35/15 tier mix), so the system is balanced.
 const MODELS = [
-  { id: 'M_s1', label: 'M-Small-A',  minTier: 0, base: 50,  color: '#60a5fa' },
-  { id: 'M_s2', label: 'M-Small-B',  minTier: 0, base: 30,  color: '#a78bfa' },
-  { id: 'M_m1', label: 'M-Mid-A',    minTier: 1, base: 150, color: '#f472b6' },
-  { id: 'M_m2', label: 'M-Mid-B',    minTier: 1, base: 100, color: '#fb923c' },
-  { id: 'M_l',  label: 'M-Flagship', minTier: 2, base: 400, color: '#facc15' }
+  { id: 'M_s1', label: 'M-Small-A',  minTier: 0, basePrice: 1.00, baseDemand: 126, color: '#60a5fa' },
+  { id: 'M_s2', label: 'M-Small-B',  minTier: 0, basePrice: 0.85, baseDemand: 112, color: '#a78bfa' },
+  { id: 'M_m1', label: 'M-Mid-A',    minTier: 1, basePrice: 1.40, baseDemand: 196, color: '#f472b6' },
+  { id: 'M_m2', label: 'M-Mid-B',    minTier: 1, basePrice: 1.25, baseDemand: 182, color: '#fb923c' },
+  { id: 'M_l',  label: 'M-Flagship', minTier: 2, basePrice: 2.00, baseDemand: 252, color: '#facc15' }
 ];
 const TIERS = [
   { id: 'small',    throughput: 1.0,  share: 0.50 },
@@ -319,11 +325,10 @@ const TIERS = [
   { id: 'flagship', throughput: 10.0, share: 0.15 }
 ];
 const N_OPERATORS = 256;
-// Layer-2-style scale factor: roughly proportional to model value baseline
-const WSF = (() => {
-  const max = Math.max(...MODELS.map(m => m.base));
-  return MODELS.map(m => (m.base / max) * 2.0);
-})();
+
+// Pricing parameters — when supply < demand, price ratchets up to attract operators
+const PRICE_ELASTICITY = 4.0;   // 100% unmet demand → 5x base price
+const PRICE_CAP        = 5.0;   // hard cap on price multiplier
 
 // ============================================================
 // Simulation
@@ -395,14 +400,18 @@ class Sim {
   }
 
   demandAt(epoch) {
-    const phase = epoch / 60.0;
+    // Each model's demand is mostly static (representing real user inference
+    // traffic that doesn't swing wildly hour-by-hour) but drifts ~20% on a
+    // ~100-epoch timescale. With within-tier baselines kept close (15% apart),
+    // drift produces visible crossings — which model is "the leader" in each
+    // tier rotates over time, creating real switching opportunities.
+    // The `volatility` slider scales the drift amplitude; default 0.35 keeps
+    // things lively but not chaotic.
     const amp = this.params.volatility;
     return MODELS.map((m, i) => {
-      const wave = 1.0 + amp * 0.8 * Math.sin(phase * (1 + i * 0.2) + i * 1.7)
-                       + amp * 0.3 * Math.sin(phase * 1.8 + i * 0.9);
-      const shock = (this.rng() < 0.03) ? (0.7 + this.rng() * 0.6) : 1.0;
-      const noise = 1 + rngNormal(this.rng) * 0.04;
-      return Math.max(m.base * wave * shock * noise, 0.1);
+      const slowDrift = 1.0 + amp * 0.55 * Math.sin(epoch / 100 + i * 1.7);
+      const noise = 1 + rngNormal(this.rng) * amp * 0.10;
+      return Math.max(m.baseDemand * slowDrift * noise, 0.1);
     });
   }
 
@@ -412,12 +421,26 @@ class Sim {
     return sup;
   }
 
+  // Capacity-vs-demand pricing model:
+  //   served = min(demand, supply)              — inferences actually served
+  //   unmet  = max(0, (demand - supply) / demand) — fraction of demand unmet
+  //   price  = basePrice × min(cap, 1 + e × unmet)
+  //   op_earnings = (throughput / supply) × served × price
+  // Equilibrium is supply ≈ demand for each model. Under-supplied models pay
+  // higher per-inference price → attract operators. Over-supplied models pay
+  // less per-op → repel operators.
   evForSwitch(op, currentModel, targetModel, predictedSupply, demand) {
-    const pot = demand[targetModel] * WSF[targetModel];
-    const effSupply = (targetModel === currentModel)
-      ? Math.max(predictedSupply[targetModel], op.throughput)
-      : predictedSupply[targetModel] + op.throughput;
-    return op.throughput / effSupply * pot;
+    const m = targetModel;
+    const dem = demand[m];
+    if (dem <= 0) return 0;
+    const effSupply = (m === currentModel)
+      ? Math.max(predictedSupply[m], op.throughput)
+      : predictedSupply[m] + op.throughput;
+    if (effSupply <= 0) return 0;
+    const served = Math.min(dem, effSupply);
+    const unmet = Math.max(0, (dem - effSupply) / dem);
+    const priceMultiplier = Math.min(PRICE_CAP, 1 + PRICE_ELASTICITY * unmet);
+    return (op.throughput / effSupply) * served * MODELS[m].basePrice * priceMultiplier;
   }
 
   step() {
@@ -518,10 +541,14 @@ class Sim {
     }
 
     // Metrics
-    const captured = MODELS.reduce((acc, m, i) =>
-      acc + (supply[i] > 0 ? demand[i] * WSF[i] : 0), 0);
-    const total = MODELS.reduce((acc, m, i) => acc + demand[i] * WSF[i], 0);
-    const eff = captured / total;
+    // Efficiency = fraction of demand actually served (inferences served / total demand).
+    // Tracks how well the operator population is allocated to match real user demand.
+    let servedTotal = 0, demandTotal = 0;
+    for (let i = 0; i < MODELS.length; i++) {
+      servedTotal += Math.min(demand[i], supply[i]);
+      demandTotal += demand[i];
+    }
+    const eff = demandTotal > 0 ? servedTotal / demandTotal : 1.0;
     const earnings = Array.from(perOpEv.values()).reduce((a, b) => a + b, 0) / N_OPERATORS;
 
     const truths = [];

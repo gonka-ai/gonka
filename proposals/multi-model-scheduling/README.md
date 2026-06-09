@@ -649,6 +649,34 @@ demand_factor(m, E) = clamp(share(m, E) / s_ref, 0.5, 2.0)
 
 Bounds (`0.5` and `2.0`) are governance-tunable parameters.
 
+##### Sparsity fallback
+
+If the trailing-window total inference count is too low to produce a
+reliable demand signal, `demand_factor` falls back to `1.0` across all
+models:
+
+```
+if total_inference_count_trailing(D) < n_inferences_threshold:
+    demand_factor(m, E) = 1.0   for all m
+```
+
+`n_inferences_threshold` is a governance-set parameter (default `1000`,
+i.e. ~1000 inferences across the entire network over the trailing
+window). Below this floor the coefficient sticks at `base × status_factor`
+and operators react to governance-set baseline values and supply ratios
+alone — equivalent to how the current static `weight_scale_factor`
+mechanism behaves today.
+
+This fallback is critical during the bootstrap period when paid-inference
+volume is small. Without it, `share(m) / s_ref` would be dominated by a
+handful of payers and the coefficient would be noisy and gameable. With
+it, the system gracefully degrades to current behavior until inference
+revenue scales up, at which point `demand_factor` activates and the
+coefficient becomes responsive to settled inference value. The threshold
+SHOULD be set by governance at upgrade time to roughly 5–10× the typical
+trailing-window total inference count at the moment of activation, so
+the mechanism activates only when there's enough volume to be meaningful.
+
 #### 4.3. The learning period (LEARNING) and uncertainty bands
 
 The LEARNING phase is **derived from the existing
@@ -667,21 +695,42 @@ While LEARNING:
 
 - The effective coefficient is clamped to `[min_band_learning,
   max_band_learning]` rather than the standard `[min_band, max_band]`.
-- Learning bands are intentionally wider (e.g. `[0.5 × base, 2.0 ×
-  base]`) to encode pricing uncertainty.
+- These bands are **NOT** derived as multiples of `base`. They are set
+  explicitly by governance at model registration, sized to make the new
+  model genuinely EV-positive for first-mover operators given the
+  expected switching cost and the existing reward landscape.
 - The wider band is **the bootstrap subsidy** in this design. With no
   chain-side scheduler directing operators to new models, the only way a
   rational agent gets pulled toward an unproven model is via a coefficient
   high enough to make the switch EV-positive even with a conservative
-  switching-cost prior. The LEARNING-band ceiling SHOULD be set with this
-  in mind: high enough that early adopters can earn back their switching
-  cost across the LEARNING window if demand materializes.
+  switching-cost prior.
+
+**Why explicit, not derived as a multiple of `base`.** A naive design
+that sets `max_band_learning = 2.0 × base` produces perverse outcomes for
+low-`base` models. Concrete example from current mainnet: MiniMax-M2.7 was
+registered with `weight_scale_factor = 0.30`. A `2.0 × base` ceiling
+gives `max_band_learning = 0.60`, which is *still less than* the existing
+Qwen-235B-FP8 base coefficient of `0.36`. A new model that pays
+proportionally less per PoC unit than the incumbent during its learning
+window has no realistic chance of attracting early adopters — they
+would lose money switching to it.
+
+Governance MUST set the LEARNING ceiling at a value attractive relative
+to **the network's existing reward landscape**, not relative to the new
+model's own base. Suggested target: `max_band_learning ≥ 1.5 ×
+network_median_current_coefficient` at the time of model registration.
+That ensures a first-mover operator switching to the new model has a
+clear EV improvement over staying on whatever model their hardware was
+previously serving, sized to cover the switching-cost prior plus margin.
 
 At `current_epoch == penalty_start_epoch`:
 
 - The standard `[min_band, max_band]` takes over.
-- No additional logic; the band narrows automatically by virtue of
-  switching tables.
+- `[min_band, max_band]` MAY be derived from `base` as multiples (e.g.,
+  `[0.5 × base, 2.0 × base]`) since by that point a model has demand
+  history and operators can react to `demand_factor` directly. The
+  multiplicative-on-base derivation is fine post-graduation because
+  `base` itself has been validated by the LEARNING period.
 
 No new graduation logic or epoch counter is introduced; everything keys
 off `penalty_start_epoch`, which governance already sets per model.
@@ -794,37 +843,78 @@ At the upgrade introducing this GIP:
      multi-model PoC and is not affected by this GIP's lifecycle additions.
    - `status_changed_at_epoch = current_epoch`.
    - `min_band = base × 0.5`, `max_band = base × 2.0`.
-     `min_band_learning = base × 0.5`, `max_band_learning = base × 2.0`
-     initially (i.e. learning bands match active bands at upgrade so
-     existing bootstrapping models see no behavioral change). Governance
-     SHOULD widen `*_learning` bands in a follow-up parameter change as
-     experience accumulates.
+     `min_band_learning` and `max_band_learning` MUST be set explicitly
+     per the calibration pass below (NOT derived as multiples of `base` —
+     see §4.3 for why).
    - `min_gpu_count` and `min_vram_gb_total` set per the table in §2.2 for
      the three currently-known models. Models added between this GIP
      being drafted and shipped MUST be assigned values by governance at
      upgrade time.
 
-2. INTENT handling for active models is extended per §2.3 at the
+2. **Pre-activation calibration pass (governance).** Before this GIP
+   activates, governance MUST perform a deliberate calibration pass on
+   the parameters that become more load-bearing post-upgrade. These were
+   set under the pre-GIP model where they functioned as static per-model
+   multipliers with no `demand_factor` or `status_factor` reading on top;
+   post-GIP they directly determine reward share whenever the demand
+   signal is sparse (which is the current state of mainnet).
+
+   The calibration pass SHOULD:
+
+   - **Confirm `weight_scale_factor` (i.e. `base`) values for every
+     currently-active model.** Current mainnet values (`Qwen ≈ 0.36`,
+     `Kimi K2.6 ≈ 0.78`, `MiniMax-M2.7 ≈ 0.30`) reflect the pre-GIP
+     intuition of relative hardware difficulty. With Layer 1's local
+     rational agent active, operators will have more freedom to choose
+     among models, so these ratios become the *primary* incentive for
+     which model an operator on capable hardware will run. Are they where
+     governance wants them?
+   - **Set `[min_band_learning, max_band_learning]` per active model
+     explicitly.** Per §4.3, the LEARNING ceiling must be attractive
+     relative to the network's existing reward landscape, not relative to
+     the new model's own `base`. Recommended target: `max_band_learning
+     ≥ 1.5 × network_median_current_coefficient` at the time of model
+     registration. For models that have already graduated
+     (`current_epoch >= penalty_start_epoch`), the LEARNING bands are
+     never exercised again so backfilling them to equal the standard
+     bands is fine; for models still in their LEARNING window at upgrade
+     time, the LEARNING bands MUST be set explicitly.
+   - **Set `n_inferences_threshold` (§4.2 sparsity floor) at a value
+     reflecting current mainnet inference volume.** A conservative
+     starting point is roughly 5–10× the typical trailing-window
+     (default `D = 7` epochs) total inference count, so the
+     `demand_factor` only activates during meaningful traffic. At current
+     mainnet volume this is likely in the low thousands; governance
+     SHOULD set the actual number based on observed inference counts at
+     the moment of upgrade.
+
+   These are governance values, not protocol constants. The GIP ships
+   the *mechanism*; governance ships the *initial values*. The
+   calibration pass SHOULD produce a parameter-change proposal bundled
+   with the upgrade artifact itself.
+
+3. INTENT handling for active models is extended per §2.3 at the
    upgrade. INTENT submitted for an active model before the upgrade
    continues to be a no-op (it was a no-op before); INTENT submitted
    after the upgrade is a switching announcement.
 
-3. `EpochModelDemandSummary` MUST begin populating at the first epoch
+4. `EpochModelDemandSummary` MUST begin populating at the first epoch
    after the upgrade. The trailing-window demand factor reads as `1.0`
    (neutral) until at least `D` epochs of history exist.
 
-4. Existing DAPIs continue functioning unchanged. The rational agent is
+5. Existing DAPIs continue functioning unchanged. The rational agent is
    an optional DAPI feature that operators opt into by upgrading to a
    DAPI build that includes it. Until they do, their MLNodes continue
    serving their `ENFORCED_MODEL_ID` configuration. The agent layer is
    advisory and DAPI-local; there is no protocol-level adoption
    requirement.
 
-5. Layer 2 (adaptive coefficient) takes effect immediately at upgrade.
-   With migration defaults (`demand_factor` reads as 1.0 until enough
-   history accumulates, `status_factor = 1.0`), the effective coefficient
-   equals the base immediately post-upgrade. Divergence develops only as
-   demand history accumulates.
+6. Layer 2 (adaptive coefficient) takes effect immediately at upgrade
+   with the calibrated values from step 2. With migration defaults
+   (`demand_factor` reads as 1.0 until enough history accumulates AND/OR
+   the sparsity floor is binding, `status_factor = 1.0`), the effective
+   coefficient equals `base` immediately post-upgrade. Divergence
+   develops only as demand history accumulates above the sparsity floor.
 
 ## Rationale
 
@@ -1312,11 +1402,14 @@ behaviorally.
    new DAPI releases) is required to drive adoption. A future GIP MAY
    introduce on-chain incentives for running the agent if adoption stalls.
 
-3. **Default parameter values** (`D`, `s_ref`, `switch_cooldown`,
-   deprecation/recovery thresholds, band widths, reputation parameters)
-   given in this spec are starting points. Final values SHOULD be set
-   after testnet observation and MAY be revised post-deployment via the
-   appropriate governance level (see §5.5).
+3. **Default parameter values** (`D`, `s_ref`, `n_inferences_threshold`,
+   `switch_cooldown`, deprecation/recovery thresholds, standard band
+   widths, reputation parameters) given in this spec are starting points.
+   Final values SHOULD be set after testnet observation and MAY be revised
+   post-deployment via the appropriate governance level (see §5.5).
+   `weight_scale_factor` per model, `[min_band_learning, max_band_learning]`
+   per active model, and `n_inferences_threshold` require a pre-activation
+   calibration pass per §6 step 2.
 
 4. **Per-host quality routing** is acknowledged as a third layer above
    the two specified here and is deferred to a follow-on GIP. Off-chain

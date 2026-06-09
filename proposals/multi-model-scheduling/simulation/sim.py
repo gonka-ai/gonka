@@ -38,19 +38,26 @@ TIER_THROUGHPUT = {'small': 1.0, 'mid': 4.0, 'flagship': 10.0}
 TIER_DIST = [0.50, 0.35, 0.15]
 TIER_RANK = {t: i for i, t in enumerate(TIERS)}
 
-# Models: (name, min_tier, base_demand)
+# Each entry: (id, min_tier, base_price, base_demand_inferences_per_epoch).
+# Demand is real user inference traffic. Each tier has 1-2 models with one
+# slightly more in demand than the other — close enough that demand drift
+# produces visible crossings (which model is "the leader" rotates over time).
+# Total demand (~870) ≈ total operator throughput at 256 ops, so balanced.
 MODELS_DEF = [
-    ('M_s1', 'small',    50.0),
-    ('M_s2', 'small',    30.0),
-    ('M_m1', 'mid',     150.0),
-    ('M_m2', 'mid',     100.0),
-    ('M_l',  'flagship', 400.0),
+    ('M_s1', 'small',     1.00, 126.0),
+    ('M_s2', 'small',     0.85, 112.0),
+    ('M_m1', 'mid',       1.40, 196.0),
+    ('M_m2', 'mid',       1.25, 182.0),
+    ('M_l',  'flagship',  2.00, 252.0),
 ]
 N_MODELS = len(MODELS_DEF)
-# Layer 2 weight_scale_factor — proportional to demand baseline so larger models
-# pay more per PoC unit (the multi-model PoC GIP intent)
-WSF = np.array([d for _, _, d in MODELS_DEF])
-WSF = WSF / WSF.max() * 2.0
+BASE_PRICE = np.array([p for _, _, p, _ in MODELS_DEF])
+BASE_DEMAND = np.array([d for _, _, _, d in MODELS_DEF])
+
+# Capacity-vs-demand pricing. When supply < demand, price ratchets up to
+# attract operators. Floor 1× base, ceiling cap × base.
+PRICE_ELASTICITY = 4.0
+PRICE_CAP = 5.0
 
 
 def can_run(tier: str, min_tier: str) -> bool:
@@ -74,7 +81,7 @@ class Operator:
         return TIER_THROUGHPUT[self.tier]
 
     def capable_models(self) -> list:
-        return [i for i, (_, mt, _) in enumerate(MODELS_DEF) if can_run(self.tier, mt)]
+        return [i for i, (_, mt, _, _) in enumerate(MODELS_DEF) if can_run(self.tier, mt)]
 
     def truth_rate(self, current_epoch: int) -> Optional[float]:
         # Verified announcements: ones where target epoch has passed
@@ -96,7 +103,7 @@ def make_operators(rng: np.random.Generator, init_lr_dist: str = 'uniform') -> l
     ops = []
     for i in range(N_OPERATORS):
         tier = TIERS[int(rng.choice(3, p=TIER_DIST))]
-        capable = [j for j, (_, mt, _) in enumerate(MODELS_DEF) if can_run(tier, mt)]
+        capable = [j for j, (_, mt, _, _) in enumerate(MODELS_DEF) if can_run(tier, mt)]
         current = int(rng.choice(capable))
         if init_lr_dist == 'uniform':
             lr = float(rng.uniform(0.0, 0.4))
@@ -113,43 +120,49 @@ def make_operators(rng: np.random.Generator, init_lr_dist: str = 'uniform') -> l
 
 
 def demand_at(epoch: int, base: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Demand fluctuates with overlapping sine waves + occasional small shocks.
-    Calibrated so optimal allocation drifts on a timescale of 10-30 epochs,
-    long enough for agents to adapt and switch profitably."""
-    phase = epoch / 60.0
-    wave = np.array([1.0 + 0.35 * np.sin(phase * (1 + i * 0.2) + i * 1.7)
-                     + 0.15 * np.sin(phase * 1.8 + i * 0.9)
+    """Demand for each model is mostly static — real user traffic doesn't swing
+    wildly hour-by-hour. Each model has its own slow drift with offset phases,
+    enough to cross within-tier neighbours and reorder which model is the
+    leader. Small noise on top."""
+    # Drift amplitude 20% on a ~100-epoch timescale → within-tier baselines
+    # (≤15% apart) cross each other when phases diverge.
+    slow = np.array([1.0 + 0.20 * np.sin(epoch / 100.0 + i * 1.7)
                      for i in range(N_MODELS)])
-    # Rare shocks (3% chance per model per epoch, smaller magnitude)
-    shocks = np.where(rng.random(N_MODELS) < 0.03,
-                      rng.uniform(0.7, 1.3, N_MODELS),
-                      1.0)
-    noise = rng.normal(0, 0.04, N_MODELS)
-    return np.maximum(base * wave * shocks * (1.0 + noise), 0.1)
+    # Small per-epoch noise (~5%)
+    noise = rng.normal(0, 0.05, N_MODELS)
+    return np.maximum(base * slow * (1.0 + noise), 0.1)
+
+
+def _earnings_at(throughput: float, model_idx: int, supply_at: float,
+                  demand: np.ndarray) -> float:
+    """Capacity-vs-demand earnings model:
+       served = min(demand, supply); unmet = max(0, (demand-supply)/demand);
+       price = base × min(cap, 1 + e × unmet);
+       op share = throughput / supply.
+    """
+    dem = demand[model_idx]
+    if dem <= 0 or supply_at <= 0:
+        return 0.0
+    served = min(dem, supply_at)
+    unmet = max(0.0, (dem - supply_at) / dem)
+    price_mult = min(PRICE_CAP, 1.0 + PRICE_ELASTICITY * unmet)
+    return float((throughput / supply_at) * served * BASE_PRICE[model_idx] * price_mult)
 
 
 def ev_per_op(throughput: float, model_idx: int, supply: np.ndarray, demand: np.ndarray) -> float:
-    """Realized earnings per epoch for an operator currently on the given model.
-       Used for current-epoch realized payoff, not predicted EV of a candidate switch.
-       Caller MUST ensure supply[model_idx] >= throughput (the op is on this model)."""
-    pot = demand[model_idx] * WSF[model_idx]
-    return float(throughput / max(supply[model_idx], throughput) * pot)
+    """Realized earnings per epoch for an operator currently on the given model."""
+    eff_supply = max(supply[model_idx], throughput)
+    return _earnings_at(throughput, model_idx, eff_supply, demand)
 
 
 def ev_if_op_switches_to(op_throughput: float, current_model: int, target_model: int,
                          predicted_supply: np.ndarray, demand: np.ndarray) -> float:
-    """Predicted EV if this op commits to target_model next epoch.
-       If they're not currently on target_model, their throughput must be ADDED to
-       predicted_supply[target_model] since they will contribute by switching there.
-       Bounded by pot — they can never earn more than the full model pot (alone case)."""
-    pot = demand[target_model] * WSF[target_model]
+    """Predicted EV if this op commits to target_model next epoch."""
     if target_model == current_model:
-        # Stay: op's throughput already in supply
         eff_supply = max(predicted_supply[target_model], op_throughput)
     else:
-        # Switch: op's throughput added to predicted_supply
         eff_supply = predicted_supply[target_model] + op_throughput
-    return float(op_throughput / eff_supply * pot)
+    return _earnings_at(op_throughput, target_model, eff_supply, demand)
 
 
 def best_model_for(op: Operator, predicted_supply: np.ndarray, demand: np.ndarray) -> tuple[int, float]:
@@ -175,7 +188,7 @@ def run_simulation(threshold: float, smoothness: float, n_epochs: int = N_EPOCHS
                     adapt: bool = True) -> dict:
     rng = np.random.default_rng(rng_seed)
     operators = make_operators(rng, init_lr_dist=init_lr_dist)
-    base_demand = np.array([d for _, _, d in MODELS_DEF])
+    base_demand = BASE_DEMAND
 
     # Per-epoch tracking
     history = {
@@ -297,13 +310,12 @@ def run_simulation(threshold: float, smoothness: float, n_epochs: int = N_EPOCHS
 
         # Record metrics
         # Efficiency = fraction of total value pot the network actually captures.
-        # Per epoch, model m's pot = demand_m * WSF_m. That pot is collected only if
-        # at least one operator runs m. If all operators stampede onto a single model,
-        # the others' pots are wasted. Perfect efficiency = 1.0 (every populated model
-        # captured), achieved when supply > 0 on every model.
-        captured_pot = float(sum(demand[m] * WSF[m] for m in range(N_MODELS) if supply[m] > 0))
-        total_pot = float(np.sum(demand * WSF))
-        efficiency = captured_pot / max(total_pot, eps)
+        # Efficiency = fraction of demand actually served (inferences served /
+        # total demand). Tracks how well the operator population is allocated
+        # to match real user demand under the capacity-vs-demand pricing model.
+        served = float(sum(min(demand[m], supply[m]) for m in range(N_MODELS)))
+        total_demand = float(np.sum(demand))
+        efficiency = served / max(total_demand, eps)
 
         # Truth rates aggregate
         truth_rates_now = [op.truth_rate(epoch) for op in operators]
