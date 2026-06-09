@@ -59,6 +59,17 @@ func TestPostNodeTest(t *testing.T) {
 	s, cm, factory := setupTestServer(t)
 	registerTestNode(t, s, cm, "node-1")
 
+	// Push the next PoC far out so the manual-test gate is open for the
+	// success/failure cases (setupTestServer's default puts PoC inside the
+	// must-be-online window, which would correctly 409 — covered separately).
+	s.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "h"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+
 	t.Run("success returns 200 with SUCCESS", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
 		rec := httptest.NewRecorder()
@@ -90,6 +101,55 @@ func TestPostNodeTest(t *testing.T) {
 	})
 
 	t.Run("unknown node returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/does-not-exist/test", nil)
+		rec := httptest.NewRecorder()
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("imminent PoC returns 409", func(t *testing.T) {
+		// Node should be online for an imminent PoC: refuse to test it.
+		s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 9999, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+		defer s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 1, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
+		rec := httptest.NewRecorder()
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+
+	// An unknown node must 404 even when PoC is imminent (existence is checked
+	// before the timing gate).
+	t.Run("unknown node returns 404 even near PoC", func(t *testing.T) {
+		s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 9999, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+		defer s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 1, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+
 		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/does-not-exist/test", nil)
 		rec := httptest.NewRecorder()
 		s.e.ServeHTTP(rec, req)
@@ -215,6 +275,56 @@ func TestMaybeAutoTest(t *testing.T) {
 		if assert.NotNil(t, got, "auto-test should have recorded a result") {
 			assert.Equal(t, TestSuccess, got.Status)
 		}
+	})
+}
+
+func TestMaybeAutoTest_RetriesRetryableFailureAfterBackoff(t *testing.T) {
+	s, cm, _ := setupTestServer(t)
+	registerTestNode(t, s, cm, "node-1")
+	s.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "h"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+
+	t.Run("recent retryable failure stays in backoff", func(t *testing.T) {
+		recentFailure := &TestResult{
+			NodeId:    "node-1",
+			Status:    TestFailed,
+			Retryable: true,
+			StartedAt: time.Now(),
+		}
+		s.tester.recordResult("node-1", 0, recentFailure)
+
+		s.maybeAutoTest("node-1")
+		time.Sleep(100 * time.Millisecond)
+
+		got := s.tester.LastResult("node-1")
+		assert.Same(t, recentFailure, got)
+		assert.Equal(t, TestFailed, got.Status)
+	})
+
+	t.Run("old retryable failure is retried", func(t *testing.T) {
+		oldFailure := &TestResult{
+			NodeId:    "node-1",
+			Status:    TestFailed,
+			Retryable: true,
+			StartedAt: time.Now().Add(-time.Duration(apiconfig.AutoTestRetryBackoffSeconds+1) * time.Second),
+		}
+		s.tester.recordResult("node-1", 0, oldFailure)
+
+		s.maybeAutoTest("node-1")
+
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if got := s.tester.LastResult("node-1"); got != nil && got != oldFailure && got.Status == TestSuccess {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("old retryable failure was not retried; last result: %+v", s.tester.LastResult("node-1"))
 	})
 }
 

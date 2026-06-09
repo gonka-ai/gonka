@@ -1187,6 +1187,14 @@ func (b *Broker) supportedNodeModels(nodeModels map[string]ModelArgs) map[string
 	return filterNodeModelsByPoCParams(nodeModels, b.configManager.GetPoCParams())
 }
 
+// SupportedNodeModels returns the subset of nodeModels supported by the current
+// PoC params. Exported so the pre-PoC MLnode tester can apply the exact same
+// filter the broker uses before resolving which model to launch, keeping the
+// onboarding readiness test aligned with real broker behavior.
+func SupportedNodeModels(nodeModels map[string]ModelArgs, pocParams apiconfig.PoCParamsCache) map[string]ModelArgs {
+	return filterNodeModelsByPoCParams(nodeModels, pocParams)
+}
+
 func (b *Broker) resolveSupportedNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
 	return ResolveNodeModelID(epochMLNodes, b.supportedNodeModels(nodeModels))
 }

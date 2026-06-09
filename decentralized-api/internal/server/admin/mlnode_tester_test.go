@@ -210,6 +210,91 @@ func TestMLNodeTester_MultipleModels(t *testing.T) {
 	}
 }
 
+func TestMLNodeTester_FiltersModelsUnsupportedByPoCParams(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models: map[string]apiconfig.ModelConfig{
+			"model-a": {},
+			"model-b": {},
+		},
+	}})
+	if err := cm.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{{ModelId: "model-a", SeqLen: 1024}},
+	}); err != nil {
+		t.Fatalf("SetPoCParams: %v", err)
+	}
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	gov := stubGovModels{resp: &types.QueryModelsAllResponse{
+		Model: []types.Model{{Id: "model-a"}, {Id: "model-b"}},
+	}}
+
+	result, err := NewMLNodeTester(cm, factory, gov).Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestSuccess {
+		t.Fatalf("status=%q error=%q", result.Status, result.Error)
+	}
+	if mockClient.InferenceUpCalled != 1 {
+		t.Fatalf("InferenceUp called %d times, want 1", mockClient.InferenceUpCalled)
+	}
+	if mockClient.LastInferenceModel != "model-a" {
+		t.Fatalf("last model=%q, want model-a", mockClient.LastInferenceModel)
+	}
+	if _, ok := result.LoadMs["model-b"]; ok {
+		t.Fatalf("unsupported model-b should not be tested: %+v", result.LoadMs)
+	}
+}
+
+func TestMLNodeTester_SkipsConfiguredModelsAbsentFromGovernance(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models: map[string]apiconfig.ModelConfig{
+			"legacy-model": {},
+			"model-a":      {},
+		},
+	}})
+	if err := cm.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "legacy-model", SeqLen: 1024},
+			{ModelId: "model-a", SeqLen: 1024},
+		},
+	}); err != nil {
+		t.Fatalf("SetPoCParams: %v", err)
+	}
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	gov := stubGovModels{resp: &types.QueryModelsAllResponse{
+		Model: []types.Model{{Id: "model-a"}},
+	}}
+
+	result, err := NewMLNodeTester(cm, factory, gov).Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestSuccess {
+		t.Fatalf("status=%q error=%q", result.Status, result.Error)
+	}
+	if mockClient.InferenceUpCalled != 1 {
+		t.Fatalf("InferenceUp called %d times, want 1", mockClient.InferenceUpCalled)
+	}
+	if mockClient.LastInferenceModel != "model-a" {
+		t.Fatalf("last model=%q, want model-a", mockClient.LastInferenceModel)
+	}
+	if _, ok := result.LoadMs["legacy-model"]; ok {
+		t.Fatalf("governance-absent legacy-model should be skipped: %+v", result.LoadMs)
+	}
+}
+
 func TestMLNodeTester_StopsBeforeFirstModel(t *testing.T) {
 	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
 		Id:            "node1",

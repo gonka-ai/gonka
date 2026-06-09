@@ -4,9 +4,11 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -42,6 +44,12 @@ type TestResult struct {
 	RespMs       int64            `json:"resp_ms,omitempty"`
 	StartedAt    time.Time        `json:"started_at"`
 	DurationMs   int64            `json:"duration_ms"`
+	// Retryable marks a FAILED result that looks transient (RPC/network/health
+	// blip) rather than a deterministic config error (model missing from
+	// governance, no supported model). Auto-test uses this to retry transient
+	// failures with backoff instead of latching TEST_FAILED until config
+	// changes. SUCCESS results leave it false.
+	Retryable bool `json:"retryable,omitempty"`
 }
 
 // ErrTestInProgress is returned by MLNodeTester.Run when a test is
@@ -161,6 +169,14 @@ func (t *MLNodeTester) recordResult(nodeId string, revision uint64, result *Test
 	}
 }
 
+// HasNode reports whether nodeId is present in the configured node list.
+// Used by handlers to return 404 before applying test-safety gates so an
+// unknown node never masquerades as "blocked".
+func (t *MLNodeTester) HasNode(nodeId string) bool {
+	_, ok := t.findNode(nodeId)
+	return ok
+}
+
 func (t *MLNodeTester) findNode(nodeId string) (apiconfig.InferenceNodeConfig, bool) {
 	for _, n := range t.configManager.GetNodes() {
 		if n.Id == nodeId {
@@ -168,6 +184,35 @@ func (t *MLNodeTester) findNode(nodeId string) (apiconfig.InferenceNodeConfig, b
 		}
 	}
 	return apiconfig.InferenceNodeConfig{}, false
+}
+
+// buildTestableLaunchPlans builds launch plans for the node models the broker
+// could actually launch: those present in governance. Models configured on the
+// node but absent from governance are returned in skipped (not failed), since
+// the broker would ignore them too. Plans are returned in stable model-id order.
+func buildTestableLaunchPlans(governanceModels []types.Model, nodeModels map[string]broker.ModelArgs) (plans []broker.ModelLaunchPlan, skipped []string, err error) {
+	govByID := make(map[string]types.Model, len(governanceModels))
+	for _, m := range governanceModels {
+		govByID[m.Id] = m
+	}
+	ids := make([]string, 0, len(nodeModels))
+	for id := range nodeModels {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		gm, ok := govByID[id]
+		if !ok {
+			skipped = append(skipped, id)
+			continue
+		}
+		plan, planErr := broker.BuildModelLaunchPlan(gm, nodeModels)
+		if planErr != nil {
+			return nil, nil, planErr
+		}
+		plans = append(plans, plan)
+	}
+	return plans, skipped, nil
 }
 
 func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeConfig) *TestResult {
@@ -186,6 +231,8 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 	if err != nil {
 		result.Status = TestFailed
 		result.Error = err.Error()
+		// Governance is fetched over RPC; a failure here is transient.
+		result.Retryable = true
 		return result
 	}
 
@@ -193,11 +240,37 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 	for modelID, modelConfig := range cfg.Models {
 		nodeModels[modelID] = broker.ModelArgs{Args: modelConfig.Args}
 	}
-	launchPlans, err := broker.BuildConfiguredModelLaunchPlans(governanceModels, nodeModels)
+
+	// Align the readiness test with broker model semantics so it does not
+	// false-fail on models the broker would never launch this epoch:
+	//   1. Drop models unsupported by the current PoC params — the broker
+	//      filters these out before it resolves which model to launch.
+	//   2. Among the remaining models, test those present in governance and
+	//      SKIP (rather than hard-fail on) configured models absent from
+	//      governance — a node carrying an old/backup model would otherwise be
+	//      marked TEST_FAILED even though the broker would simply ignore it.
+	// Every model that survives both filters is still loaded and probed, so a
+	// multi-model node keeps full coverage of the models it can actually serve.
+	supported := broker.SupportedNodeModels(nodeModels, t.configManager.GetPoCParams())
+	if len(supported) == 0 {
+		result.Status = TestFailed
+		result.Error = "no configured model is supported by the current PoC params"
+		return result
+	}
+	launchPlans, skipped, err := buildTestableLaunchPlans(governanceModels, supported)
 	if err != nil {
 		result.Status = TestFailed
 		result.Error = err.Error()
 		return result
+	}
+	if len(launchPlans) == 0 {
+		result.Status = TestFailed
+		result.Error = "no configured model is both supported by the current PoC params and present in governance"
+		return result
+	}
+	if len(skipped) > 0 {
+		logging.Info("MLnode test skipping models absent from governance", types.Nodes,
+			"node_id", cfg.Id, "skipped_models", skipped)
 	}
 
 	// Build URLs the same way the broker does for versioned (rolling-
@@ -227,6 +300,8 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			result.Status = TestFailed
 			result.FailingModel = plan.ModelID
 			result.Error = "failed to stop node before inference up: " + err.Error()
+			// MLnode unreachable for stop is a transient/infra failure.
+			result.Retryable = true
 			return result
 		}
 
@@ -247,6 +322,8 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			result.Status = TestFailed
 			result.FailingModel = plan.ModelID
 			result.Error = "health check error: " + err.Error()
+			// A health probe transport error is transient.
+			result.Retryable = true
 			return result
 		}
 		if !ok {
@@ -264,6 +341,8 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			result.FailingModel = plan.ModelID
 			result.Error = "inference request error: " + err.Error()
 			result.RespMs = time.Since(respStart).Milliseconds()
+			// A transport error on the probe request is transient.
+			result.Retryable = true
 			return result
 		}
 		result.RespMs = time.Since(respStart).Milliseconds()

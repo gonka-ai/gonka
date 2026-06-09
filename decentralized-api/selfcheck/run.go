@@ -136,11 +136,13 @@ func Run(ctx context.Context) (Report, error) {
 	hwSubmitted := ev.AssertHardwareDiffSubmitted()
 
 	// Step the synthetic chain through PoCGenerate -> PoCValidate -> back to
-	// Inference, queueing the same broker commands a real block would, and
-	// assert the broker's intended-state transitions for each phase (no real
-	// MLnode needed). This verifies broker PoC-phase wiring at the
-	// intended-state level — it does NOT assert the MLnode worker actually
-	// completed each operation; that is intentionally out of scope here.
+	// Inference, queueing the same broker commands a real block would. Each
+	// phase waits for the broker's ACTUAL (current) state to converge before
+	// triggering the next, mirroring real blocks (which are seconds apart, not
+	// microseconds). Asserting actual state — not just the intended target —
+	// means a rejected/failed worker transition fails the report instead of
+	// passing silently while a WARN scrolls by. No real MLnode is needed: the
+	// mock client advances its state on each PoC/inference call.
 	ec := types.NewEpochContext(*epoch, *phaseParams.Params.EpochParams)
 
 	// PoC generation phase.
@@ -148,7 +150,7 @@ func Run(ctx context.Context) (Report, error) {
 	if err := driver.TriggerStartPoC(); err != nil {
 		return Report{}, fmt.Errorf("TriggerStartPoC: %w", err)
 	}
-	pocGenerate := ev.AssertNodeIntendedStatus("poc-generate",
+	pocGenerate := ev.AssertNodeActualStatus("poc-generate",
 		types.HardwareNodeStatus_POC, broker.PocStatusGenerating)
 
 	// PoC validation phase.
@@ -156,7 +158,7 @@ func Run(ctx context.Context) (Report, error) {
 	if err := driver.TriggerInitValidate(); err != nil {
 		return Report{}, fmt.Errorf("TriggerInitValidate: %w", err)
 	}
-	pocValidate := ev.AssertNodeIntendedStatus("poc-validate",
+	pocValidate := ev.AssertNodeActualStatus("poc-validate",
 		types.HardwareNodeStatus_POC, broker.PocStatusValidating)
 
 	// Back to inference once validation is over.
@@ -164,7 +166,7 @@ func Run(ctx context.Context) (Report, error) {
 	if err := driver.TriggerInferenceUpAll(); err != nil {
 		return Report{}, fmt.Errorf("TriggerInferenceUpAll: %w", err)
 	}
-	inferenceResume := ev.AssertNodeIntendedStatus("inference-resumed",
+	inferenceResume := ev.AssertNodeActualStatus("inference-resumed",
 		types.HardwareNodeStatus_INFERENCE, "")
 
 	return ev.Combine(registered, epochPopulated, hwSubmitted,
