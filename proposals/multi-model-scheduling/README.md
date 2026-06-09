@@ -6,44 +6,50 @@
 | **Type** | Standards Track (Core) |
 | **Author** | 0xgonka |
 | **Created** | 2026-05-05 |
+| **Revised** | 2026-06-09 |
 | **Requires** | [Multi-Model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md) |
 | **Replaces** | None |
 
 ## Abstract
 
 This GIP introduces a two-layer mechanism for allocating compute and pricing
-PoC weight across the multiple models supported by the Gonka network.
+PoC weight across the multiple models supported by the Gonka network. The
+mechanism keeps the chain a thin substrate (model registry, demand signal,
+adaptive coefficient) and pushes scheduling intelligence to the operator's
+DAPI as a local rational agent.
 
-A new on-chain **GPU class registry** establishes a canonical taxonomy
-(replacing today's free-form `Hardware.Type` string). Operators declare a
-per-MLNode **capability** that names a canonical GPU class and the set of
-models the node has weights for and is willing to serve. Layer 1 is a
-deterministic on-chain **default scheduler** that publishes a per-epoch
-**opinion**: a target share of compute per `(GPU class, model)` pair. Each
-DAPI computes its MLNode assignments as the intersection of the operator's
-capability with the chain's opinion, weighted by a **hardware fit factor**
-that prefers matching high-end GPUs to high-end models and discounts
-wasteful over-provisioning. **Model switches are aligned to epoch
-boundaries** so the existing PoC and validation pipelines remain
-well-defined under reassignment.
+**Layer 1 (Local rational agent).** Each DAPI runs a rational agent that
+decides which model its MLNodes will run next epoch by maximizing expected
+value: model demand × adaptive coefficient ÷ predicted next-epoch supply,
+net of a measured switching-cost discount. Predicted supply incorporates
+**switching-intent announcements** (a repurposing of the existing
+`MsgDeclarePoCIntent` from multi-model PoC) discounted by a **per-agent
+honesty reputation** for each announcer. Operators with no preferences get
+sensible defaults from the agent. Operators who want manual control can pin
+the agent to a specific model or disable it entirely.
 
-Layer 2 makes `PoCModelConfig.weight_scale_factor` **adaptive within a
-governance-set band**, scaling with realized inference demand. The
-band is intentionally wider during the **learning period** of newly
-approved models (reusing the existing
+**Layer 2 (Adaptive coefficient).** `PoCModelConfig.weight_scale_factor`
+becomes adaptive within a governance-set band, scaling with realized
+inference demand. The band is intentionally wider during the **learning
+period** of newly approved models (reusing the existing
 [multi-model PoC](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
-`penalty_start_epoch` boundary as the LEARNING/ACTIVE divide, no new
-state introduced). Auto-deprecation removes models that sustain
-near-zero demand, with a governance veto window before terminal
-retirement.
+`penalty_start_epoch` boundary as the LEARNING/ACTIVE divide, no new state
+introduced). Auto-deprecation removes models that sustain near-zero demand,
+with a governance veto window before terminal retirement.
+
+This GIP introduces **no on-chain capability registry, no on-chain GPU class
+taxonomy, and no chain-published scheduler opinion**. All scheduling
+intelligence lives client-side, where the relevant information (hardware,
+weights on disk, operator risk tolerance) actually exists. The chain
+provides demand and pricing signals; agents react. Equilibrium emerges from
+independent rational decisions, not from central direction.
 
 **Per-host quality routing** — biasing which host serves a given inference
 request based on that host's historical performance on that model
 (latency, error rate, validation pass rate, etc.) — is explicitly out of
-scope. This GIP changes *what each model is worth* and *how default supply
-is distributed across models*; per-host quality is a separate concern
-(*which host should serve a given request*) and is deferred to a follow-on
-proposal.
+scope. This GIP changes *what each model is worth* and *which model each
+operator chooses to run*; per-host quality is a separate concern (*which
+host should serve a given request*) and is deferred to a follow-on proposal.
 
 ## Motivation
 
@@ -68,39 +74,34 @@ more than two or three models:
    governance-set rate forever. The chain has no mechanism to retire a
    model without an explicit per-model governance vote.
 
-A fourth concern is operational: **hardware mismatch**. A naive scheduler
-that routes by demand alone will assign high-demand small models to
-flagship GPUs purely because the demand signal is high, wasting hardware
-capacity that small GPUs could serve as efficiently.
-
 A naive composite multiplier on the coefficient does not address (1)
 because it requires hosts to *act* on the new signal. The majority of the
 network's compute belongs to operators who configure their nodes once and
 rarely revisit. Equilibrium must be produced *by default*, not by host
 response. And that equilibrium must respect the physical reality that an
-operator can only run models they have weights for, and that high-end
-hardware should not be assigned wasteful work when better-fit work exists.
+operator can only run models they have weights for and that switching
+between models is costly.
 
-This GIP separates the equilibrium-by-default mechanism (the scheduler)
-from the price-discovery mechanism (the adaptive coefficient), and grounds
-both in operator-declared capability sets and a hardware fit factor.
+This GIP separates the equilibrium-by-default mechanism (the local rational
+agent, which acts on the operator's behalf even when the operator does
+nothing) from the price-discovery mechanism (the adaptive coefficient).
+Both run with no new on-chain registry overhead.
 
 ## Specification
 
 ### 1. Architecture
 
 Two cooperating layers, plus end-of-life additions to the existing model
-lifecycle, all built on explicit operator-declared capability sets.
+lifecycle.
 
-- **Capability:** each MLNode declares the set of models it can and will
-  serve, plus its canonical GPU class, persisted on-chain.
-- **Layer 1 (Scheduler):** chain-side computation that publishes an
-  *opinion* — a target distribution of lazy compute per `(GPU class,
-  model)` pair each epoch — weighted by demand and by a hardware fit
-  factor. Each DAPI selects its MLNode assignments from the intersection
-  of operator capability and the chain's opinion.
-- **Layer 2 (Coefficient):** chain-side computation that produces an
-  effective per-model `weight_scale_factor` from a governance-set base,
+- **Layer 1 (Local rational agent):** off-chain, runs in the DAPI. Each
+  agent observes chain state (current per-model supply, demand history,
+  switching-intent announcements, honesty history per participant) and
+  decides locally which model each of its MLNodes will run next epoch.
+  Default behavior is sensible without operator tuning; operators may
+  override by pinning or disabling the agent.
+- **Layer 2 (Adaptive coefficient):** chain-side computation that produces
+  an effective per-model `weight_scale_factor` from a governance-set base,
   an observed demand factor, and a status factor, clamped to a
   governance-set band.
 - **Lifecycle:** the existing
@@ -110,13 +111,16 @@ lifecycle, all built on explicit operator-declared capability sets.
   the LEARNING/ACTIVE divide and **adds** the ACTIVE → DEPRECATED →
   RETIRED end-of-life transitions.
 
-The scheduler is **advisory**. It expresses an opinion over each
-operator's declared capabilities; it does not direct hosts to run models
-they have not declared themselves capable of running.
+The rational agent is **purely client-side**. The chain does not direct,
+verify, or enforce its decisions. The chain provides public information
+(demand summaries, switching-intent announcements, per-participant
+fulfillment history) and the agent reasons over that information locally.
+Two different DAPI implementations may make different decisions from
+identical chain state; this is acceptable and expected.
 
-Both layers run at epoch settlement. Outputs are persisted on-chain as
-part of `EpochGroupData` or analogous per-epoch state and become inputs
-to the next epoch.
+Layer 2 runs at epoch settlement. Its output (the effective coefficient
+per model per epoch) becomes the consensus-weight multiplier for the next
+epoch.
 
 ### 1.1. Relationship to existing multi-model PoC
 
@@ -126,25 +130,24 @@ delegation, and PoC mechanisms specified in
 Specifically:
 
 - **Participation modes** (DIRECT, DELEGATE, REFUSE, INTENT, NONE) are
-  unchanged. `MLNodeCapability` is orthogonal: it declares which models
-  an MLNode *can serve* and the GPU class of its hardware. Whether a
-  host actually participates in PoC for a given model on a given epoch
-  is still resolved through the existing participation system.
+  unchanged. The semantic change in this GIP is that INTENT for an *active*
+  model also carries meaning (as a switching announcement consumed by other
+  rational agents). See §2.3.
 - **`penalty_start_epoch`** per model is reused directly as the
   LEARNING/ACTIVE boundary (see §4.3). No new "learning period" field
   is introduced.
 - **Bootstrap pre-eligibility** (`BootstrapDelegationSnapshot`,
   `deploy_window`, INTENT) continues to operate as specified for new
-  models. The scheduler's allocation cap during the LEARNING period is
-  complementary: it bounds how much of the *lazy* compute pool can be
-  pulled toward an unproven model, while existing bootstrap mechanics
-  govern the explicit declaration of intent and hardware deployment.
+  models. The wider coefficient band during LEARNING (§4.3) is the
+  bootstrap subsidy: it makes the coefficient EV attractive enough that a
+  rational agent will accept the switching cost to deploy an unproven
+  model. The chain does not allocate compute to learning models directly;
+  the agent does, by following the coefficient signal.
 - **The founding-model weight-cap exemption** (`initial_model_id` =
-  Qwen3-235B-FP8) is preserved by this GIP. The exemption applies to
-  the legacy weight-cap; this GIP's coefficient bands and scheduler
-  allocation cap apply to all models including the founding model, but
-  with backfill values that produce no behavioral change at the
-  upgrade boundary (see §6).
+  Qwen3-235B-FP8) is preserved by this GIP. The exemption applies to the
+  legacy weight-cap; this GIP's coefficient bands apply to all models
+  including the founding model, with backfill values that produce no
+  behavioral change at the upgrade boundary (see §6).
 
 ### 2. New on-chain state
 
@@ -166,7 +169,8 @@ message EpochModelDemandSummary {
 
 `paid_value_ngonka` is the primary demand metric used by both layers. It
 MUST aggregate only inferences that settled with status `valid` and that
-were paid (not refunded or rejected).
+were paid (not refunded or rejected). It is consumed both by Layer 2
+(adaptive coefficient) and by Layer 1 rational agents (EV computation).
 
 #### 2.2. `PoCModelConfig` extensions
 
@@ -177,41 +181,32 @@ Add the following fields to
 message PoCModelConfig {
   // existing fields preserved...
 
-  Decimal min_band                  = 10;  // floor for effective coefficient
-  Decimal max_band                  = 11;  // ceiling for effective coefficient
-  Decimal min_band_learning         = 12;  // wider floor before penalty_start_epoch
-  Decimal max_band_learning         = 13;  // wider ceiling before penalty_start_epoch
-  ModelStatus status                = 14;  // ACTIVE | DEPRECATED | RETIRED
-  uint64 status_changed_at_epoch    = 15;  // updated on each status transition
-  Decimal scheduler_allocation_cap  = 16;  // < 1.0 before penalty_start_epoch
-  string target_gpu_class           = 17;  // GpuClass.id this model was designed for
-  repeated string compatible_gpu_classes = 18; // GpuClass.ids that can physically serve
-  uint32 min_gpu_count              = 19;  // minimum GPU count of target class
+  Decimal min_band              = 10;  // floor for effective coefficient
+  Decimal max_band              = 11;  // ceiling for effective coefficient
+  Decimal min_band_learning     = 12;  // wider floor before penalty_start_epoch
+  Decimal max_band_learning     = 13;  // wider ceiling before penalty_start_epoch
+  ModelStatus status            = 14;  // ACTIVE | DEPRECATED | RETIRED
+  uint64 status_changed_at_epoch = 15; // updated on each status transition
+  uint32 min_gpu_count          = 16;  // minimum GPU count this model needs
+  uint32 min_vram_gb_total      = 17;  // minimum total VRAM (GB) across GPUs
 }
 
-// LEARNING is not a status; it is derived from
-// (current_epoch < penalty_start_epoch) using the existing field
-// from PoCModelConfig defined in multi-model PoC. See §4.3.
 enum ModelStatus {
   MODEL_STATUS_UNSPECIFIED = 0;
   MODEL_STATUS_ACTIVE      = 1;
   MODEL_STATUS_DEPRECATED  = 2;
   MODEL_STATUS_RETIRED     = 3;
 }
+
+// LEARNING is not a status; it is derived from
+// (current_epoch < penalty_start_epoch) using the existing field
+// from PoCModelConfig defined in multi-model PoC. See §4.3.
 ```
 
 `min_band` and `max_band` MUST satisfy `0 < min_band ≤ base ≤ max_band`.
-`target_gpu_class` MUST be an element of `compatible_gpu_classes` and
-MUST reference a registered class in §2.6. `min_gpu_count` is the
-minimum number of GPUs of the target class required to host one
-instance (e.g. flagship 235B FP8 needs ~4× H100/H200 SXM with NVLink).
-
-The existing [`Model.v_ram`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/model.proto)
-field is currently stored at registration but never read. It SHOULD be
-preserved for informational purposes but is not a substitute for the
-explicit `target_gpu_class` declaration: serving a flagship model needs
-not just enough VRAM but specific interconnect (NVLink) and precision
-(FP8) characteristics that pure VRAM cannot capture.
+`min_gpu_count` and `min_vram_gb_total` are advisory hardware floors
+consumed by Layer 1 rational agents (§3.1) to compute their local capability
+set. The chain does not verify operator hardware against them.
 
 ##### Initial backfill (informed by current network state)
 
@@ -219,296 +214,344 @@ Mainnet currently serves `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`. The
 genesis model list also includes `Qwen/QwQ-32B` and
 `Qwen/Qwen2.5-7B-Instruct`. Suggested initial values:
 
-| Model | `target_gpu_class` | `compatible_gpu_classes` | `min_gpu_count` |
-|---|---|---|---:|
-| `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | `H100_SXM` | `H100_SXM, H200_SXM, B200_SXM` | 4 |
-| `Qwen/QwQ-32B` (FP8) | `A100_80` | `A100_80, H100_PCIE, H100_SXM, H200_SXM, L40S` | 1 |
-| `Qwen/Qwen2.5-7B-Instruct` (FP8) | `L40S` | `L40S, A100_40, A100_80, H100_PCIE, H100_SXM, H200_SXM` | 1 |
+| Model | `min_gpu_count` | `min_vram_gb_total` |
+|---|---:|---:|
+| `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | 4 | 320 |
+| `Qwen/QwQ-32B` (FP8) | 1 | 48 |
+| `Qwen/Qwen2.5-7B-Instruct` (FP8) | 1 | 24 |
 
-These are starting points; final values to be confirmed by governance
-at upgrade time.
+These are starting points; final values to be confirmed by governance at
+upgrade time. Note that the hardware floor is informational only — an
+operator running an MLNode below these floors will fail PoC naturally
+(low throughput, OOM, or both); the chain does not need to enforce it.
 
-#### 2.3. `PocParams` extensions
+#### 2.3. INTENT semantics extension
 
-A new global `fit_decay` parameter governs the hardware fit factor (see
-§3.3):
+[`MsgDeclarePoCIntent`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/tx.proto)
+is preserved unchanged at the message-type level. The semantic change is
+in interpretation:
 
-```proto
-message PocParams {
-  // existing fields preserved...
-  Decimal fit_decay = N;  // per-class penalty for over-provisioning; default 0.4
+- **Bootstrap mode (existing).** An INTENT for a model with
+  `current_epoch < penalty_start_epoch` (LEARNING) signals the operator's
+  intent to deploy that model for bootstrap purposes. The chain consumes
+  this for pre-eligibility computation per multi-model PoC.
+- **Switching mode (new).** An INTENT for a model with
+  `current_epoch >= penalty_start_epoch` (ACTIVE) functions as a
+  switching announcement: the operator declares they will run that model
+  starting at epoch `submission_epoch + 1`. The chain treats this as
+  purely informational — no chain-side reputation, no penalty, no
+  enforcement. Rational agents (§3) consume it locally as a market signal.
+
+The submission deadline for a switching-mode INTENT is the
+**switching INTENT cutoff**: the last 5% of the epoch's block height
+(governance-tunable). INTENT submissions for active models after the
+cutoff MUST be rejected at message handling. The cutoff ensures other
+agents have time to read announcements and react before the epoch
+boundary.
+
+INTENT is **not** in the fee-exempt list (per
+[`liquidity_pool_fee_bypass_decorator.go`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/app/ante/) and
+similar). This is intentional: switching-mode INTENT is a market signal,
+not a protocol duty. The fee provides spam resistance and a small honesty
+incentive. Bootstrap-mode INTENT (for LEARNING models) follows whatever
+fee policy multi-model PoC specifies; this GIP does not modify it.
+
+### 3. Layer 1: Local rational agent
+
+#### 3.1. Hardware-derived capability set
+
+Each DAPI's rational agent computes its own capability set locally from
+information the operator already has: the GPUs available to each MLNode,
+which model weights are present on disk, and the chain's
+`min_gpu_count` / `min_vram_gb_total` floors per model:
+
+```
+capable(node) = { m :
+    node.gpu_count >= min_gpu_count(m) AND
+    node.total_vram_gb >= min_vram_gb_total(m) AND
+    weights_on_disk(node, m) AND
+    status(m) != RETIRED
 }
 ```
 
-#### 2.4. `EpochSchedulerTarget`
+The chain does NOT need to know `capable(node)`. The agent uses it locally
+to filter candidates for the switching decision.
 
-A new collection keyed by `(epoch_index, gpu_class, model_id)` published
-at epoch settlement and read by DAPIs.
+For nodes where weights are not yet on disk but could be downloaded, the
+agent MAY include them as "potentially capable" with a higher effective
+switching cost (download + warm-up time). Default DAPI behavior is to
+only include weights already cached; aggressive operators can configure
+the agent to consider downloads.
 
-```proto
-message EpochSchedulerTarget {
-  uint64 epoch_index = 1;
-  string gpu_class   = 2;
-  string model_id    = 3;
-  Decimal lazy_share = 4;   // fraction of lazy compute for this (class, model)
-}
-```
+#### 3.2. Decision criterion
 
-For each `gpu_class`, `Σ lazy_share over all models = 1.0` (or 0 if no
-eligible models for that class).
-
-#### 2.5. `MLNodeCapability`
-
-An explicit per-MLNode capability declaration submitted by the operator
-and persisted on-chain via a new `MsgSetMLNodeCapability`. It carries
-both the canonical GPU class of the MLNode (see §2.6) and the set of
-models the operator has weights for and is willing to serve on it.
-
-```proto
-message MLNodeCapability {
-  string mlnode_id                  = 1;
-  string gpu_class                  = 2;  // canonical class id from registry
-  repeated string supported_models  = 3;  // models this MLNode is willing/able to serve
-  uint64 set_at_epoch               = 4;
-}
-```
-
-A capability set of size 1 is equivalent to a hard pin. A capability set
-of size > 1 indicates the operator is willing to let the scheduler choose
-among the listed models (weighted by the chain's opinion). An empty
-capability set or unset `gpu_class` (default for newly registered MLNodes
-that have not yet declared) means the MLNode is **not eligible for
-scheduler assignment** and serves nothing under this GIP's mechanism
-until the operator declares.
-
-`gpu_class` is the class of GPUs **allocated to that specific MLNode**,
-not necessarily the host's full inventory. A host with both A100_80 and
-T4 hardware that runs one vLLM instance on the A100s and another on the
-T4s declares two MLNodes with different `gpu_class` values.
-
-`supported_models` MUST contain only models present in the on-chain Model
-registry. Declarations referencing unknown or `RETIRED` models MUST be
-rejected at message handling. `gpu_class` MUST be a registered class in
-the GPU class registry (§2.6).
-
-`MsgSetMLNodeCapability` is a regular paid transaction (not a network
-duty) and is subject to standard fees. This is intentional: it provides
-a small economic friction against spammed re-declarations that perturb
-the scheduler's opinion across epochs (see Security Considerations).
-
-#### 2.6. GPU class registry
-
-A new on-chain collection of canonical GPU classes, governance-maintained.
-This is necessary because the existing
-[`HardwareNode.hardware[].type`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/hardware_node.proto#L33-L36)
-field is a free-form string with no validation, no normalization, and is
-not consumed by any production code today. Operator submissions in
-practice are coarse strings like `"A100"` or `"T4"` with no variant
-information (memory size, NVLink presence, etc.), which is insufficient
-for fit-based scheduling.
-
-```proto
-message GpuClass {
-  string id          = 1;  // canonical identifier, e.g. "H100_SXM"
-  uint32 vram_gb     = 2;  // per-GPU VRAM capacity
-  bool   nvlink      = 3;  // NVLink interconnect present
-  bool   fp8_native  = 4;  // hardware FP8 support
-  uint32 tier_rank   = 5;  // position in the global ordering (0 = lowest tier)
-}
-```
-
-The registry is queried as an ordered set keyed by `tier_rank`. Adding a
-new class, removing a class, or reordering existing classes requires a
-governance proposal. `tier_rank` values define the ordering used by the
-fit factor (§3.3); higher rank = higher tier.
-
-##### 2.6.1. Initial registry contents
-
-Genesis seeding informed by hardware actually in use on the network
-today and the model classes the network is expected to serve. Final
-values to be confirmed by governance at upgrade time.
-
-| `id` | `vram_gb` | `nvlink` | `fp8_native` | `tier_rank` |
-|---|---:|:---:|:---:|---:|
-| `T4` | 16 | no | no | 0 |
-| `RTX_4090` | 24 | no | no | 1 |
-| `L40S` | 48 | no | yes | 2 |
-| `A100_40` | 40 | yes | no | 3 |
-| `A100_80` | 80 | yes | no | 4 |
-| `H100_PCIE` | 80 | partial | yes | 5 |
-| `H100_SXM` | 80 | yes | yes | 6 |
-| `H200_SXM` | 141 | yes | yes | 7 |
-| `B200_SXM` | 192 | yes | yes | 8 |
-
-This list is intentionally narrow at launch (covers what's observed in
-testnet fixtures plus the obvious flagship classes). Consumer-grade and
-non-Nvidia accelerators can be added by governance as they enter the
-network.
-
-##### 2.6.2. Relationship to legacy `Hardware.Type`
-
-The legacy free-form `HardwareNode.hardware[].type` field is preserved
-as informational only. It is not used by the scheduler. Operators MUST
-declare a canonical `gpu_class` in `MLNodeCapability` for an MLNode to
-be eligible for scheduler assignment. A future GIP MAY deprecate the
-legacy field once adoption is universal.
-
-### 3. Layer 1: Default scheduler
-
-#### 3.1. Inputs
-
-At settlement of epoch `E`, the scheduler MUST consume:
-
-- The set of all MLNodes registered on the network whose
-  `MLNodeCapability` is declared (non-empty `gpu_class` and
-  `supported_models`).
-- For each model: `status`, `scheduler_allocation_cap`, `target_gpu_class`,
-  `compatible_gpu_classes`.
-- `EpochModelDemandSummary` records for the trailing window of `D` epochs
-  ending at `E` (default `D = 7`).
-- The global `fit_decay` parameter and the GPU class registry (§2.6).
-
-#### 3.2. Eligible compute pool
-
-For scheduler purposes, the eligible pool for `(gpu_class c, model m)` is
-the set of MLNodes that:
-1. Have GPU class `c`.
-2. Have a non-empty `MLNodeCapability` containing `m`.
-3. Are not pinned to a different model (capability of size 1 referencing
-   a different model excludes the MLNode from this pool).
-
-MLNodes with a capability set of size 1 contribute fixed supply to that
-one model and are not subject to scheduler reallocation. MLNodes with a
-capability set of size > 1 contribute flexible supply that the scheduler's
-opinion shapes.
-
-#### 3.3. Hardware fit factor
-
-The scheduler weights its opinion by a fit factor that prefers matching
-GPU class to model target and penalizes over-provisioning. Let
-`rank(c)` be the `tier_rank` of class `c` in the GPU class registry
-(§2.6) — 0 is the lowest tier.
+Approaching an epoch boundary, the agent computes expected value (EV) per
+candidate model:
 
 ```
-fit_factor(c, m) =
-    0                                            if c ∉ compatible_gpu_classes(m)
-    1.0                                          if rank(c) ≤ rank(target_gpu_class(m))
-    fit_decay ^ (rank(c) − rank(target))         if rank(c) >  rank(target_gpu_class(m))
+EV(node, m, next_epoch) =
+    pot(m, next_epoch) × throughput(node, m) /
+    max(predicted_supply(m, next_epoch), throughput(node, m))
 ```
 
-Asymmetry is intentional: serving on a class at or below target is fully
-weighted (the model is well-matched or efficiently served on smaller
-hardware that frees up bigger GPUs for bigger work). Serving on a class
-above target is discounted geometrically per class above (over-
-provisioning waste).
+where:
 
-`fit_decay` defaults to `0.4` (each class above target reduces opinion
-weight by ~60%).
+- `pot(m, next_epoch) = paid_value_trailing(m, D) × effective_coeff(m, next_epoch)`
+  — the value pool for model m next epoch. `D` is the trailing demand
+  window (default 7 epochs).
+- `throughput(node, m)` is the agent's expected PoC throughput on model
+  m, derived locally from the hardware and the model's compute profile.
+  For new candidate models without a historical baseline, the agent may
+  use a conservative estimate based on the GPU class.
+- `predicted_supply(m, next_epoch)` accounts for current supply plus
+  announced inflows/outflows (§3.4), each weighted by the announcer's
+  reputation (§3.5).
+- The `max(·, throughput)` floor in the denominator bounds EV by the full
+  pot: if the agent would be alone on model m, supply is exactly its own
+  throughput.
 
-#### 3.4. Target distribution
-
-For each `gpu_class c`, let `M(c) = { models m : status(m) == ACTIVE ∧
-fit_factor(c, m) > 0 }`. (Note: LEARNING is derived from
-`current_epoch < penalty_start_epoch` and applies orthogonally to
-`status`, which defaults to ACTIVE; learning models therefore appear in
-`M(c)` with reduced exposure via `scheduler_allocation_cap`.) For each
-`m ∈ M(c)`:
-
-```
-weight(c, m) = paid_value_trailing(m, D) × fit_factor(c, m)
-                                        × scheduler_allocation_cap(m)
-```
-
-If `Σ weight(c, m) over M(c) == 0` (no demand history for any compatible
-model), distribute uniformly weighted by fit factor:
-`lazy_share(c, m) = fit_factor(c, m) / Σ fit_factor(c, m')`. Otherwise:
+The agent decides to switch from `current_model` to `m*` iff:
 
 ```
-lazy_share(c, m) = weight(c, m) / Σ weight(c, m')
+EV(node, m*, next_epoch) >
+    EV(node, current_model, next_epoch) × (1 + switch_threshold + switch_cost_fraction(m*))
 ```
 
-For models in the LEARNING period (`current_epoch <
-penalty_start_epoch`), `scheduler_allocation_cap(m) < 1.0` (default
-`0.1`) limits the scheduler's exposure to unproven models even if
-their early demand is high. After graduation
-(`current_epoch >= penalty_start_epoch`), the cap MUST be `1.0`.
-`DEPRECATED` and `RETIRED` models MUST receive `lazy_share = 0`.
+with:
 
-#### 3.5. Hysteresis
+- `switch_threshold` = default 0.05 (5% EV margin required to switch).
+  This is the agent's hysteresis. Operators may tune locally — aggressive
+  arbitrage at 0.02, conservative stability at 0.10.
+- `switch_cost_fraction(m*)` is the agent's estimate of one epoch's
+  earnings lost to downtime when switching to m*. See §3.3.
 
-The published `EpochSchedulerTarget` for epoch `E+1` MUST be a smoothed
-function of the raw computation in §3.4 and the previous epoch's
-published target:
+When no candidate satisfies the threshold, the agent stays on
+`current_model`. Including the switching cost in the EV calculation gives
+natural hysteresis: switching only happens when expected gains exceed both
+the threshold AND the realized cost.
+
+#### 3.3. Switching cost estimation
+
+The agent maintains a per-model estimate of switching downtime, derived
+empirically from public chain data. No chain-side state is required.
+
+**Observation source.** Each PoC commit on the chain carries the
+participant's model ID. The agent watches the chain across epoch
+boundaries and identifies transitions: the gap (in blocks) between the
+last PoC commit for participant `p` on model `A` and the first PoC commit
+for the same participant on model `B` is a noisy estimate of `p`'s
+switching cost into `B`.
+
+**Aggregation.** Per target model `m`, the agent maintains a rolling
+sample of the last N observed transitions into `m` from any participant.
+Suggested defaults:
+
+- Sample size: last 50 observations (per target model).
+- Statistic: median, not mean. Robust to outliers (the operator who took
+  three hours to switch because their cluster was down should not skew
+  the population estimate).
+- Outlier exclusion: any observation > 2 hours is discarded as an ops
+  failure, not switching cost.
+
+**Priors.** Until N ≥ 10 observations have accumulated, the agent uses a
+conservative prior:
+
+- Default prior for models with `min_gpu_count <= 2`: 30 minutes.
+- Default prior for models with `min_gpu_count > 2` (flagship): 45 minutes.
+
+The conservative prior errs toward overestimating cost, which biases the
+agent toward stability rather than oscillation when its empirical
+knowledge is thin.
+
+**Conversion to `switch_cost_fraction`.** Divide the median switch time by
+the epoch duration to get the fraction of one epoch's earnings lost.
+Example: 30 minute median switch + 22 hour epoch → `switch_cost_fraction
+≈ 30 / (22 × 60) ≈ 0.0227` (2.3% of epoch earnings).
+
+Different DAPI implementations may diverge slightly on these statistics
+(different sample sizes, different outlier filters, different priors).
+This is acceptable — agents are allowed to disagree about their
+predictions; the market resolves correct ones through realized EV. The
+GIP specifies defaults; implementers may tune.
+
+#### 3.4. Switching intent announcements
+
+When the agent has decided to switch, it submits `MsgDeclarePoCIntent`
+for the target model before the switching INTENT cutoff (§2.3). The
+announcement is read by other agents as a switching signal and consumed
+in their `predicted_supply` computation.
+
+When the agent has decided NOT to switch (staying on the current model),
+no announcement is required. Stay-decisions are implicit from the
+absence of an INTENT and the existing chain state showing the current
+model.
+
+The agent's published INTENT is the operator's binding commitment for
+reputation purposes (§3.5). If the agent later changes its mind and runs
+a different model, the reputation system marks the original announcement
+as unfulfilled.
+
+**Strategic bluffing.** A rational agent may sometimes deliberately
+announce a model it does not intend to switch to. This is strategic noise
+injection — by adding uncertainty to other agents' supply predictions,
+the bluffer reduces the chance that competitors converge on the bluffer's
+actual target. This GIP explicitly accepts strategic bluffing as
+legitimate market behavior (see §Rationale and §Simulation Framework).
+The reputation system is designed to tolerate it within bounds.
+
+#### 3.5. Honesty reputation
+
+Each rational agent maintains a local per-participant honesty score
+computed from public chain data. No chain-side reputation, no chain-side
+state.
+
+**Truth rate.** For participant `p`:
 
 ```
-published(E+1, c, m) = α × raw(E+1, c, m) + (1 − α) × published(E, c, m)
+truth_rate(p) = fulfilled(p) / total_verified(p)
 ```
 
-with `α` defaulting to `0.25` (governance-tunable). DAPIs MUST further
-apply a **minimum-change threshold** (default `0.05` absolute change in
-`lazy_share`) before triggering an MLNode reconfiguration, to avoid
-thrashing across epochs.
+where:
 
-#### 3.6. DAPI behavior (normative)
+- `fulfilled(p)` counts INTENT announcements within the lookback window
+  where p actually ran the announced model in the target epoch.
+- A late fulfillment — announced model `m` for epoch `E`, ran model `m`
+  in epoch `E+1` — counts as 0.5 fulfilled credit. The signal was
+  directionally correct; the timing was off.
+- `total_verified(p)` counts announcements within the window whose target
+  epoch has passed (so the actual outcome is known).
+- Lookback window: 20 announcements (default; governance-tunable).
 
-A DAPI hosting one or more MLNodes MUST, at each epoch:
+**Reputation weight.** A continuous sigmoid function of truth_rate:
 
-1. Read `EpochSchedulerTarget` for the current epoch.
-2. For each MLNode `n` of GPU class `c` with capability set
-   `S_n = supported_models(n)`:
-   a. If `|S_n| == 0`: serve nothing (MLNode is undeclared).
-   b. If `|S_n| == 1`: serve the single model in `S_n` (effective pin).
-   c. If `|S_n| > 1`: select a target model from `S_n` by sampling in
-      proportion to `lazy_share(c, m) for m ∈ S_n`, normalized over
-      `S_n`. Tiebreaking and rounding MUST be deterministic
-      (lexicographic on model ID, largest-remainders for share-to-count
-      conversion when an operator has multiple MLNodes of the same class
-      and capability set).
-3. If the MLNode's currently loaded model differs from its target, and
-   the change in `lazy_share` over the previous epoch exceeds the
-   minimum-change threshold, the DAPI SHOULD initiate a model switch
-   per §3.7.
-4. The chain MUST NOT slash or otherwise penalize a DAPI for diverging
-   from the published target. The scheduler is advisory.
+```
+weight(p) = sigmoid((truth_rate(p) - threshold) / smoothness)
+         = 1 / (1 + exp(-(truth_rate(p) - threshold) / smoothness))
+```
+
+with **canonical defaults**:
+
+- `threshold = 0.70`
+- `smoothness = 0.15`
+
+These defaults are derived from agent-based simulation (§Simulation
+Framework). The threshold is set above the natural strategic-bluffing
+Nash equilibrium (~10-20% lying, i.e. ~80-90% truth_rate) so that
+occasional bluffers retain near-full signal weight while systematic
+liars are heavily discounted.
+
+The continuous sigmoid rather than a binary threshold means a participant
+who just got unlucky once (e.g., infrastructure failure during an
+otherwise honest switch) doesn't suddenly lose all signal weight. They
+take a smooth hit and recover as future announcements are honored.
+
+**New participant default.** A participant with no verified announcement
+history (i.e., they haven't made or completed an announcement in the
+lookback window) is assigned a starting weight proportional to their
+existing on-chain consensus weight relative to the network median:
+
+```
+weight_default(p) = 0.5 × min(1.0, consensus_weight(p) / median_consensus_weight)
+```
+
+This means:
+
+- A brand-new node spinning up just to spam fake announcements has
+  near-zero signal weight until they've accumulated real on-chain
+  consensus weight.
+- An established operator making their first announcement gets reasonable
+  trust (≥0.5 weight) because they've already demonstrated commitment to
+  the network in other ways.
+- The combination of the announcement fee and the weight-proportional new-
+  participant default provides Sybil hardening: a Sybil army needs both
+  ngonka AND time-on-chain to move the market signal.
+
+**Application in `predicted_supply`.** For epoch `E+1`, the agent
+computes:
+
+```
+predicted_inflow(m, E+1)  = Σ over INTENTs for m at E+1:
+                              announcer.throughput × weight(announcer)
+predicted_outflow(m, E+1) = Σ over INTENTs that imply leaving m:
+                              announcer.throughput × weight(announcer)
+predicted_supply(m, E+1)  = current_supply(m) + predicted_inflow(m, E+1)
+                                              - predicted_outflow(m, E+1)
+```
+
+Different DAPI implementations MUST converge on similar reputations
+computed from the same public data. To prevent implementation divergence
+that would make the announcement layer noisy, the **canonical reputation
+computation (sigmoid formula, lookback window, late-credit weighting,
+new-participant default)** is specified above and SHOULD NOT be varied
+across implementations. The `switch_threshold` (§3.2) and the agent's
+own lying rate are operator-tunable; the reputation formula is not.
+
+#### 3.6. Default behavior for lazy operators
+
+A DAPI with default configuration runs the rational agent automatically.
+Operators who don't tune any parameters get sensible behavior:
+
+- Capability set = whatever models have weights present on disk and
+  whose hardware floors the operator's MLNodes satisfy.
+- `switch_threshold = 0.05`.
+- Switching-cost prior per §3.3.
+- INTENT submitted automatically when the agent decides to switch.
+- Reputation tracked locally; no operator action needed.
+
+Operators who want manual control can override:
+
+- **Pin to a specific model.** Reduces the capability set to size 1.
+  Equivalent to disabling the agent for that MLNode; the operator has
+  decided.
+- **Adjust `switch_threshold`.** Lower for aggressive arbitrage; higher
+  for stability.
+- **Disable the agent entirely.** No auto-switching, no INTENT
+  submission. Useful for operators who manage scheduling externally
+  (e.g. via their own ops tooling).
+- **Adjust personal lying rate.** Operators who want to engage in
+  strategic bluffing can configure the agent's announcement layer to lie
+  occasionally. The simulation suggests an equilibrium personal rate
+  around 10-20%; defaults SHOULD be 0 (honest), with bluffing as an
+  opt-in tuning knob for sophisticated operators.
 
 #### 3.7. Model switch transition
 
-Model switches are aligned to **epoch boundaries**. The chain operates
-on epochs already (PoC happens at epoch transitions, validation cuts
-off at fixed positions within the epoch); switching models on the same
-boundary keeps every other epoch-keyed mechanism well-defined.
+A switch from model A to model B at epoch boundary `E → E+1`:
 
-A DAPI that has decided to switch an MLNode from model A to model B at
-epoch boundary `E → E+1` MUST:
+1. **During epoch `E`:** the MLNode continues serving model A. The agent
+   has decided to switch and submitted INTENT before the switching INTENT
+   cutoff.
+2. **At the inference cutoff for epoch `E`:** stop accepting new inference
+   requests on this MLNode. Drain in-flight requests.
+3. **During the inter-epoch window:** mark the MLNode `STOPPED`, unload
+   model A, load model B, mark ready. This is the wall-clock cost the
+   agent estimated as `switch_cost_fraction × epoch_duration`.
+4. **At epoch `E+1`'s PoC stage:** PoC model B. Serve model B for the
+   remainder of `E+1`.
 
-1. **During epoch `E`:** continue serving model A. New `EpochSchedulerTarget`
-   for `E+1` is published at the start of `E`'s settlement window, so the
-   DAPI has the full inter-epoch interval to prepare.
-2. **At the inference cutoff for epoch `E`:** stop accepting new
-   inference requests on this MLNode. Drain in-flight requests.
-3. **During the inter-epoch window (between epoch `E` end and `E+1` PoC
-   stage start):** mark the MLNode `STOPPED`, unload model A, load model
-   B, mark the MLNode ready.
-4. **At epoch `E+1`'s PoC stage:** PoC model B (see §3.8). Serve model B
-   for the remainder of `E+1`.
+If the switch cannot complete in time (unexpected slow weight load,
+network issues), the DAPI SHOULD continue serving the old model and
+re-attempt the switch at the next epoch boundary. The late attempt
+counts as a half-credit fulfillment for reputation purposes (§3.5).
 
-The inter-epoch window is bounded but not instantaneous; loading
-flagship model weights can take several minutes. Operators with
-flagship MLNodes who anticipate frequent reassignment SHOULD size their
-storage and bandwidth to support the switch within the window. If the
-switch cannot complete in time, the DAPI SHOULD continue serving the
-old model and re-attempt the switch at the next epoch boundary.
+The agent SHOULD reduce its observed switching-cost estimate for the
+target model based on its own actual switch times. Self-observation
+complements peer-observation in §3.3.
 
-##### Minimum dwell time
+#### 3.8. Minimum dwell
 
-To prevent operational thrashing even at epoch granularity, an MLNode
-that has switched models at epoch boundary `E → E+1` MUST NOT be
-switched again before epoch `E + 1 + min_dwell` (default `min_dwell = 5`
-epochs, governance-tunable). DAPIs enforce this locally; the scheduler's
-opinion does not override it. An MLNode in dwell hold continues serving
-its current model regardless of opinion drift.
+To prevent operational thrashing, an MLNode that has switched models at
+epoch boundary `E → E+1` SHOULD NOT be switched again before epoch
+`E + 1 + min_dwell` (default `min_dwell = 5` epochs). The agent enforces
+this locally; it is not a chain-level constraint.
 
-#### 3.8. PoC validation interaction
+Combined with the EV-margin + switch-cost criterion in §3.2, `min_dwell`
+gives the agent two independent stability mechanisms. The criterion
+prevents single-step oscillation under noisy EV signals; `min_dwell`
+caps the long-term switching frequency even under pathological signal
+drift.
+
+#### 3.9. PoC validation interaction
 
 A multi-model PoC requires the validating MLNode to actually run the
 model it is being PoC'd against. Combined with §3.7, this gives an
@@ -520,16 +563,15 @@ unambiguous rule:
   the PoC stage of `E+1` (per the §3.7 timeline). The new model is
   what gets PoC'd.
 - A switch that fails to complete in the inter-epoch window leaves the
-  MLNode on the old model; it PoCs the old model. The DAPI re-attempts
+  MLNode on the old model; it PoCs the old model. The agent re-attempts
   the switch for `E+1 → E+2`.
 
-This means a switch costs at most one PoC cycle of revenue at the new
-model (for the host whose first PoC there is its first PoC ever). This
-is a real cost, but it is bounded and predictable, which is why
-`min_dwell` exists.
+This means a successful switch costs at most one PoC cycle of revenue at
+the new model (the first PoC on the new model is the first PoC ever).
+This is a real cost reflected in `switch_cost_fraction` (§3.3).
 
-For `LEARNING` models with too few hosts to form a PoC quorum, the
-paired validation-grace GIP applies (see Open Issues §1).
+For `LEARNING` models with too few hosts to form a PoC quorum, the paired
+validation-grace GIP applies (see Open Issues §1).
 
 ### 4. Layer 2: Adaptive coefficient
 
@@ -539,23 +581,24 @@ For each model `m` in epoch `E`:
 
 ```
 effective_coeff(m, E) = clamp(
-    base(m) × demand_factor(m, E) × novelty_factor(m, E) × status_factor(m, E),
-    min_band(m),
-    max_band(m)
+    base(m) × demand_factor(m, E) × status_factor(m, E),
+    band_min(m, E),
+    band_max(m, E)
 )
 ```
 
 where:
 
 - `base(m)` is `weight_scale_factor` from `PoCModelConfig`.
-- `demand_factor(m, E)`, `novelty_factor(m, E)`, `status_factor(m, E)`
-  are defined below.
+- `demand_factor(m, E)` and `status_factor(m, E)` are defined below.
+- `band_min` and `band_max` are the LEARNING-period bands while
+  `current_epoch < penalty_start_epoch`, the standard bands otherwise.
 
 The result is what consensus-weight aggregation MUST use in place of the
 static `weight_scale_factor`. The on-chain
 [`ConfirmationWeightScale`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/x/inference/types/weight.go)
 record SHOULD be extended to carry the effective coefficient so it is
-observable per epoch.
+observable per epoch by both consensus and by rational agents.
 
 #### 4.2. `demand_factor`
 
@@ -585,31 +628,33 @@ a model with `current_epoch < penalty_start_epoch` is in LEARNING; once
 `current_epoch >= penalty_start_epoch` it is governed by its `status`
 field (ACTIVE by default).
 
-Reusing this boundary keeps a single source of truth for "this model
-has graduated from bootstrap." The same epoch at which participation
-penalties begin applying is the epoch at which the wide uncertainty
-band tightens and the scheduler allocation cap lifts.
+Reusing this boundary keeps a single source of truth for "this model has
+graduated from bootstrap." The same epoch at which participation
+penalties begin applying is the epoch at which the wide uncertainty band
+tightens.
 
 While LEARNING:
+
 - The effective coefficient is clamped to `[min_band_learning,
   max_band_learning]` rather than the standard `[min_band, max_band]`.
-  Learning bands are intentionally wider (e.g. `[0.5 × base, 2.0 ×
+- Learning bands are intentionally wider (e.g. `[0.5 × base, 2.0 ×
   base]`) to encode pricing uncertainty.
-- `scheduler_allocation_cap` applies (default `0.1`). The scheduler
-  may not allocate more than this fraction of capable lazy compute to
-  a learning model, regardless of its demand factor.
-- `novelty_factor` is `1.0` (it does not multiply); the *width of the
-  band* is what encodes uncertainty.
+- The wider band is **the bootstrap subsidy** in this design. With no
+  chain-side scheduler directing operators to new models, the only way a
+  rational agent gets pulled toward an unproven model is via a coefficient
+  high enough to make the switch EV-positive even with a conservative
+  switching-cost prior. The LEARNING-band ceiling SHOULD be set with this
+  in mind: high enough that early adopters can earn back their switching
+  cost across the LEARNING window if demand materializes.
 
 At `current_epoch == penalty_start_epoch`:
-- The standard `[min_band, max_band]` takes over.
-- `scheduler_allocation_cap` MUST be set to `1.0` (typically by the
-  same governance proposal that sets `penalty_start_epoch`, or by
-  automated transition logic at the boundary).
 
-No new graduation logic or epoch counter is introduced; everything
-keys off `penalty_start_epoch`, which governance already sets per
-model.
+- The standard `[min_band, max_band]` takes over.
+- No additional logic; the band narrows automatically by virtue of
+  switching tables.
+
+No new graduation logic or epoch counter is introduced; everything keys
+off `penalty_start_epoch`, which governance already sets per model.
 
 #### 4.4. `status_factor`
 
@@ -676,19 +721,11 @@ A `DEPRECATED` model that remains deprecated for `W_d + W_v` epochs
 veto transitions to `RETIRED`. `W_v` is the governance veto window during
 which a governance proposal MAY override the pending retirement.
 
-A `RETIRED` model is removed from PoC entirely; its
-`scheduler_allocation_cap` is `0`, its `effective_coeff` is `0`, and it
-is excluded from `EpochModelDemandSummary` aggregation going forward.
-`MLNodeCapability` declarations referencing a `RETIRED` model have that
-model filtered out at scheduler input time.
-
-An MLNode whose capability set after filtering is empty (i.e. its only
-declared model was retired) becomes unschedulable until its operator
-submits a new `MsgSetMLNodeCapability` declaring at least one
-non-retired model. Until then the MLNode serves nothing under this
-GIP's mechanism. The deprecation/retirement timeline (`W_d + W_v`,
-default 30 epochs) gives operators ample time to update their
-declarations before retirement actually takes effect.
+A `RETIRED` model is removed from PoC entirely; its `effective_coeff` is
+`0`, it is excluded from `EpochModelDemandSummary` aggregation going
+forward, and rational agents MUST drop it from their capability sets.
+DAPIs SHOULD switch any MLNode currently serving a RETIRED model off it
+within `min_dwell` epochs.
 
 #### 5.5. Governance overrides
 
@@ -700,143 +737,185 @@ PoC validation operational decisions).
 
 This GIP recommends:
 
-- **Governance Voting (x/gov)** for: structural changes — adding,
-  removing, or reordering entries in the GPU class registry (§2.6);
-  changes to a model's `target_gpu_class`, `compatible_gpu_classes`,
-  `min_gpu_count`, or `penalty_start_epoch`; forcing status transitions
-  between ACTIVE / DEPRECATED / RETIRED; veto of an automatic
-  retirement.
-- **Operational Voting (x/group)** for: routine tuning of global
-  parameters (`D`, `W_q`, `W_d`, `W_v`, `s_ref`, `α`, `fit_decay`,
-  `min_dwell`, deprecation/recovery thresholds, `demand_factor` bounds,
-  per-model band widths). These have bounded effects, are reversible,
-  and benefit from the faster cadence.
+- **Governance Voting (x/gov)** for: changes to a model's `min_gpu_count`,
+  `min_vram_gb_total`, or `penalty_start_epoch`; forcing status transitions
+  between ACTIVE / DEPRECATED / RETIRED; veto of an automatic retirement;
+  changes to the canonical reputation parameters (`threshold`, `smoothness`,
+  `lookback_window`) since divergence across implementations would
+  fragment the market signal.
+- **Operational Voting (x/group)** for: routine tuning of global parameters
+  (`D`, `W_q`, `W_d`, `W_v`, `s_ref`, deprecation/recovery thresholds,
+  `demand_factor` bounds, per-model band widths, the switching INTENT
+  cutoff). These have bounded effects, are reversible, and benefit from
+  the faster cadence.
 
 This split is a recommendation; final partition between voting modes
-SHOULD be confirmed by the chain's governance maintainers at upgrade
-time.
+SHOULD be confirmed by the chain's governance maintainers at upgrade time.
 
 ### 6. Genesis and migration
 
 At the upgrade introducing this GIP:
 
-1. The GPU class registry (§2.6) MUST be initialized at upgrade with the
-   seed contents in §2.6.1, subject to governance refinement.
-
-1a. The existing `MsgRegisterModel` (and its governance-flow analogue
-    used to add new models) MUST be extended with `target_gpu_class`,
-    `compatible_gpu_classes`, and `min_gpu_count` fields, all required
-    for new model registrations going forward.
-
-2. Every existing `PoCModelConfig` MUST be backfilled with:
-   - `status = ACTIVE`. Existing models already have
-     `penalty_start_epoch` set by prior governance; this GIP does not
-     reset it. The founding model
-     (`Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, current
+1. Every existing `PoCModelConfig` MUST be backfilled with:
+   - `status = ACTIVE`. Existing models already have `penalty_start_epoch`
+     set by prior governance; this GIP does not reset it. The founding
+     model (`Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`, current
      `initial_model_id`) retains its existing weight-cap exemption from
-     multi-model PoC and is not affected by this GIP's lifecycle
-     additions.
+     multi-model PoC and is not affected by this GIP's lifecycle additions.
    - `status_changed_at_epoch = current_epoch`.
-   - `scheduler_allocation_cap = 1.0` for any model with
-     `current_epoch >= penalty_start_epoch` (already past learning);
-     `< 1.0` only for models still bootstrapping at upgrade time.
    - `min_band = base × 0.5`, `max_band = base × 2.0`.
      `min_band_learning = base × 0.5`, `max_band_learning = base × 2.0`
      initially (i.e. learning bands match active bands at upgrade so
      existing bootstrapping models see no behavioral change). Governance
      SHOULD widen `*_learning` bands in a follow-up parameter change as
      experience accumulates.
-   - `target_gpu_class`, `compatible_gpu_classes`, and `min_gpu_count`
-     set per the table in §2.2 for the three currently-known models.
-     Models added between this GIP being drafted and shipped MUST be
-     assigned values by governance at upgrade time.
+   - `min_gpu_count` and `min_vram_gb_total` set per the table in §2.2 for
+     the three currently-known models. Models added between this GIP
+     being drafted and shipped MUST be assigned values by governance at
+     upgrade time.
 
-3. **MLNode capability declarations are NOT auto-backfilled.** Each
-   operator MUST submit `MsgSetMLNodeCapability` for each of their
-   MLNodes after the upgrade in order to participate in scheduling.
-   Until they do, the MLNode is invisible to the scheduler and continues
-   serving whatever it was serving before the upgrade (driven by the
-   operator's existing
-   [`ENFORCED_MODEL_ID`](https://github.com/gonka-ai/gonka/blob/main/decentralized-api/broker/enforced_model.go)
-   configuration). This is intentional: auto-backfilling would require
-   the chain to guess the canonical `gpu_class` from the free-form
-   legacy `Hardware.Type` string, and there is no reliable mapping.
-   Operators know their hardware; they declare it explicitly.
+2. INTENT handling for active models is extended per §2.3 at the
+   upgrade. INTENT submitted for an active model before the upgrade
+   continues to be a no-op (it was a no-op before); INTENT submitted
+   after the upgrade is a switching announcement.
 
-4. `EpochModelDemandSummary` MUST begin populating at the first epoch
+3. `EpochModelDemandSummary` MUST begin populating at the first epoch
    after the upgrade. The trailing-window demand factor reads as `1.0`
    (neutral) until at least `D` epochs of history exist.
 
-5. The first `EpochSchedulerTarget` is published at the epoch boundary
-   following the upgrade. Until operators submit
-   `MsgSetMLNodeCapability` declarations, the eligible pool is empty
-   and no MLNode is reallocated. Reallocation phases in as the
-   operator base declares.
+4. Existing DAPIs continue functioning unchanged. The rational agent is
+   an optional DAPI feature that operators opt into by upgrading to a
+   DAPI build that includes it. Until they do, their MLNodes continue
+   serving their `ENFORCED_MODEL_ID` configuration. The agent layer is
+   advisory and DAPI-local; there is no protocol-level adoption
+   requirement.
+
+5. Layer 2 (adaptive coefficient) takes effect immediately at upgrade.
+   With migration defaults (`demand_factor` reads as 1.0 until enough
+   history accumulates, `status_factor = 1.0`), the effective coefficient
+   equals the base immediately post-upgrade. Divergence develops only as
+   demand history accumulates.
 
 ## Rationale
 
-### Why two layers?
+### Why local rational agent rather than chain-published scheduler
+
+An earlier draft of this GIP proposed a chain-side scheduler that
+published per-epoch opinions (target compute share per `(GPU class,
+model)` pair) consumed by DAPIs. That approach had several structural
+problems the local-agent approach solves:
+
+- **The chain cannot verify what it would direct.** Chain-side scheduling
+  needed an on-chain GPU class registry, on-chain `MLNodeCapability`
+  declarations, and on-chain `target_gpu_class` per model. None of these
+  declarations are cryptographically verifiable — an operator could
+  declare any GPU class. The scheduler's opinion would then be only as
+  good as the (unverified) declarations underneath it.
+- **The agent knows what the chain can't.** Each operator's DAPI already
+  knows the operator's hardware exactly (no declaration needed), knows
+  which model weights are cached on disk, knows the operator's risk
+  tolerance and operational constraints. Pushing the decision logic to
+  where the information lives gives richer decisions and avoids needing
+  to encode every relevant detail in chain state.
+- **Consensus-critical complexity goes away.** A chain-side scheduler
+  must produce identical output on every node: no floating-point math,
+  ordered map iteration, explicit tiebreaking. An agent-local
+  computation has no such constraint. Different DAPI implementations may
+  make different decisions from identical chain state, and that's fine.
+- **Removing the scheduler removes the GPU class registry, capability
+  declarations, and `EpochSchedulerTarget` as on-chain state.** Much
+  smaller surface area for bugs, attacks, and governance overhead.
+- **The trade-off is small.** Chain-side scheduling would have been
+  *enforceable* (the chain says "this is the opinion, here's what
+  compatible MLNodes should do"). Agent-local is *advisory* — each
+  operator does what their agent computes. The simulation work
+  (§Simulation Framework) shows that under the expected equilibrium
+  conditions, the agent-local design converges to ≥95% market efficiency.
+  Comparable to what a chain-side scheduler could achieve in theory.
+
+### Why INTENT becomes meaningful for active models
+
+In multi-model PoC, `MsgDeclarePoCIntent` is meaningful only for
+bootstrap (not-yet-active) models — declaring "I plan to deploy this
+model that hasn't been activated yet." For active models, INTENT is
+currently ignored.
+
+This GIP extends INTENT semantics so that an INTENT for an active model
+functions as a switching announcement. Other rational agents read it from
+the chain and adjust their predicted-supply calculations. The extension
+is intentionally minimal:
+
+- **No new message type.** Reuses `MsgDeclarePoCIntent` with extended
+  semantic. Same indexing infrastructure, same chain-side accept path.
+- **No new chain state.** Announcements are already indexed by epoch and
+  participant.
+- **No chain-side reputation.** Reputation is local to each agent. The
+  chain just publishes raw announcement data.
+
+The fee on switching-mode INTENT is intentionally not exempt. Unlike
+bootstrap INTENT (closer to a network duty for new models), switching
+INTENT is a market signal. Making it slightly costly prevents spam
+without deterring honest use, and the cost is small enough that strategic
+bluffing — when an operator's EV math justifies it — remains viable.
+
+### Why a continuous-discount reputation rather than a binary filter
+
+A binary filter ("if your truth_rate < threshold, ignore your signal
+entirely") is too brittle. Real operators occasionally have legitimate
+reasons their announcement doesn't match their actual model (hardware
+failure mid-switch, network issue, late re-deploy). A single mistake
+shouldn't permanently silence them.
+
+A continuous sigmoid discount lets the system:
+
+- Tolerate occasional unlucky honest operators (one bad epoch out of 20
+  → truth_rate = 0.95 → near-full weight).
+- Discount strategic bluffers gracefully (truth_rate ≈ 0.8 → still useful
+  but reduced).
+- Effectively silence systematic liars (truth_rate < 0.5 → minimal
+  signal weight).
+- Avoid knife-edge behavior at any single threshold value.
+
+The sigmoid's `smoothness` parameter is structurally more important than
+its `threshold`. A high smoothness ensures even a participant near the
+threshold contributes some signal, preserving information. A very sharp
+sigmoid approximates a binary filter and is less robust.
+
+### Strategic bluffing as expected behavior
+
+A rational operator may sometimes deliberately announce a model they
+don't plan to switch to. This is strategic noise injection — by adding
+uncertainty to other agents' supply predictions, the bluffer reduces the
+chance that competitors converge on the bluffer's actual target.
+
+This GIP **explicitly accepts strategic bluffing as legitimate market
+behavior**, not an exploit to suppress. The reputation system distinguishes
+occasional bluffers (truth_rate ≈ 0.8) from systematic liars (truth_rate
+< 0.5) and discounts only the latter heavily.
+
+The simulation found a Nash equilibrium personal lying rate of ~10-20%
+under realistic conditions (limited information, gossip latency).
+Meaning a population of rational operators converges to bluffing on
+roughly 1 in 5-10 announcements. This is the expected market state, not
+a pathology. The system was designed with this in mind.
+
+### Why two layers
 
 Conflating equilibrium and pricing into a single composite multiplier
 forces every host to be a savvy market participant. In practice most
 network compute belongs to operators who configure their nodes once and
 rarely revisit. A composite multiplier produces correct behavior only
-when hosts respond to it. Splitting the design into a default scheduler
-(which allocates without requiring response) and an adaptive coefficient
-(which prices for those who do respond) ensures equilibrium even when
-most operators are passive.
+when hosts respond to it. Splitting the design into a default rational
+agent (which allocates without requiring operator response) and an
+adaptive coefficient (which prices for those agents to respond to)
+ensures equilibrium even when most operators are passive.
 
-### Why operator-declared capability sets rather than a directive scheduler?
+The agent makes the lazy-operator case work. Even an operator who never
+touches their DAPI gets sensible scheduling from the agent's defaults.
+The coefficient layer makes the savvy-operator case work — those who pin
+models manually arbitrage the coefficient signal directly.
 
-The chain cannot reliably know which model weights an operator has
-downloaded, which models they've configured their inference stack to
-serve, or which they're willing to host given off-chain considerations.
-A directive scheduler would frequently assign work that a host cannot
-physically perform.
-
-Capability sets push that knowledge to the only party that has it (the
-operator) and let the chain's scheduler express a useful opinion *over
-the operator's stated capabilities*. This collapses the
-"recommendation vs. directive" question — the opinion is always
-recommendation-shaped because it operates within the operator's declared
-domain. It also dissolves switching cost as a protocol concern: a host
-only ever switches *within* its declared capability set, where weights
-are presumably already on disk and warmable.
-
-### Why an asymmetric hardware fit factor?
-
-A demand-only scheduler will route H100 lazy compute to whichever model
-has the most demand, even if that model is a 7B that runs efficiently on
-an L40S. The H100 capacity is wasted; the L40S could have served the
-same demand and the H100 could have served a flagship model that
-actually needs it.
-
-The fit factor encodes "high-end hardware should preferentially serve
-high-end work." Asymmetric (penalty for over-provisioning, no penalty
-for under-provisioning) because:
-
-- Serving a model on hardware *above* its target wastes capacity.
-- Serving a model on hardware *at or below* its target uses capacity
-  efficiently — and frees the bigger hardware for bigger work.
-
-The geometric decay (`fit_decay^k` per class above target) means the
-penalty is sharp: each class up roughly halves the opinion weight. This
-is enough that flagship hardware will overwhelmingly prefer flagship
-models when any flagship demand exists, and only fall back to smaller
-models when there is no flagship work to do.
-
-### Why an uncertainty band for new models, not a fixed subsidy?
-
-A fixed bootstrap subsidy assumes the chain knows the model's true
-value and is paying extra to attract first hosts. The chain does *not*
-know the true value of a brand-new model. A wide-band, capped-allocation
-learning period is honest about the uncertainty, accumulates the data
-needed to price the model correctly, and self-resolves at graduation
-without requiring a separate unwind mechanism. It also bounds damage
-from a bad new model on both sides (band floor + scheduler cap +
-voluntary capability declaration).
-
-### Why settled paid value rather than token count?
+### Why settled paid value rather than token count
 
 Tokens correlate with compute but not with what the network actually
 collected. Paid value reflects both volume and price, captures the
@@ -846,46 +925,64 @@ demand-side willingness to pay, and is harder to game than token count
 ### Capability adoption replaces the bootstrap problem
 
 In a directive-scheduler design, bootstrapping a new model means
-"convince hosts to switch onto it." In a capability-set design,
-bootstrapping a new model means "convince hosts to add it to their
-capability sets." That's a meaningfully different (and more honest)
-problem:
+"convince hosts to switch onto it." In an agent-local design,
+bootstrapping a new model means "set the LEARNING-band ceiling high
+enough that a rational agent's EV math justifies the switching cost for
+a few brave operators." That's a meaningfully different (and more
+honest) problem:
 
-- The chain cannot allocate compute that no operator has declared
-  capability for, regardless of how attractive the coefficient is.
-- The wide coefficient band still attracts savvy operators once the
-  first few have declared.
-- The first declarations need an off-chain or off-protocol push (e.g.
-  the model proponent coordinating with hosts, or a future capability-
-  declaration bounty mechanism). That push is a coordination problem,
-  not a protocol parameter problem.
+- The chain cannot allocate compute that no operator's agent finds
+  EV-positive, regardless of how attractive the coefficient is in the
+  abstract. But: the LEARNING-band makes the coefficient *concretely*
+  attractive — if `effective_coeff(new model) = 2× base`, the rational
+  agent's EV math may pull operators toward it even with no demand
+  history.
+- The first deployments need an off-chain or off-protocol push (the
+  model proponent coordinating with hosts). That push is a coordination
+  problem, not a protocol parameter problem.
 
 ### The savvy/lazy dynamic is intentional
 
-A savvy operator can ignore the scheduler entirely by declaring a
-capability set of size 1 pinned to whichever model has the highest
-`effective_coeff`. They capture the high-revenue spot; the lazy
-operators (capability set of size > 1) absorb the rebalancing the
-scheduler does to keep other models served. This is by design rather
-than a flaw:
+A savvy operator can ignore the agent entirely by pinning their MLNode
+to whichever model has the highest `effective_coeff`. They capture the
+high-revenue spot; the lazy operators (running the agent with defaults)
+absorb the rebalancing the agent does to keep other models served. This
+is by design rather than a flaw:
 
 - The savvy operator is doing exactly what a market participant should
   do — responding to a price signal. The point of the coefficient layer
   is to provide that signal.
 - The lazy operator gives up some upside in exchange for not having to
-  monitor coefficients themselves. They get the average, the savvy
-  operator gets the peak. That tradeoff is the operator's choice.
+  monitor coefficients themselves. They get the average; the savvy
+  operator gets the peak. That trade-off is the operator's choice.
 - The network gets equilibrium because most operators are lazy and the
-  scheduler's allocation across them produces balance. A few savvy
-  operators arbitraging the margins do not break this — they are a
-  small fraction of supply.
+  agent's allocation across them produces balance. A few savvy operators
+  arbitraging the margins do not break this — they are a small fraction
+  of supply.
 
-This dynamic does mean the scheduler is **only useful when most
-operators choose lazy mode**. If every operator declares a capability
-set of size 1, the scheduler is a no-op and the network's equilibrium
+This dynamic does mean the agent layer is **only useful when most
+operators run the agent with defaults**. If every operator pins their
+MLNode manually, the agent is a no-op and the network's equilibrium
 depends entirely on the coefficient layer plus operator response. That
 state is degenerate but not broken; it's just the system without
 Layer 1's benefit.
+
+### Why no on-chain GPU class taxonomy
+
+The previous draft proposed an on-chain GPU class registry to support
+fit-factor scheduling. The registry was load-bearing but the underlying
+declarations were unverifiable: an operator could declare any class. The
+fit factor depended on the registry's ordering being accurate, but the
+ordering was a governance vote, and the declarations against the
+ordering were operator self-reports.
+
+Without a chain-side scheduler, the fit-factor logic isn't needed at the
+chain layer. Each rational agent knows its own hardware exactly and can
+encode its own preference for matching high-end GPUs to high-end models
+in its EV math (e.g., by weighting throughput on a flagship model
+running on flagship hardware more highly than the same model on
+mid-tier). This preference emerges naturally from local EV
+maximization, without needing the chain to encode it.
 
 ### Why per-host quality routing is out of scope
 
@@ -896,50 +993,48 @@ hosts with a better track record on the requested model. It changes
 *who gets the work*, not *what the work is worth*.
 
 This GIP treats all hosts on a given model as interchangeable for
-coefficient and scheduler purposes. Per-host quality is a routing-layer
-adjustment that is largely independent of the consensus-weight
-rebalancing here. The signals it needs are not currently settled chain
-state, the gaming surface is materially larger than for the per-model
-demand factor, and the natural prototype location is the DAPI's
-request-routing logic before any chain-state promotion. Bundling it
-would expand scope without improving either system. A follow-on GIP can
-specify per-host quality once layers 1 and 2 are operating in production.
+coefficient purposes. Per-host quality is a routing-layer adjustment
+that is largely independent of the consensus-weight rebalancing here.
+The signals it needs are not currently settled chain state, the gaming
+surface is materially larger than for the per-model demand factor, and
+the natural prototype location is the DAPI's request-routing logic
+before any chain-state promotion. Bundling it would expand scope without
+improving either system. A follow-on GIP can specify per-host quality
+once layers 1 and 2 are operating in production.
 
 ## Backwards compatibility
 
-This GIP is a consensus-affecting change and requires a coordinated
-upgrade.
+This GIP is a consensus-affecting change (Layer 2) and requires a
+coordinated upgrade. Layer 1 is purely DAPI-side and is not
+consensus-affecting.
 
 - The static `weight_scale_factor` field is preserved as the `base`
   parameter; existing values are not lost.
 - Consensus-weight aggregation switches from `weight_scale_factor` to
   `effective_coeff`. With the migration defaults (`demand_factor` reads
   as `1.0` until enough history exists, `status_factor = 1.0` for active
-  models, `novelty_factor = 1.0`), the effective coefficient equals the
-  base immediately post-upgrade. Behavior is unchanged at the upgrade
-  boundary; divergence develops only as demand history accumulates.
-- DAPIs that do not implement §3.6 continue functioning with operator-
-  configured model assignments. The scheduler is advisory; ignoring it
-  is not a protocol violation.
-- `MLNodeCapability` is **not** auto-backfilled. Existing MLNodes
-  continue serving their `ENFORCED_MODEL_ID` configuration unchanged
-  until the operator submits an explicit `MsgSetMLNodeCapability`.
-  Auto-backfill would require guessing the canonical `gpu_class` from
-  legacy free-form `Hardware.Type` strings (e.g. `"A100"` could mean
-  `A100_40` or `A100_80`), which is unreliable. The scheduler is a
-  no-op for an MLNode until its operator declares.
-- The legacy `HardwareNode.hardware[].type` field is preserved
-  unchanged for informational purposes; it is not consumed by this
-  GIP's mechanism.
+  models), the effective coefficient equals the base immediately
+  post-upgrade. Behavior is unchanged at the upgrade boundary; divergence
+  develops only as demand history accumulates.
+- The semantic change to INTENT (§2.3) is additive: INTENT for active
+  models was previously a no-op and becomes a switching announcement.
+  Operators who don't submit any INTENTs for active models see no
+  difference.
+- DAPIs that do not implement the rational agent (§3) continue
+  functioning with operator-configured model assignments. The agent is
+  an optional DAPI feature; running without it is not a protocol
+  violation.
+- The legacy `HardwareNode.hardware[].type` field is preserved unchanged
+  for informational purposes; it is not consumed by this GIP.
 
 ## Security considerations
 
 ### Demand metric gaming
 
-The demand factor responds to settled paid value. An attacker
-controlling both a payer account and a host could submit self-directed
-traffic to inflate a model's demand factor and steal coefficient share
-from legitimate models. Mitigations:
+The demand factor responds to settled paid value. An attacker controlling
+both a payer account and a host could submit self-directed traffic to
+inflate a model's demand factor and steal coefficient share from
+legitimate models. Mitigations:
 
 - Only `valid`-status, paid, non-refunded inferences count.
 - The demand factor is bounded (`clamp(·, 0.5, 2.0)` by default), so
@@ -952,60 +1047,47 @@ A future hardening could require demand attribution to come from
 developer/TA accounts above some reputation threshold, or weight demand
 by the diversity of paying accounts. Not specified here.
 
-### Scheduler determinism
+### Announcement gaming
 
-Layer 1 must produce the same `EpochSchedulerTarget` on every node from
-identical on-chain state. Sources of nondeterminism MUST be eliminated:
-floating-point arithmetic is forbidden (use `Decimal`); map iteration
-MUST be replaced with sorted-key iteration; tiebreaking MUST be explicit
-(lexicographic on model ID and MLNode ID).
+A participant could spam fake switching announcements to perturb other
+agents' supply predictions. The reputation system penalizes this: the
+spammer's truth_rate drops, their signal weight in other agents' EV math
+drops with it, and their announcements become ineffective.
 
-### GPU class registry integrity
+The new-participant default reputation (§3.5) is proportional to
+existing on-chain consensus weight, so spinning up fresh participants for
+spam announcements has near-zero market impact. Combined with the
+INTENT transaction fee, this provides Sybil-resistant signal
+authentication without any chain-side reputation machinery.
 
-The hardware fit factor depends on the GPU class registry's `tier_rank`
-ordering reflecting real hardware tiers. An incorrect or inverted
-ordering would route flagship work to small GPUs and small work to
-flagship GPUs. Governance MUST audit any change to the registry
-carefully, and a change that demotes an existing class SHOULD be
-treated as exceptional. The routine operation is **adding a new class
-at the correct position** as new GPU generations enter the network.
+### Strategic bluffing escalation
 
-A second concern: an operator could declare a higher `gpu_class` than
-they actually run, capturing a larger share of high-tier opinion than
-their hardware deserves. The chain has no way to verify GPU identity
-cryptographically. Mitigation: the existing PoC validation system
-already produces a hardware-derived `pocWeight` that is independent of
-the operator's class declaration. A node that declares `H100_SXM` but
-runs a `T4` will produce `T4`-shaped PoC weight, which limits the
-absolute consensus weight they can earn. The class declaration affects
-*which models the scheduler suggests they run*, not how their PoC
-weight is valued. So the abuse surface is "I get assigned flagship work
-I can't actually serve well," which the demand factor and per-host
-quality routing (future GIP) will eventually penalize via reduced
-revenue.
+In principle, a population could collude to systematically bluff their
+announcements in a way that degrades the entire announcement layer's
+information value. The reputation system makes this self-defeating: if
+everyone's truth_rate is low, everyone's reputation weight is low, the
+announcement layer carries little weight in EV computations, and agents
+fall back to direct supply observation. The system gracefully degrades
+to the baseline (no announcement layer) rather than producing pathological
+allocations.
 
-### Capability declaration consistency
-
-`MLNodeCapability` declarations affect which MLNodes appear in which
-eligible pools, and therefore the scheduler's published opinion. They
-MUST be persisted on-chain so all nodes compute the same target. A
-declaration set mid-epoch takes effect at the next
-`EpochSchedulerTarget` publication. An operator can spam declaration
-changes to perturb the opinion across epochs; this should be discouraged
-either via gas cost on `MsgSetMLNodeCapability` or via a minimum
-inter-change interval.
+The simulation (§Simulation Framework) confirms that even in a population
+where everyone lies 80% of the time, individual operators have strong
+incentive to deviate toward honesty — gains of +5 to +30% EV are
+available to operators who lie meaningfully less than the median. The
+equilibrium pushes back toward moderate honesty.
 
 ### Bounded damage from learning-period models
 
 A newly approved model in the learning period
-(`current_epoch < penalty_start_epoch`) is bounded on three axes:
+(`current_epoch < penalty_start_epoch`) is bounded on two axes:
+
 - Coefficient bounded by `min_band_learning` and `max_band_learning`
   (wider than the post-graduation band but still finite).
-- Compute exposure bounded by `scheduler_allocation_cap` (default `0.1`
-  of capable lazy compute).
-- Voluntary capability declaration: no operator is forced to declare
-  capability for a learning model; bad models attract no capability
-  declarations and self-quarantine.
+- Voluntary adoption: no operator is forced to deploy a learning model;
+  rational agents only switch to it if their EV math justifies it
+  including the conservative LEARNING-period switching-cost prior. Bad
+  models attract no adoption and self-quarantine.
 
 ### Auto-deprecation of useful niche models
 
@@ -1015,72 +1097,201 @@ A genuinely useful but low-volume model could fall below
 becomes terminal. Recovery from `DEPRECATED → ACTIVE` is automatic if
 demand returns above `recovery_threshold` before retirement.
 
+### Reputation parameter divergence
+
+If different DAPI implementations compute reputation slightly differently
+(different lookback windows, different sigmoid functions, different
+late-credit weighting), agents disagree about which announcements to
+trust. This noise degrades the announcement layer's information value.
+
+Mitigation: the canonical reputation parameters (lookback = 20, sigmoid
+threshold = 0.70, smoothness = 0.15, late credit = 0.5) are specified
+above and SHOULD NOT be varied across implementations. Operators can tune
+their personal `switch_threshold` or personal lying rate locally; they
+should not tune the reputation function.
+
 ### Validation interaction (paired GIP)
 
 Learning-period models with very few hosts cannot pass standard PoC
 validation alone. This GIP defers the validation grace mechanism to a
 paired GIP (see §Open issues). Until that paired GIP ships, the
 practical constraint is that a model SHOULD NOT be approved unless at
-least the minimum-quorum number of hosts have pre-committed to declaring
-capability and running it.
+least the minimum-quorum number of hosts have committed to deploying it.
 
 ## Phased rollout
 
-The specification above defines the full target system. Implementation
-SHOULD ship in three phases on consecutive network upgrades to limit
-risk.
+**Phase 1 (Layer 2 only).** Adaptive coefficient with bands and
+`demand_factor`. New on-chain state: `EpochModelDemandSummary`,
+PoCModelConfig band/status extensions. Layer 1 not yet shipped; DAPIs
+continue operating in legacy enforced-model mode. Revenue is now
+responsive to demand. Bands kept conservative initially. **Consensus-
+affecting; requires governance upgrade.**
 
-**Phase 1.** New on-chain state: GPU class registry (§2.6),
-`EpochModelDemandSummary`, `MLNodeCapability`, `EpochSchedulerTarget`,
-per-model `target_gpu_class` / `compatible_gpu_classes` / `min_gpu_count`,
-global `fit_decay`. New transactions: `MsgSetMLNodeCapability` (operator)
-and governance proposals for registry maintenance. Layer 1 scheduler
-computation including hardware fit. DAPI consumer that reconfigures
-MLNodes within the operator's declared capability. Coefficient remains
-static. Largest equilibrium impact, no revenue effect.
+**Phase 2 (Layer 1).** Rational agent ships in the DAPI. INTENT semantic
+extension for active models ships on-chain (the only Phase 2 consensus
+change). Operators opt in by upgrading their DAPI. As adoption grows, the
+announcement layer's information value rises and equilibrium behavior
+emerges. **Minor consensus change for INTENT semantics; DAPI changes
+are opt-in.**
 
-**Phase 2.** Layer 2 adaptive coefficient (demand-responsive), with
-bands and `demand_factor`. Revenue is now responsive to demand. Bands
-kept conservative initially.
+**Phase 3 (lifecycle).** Auto-deprecation and retirement state machine
+ships. Requires paired validation-grace GIP for full functionality.
+**Consensus-affecting; requires governance upgrade.**
 
-**Phase 3.** Lifecycle state machine: learning period, deprecation,
-retirement. Requires paired validation-grace GIP for full functionality.
+## Simulation Framework
+
+To validate the parameter choices in §3.5, an agent-based simulation was
+conducted. Code lives in
+[`simulation/`](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-scheduling/simulation/).
+An **interactive HTML simulation** at
+[`simulation/index.html`](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-scheduling/simulation/index.html)
+runs in any modern browser — operators visualize on a grid, demand and
+supply animate as line charts, and a control panel exposes every parameter
+in §3 so reviewers can verify the GIP's defaults behaviorally. A separate
+"Why these defaults?" tab presents pre-computed parameter sweeps showing
+the system is robust to parameter choice within wide ranges around each
+default.
+
+The Python simulation setup models:
+
+- 100 operators across 3 hardware tiers (small/mid/flagship with
+  throughput ratios 1:4:10).
+- 5 models with tier requirements and fluctuating demand (overlapping
+  sine waves + occasional demand shocks).
+- Per-epoch iterated cheap talk: each agent decides plan, reads others'
+  announcements (weighted by reputation), updates plan, announces.
+- Honesty reputation per the sigmoid (§3.5).
+- 600 epochs per run, 200-epoch warmup.
+
+Four realism regimes were tested:
+
+1. **Clean (idealized):** 10 iterations of cheap talk per epoch, full
+   information (each agent sees all others' announcements).
+2. **Reduced iterations:** 2 iterations per epoch, full information.
+   Models limited within-epoch convergence time.
+3. **Partial information:** 10 iterations, each agent sees a random
+   sample of 20/100 others' announcements. Models gossip latency.
+4. **Realistic (combined):** 2 iterations + partial information.
+
+### Population-optimal lying rate
+
+Across every `(threshold, smoothness)` combination in the sweep, market
+efficiency (fraction of total value pot captured by the network) peaks at
+L = 0 (population lying rate of 0 → efficiency 100%) and degrades
+monotonically as L rises. Bluffing creates pure noise in the announcement
+signal that hurts everyone collectively. The "some bluffing is good for
+the market" intuition does NOT hold at the population level — it's
+strictly destructive of collective welfare.
+
+### Nash equilibrium under realistic friction
+
+While the population-optimal is L = 0, individual incentive to bluff is
+real under realistic frictions. At `threshold = 0.7, smoothness = 0.10`:
+
+| Regime | Nash L* | Best deviator gain at pop_L = 0 |
+|---|---|---|
+| Clean | — (no interior Nash) | +0.24% |
+| Reduced iterations | **L\* = 0.2** | +0.38% |
+| Partial information | — (no interior Nash) | **+18.22%** |
+| Realistic (combined) | **L\* = 0.1** | +0.65% |
+
+The most striking observation: under partial information (each operator
+sees only 20% of others' announcements), a single operator who bluffs
+at L = 0.15 in an otherwise-honest population gains an 18% EV advantage.
+That's a strong individual incentive. Under the more realistic combined
+case (limited iteration AND partial info), Nash converges to L ≈ 0.10 —
+exactly the "10-20% strategic bluffing" range we'd expect.
+
+### Robustness of the discount function
+
+Across the threshold sweep at fixed smoothness = 0.20, efficiency at
+moderate lying rates (say L = 0.3) varies by less than 2% across
+`threshold ∈ [0.5, 0.9]`. The discount function's *shape* (smoothness)
+matters more than the *inflection point* (threshold).
+
+Higher smoothness is uniformly better for system robustness — at high L,
+efficiency degrades less with smoothness = 0.20 than with smoothness =
+0.05. The smoother sigmoid preserves more information from operators
+whose truth_rate is below threshold rather than abruptly zeroing them
+out.
+
+### Systematic liars self-correct
+
+At pop_L = 0.8 across all configurations, a deviator's best response is
+L ≈ 0.10-0.15, with gains of +2% to +24% EV. Even in a totally dishonest
+market, individual operators have strong incentive to be mostly honest.
+The reputation system self-stabilizes the population away from systematic
+lying.
+
+### Parameter choice
+
+The simulation supports the defaults specified in §3.5:
+
+```
+threshold:                       0.70
+smoothness:                      0.15
+lookback window:                 20 announcements
+new-participant default rep:     0.5 × min(1, weight / median)
+late-credit fraction:            0.5
+expected equilibrium personal L: 10-20% (strategic bluffing)
+```
+
+### Robustness of the defaults
+
+A separate sweep over every GIP-tunable parameter under adversarial
+conditions (**256 operators across 2000-epoch runs**, partial information
+of 5 visible others per agent, aggressive demand volatility — chosen to
+make parameter sensitivity visible if it exists) finds that **the system
+is largely insensitive to parameter choice within reasonable ranges**:
+
+- Sweeping `threshold ∈ [0.1, 0.99]`, `smoothness ∈ [0.01, 1.0]`,
+  `lookback ∈ [3, 100]`, `switch_threshold ∈ [0.001, 0.5]`,
+  `late_credit ∈ [0, 1]`, `new_participant_default ∈ [0, 1]` — mean
+  per-operator earnings vary by under 1% across the entire range.
+- Only `min_dwell` at extreme values (≥30 epochs) clearly degrades
+  performance (~3% earnings drop), because it locks operators into the
+  wrong model for too long when conditions change.
+- Under a fully-dishonest population (`pop_lying_rate = 1.0`), earnings
+  hold steady (within noise of baseline). The reputation system
+  gracefully degrades to "use current supply only" rather than
+  catastrophically failing.
+
+This is the property the design aims for. The defaults are chosen as
+sensible round numbers in the robust zone, not magic values that the
+system is sensitive to. Operators tuning their own DAPI within the
+expected ranges (e.g., `switch_threshold ∈ [0.02, 0.10]`, or `min_dwell
+∈ [3, 10]`) won't hurt themselves; only obviously-extreme values do.
+
+Reviewers MAY propose alternative defaults by running
+[`defaults_sweep.py`](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-scheduling/simulation/defaults_sweep.py)
+with modified ranges and presenting the resulting earnings curves. The
+interactive simulation can be used to verify proposed parameters
+behaviorally.
 
 ## Open issues
 
 1. **Validation grace for learning-period models** is deferred to a
    paired GIP. Without it, the practical pre-condition for approving a
-   new model is that enough hosts have pre-committed capability to
+   new model is that enough hosts have pre-committed to deploying it to
    satisfy PoC validation quorum from epoch one of the learning period.
 
-2. **Capability declaration incentives.** The bootstrap problem for new
-   models is now "get hosts to declare capability." This GIP does not
-   specify a protocol-level incentive (off-chain coordination is the
-   v1 answer). A follow-on may add a small on-chain bounty for early
-   capability declarations on newly approved models.
+2. **DAPI rational-agent adoption.** Layer 1 is opt-in via DAPI upgrade.
+   Equilibrium behavior emerges only as adoption grows. Off-protocol
+   coordination (operator outreach, documentation, default-enabled in
+   new DAPI releases) is required to drive adoption. A future GIP MAY
+   introduce on-chain incentives for running the agent if adoption stalls.
 
-3. **MLNode capability declaration adoption.** The scheduler does
-   nothing for an MLNode until its operator submits
-   `MsgSetMLNodeCapability` with a canonical `gpu_class` and a
-   `supported_models` set. Adoption is voluntary and gradual; the
-   network gets the equilibrium benefit only as operators declare. An
-   off-protocol coordination effort (operator outreach, documentation,
-   migration tooling in the DAPI) is required to drive adoption. A
-   future GIP MAY introduce a small capability-declaration bounty if
-   adoption stalls.
+3. **Default parameter values** (`D`, `s_ref`, `min_dwell`,
+   deprecation/recovery thresholds, band widths, reputation parameters)
+   given in this spec are starting points. Final values SHOULD be set
+   after testnet observation and MAY be revised post-deployment via the
+   appropriate governance level (see §5.5).
 
-4. **Default parameter values** (`D`, `α`, `s_ref`,
-   `scheduler_allocation_cap`, `fit_decay`, `min_dwell`,
-   deprecation/recovery thresholds, band widths) given in this spec
-   are starting points. Final values SHOULD be set after testnet
-   observation and MAY be revised post-deployment via the appropriate
-   governance level (see §5.5).
-
-5. **Per-host quality routing** is acknowledged as a third layer above
+4. **Per-host quality routing** is acknowledged as a third layer above
    the two specified here and is deferred to a follow-on GIP. Off-chain
    prototyping in the DAPI is encouraged in the interim.
 
-6. **GIP numbering and publication venue.** Gonka does not yet have a
+5. **GIP numbering and publication venue.** Gonka does not yet have a
    formalized GIP numbering scheme or a single canonical proposal
    discussion venue documented in
    [voting.md](https://github.com/gonka-ai/gonka/blob/main/docs/voting.md)
@@ -1099,6 +1310,7 @@ retirement. Requires paired validation-grace GIP for full functionality.
 - [Multi-Model PoC proposal](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
 - [`PoCModelConfig.weight_scale_factor`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/params.proto#L140-L154)
 - [`weight.go` consensus-weight aggregation](https://github.com/gonka-ai/gonka/blob/main/inference-chain/x/inference/types/weight.go)
+- [`MsgDeclarePoCIntent`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/tx.proto)
 - [`Inference.model` field](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/inference.proto#L37)
 - [`EpochPerformanceSummary`](https://github.com/gonka-ai/gonka/blob/main/inference-chain/proto/inference/inference/epoch_performance_summary.proto)
 - [`enforced_model.go`](https://github.com/gonka-ai/gonka/blob/main/decentralized-api/broker/enforced_model.go)
@@ -1107,3 +1319,4 @@ retirement. Requires paired validation-grace GIP for full functionality.
 - [Gonka PoC overview](https://github.com/gonka-ai/gonka/blob/main/docs/gonka_poc.md)
 - [Gonka tokenomics](https://github.com/gonka-ai/gonka/blob/main/docs/tokenomics.md)
 - [Multi-model PoC `penalty_start_epoch` and participation modes](https://github.com/gonka-ai/gonka/blob/main/proposals/multi-model-poc/README.md)
+- [Simulation framework (this directory)](https://github.com/gonka-ai/gonka/tree/main/proposals/multi-model-scheduling/simulation)

@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Multi-Model Scheduling — Interactive Simulation</title>
+<style>
+:root {
+  --bg: #0f1115;
+  --panel: #1a1d24;
+  --panel-2: #232730;
+  --text: #e7ebf0;
+  --text-dim: #99a1ad;
+  --accent: #5fb3d4;
+  --good: #4ade80;
+  --bad: #f87171;
+  --grid: #2a2f38;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+header {
+  padding: 24px 32px 16px;
+  border-bottom: 1px solid var(--grid);
+  background: linear-gradient(180deg, #14171c 0%, #0f1115 100%);
+}
+header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+header p { margin: 0; color: var(--text-dim); font-size: 14px; }
+header nav { margin-top: 14px; display: flex; gap: 4px; }
+header nav button {
+  background: transparent;
+  border: 1px solid var(--grid);
+  color: var(--text-dim);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+header nav button:hover { color: var(--text); border-color: #3a4150; }
+header nav button.active {
+  background: var(--accent);
+  color: #0f1115;
+  border-color: var(--accent);
+}
+
+main { padding: 24px 32px 64px; max-width: 1400px; margin: 0 auto; }
+section.tab { display: none; }
+section.tab.active { display: block; }
+h2 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+.subtle { color: var(--text-dim); font-size: 13px; }
+
+/* Live tab */
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 20px;
+}
+.controls {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 16px;
+  height: fit-content;
+  position: sticky;
+  top: 16px;
+}
+.controls h3 { margin-top: 16px; }
+.controls h3:first-child { margin-top: 0; }
+.controls label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 10px 0 4px;
+}
+.controls label span { color: var(--text); font-variant-numeric: tabular-nums; float: right; }
+.controls input[type=range] { width: 100%; }
+.controls .buttons { display: flex; gap: 6px; margin: 16px 0 8px; }
+.controls .buttons button {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--grid);
+  color: var(--text);
+  padding: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.controls .buttons button:hover { border-color: var(--accent); }
+.controls .buttons button.primary { background: var(--accent); color: #0f1115; border-color: var(--accent); }
+
+.viz { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.panel {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 16px;
+}
+.panel canvas { display: block; width: 100%; }
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+.metric {
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.metric .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.metric .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.metric .delta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; margin-bottom: 8px; }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+/* Defaults tab */
+.sweeps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 20px;
+}
+.sweep-panel { background: var(--panel); border-radius: 8px; padding: 16px; }
+.sweep-panel canvas { display: block; width: 100%; height: 220px; }
+.sweep-explanation { color: var(--text-dim); font-size: 13px; margin-top: 8px; line-height: 1.55; }
+.sweep-explanation strong { color: var(--text); font-weight: 600; }
+.intro {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.intro p { margin: 0 0 10px; }
+.intro p:last-child { margin-bottom: 0; }
+.intro code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+footer { padding: 20px 32px; color: var(--text-dim); font-size: 12px; border-top: 1px solid var(--grid); margin-top: 40px; }
+footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Multi-Model Scheduling — Interactive Simulation</h1>
+  <p>Agent-based model of the rational-agent design proposed in GIP-XX. Operators decide which model to serve; the chain just provides demand and announcement signals.</p>
+  <nav>
+    <button id="tab-live" class="active" onclick="showTab('live')">Live simulation</button>
+    <button id="tab-defaults" onclick="showTab('defaults')">Why these defaults?</button>
+    <button id="tab-about" onclick="showTab('about')">About</button>
+  </nav>
+</header>
+
+<main>
+
+<section id="live" class="tab active">
+  <div class="layout">
+    <aside class="controls">
+      <h3>Reputation function</h3>
+      <label>Threshold <span id="v-threshold">0.70</span><input type="range" id="threshold" min="0.40" max="0.95" step="0.01" value="0.70"></label>
+      <label>Smoothness <span id="v-smoothness">0.15</span><input type="range" id="smoothness" min="0.05" max="0.30" step="0.01" value="0.15"></label>
+      <label>Lookback window <span id="v-lookback">20</span><input type="range" id="lookback" min="5" max="50" step="1" value="20"></label>
+
+      <h3>Agent behavior</h3>
+      <label>Switch threshold <span id="v-switchth">0.05</span><input type="range" id="switchth" min="0.01" max="0.20" step="0.01" value="0.05"></label>
+      <label>Switch cost fraction <span id="v-switchcost">0.02</span><input type="range" id="switchcost" min="0.00" max="0.10" step="0.005" value="0.02"></label>
+      <label>Min dwell (epochs) <span id="v-mindwell">5</span><input type="range" id="mindwell" min="0" max="15" step="1" value="5"></label>
+
+      <h3>Market</h3>
+      <label>Population lying rate <span id="v-poplie">0.10</span><input type="range" id="poplie" min="0.00" max="1.00" step="0.05" value="0.10"></label>
+      <label>Demand volatility <span id="v-volatility">0.35</span><input type="range" id="volatility" min="0.00" max="0.80" step="0.05" value="0.35"></label>
+
+      <h3>Display</h3>
+      <label>Speed (epochs/sec) <span id="v-speed">5</span><input type="range" id="speed" min="1" max="60" step="1" value="5"></label>
+
+      <div class="buttons">
+        <button id="play" class="primary">Play</button>
+        <button id="pause">Pause</button>
+        <button id="reset">Reset</button>
+      </div>
+      <div class="buttons">
+        <button id="resetDefaults">Reset to GIP defaults</button>
+      </div>
+    </aside>
+
+    <div>
+      <div style="margin-bottom: 16px;">
+        <div class="metrics-grid">
+          <div class="metric"><div class="label">Epoch</div><div class="value" id="m-epoch">0</div></div>
+          <div class="metric"><div class="label">Mean earnings/op</div><div class="value" id="m-earnings">—</div><div class="delta" id="m-earnings-avg">avg —</div></div>
+          <div class="metric"><div class="label">Market efficiency</div><div class="value" id="m-efficiency">—</div><div class="delta" id="m-efficiency-avg">avg —</div></div>
+          <div class="metric"><div class="label">Switches/epoch</div><div class="value" id="m-switches">—</div><div class="delta" id="m-switches-avg">avg —</div></div>
+          <div class="metric"><div class="label">Mean truth rate</div><div class="value" id="m-truth">—</div></div>
+          <div class="metric"><div class="label">Operators</div><div class="value">256</div><div class="delta" id="m-tier">— small / — mid / — fl</div></div>
+        </div>
+      </div>
+
+      <div class="viz">
+        <div class="panel">
+          <h3>Operator allocation</h3>
+          <p class="subtle">Each circle is one operator. Color = current model. Ring = hardware tier (small/mid/flagship).</p>
+          <canvas id="opCanvas" width="500" height="380" style="height: 380px;"></canvas>
+          <div class="legend" id="model-legend"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Supply per model</h3>
+          <p class="subtle">Total throughput on each model over time. Watch herding (sudden spikes) and recovery.</p>
+          <canvas id="supplyCanvas" width="500" height="180"></canvas>
+        </div>
+
+        <div class="panel">
+          <h3>Demand per model</h3>
+          <p class="subtle">Fluctuating model demand (the price signal the agents react to).</p>
+          <canvas id="demandCanvas" width="500" height="180"></canvas>
+        </div>
+
+        <div class="panel">
+          <h3>Mean earnings per operator</h3>
+          <p class="subtle">What an operator actually cares about. Tracks how well the rational agent's decisions are working in aggregate.</p>
+          <canvas id="earningsCanvas" width="500" height="180"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="defaults" class="tab">
+  <div class="intro">
+    <p>Each chart sweeps a single parameter across a wide range — including deliberately bad values — while holding the other parameters at their GIP defaults. The teal dashed line marks the GIP default. Y-axis is mean per-operator earnings (the metric operators actually care about); ribbon is std across 3 seeds.</p>
+    <p class="subtle"><strong>The result the simulation gives:</strong> within reasonable ranges, the system is essentially flat. Honest operators can tune any of these parameters within a wide band around the default and earnings barely change — the design is robust by construction. Where curves <em>do</em> show structure, it's at extreme values that obviously break things (e.g. <code>min_dwell=30</code> locks an operator into the wrong model for too long, dropping earnings ~3%).</p>
+    <p class="subtle">This is the property we want. Operators who set defaults get good behavior. Operators who tweak don't hurt themselves unless they pick extreme values. The defaults are chosen as round numbers in the robust zone, not magic numbers.</p>
+    <p class="subtle">Conditions: <strong>256 operators</strong> across 3 hardware tiers, 5 models, <strong>2000 epochs per run</strong> (500-epoch warmup discarded), aggressive demand volatility, each operator sees only 5 random others' announcements per iteration (limited info / gossip-latency model). Run the sweeps yourself with <code>python3 defaults_sweep.py</code>.</p>
+  </div>
+  <div class="sweeps" id="sweep-grid">
+    <div class="sweep-panel" style="grid-column: 1 / -1; padding: 40px; text-align: center; color: var(--text-dim);">
+      Sweep data not yet loaded — run <code>python3 defaults_sweep.py</code> first to populate <code>sweep_data.json</code>.
+    </div>
+  </div>
+</section>
+
+<section id="about" class="tab">
+  <div class="intro">
+    <h2>What this is</h2>
+    <p>An agent-based simulation of the multi-model scheduling design in <a href="../README.md" style="color: var(--accent);">GIP-XX</a>. The chain provides demand and pricing signals; each operator's DAPI runs a local rational agent that decides which model to serve next epoch.</p>
+    <p>Each epoch, every operator:</p>
+    <ol style="margin: 4px 0 10px 0; padding-left: 22px;">
+      <li>Reads current per-model supply and demand from the chain.</li>
+      <li>Reads other operators' switching-intent announcements, weighted by their honesty reputation (a sigmoid of their past announcement fulfillment rate).</li>
+      <li>Computes expected value per candidate model: <code>EV(m) = demand(m) × coefficient(m) × throughput / predicted_supply(m)</code>.</li>
+      <li>Switches if a candidate beats the current model by at least <code>switch_threshold + switch_cost_fraction</code>.</li>
+      <li>Announces the new plan (honestly, or with a small probability of bluffing).</li>
+    </ol>
+    <p>The reputation system makes announcements meaningful without giving the chain a centralized scheduler. Operators who systematically lie lose signal weight; occasional bluffing is tolerated. The simulation finds a Nash equilibrium personal lying rate of ~10–20% — see the GIP's "Simulation Framework" section.</p>
+
+    <h2>Model</h2>
+    <ul style="margin: 4px 0 0 0; padding-left: 22px;">
+      <li><strong>256 operators</strong> across 3 hardware tiers (small/mid/flagship at throughput 1×/4×/10×, 50%/35%/15% of the population).</li>
+      <li>5 models with tier requirements and per-model base demand.</li>
+      <li>Demand fluctuates via overlapping sine waves plus shocks.</li>
+      <li>Per epoch: 2 iterations of asynchronous cheap-talk decision-making (each iteration, 30% of operators randomly update their plan).</li>
+      <li>Honesty reputation uses a sigmoid discount with the GIP's specified canonical parameters.</li>
+      <li>"Why these defaults?" data is from <strong>2000-epoch runs (500-epoch warmup discarded)</strong> with 3 random seeds per parameter value.</li>
+    </ul>
+
+    <h2>Limitations</h2>
+    <p>This is a simulation, not a proof. It captures the announcement-and-reputation game but abstracts away: cross-DAPI variance in agent implementations, real switching dynamics (weights download time, container restart), validation interactions, BLS DKG participation, fee dynamics, real network heterogeneity. Treat it as evidence the defaults are sensible under reasonable assumptions, not as a guarantee.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Source at <code>proposals/multi-model-scheduling/simulation/</code>.
+  Sim implementation: <a href="index.html">index.html</a> (this page);
+  parameter sweeps: <code>defaults_sweep.py</code>.
+</footer>
+
+<script>
+// ============================================================
+// Deterministic PRNG (mulberry32) so behaviour is reproducible.
+// ============================================================
+function makeRng(seed) {
+  let s = (seed | 0) || 1;
+  return function() {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function rngChoice(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+function rngNormal(rng) {
+  // Box-Muller
+  const u = Math.max(rng(), 1e-9), v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ============================================================
+// Model and operator definitions
+// ============================================================
+const MODELS = [
+  { id: 'M_s1', label: 'M-Small-A',  minTier: 0, base: 50,  color: '#60a5fa' },
+  { id: 'M_s2', label: 'M-Small-B',  minTier: 0, base: 30,  color: '#a78bfa' },
+  { id: 'M_m1', label: 'M-Mid-A',    minTier: 1, base: 150, color: '#f472b6' },
+  { id: 'M_m2', label: 'M-Mid-B',    minTier: 1, base: 100, color: '#fb923c' },
+  { id: 'M_l',  label: 'M-Flagship', minTier: 2, base: 400, color: '#facc15' }
+];
+const TIERS = [
+  { id: 'small',    throughput: 1.0,  share: 0.50 },
+  { id: 'mid',      throughput: 4.0,  share: 0.35 },
+  { id: 'flagship', throughput: 10.0, share: 0.15 }
+];
+const N_OPERATORS = 256;
+// Layer-2-style scale factor: roughly proportional to model value baseline
+const WSF = (() => {
+  const max = Math.max(...MODELS.map(m => m.base));
+  return MODELS.map(m => (m.base / max) * 2.0);
+})();
+
+// ============================================================
+// Simulation
+// ============================================================
+class Sim {
+  constructor(params) {
+    this.params = params;
+    this.rng = makeRng(params.seed || 42);
+    this.epoch = 0;
+    this.operators = this.makeOperators();
+    this.lastSwitchEpoch = new Map(this.operators.map(o => [o.id, -100]));
+    // Rolling history (last N epochs)
+    this.maxHistory = 400;
+    this.history = {
+      demand:     [],      // [ [d0, d1, ..., dM-1] per epoch ]
+      supply:     [],      // [ [s0, s1, ..., sM-1] per epoch ]
+      efficiency: [],
+      earnings:   [],      // mean per-op earnings this epoch
+      switches:   [],
+      truth:      [],
+    };
+  }
+
+  makeOperators() {
+    const ops = [];
+    for (let i = 0; i < N_OPERATORS; i++) {
+      // Sample tier by cumulative dist
+      const r = this.rng();
+      let tier = 0, acc = 0;
+      for (let t = 0; t < TIERS.length; t++) {
+        acc += TIERS[t].share;
+        if (r < acc) { tier = t; break; }
+      }
+      const capable = MODELS.map((_, idx) => idx).filter(idx => tier >= MODELS[idx].minTier);
+      const current = capable[Math.floor(this.rng() * capable.length)];
+      ops.push({
+        id: i,
+        tier: tier,
+        throughput: TIERS[tier].throughput,
+        capable: capable,
+        currentModel: current,
+        log: [],  // [ {epoch, announced, final} ]
+      });
+    }
+    return ops;
+  }
+
+  truthRate(op) {
+    const lookback = this.params.lookback;
+    const verified = op.log.filter(e => e.epoch + 1 < this.epoch);
+    const recent = verified.slice(-lookback);
+    if (recent.length === 0) return null;
+    const matches = recent.filter(e => e.announced === e.final).length;
+    return matches / recent.length;
+  }
+
+  reputationWeight(truthRate) {
+    if (truthRate === null) return this.params.newParticipantDefault;
+    const x = (truthRate - this.params.threshold) / Math.max(this.params.smoothness, 1e-6);
+    return 1 / (1 + Math.exp(-x));
+  }
+
+  demandAt(epoch) {
+    const phase = epoch / 60.0;
+    const amp = this.params.volatility;
+    return MODELS.map((m, i) => {
+      const wave = 1.0 + amp * 0.8 * Math.sin(phase * (1 + i * 0.2) + i * 1.7)
+                       + amp * 0.3 * Math.sin(phase * 1.8 + i * 0.9);
+      const shock = (this.rng() < 0.03) ? (0.7 + this.rng() * 0.6) : 1.0;
+      const noise = 1 + rngNormal(this.rng) * 0.04;
+      return Math.max(m.base * wave * shock * noise, 0.1);
+    });
+  }
+
+  computeSupply() {
+    const sup = new Array(MODELS.length).fill(0);
+    for (const op of this.operators) sup[op.currentModel] += op.throughput;
+    return sup;
+  }
+
+  evForSwitch(op, currentModel, targetModel, predictedSupply, demand) {
+    const pot = demand[targetModel] * WSF[targetModel];
+    const effSupply = (targetModel === currentModel)
+      ? Math.max(predictedSupply[targetModel], op.throughput)
+      : predictedSupply[targetModel] + op.throughput;
+    return op.throughput / effSupply * pot;
+  }
+
+  step() {
+    const demand = this.demandAt(this.epoch);
+    const supply = this.computeSupply();
+
+    // Compute per-op reputation
+    const repWeights = new Map();
+    for (const op of this.operators) {
+      repWeights.set(op.id, this.reputationWeight(this.truthRate(op)));
+    }
+
+    // Iterated cheap-talk
+    const plans = new Map(this.operators.map(op => [op.id, op.currentModel]));
+    const EPS = 1e-3;
+    const iters = 2;
+    const fractionUpdate = 0.3;
+
+    for (let iter = 0; iter < iters; iter++) {
+      const inflow = new Array(MODELS.length).fill(0);
+      const outflow = new Array(MODELS.length).fill(0);
+      for (const op of this.operators) {
+        const planned = plans.get(op.id);
+        const r = repWeights.get(op.id);
+        if (planned !== op.currentModel) {
+          inflow[planned]       += op.throughput * r;
+          outflow[op.currentModel] += op.throughput * r;
+        }
+      }
+      const predictedSupply = supply.map((s, i) =>
+        Math.max(s + inflow[i] - outflow[i], EPS)
+      );
+
+      // Random subset updates
+      const updateCount = Math.floor(N_OPERATORS * fractionUpdate);
+      const opIds = this.operators.map(o => o.id);
+      // Fisher-Yates partial shuffle
+      const updaters = new Set();
+      const pool = [...opIds];
+      for (let k = 0; k < updateCount; k++) {
+        const j = k + Math.floor(this.rng() * (pool.length - k));
+        [pool[k], pool[j]] = [pool[j], pool[k]];
+        updaters.add(pool[k]);
+      }
+
+      let changed = 0;
+      for (const op of this.operators) {
+        if (!updaters.has(op.id)) continue;
+        // Min dwell
+        if (this.epoch - this.lastSwitchEpoch.get(op.id) < this.params.minDwell) continue;
+        // Compute best
+        const baseEv = this.evForSwitch(op, op.currentModel, op.currentModel, predictedSupply, demand);
+        let bestM = op.currentModel, bestEv = baseEv;
+        for (const m of op.capable) {
+          if (m === op.currentModel) continue;
+          const ev = this.evForSwitch(op, op.currentModel, m, predictedSupply, demand);
+          const threshold = (1 + this.params.switchThreshold + this.params.switchCostFraction);
+          if (ev > baseEv * threshold && ev > bestEv) {
+            bestEv = ev;
+            bestM = m;
+          }
+        }
+        if (bestM !== plans.get(op.id)) {
+          plans.set(op.id, bestM);
+          changed++;
+        }
+      }
+      if (changed === 0) break;
+    }
+
+    // Per-op realized earnings THIS epoch (before applying switches)
+    const perOpEv = new Map();
+    for (const op of this.operators) {
+      const ev = this.evForSwitch(op, op.currentModel, op.currentModel, supply, demand);
+      perOpEv.set(op.id, ev);
+    }
+
+    // Apply switches + announce
+    let switches = 0;
+    for (const op of this.operators) {
+      const finalM = plans.get(op.id);
+      let announced = finalM;
+      if (this.rng() < this.params.popLyingRate) {
+        const alts = op.capable.filter(m => m !== finalM);
+        if (alts.length > 0) announced = alts[Math.floor(this.rng() * alts.length)];
+      }
+      op.log.push({ epoch: this.epoch, announced: announced, final: finalM });
+      if (finalM !== op.currentModel) {
+        switches++;
+        this.lastSwitchEpoch.set(op.id, this.epoch);
+        // Switch cost: lose a fraction of this epoch's earnings
+        perOpEv.set(op.id, perOpEv.get(op.id) * (1 - this.params.switchCostFraction));
+      }
+      op.currentModel = finalM;
+      if (op.log.length > this.params.lookback * 3) {
+        op.log = op.log.slice(-this.params.lookback * 3);
+      }
+    }
+
+    // Metrics
+    const captured = MODELS.reduce((acc, m, i) =>
+      acc + (supply[i] > 0 ? demand[i] * WSF[i] : 0), 0);
+    const total = MODELS.reduce((acc, m, i) => acc + demand[i] * WSF[i], 0);
+    const eff = captured / total;
+    const earnings = Array.from(perOpEv.values()).reduce((a, b) => a + b, 0) / N_OPERATORS;
+
+    const truths = [];
+    for (const op of this.operators) {
+      const t = this.truthRate(op);
+      if (t !== null) truths.push(t);
+    }
+    const truth = truths.length ? truths.reduce((a, b) => a + b, 0) / truths.length : 0.5;
+
+    // Record
+    this.history.demand.push(demand);
+    this.history.supply.push(supply);
+    this.history.efficiency.push(eff);
+    this.history.earnings.push(earnings);
+    this.history.switches.push(switches);
+    this.history.truth.push(truth);
+    for (const k of Object.keys(this.history)) {
+      if (this.history[k].length > this.maxHistory) this.history[k].shift();
+    }
+
+    this.epoch++;
+    return { eff, earnings, switches, truth, supply, demand };
+  }
+
+  reset(params) {
+    Object.assign(this, new Sim(params));
+  }
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+function setupCanvas(id) {
+  const c = document.getElementById(id);
+  const ctx = c.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const cssWidth = c.clientWidth, cssHeight = c.clientHeight;
+  c.width = cssWidth * ratio;
+  c.height = cssHeight * ratio;
+  ctx.scale(ratio, ratio);
+  return { ctx, w: cssWidth, h: cssHeight };
+}
+
+function renderOps(sim) {
+  const { ctx, w, h } = setupCanvas('opCanvas');
+  ctx.clearRect(0, 0, w, h);
+  // Auto-fit grid: roughly square with as many columns as fit nicely
+  const cols = Math.ceil(Math.sqrt(N_OPERATORS * (w / h)));
+  const rows = Math.ceil(N_OPERATORS / cols);
+  const cellW = w / cols, cellH = h / rows;
+  const r = Math.min(cellW, cellH) * 0.35;
+  for (let i = 0; i < N_OPERATORS; i++) {
+    const op = sim.operators[i];
+    const cx = (i % cols + 0.5) * cellW;
+    const cy = (Math.floor(i / cols) + 0.5) * cellH;
+    ctx.fillStyle = MODELS[op.currentModel].color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Tier ring: scale stroke width down for larger grids
+    const strokeScale = Math.min(1, cellW / 50);
+    ctx.strokeStyle = ['#666', '#aaa', '#fff'][op.tier];
+    ctx.lineWidth = [0.6, 1.0, 1.6][op.tier] * strokeScale;
+    ctx.stroke();
+  }
+}
+
+function renderModelLegend() {
+  const legend = document.getElementById('model-legend');
+  legend.innerHTML = MODELS.map(m =>
+    `<div class="legend-item"><div class="legend-swatch" style="background:${m.color}"></div>${m.label}</div>`
+  ).join('');
+}
+
+function renderLineChart(canvasId, series, opts) {
+  const { ctx, w, h } = setupCanvas(canvasId);
+  ctx.clearRect(0, 0, w, h);
+  const pad = { l: 32, r: 8, t: 8, b: 16 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+  // Find min/max across all series
+  let yMin = opts.yMin ?? Infinity, yMax = opts.yMax ?? -Infinity;
+  let maxLen = 0;
+  for (const s of series) {
+    maxLen = Math.max(maxLen, s.data.length);
+    if (opts.yMin === undefined) for (const v of s.data) yMin = Math.min(yMin, v);
+    if (opts.yMax === undefined) for (const v of s.data) yMax = Math.max(yMax, v);
+  }
+  if (yMin === Infinity) yMin = 0;
+  if (yMax === -Infinity) yMax = 1;
+  if (yMin === yMax) yMax = yMin + 1;
+  const yRange = yMax - yMin;
+  // Axes
+  ctx.strokeStyle = '#2a2f38';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t);
+  ctx.lineTo(pad.l, pad.t + ph);
+  ctx.lineTo(pad.l + pw, pad.t + ph);
+  ctx.stroke();
+  // Y-axis ticks (3)
+  ctx.fillStyle = '#99a1ad';
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 2; i++) {
+    const v = yMin + (yRange * i / 2);
+    const y = pad.t + ph - (ph * i / 2);
+    ctx.fillText(opts.yFormat ? opts.yFormat(v) : v.toFixed(2), pad.l - 4, y);
+    ctx.strokeStyle = '#1f242c';
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(pad.l + pw, y);
+    ctx.stroke();
+  }
+  // Draw series
+  for (const s of series) {
+    if (s.data.length === 0) continue;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.lineWidth || 1.5;
+    ctx.beginPath();
+    s.data.forEach((v, i) => {
+      const x = pad.l + (i / Math.max(maxLen - 1, 1)) * pw;
+      const y = pad.t + ph - ((v - yMin) / yRange) * ph;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+}
+
+function renderSupplyChart(sim) {
+  const series = MODELS.map((m, i) => ({
+    color: m.color,
+    data: sim.history.supply.map(s => s[i]),
+  }));
+  renderLineChart('supplyCanvas', series, { yMin: 0 });
+}
+function renderDemandChart(sim) {
+  const series = MODELS.map((m, i) => ({
+    color: m.color,
+    data: sim.history.demand.map(d => d[i]),
+  }));
+  renderLineChart('demandCanvas', series, { yMin: 0 });
+}
+function renderEarningsChart(sim) {
+  const series = [{
+    color: '#4ade80',
+    data: sim.history.earnings,
+    lineWidth: 2,
+  }];
+  renderLineChart('earningsCanvas', series, {
+    yMin: 0,
+  });
+}
+
+function renderAll(sim) {
+  renderOps(sim);
+  renderSupplyChart(sim);
+  renderDemandChart(sim);
+  renderEarningsChart(sim);
+  // Metrics
+  const h = sim.history;
+  document.getElementById('m-epoch').textContent = sim.epoch;
+  const last = h.efficiency.length - 1;
+  if (last >= 0) {
+    document.getElementById('m-earnings').textContent = h.earnings[last].toFixed(2);
+    const recentE = h.earnings.slice(Math.max(0, h.earnings.length - 50));
+    const avgE = recentE.reduce((a, b) => a + b, 0) / recentE.length;
+    document.getElementById('m-earnings-avg').textContent = 'avg ' + avgE.toFixed(2);
+
+    document.getElementById('m-efficiency').textContent = (h.efficiency[last] * 100).toFixed(1) + '%';
+    const recent = h.efficiency.slice(Math.max(0, h.efficiency.length - 50));
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    document.getElementById('m-efficiency-avg').textContent = 'avg ' + (avg * 100).toFixed(1) + '%';
+    document.getElementById('m-switches').textContent = h.switches[last];
+    const sAvg = h.switches.slice(Math.max(0, h.switches.length - 50)).reduce((a, b) => a + b, 0) / Math.min(50, h.switches.length);
+    document.getElementById('m-switches-avg').textContent = 'avg ' + sAvg.toFixed(1);
+    document.getElementById('m-truth').textContent = (h.truth[last] * 100).toFixed(1) + '%';
+  }
+}
+
+// ============================================================
+// Defaults sweep visualization
+// ============================================================
+const SWEEP_INFO = {
+  threshold: {
+    title: 'Reputation threshold',
+    xLabel: 'threshold',
+    description: 'The truth-rate at which a participant\'s announcement weight crosses 0.5. Default <strong>0.70</strong> places the inflection slightly above the expected Nash-equilibrium honesty level (~80%), so occasional bluffers stay near-full-weight and only systematic liars get discounted. The curve is essentially flat across the entire 0.1–0.99 range — the system doesn\'t care much exactly where you draw the line.',
+  },
+  smoothness: {
+    title: 'Sigmoid smoothness',
+    xLabel: 'smoothness',
+    description: 'Controls how sharply weight drops near the threshold. Default <strong>0.15</strong> balances signal preservation against discounting strength. Even at smoothness=1.0 (near-flat curve, almost no discounting) the system holds — graceful degradation rather than collapse.',
+  },
+  lookback_window: {
+    title: 'Lookback window (announcements)',
+    xLabel: 'lookback',
+    description: 'How many past announcements to score for the truth rate. Default <strong>20</strong>. Too short = volatile reputation (small samples are noisy); too long = stale. The curve is mostly flat in the 10–50 range; lookback=100 starts to slip slightly.',
+  },
+  switch_threshold: {
+    title: 'EV margin required to switch',
+    xLabel: 'switch_threshold',
+    description: 'How much better next-epoch EV must be before the agent commits to a switch. Default <strong>0.05 (5%)</strong>. The agent already factors in switching cost separately, so even <code>switch_threshold = 0</code> doesn\'t cause oscillation. At very high thresholds (0.2+) switching becomes rare; the system still works but responds slowly to demand shifts.',
+  },
+  min_dwell: {
+    title: 'Minimum dwell after a switch (epochs)',
+    xLabel: 'min_dwell',
+    description: 'Hard cap on switching frequency: once an MLNode switched, it cannot switch again for this many epochs. Default <strong>5</strong>. <em>This is the one parameter where extreme values clearly hurt</em> — <code>min_dwell = 30</code> drops earnings ~3% because the agent gets locked into a bad model for too long when conditions change. Anything in 2–10 works fine.',
+  },
+  late_credit: {
+    title: 'Late-fulfillment credit',
+    xLabel: 'late_credit',
+    description: 'Honesty credit when an announcement is honored one epoch late. Default <strong>0.5</strong>. The curve is essentially flat because in this simulation everyone fulfills on time — the parameter doesn\'t bind. Matters in real-world conditions where ops failures cause late fulfillments. The default avoids extremes: 0.0 over-penalizes slow operators; 1.0 lets operators publish stale announcements freely.',
+  },
+  new_participant_default: {
+    title: 'New-participant default reputation',
+    xLabel: 'new_participant_default',
+    description: 'Starting reputation weight for participants with no announcement history. Default <strong>0.5</strong>. Effectively flat across the range because most operators in the simulation have history by the time it matters. In practice: high enough that new entrants contribute to signal, low enough that Sybils can\'t flood with fresh accounts.',
+  },
+  pop_lying_rate: {
+    title: 'Population lying rate (informational)',
+    xLabel: 'population L',
+    description: 'NOT a GIP default — operators choose their own. This shows what happens as more of the population systematically bluffs. The system holds up gracefully even at L=1.0 (everyone lying) — the reputation layer discounts the signal, agents fall back to using current supply directly, and they still find good allocations. This is the property the reputation system is designed for: it can\'t make the announcement layer useful if no one\'s honest, but it doesn\'t catastrophically break either.',
+  },
+};
+
+function renderSweepPanel(name, sweep) {
+  const info = SWEEP_INFO[name];
+  const panel = document.createElement('div');
+  panel.className = 'sweep-panel';
+  panel.innerHTML = `
+    <h3>${info.title}</h3>
+    <canvas id="sweep-${name}"></canvas>
+    <p class="sweep-explanation">${info.description}</p>
+  `;
+  return panel;
+}
+
+function renderSweepCanvas(name, sweep) {
+  const canvas = document.getElementById('sweep-' + name);
+  if (!canvas) return;
+  // Make sure canvas has size before drawing
+  canvas.style.height = '220px';
+  const ctx = canvas.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * ratio;
+  canvas.height = canvas.clientHeight * ratio;
+  ctx.scale(ratio, ratio);
+
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const pad = { l: 40, r: 12, t: 12, b: 28 };
+  const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+
+  const values = sweep.values;
+  // Use earnings metric (more sensitive than the binary-ish efficiency)
+  const ys = sweep.curve.map(p => p.earnings ?? p.efficiency);
+  const stds = sweep.curve.map(p => p.earnings_std ?? p.efficiency_std ?? 0);
+  const minX = Math.min(...values), maxX = Math.max(...values);
+  let minY = Math.min(...ys.map((e, i) => e - stds[i]));
+  let maxY = Math.max(...ys.map((e, i) => e + stds[i]));
+  const range = maxY - minY;
+  // Padding: 15% of range above and below
+  minY = minY - range * 0.15;
+  maxY = maxY + range * 0.15;
+  if (maxY - minY < 0.01) {
+    const mid = (minY + maxY) / 2;
+    minY = mid - 0.5;
+    maxY = mid + 0.5;
+  }
+
+  const xPos = v => pad.l + ((v - minX) / (maxX - minX)) * pw;
+  const yPos = v => pad.t + ph - ((v - minY) / (maxY - minY)) * ph;
+
+  // Background grid
+  ctx.strokeStyle = '#1f242c';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ph * i / 4);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(pad.l + pw, y);
+    ctx.stroke();
+  }
+
+  // Default marker line
+  if (sweep.default !== undefined && sweep.default !== null) {
+    const x = xPos(sweep.default);
+    if (!isNaN(x)) {
+      ctx.strokeStyle = '#5fb3d4';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, pad.t);
+      ctx.lineTo(x, pad.t + ph);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Label
+      ctx.fillStyle = '#5fb3d4';
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('GIP default', x, pad.t - 2);
+    }
+  }
+
+  // Std band
+  ctx.fillStyle = 'rgba(74, 222, 128, 0.15)';
+  ctx.beginPath();
+  values.forEach((v, i) => {
+    const x = xPos(v), y = yPos(ys[i] + stds[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  for (let i = values.length - 1; i >= 0; i--) {
+    ctx.lineTo(xPos(values[i]), yPos(ys[i] - stds[i]));
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Curve
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  values.forEach((v, i) => {
+    const x = xPos(v), y = yPos(ys[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Dots
+  ctx.fillStyle = '#4ade80';
+  values.forEach((v, i) => {
+    ctx.beginPath();
+    ctx.arc(xPos(v), yPos(ys[i]), 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Y-axis labels (earnings — absolute numbers)
+  ctx.fillStyle = '#99a1ad';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const v = minY + ((maxY - minY) * i / 4);
+    ctx.fillText(v.toFixed(1), pad.l - 4, pad.t + ph - (ph * i / 4));
+  }
+
+  // X-axis labels
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  values.forEach((v, i) => {
+    if (i % Math.ceil(values.length / 6) === 0 || i === values.length - 1) {
+      const lbl = (typeof v === 'number')
+        ? (Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '') || '0')
+        : String(v);
+      ctx.fillText(lbl, xPos(v), pad.t + ph + 4);
+    }
+  });
+
+  // Axis labels
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.fillStyle = '#99a1ad';
+  ctx.save();
+  ctx.translate(8, pad.t + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('Earnings/op', 0, 0);
+  ctx.restore();
+  ctx.textAlign = 'center';
+  ctx.fillText(SWEEP_INFO[name].xLabel, pad.l + pw / 2, pad.t + ph + 18);
+}
+
+const EMBEDDED_SWEEP_DATA = {"defaults":{"threshold":0.7,"smoothness":0.15,"lookback_window":20,"switch_threshold":0.05,"switch_cost_fraction":0.02,"min_dwell":5,"late_credit":0.5,"new_participant_default":0.5,"pop_lying_rate":0.1,"partial_info_k":5},"sweeps":{"threshold":{"values":[0.1,0.3,0.5,0.6,0.65,0.7,0.75,0.8,0.9,0.99],"curve":[{"value":0.1,"efficiency":0.9990844107071698,"efficiency_std":5.3232693661531536e-05,"earnings":3.8612257322557255,"earnings_std":0.013446169221760043,"switches":22.759555555555554,"truth_rate":0.9001387152777777},{"value":0.3,"efficiency":0.9990794973505257,"efficiency_std":2.285124606310482e-05,"earnings":3.861914858546292,"earnings_std":0.009012492171400866,"switches":22.868666666666666,"truth_rate":0.9004101128472222},{"value":0.5,"efficiency":0.9990517863243905,"efficiency_std":7.163403618404007e-05,"earnings":3.8525341387047765,"earnings_std":0.013592166895224965,"switches":22.975111111111108,"truth_rate":0.9000924045138888},{"value":0.6,"efficiency":0.999107189231219,"efficiency_std":8.868795455471338e-05,"earnings":3.8471368406956192,"earnings_std":0.008782870887698095,"switches":22.89822222222222,"truth_rate":0.9000331163194444},{"value":0.65,"efficiency":0.9989039857403129,"efficiency_std":0.00014542028558010001,"earnings":3.8578404960588024,"earnings_std":0.015613222262701846,"switches":22.865777777777776,"truth_rate":0.9000358940972223},{"value":0.7,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.75,"efficiency":0.9990691820853707,"efficiency_std":1.897364172934032e-05,"earnings":3.8588484482876986,"earnings_std":0.006387546843392607,"switches":22.906000000000002,"truth_rate":0.8995772569444442},{"value":0.8,"efficiency":0.9990682684190628,"efficiency_std":4.0409772665682066e-05,"earnings":3.8351488835495093,"earnings_std":0.01666139333959465,"switches":22.878444444444444,"truth_rate":0.8998104600694444},{"value":0.9,"efficiency":0.9990238740291474,"efficiency_std":2.2526176867845677e-05,"earnings":3.861746106847221,"earnings_std":0.004668154636368872,"switches":23.167111111111108,"truth_rate":0.8998614149305556},{"value":0.99,"efficiency":0.9990755462452623,"efficiency_std":5.722345672753621e-05,"earnings":3.857862946674493,"earnings_std":0.009238250650984945,"switches":23.011777777777777,"truth_rate":0.9001680555555556}],"default":0.7},"smoothness":{"values":[0.01,0.03,0.05,0.1,0.15,0.2,0.3,0.5,1.0],"curve":[{"value":0.01,"efficiency":0.9990565233283367,"efficiency_std":3.7152370499627695e-05,"earnings":3.863387079222949,"earnings_std":0.005734198194860699,"switches":22.941777777777776,"truth_rate":0.899625},{"value":0.03,"efficiency":0.9989841434739594,"efficiency_std":3.319260333173636e-05,"earnings":3.8613773129419786,"earnings_std":0.00429699738652259,"switches":22.901555555555557,"truth_rate":0.8995813802083333},{"value":0.05,"efficiency":0.9991072534264148,"efficiency_std":3.569946597460193e-05,"earnings":3.853156268291954,"earnings_std":0.004683131012410813,"switches":23.025555555555556,"truth_rate":0.9001256076388889},{"value":0.1,"efficiency":0.9991451338307006,"efficiency_std":0.0001608239392305381,"earnings":3.8612081018456768,"earnings_std":0.007324251656433254,"switches":22.805333333333333,"truth_rate":0.8996289496527777},{"value":0.15,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.2,"efficiency":0.999036905712566,"efficiency_std":6.300359319883466e-05,"earnings":3.8428312369409814,"earnings_std":0.010497315072072064,"switches":22.977555555555558,"truth_rate":0.9002783420138888},{"value":0.3,"efficiency":0.9990338144368446,"efficiency_std":2.5006775260104757e-05,"earnings":3.8607248513771584,"earnings_std":0.004318292021795735,"switches":22.868,"truth_rate":0.900104123263889},{"value":0.5,"efficiency":0.9990332669510115,"efficiency_std":3.625804763738877e-05,"earnings":3.858773768321432,"earnings_std":0.014016822780664575,"switches":22.956222222222223,"truth_rate":0.8996224392361111},{"value":1.0,"efficiency":0.9990070256375766,"efficiency_std":4.51672088585589e-05,"earnings":3.8687694335201592,"earnings_std":0.007941112656669724,"switches":22.96688888888889,"truth_rate":0.9003988715277776}],"default":0.15},"lookback_window":{"values":[3,5,10,20,30,50,100],"curve":[{"value":3,"efficiency":0.9989919538185905,"efficiency_std":7.95264050880471e-06,"earnings":3.8459257613893585,"earnings_std":0.005822189284564484,"switches":22.88488888888889,"truth_rate":0.8998836805555555},{"value":5,"efficiency":0.9990181290052503,"efficiency_std":6.31838415032627e-05,"earnings":3.8621097344680386,"earnings_std":0.01491834313125185,"switches":22.843333333333334,"truth_rate":0.8995795138888889},{"value":10,"efficiency":0.999049647993326,"efficiency_std":8.557487621797522e-05,"earnings":3.86039615471365,"earnings_std":0.0035897881688340357,"switches":23.037333333333333,"truth_rate":0.8999697048611112},{"value":20,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":30,"efficiency":0.9990638804346103,"efficiency_std":6.304252236727613e-05,"earnings":3.861183377549104,"earnings_std":0.017749762850320903,"switches":22.918666666666667,"truth_rate":0.9001341435185187},{"value":50,"efficiency":0.9989810293357638,"efficiency_std":8.024095296941707e-05,"earnings":3.8520592506496762,"earnings_std":0.003820922374419994,"switches":23.066222222222223,"truth_rate":0.8996992708333335},{"value":100,"efficiency":0.9990446895154338,"efficiency_std":2.6065762366233028e-05,"earnings":3.844058428739229,"earnings_std":0.016092524834717244,"switches":22.890666666666664,"truth_rate":0.8998813020833333}],"default":20},"switch_threshold":{"values":[0.001,0.01,0.02,0.03,0.05,0.1,0.2,0.5],"curve":[{"value":0.001,"efficiency":0.9990401928790927,"efficiency_std":2.9796097978631062e-05,"earnings":3.8480838030422535,"earnings_std":0.011186394820503778,"switches":23.923777777777776,"truth_rate":0.8999329427083333},{"value":0.01,"efficiency":0.9990864959436471,"efficiency_std":0.0001090292666152626,"earnings":3.8404352159615454,"earnings_std":0.01351782044605428,"switches":23.71688888888889,"truth_rate":0.8997462673611111},{"value":0.02,"efficiency":0.9990546983859145,"efficiency_std":8.057494114962123e-05,"earnings":3.870263589337748,"earnings_std":0.00997639856590297,"switches":23.49,"truth_rate":0.9000626302083333},{"value":0.03,"efficiency":0.9991119045387834,"efficiency_std":2.4793372963826867e-05,"earnings":3.8514291261322935,"earnings_std":0.01518882221087632,"switches":23.22377777777778,"truth_rate":0.8998258680555554},{"value":0.05,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.1,"efficiency":0.9990002794579048,"efficiency_std":4.704162003598479e-05,"earnings":3.8386131470415363,"earnings_std":0.0068156067283074604,"switches":21.674444444444447,"truth_rate":0.8997736111111111},{"value":0.2,"efficiency":0.9990930788939205,"efficiency_std":5.228071070282413e-05,"earnings":3.857072442522424,"earnings_std":0.003098713260672295,"switches":19.297555555555554,"truth_rate":0.8997489149305555},{"value":0.5,"efficiency":0.9990499305660658,"efficiency_std":2.4724932120199215e-05,"earnings":3.855699405215302,"earnings_std":0.011400408090491296,"switches":13.067777777777778,"truth_rate":0.9002342013888888}],"default":0.05},"min_dwell":{"values":[0,1,2,3,5,8,15,30],"curve":[{"value":0,"efficiency":0.9990060505336037,"efficiency_std":0.00010709046425302949,"earnings":3.8412287022861,"earnings_std":0.0053665869701463205,"switches":57.96888888888889,"truth_rate":0.9000983940972221},{"value":1,"efficiency":0.9990060505336037,"efficiency_std":0.00010709046425302949,"earnings":3.8412287022861,"earnings_std":0.0053665869701463205,"switches":57.96888888888889,"truth_rate":0.9000983940972221},{"value":2,"efficiency":0.9990417130979893,"efficiency_std":0.00024789779147845067,"earnings":3.834436547894652,"earnings_std":0.007520303013344802,"switches":39.842000000000006,"truth_rate":0.9002215711805556},{"value":3,"efficiency":0.9990305963229303,"efficiency_std":2.160440311359083e-05,"earnings":3.846291539285644,"earnings_std":0.010936385155629716,"switches":31.74333333333333,"truth_rate":0.9001378472222221},{"value":5,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":8,"efficiency":0.9988626521679924,"efficiency_std":0.0004812416255848541,"earnings":3.8521605900167146,"earnings_std":0.01047278298374209,"switches":16.653333333333332,"truth_rate":0.8998016059027778},{"value":15,"efficiency":0.9889412685178544,"efficiency_std":0.001312273035770195,"earnings":3.848658262890005,"earnings_std":0.0027884362387792547,"switches":10.497777777777777,"truth_rate":0.8998542100694443},{"value":30,"efficiency":0.9730861023497939,"efficiency_std":0.006887380696171888,"earnings":3.7533700355772033,"earnings_std":0.019128356595111803,"switches":6.3613333333333335,"truth_rate":0.9001376302083334}],"default":5},"late_credit":{"values":[0.0,0.25,0.5,0.75,1.0],"curve":[{"value":0.0,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.25,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.5,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.75,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":1.0,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667}],"default":0.5},"new_participant_default":{"values":[0.0,0.25,0.5,0.75,1.0],"curve":[{"value":0.0,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.25,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.5,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.75,"efficiency":0.998986079499216,"efficiency_std":9.916559675996932e-05,"earnings":3.851135919211598,"earnings_std":0.010668217918487861,"switches":23.067111111111107,"truth_rate":0.8998901041666665},{"value":1.0,"efficiency":0.998986079499216,"efficiency_std":9.916559675996932e-05,"earnings":3.851135919211598,"earnings_std":0.010668217918487861,"switches":23.067111111111107,"truth_rate":0.8998901041666665}],"default":0.5},"pop_lying_rate":{"values":[0.0,0.05,0.1,0.15,0.2,0.3,0.5,0.7,0.9,1.0],"curve":[{"value":0.0,"efficiency":0.9990783193405174,"efficiency_std":6.5823706382314e-05,"earnings":3.8720532635939793,"earnings_std":0.009436141745566765,"switches":23.037999999999997,"truth_rate":1.0},{"value":0.05,"efficiency":0.9990326777419543,"efficiency_std":2.1154185553595388e-05,"earnings":3.860401081715858,"earnings_std":0.0026845628628968015,"switches":23.088666666666665,"truth_rate":0.9501511718749999},{"value":0.1,"efficiency":0.9990538267732928,"efficiency_std":4.647831256655346e-05,"earnings":3.852682127805909,"earnings_std":0.006394165852863238,"switches":23.03533333333333,"truth_rate":0.8998557291666667},{"value":0.15,"efficiency":0.9990866037399456,"efficiency_std":4.837456371958188e-05,"earnings":3.8598820005011074,"earnings_std":0.0009400914187228992,"switches":22.877333333333336,"truth_rate":0.8503230468749999},{"value":0.2,"efficiency":0.9990602632786727,"efficiency_std":1.9709890443095364e-05,"earnings":3.8551626210533865,"earnings_std":0.010138499938583918,"switches":22.904666666666667,"truth_rate":0.8002219184027778},{"value":0.3,"efficiency":0.9990577263248229,"efficiency_std":6.837960499566337e-05,"earnings":3.8536352098330826,"earnings_std":0.013319958658575588,"switches":23.025111111111112,"truth_rate":0.6996020833333333},{"value":0.5,"efficiency":0.9990170393896595,"efficiency_std":2.5987764940625965e-05,"earnings":3.866201249127949,"earnings_std":0.020662101692694498,"switches":23.144222222222222,"truth_rate":0.49948407118055554},{"value":0.7,"efficiency":0.9990517778168173,"efficiency_std":2.9472494500368467e-05,"earnings":3.852798627225091,"earnings_std":0.010156337029165534,"switches":23.097111111111115,"truth_rate":0.30030924479166665},{"value":0.9,"efficiency":0.9989044799916654,"efficiency_std":0.00016835877726990503,"earnings":3.8655306643673604,"earnings_std":0.00558181847625521,"switches":23.25,"truth_rate":0.10014830729166668},{"value":1.0,"efficiency":0.9990649399344605,"efficiency_std":9.42619371873655e-05,"earnings":3.8501803570604873,"earnings_std":0.006246192386752555,"switches":23.445777777777778,"truth_rate":0.0}],"default":0.1}},"config":{"n_operators":256,"n_models":5,"n_epochs":2000,"warmup":500,"seeds":[42,43,44]}};
+
+async function loadSweepData() {
+  // Embedded data takes precedence — keeps the page self-contained (works via file://)
+  if (typeof EMBEDDED_SWEEP_DATA !== 'undefined' && EMBEDDED_SWEEP_DATA) {
+    return EMBEDDED_SWEEP_DATA;
+  }
+  try {
+    const resp = await fetch('sweep_data.json');
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function initSweeps() {
+  const data = await loadSweepData();
+  const grid = document.getElementById('sweep-grid');
+  if (!data) return;
+  grid.innerHTML = '';
+  // Order
+  const order = ['threshold', 'smoothness', 'lookback_window', 'switch_threshold',
+                 'min_dwell', 'late_credit', 'new_participant_default', 'pop_lying_rate'];
+  for (const name of order) {
+    if (!data.sweeps[name]) continue;
+    const panel = renderSweepPanel(name, data.sweeps[name]);
+    grid.appendChild(panel);
+  }
+  // Render canvases (after DOM insert so sizes are known)
+  requestAnimationFrame(() => {
+    for (const name of order) {
+      if (!data.sweeps[name]) continue;
+      renderSweepCanvas(name, data.sweeps[name]);
+    }
+  });
+}
+
+// ============================================================
+// Control wiring
+// ============================================================
+const DEFAULTS = {
+  threshold: 0.70, smoothness: 0.15, lookback: 20,
+  switchThreshold: 0.05, switchCostFraction: 0.02, minDwell: 5,
+  popLyingRate: 0.10, newParticipantDefault: 0.5, volatility: 0.35, speed: 5,
+};
+
+function readParams() {
+  return {
+    threshold: parseFloat(document.getElementById('threshold').value),
+    smoothness: parseFloat(document.getElementById('smoothness').value),
+    lookback: parseInt(document.getElementById('lookback').value),
+    switchThreshold: parseFloat(document.getElementById('switchth').value),
+    switchCostFraction: parseFloat(document.getElementById('switchcost').value),
+    minDwell: parseInt(document.getElementById('mindwell').value),
+    popLyingRate: parseFloat(document.getElementById('poplie').value),
+    volatility: parseFloat(document.getElementById('volatility').value),
+    speed: parseInt(document.getElementById('speed').value),
+    newParticipantDefault: 0.5,
+    seed: 42,
+  };
+}
+
+function bindLabel(id, valId, fmt) {
+  const input = document.getElementById(id), out = document.getElementById(valId);
+  const update = () => out.textContent = fmt ? fmt(input.value) : input.value;
+  input.addEventListener('input', update);
+  update();
+}
+
+let sim, running = false, lastFrameTime = 0, accumulatedTime = 0;
+
+function loop(now) {
+  if (running) {
+    const dt = (now - lastFrameTime) / 1000;
+    accumulatedTime += dt;
+    const params = readParams();
+    sim.params = { ...sim.params, ...params };
+    const interval = 1 / params.speed;
+    let stepped = false;
+    while (accumulatedTime >= interval) {
+      sim.step();
+      accumulatedTime -= interval;
+      stepped = true;
+    }
+    if (stepped) renderAll(sim);
+  }
+  lastFrameTime = now;
+  requestAnimationFrame(loop);
+}
+
+function showTab(name) {
+  for (const tab of document.querySelectorAll('section.tab')) tab.classList.remove('active');
+  for (const btn of document.querySelectorAll('header nav button')) btn.classList.remove('active');
+  document.getElementById(name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'defaults') {
+    // Re-render in case fonts/sizes changed
+    initSweeps();
+  } else if (name === 'live') {
+    requestAnimationFrame(() => renderAll(sim));
+  }
+}
+window.showTab = showTab;
+
+function init() {
+  bindLabel('threshold', 'v-threshold', v => parseFloat(v).toFixed(2));
+  bindLabel('smoothness', 'v-smoothness', v => parseFloat(v).toFixed(2));
+  bindLabel('lookback', 'v-lookback');
+  bindLabel('switchth', 'v-switchth', v => parseFloat(v).toFixed(2));
+  bindLabel('switchcost', 'v-switchcost', v => parseFloat(v).toFixed(3));
+  bindLabel('mindwell', 'v-mindwell');
+  bindLabel('poplie', 'v-poplie', v => parseFloat(v).toFixed(2));
+  bindLabel('volatility', 'v-volatility', v => parseFloat(v).toFixed(2));
+  bindLabel('speed', 'v-speed');
+
+  renderModelLegend();
+
+  sim = new Sim(readParams());
+  // Pre-warm so charts have data immediately
+  for (let i = 0; i < 60; i++) sim.step();
+  renderAll(sim);
+  // Auto-play on load
+  running = true;
+  lastFrameTime = performance.now();
+  // Compute initial tier distribution display
+  const tierCounts = [0, 0, 0];
+  for (const op of sim.operators) tierCounts[op.tier]++;
+  document.getElementById('m-tier').textContent =
+    `${tierCounts[0]} small / ${tierCounts[1]} mid / ${tierCounts[2]} fl`;
+
+  document.getElementById('play').onclick = () => { running = true; lastFrameTime = performance.now(); };
+  document.getElementById('pause').onclick = () => { running = false; };
+  document.getElementById('reset').onclick = () => {
+    running = false;
+    sim = new Sim(readParams());
+    renderAll(sim);
+    const tierCounts = [0, 0, 0];
+    for (const op of sim.operators) tierCounts[op.tier]++;
+    document.getElementById('m-tier').textContent =
+      `${tierCounts[0]} small / ${tierCounts[1]} mid / ${tierCounts[2]} fl`;
+  };
+  document.getElementById('resetDefaults').onclick = () => {
+    document.getElementById('threshold').value = DEFAULTS.threshold;
+    document.getElementById('smoothness').value = DEFAULTS.smoothness;
+    document.getElementById('lookback').value = DEFAULTS.lookback;
+    document.getElementById('switchth').value = DEFAULTS.switchThreshold;
+    document.getElementById('switchcost').value = DEFAULTS.switchCostFraction;
+    document.getElementById('mindwell').value = DEFAULTS.minDwell;
+    document.getElementById('poplie').value = DEFAULTS.popLyingRate;
+    document.getElementById('volatility').value = DEFAULTS.volatility;
+    document.getElementById('speed').value = DEFAULTS.speed;
+    document.querySelectorAll('.controls input[type=range]').forEach(i => i.dispatchEvent(new Event('input')));
+  };
+
+  requestAnimationFrame(loop);
+
+  // Lazy load sweep data when tab is shown for the first time
+  initSweeps();
+
+  // Honor URL hash for direct linking to tab (e.g. ?tab=defaults or #defaults)
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get('tab') || window.location.hash.replace('#', '');
+  if (requested === 'defaults' || requested === 'about') {
+    showTab(requested);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', init);
+window.addEventListener('resize', () => { if (sim) renderAll(sim); initSweeps(); });
+</script>
+
+</body>
+</html>
