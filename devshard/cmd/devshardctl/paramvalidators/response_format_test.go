@@ -67,6 +67,30 @@ func TestResponseFormatValidatorAccepts(t *testing.T) {
 	}
 }
 
+func TestResponseFormatValidatorRewritesLocalRefs(t *testing.T) {
+	v := defaultResponseFormatValidator()
+	doc := parseDocument(t, jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/x"}},"$defs":{"x":{"type":"string"}}}`))
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	schema := responseFormatSchema(t, doc)
+	require.NotContains(t, schema, "$defs")
+	x := schema["properties"].(map[string]any)["x"].(map[string]any)
+	require.NotContains(t, x, "$ref")
+	require.Equal(t, "string", x["type"])
+}
+
+func TestResponseFormatValidatorStripsUnusedDefinitions(t *testing.T) {
+	v := defaultResponseFormatValidator()
+	doc := parseDocument(t, jsonSchemaResponseFormatBody(`{"type":"object","$defs":{"unused":{"type":"NOT_A_VALID_TYPE"}},"definitions":{"other":{"type":"ALSO_BAD"}}}`))
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	schema := responseFormatSchema(t, doc)
+	require.NotContains(t, schema, "$defs")
+	require.NotContains(t, schema, "definitions")
+}
+
 func TestResponseFormatValidatorRejects(t *testing.T) {
 	v := defaultResponseFormatValidator()
 	tests := []struct {
@@ -137,6 +161,13 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 
 func jsonSchemaResponseFormatBody(schemaJSON string) string {
 	return `{"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":` + schemaJSON + `}}}`
+}
+
+func responseFormatSchema(tb testing.TB, doc map[string]any) map[string]any {
+	tb.Helper()
+	rf := doc["response_format"].(map[string]any)
+	wrapper := rf["json_schema"].(map[string]any)
+	return wrapper["schema"].(map[string]any)
 }
 
 func nestedPropertiesSchema(depth int) string {

@@ -129,7 +129,7 @@ func (v StructuredOutputsValidator) Validate(vctx ValidatorContext) error {
 		return fmt.Errorf("%w (got %d: %s)", ErrStructuredOutputsExactlyOne, set, strings.Join(setNames, ", "))
 	}
 	if value, ok := obj["json"]; ok && value != nil {
-		if err := v.validateJSON(value); err != nil {
+		if err := v.validateJSON(obj); err != nil {
 			return err
 		}
 	}
@@ -179,13 +179,11 @@ func (v StructuredOutputsValidator) Validate(vctx ValidatorContext) error {
 	return nil
 }
 
-func (v StructuredOutputsValidator) validateJSON(value any) error {
-	schema, ok := value.(map[string]any)
+func (v StructuredOutputsValidator) validateJSON(obj map[string]any) error {
+	schema, ok := obj["json"].(map[string]any)
 	if !ok {
 		return fmt.Errorf("%w", ErrStructuredOutputsJSONShape)
 	}
-	// Resolve local refs for validation only. Keep the forwarded request unchanged;
-	// vLLM remains responsible for parsing the user-provided schema.
 	schema, err := DereferenceLocalSchemaRefs(schema, v.MaxNodes)
 	if err != nil {
 		return fmt.Errorf("structured_outputs.json: %w", err)
@@ -204,6 +202,7 @@ func (v StructuredOutputsValidator) validateJSON(value any) error {
 	if err := bounds.CheckSize(schema); err != nil {
 		return fmt.Errorf("structured_outputs.json: %w", err)
 	}
+	obj["json"] = schema
 	return nil
 }
 

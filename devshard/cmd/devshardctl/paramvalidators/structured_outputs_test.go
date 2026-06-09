@@ -114,7 +114,7 @@ func TestStructuredOutputsValidatorJSONAcceptsLocalRef(t *testing.T) {
 	require.NoError(t, v.Validate(ValidatorContext{Document: parseDocument(t, body)}))
 }
 
-func TestStructuredOutputsValidatorJSONDoesNotRewriteLocalRef(t *testing.T) {
+func TestStructuredOutputsValidatorJSONRewritesLocalRef(t *testing.T) {
 	v := defaultStructuredOutputsValidator()
 	doc := parseDocument(t, `{"structured_outputs":{"json":{"type":"object","properties":{"x":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}}}`)
 
@@ -122,9 +122,21 @@ func TestStructuredOutputsValidatorJSONDoesNotRewriteLocalRef(t *testing.T) {
 
 	so := doc["structured_outputs"].(map[string]any)
 	schema := so["json"].(map[string]any)
-	require.Contains(t, schema, "definitions")
+	require.NotContains(t, schema, "definitions")
 	x := schema["properties"].(map[string]any)["x"].(map[string]any)
-	require.Equal(t, "#/definitions/x", x["$ref"])
+	require.NotContains(t, x, "$ref")
+	require.Equal(t, "string", x["type"])
+}
+
+func TestStructuredOutputsValidatorJSONStripsUnusedDefinitions(t *testing.T) {
+	v := defaultStructuredOutputsValidator()
+	doc := parseDocument(t, `{"structured_outputs":{"json":{"type":"object","$defs":{"unused":{"type":"NOT_A_VALID_TYPE"}}}}}`)
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	so := doc["structured_outputs"].(map[string]any)
+	schema := so["json"].(map[string]any)
+	require.NotContains(t, schema, "$defs")
 }
 
 func TestStructuredOutputsValidatorJSONRejectsStringForm(t *testing.T) {
