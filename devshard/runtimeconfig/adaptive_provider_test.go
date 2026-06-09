@@ -3,6 +3,7 @@ package runtimeconfig
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -154,6 +155,55 @@ func waitActiveSource(t *testing.T, p AdaptiveProvider, want string, max time.Du
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatalf("timeout waiting for active source %q (got %q)", want, p.ActiveSource())
+}
+
+// waitSignal advances the fake clock until ch receives a value or max elapses.
+func waitSignal(t *testing.T, clock *fakeClock, step time.Duration, ch <-chan struct{}, max time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ch:
+			return
+		default:
+			clock.Advance(step)
+			runtime.Gosched()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	t.Fatalf("timeout waiting for signal within %v", max)
+}
+
+// driveClockUntil advances the fake clock in steps until cond is true or max
+// wall-clock time elapses. A short sleep between steps lets timer-driven
+// goroutines (gRPC backoff, supervisor stale/reprobe) run reliably.
+func driveClockUntil(t *testing.T, clock *fakeClock, step time.Duration, max time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		clock.Advance(step)
+		runtime.Gosched()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v (step=%v)", max, step)
+}
+
+func waitSourceAfterClock(t *testing.T, p AdaptiveProvider, clock *fakeClock, step time.Duration, want string) {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		if p.ActiveSource() == want {
+			return
+		}
+		clock.Advance(step)
+		runtime.Gosched()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if p.ActiveSource() != want {
+		t.Fatalf("expected active source %q (got %q)", want, p.ActiveSource())
+	}
 }
 
 func TestAdaptive_BootUnimplemented_StartsChain(t *testing.T) {
@@ -327,10 +377,15 @@ func TestAdaptive_OnlyOneRunnerApplies(t *testing.T) {
 
 func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
+	recoverGRPC := atomic.Bool{}
+	pollError := make(chan struct{}, 1)
 	okAt50 := func() (*gen.GetRuntimeConfigResponse, error) {
 		return &gen.GetRuntimeConfigResponse{
 			Config: TestRuntimeConfigProto(50, 3, "raw"),
 		}, nil
+	}
+	down := func() (*gen.GetRuntimeConfigResponse, error) {
+		return nil, status.Error(codes.Unavailable, "down")
 	}
 	client := &scriptNMClient{
 		handlers: []func() (*gen.GetRuntimeConfigResponse, error){
@@ -342,13 +397,17 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 					Config: TestRuntimeConfigProto(20, 1, "raw"),
 				}, nil
 			},
+			// Keep failing until chain failover; idx>=2 repeats this handler.
 			func() (*gen.GetRuntimeConfigResponse, error) {
-				return nil, status.Error(codes.Unavailable, "down")
+				if recoverGRPC.Load() {
+					return okAt50()
+				}
+				select {
+				case pollError <- struct{}{}:
+				default:
+				}
+				return down()
 			},
-			func() (*gen.GetRuntimeConfigResponse, error) {
-				return nil, status.Error(codes.Unavailable, "down")
-			},
-			okAt50, okAt50, okAt50,
 		},
 	}
 	fetcher := &fakeFetcher{
@@ -366,15 +425,14 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	waitForHeight(t, p, 20)
 	waitActiveSource(t, p, SourceActiveGRPC, time.Second)
 
+	waitSignal(t, clock, cfg.StaleCheckInterval, pollError, 3*time.Second)
 	clock.Advance(cfg.GRPCStale + cfg.StaleCheckInterval)
-	time.Sleep(30 * time.Millisecond)
-	waitActiveSource(t, p, SourceActiveChain, 3*time.Second)
+	waitSourceAfterClock(t, p, clock, cfg.StaleCheckInterval, SourceActiveChain)
 
-	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
-	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
-	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
+	recoverGRPC.Store(true)
+	driveClockUntil(t, clock, cfg.GRPCReprobe, 3*time.Second, func() bool {
+		return p.ActiveSource() == SourceActiveGRPC
+	})
 	waitForHeight(t, p, 50)
 }
 
