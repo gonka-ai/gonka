@@ -70,7 +70,7 @@ func (s *dereferenceState) dereferenceSchemaValue(root any, value any, countSche
 			if isDefinitionContainer(key) {
 				continue
 			}
-			if _, isData := responseFormatDataKeys[key]; isData {
+			if _, isData := schemaDataKeys[key]; isData {
 				out[key] = child
 				continue
 			}
@@ -101,7 +101,7 @@ func (s *dereferenceState) dereferenceSchemaChild(root any, key string, value an
 	if !ok {
 		return s.dereferenceSchemaValue(root, value, true)
 	}
-	if _, isChildMap := responseFormatChildMapKeys[key]; !isChildMap {
+	if _, isChildMap := schemaChildMapKeys[key]; !isChildMap {
 		return s.dereferenceSchemaValue(root, typed, true)
 	}
 	out := make(map[string]any, len(typed))
@@ -135,7 +135,7 @@ func (s *dereferenceState) mergeRefSiblings(root any, resolvedTarget any, refNod
 		if key == "$ref" || isDefinitionContainer(key) {
 			continue
 		}
-		if _, isData := responseFormatDataKeys[key]; isData {
+		if _, isData := schemaDataKeys[key]; isData {
 			out[key] = child
 			continue
 		}

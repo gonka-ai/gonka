@@ -35,6 +35,34 @@ var validSchemaTypes = map[string]struct{}{
 	"null":    {},
 }
 
+// forbiddenSchemaKeys and branchSchemaKeys are walked once per node. Defining them at package
+// scope keeps the slice headers off the per-call allocation path (the literal-in-range form
+// allocates a fresh backing array on every walkSchema invocation).
+var forbiddenSchemaKeys = []string{"$ref", "$defs", "definitions"}
+var branchSchemaKeys = []string{"anyOf", "oneOf", "allOf"}
+
+// schemaDataKeys lists JSON-Schema keywords whose values are *literal data*, not child
+// schemas. They must NOT be recursed into; an attacker could otherwise put a deeply nested
+// object inside `default`/`examples`/`const` and have it counted against the schema budget
+// needlessly, or worse, hide structure the walker treats as schema-shaped.
+var schemaDataKeys = map[string]struct{}{
+	"enum":              {},
+	"const":             {},
+	"default":           {},
+	"examples":          {},
+	"required":          {},
+	"dependentRequired": {},
+}
+
+// schemaChildMapKeys lists keywords whose values are *maps* of name->schema (not a schema
+// themselves). We recurse into each map value as a separate child schema; the wrapper map
+// itself is not counted as a schema node.
+var schemaChildMapKeys = map[string]struct{}{
+	"properties":        {},
+	"patternProperties": {},
+	"dependentSchemas":  {},
+}
+
 // SchemaBounds enforces the structural bounds that keep a JSON-Schema payload from
 // exploding vLLM's grammar compiler. It is the JSON-Schema-aware walker reused by both
 // `response_format.json_schema.schema` and `tools[].function.parameters` (they hit the same
@@ -110,12 +138,12 @@ func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
 		}
 	}
 	for key, value := range obj {
-		if _, isData := responseFormatDataKeys[key]; isData {
+		if _, isData := schemaDataKeys[key]; isData {
 			continue
 		}
 		switch typed := value.(type) {
 		case map[string]any:
-			if _, isChildMap := responseFormatChildMapKeys[key]; isChildMap {
+			if _, isChildMap := schemaChildMapKeys[key]; isChildMap {
 				for _, child := range typed {
 					if err := b.walk(child, depth+1, nodes); err != nil {
 						return err
