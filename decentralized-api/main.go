@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/poc/earlyshare"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -48,6 +49,35 @@ import (
 
 	devshardbridge "devshard/bridge"
 )
+
+// buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
+// Returns nil (a valid disabled guard) when disabled or when the local sqlite
+// database is unavailable.
+func buildEarlyShareGuard(configManager *apiconfig.ConfigManager) *poc.EarlyShareGuard {
+	esgCfg := configManager.GetEarlyShareGuardConfig()
+	cfg := earlyshare.Config{
+		Mode:               earlyshare.Mode(esgCfg.Mode),
+		FirstFraction:      esgCfg.FirstFraction,
+		ThresholdRatio:     esgCfg.ThresholdRatio,
+		RequirePrefixProof: esgCfg.RequirePrefixProof,
+	}.Normalized()
+	if !cfg.Enabled() {
+		return nil
+	}
+
+	sqlDb := configManager.SqlDb()
+	if sqlDb == nil || sqlDb.GetDb() == nil {
+		logging.Warn("Early-share guard enabled but sqlite db unavailable; disabling", types.PoC)
+		return nil
+	}
+
+	store := earlyshare.NewStore(sqlDb.GetDb())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		logging.Error("Failed to initialize early-share guard schema; disabling", types.PoC, "error", err)
+		return nil
+	}
+	return poc.NewEarlyShareGuard(cfg, store)
+}
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
@@ -142,6 +172,11 @@ func main() {
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
+	// DAPI-only early-share guard (disabled by default). When enabled it reuses
+	// the embedded sqlite db for local persistence. See
+	// proposals/poc/early-share-guard-dapi.md.
+	earlyGuard := buildEarlyShareGuard(configManager)
+
 	offChainValidator := poc.NewOffChainValidator(
 		recorder,
 		nodeBroker,
@@ -151,8 +186,9 @@ func main() {
 		participantInfo.GetAddress(),
 		configManager.GetChainNodeConfig().Url,
 		poc.DefaultValidationConfig(),
+		earlyGuard,
 	)
-	logging.Info("PoC off-chain validator initialized", types.PoC)
+	logging.Info("PoC off-chain validator initialized", types.PoC, "earlyShareGuardEnabled", earlyGuard.Enabled())
 
 	// Create a cancellable context for the entire system
 	ctx, cancel := context.WithCancel(context.Background())
@@ -236,6 +272,13 @@ func main() {
 	// Manages per-height directories with automatic pruning (retains last 10)
 	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
 	defer artifactStore.Close()
+
+	// Prune early-share guard checkpoints on the same stage cadence as artifacts.
+	if earlyGuard.Enabled() {
+		artifactStore.AddPruneHook(func(stage int64) {
+			earlyGuard.DeleteStage(context.Background(), stage)
+		})
+	}
 
 	// Create commit worker for time-based artifact commits and weight distribution
 	// Worker owns flush lifecycle, commits periodically (not per-request), and handles distribution

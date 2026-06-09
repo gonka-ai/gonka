@@ -143,6 +143,12 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 	return cm.currentConfig.ChainNode
 }
 
+func (cm *ConfigManager) GetEarlyShareGuardConfig() EarlyShareGuardConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return cm.currentConfig.EarlyShareGuard
+}
+
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
