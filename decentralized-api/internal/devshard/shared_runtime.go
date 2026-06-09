@@ -32,7 +32,7 @@ import (
 type MLRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
 const (
-	MLNodeHTTPTimeout   = 20 * time.Minute
+	MLNodeHTTPTimeout   = 30 * time.Minute
 	PayloadFetchTimeout = 30 * time.Second
 )
 
