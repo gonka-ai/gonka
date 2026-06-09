@@ -94,6 +94,44 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
 }
 
+// EarlyShareCaptureTarget computes the stage height and the "first fraction"
+// capture target block height for the active PoC or confirmation-PoC generation
+// window. ok is false when no generation window is active or inputs are invalid,
+// in which case the early-share guard must skip (fail open).
+//
+//   - Regular PoC: stage = PocStartBlockHeight, target = stage + fraction*duration.
+//   - Confirmation PoC: stage = event.TriggerHeight,
+//     target = event.GenerationStartHeight + fraction*duration.
+func EarlyShareCaptureTarget(epochState *chainphase.EpochState, firstFraction float64) (stageHeight int64, targetHeight int64, ok bool) {
+	if epochState.IsNilOrNotSynced() {
+		return 0, 0, false
+	}
+	if firstFraction <= 0 || firstFraction >= 1 {
+		return 0, 0, false
+	}
+	duration := epochState.LatestEpoch.EpochParams.PocStageDuration
+	if duration <= 0 {
+		return 0, 0, false
+	}
+	offset := int64(float64(duration) * firstFraction)
+
+	// Confirmation PoC generation window during the inference phase.
+	if epochState.CurrentPhase == types.InferencePhase &&
+		epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
+		event := epochState.ActiveConfirmationPoCEvent
+		return event.TriggerHeight, event.GenerationStartHeight + offset, true
+	}
+
+	// Regular PoC generation (including the wind-down exchange window).
+	if epochState.CurrentPhase != types.PoCGeneratePhase &&
+		epochState.CurrentPhase != types.PoCGenerateWindDownPhase {
+		return 0, 0, false
+	}
+	stageHeight = epochState.LatestEpoch.PocStartBlockHeight
+	return stageHeight, stageHeight + offset, true
+}
+
 func ShouldHaveDistributedWeights(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
