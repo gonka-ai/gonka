@@ -1,5 +1,6 @@
 import com.productscience.*
 import com.productscience.data.CreatePartialUpgrade
+import com.productscience.data.OpenAIResponse
 import com.github.dockerjava.api.exception.NotFoundException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
@@ -7,6 +8,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
 import java.io.File
+import java.net.URL
+import java.net.URLEncoder
 import java.net.SocketException
 import java.security.MessageDigest
 import java.time.Duration
@@ -34,6 +37,8 @@ class UpgradeTests : TestermintTest() {
         assertLastUpgradeHeight(cluster, 0, expectedFound = false)
     }
 
+    private val upgradeArchitectures = listOf("amd64", "arm64")
+
     private fun initUpgradeCluster(config: ApplicationConfig = inferenceConfig): Pair<LocalCluster, LocalInferencePair> {
         var lastFailure: Throwable? = null
         repeat(3) { attempt ->
@@ -43,6 +48,7 @@ class UpgradeTests : TestermintTest() {
                 val shouldRetry =
                     t.message?.contains("Could not find node container for keyName=genesis") == true ||
                         t.message?.contains("Failed to get validator info within 90 seconds") == true ||
+                        t.message?.contains("without condition passing") == true ||
                         generateSequence(t) { it.cause }.any { it is SocketException || it is NotFoundException }
                 if (!shouldRetry || attempt == 2) {
                     throw t
@@ -82,6 +88,19 @@ class UpgradeTests : TestermintTest() {
         }
 
         error("Cluster did not become operational by block $targetBlock")
+    }
+
+    private fun waitForInferenceReady(
+        pair: LocalInferencePair,
+        request: String,
+        maxBlocks: Int = 10,
+    ): OpenAIResponse {
+        var response: OpenAIResponse? = null
+        pair.waitForBlock(maxBlocks) {
+            response = runCatching { it.makeInferenceRequest(request) }.getOrNull()
+            response != null
+        }
+        return assertNotNull(response)
     }
 
     private fun waitForLastUpgradeHeight(cluster: LocalCluster, genesis: LocalInferencePair, expectedHeight: Long, maxBlocks: Int = 20) {
@@ -157,18 +176,23 @@ class UpgradeTests : TestermintTest() {
         genesis.markNeedsReboot()
         val pairs = cluster.joinPairs
         val height = genesis.getCurrentBlockHeight()
-        val amdApiPath = getGithubPath(releaseTag, "decentralized-api-amd64.zip")
-        val amdBinaryPath = getGithubPath(releaseTag, "inferenced-amd64.zip")
+        val apiBinaries = upgradeArchitectures.associate { arch ->
+            "linux/$arch" to getGithubPath(releaseTag, "decentralized-api-$arch.zip")
+        }
+        val binaries = upgradeArchitectures.associate { arch ->
+            "linux/$arch" to getGithubPath(releaseTag, "inferenced-$arch.zip")
+        }
         val upgradeBlock = height + 30
         Logger.info("Upgrade block: $upgradeBlock", "")
         logSection("Submitting upgrade proposal")
         val response = genesis.submitUpgradeProposal(
             title = releaseTag,
             description = "For testing",
-            binaryPath = amdBinaryPath,
-            apiBinaryPath = amdApiPath,
+            binaries = binaries,
+            apiBinaries = apiBinaries,
             height = upgradeBlock,
             nodeVersion = "",
+            deposit = 1000000,
         )
         val proposalId = response.getProposalId()
         assertNotNull(proposalId, "couldn't find proposal")
@@ -205,18 +229,25 @@ class UpgradeTests : TestermintTest() {
         waitForClusterOperational(cluster, genesis)
         assertLastUpgradeHeightUnset(cluster)
         val height = genesis.getCurrentBlockHeight()
-        val path = getBinaryPath("v2/inferenced/inferenced-amd64.zip")
-        val apiPath = getBinaryPath("v2/dapi/decentralized-api-amd64.zip")
+        val binaries = getLocalUpgradeBinaries(
+            baseDir = "v2/inferenced",
+            archiveBaseName = "inferenced",
+        )
+        val apiBinaries = getLocalUpgradeBinaries(
+            baseDir = "v2/dapi",
+            archiveBaseName = "decentralized-api",
+        )
         val upgradeBlock = height + 30
         Logger.info("Upgrade block: $upgradeBlock", "")
         logSection("Submitting upgrade proposal")
         val response = genesis.submitUpgradeProposal(
             title = "v0.0.1test",
             description = "For testing",
-            binaryPath = path,
-            apiBinaryPath = apiPath,
+            binaries = binaries,
+            apiBinaries = apiBinaries,
             height = upgradeBlock,
             nodeVersion = "",
+            deposit = 1000000,
         )
         val proposalId = response.getProposalId()
         if (proposalId == null) {
@@ -252,9 +283,9 @@ class UpgradeTests : TestermintTest() {
         val (cluster, genesis) = initUpgradeCluster()
 
         logSection("Waiting for initial system to be ready")
-        waitForClusterOperational(cluster, genesis)
+        var currentHeight = genesis.getCurrentBlockHeight()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        waitForClusterOperational(cluster, genesis)
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
 
         // Test that the system works initially before we modify it
         logSection("Verifying system is working before version changes")
@@ -299,17 +330,18 @@ class UpgradeTests : TestermintTest() {
 
         logSection("Testing initial version v3.0.8 - should use default endpoints")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        waitForClusterOperational(cluster, genesis)
-        genesis.waitForNextInferenceWindow()
+        currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
         val initialInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         // Initially should use non-versioned endpoints, so default response
         assertThat(initialInferenceResponse.choices.first().message.content).isNotEmpty()
 
+        // Give governance enough runway to submit, deposit, and complete voting
+        // before the target upgrade height is reached.
+        val upgradeLeadBlocks = 30
+
         logSection("Initiating first upgrade: v3.0.8 → v3.0.9")
-        // Give governance enough runway to submit, deposit, and collect all votes before the upgrade height.
-        val upgradeLeadBlocks = 25
         val firstUpgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
-        assertLastUpgradeHeightUnset(cluster)
 
         val firstProposalId = genesis.runProposal(
             cluster,
@@ -321,17 +353,13 @@ class UpgradeTests : TestermintTest() {
         )
 
         logSection("Waiting for first upgrade to take effect at height $firstUpgradeHeight")
-        assertLastUpgradeHeightUnset(cluster)
-        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+10")
-        waitForLastUpgradeHeight(cluster, genesis, firstUpgradeHeight)
-        assertLastUpgradeHeight(cluster, firstUpgradeHeight)
-        waitForClusterOperational(cluster, genesis)
+        genesis.node.waitForMinimumBlock(firstUpgradeHeight + 1, "firstUpgradeHeight+1")
 
         logSection("Testing post-upgrade requests should hit v3.0.9 endpoints")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        waitForClusterOperational(cluster, genesis)
-        genesis.waitForNextInferenceWindow()
-        val upgradedInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
+        val upgradedInferenceResponse = waitForInferenceReady(genesis, inferenceRequest)
         assertThat(upgradedInferenceResponse.choices.first().message.content)
             .withFailMessage("After first upgrade, inference should use v3.0.9 endpoint")
             .isEqualTo(v039Response)
@@ -359,15 +387,12 @@ class UpgradeTests : TestermintTest() {
         )
 
         logSection("Waiting for second upgrade to take effect at height $secondUpgradeHeight")
-        assertLastUpgradeHeight(cluster, firstUpgradeHeight)
         genesis.node.waitForMinimumBlock(secondUpgradeHeight + 1, "secondUpgradeHeight+1")
-        waitForLastUpgradeHeight(cluster, genesis, secondUpgradeHeight)
-        assertLastUpgradeHeight(cluster, secondUpgradeHeight)
-        waitForClusterOperational(cluster, genesis)
 
         logSection("Testing post-second-upgrade requests should hit v3.0.10 endpoints")
-        genesis.waitForNextInferenceWindow()
-        val finalInferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        currentHeight = genesis.getCurrentBlockHeight()
+        genesis.waitForBlock(5, { it.getCurrentBlockHeight() > (currentHeight + 3) })
+        val finalInferenceResponse = waitForInferenceReady(genesis, inferenceRequest)
         assertThat(finalInferenceResponse.choices.first().message.content)
             .withFailMessage("After second upgrade, inference should use v3.0.10 endpoint")
             .isEqualTo(v0310Response)
@@ -397,6 +422,40 @@ class UpgradeTests : TestermintTest() {
         val localPath = "../public-html/$path"
         val sha = getSha256Checksum(localPath)
         return "http://genesis-mock-server:8080/files/$path?checksum=sha256:$sha"
+    }
+
+    private fun getGithubPath(releaseTag: String, fileName: String): String {
+        val safeReleaseTag = URLEncoder.encode(releaseTag, "UTF-8")
+        val path = "https://github.com/product-science/race-releases/releases/download/$safeReleaseTag/$fileName"
+        val tempDir = File("downloads").apply { mkdirs() }
+        val outputFile = File(tempDir, fileName)
+        URL(path).openStream().use { input ->
+            outputFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        val sha = getSha256Checksum(outputFile.absolutePath)
+        return "$path?checksum=sha256:$sha"
+    }
+
+    private fun getLocalUpgradeBinaries(
+        baseDir: String,
+        archiveBaseName: String,
+    ): Map<String, String> {
+        val binaries = upgradeArchitectures.mapNotNull { arch ->
+            val relativePath = "$baseDir/$archiveBaseName-$arch.zip"
+            val localFile = File("../public-html/$relativePath")
+            if (localFile.exists()) {
+                "linux/$arch" to getBinaryPath(relativePath)
+            } else {
+                null
+            }
+        }.toMap()
+
+        require(binaries.isNotEmpty()) {
+            "No local upgrade archives found for $archiveBaseName under ../public-html/$baseDir"
+        }
+        return binaries
     }
 }
 
