@@ -142,6 +142,7 @@ def docker_compose_down():
         print("Stopping any running Docker containers...")
         
         compose_files = ["-f", "docker-compose.yml", "-f", "docker-compose.mlnode.yml"]
+        config_file = DEPLOY_DIR / "config.env"
         for override_name in (
             "docker-compose.postgres.yml",
             "docker-compose.env-override.yml",
@@ -150,18 +151,37 @@ def docker_compose_down():
             "docker-compose.genesis-override.yml",
         ):
             override_path = DEPLOY_DIR / override_name
-            if override_path.exists():
-                compose_files.extend(["-f", override_name])
-        
+            if not override_path.exists():
+                continue
+            # postgres.yml requires POSTGRES_* from config.env; skip it on pre-config teardown
+            # so compose down still stops tmkms/node from a prior run.
+            if override_name == "docker-compose.postgres.yml" and not config_file.exists():
+                continue
+            compose_files.extend(["-f", override_name])
+
         try:
-            # First try to stop containers gracefully
-            result = subprocess.run(
-                ["docker", "compose"] + compose_files + ["down"],
-                cwd=DEPLOY_DIR,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            if config_file.exists():
+                down_cmd = (
+                    f"bash -c 'source {config_file} && docker compose "
+                    + " ".join(compose_files)
+                    + " down'"
+                )
+                result = subprocess.run(
+                    down_cmd,
+                    shell=True,
+                    cwd=DEPLOY_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            else:
+                result = subprocess.run(
+                    ["docker", "compose"] + compose_files + ["down"],
+                    cwd=DEPLOY_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
             if result.returncode == 0:
                 print("Docker containers stopped successfully")
             else:
@@ -820,24 +840,24 @@ def extract_consensus_key():
         print("Errors/Warnings:")
         print(pubkey_result.stderr)
     print("=" * 50)
+
+    if pubkey_result.returncode != 0:
+        print(f"Consensus key extraction failed with return code: {pubkey_result.returncode}")
+        raise subprocess.CalledProcessError(pubkey_result.returncode, pubkey_cmd)
     
     # Extract consensus key from output
     full_output = pubkey_result.stdout + pubkey_result.stderr if pubkey_result.stderr else pubkey_result.stdout
     consensus_key_match = re.search(r'([A-Za-z0-9+/=]{40,})', full_output)
-    if consensus_key_match:
-        consensus_key = consensus_key_match.group(1)
-        print(f"Extracted consensus key: {consensus_key}")
-        # Store in CONFIG_ENV for potential future use
-        CONFIG_ENV["CONSENSUS_KEY"] = consensus_key
-    else:
+    if not consensus_key_match:
         print("Warning: Could not extract consensus key from output")
         print("Full output for debugging:")
         print(full_output)
         raise ValueError("Could not extract consensus key from output")
-    
-    if pubkey_result.returncode != 0:
-        print(f"Consensus key extraction failed with return code: {pubkey_result.returncode}")
-        raise subprocess.CalledProcessError(pubkey_result.returncode, pubkey_cmd)
+
+    consensus_key = consensus_key_match.group(1)
+    print(f"Extracted consensus key: {consensus_key}")
+    # Store in CONFIG_ENV for potential future use
+    CONFIG_ENV["CONSENSUS_KEY"] = consensus_key
     
     print("Consensus key extraction completed successfully!")
     return consensus_key

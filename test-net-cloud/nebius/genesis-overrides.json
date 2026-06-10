@@ -360,23 +360,6 @@
         "standard_reward_amount": "600000000000000000",
         "pre_programmed_sale_amount": "120000000000000000",
         "supply_denom": "ngonka"
-      },
-      "bridge": {
-        "token_metadata": [
-          {
-            "chainId": "kava_2222-10",
-            "contractAddress": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
-            "name": "USDT",
-            "symbol": "USDT",
-            "decimals": 6
-          }
-        ],
-        "trade_approved_tokens": [
-          {
-            "chainId": "kava_2222-10",
-            "contractAddress": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
-          }
-        ]
       }
     }
   }
