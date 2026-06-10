@@ -15,6 +15,18 @@ import (
 // whose ConfirmedAt timestamps approximate "now".
 const stateClockWindowFactor = 3
 
+// autoSealEveryNNonces controls how often autoSealLocked runs during the
+// Active phase. 1 = every diff (current debug/production default). Values > 1
+// skip sealing on intermediate nonces and are for debugging only.
+const autoSealEveryNNonces uint64 = 1
+
+func shouldAutoSealAtNonce(nonce uint64) bool {
+	if autoSealEveryNNonces == 0 {
+		return true
+	}
+	return nonce%autoSealEveryNNonces == 0
+}
+
 func cloneCommittedInferenceEntries(src map[uint64][]byte) map[uint64][]byte {
 	if len(src) == 0 {
 		return make(map[uint64][]byte)
@@ -275,7 +287,7 @@ func (sm *StateMachine) stateClockLocked() stateClockWindow {
 		}
 	}
 	return stateClockWindow{
-		Clock:          minConfirmed,
+		Clock:          maxConfirmed, // should be deterministic
 		MinConfirmedAt: minConfirmed,
 		MaxConfirmedAt: maxConfirmed,
 		Known:          true,

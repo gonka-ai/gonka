@@ -199,15 +199,37 @@ func (r *pruneTestRig) startConfirm(inferenceID, startNonce uint64, confirmedAt 
 	r.applyDiff(startNonce+1, []*types.DevshardTx{confirmTx})
 }
 
-// bumpClock starts and confirms a fresh inference (id == startNonce) with a high
-// ConfirmedAt, advancing the deterministic state clock to confirmedAt. The new
-// inference is left in StatusStarted (not seal-eligible), so it only serves to
-// move the clock forward. The confirm diff (startNonce+1) is the nonce at which
-// any now-eligible older inference will be auto-sealed. Returns the next nonce.
+// bumpClock starts and confirms a fresh inference (id == startNonce) with the
+// given ConfirmedAt. The inference is left in StatusStarted (not seal-eligible).
+// Returns the next nonce.
+//
+// Under the min-ConfirmedAt state clock, one high-ConfirmedAt bump does not
+// advance the clock while older live inferences remain in the tail window.
+// Use advanceClockPastGrace to drive Finished sealing in tests.
 func (r *pruneTestRig) bumpClock(startNonce uint64, confirmedAt int64) uint64 {
 	r.t.Helper()
 	r.startConfirm(startNonce, startNonce, confirmedAt)
 	return startNonce + 2
+}
+
+// advanceClockPastGrace bumps the state clock until inferenceID seals. The
+// min-ConfirmedAt clock is taken over the latest N*stateClockWindowFactor live
+// ids; inferenceID must fall out of that tail (or the tail's minimum
+// ConfirmedAt must clear inferenceID's grace) before a stale Finished record
+// can seal.
+func (r *pruneTestRig) advanceClockPastGrace(startNonce uint64, inferenceID uint64) uint64 {
+	r.t.Helper()
+	window := len(r.group) * 3 // state.stateClockWindowFactor
+	targetConfirmedAt := pruneTestBaseConfirmedAt + int64(inferenceID) + int64(pruneTestClearGraceSeconds) + 1
+	for bump := 0; bump < window+5; bump++ {
+		startNonce = r.bumpClock(startNonce, targetConfirmedAt+int64(bump))
+		st := r.host.SnapshotState()
+		if _, live := st.Inferences[inferenceID]; !live {
+			return startNonce
+		}
+	}
+	r.t.Fatalf("inference %d did not seal after %d clock bumps", inferenceID, window+5)
+	return startNonce
 }
 
 // signValidation builds a MsgValidation tx signed by validatorSlot's owner.
@@ -299,7 +321,7 @@ func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 // (Validated/Invalidated/TimedOut) seal once nonce >= id+SealGraceNonces on
 // the diff that made them terminal. Finished (stale-finished) also requires the
 // state clock to advance >= InferenceClearGraceSeconds past ConfirmedAt;
-// those tests use bumpClock to advance the clock without wall-clock sleeps.
+// those tests use advanceClockPastGrace to advance the min clock without sleeps.
 
 func TestHost_PruneSink_SealsTerminal_Validated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
@@ -360,8 +382,9 @@ func TestHost_PruneSink_SealsStaleFinished(t *testing.T) {
 	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
 	require.Empty(t, rig.sink.findFor(1), "Finish itself does not prune")
 
-	// Advance the clock just past ConfirmedAt + grace; nonce gate (1+2=3) is met.
-	nonce = rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds)
+	// Advance the min-ConfirmedAt clock past inference 1's grace. One bump is not
+	// enough while id 1 stays in the tail window; fill the window first.
+	nonce = rig.advanceClockPastGrace(nonce, 1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
@@ -436,7 +459,7 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 	}
 	nonce := rig.driveStartConfirmFinish(1, 1)
 	require.Equal(t, types.StatusFinished, rig.inferenceStatus(1))
-	rig.bumpClock(nonce, pruneTestBaseConfirmedAt+1+pruneTestClearGraceSeconds)
+	rig.advanceClockPastGrace(nonce, 1)
 	rig.inferenceMissing(1)
 }
 

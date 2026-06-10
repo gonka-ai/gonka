@@ -770,7 +770,7 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	return s.clients[p.hostIdx].Send(ctx, host.HostRequest{
+	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
 		Diffs: p.catchUp,
 		Nonce: p.diff.Nonce,
 		Payload: &host.InferencePayload{
@@ -781,6 +781,23 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			StartedAt:   p.params.StartedAt,
 		},
 	}, stream, receiptHandler)
+	if err != nil && state.IsPostStateRootMismatchError(err) {
+		s.logStateRootMismatchUserDiagnostic(p)
+	}
+	return resp, err
+}
+
+func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sm.LogStateRootMismatchDiagnostic(state.StateRootMismatchOpts{
+		Side:          "devshardctl",
+		Nonce:         p.diff.Nonce,
+		DiffPostState: p.diff.PostStateRoot,
+	})
 }
 
 // SendInference composes diff, sends to correct host, processes response.

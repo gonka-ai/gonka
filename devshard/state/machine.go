@@ -341,7 +341,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	// Deterministically seal inferences whose grace gates have cleared, before
 	// the root is computed, so the user's signed post_state_root commits to the
 	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
-	if sm.state.Phase == types.PhaseActive {
+	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(nonce) {
 		if _, _, err := sm.autoSealLocked(nonce); err != nil {
 			sm.restoreMutable(snap)
 			return nil, nil, fmt.Errorf("auto-seal: %w", err)
@@ -440,7 +440,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// part of post_state_root. The decision reads only state (nonce + the
 	// ConfirmedAt-derived state clock), so user, host and replay all agree.
 	var sealClockWin stateClockWindow
-	if sm.state.Phase == types.PhaseActive {
+	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(nonce) {
 		var err error
 		_, sealClockWin, err = sm.autoSealLocked(nonce)
 		if err != nil {
@@ -458,29 +458,13 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
-		diagArgs := []any{
-			"subsystem", "state",
-			"nonce", nonce,
-			"balance", sm.state.Balance,
-			"group_size", len(sm.state.Group),
-			"host_stats_count", len(sm.state.HostStats),
-			"inferences_count", len(sm.state.Inferences),
-			"phase", sm.state.Phase,
-			"warm_keys_count", len(sm.state.WarmKeys),
-			"config_token_price", sm.state.Config.TokenPrice,
-			"config_fee_per_nonce", sm.state.Config.FeePerNonce,
-			"config_vote_threshold", sm.state.Config.VoteThreshold,
-			"config_validation_rate", sm.state.Config.ValidationRate,
-			"escrow_id", sm.state.EscrowID,
-		}
-		if sealClockWin.Known {
-			diagArgs = append(diagArgs,
-				"auto_seal_state_clock", sealClockWin.Clock,
-				"auto_seal_window_min_confirmed_at", sealClockWin.MinConfirmedAt,
-				"auto_seal_window_max_confirmed_at", sealClockWin.MaxConfirmedAt,
-			)
-		}
-		logging.Error("state root mismatch diagnostic", diagArgs...)
+		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
+			Side:          "devshardd",
+			Nonce:         nonce,
+			DiffPostState: postStateRoot,
+			ComputedState: root,
+			SealClock:     sealClockWin,
+		})
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
 	}
