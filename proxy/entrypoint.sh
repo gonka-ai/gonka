@@ -151,7 +151,7 @@ fi
 
 is_placeholder_password() {
     case "$1" in
-        ""|admin1|YourSecretPasswordHere|changeme|<FILLIN>)
+        ""|admin1|YourSecretPasswordHere|changeme|'<FILLIN>')
             return 0
             ;;
         *)
