@@ -85,7 +85,7 @@ type lruEntry struct {
 type QueryCache struct {
 	hint atomic.Int64
 
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	byHeight map[int64]map[string][]byte
 	keepLast int
 
@@ -132,13 +132,13 @@ func (c *QueryCache) SetHeightHint(h int64) {
 func (c *QueryCache) HeightHint() int64 { return c.hint.Load() }
 
 func (c *QueryCache) SnapshotStats() QueryCacheStats {
-	c.mu.Lock()
+	c.mu.RLock()
 	heights := len(c.byHeight)
 	entries := len(c.lruIndex)
 	totalBytes := c.totalBytes
 	maxEntries := c.maxEntries
 	maxBytes := c.maxBytes
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	return QueryCacheStats{
 		HeightHint:                   c.hint.Load(),
@@ -172,8 +172,8 @@ func (c *QueryCache) ResetStats() {
 }
 
 func (c *QueryCache) lookup(height int64, key string) ([]byte, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	bucket, ok := c.byHeight[height]
 	if !ok {
 		return nil, false
@@ -181,9 +181,6 @@ func (c *QueryCache) lookup(height int64, key string) ([]byte, bool) {
 	v, hit := bucket[key]
 	if !hit {
 		return nil, false
-	}
-	if el, ok := c.lruIndex[lruKey{height: height, key: key}]; ok {
-		c.lru.MoveToFront(el)
 	}
 	return v, true
 }

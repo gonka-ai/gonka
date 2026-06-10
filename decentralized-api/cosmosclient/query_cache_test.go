@@ -668,7 +668,7 @@ func TestQueryCache_EvictsByByteLimit(t *testing.T) {
 	require.False(t, ok, "least-recently-used entry must be evicted")
 }
 
-func TestQueryCache_LookupBumpsRecency(t *testing.T) {
+func TestQueryCache_LookupDoesNotBumpRecency(t *testing.T) {
 	cache := NewQueryCacheWithLimits(2, 0)
 
 	cache.store(100, "a", []byte("v"))
@@ -679,9 +679,9 @@ func TestQueryCache_LookupBumpsRecency(t *testing.T) {
 	cache.store(100, "c", []byte("v"))
 
 	_, ok = cache.lookup(100, "a")
-	require.True(t, ok, "recently used entry must survive")
+	require.False(t, ok, "lookup must not bump recency on hot read path")
 	_, ok = cache.lookup(100, "b")
-	require.False(t, ok, "least-recently-used entry must be evicted")
+	require.True(t, ok, "entry b remains because reads do not reorder LRU")
 }
 
 func TestQueryCache_HeightPruneReleasesBytes(t *testing.T) {
