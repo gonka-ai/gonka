@@ -71,13 +71,10 @@ func TestApplyMissStreak(t *testing.T) {
 	const cpoc = true
 	const poc = false
 
-	t.Run("CPoC pass resets and sets passed_once", func(t *testing.T) {
+	t.Run("CPoC pass resets streak", func(t *testing.T) {
 		out := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, true, cpoc, stage)
 		if out.VoteNo {
 			t.Fatal("pass should not vote no")
-		}
-		if !out.NewState.PassedOnce {
-			t.Fatal("CPoC pass should set PassedOnce")
 		}
 		if out.NewState.ConsecutiveMisses != 0 {
 			t.Fatalf("misses = %d, want 0", out.NewState.ConsecutiveMisses)
@@ -87,13 +84,10 @@ func TestApplyMissStreak(t *testing.T) {
 		}
 	})
 
-	t.Run("PoC pass does NOT reset streak or set passed_once", func(t *testing.T) {
-		out := ApplyMissStreak(GuardState{PassedOnce: false, ConsecutiveMisses: 1}, true, poc, stage)
+	t.Run("PoC pass does NOT reset streak", func(t *testing.T) {
+		out := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, true, poc, stage)
 		if out.VoteNo {
 			t.Fatal("pass should not vote no")
-		}
-		if out.NewState.PassedOnce {
-			t.Fatal("PoC pass must not set PassedOnce")
 		}
 		if out.NewState.ConsecutiveMisses != 1 {
 			t.Fatalf("PoC pass must not reset misses; got %d, want 1", out.NewState.ConsecutiveMisses)
@@ -101,8 +95,8 @@ func TestApplyMissStreak(t *testing.T) {
 	})
 
 	t.Run("PoC pass does not rescue an established miss streak", func(t *testing.T) {
-		// passed_once already true (from a prior CPoC), one grace miss used.
-		out := ApplyMissStreak(GuardState{PassedOnce: true, ConsecutiveMisses: 1}, true, poc, stage)
+		// One grace miss already used; a regular PoC pass must not clear it.
+		out := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, true, poc, stage)
 		if out.VoteNo {
 			t.Fatal("a passing stage never votes no")
 		}
@@ -116,18 +110,8 @@ func TestApplyMissStreak(t *testing.T) {
 		}
 	})
 
-	t.Run("fail before first CPoC pass never penalizes but accrues", func(t *testing.T) {
-		out := ApplyMissStreak(GuardState{PassedOnce: false, ConsecutiveMisses: 2}, false, poc, stage)
-		if out.VoteNo {
-			t.Fatal("must not vote no before first CPoC pass")
-		}
-		if out.NewState.ConsecutiveMisses != 3 {
-			t.Fatalf("misses = %d, want 3 (failures still accrue)", out.NewState.ConsecutiveMisses)
-		}
-	})
-
-	t.Run("first miss after CPoC pass is grace", func(t *testing.T) {
-		out := ApplyMissStreak(GuardState{PassedOnce: true, ConsecutiveMisses: 0}, false, poc, stage)
+	t.Run("first miss is grace", func(t *testing.T) {
+		out := ApplyMissStreak(GuardState{ConsecutiveMisses: 0}, false, poc, stage)
 		if out.VoteNo {
 			t.Fatal("first miss should be grace, not vote no")
 		}
@@ -136,9 +120,24 @@ func TestApplyMissStreak(t *testing.T) {
 		}
 	})
 
+	t.Run("two consecutive misses vote no without any prior pass", func(t *testing.T) {
+		// No CPoC pass ever; two consecutive early-share failures vote no.
+		first := ApplyMissStreak(GuardState{}, false, poc, stage)
+		if first.VoteNo {
+			t.Fatal("first miss should be grace")
+		}
+		second := ApplyMissStreak(first.NewState, false, poc, stage+1)
+		if !second.VoteNo {
+			t.Fatal("second consecutive miss should vote no")
+		}
+		if second.NewState.ConsecutiveMisses != 2 {
+			t.Fatalf("misses = %d, want 2", second.NewState.ConsecutiveMisses)
+		}
+	})
+
 	t.Run("second consecutive miss votes no (PoC or CPoC failure)", func(t *testing.T) {
 		for _, conf := range []bool{poc, cpoc} {
-			out := ApplyMissStreak(GuardState{PassedOnce: true, ConsecutiveMisses: 1}, false, conf, stage)
+			out := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, false, conf, stage)
 			if !out.VoteNo {
 				t.Fatalf("second consecutive miss should vote no (isConfirmation=%v)", conf)
 			}
@@ -149,7 +148,7 @@ func TestApplyMissStreak(t *testing.T) {
 	})
 
 	t.Run("CPoC pass clears streak after grace miss", func(t *testing.T) {
-		out := ApplyMissStreak(GuardState{PassedOnce: true, ConsecutiveMisses: 1}, true, cpoc, stage)
+		out := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, true, cpoc, stage)
 		if out.VoteNo || out.NewState.ConsecutiveMisses != 0 {
 			t.Fatalf("CPoC pass should reset; got vote=%v misses=%d", out.VoteNo, out.NewState.ConsecutiveMisses)
 		}

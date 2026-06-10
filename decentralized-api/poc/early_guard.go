@@ -299,6 +299,25 @@ func (g *EarlyShareGuard) Evaluate(
 					"stage", stageHeight, "participant", addr, "model", modelID, "error", err)
 			}
 
+			// Log every low-early-share miss as it happens, including the first
+			// one that is still within grace (does not yet vote no). This makes
+			// observe mode surface low early shares early instead of staying
+			// silent until the miss streak trips. shareFail marks the invalid
+			// early>final case where the share is not a usable data point.
+			if !passed {
+				logging.Info("EarlyShareGuard: low early share miss", types.PoC,
+					"stage", stageHeight,
+					"participant", addr,
+					"modelId", modelID,
+					"earlyShare", d.share,
+					"threshold", threshold,
+					"shareFail", d.shareFail,
+					"consecutiveMisses", outcome.NewState.ConsecutiveMisses,
+					"isConfirmation", isConfirmation,
+					"wouldVoteNo", outcome.VoteNo,
+					"enforcing", g.cfg.Enforcing())
+			}
+
 			decisions[key] = earlyDecision{
 				shareVoteNo:   outcome.VoteNo,
 				requirePrefix: d.requirePrefix,

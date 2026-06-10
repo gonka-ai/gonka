@@ -29,7 +29,6 @@ type Checkpoint struct {
 type GuardState struct {
 	ParticipantAddress string
 	ModelID            string
-	PassedOnce         bool
 	ConsecutiveMisses  int
 	UpdatedStageHeight int64
 }
@@ -66,7 +65,6 @@ CREATE TABLE IF NOT EXISTS poc_early_checkpoints (
 CREATE TABLE IF NOT EXISTS poc_early_guard_state (
   participant_address TEXT NOT NULL,
   model_id TEXT NOT NULL,
-  passed_once INTEGER NOT NULL DEFAULT 0,
   consecutive_misses INTEGER NOT NULL DEFAULT 0,
   updated_stage_height INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (participant_address, model_id)
@@ -239,17 +237,15 @@ func (s *Store) GetGuardState(ctx context.Context, participant, modelID string) 
 		return GuardState{}, false, errors.New("earlyshare: db is nil")
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT passed_once, consecutive_misses, updated_stage_height
+SELECT consecutive_misses, updated_stage_height
 FROM poc_early_guard_state WHERE participant_address = ? AND model_id = ?`, participant, modelID)
 	st := GuardState{ParticipantAddress: participant, ModelID: modelID}
-	var passedOnce int
-	if err := row.Scan(&passedOnce, &st.ConsecutiveMisses, &st.UpdatedStageHeight); err != nil {
+	if err := row.Scan(&st.ConsecutiveMisses, &st.UpdatedStageHeight); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return GuardState{ParticipantAddress: participant, ModelID: modelID}, false, nil
 		}
 		return GuardState{}, false, err
 	}
-	st.PassedOnce = passedOnce != 0
 	return st, true, nil
 }
 
@@ -258,18 +254,13 @@ func (s *Store) UpsertGuardState(ctx context.Context, st GuardState) error {
 	if s == nil || s.db == nil {
 		return errors.New("earlyshare: db is nil")
 	}
-	passedOnce := 0
-	if st.PassedOnce {
-		passedOnce = 1
-	}
 	q := `INSERT INTO poc_early_guard_state (
-  participant_address, model_id, passed_once, consecutive_misses, updated_stage_height
-) VALUES (?, ?, ?, ?, ?)
+  participant_address, model_id, consecutive_misses, updated_stage_height
+) VALUES (?, ?, ?, ?)
 ON CONFLICT(participant_address, model_id) DO UPDATE SET
-  passed_once = excluded.passed_once,
   consecutive_misses = excluded.consecutive_misses,
   updated_stage_height = excluded.updated_stage_height`
-	_, err := s.db.ExecContext(ctx, q, st.ParticipantAddress, st.ModelID, passedOnce, st.ConsecutiveMisses, st.UpdatedStageHeight)
+	_, err := s.db.ExecContext(ctx, q, st.ParticipantAddress, st.ModelID, st.ConsecutiveMisses, st.UpdatedStageHeight)
 	return err
 }
 
