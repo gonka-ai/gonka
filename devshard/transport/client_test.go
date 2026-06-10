@@ -91,7 +91,7 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
 }
 
-func TestHTTPClient_Send_ReturnsHTTPStatusError(t *testing.T) {
+func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	userSigner := testutil.MustGenerateKey(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "bad signature", http.StatusForbidden)

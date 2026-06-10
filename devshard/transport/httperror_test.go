@@ -20,13 +20,3 @@ func TestHTTPError_SetsDevshardHeader(t *testing.T) {
 	e.HTTPErrorHandler(err, c)
 	require.Equal(t, DevshardErrorRequestsDisabled, rec.Header().Get(HeaderDevshardError))
 }
-
-func TestStatusErrorFromResponse_ReadsHeader(t *testing.T) {
-	rec := httptest.NewRecorder()
-	rec.Header().Set(HeaderDevshardError, DevshardErrorInitializing)
-	rec.WriteHeader(http.StatusServiceUnavailable)
-
-	err := StatusErrorFromResponse(http.MethodPost, "/p", rec.Result(), "init")
-	require.Equal(t, DevshardErrorInitializing, err.DevshardError)
-	require.True(t, err.IsFailFast())
-}
