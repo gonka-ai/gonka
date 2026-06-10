@@ -58,41 +58,33 @@ type MissOutcome struct {
 // ApplyMissStreak runs the one-miss-grace state machine.
 //
 // Asymmetry between PoC and CPoC: regular PoC early-share is cheap to fake, so a
-// passing PoC round is NOT trusted to clear the streak or demonstrate
-// capability. Only a passing confirmation PoC (CPoC) does that. Failures count
-// the same in either phase.
+// passing PoC round is NOT trusted to clear the streak. Only a passing
+// confirmation PoC (CPoC) resets it. Failures count the same in either phase.
 //
-//   - pass and isConfirmation: passed_once=true, consecutive_misses=0, no vote.
-//     (A genuine CPoC pass resets the streak and proves capability.)
+//   - pass and isConfirmation: consecutive_misses=0, no vote. A genuine CPoC
+//     pass resets the streak.
 //   - pass and !isConfirmation: no vote and no state change. A regular PoC pass
-//     neither resets the streak nor sets passed_once.
-//   - fail (either phase): consecutive_misses += 1.
-//   - fail and !passed_once: no vote (never demonstrated capability via CPoC).
-//   - fail and passed_once: allow one grace miss (consecutive_misses == 1, no
-//     vote), then vote no once consecutive_misses >= 2.
+//     does not reset the streak (passes are cheap to fake).
+//   - fail (either phase): consecutive_misses += 1; allow one grace miss
+//     (consecutive_misses == 1, no vote), then vote no once
+//     consecutive_misses >= 2.
 func ApplyMissStreak(prev GuardState, passed bool, isConfirmation bool, stageHeight int64) MissOutcome {
 	next := prev
 	next.UpdatedStageHeight = stageHeight
 
 	if passed {
 		if isConfirmation {
-			// Only a confirmation PoC pass is trusted: reset and mark capability.
-			next.PassedOnce = true
+			// Only a confirmation PoC pass is trusted to clear the streak.
 			next.ConsecutiveMisses = 0
 		}
-		// Regular PoC pass: leave streak and passed_once untouched.
+		// Regular PoC pass: leave the streak untouched.
 		return MissOutcome{VoteNo: false, NewState: next}
 	}
 
 	// Failure in either phase always accrues a miss.
 	next.ConsecutiveMisses = prev.ConsecutiveMisses + 1
 
-	if !prev.PassedOnce {
-		// Never demonstrated capability via a CPoC pass yet; do not penalize.
-		return MissOutcome{VoteNo: false, NewState: next}
-	}
-
-	// Demonstrated capability: one grace miss, then vote no.
+	// One grace miss, then vote no on the second consecutive miss.
 	if next.ConsecutiveMisses <= 1 {
 		return MissOutcome{VoteNo: false, NewState: next}
 	}

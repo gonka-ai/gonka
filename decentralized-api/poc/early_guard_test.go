@@ -174,8 +174,8 @@ func TestEvaluate(t *testing.T) {
 		{StageHeight: stage, ParticipantAddress: "b", ModelID: model, EarlyCount: 90, EarlyRootHash: []byte{2}},
 		// c has no early checkpoint -> early_share 0
 	}
-	// Seed c with a prior pass + one grace miss so a fresh fail votes no.
-	store.state["c|"+model] = earlyshare.GuardState{ParticipantAddress: "c", ModelID: model, PassedOnce: true, ConsecutiveMisses: 1}
+	// Seed c with one grace miss already used so a fresh fail votes no.
+	store.state["c|"+model] = earlyshare.GuardState{ParticipantAddress: "c", ModelID: model, ConsecutiveMisses: 1}
 
 	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequirePrefixProof: true}, store)
 	if guard == nil {
@@ -228,14 +228,14 @@ func TestEvaluate(t *testing.T) {
 		t.Fatal("b should not have a decision (not assigned)")
 	}
 
-	// a's guard state should now reflect a pass.
-	if st := store.state["a|"+model]; !st.PassedOnce || st.ConsecutiveMisses != 0 {
-		t.Fatalf("a state not advanced to pass: %+v", st)
+	// a's guard state should now reflect a CPoC pass (streak reset).
+	if st := store.state["a|"+model]; st.ConsecutiveMisses != 0 {
+		t.Fatalf("a state not reset by CPoC pass: %+v", st)
 	}
 }
 
 // TestEvaluatePoCPassDoesNotAdvance verifies that a passing regular PoC stage
-// does not set passed_once or reset the streak (only CPoC does).
+// does not reset the miss streak (only a CPoC pass does).
 func TestEvaluatePoCPassDoesNotAdvance(t *testing.T) {
 	ctx := context.Background()
 	const stage = int64(2000)
@@ -246,6 +246,8 @@ func TestEvaluatePoCPassDoesNotAdvance(t *testing.T) {
 	store.checkpoints[stage] = []earlyshare.Checkpoint{
 		{StageHeight: stage, ParticipantAddress: "a", ModelID: model, EarlyCount: 50, EarlyRootHash: []byte{1}},
 	}
+	// Seed a with one grace miss already used.
+	store.state["a|"+model] = earlyshare.GuardState{ParticipantAddress: "a", ModelID: model, ConsecutiveMisses: 1}
 
 	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
 	finalCommits := []*types.PoCV2StoreCommitWithAddress{
@@ -255,10 +257,10 @@ func TestEvaluatePoCPassDoesNotAdvance(t *testing.T) {
 	assigned := map[string]bool{earlyShareKey("a", model): true}
 
 	// Regular PoC (isConfirmation=false): a passes (share 0.5 >= threshold) but
-	// the pass must NOT set passed_once.
+	// the pass must NOT reset the streak.
 	guard.Evaluate(ctx, stage, false, finalCommits, votingPowers, assigned)
-	if st := store.state["a|"+model]; st.PassedOnce {
-		t.Fatalf("PoC pass must not set PassedOnce: %+v", st)
+	if st := store.state["a|"+model]; st.ConsecutiveMisses != 1 {
+		t.Fatalf("PoC pass must not reset streak: %+v", st)
 	}
 }
 
