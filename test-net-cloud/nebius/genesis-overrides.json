@@ -193,7 +193,7 @@
         },
         "delegation_params": {
           "deploy_window": "5",
-          "initial_model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "initial_model_id": "Qwen/Qwen3-4B-Instruct-2507",
           "v_min": "3",
           "refusal_penalty": { "value": "1", "exponent": -1 },
           "no_participation_penalty": { "value": "15", "exponent": -2 },
