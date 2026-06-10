@@ -13,7 +13,7 @@ enum class EpochStage {
     CLAIM_REWARDS
 }
 
-private const val DEFAULT_INFERENCE_STAGE_SLACK_BLOCKS = 3L
+const val INFERENCE_STAGE_SLACK_BLOCKS = 3L
 
 data class StageSafeInferenceBlock(
     val block: Long,
@@ -44,7 +44,7 @@ fun EpochResponse.resolveUpcomingStage(latestEpochStage: Long, nextEpochStage: L
 
 fun EpochResponse.findStageSafeInferenceBlock(
     earliestBlock: Long,
-    minimumSlackBeforeNextPoc: Long = DEFAULT_INFERENCE_STAGE_SLACK_BLOCKS,
+    minimumSlackBeforeNextPoc: Long = INFERENCE_STAGE_SLACK_BLOCKS,
 ): StageSafeInferenceBlock? {
     require(minimumSlackBeforeNextPoc >= 0) { "minimumSlackBeforeNextPoc must be non-negative" }
 

@@ -20,7 +20,6 @@ import kotlin.test.assertNotNull
 @Tag("exclude")
 class UpgradeRehearsalTests : TestermintTest() {
     private val defaultDevshardMaxNonce = 20_000L
-    private val upgradeSchedulingSlackBlocks = 3L
 
     @Test
     @Tag("upgrade-rehearsal")
@@ -133,11 +132,11 @@ class UpgradeRehearsalTests : TestermintTest() {
         val scheduledUpgrade = requireNotNull(
             epochData.findStageSafeInferenceBlock(
                 earliestBlock = earliestUpgradeBlock,
-                minimumSlackBeforeNextPoc = upgradeSchedulingSlackBlocks,
+                minimumSlackBeforeNextPoc = INFERENCE_STAGE_SLACK_BLOCKS,
             )
         ) {
             "Failed to find a stage-safe upgrade block for height $earliestUpgradeBlock " +
-                "with slack $upgradeSchedulingSlackBlocks from phase ${epochData.phase}"
+                "with slack $INFERENCE_STAGE_SLACK_BLOCKS from phase ${epochData.phase}"
         }
 
         Logger.info(
