@@ -72,6 +72,11 @@ def load_config_from_env(hf_home: str = None):
         # Only checked when TX_GAS_PRICES is set (paid txs need funded cold key).
         "GRANT_MIN_SPENDABLE_NGONKA": "20000000000",
         "JOIN_FUND_WAIT_SECONDS": "600",
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "payloads",
+        "POSTGRES_USER": "payloads",
+        "POSTGRES_PASSWORD": "payloads",
     }
     
     config = default_config.copy()
@@ -129,6 +134,7 @@ def docker_compose_down():
         
         compose_files = ["-f", "docker-compose.yml", "-f", "docker-compose.mlnode.yml"]
         for override_name in (
+            "docker-compose.postgres.yml",
             "docker-compose.env-override.yml",
             "docker-compose.rpc-override.yml",
             "docker-compose.runtime-override.yml",
@@ -532,7 +538,11 @@ def standard_compose_files(include_mlnode=True):
     if include_mlnode:
         files.append("docker-compose.mlnode.yml")
     deploy_dir = GONKA_REPO_DIR / "deploy/join"
-    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+    for name in (
+        "docker-compose.postgres.yml",
+        "docker-compose.env-override.yml",
+        "docker-compose.rpc-override.yml",
+    ):
         path = deploy_dir / name
         if path.exists() and name not in files:
             files.append(name)
@@ -543,7 +553,11 @@ def ensure_compose_overrides(compose_files):
     """Append generated override files to an explicit compose file list."""
     files = list(compose_files)
     deploy_dir = GONKA_REPO_DIR / "deploy/join"
-    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+    for name in (
+        "docker-compose.postgres.yml",
+        "docker-compose.env-override.yml",
+        "docker-compose.rpc-override.yml",
+    ):
         if (deploy_dir / name).exists() and name not in files:
             files.append(name)
     return files

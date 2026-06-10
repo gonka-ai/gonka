@@ -92,6 +92,11 @@ services:
       - KEYRING_BACKEND=${KEYRING_BACKEND:-file}
       - KEYRING_PASSWORD=${KEYRING_PASSWORD}
       - KEYRING_DIR=/root/.inference
+      - PGHOST=${POSTGRES_HOST:-}
+      - PGPORT=${POSTGRES_PORT:-5432}
+      - PGDATABASE=${POSTGRES_DB:-payloads}
+      - PGUSER=${POSTGRES_USER:-payloads}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
