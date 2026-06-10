@@ -283,13 +283,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}},
 				},
 				{
-<<<<<<< HEAD
-					RpcMethod:      "SubnetEscrow",
-					Use:            "show-subnet-escrow [id]",
-					Short:          "Query a subnet escrow by ID",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
-				},
-=======
 					RpcMethod:      "DevshardEscrow",
 					Use:            "show-devshard-escrow [id]",
 					Short:          "Query a devshard escrow by ID",
@@ -301,7 +294,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query PoC delegation state for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "model_id", Optional: true}},
 				},
->>>>>>> origin/testnet/latest-in-v0.2.12
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -418,17 +410,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}, {ProtoField: "destination_address"}, {ProtoField: "chain_id"}},
 				},
 				{
-<<<<<<< HEAD
-					RpcMethod:      "CreateSubnetEscrow",
-					Use:            "create-subnet-escrow [amount]",
-					Short:          "Create a subnet escrow",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}},
-				},
-				{
-					RpcMethod: "SettleSubnetEscrow",
-					Skip:      true,
-				},
-=======
 					RpcMethod:      "CreateDevshardEscrow",
 					Use:            "create-devshard-escrow [amount] [model-id]",
 					Short:          "Create a devshard escrow",
@@ -456,7 +437,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Declare intent to deploy for a model",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
 				},
->>>>>>> origin/testnet/latest-in-v0.2.12
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

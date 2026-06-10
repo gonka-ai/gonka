@@ -843,6 +843,7 @@ data class ApplicationCLI(
         exec(
             listOf(config.execName, "keys", "export", keyName, "--unsafe", "--yes", "--unarmored-hex"),
             passwordInjection
+        ).first()
     }
 
     fun getWarmPrivateKey(): String = wrapLog("getWarmPrivateKey", infoLevel = false) {

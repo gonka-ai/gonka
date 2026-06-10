@@ -49,14 +49,6 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 				continue
 			}
 
-<<<<<<< HEAD
-		if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
-			if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(req.MessageTypeUrl, "/") {
-				granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
-				if err != nil {
-					k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)
-					continue
-=======
 			authorization := grant.Authorization.GetCachedValue()
 
 			if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
@@ -83,7 +75,6 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 						Address: grant.Grantee,
 						PubKey:  pubKeyStr,
 					})
->>>>>>> origin/testnet/latest-in-v0.2.12
 				}
 			}
 		}

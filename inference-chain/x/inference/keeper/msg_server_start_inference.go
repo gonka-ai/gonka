@@ -81,11 +81,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		}
 		k.LogDebug("StartInference: cryptographic signature verification skipped; dev and TA components compared for consistency", types.Inferences, "inferenceId", msg.InferenceId)
 	} else {
-<<<<<<< HEAD
-		err := k.verifyStartFirstMessageKeys(ctx, msg, &dev)
-=======
 		err := k.verifyStartFirstMessageKeys(ctx, msg, devAddress)
->>>>>>> origin/testnet/latest-in-v0.2.12
 		if err != nil {
 			k.LogError("StartInference: verifyStartFirstMessageKeys failed", types.Inferences, "error", err)
 			return failedStart(ctx, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error()), msg), nil
@@ -155,11 +151,7 @@ func failedStart(ctx sdk.Context, error error, message *types.MsgStartInference)
 	}
 }
 
-<<<<<<< HEAD
-func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgStartInference, dev *types.Participant) error {
-=======
 func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgStartInference, devAddress string) error {
->>>>>>> origin/testnet/latest-in-v0.2.12
 	devComponents := getDevSignatureComponents(msg)
 
 	if err := k.validateTimestamp(ctx, devComponents, msg.InferenceId, 60); err != nil {
@@ -168,11 +160,7 @@ func (k msgServer) verifyStartFirstMessageKeys(ctx sdk.Context, msg *types.MsgSt
 
 	// Verify dev signature (original_prompt_hash)
 	if err := calculations.VerifyKeys(ctx, devComponents, calculations.SignatureData{
-<<<<<<< HEAD
-		DevSignature: msg.InferenceId, Dev: dev,
-=======
 		DevSignature: msg.InferenceId, Dev: devAddress,
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}, k); err != nil {
 		k.LogError("StartInference: dev signature failed", types.Inferences, "error", err)
 		return err
@@ -357,26 +345,14 @@ func (k msgServer) processInferencePayments(
 		}
 	}
 	if payments.ExecutorPayment > 0 {
-<<<<<<< HEAD
-		if executor == nil {
-			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, inference.ExecutedBy)
-		}
-		ensureParticipantEpochStats(executor)
-		executor.CoinBalance += payments.ExecutorPayment
-		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
-		k.SafeLogSubAccountTransaction(ctx, executor.Address, types.ModuleName, types.OwedSubAccount, executor.CoinBalance, "inference_started:"+inference.InferenceId)
-=======
 		err := k.AddToCoinBalance(ctx, executor, uint64(payments.ExecutorPayment), "inference_finished")
 		if err != nil {
 			return nil, err
 		}
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return inference, nil
 }
 
-<<<<<<< HEAD
-=======
 // AddToCoinBalance adds payout to the participant's claimable work balance and
 // current-epoch earned coins, with overflow protection for both fields.
 func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Participant, payout uint64, memo string) error {
@@ -401,7 +377,6 @@ func (k Keeper) AddToCoinBalance(ctx context.Context, participant *types.Partici
 	return nil
 }
 
->>>>>>> origin/testnet/latest-in-v0.2.12
 func shouldPersistParticipant(inference *types.Inference, payments *calculations.Payments, executor *types.Participant) bool {
 	if inference == nil || payments == nil || executor == nil {
 		return false

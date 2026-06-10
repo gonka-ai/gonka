@@ -3285,13 +3285,8 @@ func local_request_Query_PoCValidationSnapshot_0(ctx context.Context, marshaler 
 
 }
 
-<<<<<<< HEAD
-func request_Query_SubnetEscrow_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetSubnetEscrowRequest
-=======
 func request_Query_DevshardEscrow_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryGetDevshardEscrowRequest
->>>>>>> origin/testnet/latest-in-v0.2.12
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -3312,22 +3307,13 @@ func request_Query_DevshardEscrow_0(ctx context.Context, marshaler runtime.Marsh
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
 	}
 
-<<<<<<< HEAD
-	msg, err := client.SubnetEscrow(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-=======
 	msg, err := client.DevshardEscrow(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	return msg, metadata, err
 
 }
 
-<<<<<<< HEAD
-func local_request_Query_SubnetEscrow_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetSubnetEscrowRequest
-=======
 func local_request_Query_DevshardEscrow_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryGetDevshardEscrowRequest
->>>>>>> origin/testnet/latest-in-v0.2.12
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -3348,19 +3334,11 @@ func local_request_Query_DevshardEscrow_0(ctx context.Context, marshaler runtime
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "id", err)
 	}
 
-<<<<<<< HEAD
-	msg, err := server.SubnetEscrow(ctx, &protoReq)
-=======
 	msg, err := server.DevshardEscrow(ctx, &protoReq)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	return msg, metadata, err
 
 }
 
-<<<<<<< HEAD
-func request_Query_SubnetHostEpochStats_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetSubnetHostEpochStatsRequest
-=======
 func request_Query_PreservedNodesSnapshot_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryPreservedNodesSnapshotRequest
 	var metadata runtime.ServerMetadata
@@ -3381,7 +3359,6 @@ func local_request_Query_PreservedNodesSnapshot_0(ctx context.Context, marshaler
 
 func request_Query_DevshardHostEpochStats_0(ctx context.Context, marshaler runtime.Marshaler, client QueryClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryGetDevshardHostEpochStatsRequest
->>>>>>> origin/testnet/latest-in-v0.2.12
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -3413,22 +3390,13 @@ func request_Query_DevshardHostEpochStats_0(ctx context.Context, marshaler runti
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-<<<<<<< HEAD
-	msg, err := client.SubnetHostEpochStats(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-=======
 	msg, err := client.DevshardHostEpochStats(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	return msg, metadata, err
 
 }
 
-<<<<<<< HEAD
-func local_request_Query_SubnetHostEpochStats_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq QueryGetSubnetHostEpochStatsRequest
-=======
 func local_request_Query_DevshardHostEpochStats_0(ctx context.Context, marshaler runtime.Marshaler, server QueryServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq QueryGetDevshardHostEpochStatsRequest
->>>>>>> origin/testnet/latest-in-v0.2.12
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -3460,9 +3428,6 @@ func local_request_Query_DevshardHostEpochStats_0(ctx context.Context, marshaler
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-<<<<<<< HEAD
-	msg, err := server.SubnetHostEpochStats(ctx, &protoReq)
-=======
 	msg, err := server.DevshardHostEpochStats(ctx, &protoReq)
 	return msg, metadata, err
 
@@ -3536,7 +3501,6 @@ func local_request_Query_PoCDelegation_0(ctx context.Context, marshaler runtime.
 	}
 
 	msg, err := server.PoCDelegation(ctx, &protoReq)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	return msg, metadata, err
 
 }
@@ -5203,11 +5167,7 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 
 	})
 
-<<<<<<< HEAD
-	mux.Handle("GET", pattern_Query_SubnetEscrow_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-=======
 	mux.Handle("GET", pattern_Query_DevshardEscrow_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -5218,11 +5178,7 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-<<<<<<< HEAD
-		resp, md, err := local_request_Query_SubnetEscrow_0(rctx, inboundMarshaler, server, req, pathParams)
-=======
 		resp, md, err := local_request_Query_DevshardEscrow_0(rctx, inboundMarshaler, server, req, pathParams)
->>>>>>> origin/testnet/latest-in-v0.2.12
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
@@ -5230,19 +5186,11 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 			return
 		}
 
-<<<<<<< HEAD
-		forward_Query_SubnetEscrow_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("GET", pattern_Query_SubnetHostEpochStats_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-=======
 		forward_Query_DevshardEscrow_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
 	mux.Handle("GET", pattern_Query_PreservedNodesSnapshot_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -5253,11 +5201,7 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-<<<<<<< HEAD
-		resp, md, err := local_request_Query_SubnetHostEpochStats_0(rctx, inboundMarshaler, server, req, pathParams)
-=======
 		resp, md, err := local_request_Query_PreservedNodesSnapshot_0(rctx, inboundMarshaler, server, req, pathParams)
->>>>>>> origin/testnet/latest-in-v0.2.12
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
@@ -5265,9 +5209,6 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 			return
 		}
 
-<<<<<<< HEAD
-		forward_Query_SubnetHostEpochStats_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-=======
 		forward_Query_PreservedNodesSnapshot_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
@@ -5315,7 +5256,6 @@ func RegisterQueryHandlerServer(ctx context.Context, mux *runtime.ServeMux, serv
 		}
 
 		forward_Query_PoCDelegation_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 	})
 
@@ -6800,11 +6740,7 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 
 	})
 
-<<<<<<< HEAD
-	mux.Handle("GET", pattern_Query_SubnetEscrow_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-=======
 	mux.Handle("GET", pattern_Query_DevshardEscrow_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
@@ -6813,30 +6749,18 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-<<<<<<< HEAD
-		resp, md, err := request_Query_SubnetEscrow_0(rctx, inboundMarshaler, client, req, pathParams)
-=======
 		resp, md, err := request_Query_DevshardEscrow_0(rctx, inboundMarshaler, client, req, pathParams)
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-<<<<<<< HEAD
-		forward_Query_SubnetEscrow_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-
-	})
-
-	mux.Handle("GET", pattern_Query_SubnetHostEpochStats_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
-=======
 		forward_Query_DevshardEscrow_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
 	mux.Handle("GET", pattern_Query_PreservedNodesSnapshot_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
@@ -6845,20 +6769,13 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-<<<<<<< HEAD
-		resp, md, err := request_Query_SubnetHostEpochStats_0(rctx, inboundMarshaler, client, req, pathParams)
-=======
 		resp, md, err := request_Query_PreservedNodesSnapshot_0(rctx, inboundMarshaler, client, req, pathParams)
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ctx = runtime.NewServerMetadataContext(ctx, md)
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-<<<<<<< HEAD
-		forward_Query_SubnetHostEpochStats_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
-=======
 		forward_Query_PreservedNodesSnapshot_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
@@ -6900,7 +6817,6 @@ func RegisterQueryHandlerClient(ctx context.Context, mux *runtime.ServeMux, clie
 		}
 
 		forward_Query_PoCDelegation_0(ctx, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 	})
 
@@ -7052,11 +6968,6 @@ var (
 
 	pattern_Query_PoCValidationSnapshot_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_validation_snapshot", "poc_stage_start_height"}, "", runtime.AssumeColonVerbOpt(true)))
 
-<<<<<<< HEAD
-	pattern_Query_SubnetEscrow_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "subnet_escrow", "id"}, "", runtime.AssumeColonVerbOpt(true)))
-
-	pattern_Query_SubnetHostEpochStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "subnet_host_epoch_stats", "epoch_index", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
-=======
 	pattern_Query_DevshardEscrow_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "devshard_escrow", "id"}, "", runtime.AssumeColonVerbOpt(true)))
 
 	pattern_Query_PreservedNodesSnapshot_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "preserved_nodes_snapshot"}, "", runtime.AssumeColonVerbOpt(true)))
@@ -7064,7 +6975,6 @@ var (
 	pattern_Query_DevshardHostEpochStats_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "devshard_host_epoch_stats", "epoch_index", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 
 	pattern_Query_PoCDelegation_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_delegation", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
->>>>>>> origin/testnet/latest-in-v0.2.12
 )
 
 var (
@@ -7212,11 +7122,6 @@ var (
 
 	forward_Query_PoCValidationSnapshot_0 = runtime.ForwardResponseMessage
 
-<<<<<<< HEAD
-	forward_Query_SubnetEscrow_0 = runtime.ForwardResponseMessage
-
-	forward_Query_SubnetHostEpochStats_0 = runtime.ForwardResponseMessage
-=======
 	forward_Query_DevshardEscrow_0 = runtime.ForwardResponseMessage
 
 	forward_Query_PreservedNodesSnapshot_0 = runtime.ForwardResponseMessage
@@ -7224,5 +7129,4 @@ var (
 	forward_Query_DevshardHostEpochStats_0 = runtime.ForwardResponseMessage
 
 	forward_Query_PoCDelegation_0 = runtime.ForwardResponseMessage
->>>>>>> origin/testnet/latest-in-v0.2.12
 )

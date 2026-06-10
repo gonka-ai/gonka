@@ -3,10 +3,7 @@ package keeper_test
 import (
 	"testing"
 
-<<<<<<< HEAD
-=======
 	"cosmossdk.io/math"
->>>>>>> origin/testnet/latest-in-v0.2.12
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -30,8 +27,6 @@ func TestMsgServer_RequestBridgeMint_Permissions(t *testing.T) {
 	err = keeper.CheckPermission(ms, wctx, msg, keeper.AccountPermission)
 	require.NoError(t, err)
 }
-<<<<<<< HEAD
-=======
 
 func TestMsgServer_RequestBridgeMint_Behavior(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
@@ -62,4 +57,3 @@ func TestMsgServer_RequestBridgeMint_Behavior(t *testing.T) {
 	_, err := ms.RequestBridgeMint(ctx, msg)
 	require.Error(t, err)
 }
->>>>>>> origin/testnet/latest-in-v0.2.12

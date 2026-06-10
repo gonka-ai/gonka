@@ -91,15 +91,10 @@ const (
 	Query_ListRandomSeeds_FullMethodName                           = "/inference.inference.Query/ListRandomSeeds"
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
-<<<<<<< HEAD
-	Query_SubnetEscrow_FullMethodName                              = "/inference.inference.Query/SubnetEscrow"
-	Query_SubnetHostEpochStats_FullMethodName                      = "/inference.inference.Query/SubnetHostEpochStats"
-=======
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
 	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
 	Query_PoCDelegation_FullMethodName                             = "/inference.inference.Query/PoCDelegation"
->>>>>>> origin/testnet/latest-in-v0.2.12
 )
 
 // QueryClient is the client API for Query service.
@@ -228,16 +223,11 @@ type QueryClient interface {
 	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
-<<<<<<< HEAD
-	SubnetEscrow(ctx context.Context, in *QueryGetSubnetEscrowRequest, opts ...grpc.CallOption) (*QueryGetSubnetEscrowResponse, error)
-	SubnetHostEpochStats(ctx context.Context, in *QueryGetSubnetHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetSubnetHostEpochStatsResponse, error)
-=======
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(ctx context.Context, in *QueryGetDevshardHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error)
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 type queryClient struct {
@@ -896,26 +886,15 @@ func (c *queryClient) PoCValidationSnapshot(ctx context.Context, in *QueryPoCVal
 	return out, nil
 }
 
-<<<<<<< HEAD
-func (c *queryClient) SubnetEscrow(ctx context.Context, in *QueryGetSubnetEscrowRequest, opts ...grpc.CallOption) (*QueryGetSubnetEscrowResponse, error) {
-	out := new(QueryGetSubnetEscrowResponse)
-	err := c.cc.Invoke(ctx, Query_SubnetEscrow_FullMethodName, in, out, opts...)
-=======
 func (c *queryClient) DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error) {
 	out := new(QueryGetDevshardEscrowResponse)
 	err := c.cc.Invoke(ctx, Query_DevshardEscrow_FullMethodName, in, out, opts...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-<<<<<<< HEAD
-func (c *queryClient) SubnetHostEpochStats(ctx context.Context, in *QueryGetSubnetHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetSubnetHostEpochStatsResponse, error) {
-	out := new(QueryGetSubnetHostEpochStatsResponse)
-	err := c.cc.Invoke(ctx, Query_SubnetHostEpochStats_FullMethodName, in, out, opts...)
-=======
 func (c *queryClient) PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error) {
 	out := new(QueryPreservedNodesSnapshotResponse)
 	err := c.cc.Invoke(ctx, Query_PreservedNodesSnapshot_FullMethodName, in, out, opts...)
@@ -937,7 +916,6 @@ func (c *queryClient) DevshardHostEpochStats(ctx context.Context, in *QueryGetDe
 func (c *queryClient) PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error) {
 	out := new(QueryPoCDelegationResponse)
 	err := c.cc.Invoke(ctx, Query_PoCDelegation_FullMethodName, in, out, opts...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
@@ -1070,16 +1048,11 @@ type QueryServer interface {
 	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
-<<<<<<< HEAD
-	SubnetEscrow(context.Context, *QueryGetSubnetEscrowRequest) (*QueryGetSubnetEscrowResponse, error)
-	SubnetHostEpochStats(context.Context, *QueryGetSubnetHostEpochStatsRequest) (*QueryGetSubnetHostEpochStatsResponse, error)
-=======
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1303,13 +1276,6 @@ func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *Query
 func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCValidationSnapshot not implemented")
 }
-<<<<<<< HEAD
-func (UnimplementedQueryServer) SubnetEscrow(context.Context, *QueryGetSubnetEscrowRequest) (*QueryGetSubnetEscrowResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubnetEscrow not implemented")
-}
-func (UnimplementedQueryServer) SubnetHostEpochStats(context.Context, *QueryGetSubnetHostEpochStatsRequest) (*QueryGetSubnetHostEpochStatsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubnetHostEpochStats not implemented")
-=======
 func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardEscrow not implemented")
 }
@@ -1321,7 +1287,6 @@ func (UnimplementedQueryServer) DevshardHostEpochStats(context.Context, *QueryGe
 }
 func (UnimplementedQueryServer) PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCDelegation not implemented")
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2632,27 +2597,12 @@ func _Query_PoCValidationSnapshot_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-<<<<<<< HEAD
-func _Query_SubnetEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetSubnetEscrowRequest)
-=======
 func _Query_DevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetDevshardEscrowRequest)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-<<<<<<< HEAD
-		return srv.(QueryServer).SubnetEscrow(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_SubnetEscrow_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).SubnetEscrow(ctx, req.(*QueryGetSubnetEscrowRequest))
-=======
 		return srv.(QueryServer).DevshardEscrow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -2661,32 +2611,16 @@ func _Query_DevshardEscrow_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).DevshardEscrow(ctx, req.(*QueryGetDevshardEscrowRequest))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-<<<<<<< HEAD
-func _Query_SubnetHostEpochStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetSubnetHostEpochStatsRequest)
-=======
 func _Query_PreservedNodesSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryPreservedNodesSnapshotRequest)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-<<<<<<< HEAD
-		return srv.(QueryServer).SubnetHostEpochStats(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_SubnetHostEpochStats_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).SubnetHostEpochStats(ctx, req.(*QueryGetSubnetHostEpochStatsRequest))
-=======
 		return srv.(QueryServer).PreservedNodesSnapshot(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -2731,7 +2665,6 @@ func _Query_PoCDelegation_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).PoCDelegation(ctx, req.(*QueryPoCDelegationRequest))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3032,14 +2965,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_PoCValidationSnapshot_Handler,
 		},
 		{
-<<<<<<< HEAD
-			MethodName: "SubnetEscrow",
-			Handler:    _Query_SubnetEscrow_Handler,
-		},
-		{
-			MethodName: "SubnetHostEpochStats",
-			Handler:    _Query_SubnetHostEpochStats_Handler,
-=======
 			MethodName: "DevshardEscrow",
 			Handler:    _Query_DevshardEscrow_Handler,
 		},
@@ -3054,7 +2979,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PoCDelegation",
 			Handler:    _Query_PoCDelegation_Handler,
->>>>>>> origin/testnet/latest-in-v0.2.12
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

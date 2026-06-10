@@ -193,14 +193,10 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 	validationState.SlotsCovered += uint32(len(filteredSlots))
 
-<<<<<<< HEAD
-	// Use the previous epoch DKG threshold t+1 for readiness.
-=======
 	// Check if we have sufficient participation (previous epoch DKG threshold t+1).
 	// For a polynomial of degree t (TSlotsDegree), we need at least t + 1 valid signature shares
 	// to successfully reconstruct the group signature using Lagrange interpolation.
 	// Note that TSlotsDegree is configurable per epoch, making this threshold dynamic.
->>>>>>> origin/testnet/latest-in-v0.2.12
 	requiredSlots := previousEpochBLSData.TSlotsDegree + 1
 	ms.Keeper.LogInfo("Checking for signature readiness", "required_slots", requiredSlots, "slots_covered", validationState.SlotsCovered)
 	if validationState.SlotsCovered >= requiredSlots {

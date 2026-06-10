@@ -38,15 +38,8 @@ fi
 
 escaped_addr=$(printf '%s' "$VALIDATOR_LISTEN_ADDRESS" | sed 's/[\/&]/\\&/g')
 sed -i "s/^addr *= *\".*\"/addr = \"$escaped_addr\"/" "$TOML_FILE"
+
 echo "Set addr to \"$VALIDATOR_LISTEN_ADDRESS\" in $TOML_FILE"
-
-# Chain ID replacement (default to gonka-mainnet)
-CHAIN_ID="${CHAIN_ID:-gonka-mainnet}"
-sed -i "s/^id *= *\".*\"/id = \"$CHAIN_ID\"/" "$TOML_FILE"
-sed -i "s/^chain_ids *= *\[\".*\"\]/chain_ids = [\"$CHAIN_ID\"]/" "$TOML_FILE"
-sed -i "s/^chain_id *= *\".*\"/chain_id = \"$CHAIN_ID\"/" "$TOML_FILE"
-echo "Set chain_id to \"$CHAIN_ID\" in $TOML_FILE"
-
 echo "Contents of $TOML_FILE:"
 cat "$TOML_FILE"
 

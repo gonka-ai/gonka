@@ -9,10 +9,7 @@ import (
 var _ sdk.Msg = &MsgSubmitVerificationVector{}
 
 const maxVerificationDealerValidityEntries = 65536
-<<<<<<< HEAD
-=======
 const maxVerificationDealerComplaints = 65536
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if _, err := sdk.AccAddressFromBech32(m.Creator); err != nil {
@@ -27,8 +24,6 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 	if len(m.DealerValidity) > maxVerificationDealerValidityEntries {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_validity exceeds maximum allowed count")
 	}
-<<<<<<< HEAD
-=======
 
 	if len(m.DealerComplaints) > maxVerificationDealerComplaints {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "dealer_complaints exceeds maximum allowed count")
@@ -84,6 +79,5 @@ func (m *MsgSubmitVerificationVector) ValidateBasic() error {
 		}
 		seenProofDealers[proof.DealerIndex] = struct{}{}
 	}
->>>>>>> origin/testnet/latest-in-v0.2.12
 	return nil
 }

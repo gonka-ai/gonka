@@ -47,11 +47,7 @@ func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddr
 	if err != nil || bwr.IsNegative() || bwr.GTE(math.LegacyOneDec()) {
 		return math.ZeroInt()
 	}
-<<<<<<< HEAD
-	
-=======
 
->>>>>>> origin/testnet/latest-in-v0.2.12
 	cpwu, err := collateralParams.CollateralPerWeightUnit.ToLegacyDec()
 	if err != nil || cpwu.IsNegative() || cpwu.IsZero() {
 		return math.ZeroInt()
@@ -63,8 +59,6 @@ func (k Keeper) calculateRequiredCollateral(ctx context.Context, participantAddr
 	return requiredDec.TruncateInt()
 }
 
-<<<<<<< HEAD
-=======
 // GetRequiredCollateralForSlash returns the collateral amount that should be used as the slashing base
 // for a participant under the current inference tokenomics rules.
 func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int {
@@ -77,7 +71,6 @@ func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAd
 	return k.calculateRequiredCollateral(ctx, participantAddress.String(), params.CollateralParams)
 }
 
->>>>>>> origin/testnet/latest-in-v0.2.12
 // AdjustWeightsByCollateral adjusts participant weights based on their collateral deposit,
 // implementing the core logic of the Tokenomics V2 proposal. After an initial grace
 // period, a participant's final weight is a combination of a collateral-free

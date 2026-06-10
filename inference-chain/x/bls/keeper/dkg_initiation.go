@@ -323,23 +323,6 @@ func (k Keeper) AssignSlots(ctx sdk.Context, participants []types.ParticipantWit
 func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData) error {
 	store := k.storeService.OpenKVStore(ctx)
 
-<<<<<<< HEAD
-		if assigned[i] > assigned[donor] {
-			donor = i
-			continue
-		}
-		if assigned[i] == assigned[donor] {
-			ri := remainders[i]
-			rd := remainders[donor]
-			if !ri.Equal(rd) {
-				if ri.GT(rd) {
-					donor = i
-				}
-				continue
-			}
-			if participants[i].Address < participants[donor].Address {
-				donor = i
-=======
 	// Sync any non-empty dealer parts to their sub-keys. Empty placeholders
 	// (DealerAddress == "") are skipped — they only exist as in-memory
 	// sentinels during DKG initialization.
@@ -347,7 +330,6 @@ func (k Keeper) SetEpochBLSData(ctx sdk.Context, epochBLSData types.EpochBLSData
 		if dp != nil && dp.DealerAddress != "" {
 			if err := k.SetDealerPart(ctx, epochBLSData.EpochId, uint32(i), dp); err != nil {
 				return fmt.Errorf("sync dealer part %d to sub-key: %w", i, err)
->>>>>>> origin/testnet/latest-in-v0.2.12
 			}
 		}
 	}

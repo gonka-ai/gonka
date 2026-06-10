@@ -24,14 +24,10 @@ message Params {
   DeveloperAccessParams developer_access_params = 11;
   ParticipantAccessParams participant_access_params = 12;
   TransferAgentAccessParams transfer_agent_access_params = 13;
-<<<<<<< HEAD
-  SubnetEscrowParams subnet_escrow_params = 14;
-=======
   DevshardEscrowParams devshard_escrow_params = 14;
   reserved "subnet_escrow_params";
   FeeParams fee_params = 15;
   DelegationParams delegation_params = 16;
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 message GenesisOnlyParams {
@@ -112,10 +108,7 @@ message ValidationParams {
   Decimal quick_failure_threshold = 23; // The threshold of probabilty of consecutive failures to cause a quick invalidation
   Decimal binom_test_p0 = 24; // The null hypothesis probability for the binomial test (default 0.10)
   bool claim_validation_enabled = 25; // Enables claim-time validation checks in MsgClaimRewards
-<<<<<<< HEAD
-=======
   string logprobs_mode = 26; // allowed: "processed_logprobs", "raw_logprobs"
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 message PoCModelParams {
@@ -351,10 +344,6 @@ message TransferAgentAccessParams {
   repeated string allowed_transfer_addresses = 1;
 }
 
-<<<<<<< HEAD
-// SubnetEscrowParams defines governance-controlled parameters for subnet escrow creation and settlement.
-message SubnetEscrowParams {
-=======
 // DelegationParams defines parameters for PoC delegation in the multi-model system.
 message DelegationParams {
   option (gogoproto.equal) = true;
@@ -383,7 +372,6 @@ message DevshardApprovedVersion {
 
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.
 message DevshardEscrowParams {
->>>>>>> origin/testnet/latest-in-v0.2.12
   option (gogoproto.equal) = true;
   uint64 min_amount = 1;
   uint64 max_amount = 2;
@@ -391,9 +379,9 @@ message DevshardEscrowParams {
   uint32 group_size = 4;
   repeated string allowed_creator_addresses = 5;
   uint64 token_price = 6;
-<<<<<<< HEAD
-=======
   repeated DevshardApprovedVersion approved_versions = 7;
+  uint32 max_nonce = 8;
+  bool devshard_requests_enabled = 9;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level
@@ -406,5 +394,4 @@ message FeeParams {
   uint64 base_validation_gas = 2;
   // Additional gas consumed per unit of Count delta in MsgPoCV2StoreCommit.
   uint64 gas_per_poc_count = 3;
->>>>>>> origin/testnet/latest-in-v0.2.12
 }

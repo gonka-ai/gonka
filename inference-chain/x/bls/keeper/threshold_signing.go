@@ -465,17 +465,12 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		return fmt.Errorf("participant %s already submitted partial signature", submitter)
 	}
 
-<<<<<<< HEAD
-	// Add partial signature to request
-	request.PartialSignatures = append(request.PartialSignatures, types.PartialSignature{
-=======
 	// Persist the new partial signature to its own sub-key. Write cost is
 	// bounded by this submitter's own payload, independent of how many
 	// other signers have already submitted — that is the whole point of
 	// the split (see ThresholdPartialSigRequestPrefix doc for the
 	// gas-scaling rationale).
 	newPartial := types.PartialSignature{
->>>>>>> origin/testnet/latest-in-v0.2.12
 		ParticipantAddress: submitter,
 		SlotIndices:        slotIndices,
 		Signature:          partialSignature,

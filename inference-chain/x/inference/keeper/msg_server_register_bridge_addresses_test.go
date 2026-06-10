@@ -1,15 +1,10 @@
 package keeper_test
 
 import (
-<<<<<<< HEAD
-	"testing"
-
-=======
 	"context"
 	"testing"
 	
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
->>>>>>> origin/testnet/latest-in-v0.2.12
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -31,8 +26,6 @@ func TestMsgServer_RegisterBridgeAddresses_Permissions(t *testing.T) {
 	err = keeper.CheckPermission(ms, wctx, ok, keeper.GovernancePermission)
 	require.NoError(t, err)
 }
-<<<<<<< HEAD
-=======
 
 func TestMsgServer_RegisterBridgeAddresses_CleanupExistingWrappedToken(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
@@ -121,4 +114,3 @@ func TestMsgServer_RegisterBridgeAddresses_CleanupExistingWrappedToken(t *testin
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not a registered wrapped token contract")
 }
->>>>>>> origin/testnet/latest-in-v0.2.12

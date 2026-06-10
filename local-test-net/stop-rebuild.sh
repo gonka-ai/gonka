@@ -13,4 +13,5 @@ export SET_LATEST=1
 export DEVSHARD_VERSION="v0.2.11"
 make -C "${REPO_ROOT}" build-docker
 
-make -C "${REPO_ROOT}" devshardd-build
+# devshardd self-checks build_version == the version versiond forces (v1 in DevshardStandaloneTests).
+DEVSHARD_VERSION=v1 make -C "${REPO_ROOT}" devshardd-build

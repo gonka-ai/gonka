@@ -1,12 +1,5 @@
 # PoC Validation Scripts
 
-<<<<<<< HEAD
-This folder contains the data collection pipeline for **PoC (Proof-of-Computation) vector validation** against already running vLLM servers with PoC support.
-
-The goal is to verify that PoC vector generation is consistent across different GPUs, vLLM versions, and model configurations — and to detect fraud (e.g., a node running INT4 instead of FP8).
-
-## Pipeline Overview
-=======
 This folder contains the data collection pipeline for PoC (Proof-of-Computation) vector validation against already running vLLM servers with PoC support.
 
 The goal is to verify that PoC vector generation is consistent across different GPUs, vLLM versions, and model configurations -- and to detect fraud (e.g., a node running INT4 instead of FP8).
@@ -65,7 +58,6 @@ lookup. See `skills/mlnode-validate/SKILL.md` for the full procedure
 and the agent-facing contract.
 
 ## Cross-run comparison (legacy)
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 ```
 1. collect_data.py          Collect PoC vectors from one or more servers

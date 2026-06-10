@@ -1,0 +1,16 @@
+deploy/join/docker-compose.yml
+deploy/join/node-config.json
+test-net-cloud/nebius/README.md
+test-net-cloud/nebius/docs/testnet-2.13-join-instruction.md
+test-net-cloud/nebius/genesis-overrides.json
+test-net-cloud/nebius/health-check-scripts/Readme.md
+test-net-cloud/nebius/health-check-scripts/healthcheck-nodes-example.csv
+test-net-cloud/nebius/health-check-scripts/healthcheck.sh
+test-net-cloud/nebius/inference.py
+test-net-cloud/nebius/join-1.sh
+test-net-cloud/nebius/join-2.sh
+test-net-cloud/nebius/join-additional/generate-join-and-scp.py
+test-net-cloud/nebius/join-additional/params.csv
+test-net-cloud/nebius/launch.py
+test-net-cloud/nebius/prepare.sh
+testnet-main-diff-files.txt

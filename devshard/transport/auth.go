@@ -55,4 +55,3 @@ func VerifyRequest(verifier signing.Verifier, escrowID string, body []byte, sig 
 	}
 	return addr, nil
 }
-

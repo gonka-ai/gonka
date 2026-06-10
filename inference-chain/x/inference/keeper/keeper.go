@@ -30,7 +30,7 @@ type (
 		authority     string
 		AccountKeeper types.AccountKeeper
 		AuthzKeeper   types.AuthzKeeper
-		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+		getWasmKeeper *wasmKeeperGetter
 		mintTokensFn  func(ctx sdk.Context, contractAddr, recipient, amount string) error
 
 		collateralKeeper    types.CollateralKeeper
@@ -81,8 +81,8 @@ type (
 		LastUpgradeHeight              collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
 		// Bridge & Wrapped Token collections
-		BridgeContractAddresses        collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
-		BridgeTransactionsMap          collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
+		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
+		BridgeTransactionsMap   collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
 		// BridgeTransactionValidators records per-validator confirmations
 		// for a bridge transaction. Key is (chainId, blockNumber, contentHashPart, validator_bech32),
 		// mirroring BridgeTransactionsMap's parent key so conflict txs (same
@@ -102,19 +102,11 @@ type (
 		LiquidityPoolItem              collections.Item[types.LiquidityPool]
 		LiquidityPoolApprovedTokensMap collections.Map[collections.Pair[string, string], types.BridgeTokenReference]
 		// PoC validation sampling snapshots
-		PoCValidationSnapshots collections.Map[int64, types.PoCValidationSnapshot]
+		PoCValidationSnapshots     collections.Map[int64, types.PoCValidationSnapshot]
 		PreservedNodesSnapshotItem collections.Item[types.PreservedNodesSnapshot]
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-<<<<<<< HEAD
-		// Subnet escrow collections
-		SubnetEscrows           collections.Map[uint64, types.SubnetEscrow]
-		SubnetEscrowCounter     collections.Item[uint64]
-		SubnetEscrowEpochCount  collections.Map[uint64, uint64]
-		SubnetHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.SubnetHostEpochStats]
-		SubnetEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
-=======
 		// Devshard escrow collections
 		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
 		DevshardEscrowCounter     collections.Item[uint64]
@@ -127,9 +119,12 @@ type (
 		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
 		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 )
+
+type wasmKeeperGetter struct {
+	fn func() wasmkeeper.Keeper
+}
 
 func NewKeeper(
 	cdc codec.BinaryCodec,
@@ -173,7 +168,7 @@ func NewKeeper(
 		BlsKeeper:             blsKeeper,
 		collateralKeeper:      collateralKeeper,
 		streamvestingKeeper:   streamvestingKeeper,
-		getWasmKeeper:         getWasmKeeper,
+		getWasmKeeper:         &wasmKeeperGetter{fn: getWasmKeeper},
 		UpgradeKeeper:         upgradeKeeper,
 		// collection init
 		Participants: collections.NewMap(
@@ -532,43 +527,6 @@ func NewKeeper(
 			"active_participants_cache",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
-<<<<<<< HEAD
-		// Subnet escrow collections
-		SubnetEscrows: collections.NewMap(
-			sb,
-			types.SubnetEscrowsPrefix,
-			"subnet_escrows",
-			collections.Uint64Key,
-			codec.CollValue[types.SubnetEscrow](cdc),
-		),
-		SubnetEscrowCounter: collections.NewItem(
-			sb,
-			types.SubnetEscrowCounterPrefix,
-			"subnet_escrow_counter",
-			collections.Uint64Value,
-		),
-		SubnetEscrowEpochCount: collections.NewMap(
-			sb,
-			types.SubnetEscrowEpochCountPrefix,
-			"subnet_escrow_epoch_count",
-			collections.Uint64Key,
-			collections.Uint64Value,
-		),
-		SubnetHostEpochStatsMap: collections.NewMap(
-			sb,
-			types.SubnetHostEpochStatsPrefix,
-			"subnet_host_epoch_stats",
-			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
-			codec.CollValue[types.SubnetHostEpochStats](cdc),
-		),
-		SubnetEscrowsByEpoch: collections.NewMap(
-			sb,
-			types.SubnetEscrowsByEpochPrefix,
-			"subnet_escrows_by_epoch",
-			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
-			collections.NoValue{},
-		),
-=======
 		// Devshard escrow collections
 		DevshardEscrows: collections.NewMap(
 			sb,
@@ -636,7 +594,6 @@ func NewKeeper(
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	// Build the collections schema
 	schema, err := sb.Build()
@@ -655,7 +612,20 @@ func (k Keeper) GetAuthority() string {
 
 // GetWasmKeeper returns the WASM keeper
 func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
-	return k.getWasmKeeper()
+	if k.getWasmKeeper == nil || k.getWasmKeeper.fn == nil {
+		return wasmkeeper.Keeper{}
+	}
+	return k.getWasmKeeper.fn()
+}
+
+// SetWasmKeeperGetter updates the shared WASM keeper getter. Keeper values are
+// copied into AppModule/msgServer during app wiring, so the getter itself must
+// be shared for post-legacy-module initialization updates to reach those copies.
+func (k Keeper) SetWasmKeeperGetter(getWasmKeeper func() wasmkeeper.Keeper) {
+	if k.getWasmKeeper == nil {
+		k.getWasmKeeper = &wasmKeeperGetter{}
+	}
+	k.getWasmKeeper.fn = getWasmKeeper
 }
 
 // GetCollateralKeeper returns the collateral keeper.

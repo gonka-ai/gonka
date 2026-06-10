@@ -2,12 +2,15 @@ package devshard
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -41,15 +44,67 @@ type HostManager struct {
 	sessions map[string]*transport.Server
 	sf       singleflight.Group
 
+	readyMu      sync.RWMutex
+	initializing bool
+	initErr      error
+
 	store        storage.Storage
 	signer       *signing.Secp256k1Signer
 	verifier     signing.Verifier
 	engine       devshardpkg.InferenceEngine
 	validator    devshardpkg.ValidationEngine
+	availability devshardpkg.AvailabilityProvider
 	boundVersion string
 	bridge       bridge.MainnetBridge
 	payloadStore payloadstorage.PayloadStorage
 	recorder     PayloadAuthClient
+
+	statsMu           sync.Mutex
+	statsShardsCache  *statsShardsResponse
+	statsShardsCached time.Time
+	statsDetailsCache map[string]statsShardDetailCache
+}
+
+const (
+	recoverSessionsConcurrency = 8
+	statsCacheTTL              = 60 * time.Second
+)
+
+type statsShardDetailCache struct {
+	response *statsShardDetailResponse
+	cached   time.Time
+}
+
+type statsShardsResponse struct {
+	CurrentEpochID  uint64              `json:"current_epoch_id"`
+	CachedAt        int64               `json:"cached_at"`
+	CacheTTLSeconds int64               `json:"cache_ttl_seconds"`
+	ActiveEscrows   []string            `json:"active_escrows"`
+	Shards          []statsShardSummary `json:"shards"`
+}
+
+type statsShardSummary struct {
+	EscrowID string `json:"escrow_id"`
+	EpochID  uint64 `json:"epoch_id"`
+}
+
+type statsShardDetailResponse struct {
+	EscrowID        string                    `json:"escrow_id"`
+	EpochID         uint64                    `json:"epoch_id"`
+	Nonce           uint64                    `json:"nonce"`
+	Version         string                    `json:"version"`
+	CachedAt        int64                     `json:"cached_at"`
+	CacheTTLSeconds int64                     `json:"cache_ttl_seconds"`
+	HostStats       map[uint32]statsHostStats `json:"host_stats"`
+	Group           []types.SlotAssignment    `json:"group"`
+}
+
+type statsHostStats struct {
+	Missed               uint32 `json:"missed"`
+	Invalid              uint32 `json:"invalid"`
+	Cost                 uint64 `json:"cost"`
+	RequiredValidations  uint32 `json:"required_validations"`
+	CompletedValidations uint32 `json:"completed_validations"`
 }
 
 func NewHostManager(
@@ -63,16 +118,18 @@ func NewHostManager(
 	recorder PayloadAuthClient,
 ) *HostManager {
 	return &HostManager{
-		sessions:     make(map[string]*transport.Server),
-		store:        store,
-		signer:       signer,
-		verifier:     signing.NewSecp256k1Verifier(),
-		engine:       engine,
-		validator:    validator,
-		boundVersion: types.NormalizeSessionVersion(boundVersion),
-		bridge:       br,
-		payloadStore: payloadStore,
-		recorder:     recorder,
+		sessions:          make(map[string]*transport.Server),
+		initializing:      true,
+		store:             store,
+		signer:            signer,
+		verifier:          signing.NewSecp256k1Verifier(),
+		engine:            engine,
+		validator:         validator,
+		boundVersion:      types.NormalizeSessionVersion(boundVersion),
+		bridge:            br,
+		payloadStore:      payloadStore,
+		recorder:          recorder,
+		statsDetailsCache: make(map[string]statsShardDetailCache),
 	}
 }
 
@@ -81,43 +138,98 @@ func (m *HostManager) Close() error {
 	return m.store.Close()
 }
 
+func (m *HostManager) SetInitializing() {
+	m.readyMu.Lock()
+	defer m.readyMu.Unlock()
+	m.initializing = true
+	m.initErr = nil
+}
+
+func (m *HostManager) SetReady() {
+	m.readyMu.Lock()
+	defer m.readyMu.Unlock()
+	m.initializing = false
+	m.initErr = nil
+}
+
+func (m *HostManager) SetUnavailable(err error) {
+	m.readyMu.Lock()
+	defer m.readyMu.Unlock()
+	m.initializing = true
+	m.initErr = err
+}
+
+func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
+	m.availability = p
+}
+
 // SessionServer resolves or creates the per-escrow transport server.
 func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) {
+	if err := m.readinessError(); err != nil {
+		return nil, err
+	}
 	return m.getOrCreate(escrowID)
 }
 
+func (m *HostManager) readinessError() error {
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.initializing {
+		return nil
+	}
+	if m.initErr != nil {
+		return fmt.Errorf("%w: %v", devshardserver.ErrInitializing, m.initErr)
+	}
+	return devshardserver.ErrInitializing
+}
+
 func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
-	m.mu.RLock()
-	srv, ok := m.sessions[escrowID]
-	m.mu.RUnlock()
-	if ok {
+	if srv, ok := m.session(escrowID); ok {
 		return srv, nil
 	}
 
 	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
-		m.mu.RLock()
-		if srv, ok := m.sessions[escrowID]; ok {
-			m.mu.RUnlock()
+		if srv, ok := m.session(escrowID); ok {
 			return srv, nil
 		}
-		m.mu.RUnlock()
 
-		srv, err := m.create(escrowID)
+		srv, err := m.recoverStoredSession(escrowID)
+		if err == nil {
+			return m.storeSessionIfAbsent(escrowID, srv), nil
+		}
+		if !errors.Is(err, storage.ErrSessionNotFound) {
+			return nil, err
+		}
+
+		srv, err = m.create(escrowID)
 		if err != nil {
 			return nil, err
 		}
 
-		m.mu.Lock()
-		m.sessions[escrowID] = srv
-		m.mu.Unlock()
-
-		return srv, nil
+		return m.storeSessionIfAbsent(escrowID, srv), nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
 	return v.(*transport.Server), nil
+}
+
+func (m *HostManager) session(escrowID string) (*transport.Server, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	srv, ok := m.sessions[escrowID]
+	return srv, ok
+}
+
+func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) *transport.Server {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.sessions[escrowID]; ok {
+		return existing
+	}
+	m.sessions[escrowID] = srv
+	return srv
 }
 
 func (m *HostManager) create(escrowID string) (*transport.Server, error) {
@@ -135,17 +247,6 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	config := types.SessionConfigWithPrice(len(group), escrow.TokenPrice)
 
-	if err := m.store.CreateSession(storage.CreateSessionParams{
-		EscrowID:       escrowID,
-		Version:        m.boundVersion,
-		CreatorAddr:    creatorAddr,
-		Config:         config,
-		Group:          group,
-		InitialBalance: escrow.Amount,
-	}); err != nil {
-		return nil, fmt.Errorf("init storage session: %w", err)
-	}
-
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier,
 		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
 		state.WithVersion(m.boundVersion),
@@ -157,9 +258,23 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
+		host.WithEpochID(escrow.EpochID),
+		host.WithAvailabilityProvider(m.availability),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
+	}
+
+	if err := m.store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		EpochID:        escrow.EpochID,
+		Version:        m.boundVersion,
+		CreatorAddr:    creatorAddr,
+		Config:         config,
+		Group:          group,
+		InitialBalance: escrow.Amount,
+	}); err != nil {
+		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
 	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
@@ -177,32 +292,92 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 // injecting warm key deltas from the stored DiffRecords. Call this on startup
 // after constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
-	escrowIDs, err := m.store.ListActiveSessions()
+	startedAt := time.Now()
+	active, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, escrowID := range escrowIDs {
-		if err := m.recoverSession(escrowID); err != nil {
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", escrowID, "error", err)
-		}
+	if len(active) == 0 {
+		logging.Info("completed devshard session recovery", inferenceTypes.System,
+			"session_count", 0, "worker_count", 0, "recovered_count", 0, "failed_count", 0,
+			"duration", time.Since(startedAt))
+		return nil
 	}
+
+	workers := recoverSessionsConcurrency
+	if len(active) < workers {
+		workers = len(active)
+	}
+	logging.Info("starting devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers)
+
+	jobs := make(chan storage.ActiveSession)
+	var wg sync.WaitGroup
+	var recoveredCount atomic.Int64
+	var failedCount atomic.Int64
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sess := range jobs {
+				sessionStartedAt := time.Now()
+				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					failedCount.Add(1)
+					logging.Error("failed to recover devshard session", inferenceTypes.System,
+						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+						"duration", time.Since(sessionStartedAt), "error", err)
+					continue
+				}
+				recoveredCount.Add(1)
+				logging.Info("recovered devshard session", inferenceTypes.System,
+					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+					"duration", time.Since(sessionStartedAt))
+			}
+		}()
+	}
+	for _, sess := range active {
+		jobs <- sess
+	}
+	close(jobs)
+	wg.Wait()
+
+	logging.Info("completed devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers,
+		"recovered_count", recoveredCount.Load(),
+		"failed_count", failedCount.Load(),
+		"duration", time.Since(startedAt))
 
 	return nil
 }
 
-// recoverSession replays a single session from storage. Caller must hold m.mu.
-func (m *HostManager) recoverSession(escrowID string) error {
+func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server, error) {
+	if srv, ok := m.session(escrowID); ok {
+		return srv, nil
+	}
+	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
+		if srv, ok := m.session(escrowID); ok {
+			return srv, nil
+		}
+		srv, err := m.recoverStoredSession(escrowID)
+		if err != nil {
+			return nil, err
+		}
+		return m.storeSessionIfAbsent(escrowID, srv), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*transport.Server), nil
+}
+
+// recoverStoredSession replays a single session from storage.
+func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, error) {
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
-		return fmt.Errorf("get session meta: %w", err)
+		return nil, fmt.Errorf("get session meta: %w", err)
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {
-		return fmt.Errorf("session version mismatch: stored %s, host %s", meta.Version, m.boundVersion)
+		return nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
@@ -215,25 +390,50 @@ func (m *HostManager) recoverSession(escrowID string) error {
 		state.WithVersion(recoveredVersion),
 	)
 	if err != nil {
-		return fmt.Errorf("create state machine: %w", err)
+		return nil, fmt.Errorf("create state machine: %w", err)
 	}
 
+	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
-		records, err := m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
+		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
+		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+			snapState, err := host.UnmarshalStateSnapshot(snapData)
+			if err != nil {
+				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", err)
+			} else {
+				sm.RestoreState(snapState)
+				replayFrom = snapNonce + 1
+				logging.Info("restored devshard snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+			}
+		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
+			logging.Error("failed to load devshard snapshot, replaying full history", inferenceTypes.System,
+				"escrow_id", escrowID, "error", snapErr)
+		}
+
+		records, err := m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
 		if err != nil {
-			return fmt.Errorf("get diffs: %w", err)
+			return nil, fmt.Errorf("get diffs: %w", err)
 		}
 
 		for _, rec := range records {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
 			root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
 			if applyErr != nil {
-				return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 			}
 			if len(rec.StateHash) > 0 && len(root) > 0 {
 				if !bytes.Equal(root, rec.StateHash) {
-					return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+					return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
 				}
+			}
+		}
+
+		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+			if err := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); err != nil {
+				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", err)
 			}
 		}
 	}
@@ -241,25 +441,211 @@ func (m *HostManager) recoverSession(escrowID string) error {
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
+		host.WithEpochID(meta.EpochID),
+		host.WithAvailabilityProvider(m.availability),
 	)
 	if err != nil {
-		return fmt.Errorf("create host: %w", err)
+		return nil, fmt.Errorf("create host: %w", err)
 	}
 
 	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr,
 		transport.WithBridge(m.bridge),
 	)
 	if err != nil {
-		return fmt.Errorf("create server: %w", err)
+		return nil, fmt.Errorf("create server: %w", err)
 	}
 
-	m.sessions[escrowID] = srv
+	return srv, nil
+}
+
+func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
+	data, err := host.MarshalStateSnapshot(sm.ExportState())
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
 	return nil
 }
 
 // Register mounts devshard session routes on the given echo group.
 func (m *HostManager) Register(g *echo.Group) {
+	g.GET("/stats/shards", m.handleStatsShards)
+	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
 	devshardserver.RegisterLazySessionRoutes(g, m, m)
+}
+
+func (m *HostManager) handleStatsShards(c echo.Context) error {
+	resp, err := m.statsShards(time.Now())
+	if err != nil {
+		return statsHTTPError(err)
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+func (m *HostManager) handleStatsShard(c echo.Context) error {
+	escrowID := c.Param("escrow_id")
+	if escrowID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "escrow_id required")
+	}
+	resp, err := m.statsShardDetail(escrowID, time.Now())
+	if err != nil {
+		return statsHTTPError(err)
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+func (m *HostManager) statsShards(now time.Time) (*statsShardsResponse, error) {
+	if err := m.readinessError(); err != nil {
+		return nil, err
+	}
+
+	m.statsMu.Lock()
+	if m.statsShardsCache != nil && now.Sub(m.statsShardsCached) < statsCacheTTL {
+		resp := m.statsShardsCache
+		m.statsMu.Unlock()
+		return resp, nil
+	}
+	m.statsMu.Unlock()
+
+	currentEpochID, active, err := m.currentEpochActiveSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &statsShardsResponse{
+		CurrentEpochID:  currentEpochID,
+		CachedAt:        now.Unix(),
+		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
+		ActiveEscrows:   make([]string, 0, len(active)),
+		Shards:          make([]statsShardSummary, 0, len(active)),
+	}
+	for _, sess := range active {
+		resp.ActiveEscrows = append(resp.ActiveEscrows, sess.EscrowID)
+		resp.Shards = append(resp.Shards, statsShardSummary{
+			EscrowID: sess.EscrowID,
+			EpochID:  sess.EpochID,
+		})
+	}
+
+	m.statsMu.Lock()
+	m.statsShardsCache = resp
+	m.statsShardsCached = now
+	m.statsMu.Unlock()
+	return resp, nil
+}
+
+func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsShardDetailResponse, error) {
+	if err := m.readinessError(); err != nil {
+		return nil, err
+	}
+
+	m.statsMu.Lock()
+	if cached, ok := m.statsDetailsCache[escrowID]; ok && now.Sub(cached.cached) < statsCacheTTL {
+		resp := cached.response
+		m.statsMu.Unlock()
+		return resp, nil
+	}
+	m.statsMu.Unlock()
+
+	sess, err := m.currentEpochActiveSession(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := m.SessionServer(escrowID)
+	if err != nil {
+		return nil, err
+	}
+
+	st := srv.Host().SnapshotState()
+
+	resp := &statsShardDetailResponse{
+		EscrowID:        escrowID,
+		EpochID:         sess.EpochID,
+		Nonce:           st.LatestNonce,
+		Version:         st.Version,
+		CachedAt:        now.Unix(),
+		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
+		HostStats:       statsHostStatsFromState(st.HostStats),
+		Group:           append([]types.SlotAssignment(nil), st.Group...),
+	}
+
+	m.statsMu.Lock()
+	m.statsDetailsCache[escrowID] = statsShardDetailCache{response: resp, cached: now}
+	m.statsMu.Unlock()
+	return resp, nil
+}
+
+func (m *HostManager) currentEpochActiveSession(escrowID string) (storage.ActiveSession, error) {
+	_, active, err := m.currentEpochActiveSessions()
+	if err != nil {
+		return storage.ActiveSession{}, err
+	}
+	for _, sess := range active {
+		if sess.EscrowID == escrowID {
+			return sess, nil
+		}
+	}
+	return storage.ActiveSession{}, storage.ErrSessionNotFound
+}
+
+func (m *HostManager) currentEpochActiveSessions() (uint64, []storage.ActiveSession, error) {
+	active, err := m.store.ListActiveSessions()
+	if err != nil {
+		return 0, nil, fmt.Errorf("list active sessions: %w", err)
+	}
+
+	currentEpochID := currentEpochIDFromStore(m.store)
+	if currentEpochID == 0 {
+		for _, sess := range active {
+			if sess.EpochID > currentEpochID {
+				currentEpochID = sess.EpochID
+			}
+		}
+	}
+
+	filtered := make([]storage.ActiveSession, 0, len(active))
+	for _, sess := range active {
+		if sess.EpochID == currentEpochID {
+			filtered = append(filtered, sess)
+		}
+	}
+	slices.SortFunc(filtered, func(a, b storage.ActiveSession) int {
+		return cmp.Compare(a.EpochID, b.EpochID)
+	})
+	return currentEpochID, filtered, nil
+}
+
+func statsHostStatsFromState(src map[uint32]*types.HostStats) map[uint32]statsHostStats {
+	dst := make(map[uint32]statsHostStats, len(src))
+	for slotID, stats := range src {
+		if stats == nil {
+			dst[slotID] = statsHostStats{}
+			continue
+		}
+		dst[slotID] = statsHostStats{
+			Missed:               stats.Missed,
+			Invalid:              stats.Invalid,
+			Cost:                 stats.Cost,
+			RequiredValidations:  stats.RequiredValidations,
+			CompletedValidations: stats.CompletedValidations,
+		}
+	}
+	return dst
+}
+
+func statsHTTPError(err error) error {
+	if errors.Is(err, devshardserver.ErrInitializing) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "shard not found")
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.
@@ -277,7 +663,7 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 		return err
 	}
 
-	// Retrieve payloads with adjacent epoch fallback
+	// Retrieve payloads with adjacent epoch fallback.
 	promptPayload, responsePayload, _, err := m.retrievePayloadsWithAdjacentEpochs(c.Request().Context(), escrowID, inferenceID, epochID)
 	if err != nil {
 		if errors.Is(err, payloadstorage.ErrNotFound) {
@@ -436,25 +822,57 @@ func (m *HostManager) retrievePayloadsWithAdjacentEpochs(ctx context.Context, es
 		return nil, nil, 0, fmt.Errorf("invalid inference_id %q: %w", inferenceID, err)
 	}
 	storageKey := devshardserver.PayloadKey(escrowID, parsedID)
-	prompt, response, err := m.payloadStore.Retrieve(ctx, storageKey, epochID)
-	if err == nil {
-		return prompt, response, epochID, nil
+
+	seen := map[uint64]struct{}{}
+	var epochs []uint64
+	addEpoch := func(epoch uint64) {
+		if _, ok := seen[epoch]; ok {
+			return
+		}
+		seen[epoch] = struct{}{}
+		epochs = append(epochs, epoch)
 	}
-	if !errors.Is(err, payloadstorage.ErrNotFound) {
-		return nil, nil, 0, err
+	addEpochWithAdjacent := func(epoch uint64) {
+		addEpoch(epoch)
+		if epoch > 0 {
+			addEpoch(epoch - 1)
+		}
+		addEpoch(epoch + 1)
 	}
 
-	// Try adjacent epochs (epoch boundary race condition)
-	adjacentEpochs := []uint64{}
-	if epochID > 0 {
-		adjacentEpochs = append(adjacentEpochs, epochID-1)
-	}
-	adjacentEpochs = append(adjacentEpochs, epochID+1)
+	addEpochWithAdjacent(epochID)
 
-	for _, adjEpoch := range adjacentEpochs {
-		prompt, response, err := m.payloadStore.Retrieve(ctx, storageKey, adjEpoch)
+	// TODO: remove after epoch-0 devshardd migration window closes.
+	// Older devshardd versions requested payloads under epoch 0. When they
+	// coexist with fixed binaries, validators can still send epoch 0 while the
+	// executor stored the immutable, hash-verified payload under the escrow epoch.
+	if meta, err := m.store.GetSessionMeta(escrowID); err == nil {
+		addEpochWithAdjacent(meta.EpochID)
+	}
+	if m.bridge != nil {
+		if info, err := m.bridge.GetEscrow(escrowID); err == nil && info != nil {
+			addEpochWithAdjacent(info.EpochID)
+		}
+	}
+	if epochID == 0 {
+		if current := currentEpochIDFromStore(m.store); current > 0 {
+			addEpoch(current)
+			addEpoch(current - 1)
+		}
+	}
+	addEpoch(0)
+
+	for _, candidateEpoch := range epochs {
+		prompt, response, err := m.payloadStore.Retrieve(ctx, storageKey, candidateEpoch)
 		if err == nil {
-			return prompt, response, adjEpoch, nil
+			if candidateEpoch != epochID {
+				logging.Info("served devshard payload from fallback epoch", inferenceTypes.System,
+					"escrow_id", escrowID,
+					"inference_id", inferenceID,
+					"requested_epoch", epochID,
+					"served_epoch", candidateEpoch)
+			}
+			return prompt, response, candidateEpoch, nil
 		}
 		if !errors.Is(err, payloadstorage.ErrNotFound) {
 			return nil, nil, 0, err
@@ -462,6 +880,16 @@ func (m *HostManager) retrievePayloadsWithAdjacentEpochs(ctx context.Context, es
 	}
 
 	return nil, nil, 0, payloadstorage.ErrNotFound
+}
+
+func currentEpochIDFromStore(store storage.Storage) uint64 {
+	type currentEpochProvider interface {
+		CurrentEpochID() uint64
+	}
+	if p, ok := store.(currentEpochProvider); ok {
+		return p.CurrentEpochID()
+	}
+	return 0
 }
 
 // signPayloadResponse signs the payload response using the same scheme as the public endpoint.
