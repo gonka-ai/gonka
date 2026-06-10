@@ -77,6 +77,15 @@ def load_config_from_env(hf_home: str = None):
         "POSTGRES_DB": "payloads",
         "POSTGRES_USER": "payloads",
         "POSTGRES_PASSWORD": "payloads",
+        "BOUNTY_POOL_ENABLED": "true",
+        "BOUNTY_POOL_IBC_DENOM": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
+        "BOUNTY_POOL_CHAIN_ID": "kava_2222-10",
+        "BOUNTY_POOL_NAME": "USDT",
+        "BOUNTY_POOL_SYMBOL": "USDT",
+        "BOUNTY_POOL_DECIMALS": "6",
+        "BOUNTY_POOL_AMOUNT": "1500000000000",
+        "BOUNTY_POOL_COMMUNITY_SALE_LABEL": "community-sale-testnet-v1",
+        "BOUNTY_POOL_GOV_AUTHORITY": "gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33",
     }
     
     config = default_config.copy()
@@ -1095,6 +1104,142 @@ def fund_distribution_module_account(community_pool_amount="120000000000000000")
     print(f"Address: {distribution_address}")
     print(f"Bank balance: {community_pool_amount}ngonka")
     print(f"Community pool: {community_pool_amount}.000000000000000000ngonka")
+
+
+def fund_genesis_ibc_balance(address: str):
+    """Add synthetic IBC token balance and supply to genesis for bounty pool bootstrap."""
+    if CONFIG_ENV.get("BOUNTY_POOL_ENABLED", "true").lower() != "true":
+        print("Bounty pool genesis funding skipped (BOUNTY_POOL_ENABLED is not true)")
+        return
+
+    denom = CONFIG_ENV.get("BOUNTY_POOL_IBC_DENOM", "")
+    amount = CONFIG_ENV.get("BOUNTY_POOL_AMOUNT", "")
+    if not denom or not amount:
+        raise ValueError("BOUNTY_POOL_IBC_DENOM and BOUNTY_POOL_AMOUNT must be set")
+
+    print(f"Funding genesis account {address} with {amount}{denom} for bounty pool...")
+
+    genesis_file = INFERENCED_STATE_DIR / "config/genesis.json"
+    if not genesis_file.exists():
+        raise FileNotFoundError(f"Genesis file not found at {genesis_file}")
+
+    with open(genesis_file, "r") as f:
+        genesis_data = json.load(f)
+
+    bank = genesis_data.setdefault("app_state", {}).setdefault("bank", {})
+    balances = bank.setdefault("balances", [])
+
+    balance_exists = False
+    for balance_entry in balances:
+        if balance_entry.get("address") == address:
+            coins = balance_entry.setdefault("coins", [])
+            coin_exists = False
+            for coin in coins:
+                if coin.get("denom") == denom:
+                    coin["amount"] = str(int(coin.get("amount", 0)) + int(amount))
+                    coin_exists = True
+                    break
+            if not coin_exists:
+                coins.append({"denom": denom, "amount": amount})
+            balance_exists = True
+            break
+
+    if not balance_exists:
+        balances.append({
+            "address": address,
+            "coins": [{"denom": denom, "amount": amount}],
+        })
+
+    supply = bank.setdefault("supply", [])
+    supply_exists = False
+    for supply_entry in supply:
+        if supply_entry.get("denom") == denom:
+            supply_entry["amount"] = str(int(supply_entry.get("amount", 0)) + int(amount))
+            supply_exists = True
+            break
+    if not supply_exists:
+        supply.append({"denom": denom, "amount": amount})
+
+    with open(genesis_file, "w") as f:
+        json.dump(genesis_data, f, indent=2, separators=(",", ": "))
+
+    print(f"Genesis IBC balance added: {amount} {denom} -> {address}")
+
+
+BOUNTY_POOL_STATE_FILE = BASE_DIR / "bounty-pool-state.json"
+
+
+def setup_bounty_pool():
+    """Store community_sale, fund it with synthetic USDT, write bounty-pool-state.json."""
+    if CONFIG_ENV.get("BOUNTY_POOL_ENABLED", "true").lower() != "true":
+        print("Bounty pool post-start setup skipped (BOUNTY_POOL_ENABLED is not true)")
+        return
+
+    denom = CONFIG_ENV.get("BOUNTY_POOL_IBC_DENOM", "")
+    amount = CONFIG_ENV.get("BOUNTY_POOL_AMOUNT", "")
+    if BOUNTY_POOL_STATE_FILE.exists():
+        try:
+            with open(BOUNTY_POOL_STATE_FILE, "r") as f:
+                state = json.load(f)
+            contract = state.get("community_sale_address", "")
+            if contract:
+                rpc = CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
+                result = subprocess.run(
+                    [
+                        str(INFERENCED_BINARY.path),
+                        "q", "bank", "balances", contract,
+                        "--node", rpc, "-o", "json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    balances = json.loads(result.stdout).get("balances", [])
+                    for coin in balances:
+                        if coin.get("denom") == denom and int(coin.get("amount", 0)) >= int(amount):
+                            print(f"Bounty pool already ready at {contract}")
+                            return
+                raise RuntimeError(
+                    f"bounty-pool-state.json exists but contract {contract} "
+                    f"does not have expected {amount} {denom}"
+                )
+        except (json.JSONDecodeError, RuntimeError) as exc:
+            if isinstance(exc, RuntimeError):
+                raise
+            print(f"Warning: could not parse {BOUNTY_POOL_STATE_FILE}, re-running setup")
+
+    script = GONKA_REPO_DIR / "test-net-cloud/nebius/bridge/bridge-setup-community-sale.sh"
+    if not script.exists():
+        raise FileNotFoundError(f"Bounty pool setup script not found: {script}")
+
+    print("Running bounty pool setup (community_sale store/instantiate/fund)...")
+    env = os.environ.copy()
+    env.update(CONFIG_ENV)
+    env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    env["TESTNET_BASE_DIR"] = str(BASE_DIR)
+    env["KEY_NAME"] = COLD_KEY_NAME
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=str(BASE_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, script)
+
+    if BOUNTY_POOL_STATE_FILE.exists():
+        with open(BOUNTY_POOL_STATE_FILE, "r") as f:
+            state = json.load(f)
+        print("Bounty pool ready:")
+        print(f"  contract: {state.get('community_sale_address')}")
+        print(f"  denom: {state.get('ibc_denom')}")
+        print(f"  amount: {state.get('amount')}")
 
 
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str, chain_id: str):
@@ -2268,6 +2413,8 @@ def genesis_route(account_key: AccountKey, chain_id: str) -> AccountKey:
         genesis_overrides_path = repo_overrides
         
     apply_genesis_overrides(genesis_overrides_path)
+
+    fund_genesis_ibc_balance(account_key.address)
     
     set_chain_id_in_genesis(chain_id)
 
@@ -2436,6 +2583,8 @@ def main():
             account_key.address, warm_key.address, rpc_url_for_grant
         )
     grant_key_permissions(warm_key.address)
+    if is_genesis:
+        setup_bounty_pool()
     if not is_genesis:
         print_join_deploy_summary(account_key, warm_key, args.chainid)
 

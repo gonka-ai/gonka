@@ -2,6 +2,49 @@
 
 This guide covers the steps to deploy the bridge contract on Sepolia, register it on Gonka, register the USDC Sepolia implementation, instantiate the Liquidity Pool, and perform bridging operations (wrap/unwrap) between the chains.
 
+## 0. Bounty pool (community_sale + synthetic USDT)
+
+Genesis launch automatically sets up a governance-controlled `community_sale` contract with 1.5M synthetic USDT when you run:
+
+```bash
+cd /srv/dai/ && python3 launch.py --mode genesis --branch origin/testnet/v0.2.13-devshard --chainid "$CHAIN_ID"
+```
+
+No extra flag is required. `BOUNTY_POOL_ENABLED` defaults to `true`.
+
+What happens:
+
+1. Genesis seeds `1500000000000` of `ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4` to the cold key.
+2. Genesis overrides register USDT bank metadata and IBC trade approval (`kava_2222-10`).
+3. After RPC is ready, `bridge-setup-community-sale.sh` stores `community_sale.wasm`, instantiates with governance as admin, and funds the contract.
+4. State is written to `/srv/dai/bounty-pool-state.json`.
+
+Verify:
+
+```bash
+ADDR=$(jq -r .community_sale_address /srv/dai/bounty-pool-state.json)
+/srv/dai/inferenced q bank balances "$ADDR" --node http://localhost:8000/chain-rpc/ -o json
+/srv/dai/inferenced q wasm contract-state smart "$ADDR" '{"config":{}}' --node http://localhost:8000/chain-rpc/ -o json
+/srv/dai/inferenced q inference validate-ibc-token-for-trade \
+  "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4" \
+  --node http://localhost:8000/chain-rpc/ -o json
+```
+
+For testnet bounty governance proposals, pass the testnet contract to `governance-16/generate.py`:
+
+```bash
+python3 governance-16/generate.py v2 <archive-url> <node-url> \
+  --community-sale-contract "$(jq -r .community_sale_address /srv/dai/bounty-pool-state.json)"
+```
+
+Disable automatic setup: `export BOUNTY_POOL_ENABLED=false` before launch.
+
+Manual rerun (if launch was interrupted after chain start):
+
+```bash
+bash /srv/dai/gonka/test-net-cloud/nebius/bridge/bridge-setup-community-sale.sh
+```
+
 ## 1. Register (Deploy) Bridge Contract on Sepolia
 
 To "register" the bridge contract on Sepolia (the Ethereum testnet), you must deploy the solidity contract.
