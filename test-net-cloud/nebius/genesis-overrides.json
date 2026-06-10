@@ -130,20 +130,6 @@
               "weight_scale_factor": { "value": "25", "exponent": -1 }
             },
             {
-              "model_id": "moonshotai/Kimi-K2.6",
-              "seq_len": "1024",
-              "stat_test": {
-                "dist_threshold": { "value": "4", "exponent": -1 },
-                "p_mismatch": { "value": "1", "exponent": -1 },
-                "p_value_threshold": { "value": "5", "exponent": -2 }
-              },
-              "weight_scale_factor": {
-                "value": "87815587266739846",
-                "exponent": -16
-              },
-              "penalty_start_epoch": "46"
-            },
-            {
               "model_id": "Qwen/Qwen2.5-7B-Instruct",
               "seq_len": "256",
               "stat_test": {
