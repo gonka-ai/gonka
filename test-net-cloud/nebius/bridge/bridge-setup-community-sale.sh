@@ -147,11 +147,35 @@ if [ -z "$CONTRACT_ADDR" ] || [ "$CONTRACT_ADDR" = "null" ]; then
 fi
 echo "Community sale contract: $CONTRACT_ADDR"
 
+echo "Checking signer balance for ${BOUNTY_POOL_IBC_DENOM}..."
+BALANCES_OUT=$("$APP_NAME" q bank balances "$MY_ADDR" $NODE_OPTS --output json 2>/dev/null || echo "{}")
+AVAILABLE_AMOUNT=$(echo "$BALANCES_OUT" | jq -r --arg denom "$BOUNTY_POOL_IBC_DENOM" '.balances[]? | select(.denom == $denom) | .amount' 2>/dev/null | head -n1)
+AVAILABLE_AMOUNT="${AVAILABLE_AMOUNT:-0}"
+if [ "$AVAILABLE_AMOUNT" = "null" ] || [ -z "$AVAILABLE_AMOUNT" ]; then
+    AVAILABLE_AMOUNT="0"
+fi
+echo "Signer balance: ${AVAILABLE_AMOUNT}${BOUNTY_POOL_IBC_DENOM}"
+if [ "$AVAILABLE_AMOUNT" -lt "$BOUNTY_POOL_AMOUNT" ]; then
+    echo "Error: signer does not have enough bounty pool funds"
+    echo "Required: ${BOUNTY_POOL_AMOUNT}${BOUNTY_POOL_IBC_DENOM}"
+    echo "Available: ${AVAILABLE_AMOUNT}${BOUNTY_POOL_IBC_DENOM}"
+    exit 1
+fi
+
 echo "Funding contract with ${BOUNTY_POOL_AMOUNT}${BOUNTY_POOL_IBC_DENOM}..."
+set +e
 RAW_SEND_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | "$APP_NAME" tx bank send "$MY_ADDR" "$CONTRACT_ADDR" \
     "${BOUNTY_POOL_AMOUNT}${BOUNTY_POOL_IBC_DENOM}" \
     --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
     --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+SEND_RC=$?
+set -e
+
+if [ "$SEND_RC" -ne 0 ]; then
+    echo "Error: Bank send command failed"
+    echo "$RAW_SEND_OUT"
+    exit "$SEND_RC"
+fi
 
 SEND_TX=$(echo "$RAW_SEND_OUT" | sed -n '/{/,$p')
 SEND_HASH=$(echo "$SEND_TX" | jq -r '.txhash' 2>/dev/null || echo "null")

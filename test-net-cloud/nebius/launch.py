@@ -22,8 +22,9 @@ class AccountKey:
     name: str
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
 CUSTOM_BASE_DIR = os.environ.get("TESTNET_BASE_DIR", None)
-BASE_DIR = Path(CUSTOM_BASE_DIR) if CUSTOM_BASE_DIR else Path(os.environ["HOME"]).absolute()
+BASE_DIR = Path(CUSTOM_BASE_DIR).expanduser().resolve() if CUSTOM_BASE_DIR else SCRIPT_DIR
 GENESIS_VAL_NAME = "testnet-genesis"
 GONKA_REPO_DIR = BASE_DIR / "gonka"
 DEPLOY_DIR = GONKA_REPO_DIR / "deploy/join"
