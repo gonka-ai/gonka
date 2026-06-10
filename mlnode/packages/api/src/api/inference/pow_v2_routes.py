@@ -1,16 +1,19 @@
 """PoC v2 routes for MLNode - proxies to vLLM PoC API with multi-backend support."""
 import asyncio
-from typing import List, Optional
+import hashlib
+import os
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+import httpx
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from common.logger import create_logger
+from common.mtls import mtls_enabled, client_kwargs
 from api.proxy import (
     get_healthy_backends,
     pick_backend_for_pow_generate,
     call_backend,
-    VLLM_HOST,
 )
 
 logger = create_logger(__name__)
@@ -19,6 +22,51 @@ router = APIRouter(prefix="/inference/pow", tags=["PoC v2"])
 
 
 # Request/Response Models (matching vLLM PoC v2 API)
+SELF_URL = os.getenv("MLNODE_SELF_URL", "http://127.0.0.1:8080")
+
+_relay_targets: Dict[str, str] = {}
+_relay_client: Optional[httpx.AsyncClient] = None
+
+
+def _rewrite_callback_url(url: Optional[str]) -> Optional[str]:
+    if not url or not mtls_enabled():
+        return url
+    token = hashlib.sha256(url.encode()).hexdigest()[:32]
+    _relay_targets[token] = url
+    relay_url = f"{SELF_URL}/api/v1/inference/pow/callback-relay/{token}"
+    logger.info(f"PoC callbacks for {url} will be relayed over mTLS via {relay_url}")
+    return relay_url
+
+
+def _get_relay_client() -> httpx.AsyncClient:
+    global _relay_client
+    if _relay_client is None:
+        _relay_client = httpx.AsyncClient(timeout=60, **client_kwargs())
+    return _relay_client
+
+
+@router.post("/callback-relay/{token}/{suffix:path}")
+async def callback_relay(token: str, suffix: str, request: Request) -> Response:
+    target = _relay_targets.get(token)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Unknown relay token")
+
+    body = await request.body()
+    try:
+        upstream = await _get_relay_client().post(
+            f"{target}/{suffix}",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+    except httpx.HTTPError as e:
+        logger.error(f"Callback relay to {target}/{suffix} failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Callback relay failed: {e}")
+
+    return Response(
+        status_code=upstream.status_code,
+        content=upstream.content,
+        media_type=upstream.headers.get("Content-Type", "application/json"),
+    )
 
 class PoCParamsModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -73,7 +121,6 @@ class PoCGenerateRequest(BaseModel):
 
 
 # Endpoints
-
 @router.post("/init/generate")
 async def init_generate(body: PoCInitGenerateRequest) -> dict:
     """Fan-out /init/generate to all healthy backends with group_id injection."""
@@ -85,8 +132,11 @@ async def init_generate(body: PoCInitGenerateRequest) -> dict:
     results = []
     errors = []
     
+    callback_url = _rewrite_callback_url(body.url)
+
     async def call_one(port: int, group_id: int):
         payload = body.model_dump()
+        payload["url"] = callback_url
         payload["group_id"] = group_id
         payload["n_groups"] = n_groups
         try:
@@ -197,7 +247,9 @@ async def generate(body: PoCGenerateRequest) -> dict:
         raise HTTPException(status_code=503, detail="No vLLM backends available")
     
     try:
-        r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump())
+        payload = body.model_dump()
+        payload["url"] = _rewrite_callback_url(body.url)
+        r = await call_backend(port, "POST", "/api/v1/pow/generate", payload)
         
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text)

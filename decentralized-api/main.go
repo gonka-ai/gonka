@@ -9,6 +9,7 @@ import (
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/modelmanager"
+	"decentralized-api/internal/mtls"
 	"decentralized-api/internal/nats/server"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
@@ -111,8 +112,21 @@ func main() {
 		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
+	mlnodeTLS := configManager.GetApiConfig().MLNodeTLS
+	mlNodeClientFactory := &mlnodeclient.HttpClientFactory{}
+	if mlnodeTLS.Enabled {
+		clientTLS, tlsErr := mtls.ClientConfig(mlnodeTLS.CertFile, mlnodeTLS.KeyFile, mlnodeTLS.PeerCertFile)
+		if tlsErr != nil {
+			logging.Error("Failed to load mTLS client configuration for ML nodes", types.Server, "error", tlsErr)
+			return
+		}
+		mlNodeClientFactory.TLSConfig = clientTLS
+		logging.Info("Mutual TLS to ML nodes enabled", types.Server,
+			"cert", mlnodeTLS.CertFile, "pinnedPeerCert", mlnodeTLS.PeerCertFile)
+	}
+
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, configManager.GetChainNodeConfig().Url)
-	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{}, configManager)
+	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, mlNodeClientFactory, configManager)
 
 	nodes := configManager.GetNodes()
 	for _, node := range nodes {
@@ -193,7 +207,7 @@ func main() {
 		configManager,
 		chainPhaseTracker,
 		nodeBroker,
-		&mlnodeclient.HttpClientFactory{},
+		mlNodeClientFactory,
 		30*time.Minute,
 	)
 	go mlnodeBackgroundManager.Start(ctx)
@@ -295,9 +309,22 @@ func main() {
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().MLServerPort)
-	logging.Info("start ml server on addr", types.Server, "addr", addr)
 	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore), mlserver.WithConfigManager(configManager))
-	mlServer.Start(addr)
+	if mlnodeTLS.Enabled {
+		serverTLS, tlsErr := mtls.ServerConfig(mlnodeTLS.CertFile, mlnodeTLS.KeyFile, mlnodeTLS.PeerCertFile)
+		if tlsErr != nil {
+			logging.Error("Failed to load mTLS server configuration for ML callback server", types.Server, "error", tlsErr)
+			return
+		}
+		logging.Info("start ml server on addr (mutual TLS)", types.Server, "addr", addr)
+		if err := mlServer.StartTLS(addr, serverTLS); err != nil {
+			logging.Error("Failed to start ML callback server with mTLS", types.Server, "error", err)
+			return
+		}
+	} else {
+		logging.Info("start ml server on addr", types.Server, "addr", addr)
+		mlServer.Start(addr)
+	}
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)

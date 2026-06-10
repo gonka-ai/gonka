@@ -1,0 +1,27 @@
+services:
+  api:
+    volumes:
+      - ./mtls-certs:/root/mtls:ro
+    environment:
+      - DAPI_API__MLNODE_TLS__ENABLED=true
+      - DAPI_API__MLNODE_TLS__CERT_FILE=/root/mtls/dapi.crt
+      - DAPI_API__MLNODE_TLS__KEY_FILE=/root/mtls/dapi.key
+      - DAPI_API__MLNODE_TLS__PEER_CERT_FILE=/root/mtls/mlnode.crt
+      - DAPI_API__POC_CALLBACK_URL=${MTLS_POC_CALLBACK_URL:-https://api:9100}
+
+  versiond:
+    environment:
+      - VERSIOND_ORACLE_URL=http://api:9200/admin/v1/versions
+
+  inference:
+    volumes:
+      - ./nginx.mtls.conf:/etc/nginx/nginx.conf:ro
+      - ./mtls-certs:/etc/nginx/mtls:ro
+
+  mlnode-308:
+    volumes:
+      - ./mtls-certs:/root/mtls:ro
+    environment:
+      - MLNODE_MTLS_CLIENT_CERT=/root/mtls/mlnode.crt
+      - MLNODE_MTLS_CLIENT_KEY=/root/mtls/mlnode.key
+      - MLNODE_MTLS_SERVER_CA=/root/mtls/dapi.crt

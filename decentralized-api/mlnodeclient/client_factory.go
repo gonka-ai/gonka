@@ -1,15 +1,20 @@
 package mlnodeclient
 
-import "sync"
+import (
+	"crypto/tls"
+	"sync"
+)
 
 type ClientFactory interface {
 	CreateClient(pocUrl string, inferenceUrl string) MLNodeClient
 }
 
-type HttpClientFactory struct{}
+type HttpClientFactory struct {
+	TLSConfig *tls.Config
+}
 
 func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
-	return NewNodeClient(pocUrl, inferenceUrl)
+	return NewNodeClientWithTLS(pocUrl, inferenceUrl, f.TLSConfig)
 }
 
 type MockClientFactory struct {

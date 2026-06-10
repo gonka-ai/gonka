@@ -182,14 +182,22 @@ func (n *Node) InferenceUrlWithVersion(version string) string {
 }
 
 func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+	return n.pocUrlWithScheme("http", "")
 }
 
 func (n *Node) PoCUrlWithVersion(version string) string {
+	return n.pocUrlWithScheme("http", version)
+}
+
+func (n *Node) SecurePoCUrlWithVersion(version string) string {
+	return n.pocUrlWithScheme("https", version)
+}
+
+func (n *Node) pocUrlWithScheme(scheme, version string) string {
 	if version == "" {
-		return n.PoCUrl()
+		return fmt.Sprintf("%s://%s:%d%s", scheme, n.Host, n.PoCPort, n.PoCSegment)
 	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+	return fmt.Sprintf("%s://%s:%d/%s%s", scheme, n.Host, n.PoCPort, version, n.PoCSegment)
 }
 
 type NodeWithState struct {
@@ -450,7 +458,14 @@ func (b *Broker) QueueMessage(command Command) error {
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 	version := b.configManager.GetCurrentNodeVersion()
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+	return b.mlNodeClientFactory.CreateClient(b.pocUrlForNode(node, version), node.InferenceUrlWithVersion(version))
+}
+
+func (b *Broker) pocUrlForNode(node *Node, version string) string {
+	if b.configManager != nil && b.configManager.GetApiConfig().MLNodeTLS.Enabled {
+		return node.SecurePoCUrlWithVersion(version)
+	}
+	return node.PoCUrlWithVersion(version)
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {

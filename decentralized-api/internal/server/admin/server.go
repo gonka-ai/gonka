@@ -83,6 +83,8 @@ func NewServer(
 	// Export DB state (human-readable JSON) for admin purposes
 	g.GET("export/db", s.exportDb)
 
+	g.GET("versions", s.getVersions)
+
 	// Return current unsanitized config as JSON
 	g.GET("config", s.getConfig)
 
@@ -125,4 +127,8 @@ func (s *Server) Start(addr string) {
 func (s *Server) getConfig(c echo.Context) error {
 	cfg := s.configManager.GetConfig()
 	return c.JSONPretty(200, cfg, "  ")
+}
+
+func (s *Server) getVersions(c echo.Context) error {
+	return c.JSON(200, s.configManager.GetDevshardVersions())
 }
