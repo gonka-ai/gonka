@@ -48,24 +48,28 @@ fun EpochResponse.findStageSafeInferenceBlock(
 ): StageSafeInferenceBlock? {
     require(minimumSlackBeforeNextPoc >= 0) { "minimumSlackBeforeNextPoc must be non-negative" }
 
-    val inferenceWindows = listOf(
-        epochStages.claimMoney + 1 to epochStages.nextPocStart,
-        nextEpochStages.claimMoney + 1 to nextEpochStages.nextPocStart,
-    )
+    val epochLength = nextEpochStages.pocStart - epochStages.pocStart
+    require(epochLength > 0) { "epoch stages must advance across epochs" }
 
-    return inferenceWindows.firstNotNullOfOrNull { (windowStart, nextPocStart) ->
+    val firstInferenceWindowStart = epochStages.claimMoney + 1
+    val firstInferenceWindowNextPoc = epochStages.nextPocStart
+    val firstCandidateWindowIndex = maxOf(0L, (earliestBlock - firstInferenceWindowStart) / epochLength)
+
+    for (windowIndex in firstCandidateWindowIndex..firstCandidateWindowIndex + 1) {
+        val windowStart = firstInferenceWindowStart + windowIndex * epochLength
+        val nextPocStart = firstInferenceWindowNextPoc + windowIndex * epochLength
         val candidateBlock = maxOf(blockHeight + 1, earliestBlock, windowStart)
         val latestSafeBlock = nextPocStart - minimumSlackBeforeNextPoc - 1
         if (candidateBlock <= latestSafeBlock) {
-            StageSafeInferenceBlock(
+            return StageSafeInferenceBlock(
                 block = candidateBlock,
                 inferenceWindowStart = windowStart,
                 nextPocStart = nextPocStart,
             )
-        } else {
-            null
         }
     }
+
+    return null
 }
 
 @Deprecated("Use EpochResponse.getNextStage instead. We keep it only to get the block when the very 1st validators are active.")

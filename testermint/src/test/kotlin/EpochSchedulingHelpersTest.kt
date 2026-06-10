@@ -64,6 +64,24 @@ class EpochSchedulingHelpersTest {
         assertThat(selected.nextPocStart).isEqualTo(460)
     }
 
+    @Test
+    fun `findStageSafeInferenceBlock projects forward beyond the next epoch when lead is long`() {
+        val epochData = epochResponse(
+            blockHeight = 363,
+            phase = EpochPhase.Inference,
+            epochClaimMoney = 358,
+            epochNextPocStart = 390,
+            nextClaimMoney = 398,
+            nextNextPocStart = 430,
+        )
+
+        val selected = requireNotNull(epochData.findStageSafeInferenceBlock(earliestBlock = 443))
+
+        assertThat(selected.block).isEqualTo(443)
+        assertThat(selected.inferenceWindowStart).isEqualTo(439)
+        assertThat(selected.nextPocStart).isEqualTo(470)
+    }
+
     private fun epochResponse(
         blockHeight: Long,
         phase: EpochPhase,
