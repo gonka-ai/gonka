@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	gogoproto "github.com/cosmos/gogoproto/proto"
@@ -21,8 +22,9 @@ import (
 
 const (
 	defaultKeepLastHeights = 3
-	defaultMaxEntries = 200000
-	defaultMaxBytes   = 1 << 30 // 1 GiB
+	defaultMaxEntries      = 200000
+	defaultMaxBytes        = 1 << 30 // 1 GiB
+	defaultMaxHintAge      = 30 * time.Second
 )
 
 type queryCacheBypassKey struct{}
@@ -56,6 +58,8 @@ type QueryCacheStats struct {
 	CacheWriteTotal              uint64 `json:"cache_write_total"`
 	CacheWriteSkippedHeightTotal uint64 `json:"cache_write_skipped_height_total"`
 	CacheEvictTotal              uint64 `json:"cache_evict_total"`
+	CachePruneTotal              uint64 `json:"cache_prune_total"`
+	StaleHintBypassTotal         uint64 `json:"stale_hint_bypass_total"`
 	InvokeErrorTotal             uint64 `json:"invoke_error_total"`
 }
 
@@ -68,6 +72,8 @@ type queryCacheCounters struct {
 	cacheWriteTotal              atomic.Uint64
 	cacheWriteSkippedHeightTotal atomic.Uint64
 	cacheEvictTotal              atomic.Uint64
+	cachePruneTotal              atomic.Uint64
+	staleHintBypassTotal         atomic.Uint64
 	invokeErrorTotal             atomic.Uint64
 }
 
@@ -83,7 +89,10 @@ type lruEntry struct {
 }
 
 type QueryCache struct {
-	hint atomic.Int64
+	hint      atomic.Int64
+	hintSetAt atomic.Int64
+
+	maxHintAge time.Duration
 
 	mu       sync.RWMutex
 	byHeight map[int64]map[string][]byte
@@ -111,6 +120,7 @@ func NewQueryCacheWithLimits(maxEntries int, maxBytes int64) *QueryCache {
 		lruIndex:   make(map[lruKey]*list.Element),
 		maxEntries: maxEntries,
 		maxBytes:   maxBytes,
+		maxHintAge: defaultMaxHintAge,
 	}
 }
 
@@ -120,13 +130,29 @@ func (c *QueryCache) SetHeightHint(h int64) {
 	}
 	for {
 		cur := c.hint.Load()
-		if h <= cur {
+		if h < cur {
+			return
+		}
+		if h == cur {
+			c.hintSetAt.Store(time.Now().UnixNano())
 			return
 		}
 		if c.hint.CompareAndSwap(cur, h) {
+			c.hintSetAt.Store(time.Now().UnixNano())
 			return
 		}
 	}
+}
+
+func (c *QueryCache) hintFresh() bool {
+	if c.maxHintAge <= 0 {
+		return true
+	}
+	setAt := c.hintSetAt.Load()
+	if setAt == 0 {
+		return false
+	}
+	return time.Since(time.Unix(0, setAt)) <= c.maxHintAge
 }
 
 func (c *QueryCache) HeightHint() int64 { return c.hint.Load() }
@@ -155,6 +181,8 @@ func (c *QueryCache) SnapshotStats() QueryCacheStats {
 		CacheWriteTotal:              c.stats.cacheWriteTotal.Load(),
 		CacheWriteSkippedHeightTotal: c.stats.cacheWriteSkippedHeightTotal.Load(),
 		CacheEvictTotal:              c.stats.cacheEvictTotal.Load(),
+		CachePruneTotal:              c.stats.cachePruneTotal.Load(),
+		StaleHintBypassTotal:         c.stats.staleHintBypassTotal.Load(),
 		InvokeErrorTotal:             c.stats.invokeErrorTotal.Load(),
 	}
 }
@@ -168,6 +196,8 @@ func (c *QueryCache) ResetStats() {
 	c.stats.cacheWriteTotal.Store(0)
 	c.stats.cacheWriteSkippedHeightTotal.Store(0)
 	c.stats.cacheEvictTotal.Store(0)
+	c.stats.cachePruneTotal.Store(0)
+	c.stats.staleHintBypassTotal.Store(0)
 	c.stats.invokeErrorTotal.Store(0)
 }
 
@@ -262,6 +292,7 @@ func (c *QueryCache) dropHeightLocked(height int64) {
 			c.lru.Remove(el)
 			delete(c.lruIndex, lk)
 		}
+		c.stats.cachePruneTotal.Add(1)
 	}
 	delete(c.byHeight, height)
 }
@@ -306,7 +337,9 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 
 	explicitHeight := heightFromOutgoingCtx(ctx)
 	height := explicitHeight
+	hintTrusted := true
 	if height == 0 {
+		hintTrusted = c.cache.hintFresh()
 		height = c.cache.HeightHint()
 	}
 	if height == 0 {
@@ -319,23 +352,20 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 	}
 	key := buildCacheKey(method, requestHash)
 
-	if cached, hit := c.cache.lookup(height, key); hit {
-		if err := unmarshalProtoMessage(cached, reply); err == nil {
-			c.cache.stats.cacheHitTotal.Add(1)
-			if header := headerAddrFromCallOptions(opts); header != nil {
-				*header = metadata.Pairs(grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10))
+	if hintTrusted {
+		if cached, hit := c.cache.lookup(height, key); hit {
+			if err := unmarshalProtoMessage(cached, reply); err == nil {
+				c.cache.stats.cacheHitTotal.Add(1)
+				mergeHeightIntoHeader(headerAddrFromCallOptions(opts), height)
+				return nil
 			}
-			return nil
+			c.cache.stats.cacheCorruptHitTotal.Add(1)
+			c.cache.deleteEntry(height, key)
 		}
-		c.cache.stats.cacheCorruptHitTotal.Add(1)
-		c.cache.deleteEntry(height, key)
+	} else {
+		c.cache.stats.staleHintBypassTotal.Add(1)
 	}
 	c.cache.stats.cacheMissTotal.Add(1)
-
-	pinnedCtx := ctx
-	if explicitHeight == 0 {
-		pinnedCtx = setPinnedHeight(ctx, height)
-	}
 
 	callOpts := make([]grpc.CallOption, len(opts))
 	copy(callOpts, opts)
@@ -348,11 +378,13 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 
 	sfKey := strconv.FormatInt(height, 10) + "|" + key
 	loadOrFetch := func() (interface{}, error) {
-		if cached, hit := c.cache.lookup(height, key); hit {
-			return cacheInvokeResult{data: cached, height: height, fromCache: true, dataValid: true}, nil
+		if hintTrusted {
+			if cached, hit := c.cache.lookup(height, key); hit {
+				return cacheInvokeResult{data: cached, height: height, fromCache: true, dataValid: true}, nil
+			}
 		}
 
-		if err := c.invokeBackend(pinnedCtx, method, args, reply, callOpts...); err != nil {
+		if err := c.invokeBackend(ctx, method, args, reply, callOpts...); err != nil {
 			return nil, err
 		}
 
@@ -393,9 +425,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 		return fmt.Errorf("unexpected cache invoke result type: %T", resultAny)
 	}
 
-	if header := headerAddrFromCallOptions(opts); header != nil && result.height > 0 {
-		*header = metadata.Pairs(grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(result.height, 10))
-	}
+	mergeHeightIntoHeader(headerAddrFromCallOptions(opts), result.height)
 
 	if result.leaderReply == reply {
 		return nil
@@ -403,7 +433,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 
 	if !result.dataValid {
 		if shared {
-			return c.invokeBackend(pinnedCtx, method, args, reply, callOpts...)
+			return c.invokeBackend(ctx, method, args, reply, callOpts...)
 		}
 		return nil
 	}
@@ -415,7 +445,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 		if result.height > 0 {
 			c.cache.deleteEntry(result.height, key)
 		}
-		return c.invokeBackend(pinnedCtx, method, args, reply, callOpts...)
+		return c.invokeBackend(ctx, method, args, reply, callOpts...)
 	}
 	return nil
 }
@@ -481,6 +511,20 @@ func heightFromIncomingMD(md metadata.MD) int64 {
 		return 0
 	}
 	return h
+}
+
+func mergeHeightIntoHeader(header *metadata.MD, height int64) {
+	if header == nil || height <= 0 {
+		return
+	}
+	md := *header
+	if md == nil {
+		md = metadata.MD{}
+	} else {
+		md = md.Copy()
+	}
+	md.Set(grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10))
+	*header = md
 }
 
 func headerAddrFromCallOptions(opts []grpc.CallOption) *metadata.MD {
