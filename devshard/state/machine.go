@@ -338,6 +338,16 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 		}
 	}
 
+	// Deterministically seal inferences whose grace gates have cleared, before
+	// the root is computed, so the user's signed post_state_root commits to the
+	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
+	if sm.state.Phase == types.PhaseActive {
+		if _, err := sm.autoSealLocked(nonce); err != nil {
+			sm.restoreMutable(snap)
+			return nil, nil, fmt.Errorf("auto-seal: %w", err)
+		}
+	}
+
 	root, err := sm.computeStateRootLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
@@ -422,6 +432,17 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 				sm.restoreMutable(snap)
 				return nil, fmt.Errorf("drain live into sealed_acc: %w", err)
 			}
+		}
+	}
+
+	// 6b. Deterministically seal inferences whose grace gates have cleared,
+	// folding them into SealedAcc before the root is computed so the seal is
+	// part of post_state_root. The decision reads only state (nonce + the
+	// ConfirmedAt-derived state clock), so user, host and replay all agree.
+	if sm.state.Phase == types.PhaseActive {
+		if _, err := sm.autoSealLocked(nonce); err != nil {
+			sm.restoreMutable(snap)
+			return nil, fmt.Errorf("auto-seal: %w", err)
 		}
 	}
 
@@ -1194,6 +1215,19 @@ func (sm *StateMachine) SlotAddress(slotID uint32) string {
 
 func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
+}
+
+// LiveInferenceIDs returns the set of inference ids currently in live state.
+// The live set is bounded (in-flight plus in-grace), so this is cheap. The host
+// uses it to detect which inferences a diff sealed (live before, gone after).
+func (sm *StateMachine) LiveInferenceIDs() map[uint64]struct{} {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	out := make(map[uint64]struct{}, len(sm.state.Inferences))
+	for id := range sm.state.Inferences {
+		out[id] = struct{}{}
+	}
+	return out
 }
 
 // GetInference returns a copy of the inference record for the given ID.

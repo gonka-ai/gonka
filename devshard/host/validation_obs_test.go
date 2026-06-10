@@ -43,6 +43,9 @@ func newObsRig(t *testing.T, store storage.Storage, opts ...HostOption) *obsTest
 		TokenPrice:       1,
 		VoteThreshold:    uint32(len(hosts)) / 2,
 		ValidationRate:   0,
+		// Small, explicit seal gates for deterministic auto-seal in tests.
+		SealGraceNonces:            pruneTestSealGraceNonces,
+		InferenceClearGraceSeconds: pruneTestClearGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 
@@ -113,10 +116,12 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-func (r *obsTestRig) awaitTerminalPrune(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
+// awaitTerminalSeal waits for the terminal short-path seal (nonce gate only).
+// If the terminalizing diff already sealed the inference, this returns
+// immediately; otherwise it advances empty diffs until the nonce gate clears.
+func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
 	r.t.Helper()
-	time.Sleep(20 * time.Millisecond)
-	limit := int(r.host.sealGraceNonces) + 3
+	limit := int(pruneTestSealGraceNonces) + 3
 	if limit < 3 {
 		limit = 3
 	}
@@ -594,7 +599,6 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 	sink := &recordingPruneSink{}
 	r := newObsRig(t, nil,
 		WithPruneSink(sink),
-		WithPruneTuning(1, 10*time.Millisecond),
 	)
 
 	const inferenceID = uint64(1)
@@ -607,11 +611,10 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 
 	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(inferenceID, 1, false)})
 	next++
-	require.Equal(t, types.StatusInvalidated, r.host.SnapshotState().Inferences[inferenceID].Status)
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
 	waitObsRowCount(t, r.store, r.escrowID, 2)
 
-	next = r.awaitTerminalPrune(inferenceID, next, sink)
+	next = r.awaitTerminalSeal(inferenceID, next, sink)
 	r.inferenceMissing(inferenceID)
 	require.NotZero(t, r.sealedRow(inferenceID).SealedNonce)
 
