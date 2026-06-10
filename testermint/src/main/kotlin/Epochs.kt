@@ -13,6 +13,14 @@ enum class EpochStage {
     CLAIM_REWARDS
 }
 
+private const val DEFAULT_INFERENCE_STAGE_SLACK_BLOCKS = 3L
+
+data class StageSafeInferenceBlock(
+    val block: Long,
+    val inferenceWindowStart: Long,
+    val nextPocStart: Long,
+)
+
 fun EpochResponse.getNextStage(stage: EpochStage): Long {
     return when (stage) {
         EpochStage.START_OF_POC -> resolveUpcomingStage(epochStages.pocStart, nextEpochStages.pocStart)
@@ -31,6 +39,32 @@ fun EpochResponse.resolveUpcomingStage(latestEpochStage: Long, nextEpochStage: L
         latestEpochStage
     } else {
         nextEpochStage
+    }
+}
+
+fun EpochResponse.findStageSafeInferenceBlock(
+    earliestBlock: Long,
+    minimumSlackBeforeNextPoc: Long = DEFAULT_INFERENCE_STAGE_SLACK_BLOCKS,
+): StageSafeInferenceBlock? {
+    require(minimumSlackBeforeNextPoc >= 0) { "minimumSlackBeforeNextPoc must be non-negative" }
+
+    val inferenceWindows = listOf(
+        epochStages.claimMoney + 1 to epochStages.nextPocStart,
+        nextEpochStages.claimMoney + 1 to nextEpochStages.nextPocStart,
+    )
+
+    return inferenceWindows.firstNotNullOfOrNull { (windowStart, nextPocStart) ->
+        val candidateBlock = maxOf(blockHeight + 1, earliestBlock, windowStart)
+        val latestSafeBlock = nextPocStart - minimumSlackBeforeNextPoc - 1
+        if (candidateBlock <= latestSafeBlock) {
+            StageSafeInferenceBlock(
+                block = candidateBlock,
+                inferenceWindowStart = windowStart,
+                nextPocStart = nextPocStart,
+            )
+        } else {
+            null
+        }
     }
 }
 
