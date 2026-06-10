@@ -105,7 +105,7 @@ func TestStoreGuardState(t *testing.T) {
 		t.Fatal("no state expected initially")
 	}
 
-	st := GuardState{ParticipantAddress: "a", ModelID: "m1", PassedOnce: true, ConsecutiveMisses: 1, UpdatedStageHeight: 42}
+	st := GuardState{ParticipantAddress: "a", ModelID: "m1", ConsecutiveMisses: 1, UpdatedStageHeight: 42}
 	if err := s.UpsertGuardState(ctx, st); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestStoreGuardState(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get after upsert: ok=%v err=%v", ok, err)
 	}
-	if !got.PassedOnce || got.ConsecutiveMisses != 1 || got.UpdatedStageHeight != 42 {
+	if got.ConsecutiveMisses != 1 || got.UpdatedStageHeight != 42 {
 		t.Fatalf("state mismatch: %+v", got)
 	}
 }
@@ -130,7 +130,7 @@ func TestStoreDeleteStageKeepsGuardState(t *testing.T) {
 	if err := s.MarkStageCaptured(ctx, 10, 3, 4, map[string]int{"m1": 1}); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
-	if err := s.UpsertGuardState(ctx, GuardState{ParticipantAddress: "a", ModelID: "m1", PassedOnce: true}); err != nil {
+	if err := s.UpsertGuardState(ctx, GuardState{ParticipantAddress: "a", ModelID: "m1", ConsecutiveMisses: 1}); err != nil {
 		t.Fatalf("upsert state: %v", err)
 	}
 

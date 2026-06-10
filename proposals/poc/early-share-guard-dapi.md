@@ -126,26 +126,23 @@ Do not use `MLNodeWeightDistribution` for this weighting: that is the per-node a
 DAPI keeps local state per `(participant_address, model_id)`:
 
 ```text
-passed_once
 consecutive_misses
 updated_stage_height
 ```
 
-**PoC vs CPoC asymmetry.** Regular PoC early-share is cheap to fake, so a passing *regular PoC* round is not trusted to clear the streak or to demonstrate capability. Only a passing *confirmation PoC (CPoC)* does that. Failures count the same in either phase. The single streak is shared across PoC and CPoC for a `(participant, model)` (the state is not segmented by phase).
+**PoC vs CPoC asymmetry.** Regular PoC early-share is cheap to fake, so a passing *regular PoC* round is not trusted to clear the streak. Only a passing *confirmation PoC (CPoC)* resets it. Failures count the same in either phase. The single streak is shared across PoC and CPoC for a `(participant, model)` (the state is not segmented by phase).
 
 State transition:
 
 - If the participant **passes** the early-share check:
-  - if this is a **CPoC** stage: `passed_once = true`, `consecutive_misses = 0`
-  - if this is a **regular PoC** stage: no change (do not set `passed_once`, do not reset `consecutive_misses`); never vote no on a passing stage
+  - if this is a **CPoC** stage: `consecutive_misses = 0`
+  - if this is a **regular PoC** stage: no change (do not reset `consecutive_misses`); never vote no on a passing stage
 - If the participant **fails** the early-share check (either PoC or CPoC):
   - `consecutive_misses += 1`
-  - if `passed_once == false`: do not vote no (never demonstrated capability via a CPoC pass)
-  - if `passed_once == true`:
-    - if `consecutive_misses == 1`, allow this stage (grace)
-    - if `consecutive_misses >= 2`, vote no for this participant/model
+  - if `consecutive_misses == 1`, allow this stage (grace)
+  - if `consecutive_misses >= 2`, vote no for this participant/model
 
-This allows one miss in a row after a participant has demonstrated — via a CPoC pass — that it can satisfy the early-share rule. A passing regular PoC neither rescues an existing streak nor establishes capability, because PoC output is easy to cheat.
+This allows one miss in a row before voting no. A passing regular PoC does not rescue an existing streak, because PoC output is easy to cheat; only a CPoC pass — which is ungameable — clears the streak.
 
 ### Prefix proof check
 
@@ -196,7 +193,6 @@ CREATE TABLE IF NOT EXISTS poc_early_checkpoints (
 CREATE TABLE IF NOT EXISTS poc_early_guard_state (
   participant_address TEXT NOT NULL,
   model_id TEXT NOT NULL,
-  passed_once BOOLEAN NOT NULL DEFAULT FALSE,
   consecutive_misses INTEGER NOT NULL DEFAULT 0,
   updated_stage_height INTEGER NOT NULL,
   PRIMARY KEY (participant_address, model_id)
@@ -284,7 +280,7 @@ Note that a participant present in the final list but absent from the captured e
 
 The guard should fail closed for invalid captured data:
 
-- `early_count > final_count`: vote no if participant already passed once and miss streak triggers; also treat prefix proof as unavailable.
+- `early_count > final_count`: vote no if the miss streak triggers; also treat prefix proof as unavailable.
 - early root cannot prove the shared leaf: vote no.
 - shared leaf proof differs between early and final commitments: vote no.
 

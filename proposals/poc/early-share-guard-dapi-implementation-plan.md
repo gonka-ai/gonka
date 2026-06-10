@@ -95,7 +95,7 @@ All work is in `decentralized-api/` (DAPI). No chain changes.
 22. Threshold check: compare the participant's `early_share` against
     `threshold_share`.
 23. Miss-streak check: read/update `poc_early_guard_state` for
-    `(participant, model_id)` — track `passed_once` and `consecutive_misses`, and
+    `(participant, model_id)` — track `consecutive_misses`, and
     apply the one-miss grace rule (only vote no on the relevant repeated miss).
 24. Shared-leaf injection: when `require_prefix_proof` is set, ensure the
     validation sample includes one deterministic `shared_leaf_index < early_count`
