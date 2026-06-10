@@ -342,7 +342,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	// the root is computed, so the user's signed post_state_root commits to the
 	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
 	if sm.state.Phase == types.PhaseActive {
-		if _, err := sm.autoSealLocked(nonce); err != nil {
+		if _, _, err := sm.autoSealLocked(nonce); err != nil {
 			sm.restoreMutable(snap)
 			return nil, nil, fmt.Errorf("auto-seal: %w", err)
 		}
@@ -439,8 +439,11 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// folding them into SealedAcc before the root is computed so the seal is
 	// part of post_state_root. The decision reads only state (nonce + the
 	// ConfirmedAt-derived state clock), so user, host and replay all agree.
+	var sealClockWin stateClockWindow
 	if sm.state.Phase == types.PhaseActive {
-		if _, err := sm.autoSealLocked(nonce); err != nil {
+		var err error
+		_, sealClockWin, err = sm.autoSealLocked(nonce)
+		if err != nil {
 			sm.restoreMutable(snap)
 			return nil, fmt.Errorf("auto-seal: %w", err)
 		}
@@ -455,7 +458,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
-		logging.Error("state root mismatch diagnostic",
+		diagArgs := []any{
 			"subsystem", "state",
 			"nonce", nonce,
 			"balance", sm.state.Balance,
@@ -469,7 +472,15 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			"config_vote_threshold", sm.state.Config.VoteThreshold,
 			"config_validation_rate", sm.state.Config.ValidationRate,
 			"escrow_id", sm.state.EscrowID,
-		)
+		}
+		if sealClockWin.Known {
+			diagArgs = append(diagArgs,
+				"auto_seal_state_clock", sealClockWin.Clock,
+				"auto_seal_window_min_confirmed_at", sealClockWin.MinConfirmedAt,
+				"auto_seal_window_max_confirmed_at", sealClockWin.MaxConfirmedAt,
+			)
+		}
+		logging.Error("state root mismatch diagnostic", diagArgs...)
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
 	}

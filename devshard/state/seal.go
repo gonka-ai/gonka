@@ -223,15 +223,22 @@ func terminalAutoSealStatus(s types.InferenceStatus) bool {
 	}
 }
 
+// stateClockWindow holds the deterministic state-clock value (min ConfirmedAt
+// over the tail window) plus min/max extents from that scan for diagnostics.
+type stateClockWindow struct {
+	Clock          int64
+	MinConfirmedAt int64
+	MaxConfirmedAt int64
+	Known          bool
+}
+
 // stateClockLocked derives a deterministic "current time" purely from state:
-// the max ConfirmedAt over the latest N*stateClockWindowFactor live inferences
-// (N = group size). ConfirmedAt is executor-signed and committed to the state
-// root, so every node computes the identical clock without reading any wall
-// clock -- which is what lets the auto-seal decision agree across user, host
-// and replay. Returns 0 before any inference has confirmed. Caller holds sm.mu.
-func (sm *StateMachine) stateClockLocked() int64 {
+// the min ConfirmedAt over the latest N*stateClockWindowFactor live inferences
+// (N = group size), plus the min and max ConfirmedAt in that window. Returns
+// Known=false when there are no live inferences. Caller holds sm.mu.
+func (sm *StateMachine) stateClockLocked() stateClockWindow {
 	if len(sm.state.Inferences) == 0 {
-		return 0
+		return stateClockWindow{}
 	}
 	window := len(sm.state.Group) * stateClockWindowFactor
 	if window <= 0 {
@@ -245,18 +252,34 @@ func (sm *StateMachine) stateClockLocked() int64 {
 	slices.Sort(ids)
 
 	// Inference id == start nonce, so the highest ids are the most recently
-	// started. Scan the tail window and take the max ConfirmedAt.
+	// started. Scan the tail window once and take the min ConfirmedAt as clock.
 	start := 0
 	if len(ids) > window {
 		start = len(ids) - window
 	}
-	var maxConfirmed int64
+	var minConfirmed, maxConfirmed int64
+	first := true
 	for _, id := range ids[start:] {
-		if c := sm.state.Inferences[id].ConfirmedAt; c > maxConfirmed {
+		c := sm.state.Inferences[id].ConfirmedAt
+		if first {
+			minConfirmed = c
+			maxConfirmed = c
+			first = false
+			continue
+		}
+		if c < minConfirmed {
+			minConfirmed = c
+		}
+		if c > maxConfirmed {
 			maxConfirmed = c
 		}
 	}
-	return maxConfirmed
+	return stateClockWindow{
+		Clock:          minConfirmed,
+		MinConfirmedAt: minConfirmed,
+		MaxConfirmedAt: maxConfirmed,
+		Known:          true,
+	}
 }
 
 // autoSealLocked folds every live inference that has cleared both seal gates
@@ -277,13 +300,14 @@ func (sm *StateMachine) stateClockLocked() int64 {
 // storage error on one node cannot diverge the deterministic seal. Caller must
 // hold sm.mu and should invoke this only in the Active phase (settlement uses
 // drainLiveIntoSealedAccLocked).
-func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
+func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, stateClockWindow, error) {
 	if len(sm.state.Inferences) == 0 {
-		return nil, nil
+		return nil, stateClockWindow{}, nil
 	}
 	sealGraceNonces := uint64(sm.state.Config.SealGraceNonces)
 	graceSeconds := int64(sm.state.Config.InferenceClearGraceSeconds)
-	stateClock := sm.stateClockLocked()
+	clockWin := sm.stateClockLocked()
+	stateClock := clockWin.Clock
 
 	var eligible []uint64
 	for id, rec := range sm.state.Inferences {
@@ -299,7 +323,7 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
 		eligible = append(eligible, id)
 	}
 	if len(eligible) == 0 {
-		return nil, nil
+		return nil, clockWin, nil
 	}
 	slices.Sort(eligible)
 
@@ -310,7 +334,7 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
 	for _, id := range eligible {
 		rec := sm.state.Inferences[id]
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
-			return nil, fmt.Errorf("auto-seal inference %d: %w", id, err)
+			return nil, clockWin, fmt.Errorf("auto-seal inference %d: %w", id, err)
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
@@ -328,7 +352,7 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, error) {
 		delete(sm.state.Inferences, id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
-	return eligible, nil
+	return eligible, clockWin, nil
 }
 
 func (sm *StateMachine) SealInference(id uint64) error {
