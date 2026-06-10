@@ -1918,17 +1918,17 @@ func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
 		StalledWinnerQuarantineMS:      175,
 		EmptyStreamQuarantineThreshold: 2,
 	})
-	now := time.Now()
-
 	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions", fmt.Errorf("dial tcp: connection refused"))
+	transportQuarantineAt := time.Now()
 	require.True(t, limiter.IsBlocked("transport-host"))
-	require.True(t, limiter.allow("transport-host", now.Add(101*time.Millisecond)))
+	require.True(t, limiter.allow("transport-host", transportQuarantineAt.Add(101*time.Millisecond)))
 
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
+	emptyStreamQuarantineAt := time.Now()
 	require.True(t, limiter.IsBlocked("empty-host"))
-	require.True(t, limiter.allow("empty-host", now.Add(151*time.Millisecond)))
+	require.True(t, limiter.allow("empty-host", emptyStreamQuarantineAt.Add(151*time.Millisecond)))
 }
 
 func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *testing.T) {
