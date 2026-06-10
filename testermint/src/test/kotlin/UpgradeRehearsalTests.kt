@@ -128,34 +128,29 @@ class UpgradeRehearsalTests : TestermintTest() {
     ): Long {
         require(minimumLeadBlocks >= 0) { "UPGRADE_REHEARSAL_LEAD_BLOCKS must be non-negative" }
 
-        while (true) {
-            val epochData = genesis.getEpochData()
-            val earliestUpgradeBlock = epochData.blockHeight + minimumLeadBlocks
-            val scheduledUpgrade = epochData.findStageSafeInferenceBlock(
+        val epochData = genesis.getEpochData()
+        val earliestUpgradeBlock = epochData.blockHeight + minimumLeadBlocks
+        val scheduledUpgrade = requireNotNull(
+            epochData.findStageSafeInferenceBlock(
                 earliestBlock = earliestUpgradeBlock,
                 minimumSlackBeforeNextPoc = upgradeSchedulingSlackBlocks,
             )
-
-            if (scheduledUpgrade != null) {
-                Logger.info(
-                    "Selected stage-safe upgrade height {} from block {} during phase {} " +
-                        "(inference window {}..{}, earliest acceptable block {})",
-                    scheduledUpgrade.block,
-                    epochData.blockHeight,
-                    epochData.phase,
-                    scheduledUpgrade.inferenceWindowStart,
-                    scheduledUpgrade.nextPocStart - 1,
-                    earliestUpgradeBlock,
-                )
-                return scheduledUpgrade.block
-            }
-
-            logSection(
-                "Waiting for next inference window to schedule upgrade safely " +
-                    "(current block ${epochData.blockHeight}, phase ${epochData.phase}, lead $minimumLeadBlocks)"
-            )
-            genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        ) {
+            "Failed to find a stage-safe upgrade block for height $earliestUpgradeBlock " +
+                "with slack $upgradeSchedulingSlackBlocks from phase ${epochData.phase}"
         }
+
+        Logger.info(
+            "Selected stage-safe upgrade height {} from block {} during phase {} " +
+                "(inference window {}..{}, earliest acceptable block {})",
+            scheduledUpgrade.block,
+            epochData.blockHeight,
+            epochData.phase,
+            scheduledUpgrade.inferenceWindowStart,
+            scheduledUpgrade.nextPocStart - 1,
+            earliestUpgradeBlock,
+        )
+        return scheduledUpgrade.block
     }
 
     private data class PocPowerSnapshot(
