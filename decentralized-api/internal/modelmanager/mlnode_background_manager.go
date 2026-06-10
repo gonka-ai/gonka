@@ -20,6 +20,7 @@ type NodesConfigManagerInterface interface {
 	GetNodes() []apiconfig.InferenceNodeConfig
 	GetCurrentNodeVersion() string
 	SetNodes(nodes []apiconfig.InferenceNodeConfig) error
+	GetApiConfig() apiconfig.ApiConfig
 }
 
 // PhaseTrackerInterface defines the minimal interface needed from PhaseTracker
@@ -125,7 +126,7 @@ func (m *MLNodeBackgroundManager) isInDownloadWindow(epochState *chainphase.Epoc
 // checkNodeModels checks and downloads models for a specific node
 func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeConfig) {
 	version := m.configManager.GetCurrentNodeVersion()
-	pocUrl := getPoCUrlWithVersion(node, version)
+	pocUrl := m.pocUrlForNode(node, version)
 	inferenceUrl := getInferenceUrlWithVersion(node, version)
 	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
 
@@ -192,11 +193,12 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 	}
 }
 
-func getPoCUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
+func (m *MLNodeBackgroundManager) pocUrlForNode(node apiconfig.InferenceNodeConfig, version string) string {
+	scheme := m.configManager.GetApiConfig().MLNodeTLS.Scheme()
 	if version == "" {
-		return getPoCUrl(node)
+		return fmt.Sprintf("%s://%s:%d%s", scheme, node.Host, node.PoCPort, node.PoCSegment)
 	}
-	return getPoCUrlVersioned(node, version)
+	return fmt.Sprintf("%s://%s:%d/%s%s", scheme, node.Host, node.PoCPort, version, node.PoCSegment)
 }
 
 func getInferenceUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
@@ -204,14 +206,6 @@ func getInferenceUrlWithVersion(node apiconfig.InferenceNodeConfig, version stri
 		return getInferenceUrl(node)
 	}
 	return getInferenceUrlVersioned(node, version)
-}
-
-func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
-	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
-}
-
-func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
-	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
 }
 
 func getInferenceUrl(node apiconfig.InferenceNodeConfig) string {
@@ -289,7 +283,7 @@ func (m *MLNodeBackgroundManager) checkAndUpdateGPUs(ctx context.Context) {
 // fetchNodeGPUHardware fetches GPU devices and transforms to Hardware entries
 func (m *MLNodeBackgroundManager) fetchNodeGPUHardware(ctx context.Context, node *apiconfig.InferenceNodeConfig) ([]apiconfig.Hardware, error) {
 	version := m.configManager.GetCurrentNodeVersion()
-	pocUrl := getPoCUrlWithVersion(*node, version)
+	pocUrl := m.pocUrlForNode(*node, version)
 	inferenceUrl := getInferenceUrlWithVersion(*node, version)
 	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
 

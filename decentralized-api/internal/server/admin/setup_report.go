@@ -640,15 +640,14 @@ func (s *Server) checkMLNodes(ctx context.Context) []Check {
 	nodes := s.configManager.GetConfig().Nodes
 	checks := []Check{}
 
-	for _, node := range nodes {
-		// Build PoC URL
-		version := s.configManager.GetCurrentNodeVersion()
-		pocUrl := getPoCUrlWithVersion(node, version)
+	client := s.mlNodeClientFactory.NewHTTPClient(5 * time.Second)
 
-		// Check health endpoint
+	for _, node := range nodes {
+		version := s.configManager.GetCurrentNodeVersion()
+		pocUrl := s.mlNodePoCURL(node, version)
+
 		healthUrl, _ := url.JoinPath(pocUrl, "/health")
 
-		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Get(healthUrl)
 
 		healthy := false
@@ -877,27 +876,10 @@ func buildRecommendationMap() map[string]string {
 	}
 }
 
-// Helper Functions (copied from modelmanager for isolation)
-
-func getPoCUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
+func (s *Server) mlNodePoCURL(node apiconfig.InferenceNodeConfig, version string) string {
+	scheme := s.configManager.GetApiConfig().MLNodeTLS.Scheme()
 	if version == "" {
-		return getPoCUrl(node)
+		return fmt.Sprintf("%s://%s:%d%s", scheme, node.Host, node.PoCPort, node.PoCSegment)
 	}
-	return getPoCUrlVersioned(node, version)
-}
-
-func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
-	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
-}
-
-func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
-	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
-}
-
-func formatURL(host string, port int, segment string) string {
-	return fmt.Sprintf("http://%s:%d%s", host, port, segment)
-}
-
-func formatURLWithVersion(host string, port int, version string, segment string) string {
-	return fmt.Sprintf("http://%s:%d/%s%s", host, port, version, segment)
+	return fmt.Sprintf("%s://%s:%d/%s%s", scheme, node.Host, node.PoCPort, version, node.PoCSegment)
 }

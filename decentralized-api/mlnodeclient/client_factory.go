@@ -2,11 +2,14 @@ package mlnodeclient
 
 import (
 	"crypto/tls"
+	"net/http"
 	"sync"
+	"time"
 )
 
 type ClientFactory interface {
 	CreateClient(pocUrl string, inferenceUrl string) MLNodeClient
+	NewHTTPClient(timeout time.Duration) *http.Client
 }
 
 type HttpClientFactory struct {
@@ -15,6 +18,14 @@ type HttpClientFactory struct {
 
 func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
 	return NewNodeClientWithTLS(pocUrl, inferenceUrl, f.TLSConfig)
+}
+
+func (f *HttpClientFactory) NewHTTPClient(timeout time.Duration) *http.Client {
+	client := &http.Client{Timeout: timeout}
+	if f.TLSConfig != nil {
+		client.Transport = &http.Transport{TLSClientConfig: f.TLSConfig}
+	}
+	return client
 }
 
 type MockClientFactory struct {
@@ -38,6 +49,10 @@ func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLN
 	client := NewMockClient()
 	f.clients[key] = client
 	return client
+}
+
+func (f *MockClientFactory) NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
 }
 
 func (f *MockClientFactory) GetClientForNode(pocUrl string) *MockClient {

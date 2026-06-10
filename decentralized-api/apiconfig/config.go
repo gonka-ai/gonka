@@ -81,6 +81,13 @@ type MLNodeTLSConfig struct {
 	PeerCertFile string `koanf:"peer_cert_file" json:"peer_cert_file"`
 }
 
+func (c MLNodeTLSConfig) Scheme() string {
+	if c.Enabled {
+		return "https"
+	}
+	return "http"
+}
+
 type ChainNodeConfig struct {
 	Url              string `koanf:"url" json:"url"`
 	IsGenesis        bool   `koanf:"is_genesis" json:"is_genesis"`

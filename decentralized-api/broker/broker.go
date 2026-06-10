@@ -189,10 +189,6 @@ func (n *Node) PoCUrlWithVersion(version string) string {
 	return n.pocUrlWithScheme("http", version)
 }
 
-func (n *Node) SecurePoCUrlWithVersion(version string) string {
-	return n.pocUrlWithScheme("https", version)
-}
-
 func (n *Node) pocUrlWithScheme(scheme, version string) string {
 	if version == "" {
 		return fmt.Sprintf("%s://%s:%d%s", scheme, n.Host, n.PoCPort, n.PoCSegment)
@@ -462,10 +458,11 @@ func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 }
 
 func (b *Broker) pocUrlForNode(node *Node, version string) string {
-	if b.configManager != nil && b.configManager.GetApiConfig().MLNodeTLS.Enabled {
-		return node.SecurePoCUrlWithVersion(version)
+	scheme := "http"
+	if b.configManager != nil {
+		scheme = b.configManager.GetApiConfig().MLNodeTLS.Scheme()
 	}
-	return node.PoCUrlWithVersion(version)
+	return node.pocUrlWithScheme(scheme, version)
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
