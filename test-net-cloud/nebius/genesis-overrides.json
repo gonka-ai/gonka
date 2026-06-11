@@ -83,7 +83,7 @@
     },
     "restrictions": {
       "params": {
-        "restriction_end_block": "12"
+        "restriction_end_block": "0"
       }
     },
     "inference": {

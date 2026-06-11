@@ -124,6 +124,10 @@ def clean_state():
         print(f"Removing {GONKA_REPO_DIR}")
         os.system(f"sudo rm -rf {GONKA_REPO_DIR}")
     
+    if BOUNTY_POOL_STATE_FILE.exists():
+        print(f"Removing {BOUNTY_POOL_STATE_FILE}")
+        os.system(f"sudo rm -f {BOUNTY_POOL_STATE_FILE}")
+
     if INFERENCED_BINARY.zip_file.exists():
         print(f"Removing {BASE_DIR / 'inferenced-linux-amd64.zip'}")
         os.system(f"sudo rm -f {BASE_DIR / 'inferenced-linux-amd64.zip'}")
