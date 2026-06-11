@@ -43,3 +43,6 @@ run-parallel-tests/
 inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
+
+# Generated JSONLs
+mlnode/packages/benchmarks/data/inference_results/*

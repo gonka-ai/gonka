@@ -1,0 +1,89 @@
+{
+  "timestamp": "2026-04-04T22:08:25.132676",
+  "artifact_dir": "/root/vlm-res/validation/fp8-enf_h100-a100",
+  "source_inference_artifact": "/root/vlm-res/inference/fp8-free_h100/inference_results_t099.jsonl",
+  "validation_artifact": "/root/vlm-res/validation/fp8-enf_h100-a100/validation_results.jsonl",
+  "n_items": 1000,
+  "validation_model_info": {
+    "name": "/root/models/Qwen3-VL-235B-A22B-Instruct-FP8/",
+    "url": "http://localhost:8801/",
+    "deploy_params": {}
+  },
+  "request_params": {
+    "max_tokens": 3000,
+    "temperature": 0.99,
+    "seed": 42,
+    "additional_params": {},
+    "top_logprobs": 20,
+    "top_p": null,
+    "top_k": null,
+    "repetition_penalty": null,
+    "timeout_seconds": 300,
+    "retries_max_attempts": 3,
+    "retry_backoff_seconds_start": 1.0,
+    "retry_backoff_multiplier": 2.0
+  },
+  "vllm_runtime_probe": {
+    "base_url": "http://localhost:8801",
+    "models_url": "http://localhost:8801/v1/models",
+    "served_model_ids": [
+      "/root/models/Qwen3-VL-235B-A22B-Instruct-FP8/"
+    ],
+    "raw_models_response": {
+      "object": "list",
+      "data": [
+        {
+          "id": "/root/models/Qwen3-VL-235B-A22B-Instruct-FP8/",
+          "object": "model",
+          "created": 1775340505,
+          "owned_by": "vllm",
+          "root": "/root/models/Qwen3-VL-235B-A22B-Instruct-FP8/",
+          "parent": null,
+          "max_model_len": 128000,
+          "permission": [
+            {
+              "id": "modelperm-245278b29f0d4bc790a05c113218df77",
+              "object": "model_permission",
+              "created": 1775340505,
+              "allow_create_engine": false,
+              "allow_sampling": true,
+              "allow_logprobs": true,
+              "allow_search_indices": false,
+              "allow_view": true,
+              "allow_fine_tuning": false,
+              "organization": "*",
+              "group": null,
+              "is_blocking": false
+            }
+          ]
+        }
+      ]
+    },
+    "health_status_code": 200,
+    "version_status_code": 200,
+    "version_body": "{\"version\":\"0.8.2.dev5892+gb2ebbf826\"}",
+    "timestamp": "2026-04-04T22:08:25.132383"
+  },
+  "config_check_passed": true,
+  "config_diff_keys": [],
+  "cli": {
+    "validation_url": "http://localhost:8801",
+    "validation_model": "",
+    "max_workers": 64,
+    "wait_timeout_s": 120,
+    "max_attempts": 3,
+    "retry_backoff_start_s": 1.0,
+    "retry_backoff_mult": 2.0,
+    "artifact_tag": "",
+    "api_key_set": false,
+    "images_dir": "/root/flickr8k_images/test",
+    "fallback_images_count": 1000
+  },
+  "performance": {
+    "total_time_seconds": 403.053,
+    "n_prompts": 1000,
+    "total_output_tokens": 339060,
+    "output_tokens_per_second": 841.23,
+    "average_time_per_prompt_seconds": 0.403
+  }
+}

@@ -163,5 +163,6 @@ cython_debug/
 
 **/*.jsonl
 **/*.sqlite
+*.DS_Store
 packages/benchmarks/data
 packages/benchmarks/misc_plots

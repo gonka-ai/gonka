@@ -7,6 +7,7 @@ from typing import (
     Dict,
     Optional,
     Union,
+    Any,
 )
 import pandas as pd
 
@@ -53,6 +54,17 @@ class ValidationItem(BaseModel):
 
     def to_dict(self):
         return self.model_dump()
+
+
+class InferenceArtifactItem(BaseModel):
+    """One row of inference_results.jsonl (text or VLM)."""
+
+    prompt: str
+    language: str = "en"
+    inference_result: Result
+    inference_model: ModelInfo
+    request_params: RequestParams
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExperimentRequest(BaseModel):
