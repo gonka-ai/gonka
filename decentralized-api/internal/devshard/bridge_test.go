@@ -109,10 +109,10 @@ func TestChainBridge_GetSessionBindParams(t *testing.T) {
 	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
 		Params: inferenceTypes.Params{
 			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
-				DefaultSealGraceNonces:            1,
-				DefaultInferenceClearGraceSeconds: 10,
-				ValidationRate:                    0,
-				VoteThresholdFactor:               50,
+				ValidationRate:      0,
+				VoteThresholdFactor: 50,
+				RefusalTimeout:      60,
+				ExecutionTimeout:    1200,
 			},
 		},
 	}, nil)
@@ -120,7 +120,8 @@ func TestChainBridge_GetSessionBindParams(t *testing.T) {
 	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
 	live, err := cb.GetSessionBindParams()
 	require.NoError(t, err)
-	assert.Equal(t, uint32(1), live.SealGraceNonces)
-	assert.Equal(t, uint32(10), live.InferenceClearGraceSeconds)
 	assert.Equal(t, uint32(0), live.ValidationRate)
+	assert.Equal(t, uint32(50), live.VoteThresholdFactor)
+	assert.Equal(t, int64(60), live.RefusalTimeout)
+	assert.Equal(t, int64(1200), live.ExecutionTimeout)
 }

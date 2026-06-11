@@ -17,13 +17,13 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"escrow": map[string]any{
-				"id":          "42",
-				"creator":     "inference1abc",
-				"amount":      "5000000000",
-				"slots":       []string{"valA", "valB", "valC"},
-				"epoch_index": "10",
-				"app_hash":    "deadbeef",
-				"settled":     false,
+				"id":                  "42",
+				"creator":             "inference1abc",
+				"amount":              "5000000000",
+				"slots":               []string{"valA", "valB", "valC"},
+				"epoch_index":         "10",
+				"app_hash":            "deadbeef",
+				"settled":             false,
 				"token_price":         "1",
 				"create_devshard_fee": "10000",
 				"fee_per_nonce":       "1000",
@@ -44,6 +44,28 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"valA", "valB", "valC"}, info.Slots)
 	assert.Equal(t, uint64(10_000), info.CreateDevshardFee)
 	assert.Equal(t, uint64(1_000), info.FeePerNonce)
+	assert.Equal(t, uint32(160), info.InferenceSealGraceNonces)
+	assert.Equal(t, uint32(3600), info.InferenceSealGraceSeconds)
+}
+
+func TestGetEscrow_GraceFieldsStringified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"escrow": map[string]any{
+				"id": "42", "creator": "c", "amount": "1", "slots": []string{"a"},
+				"epoch_index": "0", "app_hash": "aa", "settled": false, "token_price": "1",
+				"inference_seal_grace_nonces":  "2",
+				"inference_seal_grace_seconds": "10",
+			},
+			"found": true,
+		})
+	}))
+	defer srv.Close()
+
+	info, err := NewRESTBridge(srv.URL).GetEscrow("42")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), info.InferenceSealGraceNonces)
+	assert.Equal(t, uint32(10), info.InferenceSealGraceSeconds)
 }
 
 func TestGetEscrow_FeesMissingKeysDecodeZero(t *testing.T) {
@@ -270,12 +292,10 @@ func TestGetSessionBindParams_HappyPath(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"params": map[string]any{
 				"devshard_escrow_params": map[string]any{
-					"default_seal_grace_nonces":             1,
-					"default_inference_clear_grace_seconds": 10,
-					"refusal_timeout":                       "60",
-					"execution_timeout":                     "1200",
-					"validation_rate":                       0,
-					"vote_threshold_factor":                 50,
+					"refusal_timeout":       "60",
+					"execution_timeout":     "1200",
+					"validation_rate":       0,
+					"vote_threshold_factor": 50,
 				},
 			},
 		})
@@ -284,8 +304,6 @@ func TestGetSessionBindParams_HappyPath(t *testing.T) {
 
 	live, err := NewRESTBridge(srv.URL).GetSessionBindParams()
 	require.NoError(t, err)
-	assert.Equal(t, uint32(1), live.SealGraceNonces)
-	assert.Equal(t, uint32(10), live.InferenceClearGraceSeconds)
 	assert.Equal(t, uint32(0), live.ValidationRate)
 	assert.Equal(t, int64(60), live.RefusalTimeout)
 	assert.Equal(t, int64(1200), live.ExecutionTimeout)

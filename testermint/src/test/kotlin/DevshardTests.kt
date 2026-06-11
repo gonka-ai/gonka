@@ -75,9 +75,9 @@ class DevshardTests : TestermintTest() {
             genesis.waitForDevshardProxyWarmup()
 
             val status = genesis.getDevshardProxyStatus(handle.proxyUrl)
-            assertThat(status.config.sealGraceNonces).isEqualTo(devshardAutoSealSealGraceNonces.toInt())
-            assertThat(status.config.inferenceClearGraceSeconds)
-                .isEqualTo(devshardAutoSealClearGraceSeconds.toInt())
+            assertThat(status.config.inferenceSealGraceNonces).isEqualTo(devshardAutoSealInferenceSealGraceNonces.toInt())
+            assertThat(status.config.inferenceSealGraceSeconds)
+                .isEqualTo(devshardAutoSealInferenceSealGraceSeconds.toInt())
             assertThat(status.config.validationRate).isEqualTo(0)
 
             logSection("Sending first batch ($firstBatch finished inferences)")
@@ -96,8 +96,8 @@ class DevshardTests : TestermintTest() {
             assertThat(debugBeforeGrace.liveInferences).isGreaterThanOrEqualTo(firstBatch)
             assertThat(debugBeforeGrace.sealedInferences).isEqualTo(0)
 
-            logSection("Waiting ${devshardAutoSealClearGraceSeconds}s inference clear grace")
-            Thread.sleep((devshardAutoSealClearGraceSeconds + 2) * 1_000L)
+            logSection("Waiting ${devshardAutoSealInferenceSealGraceSeconds}s inference seal grace")
+            Thread.sleep((devshardAutoSealInferenceSealGraceSeconds + 2) * 1_000L)
 
             logSection("Sending second batch ($secondBatch inferences to trigger auto-seal)")
             for (i in 0 until secondBatch) {

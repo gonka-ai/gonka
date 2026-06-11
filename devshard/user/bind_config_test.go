@@ -39,22 +39,22 @@ func (escrowOnlyBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]
 func TestSessionConfigAtBind_AppliesChainParams(t *testing.T) {
 	const groupSize = 16
 	escrow := &bridge.EscrowInfo{
-		TokenPrice:        1,
-		CreateDevshardFee: 10_000,
-		FeePerNonce:       1_000,
+		TokenPrice:                1,
+		CreateDevshardFee:         10_000,
+		FeePerNonce:               1_000,
+		InferenceSealGraceNonces:  55,
+		InferenceSealGraceSeconds: 77,
 	}
 	b := &bindParamsBridge{
 		live: types.LiveSessionBindParams{
-			SealGraceNonces:            1,
-			InferenceClearGraceSeconds: 10,
-			ValidationRate:             0,
+			ValidationRate: 0,
 		},
 	}
 
 	cfg, err := sessionConfigAtBind(groupSize, escrow, b)
 	require.NoError(t, err)
-	assert.Equal(t, uint32(1), cfg.SealGraceNonces)
-	assert.Equal(t, uint32(10), cfg.InferenceClearGraceSeconds)
+	assert.Equal(t, uint32(55), cfg.InferenceSealGraceNonces, "grace nonces come from escrow")
+	assert.Equal(t, uint32(77), cfg.InferenceSealGraceSeconds, "grace seconds come from escrow")
 	assert.Equal(t, uint32(0), cfg.ValidationRate)
 }
 
@@ -64,6 +64,6 @@ func TestSessionConfigAtBind_FallsBackWithoutParamsBridge(t *testing.T) {
 
 	cfg, err := sessionConfigAtBind(groupSize, escrow, escrowOnlyBridge{})
 	require.NoError(t, err)
-	assert.Equal(t, types.DefaultSealGraceNonces(groupSize), cfg.SealGraceNonces)
-	assert.Equal(t, uint32(types.DefaultInferenceClearGraceSeconds), cfg.InferenceClearGraceSeconds)
+	assert.Equal(t, types.DefaultInferenceSealGraceNonces(groupSize), cfg.InferenceSealGraceNonces)
+	assert.Equal(t, uint32(types.DefaultInferenceSealGraceSeconds), cfg.InferenceSealGraceSeconds)
 }

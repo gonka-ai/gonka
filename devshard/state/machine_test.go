@@ -26,7 +26,7 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	return sm, user
 }
 
-func TestNewStateMachine_NormalizesSealGraceNonces(t *testing.T) {
+func TestNewStateMachine_NormalizesInferenceSealGraceNonces(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -41,7 +41,7 @@ func TestNewStateMachine_NormalizesSealGraceNonces(t *testing.T) {
 	require.NoError(t, err)
 
 	st := sm.SnapshotState()
-	require.Equal(t, types.DefaultSealGraceNonces(len(group)), st.Config.SealGraceNonces)
+	require.Equal(t, types.DefaultInferenceSealGraceNonces(len(group)), st.Config.InferenceSealGraceNonces)
 }
 
 // txStart wraps MsgStartInference in a DevshardTx.

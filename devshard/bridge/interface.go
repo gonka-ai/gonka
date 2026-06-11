@@ -32,9 +32,11 @@ type EscrowInfo struct {
 	CreatorAddress string
 	AppHash        []byte
 	Slots          []string // host addresses, len == DevshardGroupSize
-	TokenPrice        uint64
-	CreateDevshardFee uint64
-	FeePerNonce       uint64
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

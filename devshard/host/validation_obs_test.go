@@ -44,8 +44,8 @@ func newObsRig(t *testing.T, store storage.Storage, opts ...HostOption) *obsTest
 		VoteThreshold:    uint32(len(hosts)) / 2,
 		ValidationRate:   0,
 		// Small, explicit seal gates for deterministic auto-seal in tests.
-		SealGraceNonces:            pruneTestSealGraceNonces,
-		InferenceClearGraceSeconds: pruneTestClearGraceSeconds,
+		InferenceSealGraceNonces:            pruneTestInferenceSealGraceNonces,
+		InferenceSealGraceSeconds: pruneTestInferenceSealGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 
@@ -121,7 +121,7 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 // immediately; otherwise it advances empty diffs until the nonce gate clears.
 func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
 	r.t.Helper()
-	limit := int(pruneTestSealGraceNonces) + 3
+	limit := int(pruneTestInferenceSealGraceNonces) + 3
 	if limit < 3 {
 		limit = 3
 	}

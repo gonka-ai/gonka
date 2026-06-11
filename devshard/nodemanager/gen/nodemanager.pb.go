@@ -386,22 +386,20 @@ func (x *GetRuntimeConfigResponse) GetConfig() *RuntimeConfig {
 }
 
 type RuntimeConfig struct {
-	state                             protoimpl.MessageState `protogen:"open.v1"`
-	ParamsBlockHeight                 int64                  `protobuf:"varint,1,opt,name=params_block_height,json=paramsBlockHeight,proto3" json:"params_block_height,omitempty"`
-	CurrentEpochId                    uint64                 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
-	LogprobsMode                      string                 `protobuf:"bytes,3,opt,name=logprobs_mode,json=logprobsMode,proto3" json:"logprobs_mode,omitempty"`
-	DevshardRequestsEnabled           bool                   `protobuf:"varint,4,opt,name=devshard_requests_enabled,json=devshardRequestsEnabled,proto3" json:"devshard_requests_enabled,omitempty"`
-	DefaultSealGraceNonces            uint32                 `protobuf:"varint,5,opt,name=default_seal_grace_nonces,json=defaultSealGraceNonces,proto3" json:"default_seal_grace_nonces,omitempty"`
-	DefaultInferenceClearGraceSeconds uint32                 `protobuf:"varint,6,opt,name=default_inference_clear_grace_seconds,json=defaultInferenceClearGraceSeconds,proto3" json:"default_inference_clear_grace_seconds,omitempty"`
-	MaxNonce                          uint32                 `protobuf:"varint,7,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
-	ApprovedVersions                  []*ApprovedVersion     `protobuf:"bytes,8,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
-	ServedAtUnix                      int64                  `protobuf:"varint,9,opt,name=served_at_unix,json=servedAtUnix,proto3" json:"served_at_unix,omitempty"`
-	RefusalTimeout                    int64                  `protobuf:"varint,10,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
-	ExecutionTimeout                  int64                  `protobuf:"varint,11,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
-	ValidationRate                    uint32                 `protobuf:"varint,12,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
-	VoteThresholdFactor               uint32                 `protobuf:"varint,13,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
-	unknownFields                     protoimpl.UnknownFields
-	sizeCache                         protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	ParamsBlockHeight       int64                  `protobuf:"varint,1,opt,name=params_block_height,json=paramsBlockHeight,proto3" json:"params_block_height,omitempty"`
+	CurrentEpochId          uint64                 `protobuf:"varint,2,opt,name=current_epoch_id,json=currentEpochId,proto3" json:"current_epoch_id,omitempty"`
+	LogprobsMode            string                 `protobuf:"bytes,3,opt,name=logprobs_mode,json=logprobsMode,proto3" json:"logprobs_mode,omitempty"`
+	DevshardRequestsEnabled bool                   `protobuf:"varint,4,opt,name=devshard_requests_enabled,json=devshardRequestsEnabled,proto3" json:"devshard_requests_enabled,omitempty"`
+	MaxNonce                uint32                 `protobuf:"varint,5,opt,name=max_nonce,json=maxNonce,proto3" json:"max_nonce,omitempty"`
+	ApprovedVersions        []*ApprovedVersion     `protobuf:"bytes,6,rep,name=approved_versions,json=approvedVersions,proto3" json:"approved_versions,omitempty"`
+	ServedAtUnix            int64                  `protobuf:"varint,7,opt,name=served_at_unix,json=servedAtUnix,proto3" json:"served_at_unix,omitempty"`
+	RefusalTimeout          int64                  `protobuf:"varint,8,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout        int64                  `protobuf:"varint,9,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	ValidationRate          uint32                 `protobuf:"varint,10,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	VoteThresholdFactor     uint32                 `protobuf:"varint,11,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *RuntimeConfig) Reset() {
@@ -460,20 +458,6 @@ func (x *RuntimeConfig) GetDevshardRequestsEnabled() bool {
 		return x.DevshardRequestsEnabled
 	}
 	return false
-}
-
-func (x *RuntimeConfig) GetDefaultSealGraceNonces() uint32 {
-	if x != nil {
-		return x.DefaultSealGraceNonces
-	}
-	return 0
-}
-
-func (x *RuntimeConfig) GetDefaultInferenceClearGraceSeconds() uint32 {
-	if x != nil {
-		return x.DefaultInferenceClearGraceSeconds
-	}
-	return 0
 }
 
 func (x *RuntimeConfig) GetMaxNonce() uint32 {
@@ -606,22 +590,20 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x10max_wait_seconds\x18\x02 \x01(\x05R\x0emaxWaitSeconds\"l\n" +
 	"\x18GetRuntimeConfigResponse\x12\x1c\n" +
 	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x122\n" +
-	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\x98\x05\n" +
+	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\x8b\x04\n" +
 	"\rRuntimeConfig\x12.\n" +
 	"\x13params_block_height\x18\x01 \x01(\x03R\x11paramsBlockHeight\x12(\n" +
 	"\x10current_epoch_id\x18\x02 \x01(\x04R\x0ecurrentEpochId\x12#\n" +
 	"\rlogprobs_mode\x18\x03 \x01(\tR\flogprobsMode\x12:\n" +
-	"\x19devshard_requests_enabled\x18\x04 \x01(\bR\x17devshardRequestsEnabled\x129\n" +
-	"\x19default_seal_grace_nonces\x18\x05 \x01(\rR\x16defaultSealGraceNonces\x12P\n" +
-	"%default_inference_clear_grace_seconds\x18\x06 \x01(\rR!defaultInferenceClearGraceSeconds\x12\x1b\n" +
-	"\tmax_nonce\x18\a \x01(\rR\bmaxNonce\x12I\n" +
-	"\x11approved_versions\x18\b \x03(\v2\x1c.nodemanager.ApprovedVersionR\x10approvedVersions\x12$\n" +
-	"\x0eserved_at_unix\x18\t \x01(\x03R\fservedAtUnix\x12'\n" +
-	"\x0frefusal_timeout\x18\n" +
-	" \x01(\x03R\x0erefusalTimeout\x12+\n" +
-	"\x11execution_timeout\x18\v \x01(\x03R\x10executionTimeout\x12'\n" +
-	"\x0fvalidation_rate\x18\f \x01(\rR\x0evalidationRate\x122\n" +
-	"\x15vote_threshold_factor\x18\r \x01(\rR\x13voteThresholdFactor\"U\n" +
+	"\x19devshard_requests_enabled\x18\x04 \x01(\bR\x17devshardRequestsEnabled\x12\x1b\n" +
+	"\tmax_nonce\x18\x05 \x01(\rR\bmaxNonce\x12I\n" +
+	"\x11approved_versions\x18\x06 \x03(\v2\x1c.nodemanager.ApprovedVersionR\x10approvedVersions\x12$\n" +
+	"\x0eserved_at_unix\x18\a \x01(\x03R\fservedAtUnix\x12'\n" +
+	"\x0frefusal_timeout\x18\b \x01(\x03R\x0erefusalTimeout\x12+\n" +
+	"\x11execution_timeout\x18\t \x01(\x03R\x10executionTimeout\x12'\n" +
+	"\x0fvalidation_rate\x18\n" +
+	" \x01(\rR\x0evalidationRate\x122\n" +
+	"\x15vote_threshold_factor\x18\v \x01(\rR\x13voteThresholdFactor\"U\n" +
 	"\x0fApprovedVersion\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06binary\x18\x02 \x01(\tR\x06binary\x12\x16\n" +

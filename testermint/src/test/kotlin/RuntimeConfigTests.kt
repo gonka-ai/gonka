@@ -255,9 +255,6 @@ class RuntimeConfigTests : TestermintTest() {
 
             val escrow = chainEscrow(genesis)
             assertThat(cfg.devshardRequestsEnabled).isEqualTo(escrow.devshardRequestsEnabled)
-            assertThat(cfg.defaultSealGraceNonces).isEqualTo(escrow.defaultSealGraceNonces.toInt())
-            assertThat(cfg.defaultInferenceClearGraceSeconds)
-                .isEqualTo(escrow.defaultInferenceClearGraceSeconds.toInt())
             assertThat(cfg.maxNonce).isEqualTo(escrow.maxNonce.toInt())
             assertThat(cfg.refusalTimeout).isEqualTo(escrow.refusalTimeout)
             assertThat(cfg.executionTimeout).isEqualTo(escrow.executionTimeout)

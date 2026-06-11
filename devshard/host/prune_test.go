@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	// pruneTestSealGraceNonces is the nonce gate used by prune tests: an
+	// pruneTestInferenceSealGraceNonces is the nonce gate used by prune tests: an
 	// inference id may be sealed only once nonce >= id + this.
-	pruneTestSealGraceNonces = 2
-	// pruneTestClearGraceSeconds is the clock gate: an inference may be sealed
+	pruneTestInferenceSealGraceNonces = 2
+	// pruneTestInferenceSealGraceSeconds is the clock gate: an inference may be sealed
 	// only once stateClock - ConfirmedAt >= this many "seconds".
-	pruneTestClearGraceSeconds = 5
+	pruneTestInferenceSealGraceSeconds = 5
 	// pruneTestBaseConfirmedAt anchors the ConfirmedAt values the helpers use.
 	pruneTestBaseConfirmedAt = 2000
 )
@@ -76,7 +76,7 @@ type pruneTestRig struct {
 // which group member runs locally; pickng a non-executor avoids interference
 // from the executor receipt path.
 func newPruneRig(t *testing.T, observerIdx, numHosts int, opts ...HostOption) *pruneTestRig {
-	return newPruneRigGrace(t, observerIdx, numHosts, pruneTestSealGraceNonces, pruneTestClearGraceSeconds, opts...)
+	return newPruneRigGrace(t, observerIdx, numHosts, pruneTestInferenceSealGraceNonces, pruneTestInferenceSealGraceSeconds, opts...)
 }
 
 // newPruneRigGrace is newPruneRig with explicit seal-grace gates, replacing the
@@ -100,8 +100,8 @@ func newPruneRigGrace(t *testing.T, observerIdx, numHosts int, sealGraceNonces, 
 		TokenPrice:                 1,
 		VoteThreshold:              uint32(numHosts) / 2,
 		ValidationRate:             0,
-		SealGraceNonces:            sealGraceNonces,
-		InferenceClearGraceSeconds: clearGraceSeconds,
+		InferenceSealGraceNonces:            sealGraceNonces,
+		InferenceSealGraceSeconds: clearGraceSeconds,
 		// ValidationRate=0 + no WithValidator means no async validation
 		// will sneak in and emit unrelated mempool entries.
 	}
@@ -220,7 +220,7 @@ func (r *pruneTestRig) bumpClock(startNonce uint64, confirmedAt int64) uint64 {
 func (r *pruneTestRig) advanceClockPastGrace(startNonce uint64, inferenceID uint64) uint64 {
 	r.t.Helper()
 	window := len(r.group) * 3 // state.stateClockWindowFactor
-	targetConfirmedAt := pruneTestBaseConfirmedAt + int64(inferenceID) + int64(pruneTestClearGraceSeconds) + 1
+	targetConfirmedAt := pruneTestBaseConfirmedAt + int64(inferenceID) + int64(pruneTestInferenceSealGraceSeconds) + 1
 	for bump := 0; bump < window+5; bump++ {
 		startNonce = r.bumpClock(startNonce, targetConfirmedAt+int64(bump))
 		st := r.host.SnapshotState()
@@ -318,9 +318,9 @@ func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 }
 
 // The seal is a deterministic function of state. Terminal statuses
-// (Validated/Invalidated/TimedOut) seal once nonce >= id+SealGraceNonces on
+// (Validated/Invalidated/TimedOut) seal once nonce >= id+InferenceSealGraceNonces on
 // the diff that made them terminal. Finished (stale-finished) also requires the
-// state clock to advance >= InferenceClearGraceSeconds past ConfirmedAt;
+// state clock to advance >= InferenceSealGraceSeconds past ConfirmedAt;
 // those tests use advanceClockPastGrace to advance the min clock without sleeps.
 
 func TestHost_PruneSink_SealsTerminal_Validated(t *testing.T) {
@@ -364,7 +364,7 @@ func TestHost_PruneSink_SealsTerminal_TimedOut(t *testing.T) {
 	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
 	require.Empty(t, rig.sink.findFor(1), "nonce gate not yet cleared at timeout diff")
 
-	// Terminal short path: no clock grace; advance nonce to clear id+SealGraceNonces.
+	// Terminal short path: no clock grace; advance nonce to clear id+InferenceSealGraceNonces.
 	rig.applyDiff(3, nil)
 
 	events := rig.sink.findFor(1)
@@ -437,8 +437,8 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 		TokenPrice:                 1,
 		VoteThreshold:              2,
 		ValidationRate:             0,
-		SealGraceNonces:            pruneTestSealGraceNonces,
-		InferenceClearGraceSeconds: pruneTestClearGraceSeconds,
+		InferenceSealGraceNonces:            pruneTestInferenceSealGraceNonces,
+		InferenceSealGraceSeconds: pruneTestInferenceSealGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)

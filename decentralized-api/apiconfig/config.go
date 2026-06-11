@@ -255,13 +255,7 @@ type DevshardVersionsCache struct {
 	Versions                          []DevshardVersion `json:"versions"`
 	// DevshardRequestsEnabled is the live governance kill-switch for host-side
 	// completion/timeout request handling.
-	DevshardRequestsEnabled           bool              `json:"devshard_requests_enabled"`
-	// DefaultSealGraceNonces is the chain default for session bind
-	// SealGraceNonces (nonce units).
-	DefaultSealGraceNonces            uint32            `json:"default_seal_grace_nonces"`
-	// DefaultInferenceClearGraceSeconds is the chain default for session bind
-	// InferenceClearGraceSeconds (seconds).
-	DefaultInferenceClearGraceSeconds uint32            `json:"default_inference_clear_grace_seconds"`
+	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
 	// MaxNonce is the chain upper bound for session nonces.
 	MaxNonce                          uint32            `json:"max_nonce"`
 	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).

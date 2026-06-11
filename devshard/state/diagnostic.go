@@ -119,8 +119,8 @@ func (sm *StateMachine) logStateRootMismatchDiagnosticLocked(opts StateRootMisma
 		"config_fee_per_nonce", sm.state.Config.FeePerNonce,
 		"config_vote_threshold", sm.state.Config.VoteThreshold,
 		"config_validation_rate", sm.state.Config.ValidationRate,
-		"config_seal_grace_nonces", sm.state.Config.SealGraceNonces,
-		"config_inference_clear_grace_seconds", sm.state.Config.InferenceClearGraceSeconds,
+		"config_inference_seal_grace_nonces", sm.state.Config.InferenceSealGraceNonces,
+		"config_inference_seal_grace_seconds", sm.state.Config.InferenceSealGraceSeconds,
 		"sealed_acc", hex.EncodeToString(sm.state.SealedAcc),
 		"inference_entries", string(entriesJSON),
 	}

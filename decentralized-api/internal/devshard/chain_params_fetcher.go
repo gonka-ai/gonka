@@ -67,8 +67,6 @@ func (f *ChainParamsFetcher) FetchSnapshot(ctx context.Context) (runtimeconfig.S
 		out.ExecutionTimeout = dep.ExecutionTimeout
 		out.ValidationRate = dep.ValidationRate
 		out.VoteThresholdFactor = dep.VoteThresholdFactor
-		out.DefaultSealGraceNonces = dep.DefaultSealGraceNonces
-		out.DefaultInferenceClearGraceSeconds = dep.DefaultInferenceClearGraceSeconds
 	}
 	return out, nil
 }

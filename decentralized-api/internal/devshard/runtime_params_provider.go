@@ -21,13 +21,11 @@ type RuntimeConfigSnapshotSource interface {
 // All fields are populated from apiconfig.DevshardVersionsCache /
 // runtimeconfig.Snapshot (long-poll). Zero means "not provided" at bind time.
 type SessionParams struct {
-	RefusalTimeout             int64
-	ExecutionTimeout           int64
-	ValidationRate             uint32
-	SealGraceNonces            uint32
-	InferenceClearGraceSeconds uint32
-	VoteThresholdFactor        uint32 // percent, e.g. 50 == 50%
-	MaxNonce                   uint32
+	RefusalTimeout      int64
+	ExecutionTimeout    int64
+	ValidationRate      uint32
+	VoteThresholdFactor uint32 // percent, e.g. 50 == 50%
+	MaxNonce            uint32
 }
 
 // RuntimeParamsProvider returns the live, long-poll-backed view of
@@ -51,13 +49,11 @@ func ConfigManagerRuntimeParams(cm *apiconfig.ConfigManager) RuntimeParamsProvid
 func (p configManagerRuntimeParams) SessionParams() SessionParams {
 	cache := p.cm.GetDevshardVersions()
 	return SessionParams{
-		RefusalTimeout:             cache.RefusalTimeout,
-		ExecutionTimeout:           cache.ExecutionTimeout,
-		ValidationRate:             cache.ValidationRate,
-		SealGraceNonces:            cache.DefaultSealGraceNonces,
-		InferenceClearGraceSeconds: cache.DefaultInferenceClearGraceSeconds,
-		VoteThresholdFactor:        cache.VoteThresholdFactor,
-		MaxNonce:                   cache.MaxNonce,
+		RefusalTimeout:      cache.RefusalTimeout,
+		ExecutionTimeout:    cache.ExecutionTimeout,
+		ValidationRate:      cache.ValidationRate,
+		VoteThresholdFactor: cache.VoteThresholdFactor,
+		MaxNonce:            cache.MaxNonce,
 	}
 }
 
@@ -76,12 +72,10 @@ func RuntimeConfigRuntimeParams(source RuntimeConfigSnapshotSource) RuntimeParam
 func (p runtimeConfigRuntimeParams) SessionParams() SessionParams {
 	snap := p.source.Snapshot()
 	return SessionParams{
-		RefusalTimeout:             snap.RefusalTimeout,
-		ExecutionTimeout:           snap.ExecutionTimeout,
-		ValidationRate:             snap.ValidationRate,
-		SealGraceNonces:            snap.DefaultSealGraceNonces,
-		InferenceClearGraceSeconds: snap.DefaultInferenceClearGraceSeconds,
-		VoteThresholdFactor:        snap.VoteThresholdFactor,
-		MaxNonce:                   snap.MaxNonce,
+		RefusalTimeout:      snap.RefusalTimeout,
+		ExecutionTimeout:    snap.ExecutionTimeout,
+		ValidationRate:      snap.ValidationRate,
+		VoteThresholdFactor: snap.VoteThresholdFactor,
+		MaxNonce:            snap.MaxNonce,
 	}
 }

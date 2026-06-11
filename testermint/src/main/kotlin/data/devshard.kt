@@ -18,7 +18,11 @@ data class DevshardEscrow(
     val epochIndex: String,
     @SerializedName("app_hash")
     val appHash: String,
-    val settled: Boolean
+    val settled: Boolean,
+    @SerializedName("inference_seal_grace_nonces")
+    val inferenceSealGraceNonces: String? = null,
+    @SerializedName("inference_seal_grace_seconds")
+    val inferenceSealGraceSeconds: String? = null,
 )
 
 data class DevshardMempoolResponse(
@@ -49,10 +53,10 @@ data class DevshardSessionConfig(
     val voteThreshold: Int,
     @SerializedName("validation_rate")
     val validationRate: Int,
-    @SerializedName("seal_grace_nonces")
-    val sealGraceNonces: Int? = null,
-    @SerializedName("inference_clear_grace_seconds")
-    val inferenceClearGraceSeconds: Int? = null,
+    @SerializedName("inference_seal_grace_nonces")
+    val inferenceSealGraceNonces: Int? = null,
+    @SerializedName("inference_seal_grace_seconds")
+    val inferenceSealGraceSeconds: Int? = null,
 )
 
 data class DevshardProxyDebugState(

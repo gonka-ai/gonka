@@ -112,8 +112,8 @@ type SessionConfig struct {
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
 	VoteThreshold              uint32
 	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
-	SealGraceNonces            uint32
-	InferenceClearGraceSeconds uint32
+	InferenceSealGraceNonces   uint32
+	InferenceSealGraceSeconds  uint32
 }
 
 // EscrowState is the full state of a devshard session.

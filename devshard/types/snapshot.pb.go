@@ -23,18 +23,18 @@ const (
 
 // SessionConfigProto is the frozen session config stamped at bind time.
 type SessionConfigProto struct {
-	state                      protoimpl.MessageState `protogen:"open.v1"`
-	RefusalTimeout             int64                  `protobuf:"varint,1,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
-	ExecutionTimeout           int64                  `protobuf:"varint,2,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
-	TokenPrice                 uint64                 `protobuf:"varint,3,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
-	CreateDevshardFee          uint64                 `protobuf:"varint,4,opt,name=create_devshard_fee,json=createDevshardFee,proto3" json:"create_devshard_fee,omitempty"`
-	FeePerNonce                uint64                 `protobuf:"varint,5,opt,name=fee_per_nonce,json=feePerNonce,proto3" json:"fee_per_nonce,omitempty"`
-	VoteThreshold              uint32                 `protobuf:"varint,6,opt,name=vote_threshold,json=voteThreshold,proto3" json:"vote_threshold,omitempty"`
-	ValidationRate             uint32                 `protobuf:"varint,7,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
-	SealGraceNonces            uint32                 `protobuf:"varint,8,opt,name=seal_grace_nonces,json=sealGraceNonces,proto3" json:"seal_grace_nonces,omitempty"`
-	InferenceClearGraceSeconds uint32                 `protobuf:"varint,9,opt,name=inference_clear_grace_seconds,json=inferenceClearGraceSeconds,proto3" json:"inference_clear_grace_seconds,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	RefusalTimeout            int64                  `protobuf:"varint,1,opt,name=refusal_timeout,json=refusalTimeout,proto3" json:"refusal_timeout,omitempty"`
+	ExecutionTimeout          int64                  `protobuf:"varint,2,opt,name=execution_timeout,json=executionTimeout,proto3" json:"execution_timeout,omitempty"`
+	TokenPrice                uint64                 `protobuf:"varint,3,opt,name=token_price,json=tokenPrice,proto3" json:"token_price,omitempty"`
+	CreateDevshardFee         uint64                 `protobuf:"varint,4,opt,name=create_devshard_fee,json=createDevshardFee,proto3" json:"create_devshard_fee,omitempty"`
+	FeePerNonce               uint64                 `protobuf:"varint,5,opt,name=fee_per_nonce,json=feePerNonce,proto3" json:"fee_per_nonce,omitempty"`
+	VoteThreshold             uint32                 `protobuf:"varint,6,opt,name=vote_threshold,json=voteThreshold,proto3" json:"vote_threshold,omitempty"`
+	ValidationRate            uint32                 `protobuf:"varint,7,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
+	InferenceSealGraceNonces  uint32                 `protobuf:"varint,8,opt,name=inference_seal_grace_nonces,json=inferenceSealGraceNonces,proto3" json:"inference_seal_grace_nonces,omitempty"`
+	InferenceSealGraceSeconds uint32                 `protobuf:"varint,9,opt,name=inference_seal_grace_seconds,json=inferenceSealGraceSeconds,proto3" json:"inference_seal_grace_seconds,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *SessionConfigProto) Reset() {
@@ -116,16 +116,16 @@ func (x *SessionConfigProto) GetValidationRate() uint32 {
 	return 0
 }
 
-func (x *SessionConfigProto) GetSealGraceNonces() uint32 {
+func (x *SessionConfigProto) GetInferenceSealGraceNonces() uint32 {
 	if x != nil {
-		return x.SealGraceNonces
+		return x.InferenceSealGraceNonces
 	}
 	return 0
 }
 
-func (x *SessionConfigProto) GetInferenceClearGraceSeconds() uint32 {
+func (x *SessionConfigProto) GetInferenceSealGraceSeconds() uint32 {
 	if x != nil {
-		return x.InferenceClearGraceSeconds
+		return x.InferenceSealGraceSeconds
 	}
 	return 0
 }
@@ -398,7 +398,7 @@ var File_devshard_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\x9e\x03\n" +
+	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\xaf\x03\n" +
 	"\x12SessionConfigProto\x12'\n" +
 	"\x0frefusal_timeout\x18\x01 \x01(\x03R\x0erefusalTimeout\x12+\n" +
 	"\x11execution_timeout\x18\x02 \x01(\x03R\x10executionTimeout\x12\x1f\n" +
@@ -407,9 +407,9 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\x13create_devshard_fee\x18\x04 \x01(\x04R\x11createDevshardFee\x12\"\n" +
 	"\rfee_per_nonce\x18\x05 \x01(\x04R\vfeePerNonce\x12%\n" +
 	"\x0evote_threshold\x18\x06 \x01(\rR\rvoteThreshold\x12'\n" +
-	"\x0fvalidation_rate\x18\a \x01(\rR\x0evalidationRate\x12*\n" +
-	"\x11seal_grace_nonces\x18\b \x01(\rR\x0fsealGraceNonces\x12A\n" +
-	"\x1dinference_clear_grace_seconds\x18\t \x01(\rR\x1ainferenceClearGraceSeconds\"[\n" +
+	"\x0fvalidation_rate\x18\a \x01(\rR\x0evalidationRate\x12=\n" +
+	"\x1binference_seal_grace_nonces\x18\b \x01(\rR\x18inferenceSealGraceNonces\x12?\n" +
+	"\x1cinference_seal_grace_seconds\x18\t \x01(\rR\x19inferenceSealGraceSeconds\"[\n" +
 	"\x13SlotAssignmentProto\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12+\n" +
 	"\x11validator_address\x18\x02 \x01(\tR\x10validatorAddress\"\xf3\x06\n" +

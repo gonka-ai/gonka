@@ -12,13 +12,13 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.14", UpgradeName)
 }
 
-func TestBackfillDevshardEscrowParamDefaults_DefaultSealGraceNonces(t *testing.T) {
+func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceNonces(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, params.DevshardEscrowParams)
-	params.DevshardEscrowParams.DefaultSealGraceNonces = 0
+	params.DevshardEscrowParams.DefaultInferenceSealGraceNonces = 0
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, backfillDevshardEscrowParamDefaults(ctx, k))
@@ -26,25 +26,25 @@ func TestBackfillDevshardEscrowParamDefaults_DefaultSealGraceNonces(t *testing.T
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, got.DevshardEscrowParams)
-	expected := inferencetypes.DefaultDevshardSealGraceNonces(got.DevshardEscrowParams.GroupSize)
-	require.Equal(t, expected, got.DevshardEscrowParams.DefaultSealGraceNonces)
-	require.Equal(t, inferencetypes.DefaultDevshardInferenceClearGraceSeconds, got.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+	expected := inferencetypes.DefaultDevshardInferenceSealGraceNonces(got.DevshardEscrowParams.GroupSize)
+	require.Equal(t, expected, got.DevshardEscrowParams.DefaultInferenceSealGraceNonces)
+	require.Equal(t, inferencetypes.DefaultDevshardInferenceSealGraceSeconds, got.DevshardEscrowParams.DefaultInferenceSealGraceSeconds)
 }
 
-func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceClearGraceSeconds(t *testing.T) {
+func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceSeconds(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, params.DevshardEscrowParams)
-	params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = 0
+	params.DevshardEscrowParams.DefaultInferenceSealGraceSeconds = 0
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, backfillDevshardEscrowParamDefaults(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Equal(t, inferencetypes.DefaultDevshardInferenceClearGraceSeconds, got.DevshardEscrowParams.DefaultInferenceClearGraceSeconds)
+	require.Equal(t, inferencetypes.DefaultDevshardInferenceSealGraceSeconds, got.DevshardEscrowParams.DefaultInferenceSealGraceSeconds)
 }
 
 func TestBackfillDevshardEscrowParamDefaults_Phase4Fields(t *testing.T) {
@@ -161,19 +161,19 @@ func TestBackfillDevshardEscrowFees_NoEscrowsIsNoOp(t *testing.T) {
 	require.NoError(t, backfillDevshardEscrowFees(ctx, k))
 }
 
-func TestBackfillDevshardEscrowParamDefaults_PreservesExistingDefaultSealGraceNonces(t *testing.T) {
+func TestBackfillDevshardEscrowParamDefaults_PreservesExistingDefaultInferenceSealGraceNonces(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, params.DevshardEscrowParams)
 	const customGrace uint32 = 12345
-	params.DevshardEscrowParams.DefaultSealGraceNonces = customGrace
+	params.DevshardEscrowParams.DefaultInferenceSealGraceNonces = customGrace
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, backfillDevshardEscrowParamDefaults(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Equal(t, customGrace, got.DevshardEscrowParams.DefaultSealGraceNonces)
+	require.Equal(t, customGrace, got.DevshardEscrowParams.DefaultInferenceSealGraceNonces)
 }

@@ -203,10 +203,10 @@ touched by a validation, challenge, or timeout. The host evicts it
 only when **both** of:
 
 - enough nonces have passed since `MsgFinishInference`
-  (`SealGraceNonces`, governance-pinned at session create, default
+  (`InferenceSealGraceNonces`, governance-pinned at session create, default
   `10 * len(group)` with floor 20), and
 - enough wall-clock time has passed since the host observed that
-  finish (`InferenceClearGraceSeconds`, governance-pinned at session
+  finish (`InferenceSealGraceSeconds`, governance-pinned at session
   create, default `120` seconds).
 
 A two-gate is needed because nonce growth is traffic-dependent — at

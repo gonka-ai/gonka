@@ -113,20 +113,20 @@ const (
 const DefaultSealGraceMultiplier uint32 = 10
 
 // DevshardSealGraceFloor is the floor applied when computing the chain-wide
-// default seal grace. Mirrors devshard/types.minSealGraceNonces so the two
+// default seal grace. Mirrors devshard/types.minInferenceSealGraceNonces so the two
 // layers agree without an import dependency.
 const DevshardSealGraceFloor uint32 = 20
 
-// DefaultDevshardInferenceClearGraceSeconds is the default wall-clock grace
+// DefaultDevshardInferenceSealGraceSeconds is the default wall-clock grace
 // before sealing stale-finished or post-terminal inferences. Mirrors
-// devshard/types.DefaultInferenceClearGraceSeconds.
-const DefaultDevshardInferenceClearGraceSeconds uint32 = 3600
+// devshard/types.DefaultInferenceSealGraceSeconds.
+const DefaultDevshardInferenceSealGraceSeconds uint32 = 3600
 
-// DefaultDevshardSealGraceNonces returns the canonical default seal grace
+// DefaultDevshardInferenceSealGraceNonces returns the canonical default seal grace
 // nonces value derived from the configured group size. This mirrors
-// devshard/types.DefaultSealGraceNonces (10 * groupSize, floor 20). It is
-// used at genesis to seed DevshardEscrowParams.DefaultSealGraceNonces.
-func DefaultDevshardSealGraceNonces(groupSize uint32) uint32 {
+// devshard/types.DefaultInferenceSealGraceNonces (10 * groupSize, floor 20). It is
+// used at genesis to seed DevshardEscrowParams.DefaultInferenceSealGraceNonces.
+func DefaultDevshardInferenceSealGraceNonces(groupSize uint32) uint32 {
 	grace := groupSize * DefaultSealGraceMultiplier
 	if grace < DevshardSealGraceFloor {
 		grace = DevshardSealGraceFloor
@@ -353,22 +353,22 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 
 func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	return &DevshardEscrowParams{
-		MinAmount:                         DefaultDevshardEscrowMinAmount,
-		MaxAmount:                         DefaultDevshardEscrowMaxAmount,
-		MaxEscrowsPerEpoch:                DefaultDevshardMaxEscrowsPerEpoch,
-		GroupSize:                         DefaultDevshardGroupSize,
-		AllowedCreatorAddresses:           nil,
-		TokenPrice:                        DefaultDevshardTokenPrice,
-		MaxNonce:                          DefaultDevshardMaxNonce,
-		DevshardRequestsEnabled:           DefaultDevshardRequestsEnabled,
-		DefaultSealGraceNonces:            DefaultDevshardSealGraceNonces(DefaultDevshardGroupSize),
-		DefaultInferenceClearGraceSeconds: DefaultDevshardInferenceClearGraceSeconds,
-		CreateDevshardFee:                 DefaultDevshardCreateDevshardFee,
-		FeePerNonce:                       DefaultDevshardFeePerNonce,
-		RefusalTimeout:                    DefaultDevshardRefusalTimeout,
-		ExecutionTimeout:                  DefaultDevshardExecutionTimeout,
-		ValidationRate:                    DefaultDevshardValidationRate,
-		VoteThresholdFactor:               DefaultDevshardVoteThresholdFactor,
+		MinAmount:                        DefaultDevshardEscrowMinAmount,
+		MaxAmount:                        DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:               DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:                        DefaultDevshardGroupSize,
+		AllowedCreatorAddresses:          nil,
+		TokenPrice:                       DefaultDevshardTokenPrice,
+		MaxNonce:                         DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled:          DefaultDevshardRequestsEnabled,
+		DefaultInferenceSealGraceNonces:  DefaultDevshardInferenceSealGraceNonces(DefaultDevshardGroupSize),
+		DefaultInferenceSealGraceSeconds: DefaultDevshardInferenceSealGraceSeconds,
+		CreateDevshardFee:                DefaultDevshardCreateDevshardFee,
+		FeePerNonce:                      DefaultDevshardFeePerNonce,
+		RefusalTimeout:                   DefaultDevshardRefusalTimeout,
+		ExecutionTimeout:                 DefaultDevshardExecutionTimeout,
+		ValidationRate:                   DefaultDevshardValidationRate,
+		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
 	}
 }
 

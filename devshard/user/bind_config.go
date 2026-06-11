@@ -9,9 +9,11 @@ import (
 
 func sessionConfigAtBind(groupSize int, escrow *bridge.EscrowInfo, b bridge.MainnetBridge) (types.SessionConfig, error) {
 	config := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
-		TokenPrice:        escrow.TokenPrice,
-		CreateDevshardFee: escrow.CreateDevshardFee,
-		FeePerNonce:       escrow.FeePerNonce,
+		TokenPrice:                escrow.TokenPrice,
+		CreateDevshardFee:         escrow.CreateDevshardFee,
+		FeePerNonce:               escrow.FeePerNonce,
+		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
 	})
 	sb, ok := b.(bridge.SessionBindParamsBridge)
 	if !ok {

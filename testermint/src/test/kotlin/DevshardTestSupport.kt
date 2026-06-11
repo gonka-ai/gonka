@@ -39,15 +39,15 @@ val devshardAlwaysValidateSpec = spec<AppState> {
 
 /** Short seal grace for gateway auto-seal tests (Finished inferences + wall-clock gate). */
 const val devshardAutoSealGroupSize = 16L
-const val devshardAutoSealSealGraceNonces = 1L
-const val devshardAutoSealClearGraceSeconds = 10L
+const val devshardAutoSealInferenceSealGraceNonces = 1L
+const val devshardAutoSealInferenceSealGraceSeconds = 10L
 
 val devshardShortSealGraceSpec = spec<AppState> {
     this[AppState::inference] = spec<InferenceState> {
         this[InferenceState::params] = spec<InferenceParams> {
             this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
-                this[DevshardEscrowParams::defaultSealGraceNonces] = devshardAutoSealSealGraceNonces
-                this[DevshardEscrowParams::defaultInferenceClearGraceSeconds] = devshardAutoSealClearGraceSeconds
+                this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
+                this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::validationRate] = 0L
             }
         }

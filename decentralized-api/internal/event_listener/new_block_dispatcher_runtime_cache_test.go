@@ -80,14 +80,14 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 
 func devshardParamsResponse(
 	enabled bool,
-	sealGrace, clearGrace, maxNonce uint32,
+	maxNonce uint32,
 ) *types.QueryParamsResponse {
-	return devshardParamsResponseFull(enabled, sealGrace, clearGrace, maxNonce, 60, 1200, 5000, 50)
+	return devshardParamsResponseFull(enabled, maxNonce, 60, 1200, 5000, 50)
 }
 
 func devshardParamsResponseFull(
 	enabled bool,
-	sealGrace, clearGrace, maxNonce uint32,
+	maxNonce uint32,
 	refusalTimeout, executionTimeout int64,
 	validationRate, voteThresholdFactor uint32,
 ) *types.QueryParamsResponse {
@@ -100,10 +100,8 @@ func devshardParamsResponseFull(
 				LogprobsMode:        "raw",
 			},
 			DevshardEscrowParams: &types.DevshardEscrowParams{
-				DevshardRequestsEnabled:           enabled,
-				DefaultSealGraceNonces:            sealGrace,
-				DefaultInferenceClearGraceSeconds: clearGrace,
-				MaxNonce:                          maxNonce,
+				DevshardRequestsEnabled: enabled,
+				MaxNonce:                maxNonce,
 				RefusalTimeout:                    refusalTimeout,
 				ExecutionTimeout:                  executionTimeout,
 				ValidationRate:                    validationRate,
@@ -121,7 +119,7 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
 	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(true, 40, 120, 20000), nil,
+		devshardParamsResponse(true, 20000), nil,
 	).Once()
 	err := dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 100,
@@ -131,8 +129,6 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 
 	got := cm.GetDevshardVersions()
 	require.True(t, got.DevshardRequestsEnabled)
-	require.Equal(t, uint32(40), got.DefaultSealGraceNonces)
-	require.Equal(t, uint32(120), got.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(20000), got.MaxNonce)
 	require.Equal(t, int64(60), got.RefusalTimeout)
 	require.Equal(t, int64(1200), got.ExecutionTimeout)
@@ -143,7 +139,7 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	require.Equal(t, int64(100), cm.RuntimeParamsBlockHeight())
 
 	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(false, 50, 180, 30000), nil,
+		devshardParamsResponse(false, 30000), nil,
 	).Once()
 	err = dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 101,
@@ -153,8 +149,6 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 
 	got = cm.GetDevshardVersions()
 	require.False(t, got.DevshardRequestsEnabled)
-	require.Equal(t, uint32(50), got.DefaultSealGraceNonces)
-	require.Equal(t, uint32(180), got.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(30000), got.MaxNonce)
 	require.Equal(t, int64(101), cm.RuntimeParamsBlockHeight())
 }
@@ -163,7 +157,7 @@ func TestOnNewBlockDispatcher_NoNotifyOnUnchangedBlock(t *testing.T) {
 	qc := &mockParamsQueryClient{}
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
-	resp := devshardParamsResponse(true, 40, 120, 20000)
+	resp := devshardParamsResponse(true, 20000)
 	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Twice()
 
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
@@ -190,7 +184,7 @@ func TestOnNewBlockDispatcher_ApplyRuntimeConfigBlockIfChanged_Notifies(t *testi
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
 	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(true, 40, 120, 20000), nil,
+		devshardParamsResponse(true, 20000), nil,
 	).Once()
 
 	ch := cm.RuntimeConfigNotifier().NotifyChan()
@@ -212,10 +206,8 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
 	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		DevshardRequestsEnabled:           true,
-		DefaultSealGraceNonces:            10,
-		DefaultInferenceClearGraceSeconds: 20,
-		MaxNonce:                          100,
+		DevshardRequestsEnabled: true,
+		MaxNonce:                100,
 	})
 
 	qc.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
@@ -240,7 +232,5 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 
 	got := cm.GetDevshardVersions()
 	require.True(t, got.DevshardRequestsEnabled)
-	require.Equal(t, uint32(10), got.DefaultSealGraceNonces)
-	require.Equal(t, uint32(20), got.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(100), got.MaxNonce)
 }

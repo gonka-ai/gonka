@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	autoSealTestSealGraceNonces     = 2
-	autoSealTestClearGraceSeconds   = 5
+	autoSealTestInferenceSealGraceNonces     = 2
+	autoSealTestInferenceSealGraceSeconds   = 5
 	autoSealTestBaseConfirmedAt     = 10_000
 	autoSealAgreementNumHosts       = 16
 	autoSealAgreementPipelinedCount = 80
@@ -42,8 +42,8 @@ func autoSealTestConfig(numHosts int) types.SessionConfig {
 		VoteThreshold:              uint32(numHosts) / 2,
 		ValidationRate:             0,
 		FeePerNonce:                0,
-		SealGraceNonces:            autoSealTestSealGraceNonces,
-		InferenceClearGraceSeconds: autoSealTestClearGraceSeconds,
+		InferenceSealGraceNonces:            autoSealTestInferenceSealGraceNonces,
+		InferenceSealGraceSeconds: autoSealTestInferenceSealGraceSeconds,
 	}, numHosts)
 }
 
@@ -192,7 +192,7 @@ func (env *autoSealEnv) bumpClock(t *testing.T, startNonce uint64, confirmedAt i
 func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenceID uint64) uint64 {
 	t.Helper()
 	window := len(env.group) * 3 // state.stateClockWindowFactor
-	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + int64(autoSealTestClearGraceSeconds) + 1
+	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + int64(autoSealTestInferenceSealGraceSeconds) + 1
 	for bump := 0; bump < window+5; bump++ {
 		startNonce = env.bumpClock(t, startNonce, targetConfirmedAt+int64(bump))
 		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {

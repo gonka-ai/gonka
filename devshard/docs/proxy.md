@@ -148,15 +148,15 @@ Returns current session state.
     "fee_per_nonce": 1000,
     "vote_threshold": 8,
     "validation_rate": 5000,
-    "seal_grace_nonces": 160,
-    "inference_clear_grace_seconds": 120
+    "inference_seal_grace_nonces": 160,
+    "inference_seal_grace_seconds": 120
   }
 }
 ```
 
 Phase values: `active`, `finalizing`, `settlement`.
 
-`config` mirrors the session's frozen `SessionConfig`, including the paired seal-grace gates (`seal_grace_nonces`, `inference_clear_grace_seconds`).
+`config` mirrors the session's frozen `SessionConfig`, including the paired seal-grace gates (`inference_seal_grace_nonces`, `inference_seal_grace_seconds`).
 
 ### GET /v1/state
 

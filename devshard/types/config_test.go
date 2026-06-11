@@ -6,18 +6,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultSealGraceNonces(t *testing.T) {
+func TestDefaultInferenceSealGraceNonces(t *testing.T) {
 	t.Run("floor", func(t *testing.T) {
-		require.Equal(t, uint32(20), DefaultSealGraceNonces(0))
-		require.Equal(t, uint32(20), DefaultSealGraceNonces(1))
+		require.Equal(t, uint32(20), DefaultInferenceSealGraceNonces(0))
+		require.Equal(t, uint32(20), DefaultInferenceSealGraceNonces(1))
 	})
 
 	t.Run("scaled", func(t *testing.T) {
-		require.Equal(t, uint32(30), DefaultSealGraceNonces(3))
+		require.Equal(t, uint32(20), DefaultInferenceSealGraceNonces(3))
 	})
 }
 
-func TestNormalizeSessionConfig_FillsSealGraceNoncesOnlyWhenUnset(t *testing.T) {
+func TestNormalizeSessionConfig_FillsInferenceSealGraceNoncesOnlyWhenUnset(t *testing.T) {
 	cfg := NormalizeSessionConfig(SessionConfig{
 		RefusalTimeout:   7,
 		ExecutionTimeout: 9,
@@ -25,19 +25,19 @@ func TestNormalizeSessionConfig_FillsSealGraceNoncesOnlyWhenUnset(t *testing.T) 
 		ValidationRate:   1234,
 	}, 4)
 
-	require.Equal(t, uint32(40), cfg.SealGraceNonces)
-	require.Equal(t, uint32(DefaultInferenceClearGraceSeconds), cfg.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(20), cfg.InferenceSealGraceNonces)
+	require.Equal(t, uint32(DefaultInferenceSealGraceSeconds), cfg.InferenceSealGraceSeconds)
 	require.Equal(t, int64(7), cfg.RefusalTimeout)
 	require.Equal(t, int64(9), cfg.ExecutionTimeout)
 	require.Equal(t, uint64(11), cfg.TokenPrice)
 	require.Equal(t, uint32(1234), cfg.ValidationRate)
 
-	explicit := NormalizeSessionConfig(SessionConfig{SealGraceNonces: 77}, 4)
-	require.Equal(t, uint32(77), explicit.SealGraceNonces)
+	explicit := NormalizeSessionConfig(SessionConfig{InferenceSealGraceNonces: 77}, 4)
+	require.Equal(t, uint32(77), explicit.InferenceSealGraceNonces)
 
-	explicitClear := NormalizeSessionConfig(SessionConfig{InferenceClearGraceSeconds: 45}, 4)
-	require.Equal(t, uint32(45), explicitClear.InferenceClearGraceSeconds)
-	require.Equal(t, uint32(40), explicitClear.SealGraceNonces)
+	explicitClear := NormalizeSessionConfig(SessionConfig{InferenceSealGraceSeconds: 45}, 4)
+	require.Equal(t, uint32(45), explicitClear.InferenceSealGraceSeconds)
+	require.Equal(t, uint32(20), explicitClear.InferenceSealGraceNonces)
 }
 
 func TestSessionConfigFromEscrow_ZeroFallback(t *testing.T) {
@@ -58,8 +58,8 @@ func TestSessionConfigFromEscrow_PerFieldOverride(t *testing.T) {
 		require.Equal(t, uint64(42), got.TokenPrice)
 		require.Equal(t, base.CreateDevshardFee, got.CreateDevshardFee)
 		require.Equal(t, base.FeePerNonce, got.FeePerNonce)
-		require.Equal(t, base.SealGraceNonces, got.SealGraceNonces)
-		require.Equal(t, base.InferenceClearGraceSeconds, got.InferenceClearGraceSeconds)
+		require.Equal(t, base.InferenceSealGraceNonces, got.InferenceSealGraceNonces)
+		require.Equal(t, base.InferenceSealGraceSeconds, got.InferenceSealGraceSeconds)
 		require.Equal(t, base.ValidationRate, got.ValidationRate)
 		require.Equal(t, base.VoteThreshold, got.VoteThreshold)
 	})
@@ -105,39 +105,41 @@ func TestComputeVoteThreshold(t *testing.T) {
 func TestApplyLiveSessionParams_FreezesLiveFields(t *testing.T) {
 	const groupSize = 6
 	cfg := ApplyLiveSessionParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{}),
+		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+			InferenceSealGraceNonces:  55,
+			InferenceSealGraceSeconds: 99,
+		}),
 		groupSize,
 		LiveSessionBindParams{
-			RefusalTimeout:             90,
-			ExecutionTimeout:           1800,
-			ValidationRate:             6000,
-			SealGraceNonces:            55,
-			InferenceClearGraceSeconds: 99,
-			VoteThresholdFactor:        67,
+			RefusalTimeout:      90,
+			ExecutionTimeout:    1800,
+			ValidationRate:        6000,
+			VoteThresholdFactor: 67,
 		},
 	)
 	require.Equal(t, int64(90), cfg.RefusalTimeout)
 	require.Equal(t, int64(1800), cfg.ExecutionTimeout)
 	require.Equal(t, uint32(6000), cfg.ValidationRate)
-	require.Equal(t, uint32(55), cfg.SealGraceNonces)
-	require.Equal(t, uint32(99), cfg.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
+	require.Equal(t, uint32(99), cfg.InferenceSealGraceSeconds)
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 }
 
 func TestApplyChainSessionBindParams_HonorsZeroValidationRate(t *testing.T) {
 	const groupSize = 16
 	cfg := ApplyChainSessionBindParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{}),
+		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+			InferenceSealGraceNonces:  1,
+			InferenceSealGraceSeconds: 10,
+		}),
 		groupSize,
 		LiveSessionBindParams{
-			ValidationRate:             0,
-			SealGraceNonces:            1,
-			InferenceClearGraceSeconds: 10,
+			ValidationRate: 0,
 		},
 	)
 	require.Equal(t, uint32(0), cfg.ValidationRate)
-	require.Equal(t, uint32(1), cfg.SealGraceNonces)
-	require.Equal(t, uint32(10), cfg.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(1), cfg.InferenceSealGraceNonces)
+	require.Equal(t, uint32(10), cfg.InferenceSealGraceSeconds)
 }
 
 func TestSessionConfigWithPrice_WrapsBuilder(t *testing.T) {

@@ -27,19 +27,17 @@ func SnapshotFromProto(c *gen.RuntimeConfig) Snapshot {
 		servedAt = time.Time{}
 	}
 	return Snapshot{
-		ParamsBlockHeight:                 c.GetParamsBlockHeight(),
-		CurrentEpochID:                    c.GetCurrentEpochId(),
-		LogprobsMode:                      c.GetLogprobsMode(),
-		DevshardRequestsEnabled:           c.GetDevshardRequestsEnabled(),
-		DefaultSealGraceNonces:            c.GetDefaultSealGraceNonces(),
-		DefaultInferenceClearGraceSeconds: c.GetDefaultInferenceClearGraceSeconds(),
-		MaxNonce:                          c.GetMaxNonce(),
-		ApprovedVersions:                  versions,
-		ServedAt:                          servedAt,
-		RefusalTimeout:                    c.GetRefusalTimeout(),
-		ExecutionTimeout:                  c.GetExecutionTimeout(),
-		ValidationRate:                    c.GetValidationRate(),
-		VoteThresholdFactor:               c.GetVoteThresholdFactor(),
+		ParamsBlockHeight:       c.GetParamsBlockHeight(),
+		CurrentEpochID:          c.GetCurrentEpochId(),
+		LogprobsMode:            c.GetLogprobsMode(),
+		DevshardRequestsEnabled: c.GetDevshardRequestsEnabled(),
+		MaxNonce:                c.GetMaxNonce(),
+		ApprovedVersions:        versions,
+		ServedAt:                servedAt,
+		RefusalTimeout:          c.GetRefusalTimeout(),
+		ExecutionTimeout:        c.GetExecutionTimeout(),
+		ValidationRate:          c.GetValidationRate(),
+		VoteThresholdFactor:     c.GetVoteThresholdFactor(),
 	}
 }
 
@@ -58,18 +56,16 @@ func ProtoFromSnapshot(s Snapshot) *gen.RuntimeConfig {
 		servedAt = s.ServedAt.Unix()
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:                 s.ParamsBlockHeight,
-		CurrentEpochId:                    s.CurrentEpochID,
-		LogprobsMode:                      s.LogprobsMode,
-		DevshardRequestsEnabled:           s.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            s.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: s.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          s.MaxNonce,
-		ApprovedVersions:                  versions,
-		ServedAtUnix:                      servedAt,
-		RefusalTimeout:                    s.RefusalTimeout,
-		ExecutionTimeout:                  s.ExecutionTimeout,
-		ValidationRate:                    s.ValidationRate,
-		VoteThresholdFactor:               s.VoteThresholdFactor,
+		ParamsBlockHeight:       s.ParamsBlockHeight,
+		CurrentEpochId:          s.CurrentEpochID,
+		LogprobsMode:            s.LogprobsMode,
+		DevshardRequestsEnabled: s.DevshardRequestsEnabled,
+		MaxNonce:                s.MaxNonce,
+		ApprovedVersions:        versions,
+		ServedAtUnix:            servedAt,
+		RefusalTimeout:          s.RefusalTimeout,
+		ExecutionTimeout:        s.ExecutionTimeout,
+		ValidationRate:          s.ValidationRate,
+		VoteThresholdFactor:     s.VoteThresholdFactor,
 	}
 }

@@ -44,15 +44,17 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 	}
 
 	return &bridge.EscrowInfo{
-		EscrowID:          escrowID,
-		Amount:            resp.Escrow.Amount,
-		CreatorAddress:    resp.Escrow.Creator,
-		AppHash:           appHash,
-		Slots:             resp.Escrow.Slots,
-		TokenPrice:        resp.Escrow.TokenPrice,
-		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
-		FeePerNonce:       resp.Escrow.FeePerNonce,
-		EpochID:           resp.Escrow.EpochIndex,
+		EscrowID:                  escrowID,
+		Amount:                    resp.Escrow.Amount,
+		CreatorAddress:            resp.Escrow.Creator,
+		AppHash:                   appHash,
+		Slots:                     resp.Escrow.Slots,
+		TokenPrice:                resp.Escrow.TokenPrice,
+		CreateDevshardFee:         resp.Escrow.CreateDevshardFee,
+		FeePerNonce:               resp.Escrow.FeePerNonce,
+		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
+		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }
 
@@ -131,12 +133,10 @@ func (b *ChainBridge) GetSessionBindParams() (devshardtypes.LiveSessionBindParam
 	}
 	dep := resp.Params.DevshardEscrowParams
 	return devshardtypes.LiveSessionBindParams{
-		RefusalTimeout:             dep.RefusalTimeout,
-		ExecutionTimeout:           dep.ExecutionTimeout,
-		ValidationRate:             dep.ValidationRate,
-		SealGraceNonces:            dep.DefaultSealGraceNonces,
-		InferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
-		VoteThresholdFactor:        dep.VoteThresholdFactor,
+		RefusalTimeout:      dep.RefusalTimeout,
+		ExecutionTimeout:    dep.ExecutionTimeout,
+		ValidationRate:      dep.ValidationRate,
+		VoteThresholdFactor: dep.VoteThresholdFactor,
 	}, nil
 }
 

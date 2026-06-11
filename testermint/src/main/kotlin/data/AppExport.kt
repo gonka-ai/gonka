@@ -302,10 +302,10 @@ data class DevshardEscrowParams(
     val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
     @SerializedName("max_nonce")
     val maxNonce: Long = 0,
-    @SerializedName("default_seal_grace_nonces")
-    val defaultSealGraceNonces: Long = 0,
-    @SerializedName("default_inference_clear_grace_seconds")
-    val defaultInferenceClearGraceSeconds: Long = 0,
+    @SerializedName("default_inference_seal_grace_nonces")
+    val defaultInferenceSealGraceNonces: Long = 0,
+    @SerializedName("default_inference_seal_grace_seconds")
+    val defaultInferenceSealGraceSeconds: Long = 0,
     @SerializedName("devshard_requests_enabled")
     val devshardRequestsEnabled: Boolean = true,
     @SerializedName("create_devshard_fee")

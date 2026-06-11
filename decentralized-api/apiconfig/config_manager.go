@@ -335,16 +335,14 @@ func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
 	versions := make([]DevshardVersion, len(dv.Versions))
 	copy(versions, dv.Versions)
 	return runtimeConfigContent{
-		LogprobsMode:                      vp.LogprobsMode,
-		DevshardRequestsEnabled:           dv.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            dv.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: dv.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          dv.MaxNonce,
-		ApprovedVersions:                  versions,
-		RefusalTimeout:                    dv.RefusalTimeout,
-		ExecutionTimeout:                  dv.ExecutionTimeout,
-		ValidationRate:                    dv.ValidationRate,
-		VoteThresholdFactor:               dv.VoteThresholdFactor,
+		LogprobsMode:            vp.LogprobsMode,
+		DevshardRequestsEnabled: dv.DevshardRequestsEnabled,
+		MaxNonce:                dv.MaxNonce,
+		ApprovedVersions:        versions,
+		RefusalTimeout:          dv.RefusalTimeout,
+		ExecutionTimeout:        dv.ExecutionTimeout,
+		ValidationRate:          dv.ValidationRate,
+		VoteThresholdFactor:     dv.VoteThresholdFactor,
 	}
 }
 
