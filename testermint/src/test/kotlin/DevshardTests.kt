@@ -56,7 +56,6 @@ class DevshardTests : TestermintTest() {
     fun `devshard gateway auto-seals inferences after grace timeout`() {
         val slots = devshardAutoSealGroupSize.toInt()
         val firstBatch = slots * 2
-        val secondBatch = slots
 
         val (cluster, genesis) = initCluster(config = shortSealGraceConfig, reboot = true)
         genesis.waitForNextEpoch()
@@ -99,12 +98,15 @@ class DevshardTests : TestermintTest() {
             logSection("Waiting ${devshardAutoSealInferenceSealGraceSeconds}s inference seal grace")
             Thread.sleep((devshardAutoSealInferenceSealGraceSeconds + 2) * 1_000L)
 
-            logSection("Sending second batch ($secondBatch inferences to trigger auto-seal)")
-            for (i in 0 until secondBatch) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "autoseal batch2 $i")
-                assertThat(response).isNotEmpty()
-            }
-            genesis.waitForFinishedDevshardInferences(handle.proxyUrl, firstBatch + secondBatch)
+            logSection(
+                "Driving nonce to auto-seal boundary ($devshardAutoSealEveryNNonces) " +
+                    "and waiting for >= $firstBatch sealed inferences",
+            )
+            genesis.waitForDevshardAutoSeal(
+                proxyUrl = handle.proxyUrl,
+                minSealed = firstBatch,
+                targetNonce = devshardAutoSealEveryNNonces,
+            )
 
             val debugAfter = genesis.getDevshardProxyDebugState(handle.proxyUrl)
             logSection(

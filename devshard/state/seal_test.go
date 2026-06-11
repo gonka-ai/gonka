@@ -225,6 +225,13 @@ func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
 	require.Greater(t, got.ActualCost, uint64(0))
 }
 
+func TestNextAutoSealNonce(t *testing.T) {
+	require.Equal(t, uint64(150), NextAutoSealNonce(0))
+	require.Equal(t, uint64(150), NextAutoSealNonce(149))
+	require.Equal(t, uint64(300), NextAutoSealNonce(150))
+	require.Equal(t, uint64(300), NextAutoSealNonce(299))
+}
+
 func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

@@ -94,6 +94,15 @@ func (r *obsTestRig) applyDiff(nonce uint64, txs []*types.DevshardTx) {
 	require.NoError(r.t, err)
 }
 
+func (r *obsTestRig) advanceToNextAutoSealNonce(after uint64) uint64 {
+	r.t.Helper()
+	target := state.NextAutoSealNonce(after)
+	for n := after + 1; n <= target; n++ {
+		r.applyDiff(n, nil)
+	}
+	return target + 1
+}
+
 func (r *obsTestRig) applyDiffExpectError(nonce uint64, txs []*types.DevshardTx) error {
 	r.t.Helper()
 	d := testutil.SignDiff(r.t, r.user, r.escrowID, nonce, txs)
@@ -116,22 +125,23 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 	return row
 }
 
-// awaitTerminalSeal waits for the terminal short-path seal (nonce gate only).
-// If the terminalizing diff already sealed the inference, this returns
-// immediately; otherwise it advances empty diffs until the nonce gate clears.
+// awaitTerminalSeal waits for the terminal seal once the nonce gate clears and
+// the state clock is non-zero. If the terminalizing diff already sealed the
+// inference, this returns immediately; otherwise it advances empty diffs.
 func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
 	r.t.Helper()
-	limit := int(pruneTestInferenceSealGraceNonces) + 3
-	if limit < 3 {
-		limit = 3
+	if events := sink.findFor(inferenceID); len(events) == 1 {
+		require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+		return nonce
 	}
-	for i := 0; i < limit; i++ {
+	after := r.host.LatestNonce()
+	for i := 0; i < 3; i++ {
+		nonce = r.advanceToNextAutoSealNonce(after)
 		if events := sink.findFor(inferenceID); len(events) == 1 {
 			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
 			return nonce
 		}
-		r.applyDiff(nonce, nil)
-		nonce++
+		after = nonce - 1
 	}
 	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
 		inferenceID, len(sink.findFor(inferenceID)))

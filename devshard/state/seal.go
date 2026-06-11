@@ -17,8 +17,7 @@ import (
 const stateClockWindowFactor = 3
 
 // autoSealEveryNNonces controls how often autoSealLocked runs during the
-// Active phase. 1 = every diff (for debug). Values > 1
-// skip sealing on intermediate nonces and are for debugging only.
+// Active phase. Production uses 150; set to 1 to seal on every diff (debug).
 const autoSealEveryNNonces uint64 = 150
 
 func shouldAutoSealAtNonce(nonce uint64) bool {
@@ -26,6 +25,28 @@ func shouldAutoSealAtNonce(nonce uint64) bool {
 		return true
 	}
 	return nonce%autoSealEveryNNonces == 0
+}
+
+// AutoSealEveryNNonces returns the auto-seal sweep interval during Active phase.
+func AutoSealEveryNNonces() uint64 {
+	return autoSealEveryNNonces
+}
+
+// ShouldAutoSealAtNonce reports whether autoSealLocked runs at nonce.
+func ShouldAutoSealAtNonce(nonce uint64) bool {
+	return shouldAutoSealAtNonce(nonce)
+}
+
+// NextAutoSealNonce returns the smallest nonce >= after+1 that triggers auto-seal.
+func NextAutoSealNonce(after uint64) uint64 {
+	n := after + 1
+	if autoSealEveryNNonces == 0 {
+		return n
+	}
+	if r := n % autoSealEveryNNonces; r != 0 {
+		n += autoSealEveryNNonces - r
+	}
+	return n
 }
 
 func cloneCommittedInferenceEntries(src map[uint64][]byte) map[uint64][]byte {
@@ -393,8 +414,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	clockWin := sm.stateClockLocked()
 	stateClock := clockWin.Clock
 
-	// It is possible that no confirmed records are in the tail window because
-	// Don't seal in this case as we don't have a deterministic state clock.
+	// No confirmed records in the tail window — skip sealing until the clock is known.
 	if stateClock == 0 {
 		return nil, StateClockWindow{}, nil
 	}

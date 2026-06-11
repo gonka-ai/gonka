@@ -41,6 +41,8 @@ val devshardAlwaysValidateSpec = spec<AppState> {
 const val devshardAutoSealGroupSize = 16L
 const val devshardAutoSealInferenceSealGraceNonces = 1L
 const val devshardAutoSealInferenceSealGraceSeconds = 10L
+/** Must match devshard/state/seal.go autoSealEveryNNonces. */
+const val devshardAutoSealEveryNNonces = 150L
 
 val devshardShortSealGraceSpec = spec<AppState> {
     this[AppState::inference] = spec<InferenceState> {
@@ -512,5 +514,39 @@ fun LocalInferencePair.waitForFinishedDevshardInferences(
     error(
         "timed out waiting for $minCount finished inferences " +
             "(got ${inferences.values.count { it.status == DevshardInferenceStatus.FINISHED }})",
+    )
+}
+
+/**
+ * Drive chat completions until [targetNonce] is reached and at least [minSealed]
+ * inferences have been folded into sealed_acc. Auto-seal runs only on nonces that
+ * are multiples of [devshardAutoSealEveryNNonces] (see devshard/state/seal.go).
+ */
+fun LocalInferencePair.waitForDevshardAutoSeal(
+    proxyUrl: String,
+    minSealed: Int,
+    targetNonce: Long = devshardAutoSealEveryNNonces,
+    model: String = defaultModel,
+    timeoutMs: Long = 300_000L,
+    pollIntervalMs: Long = 500L,
+) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    var drive = 0
+    while (System.currentTimeMillis() < deadline) {
+        val debug = getDevshardProxyDebugState(proxyUrl)
+        if (debug.nonce >= targetNonce && debug.sealedInferences >= minSealed) {
+            return
+        }
+        if (debug.nonce < targetNonce || debug.sealedInferences < minSealed) {
+            val response = sendChatCompletion(proxyUrl, model, "autoseal drive $drive")
+            assertThat(response).isNotEmpty()
+            drive++
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    val last = getDevshardProxyDebugState(proxyUrl)
+    error(
+        "timed out waiting for auto-seal: nonce=${last.nonce} target=$targetNonce " +
+            "sealed=${last.sealedInferences} minSealed=$minSealed",
     )
 }

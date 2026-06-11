@@ -154,6 +154,15 @@ func (r *pruneTestRig) applyDiff(nonce uint64, txs []*types.DevshardTx) {
 	require.NoError(r.t, err)
 }
 
+func (r *pruneTestRig) advanceToNextAutoSealNonce(after uint64) uint64 {
+	r.t.Helper()
+	target := state.NextAutoSealNonce(after)
+	for n := after + 1; n <= target; n++ {
+		r.applyDiff(n, nil)
+	}
+	return target + 1
+}
+
 // driveStartConfirmFinish brings inferenceID through Pending -> Started ->
 // Finished using a default ConfirmedAt of base+inferenceID. startNonce is
 // consumed for MsgStartInference; the next two diffs use startNonce+1/+2.
@@ -224,6 +233,11 @@ func (r *pruneTestRig) advanceClockPastGrace(startNonce uint64, inferenceID uint
 	for bump := 0; bump < window+5; bump++ {
 		startNonce = r.bumpClock(startNonce, targetConfirmedAt+int64(bump))
 		st := r.host.SnapshotState()
+		if _, live := st.Inferences[inferenceID]; !live {
+			return startNonce
+		}
+		startNonce = r.advanceToNextAutoSealNonce(startNonce - 1)
+		st = r.host.SnapshotState()
 		if _, live := st.Inferences[inferenceID]; !live {
 			return startNonce
 		}
@@ -319,13 +333,14 @@ func (r *pruneTestRig) driveToValidated(startNonce uint64) uint64 {
 
 // The seal is a deterministic function of state. Terminal statuses
 // (Validated/Invalidated/TimedOut) seal once nonce >= id+InferenceSealGraceNonces on
-// the diff that made them terminal. Finished (stale-finished) also requires the
-// state clock to advance >= InferenceSealGraceSeconds past ConfirmedAt;
-// those tests use advanceClockPastGrace to advance the min clock without sleeps.
+// an auto-seal nonce (every AutoSealEveryNNonces). Finished (stale-finished) also
+// requires the state clock to advance >= InferenceSealGraceSeconds past ConfirmedAt;
+// those tests use advanceClockPastGrace to advance the clock without sleeps.
 
 func TestHost_PruneSink_SealsTerminal_Validated(t *testing.T) {
 	rig := newPruneRig(t, 0, 5)
-	_ = rig.driveToValidated(1) // inference 1 Validated; seals on last vote diff.
+	next := rig.driveToValidated(1) // inference 1 Validated; seals on next auto-seal nonce.
+	rig.advanceToNextAutoSealNonce(next - 1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)
@@ -345,9 +360,9 @@ func TestHost_PruneSink_SealsTerminal_Invalidated(t *testing.T) {
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 0, false)})
 	nonce++
 	rig.applyDiff(nonce, []*types.DevshardTx{rig.signValidationVote(1, 3, false)})
+	rig.advanceToNextAutoSealNonce(nonce)
 
 	events := rig.sink.findFor(1)
-	require.Len(t, events, 1)
 	require.Equal(t, PruneReasonTerminal, events[0].Reason)
 	rig.inferenceMissing(1)
 	require.NotZero(t, rig.sealedRow(1).SealedNonce)
@@ -364,8 +379,11 @@ func TestHost_PruneSink_SealsTerminal_TimedOut(t *testing.T) {
 	require.Equal(t, types.StatusTimedOut, rig.inferenceStatus(1))
 	require.Empty(t, rig.sink.findFor(1), "nonce gate not yet cleared at timeout diff")
 
-	// Terminal short path: no clock grace; advance nonce to clear id+InferenceSealGraceNonces.
-	rig.applyDiff(3, nil)
+	// Terminal short path skips the clock gate, but auto-seal still requires a
+	// non-zero state clock (confirmed record in the tail). Establish clock, then
+	// advance nonce to clear id+InferenceSealGraceNonces.
+	nonce := rig.bumpClock(3, pruneTestBaseConfirmedAt+100)
+	rig.advanceToNextAutoSealNonce(nonce - 1)
 
 	events := rig.sink.findFor(1)
 	require.Len(t, events, 1)

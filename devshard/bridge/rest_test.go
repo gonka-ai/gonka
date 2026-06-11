@@ -27,6 +27,8 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 				"token_price":         "1",
 				"create_devshard_fee": "10000",
 				"fee_per_nonce":       "1000",
+				"inference_seal_grace_nonces":  "160",
+				"inference_seal_grace_seconds": "3600",
 			},
 			"found": true,
 		})

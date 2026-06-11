@@ -189,12 +189,25 @@ func (env *autoSealEnv) bumpClock(t *testing.T, startNonce uint64, confirmedAt i
 	return startNonce + 2
 }
 
+func (env *autoSealEnv) advanceToNextAutoSealNonce(t *testing.T, after uint64) uint64 {
+	t.Helper()
+	target := state.NextAutoSealNonce(after)
+	for n := after + 1; n <= target; n++ {
+		applySignedDiffToUserAndHost(t, env, n, nil)
+	}
+	return target + 1
+}
+
 func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenceID uint64) uint64 {
 	t.Helper()
 	window := len(env.group) * 3 // state.stateClockWindowFactor
 	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + int64(autoSealTestInferenceSealGraceSeconds) + 1
 	for bump := 0; bump < window+5; bump++ {
 		startNonce = env.bumpClock(t, startNonce, targetConfirmedAt+int64(bump))
+		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {
+			return startNonce
+		}
+		startNonce = env.advanceToNextAutoSealNonce(t, startNonce-1)
 		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {
 			return startNonce
 		}
