@@ -30,6 +30,9 @@ func CreateUpgradeHandler(
 		if err := backfillDevshardEscrowFees(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := backfillDevshardEscrowInferenceSealGrace(ctx, k); err != nil {
+			return nil, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -57,16 +60,16 @@ func backfillDevshardEscrowParamDefaults(ctx context.Context, k keeper.Keeper) e
 
 	changed := false
 
-	if params.DevshardEscrowParams.DefaultSealGraceNonces == 0 {
+	if params.DevshardEscrowParams.DefaultInferenceSealGraceNonces == 0 {
 		groupSize := params.DevshardEscrowParams.GroupSize
 		if groupSize == 0 {
 			groupSize = types.DefaultDevshardGroupSize
 		}
-		params.DevshardEscrowParams.DefaultSealGraceNonces = types.DefaultDevshardSealGraceNonces(groupSize)
+		params.DevshardEscrowParams.DefaultInferenceSealGraceNonces = types.DefaultDevshardInferenceSealGraceNonces(groupSize)
 		changed = true
 	}
-	if params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds == 0 {
-		params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds = types.DefaultDevshardInferenceClearGraceSeconds
+	if params.DevshardEscrowParams.DefaultInferenceSealGraceSeconds == 0 {
+		params.DevshardEscrowParams.DefaultInferenceSealGraceSeconds = types.DefaultDevshardInferenceSealGraceSeconds
 		changed = true
 	}
 	if params.DevshardEscrowParams.CreateDevshardFee == 0 {
@@ -103,8 +106,8 @@ func backfillDevshardEscrowParamDefaults(ctx context.Context, k keeper.Keeper) e
 		return err
 	}
 	k.LogInfo("backfilled devshard escrow param defaults", types.Upgrades,
-		"default_seal_grace_nonces", params.DevshardEscrowParams.DefaultSealGraceNonces,
-		"default_inference_clear_grace_seconds", params.DevshardEscrowParams.DefaultInferenceClearGraceSeconds,
+		"default_inference_seal_grace_nonces", params.DevshardEscrowParams.DefaultInferenceSealGraceNonces,
+		"default_inference_seal_grace_seconds", params.DevshardEscrowParams.DefaultInferenceSealGraceSeconds,
 		"create_devshard_fee", params.DevshardEscrowParams.CreateDevshardFee,
 		"fee_per_nonce", params.DevshardEscrowParams.FeePerNonce,
 		"refusal_timeout", params.DevshardEscrowParams.RefusalTimeout,
@@ -161,6 +164,54 @@ func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
 		"updated", len(updateIDs),
 		"create_devshard_fee", createFee,
 		"fee_per_nonce", feePerNonce,
+	)
+	return nil
+}
+
+// backfillDevshardEscrowInferenceSealGrace populates per-escrow inference seal
+// grace snapshots on DevshardEscrow rows created before those fields existed.
+// Rows that already carry a non-zero snapshot are left untouched.
+func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		k.LogInfo("backfill devshard escrow inference seal grace skipped: devshard escrow params missing", types.Upgrades)
+		return nil
+	}
+	ep := params.DevshardEscrowParams
+
+	var updateIDs []uint64
+	if err := k.DevshardEscrows.Walk(ctx, nil, func(_ uint64, escrow types.DevshardEscrow) (bool, error) {
+		if escrow.InferenceSealGraceNonces != 0 && escrow.InferenceSealGraceSeconds != 0 {
+			return false, nil
+		}
+		updateIDs = append(updateIDs, escrow.Id)
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk devshard escrows for inference seal grace backfill: %w", err)
+	}
+
+	for _, id := range updateIDs {
+		escrow, found := k.GetDevshardEscrow(ctx, id)
+		if !found {
+			return fmt.Errorf("get devshard escrow %d during inference seal grace backfill: not found", id)
+		}
+		if escrow.InferenceSealGraceNonces == 0 {
+			escrow.InferenceSealGraceNonces = types.DevshardInferenceSealGraceNoncesForCreate(ep, uint32(len(escrow.Slots)))
+		}
+		if escrow.InferenceSealGraceSeconds == 0 {
+			escrow.InferenceSealGraceSeconds = types.DevshardInferenceSealGraceSecondsForCreate(ep)
+		}
+		if err := k.SetDevshardEscrow(ctx, escrow); err != nil {
+			return fmt.Errorf("set devshard escrow %d during inference seal grace backfill: %w", escrow.Id, err)
+		}
+	}
+	k.LogInfo("backfilled devshard escrow inference seal grace", types.Upgrades,
+		"updated", len(updateIDs),
+		"default_inference_seal_grace_nonces", ep.DefaultInferenceSealGraceNonces,
+		"default_inference_seal_grace_seconds", ep.DefaultInferenceSealGraceSeconds,
 	)
 	return nil
 }

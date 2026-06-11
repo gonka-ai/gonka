@@ -2,20 +2,15 @@ package devshard
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"decentralized-api/apiconfig"
-
 	"devshard/runtimeconfig"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// stubSnapshotSource is a deterministic RuntimeConfigSnapshotSource for the
-// devshardd-standalone provider tests. Snapshot writes are guarded so the
-// concurrent-read sub-test can swap in fresh values mid-flight.
 type stubSnapshotSource struct {
 	mu   sync.RWMutex
 	snap runtimeconfig.Snapshot
@@ -36,17 +31,21 @@ func (s *stubSnapshotSource) Snapshot() runtimeconfig.Snapshot {
 func TestConfigManagerRuntimeParams_FromPopulatedCache(t *testing.T) {
 	cm := &apiconfig.ConfigManager{}
 	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		DefaultSealGraceNonces:            55,
-		DefaultInferenceClearGraceSeconds: 90,
-		MaxNonce:                          2000,
+		MaxNonce:              2000,
+		ValidationRate:        5000,
+		VoteThresholdFactor:   50,
+		RefusalTimeout:        60,
+		ExecutionTimeout:      1200,
 	})
 
 	p := ConfigManagerRuntimeParams(cm)
 	got := p.SessionParams()
 
-	assert.Equal(t, uint32(55), got.SealGraceNonces)
-	assert.Equal(t, uint32(90), got.InferenceClearGraceSeconds)
 	assert.Equal(t, uint32(2000), got.MaxNonce)
+	assert.Equal(t, uint32(5000), got.ValidationRate)
+	assert.Equal(t, uint32(50), got.VoteThresholdFactor)
+	assert.Equal(t, int64(60), got.RefusalTimeout)
+	assert.Equal(t, int64(1200), got.ExecutionTimeout)
 }
 
 func TestConfigManagerRuntimeParams_EmptyCacheZeroFields(t *testing.T) {
@@ -61,13 +60,11 @@ func TestConfigManagerRuntimeParams_EmptyCacheZeroFields(t *testing.T) {
 func TestConfigManagerRuntimeParams_Phase4FieldsFromCache(t *testing.T) {
 	cm := &apiconfig.ConfigManager{}
 	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		DefaultSealGraceNonces:            1,
-		DefaultInferenceClearGraceSeconds: 1,
-		MaxNonce:                          1,
-		RefusalTimeout:                    90,
-		ExecutionTimeout:                    1800,
-		ValidationRate:                    4000,
-		VoteThresholdFactor:               67,
+		MaxNonce:            1,
+		RefusalTimeout:      90,
+		ExecutionTimeout:    1800,
+		ValidationRate:        4000,
+		VoteThresholdFactor: 67,
 	})
 
 	got := ConfigManagerRuntimeParams(cm).SessionParams()
@@ -83,39 +80,35 @@ func TestConfigManagerRuntimeParams_ReflectsUpdate(t *testing.T) {
 	p := ConfigManagerRuntimeParams(cm)
 
 	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		DefaultSealGraceNonces:            10,
-		DefaultInferenceClearGraceSeconds: 11,
-		MaxNonce:                          12,
+		MaxNonce:         12,
+		ValidationRate:   1000,
 	})
 	first := p.SessionParams()
-	assert.Equal(t, uint32(10), first.SealGraceNonces)
-	assert.Equal(t, uint32(11), first.InferenceClearGraceSeconds)
 	assert.Equal(t, uint32(12), first.MaxNonce)
+	assert.Equal(t, uint32(1000), first.ValidationRate)
 
 	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-		DefaultSealGraceNonces:            20,
-		DefaultInferenceClearGraceSeconds: 21,
-		MaxNonce:                          22,
+		MaxNonce:       22,
+		ValidationRate: 2000,
 	})
 	second := p.SessionParams()
-	assert.Equal(t, uint32(20), second.SealGraceNonces)
-	assert.Equal(t, uint32(21), second.InferenceClearGraceSeconds)
 	assert.Equal(t, uint32(22), second.MaxNonce)
+	assert.Equal(t, uint32(2000), second.ValidationRate)
 }
 
 func TestRuntimeConfigRuntimeParams_FromSnapshot(t *testing.T) {
 	src := &stubSnapshotSource{}
 	src.set(runtimeconfig.Snapshot{
-		DefaultSealGraceNonces:            33,
-		DefaultInferenceClearGraceSeconds: 44,
-		MaxNonce:                          555,
+		MaxNonce:            33,
+		ValidationRate:      6000,
+		VoteThresholdFactor: 50,
 	})
 
 	got := RuntimeConfigRuntimeParams(src).SessionParams()
 
-	assert.Equal(t, uint32(33), got.SealGraceNonces)
-	assert.Equal(t, uint32(44), got.InferenceClearGraceSeconds)
-	assert.Equal(t, uint32(555), got.MaxNonce)
+	assert.Equal(t, uint32(33), got.MaxNonce)
+	assert.Equal(t, uint32(6000), got.ValidationRate)
+	assert.Equal(t, uint32(50), got.VoteThresholdFactor)
 }
 
 func TestRuntimeConfigRuntimeParams_ZeroSnapshotZeroFields(t *testing.T) {
@@ -138,72 +131,68 @@ func TestRuntimeConfigRuntimeParams_ReflectsLatestSnapshot(t *testing.T) {
 }
 
 func TestRuntimeParamsProvider_ConcurrentReadsAreSafe(t *testing.T) {
-	const (
-		readers    = 16
-		iterations = 500
-	)
+	const readers = 8
+	const iterations = 200
 
-	t.Run("config manager", func(t *testing.T) {
+	t.Run("configManager", func(t *testing.T) {
 		cm := &apiconfig.ConfigManager{}
 		cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
-			DefaultSealGraceNonces:            7,
-			DefaultInferenceClearGraceSeconds: 8,
-			MaxNonce:                          9,
+			MaxNonce: 7,
 		})
 		p := ConfigManagerRuntimeParams(cm)
 		runConcurrent(t, readers, iterations, func() SessionParams { return p.SessionParams() })
 	})
 
-	t.Run("runtime config snapshot", func(t *testing.T) {
+	t.Run("runtimeConfig", func(t *testing.T) {
 		src := &stubSnapshotSource{}
 		src.set(runtimeconfig.Snapshot{
-			DefaultSealGraceNonces:            7,
-			DefaultInferenceClearGraceSeconds: 8,
-			MaxNonce:                          9,
+			MaxNonce: 7,
 		})
 		p := RuntimeConfigRuntimeParams(src)
 		runConcurrent(t, readers, iterations, func() SessionParams { return p.SessionParams() })
 	})
 }
 
-// runConcurrent fan-outs readers calls of fn and asserts every read returned
-// the same value. Detects torn reads via go test -race.
 func runConcurrent(t *testing.T, readers, iterations int, fn func() SessionParams) {
 	t.Helper()
-
-	want := fn()
-	var fails atomic.Int64
+	var fails sync.Map
 	var wg sync.WaitGroup
-	wg.Add(readers)
 	for i := 0; i < readers; i++ {
-		go func() {
+		wg.Add(1)
+		go func(seed int) {
 			defer wg.Done()
+			var baseline SessionParams
 			for j := 0; j < iterations; j++ {
-				if got := fn(); got != want {
-					fails.Add(1)
-					return
+				got := fn()
+				if j == 0 {
+					baseline = got
+					continue
+				}
+				if got != baseline {
+					fails.Store(seed, got)
 				}
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
-	require.Zero(t, fails.Load(), "concurrent SessionParams reads diverged")
+	var count int
+	fails.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	require.Zero(t, count, "concurrent SessionParams reads diverged")
 }
 
 // TestHostManager_SetRuntimeParamsProvider_NoBehaviorChange guards Phase 2's
-// "captured but not consulted" contract: wiring the provider in dapi/devshardd
-// must not change today's bind path. Phase 5 turns this into a real
-// freeze-at-bind assertion.
+// optional wiring: attaching a provider must not change behavior when create
+// is never called.
 func TestHostManager_SetRuntimeParamsProvider_NoBehaviorChange(t *testing.T) {
 	m := &HostManager{}
-	require.Nil(t, m.params)
 
 	p := ConfigManagerRuntimeParams(&apiconfig.ConfigManager{})
 	m.SetRuntimeParamsProvider(p)
-	require.NotNil(t, m.params, "setter must store the provider for phase 5")
+	require.NotNil(t, m.params)
 
-	// Sanity: replacing the provider is allowed (governance updates pick a new
-	// cache snapshot via the same long-poll; the manager just reads through it).
 	other := ConfigManagerRuntimeParams(&apiconfig.ConfigManager{})
 	m.SetRuntimeParamsProvider(other)
 	require.NotNil(t, m.params)

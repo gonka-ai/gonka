@@ -19,14 +19,12 @@ func DevshardVersionsCacheFromParams(dep *types.DevshardEscrowParams) DevshardVe
 		}
 	}
 	return DevshardVersionsCache{
-		Versions:                          versions,
-		DevshardRequestsEnabled:           dep.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            dep.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          dep.MaxNonce,
-		RefusalTimeout:                    dep.RefusalTimeout,
-		ExecutionTimeout:                  dep.ExecutionTimeout,
-		ValidationRate:                    dep.ValidationRate,
-		VoteThresholdFactor:               dep.VoteThresholdFactor,
+		Versions:                versions,
+		DevshardRequestsEnabled: dep.DevshardRequestsEnabled,
+		MaxNonce:                dep.MaxNonce,
+		RefusalTimeout:          dep.RefusalTimeout,
+		ExecutionTimeout:        dep.ExecutionTimeout,
+		ValidationRate:          dep.ValidationRate,
+		VoteThresholdFactor:     dep.VoteThresholdFactor,
 	}
 }

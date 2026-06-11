@@ -29,6 +29,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | `slots`, `epoch_index`, `app_hash` | Group + settlement context |
 | `token_price` | Frozen for the life of the escrow |
 | **`create_devshard_fee`**, **`fee_per_nonce`** | Snapshotted at escrow create; hashed into state root / settlement |
+| **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | `settled`, `model_id`, `amount` | Operational / display |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach grace defaults to `EscrowInfo`.
@@ -39,8 +40,6 @@ Read once via `RuntimeParamsProvider` (`ConfigManagerRuntimeParams` embedded, `R
 
 | Field | Notes |
 |-------|--------|
-| `default_seal_grace_nonces` → `SealGraceNonces` | Consensus-sensitive |
-| `default_inference_clear_grace_seconds` → `InferenceClearGraceSeconds` | Consensus-sensitive |
 | `validation_rate` | Consensus-sensitive |
 | `vote_threshold_factor` → `VoteThreshold` | Derived: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
 
@@ -71,7 +70,7 @@ Proxy may still expose bound `RefusalTimeout` / `ExecutionTimeout` on `/status`;
 | `QueryGranteesByMessageType` | Per validator warm-key grants |
 | `QueryAccountByAddress` | Per address pubkey |
 
-`bindGraceDefaults`, `DevshardDefaults`, and nested `QueryParams` on `GetEscrow` are **removed** — grace and governance session fields come from lane B at bind, not from the bridge.
+`bindGraceDefaults`, `DevshardDefaults`, and nested `QueryParams` on `GetEscrow` are **removed** — governance session fields (except grace) come from lane B at bind; seal grace comes from lane A on the escrow row.
 
 ---
 
@@ -109,7 +108,6 @@ devshardd (active_chain — fallback):
 | `current_epoch_id` | C (live) |
 | `logprobs_mode` | C |
 | `devshard_requests_enabled` | C |
-| `default_seal_grace_nonces`, `default_inference_clear_grace_seconds` | B (frozen) |
 | `max_nonce` | C |
 | `approved_versions` | C |
 | `refusal_timeout`, `execution_timeout` | C (live at proxy; also copied at bind for `/status`) |
@@ -165,7 +163,7 @@ Long-poll and chain runners (same as before):
 `approved_versions` comes from dapi’s in-memory cache over long-poll only. While **`active_chain`**:
 
 - The snapshot keeps the **last** `approved_versions` from a prior gRPC apply, or **nil** if devshardd never had a successful long-poll apply.
-- Chain fallback still updates governance fields present on chain (`max_nonce`, `devshard_requests_enabled`, `logprobs_mode`, epoch, grace defaults in the snapshot, etc.).
+- Chain fallback still updates governance fields present on chain (`max_nonce`, `devshard_requests_enabled`, `logprobs_mode`, epoch, etc.).
 - After **failback** to `active_grpc`, the next full `RuntimeConfig` from dapi repopulates `approved_versions`.
 
 #### Observability (logs)
@@ -213,7 +211,7 @@ Implementation details: [params-provider-adaptive-plan.md](./params-provider-ada
 | `approved_versions` | On long-poll only | dapi cache while `active_grpc`; stale or nil on chain fallback; **versiond** may still poll `GET /versions` on `:9100` |
 | `devshard_requests_enabled` | **Moved** | devshardd + `AvailabilityTracker` |
 | `logprobs_mode` | **Moved** | Validation |
-| Seal/clear grace defaults | **Moved** | Frozen at bind (lane B) |
+| Seal grace (`inference_seal_grace_*`) | On-chain escrow | Lane A — snapshotted at create; not on `RuntimeConfig` |
 | `max_nonce` | **Moved** | `MaxNonceProvider` |
 | `refusal_timeout`, `execution_timeout` | **Moved** | Live proxy + long-poll snapshot |
 | `validation_rate`, `vote_threshold_factor` | **Moved** | Frozen at bind (lane B) |

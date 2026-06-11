@@ -18,10 +18,8 @@ func TestConfigManager_RuntimeConfigSnapshot_FieldsPopulated(t *testing.T) {
 		Versions: []apiconfig.DevshardVersion{
 			{Name: "v2", Binary: "https://example/v2", SHA256: "deadbeef"},
 		},
-		DevshardRequestsEnabled:           false,
-		DefaultSealGraceNonces:            30,
-		DefaultInferenceClearGraceSeconds: 90,
-		MaxNonce:                          1000,
+		DevshardRequestsEnabled: false,
+		MaxNonce:                1000,
 	})
 	require.True(t, cm.ApplyRuntimeConfigBlockIfChanged(42_000, 7))
 
@@ -30,8 +28,6 @@ func TestConfigManager_RuntimeConfigSnapshot_FieldsPopulated(t *testing.T) {
 	require.Equal(t, uint64(7), snap.CurrentEpochID)
 	require.Equal(t, "full", snap.LogprobsMode)
 	require.False(t, snap.DevshardRequestsEnabled)
-	require.Equal(t, uint32(30), snap.DefaultSealGraceNonces)
-	require.Equal(t, uint32(90), snap.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(1000), snap.MaxNonce)
 	require.Len(t, snap.ApprovedVersions, 1)
 	require.Equal(t, "v2", snap.ApprovedVersions[0].Name)

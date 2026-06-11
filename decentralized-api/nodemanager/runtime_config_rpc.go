@@ -15,18 +15,16 @@ func runtimeConfigFromSnapshot(snap apiconfig.RuntimeConfigSnapshot) *gen.Runtim
 		}
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:                 snap.ParamsBlockHeight,
-		CurrentEpochId:                    snap.CurrentEpochID,
-		LogprobsMode:                      snap.LogprobsMode,
-		DevshardRequestsEnabled:           snap.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            snap.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: snap.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          snap.MaxNonce,
-		ApprovedVersions:                  versions,
-		ServedAtUnix:                      snap.ServedAt.Unix(),
-		RefusalTimeout:                    snap.RefusalTimeout,
-		ExecutionTimeout:                  snap.ExecutionTimeout,
-		ValidationRate:                    snap.ValidationRate,
-		VoteThresholdFactor:               snap.VoteThresholdFactor,
+		ParamsBlockHeight:       snap.ParamsBlockHeight,
+		CurrentEpochId:          snap.CurrentEpochID,
+		LogprobsMode:            snap.LogprobsMode,
+		DevshardRequestsEnabled: snap.DevshardRequestsEnabled,
+		MaxNonce:                snap.MaxNonce,
+		ApprovedVersions:        versions,
+		ServedAtUnix:            snap.ServedAt.Unix(),
+		RefusalTimeout:          snap.RefusalTimeout,
+		ExecutionTimeout:        snap.ExecutionTimeout,
+		ValidationRate:          snap.ValidationRate,
+		VoteThresholdFactor:     snap.VoteThresholdFactor,
 	}
 }

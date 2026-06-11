@@ -91,6 +91,12 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.False(t, escrow.Settled)
 	require.Equal(t, types.DefaultDevshardCreateDevshardFee, escrow.CreateDevshardFee)
 	require.Equal(t, types.DefaultDevshardFeePerNonce, escrow.FeePerNonce)
+	require.Equal(t, types.DevshardInferenceSealGraceNoncesForCreate(
+		types.DefaultDevshardEscrowParams(), uint32(len(escrow.Slots)),
+	), escrow.InferenceSealGraceNonces)
+	require.Equal(t, types.DevshardInferenceSealGraceSecondsForCreate(
+		types.DefaultDevshardEscrowParams(),
+	), escrow.InferenceSealGraceSeconds)
 	for _, slotAddr := range escrow.Slots {
 		require.Contains(t, subgroupAddrs, slotAddr)
 	}

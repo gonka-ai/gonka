@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"devshard/types"
 )
 
 // warmCacheKey is the key for the warm key verification cache.
@@ -53,9 +55,11 @@ type escrowResponse struct {
 		EpochIndex uint64   `json:"epoch_index,string"`
 		AppHash    string   `json:"app_hash"`
 		Settled    bool     `json:"settled"`
-		TokenPrice        uint64 `json:"token_price,string"`
-		CreateDevshardFee uint64 `json:"create_devshard_fee,string"`
-		FeePerNonce       uint64 `json:"fee_per_nonce,string"`
+		TokenPrice                uint64 `json:"token_price,string"`
+		CreateDevshardFee         uint64 `json:"create_devshard_fee,string"`
+		FeePerNonce               uint64 `json:"fee_per_nonce,string"`
+		InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces,string"`
+		InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds,string"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -88,11 +92,15 @@ type epochGroupDataResponse struct {
 type paramsResponse struct {
 	Params *struct {
 		DevshardEscrowParams *struct {
-			DefaultSealGraceNonces              uint32 `json:"default_seal_grace_nonces"`
-			DefaultInferenceClearGraceSeconds uint32 `json:"default_inference_clear_grace_seconds"`
+			RefusalTimeout      int64  `json:"refusal_timeout,string"`
+			ExecutionTimeout    int64  `json:"execution_timeout,string"`
+			ValidationRate      uint32 `json:"validation_rate"`
+			VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 		} `json:"devshard_escrow_params"`
 	} `json:"params"`
 }
+
+var _ SessionBindParamsBridge = (*RESTBridge)(nil)
 
 // -- helper --
 
@@ -137,15 +145,17 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	}
 
 	return &EscrowInfo{
-		EscrowID:          escrowID,
-		Amount:            resp.Escrow.Amount,
-		CreatorAddress:    resp.Escrow.Creator,
-		AppHash:           appHash,
-		Slots:             resp.Escrow.Slots,
-		TokenPrice:        resp.Escrow.TokenPrice,
-		CreateDevshardFee: resp.Escrow.CreateDevshardFee,
-		FeePerNonce:       resp.Escrow.FeePerNonce,
-		EpochID:           resp.Escrow.EpochIndex,
+		EscrowID:                  escrowID,
+		Amount:                    resp.Escrow.Amount,
+		CreatorAddress:            resp.Escrow.Creator,
+		AppHash:                   appHash,
+		Slots:                     resp.Escrow.Slots,
+		TokenPrice:                resp.Escrow.TokenPrice,
+		CreateDevshardFee:         resp.Escrow.CreateDevshardFee,
+		FeePerNonce:               resp.Escrow.FeePerNonce,
+		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
+		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }
 
@@ -163,6 +173,25 @@ func (b *RESTBridge) GetHostInfo(address string) (*HostInfo, error) {
 	return &HostInfo{
 		Address: resp.Participant.Address,
 		URL:     resp.Participant.InferenceURL,
+	}, nil
+}
+
+func (b *RESTBridge) GetSessionBindParams() (types.LiveSessionBindParams, error) {
+	u := fmt.Sprintf("%s/productscience/inference/inference/params", b.baseURL)
+
+	resp, err := doGet[paramsResponse](b.client, u)
+	if err != nil {
+		return types.LiveSessionBindParams{}, err
+	}
+	if resp == nil || resp.Params == nil || resp.Params.DevshardEscrowParams == nil {
+		return types.LiveSessionBindParams{}, fmt.Errorf("devshard escrow params missing from chain params response")
+	}
+	dep := resp.Params.DevshardEscrowParams
+	return types.LiveSessionBindParams{
+		RefusalTimeout:      dep.RefusalTimeout,
+		ExecutionTimeout:    dep.ExecutionTimeout,
+		ValidationRate:      dep.ValidationRate,
+		VoteThresholdFactor: dep.VoteThresholdFactor,
 	}, nil
 }
 

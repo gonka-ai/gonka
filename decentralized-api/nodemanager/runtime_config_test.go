@@ -48,10 +48,8 @@ func populateRuntimeConfig(t *testing.T, cm *apiconfig.ConfigManager, height int
 		Versions: []apiconfig.DevshardVersion{
 			{Name: "v1", Binary: "https://example/v1", SHA256: "abc123"},
 		},
-		DevshardRequestsEnabled:           true,
-		DefaultSealGraceNonces:            40,
-		DefaultInferenceClearGraceSeconds: 120,
-		MaxNonce:                          20000,
+		DevshardRequestsEnabled: true,
+		MaxNonce:                20000,
 		RefusalTimeout:                    60,
 		ExecutionTimeout:                  1200,
 		ValidationRate:                    5000,
@@ -76,8 +74,6 @@ func TestNodeManager_GetRuntimeConfig_FullResponse(t *testing.T) {
 	require.Equal(t, uint64(7), resp.Config.CurrentEpochId)
 	require.Equal(t, "full", resp.Config.LogprobsMode)
 	require.True(t, resp.Config.DevshardRequestsEnabled)
-	require.Equal(t, uint32(40), resp.Config.DefaultSealGraceNonces)
-	require.Equal(t, uint32(120), resp.Config.DefaultInferenceClearGraceSeconds)
 	require.Equal(t, uint32(20000), resp.Config.MaxNonce)
 	require.Len(t, resp.Config.ApprovedVersions, 1)
 	require.Equal(t, "v1", resp.Config.ApprovedVersions[0].Name)

@@ -624,16 +624,20 @@ type statusResponse struct {
 
 // statusSessionConfig is the JSON representation of session config values
 // returned by the devshardctl status endpoint.
+//
+// These fields are written as JSON numbers (native Go encode). They are not
+// used to decode Cosmos REST; grpc-gateway stringified uint64/int64 fields are
+// handled in devshard/bridge/rest.go (escrowResponse) with `json:"...,string"`.
 type statusSessionConfig struct {
-	RefusalTimeout    int64  `json:"refusal_timeout"`
-	ExecutionTimeout  int64  `json:"execution_timeout"`
-	TokenPrice        uint64 `json:"token_price"`
-	CreateDevshardFee uint64 `json:"create_devshard_fee"`
-	FeePerNonce       uint64 `json:"fee_per_nonce"`
-	VoteThreshold     uint32 `json:"vote_threshold"`
-	ValidationRate             uint32 `json:"validation_rate"`
-	SealGraceNonces            uint32 `json:"seal_grace_nonces"`
-	InferenceClearGraceSeconds uint32 `json:"inference_clear_grace_seconds"`
+	RefusalTimeout            int64  `json:"refusal_timeout"`
+	ExecutionTimeout          int64  `json:"execution_timeout"`
+	TokenPrice                uint64 `json:"token_price"`
+	CreateDevshardFee         uint64 `json:"create_devshard_fee"`
+	FeePerNonce               uint64 `json:"fee_per_nonce"`
+	VoteThreshold             uint32 `json:"vote_threshold"`
+	ValidationRate            uint32 `json:"validation_rate"`
+	InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
+	InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -774,15 +778,15 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Phase:    phaseStr,
 		Balance:  st.Balance,
 		Config: statusSessionConfig{
-			RefusalTimeout:             cfg.RefusalTimeout,
-			ExecutionTimeout:           cfg.ExecutionTimeout,
-			TokenPrice:                 cfg.TokenPrice,
-			CreateDevshardFee:          cfg.CreateDevshardFee,
-			FeePerNonce:                cfg.FeePerNonce,
-			VoteThreshold:              cfg.VoteThreshold,
-			ValidationRate:             cfg.ValidationRate,
-			SealGraceNonces:            cfg.SealGraceNonces,
-			InferenceClearGraceSeconds: cfg.InferenceClearGraceSeconds,
+			RefusalTimeout:            cfg.RefusalTimeout,
+			ExecutionTimeout:          cfg.ExecutionTimeout,
+			TokenPrice:                cfg.TokenPrice,
+			CreateDevshardFee:         cfg.CreateDevshardFee,
+			FeePerNonce:               cfg.FeePerNonce,
+			VoteThreshold:             cfg.VoteThreshold,
+			ValidationRate:            cfg.ValidationRate,
+			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
+			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 		},
 	}
 	if p.phaseGate != nil {

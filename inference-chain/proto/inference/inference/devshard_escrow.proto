@@ -16,6 +16,8 @@ message DevshardEscrow {
   string model_id = 9;
   uint64 create_devshard_fee = 10;
   uint64 fee_per_nonce = 11;
+  uint32 inference_seal_grace_nonces = 12;
+  uint32 inference_seal_grace_seconds = 13;
 }
 
 message DevshardHostEpochStats {

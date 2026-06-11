@@ -53,9 +53,9 @@ func MakeGroup(signers []*signing.Secp256k1Signer) []types.SlotAssignment {
 	return group
 }
 
-// TestInferenceClearGraceSeconds is a tiny wall-clock grace for unit tests so
+// TestInferenceSealGraceSeconds is a tiny wall-clock grace for unit tests so
 // prune/seal scenarios never wait on the production default (3600s).
-const TestInferenceClearGraceSeconds uint32 = 1
+const TestInferenceSealGraceSeconds uint32 = 1
 
 // DefaultConfig returns a SessionConfig with VoteThreshold = numHosts/2
 // and ValidationRate = 5000 (50%).
@@ -68,7 +68,7 @@ func DefaultConfig(numHosts int) types.SessionConfig {
 		ValidationRate:             5000,
 		CreateDevshardFee:          0,
 		FeePerNonce:                0,
-		InferenceClearGraceSeconds: TestInferenceClearGraceSeconds,
+		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
 	}, numHosts)
 }
 

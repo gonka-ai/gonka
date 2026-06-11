@@ -13,8 +13,8 @@ message SessionConfigProto {
   uint64 fee_per_nonce = 5;
   uint32 vote_threshold = 6;
   uint32 validation_rate = 7;
-  uint32 seal_grace_nonces = 8;
-  uint32 inference_clear_grace_seconds = 9;
+  uint32 inference_seal_grace_nonces = 8;
+  uint32 inference_seal_grace_seconds = 9;
 }
 
 message SlotAssignmentProto {

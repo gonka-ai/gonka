@@ -37,6 +37,25 @@ val devshardAlwaysValidateSpec = spec<AppState> {
     }
 }
 
+/** Short seal grace for gateway auto-seal tests (Finished inferences + wall-clock gate). */
+const val devshardAutoSealGroupSize = 16L
+const val devshardAutoSealInferenceSealGraceNonces = 1L
+const val devshardAutoSealInferenceSealGraceSeconds = 10L
+/** Must match devshard/state/seal.go autoSealEveryNNonces. */
+const val devshardAutoSealEveryNNonces = 150L
+
+val devshardShortSealGraceSpec = spec<AppState> {
+    this[AppState::inference] = spec<InferenceState> {
+        this[InferenceState::params] = spec<InferenceParams> {
+            this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
+                this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
+                this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
+                this[DevshardEscrowParams::validationRate] = 0L
+            }
+        }
+    }
+}
+
 /** 100% devshard validation sampling (basis points). Distinct from legacy ValidationParams above. */
 val devshardEscrowAlwaysValidateSpec = spec<AppState> {
     this[AppState::inference] = spec<InferenceState> {
@@ -98,7 +117,7 @@ fun LocalInferencePair.dumpDevshardChallengeTraceLogs(escrowId: Long) {
                 logSection("phase-trace $containerName (${filtered.lines().size} matching lines):\n$filtered")
             }
         }
-        val proxyLog = "/tmp/devshardctl-proxy-${escrowId}.log"
+        val proxyLog = devshardProxyLogPath(escrowId)
         runCatching {
             val lines = api.executor.exec(
                 listOf("sh", "-c", "grep -E '$grepExpr' $proxyLog 2>/dev/null | tail -200 || true"),
@@ -440,4 +459,94 @@ fun LocalInferencePair.findChallengedDevshardInference(
 ): DevshardInferencePayload? {
     return getDevshardProxyInferences(handle.proxyUrl)
         .values.firstOrNull { it.hasChallengedOutcome() }
+}
+
+fun LocalInferencePair.waitForConfirmedDevshardInferences(
+    proxyUrl: String,
+    minCount: Int,
+    timeoutMs: Long = 120_000L,
+    pollIntervalMs: Long = 500L,
+) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val inferences = getDevshardProxyInferences(proxyUrl)
+        val confirmed = inferences.values.count { rec ->
+            rec.confirmedAt != null &&
+                rec.confirmedAt!! > 0 &&
+                (
+                    rec.status == DevshardInferenceStatus.FINISHED ||
+                        rec.status == DevshardInferenceStatus.STARTED ||
+                        rec.status == DevshardInferenceStatus.VALIDATED
+                    )
+        }
+        if (confirmed >= minCount) {
+            return
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    val inferences = getDevshardProxyInferences(proxyUrl)
+    error(
+        "timed out waiting for $minCount confirmed inferences " +
+            "(got ${inferences.values.count { it.confirmedAt != null && it.confirmedAt!! > 0 }})",
+    )
+}
+
+fun LocalInferencePair.waitForFinishedDevshardInferences(
+    proxyUrl: String,
+    minCount: Int,
+    timeoutMs: Long = 120_000L,
+    pollIntervalMs: Long = 500L,
+) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val inferences = getDevshardProxyInferences(proxyUrl)
+        val finished = inferences.values.count { rec ->
+            rec.status == DevshardInferenceStatus.FINISHED &&
+                rec.confirmedAt != null &&
+                rec.confirmedAt!! > 0
+        }
+        if (finished >= minCount) {
+            return
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    val inferences = getDevshardProxyInferences(proxyUrl)
+    error(
+        "timed out waiting for $minCount finished inferences " +
+            "(got ${inferences.values.count { it.status == DevshardInferenceStatus.FINISHED }})",
+    )
+}
+
+/**
+ * Drive chat completions until [targetNonce] is reached and at least [minSealed]
+ * inferences have been folded into sealed_acc. Auto-seal runs only on nonces that
+ * are multiples of [devshardAutoSealEveryNNonces] (see devshard/state/seal.go).
+ */
+fun LocalInferencePair.waitForDevshardAutoSeal(
+    proxyUrl: String,
+    minSealed: Int,
+    targetNonce: Long = devshardAutoSealEveryNNonces,
+    model: String = defaultModel,
+    timeoutMs: Long = 300_000L,
+    pollIntervalMs: Long = 500L,
+) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    var drive = 0
+    while (System.currentTimeMillis() < deadline) {
+        val debug = getDevshardProxyDebugState(proxyUrl)
+        if (debug.nonce >= targetNonce && debug.sealedInferences >= minSealed) {
+            return
+        }
+        if (debug.nonce < targetNonce || debug.sealedInferences < minSealed) {
+            val response = sendChatCompletion(proxyUrl, model, "autoseal drive $drive")
+            assertThat(response).isNotEmpty()
+            drive++
+        }
+        Thread.sleep(pollIntervalMs)
+    }
+    val last = getDevshardProxyDebugState(proxyUrl)
+    error(
+        "timed out waiting for auto-seal: nonce=${last.nonce} target=$targetNonce " +
+            "sealed=${last.sealedInferences} minSealed=$minSealed",
+    )
 }

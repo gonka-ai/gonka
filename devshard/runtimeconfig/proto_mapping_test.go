@@ -9,20 +9,18 @@ import (
 
 func TestProtoMapping_RoundTrip(t *testing.T) {
 	orig := Snapshot{
-		ParamsBlockHeight:                 42,
-		CurrentEpochID:                    7,
-		LogprobsMode:                      "raw",
-		DevshardRequestsEnabled:           true,
-		DefaultSealGraceNonces:            3,
-		DefaultInferenceClearGraceSeconds: 45,
-		MaxNonce:                          99,
+		ParamsBlockHeight:       42,
+		CurrentEpochID:          7,
+		LogprobsMode:            "raw",
+		DevshardRequestsEnabled: true,
+		MaxNonce:                99,
 		ApprovedVersions: []ApprovedVersion{
 			{Name: "v1", Binary: "/bin/v1", SHA256: "deadbeef"},
 		},
 		ServedAt:            time.Unix(1_700_000_123, 0),
 		RefusalTimeout:      60,
 		ExecutionTimeout:    1200,
-		ValidationRate:        5000,
+		ValidationRate:      5000,
 		VoteThresholdFactor: 50,
 	}
 	round := SnapshotFromProto(ProtoFromSnapshot(orig))

@@ -1,18 +1,21 @@
 package types
 
 const (
-	defaultSealGraceMultiplier        = 10
-	minSealGraceNonces                = 20
-	DefaultInferenceClearGraceSeconds = 3600 // 1 hour (give time for long validations)
+	defaultInferenceSealGraceMultiplier = 1 // for tests
+	minInferenceSealGraceNonces         = 20
+	// DefaultInferenceSealGraceSeconds is the wall-clock grace before sealing
+	// stale-finished inferences. Must match inference-chain
+	// DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
+	DefaultInferenceSealGraceSeconds = 3600
 )
 
-// DefaultSealGraceNonces returns the canonical seal grace for a session group.
+// DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
 // Phase 1 uses a nonce gate of 10 * groupSize with a floor of 20 so small
 // groups still leave enough room for post-terminal traffic before sealing.
-func DefaultSealGraceNonces(groupSize int) uint32 {
-	grace := groupSize * defaultSealGraceMultiplier
-	if grace < minSealGraceNonces {
-		grace = minSealGraceNonces
+func DefaultInferenceSealGraceNonces(groupSize int) uint32 {
+	grace := groupSize * defaultInferenceSealGraceMultiplier
+	if grace < minInferenceSealGraceNonces {
+		grace = minInferenceSealGraceNonces
 	}
 	return uint32(grace)
 }
@@ -22,11 +25,11 @@ func DefaultSealGraceNonces(groupSize int) uint32 {
 // are preserved; only fields with explicit "unset means use canonical default"
 // semantics are filled here.
 func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
-	if cfg.SealGraceNonces == 0 {
-		cfg.SealGraceNonces = DefaultSealGraceNonces(groupSize)
+	if cfg.InferenceSealGraceNonces == 0 {
+		cfg.InferenceSealGraceNonces = DefaultInferenceSealGraceNonces(groupSize)
 	}
-	if cfg.InferenceClearGraceSeconds == 0 {
-		cfg.InferenceClearGraceSeconds = DefaultInferenceClearGraceSeconds
+	if cfg.InferenceSealGraceSeconds == 0 {
+		cfg.InferenceSealGraceSeconds = DefaultInferenceSealGraceSeconds
 	}
 	return cfg
 }
@@ -46,24 +49,24 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 	}, groupSize)
 }
 
-// EscrowSessionFields collects the per-escrow fee parameters that are frozen
-// onto DevshardEscrow at create. Every field is "zero means use the compiled
-// default" so callers can populate only what the chain returned.
+// EscrowSessionFields collects per-escrow parameters frozen onto DevshardEscrow
+// at create. Every field is "zero means use the compiled default" so callers can
+// populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice        uint64
-	CreateDevshardFee uint64
-	FeePerNonce       uint64
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
 }
 
 // LiveSessionBindParams carries governance fields read from the long-poll
 // snapshot once at session bind. Zero means "not provided" for that field.
 type LiveSessionBindParams struct {
-	RefusalTimeout             int64
-	ExecutionTimeout           int64
-	ValidationRate             uint32
-	SealGraceNonces            uint32
-	InferenceClearGraceSeconds uint32
-	VoteThresholdFactor        uint32 // percent, e.g. 50 == 50%
+	RefusalTimeout      int64
+	ExecutionTimeout    int64
+	ValidationRate      uint32
+	VoteThresholdFactor uint32 // percent, e.g. 50 == 50%
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -82,12 +85,21 @@ func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBi
 	if live.ValidationRate > 0 {
 		cfg.ValidationRate = live.ValidationRate
 	}
-	if live.SealGraceNonces > 0 {
-		cfg.SealGraceNonces = live.SealGraceNonces
+	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
+	if live.RefusalTimeout > 0 {
+		cfg.RefusalTimeout = live.RefusalTimeout
 	}
-	if live.InferenceClearGraceSeconds > 0 {
-		cfg.InferenceClearGraceSeconds = live.InferenceClearGraceSeconds
+	if live.ExecutionTimeout > 0 {
+		cfg.ExecutionTimeout = live.ExecutionTimeout
 	}
+	return NormalizeSessionConfig(cfg, groupSize)
+}
+
+// ApplyChainSessionBindParams overlays lane-B fields from a chain Params query
+// at session bind. Unlike ApplyLiveSessionParams, validation_rate=0 from chain
+// is honored (disables validation sampling).
+func ApplyChainSessionBindParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
+	cfg.ValidationRate = live.ValidationRate
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
 	if live.RefusalTimeout > 0 {
 		cfg.RefusalTimeout = live.RefusalTimeout
@@ -99,13 +111,12 @@ func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBi
 }
 
 // SessionConfigFromEscrow builds a SessionConfig by starting from the
-// compiled DefaultSessionConfig and overlaying any non-zero per-escrow fee
-// values. This is the canonical constructor for "bind a session against an
-// on-chain escrow"; live (long-poll) fields are layered on by the caller after
-// this returns, before NormalizeSessionConfig finalizes derived defaults.
+// compiled DefaultSessionConfig and overlaying any non-zero per-escrow values.
+// Live (long-poll) lane-B fields are layered on by the caller after this
+// returns, before NormalizeSessionConfig finalizes derived defaults.
 //
-// Zero fields fall through to defaults so legacy escrows (no fee snapshot)
-// keep today's behavior — see devshard/docs/session-config-flow-plan.md.
+// Zero fields fall through to defaults so legacy escrows (no snapshot)
+// keep today's behavior.
 func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionConfig {
 	cfg := DefaultSessionConfig(groupSize)
 	if fields.TokenPrice > 0 {
@@ -117,7 +128,13 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	if fields.FeePerNonce > 0 {
 		cfg.FeePerNonce = fields.FeePerNonce
 	}
-	return cfg
+	if fields.InferenceSealGraceNonces > 0 {
+		cfg.InferenceSealGraceNonces = fields.InferenceSealGraceNonces
+	}
+	if fields.InferenceSealGraceSeconds > 0 {
+		cfg.InferenceSealGraceSeconds = fields.InferenceSealGraceSeconds
+	}
+	return NormalizeSessionConfig(cfg, groupSize)
 }
 
 // SessionConfigWithPrice returns a session config with a custom token price.

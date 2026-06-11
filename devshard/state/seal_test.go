@@ -225,6 +225,45 @@ func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
 	require.Greater(t, got.ActualCost, uint64(0))
 }
 
+func TestNextAutoSealNonce(t *testing.T) {
+	require.Equal(t, uint64(150), NextAutoSealNonce(0))
+	require.Equal(t, uint64(150), NextAutoSealNonce(149))
+	require.Equal(t, uint64(300), NextAutoSealNonce(150))
+	require.Equal(t, uint64(300), NextAutoSealNonce(299))
+}
+
+func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, _, _, _ := newSealTestSM(t, "escrow-clock", hosts, false)
+
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("pending"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 2, PromptHash: []byte("confirmed"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, hosts[2], "escrow-clock", 2, []byte("confirmed"), "llama", 100, 50, 1000, 5000)
+	_, err = sm.ApplyLocal(3, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 5000,
+	})})
+	require.NoError(t, err)
+
+	clock := sm.AutoSealStateClock()
+	require.True(t, clock.Known)
+	require.Equal(t, int64(5000), clock.MinConfirmedAt, "Pending ConfirmedAt=0 must not pull window min to zero")
+	require.Equal(t, int64(5000), clock.MaxConfirmedAt)
+	require.Equal(t, int64(5000), clock.Clock)
+}
+
 func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

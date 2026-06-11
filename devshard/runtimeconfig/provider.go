@@ -15,19 +15,17 @@ type ApprovedVersion struct {
 
 // Snapshot is an immutable view of dapi's cached chain runtime params.
 type Snapshot struct {
-	ParamsBlockHeight                 int64
-	CurrentEpochID                    uint64
-	LogprobsMode                      string
-	DevshardRequestsEnabled           bool
-	DefaultSealGraceNonces            uint32
-	DefaultInferenceClearGraceSeconds uint32
-	MaxNonce                          uint32
-	ApprovedVersions                  []ApprovedVersion
-	ServedAt                          time.Time
-	RefusalTimeout                    int64
-	ExecutionTimeout                  int64
-	ValidationRate                    uint32
-	VoteThresholdFactor               uint32
+	ParamsBlockHeight       int64
+	CurrentEpochID          uint64
+	LogprobsMode            string
+	DevshardRequestsEnabled bool
+	MaxNonce                uint32
+	ApprovedVersions        []ApprovedVersion
+	ServedAt                time.Time
+	RefusalTimeout          int64
+	ExecutionTimeout        int64
+	ValidationRate          uint32
+	VoteThresholdFactor     uint32
 }
 
 // EpochChangeListener fires once per CurrentEpochID transition observed by the

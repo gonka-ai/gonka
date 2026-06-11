@@ -10,43 +10,37 @@ import (
 // runtimeConfigContent is the chain-driven subset of RuntimeConfig used for
 // change detection (excludes ParamsBlockHeight and ServedAt).
 type runtimeConfigContent struct {
-	LogprobsMode                      string
-	DevshardRequestsEnabled           bool
-	DefaultSealGraceNonces            uint32
-	DefaultInferenceClearGraceSeconds uint32
-	MaxNonce                          uint32
-	ApprovedVersions                  []DevshardVersion
-	RefusalTimeout                    int64
-	ExecutionTimeout                  int64
-	ValidationRate                    uint32
-	VoteThresholdFactor               uint32
+	LogprobsMode            string
+	DevshardRequestsEnabled bool
+	MaxNonce                uint32
+	ApprovedVersions        []DevshardVersion
+	RefusalTimeout          int64
+	ExecutionTimeout        int64
+	ValidationRate          uint32
+	VoteThresholdFactor     uint32
 }
 
 func runtimeConfigSnapshotFromContent(height int64, epochID uint64, c runtimeConfigContent) RuntimeConfigSnapshot {
 	versions := make([]DevshardVersion, len(c.ApprovedVersions))
 	copy(versions, c.ApprovedVersions)
 	return RuntimeConfigSnapshot{
-		ParamsBlockHeight:                 height,
-		CurrentEpochID:                    epochID,
-		LogprobsMode:                      c.LogprobsMode,
-		DevshardRequestsEnabled:           c.DevshardRequestsEnabled,
-		DefaultSealGraceNonces:            c.DefaultSealGraceNonces,
-		DefaultInferenceClearGraceSeconds: c.DefaultInferenceClearGraceSeconds,
-		MaxNonce:                          c.MaxNonce,
-		ApprovedVersions:                  versions,
-		ServedAt:                          time.Now(),
-		RefusalTimeout:                    c.RefusalTimeout,
-		ExecutionTimeout:                  c.ExecutionTimeout,
-		ValidationRate:                    c.ValidationRate,
-		VoteThresholdFactor:               c.VoteThresholdFactor,
+		ParamsBlockHeight:       height,
+		CurrentEpochID:          epochID,
+		LogprobsMode:            c.LogprobsMode,
+		DevshardRequestsEnabled: c.DevshardRequestsEnabled,
+		MaxNonce:                c.MaxNonce,
+		ApprovedVersions:        versions,
+		ServedAt:                time.Now(),
+		RefusalTimeout:          c.RefusalTimeout,
+		ExecutionTimeout:        c.ExecutionTimeout,
+		ValidationRate:          c.ValidationRate,
+		VoteThresholdFactor:     c.VoteThresholdFactor,
 	}
 }
 
 func (a runtimeConfigContent) equal(b runtimeConfigContent) bool {
 	return a.LogprobsMode == b.LogprobsMode &&
 		a.DevshardRequestsEnabled == b.DevshardRequestsEnabled &&
-		a.DefaultSealGraceNonces == b.DefaultSealGraceNonces &&
-		a.DefaultInferenceClearGraceSeconds == b.DefaultInferenceClearGraceSeconds &&
 		a.MaxNonce == b.MaxNonce &&
 		devshardVersionsEqual(a.ApprovedVersions, b.ApprovedVersions) &&
 		a.RefusalTimeout == b.RefusalTimeout &&

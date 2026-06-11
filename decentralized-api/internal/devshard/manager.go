@@ -295,19 +295,19 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	creatorAddr := escrow.CreatorAddress
 
 	config := types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
-		TokenPrice:        escrow.TokenPrice,
-		CreateDevshardFee: escrow.CreateDevshardFee,
-		FeePerNonce:       escrow.FeePerNonce,
+		TokenPrice:                escrow.TokenPrice,
+		CreateDevshardFee:         escrow.CreateDevshardFee,
+		FeePerNonce:               escrow.FeePerNonce,
+		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
 	})
 	if m.params != nil {
 		live := m.params.SessionParams()
-		config = types.ApplyLiveSessionParams(config, len(group), types.LiveSessionBindParams{
-			RefusalTimeout:             live.RefusalTimeout,
-			ExecutionTimeout:           live.ExecutionTimeout,
-			ValidationRate:             live.ValidationRate,
-			SealGraceNonces:            live.SealGraceNonces,
-			InferenceClearGraceSeconds: live.InferenceClearGraceSeconds,
-			VoteThresholdFactor:        live.VoteThresholdFactor,
+		config = types.ApplyChainSessionBindParams(config, len(group), types.LiveSessionBindParams{
+			RefusalTimeout:      live.RefusalTimeout,
+			ExecutionTimeout:    live.ExecutionTimeout,
+			ValidationRate:      live.ValidationRate,
+			VoteThresholdFactor: live.VoteThresholdFactor,
 		})
 	} else {
 		config = types.NormalizeSessionConfig(config, len(group))

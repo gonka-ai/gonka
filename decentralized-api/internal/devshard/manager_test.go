@@ -850,21 +850,21 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:       "escrow-1",
-			Amount:         100000,
-			CreatorAddress: user.Address(),
-			Slots:          addresses,
-			TokenPrice:     1,
+			EscrowID:                  "escrow-1",
+			Amount:                    100000,
+			CreatorAddress:            user.Address(),
+			Slots:                     addresses,
+			TokenPrice:                1,
+			InferenceSealGraceNonces:  123,
+			InferenceSealGraceSeconds: 99,
 		},
 	}
 
 	live := SessionParams{
-		RefusalTimeout:             90,
-		ExecutionTimeout:           1800,
-		ValidationRate:             6000,
-		SealGraceNonces:            123,
-		InferenceClearGraceSeconds: 99,
-		VoteThresholdFactor:        67,
+		RefusalTimeout:      90,
+		ExecutionTimeout:    1800,
+		ValidationRate:      6000,
+		VoteThresholdFactor: 67,
 	}
 	provider := stubRuntimeParams{params: live}
 
@@ -875,17 +875,16 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 
 	meta, err := store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
-	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
-	require.Equal(t, uint32(99), meta.Config.InferenceClearGraceSeconds)
+	require.Equal(t, uint32(123), meta.Config.InferenceSealGraceNonces)
+	require.Equal(t, uint32(99), meta.Config.InferenceSealGraceSeconds)
 	require.Equal(t, uint32(6000), meta.Config.ValidationRate)
 	require.Equal(t, uint32(2), meta.Config.VoteThreshold) // floor(3 * 67 / 100)
 	require.Equal(t, int64(90), meta.Config.RefusalTimeout)
 	require.Equal(t, int64(1800), meta.Config.ExecutionTimeout)
 
 	live.ValidationRate = 9999
-	live.SealGraceNonces = 1
 	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "frozen session must not hot-reload")
-	require.Equal(t, uint32(123), meta.Config.SealGraceNonces)
+	require.Equal(t, uint32(123), meta.Config.InferenceSealGraceNonces, "grace comes from escrow snapshot, not live provider")
 }
 
 func TestHostManager_Create_SnapshotsFeesFromEscrow(t *testing.T) {

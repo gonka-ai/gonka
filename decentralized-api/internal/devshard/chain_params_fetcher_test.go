@@ -48,9 +48,7 @@ func TestChainParamsFetcher_v0_2_13Chain_MapsAllFields(t *testing.T) {
 						RefusalTimeout:                    60,
 						ExecutionTimeout:                  1200,
 						ValidationRate:                    5000,
-						VoteThresholdFactor:               50,
-						DefaultSealGraceNonces:            33,
-						DefaultInferenceClearGraceSeconds: 120,
+						VoteThresholdFactor: 50,
 					},
 				},
 			}, nil
@@ -75,8 +73,6 @@ func TestChainParamsFetcher_v0_2_13Chain_MapsAllFields(t *testing.T) {
 	assert.Equal(t, int64(1200), snap.ExecutionTimeout)
 	assert.Equal(t, uint32(5000), snap.ValidationRate)
 	assert.Equal(t, uint32(50), snap.VoteThresholdFactor)
-	assert.Equal(t, uint32(33), snap.DefaultSealGraceNonces)
-	assert.Equal(t, uint32(120), snap.DefaultInferenceClearGraceSeconds)
 	assert.Nil(t, snap.ApprovedVersions, "approved_versions are not on chain; stay nil")
 	assert.True(t, snap.ServedAt.IsZero(), "ServedAt is stamped by chainProvider, not the fetcher")
 }
@@ -115,8 +111,6 @@ func TestChainParamsFetcher_v0_2_12Chain_NewFieldsZero(t *testing.T) {
 	assert.Equal(t, int64(0), snap.ExecutionTimeout)
 	assert.Equal(t, uint32(0), snap.ValidationRate)
 	assert.Equal(t, uint32(0), snap.VoteThresholdFactor)
-	assert.Equal(t, uint32(0), snap.DefaultSealGraceNonces)
-	assert.Equal(t, uint32(0), snap.DefaultInferenceClearGraceSeconds)
 }
 
 func TestChainParamsFetcher_DevshardEscrowParamsNil_KeepsZeros(t *testing.T) {

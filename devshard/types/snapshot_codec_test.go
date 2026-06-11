@@ -18,8 +18,8 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 			FeePerNonce:                1_000,
 			VoteThreshold:              1,
 			ValidationRate:             5000,
-			SealGraceNonces:            20,
-			InferenceClearGraceSeconds: 120,
+			InferenceSealGraceNonces:            20,
+			InferenceSealGraceSeconds: 120,
 		},
 		Group: []SlotAssignment{
 			{SlotID: 0, ValidatorAddress: "host-0"},
