@@ -37,7 +37,9 @@ func NewNodeClientWithTLS(pocUrl string, inferenceUrl string, tlsConfig *tls.Con
 		Timeout: 15 * time.Minute,
 	}
 	if tlsConfig != nil {
-		httpClient.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = tlsConfig.Clone()
+		httpClient.Transport = transport
 	}
 	return &Client{
 		pocUrl:                pocUrl,
