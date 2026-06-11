@@ -138,15 +138,3 @@ func TestCachingConn_HeaderKeepsBackendMetadataOnMiss(t *testing.T) {
 	require.Equal(t, 1, inner.invokeCount())
 	require.Equal(t, []string{"100"}, cachedHeader.Get(grpctypes.GRPCBlockHeightHeader))
 }
-
-func TestQueryCache_HeightPruneCountsInStats(t *testing.T) {
-	cache := NewQueryCache()
-
-	for h := int64(1); h <= int64(defaultKeepLastHeights+2); h++ {
-		cache.store(h, "k", []byte("v"))
-	}
-
-	stats := cache.SnapshotStats()
-	require.Equal(t, defaultKeepLastHeights, stats.Heights)
-	require.Equal(t, uint64(2), stats.CachePruneTotal)
-}

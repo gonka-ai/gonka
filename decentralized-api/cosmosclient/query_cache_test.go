@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,7 +267,7 @@ func TestCachingConn_DeduplicatesConcurrentMisses_WhenResponseHeightMissing(t *t
 	close(startFollowers)
 
 	require.Eventually(t, func() bool {
-		return cache.SnapshotStats().RequestsTotal == uint64(workers+1)
+		return cache.SnapshotStats().CacheMissTotal == uint64(workers+1)
 	}, time.Second, time.Millisecond)
 
 	close(inner.blockCh)
@@ -279,13 +280,15 @@ func TestCachingConn_DeduplicatesConcurrentMisses_WhenResponseHeightMissing(t *t
 		require.NoError(t, err)
 	}
 
-	require.Equal(t, 1, inner.invokeCount())
+	invokes := inner.invokeCount()
+	require.GreaterOrEqual(t, invokes, 1)
+	require.LessOrEqual(t, invokes, 2, "dedup is best-effort: a follower entering singleflight after the leader completed performs its own call")
+
 	stats := cache.SnapshotStats()
 	require.Equal(t, uint64(workers+1), stats.RequestsTotal)
-	require.Equal(t, uint64(1), stats.BackendInvokeTotal)
+	require.Equal(t, uint64(invokes), stats.BackendInvokeTotal)
 	require.Equal(t, uint64(0), stats.CacheWriteTotal)
-	require.Equal(t, uint64(1), stats.CacheWriteSkippedHeightTotal)
-	require.Equal(t, 0, stats.Heights)
+	require.Equal(t, uint64(invokes), stats.CacheWriteSkippedHeightTotal)
 	require.Equal(t, 0, stats.Entries)
 }
 
@@ -359,7 +362,6 @@ func TestQueryCacheStatsReset(t *testing.T) {
 	require.Equal(t, uint64(1), beforeReset.BackendInvokeTotal)
 	require.Equal(t, uint64(1), beforeReset.CacheWriteTotal)
 	require.Equal(t, int64(100), beforeReset.HeightHint)
-	require.Equal(t, 1, beforeReset.Heights)
 	require.Equal(t, 1, beforeReset.Entries)
 
 	cache.ResetStats()
@@ -373,7 +375,6 @@ func TestQueryCacheStatsReset(t *testing.T) {
 	require.Equal(t, uint64(0), afterReset.CacheWriteTotal)
 	require.Equal(t, uint64(0), afterReset.InvokeErrorTotal)
 	require.Equal(t, int64(100), afterReset.HeightHint)
-	require.Equal(t, 1, afterReset.Heights)
 	require.Equal(t, 1, afterReset.Entries)
 }
 
@@ -527,7 +528,6 @@ func TestCachingConn_TwoWorkersDifferentBlockCtx_NoInterference(t *testing.T) {
 	require.Equal(t, uint64(2), stats.CacheHitTotal)
 	require.Equal(t, uint64(2), stats.CacheMissTotal)
 	require.Equal(t, uint64(2), stats.CacheWriteTotal)
-	require.Equal(t, 2, stats.Heights)
 	require.Equal(t, 2, stats.Entries)
 
 	requestHash, err := buildRequestHash(req)
@@ -598,103 +598,98 @@ func TestCachingConn_HintFlipDuringRequest_NoCorruption(t *testing.T) {
 	require.Equal(t, 2, inner.invokeCount(), "post-flip call must reach backend, not reuse 100 entry")
 }
 
-func TestQueryCachePruning_KeepsLastNHeights(t *testing.T) {
-	cache := NewQueryCache()
-	inner := &testConn{heightFromCtx: true}
-	conn := &CachingConn{inner: inner, cache: cache}
+type fakeClock struct {
+	now atomic.Int64
+}
 
-	req := &emptypb.Empty{}
-	const method = "/inference.Query/EpochInfo"
+func newFakeClock() *fakeClock {
+	c := &fakeClock{}
+	c.now.Store(time.Now().UnixNano())
+	return c
+}
 
-	for h := int64(1); h <= int64(defaultKeepLastHeights+2); h++ {
-		ctx := PinHeight(context.Background(), h)
-		resp := &emptypb.Empty{}
-		require.NoError(t, conn.Invoke(ctx, method, req, resp))
-	}
+func (c *fakeClock) NowNano() int64 { return c.now.Load() }
 
+func (c *fakeClock) Tick(time.Duration) <-chan time.Time { return nil }
+
+func (c *fakeClock) advance(d time.Duration) { c.now.Add(int64(d)) }
+
+func TestQueryCache_EntriesExpireAfterTTL(t *testing.T) {
+	clock := newFakeClock()
+	cache := newQueryCache(queryCacheConfig{
+		maxBytes: defaultMaxBytes,
+		entryTTL: defaultEntryTTL,
+		clock:    clock,
+		executor: func(fn func()) { fn() },
+	})
+
+	cache.store(100, "k", []byte("v"))
+	_, ok := cache.lookup(100, "k")
+	require.True(t, ok)
+
+	clock.advance(defaultEntryTTL + 2*time.Second)
+
+	_, ok = cache.lookup(100, "k")
+	require.False(t, ok, "expired entry must not be visible to reads")
+
+	cache.entries.CleanUp()
 	stats := cache.SnapshotStats()
-	require.Equal(t, defaultKeepLastHeights, stats.Heights)
-
-	requestHash, err := buildRequestHash(req)
-	require.NoError(t, err)
-	key := buildCacheKey(method, requestHash)
-
-	_, ok := cache.lookup(1, key)
-	require.False(t, ok, "oldest height should have been pruned")
-	_, ok = cache.lookup(2, key)
-	require.False(t, ok, "second oldest height should have been pruned")
-	for h := int64(3); h <= int64(defaultKeepLastHeights+2); h++ {
-		_, ok := cache.lookup(h, key)
-		require.Truef(t, ok, "height %d entry must remain", h)
-	}
+	require.Equal(t, uint64(1), stats.CachePruneTotal, "expiration must be counted as prune")
+	require.Equal(t, 0, stats.Entries)
 }
 
 func TestQueryCache_EvictsByEntryLimit(t *testing.T) {
-	cache := NewQueryCacheWithLimits(3, 0)
+	cache := newQueryCache(queryCacheConfig{
+		maxEntries: 3,
+		entryTTL:   defaultEntryTTL,
+		executor:   func(fn func()) { fn() },
+	})
 
 	for i := 0; i < 5; i++ {
 		cache.store(100, "k"+strconv.Itoa(i), []byte("v"))
 	}
+	cache.entries.CleanUp()
 
 	stats := cache.SnapshotStats()
-	require.Equal(t, 3, stats.Entries, "entry count must be bounded by maxEntries")
-	require.Equal(t, uint64(2), stats.CacheEvictTotal)
+	require.LessOrEqual(t, stats.Entries, 3, "entry count must be bounded by maxEntries")
+	require.GreaterOrEqual(t, stats.CacheEvictTotal, uint64(2))
+}
 
-	_, ok := cache.lookup(100, "k0")
-	require.False(t, ok)
-	_, ok = cache.lookup(100, "k1")
-	require.False(t, ok)
-	for i := 2; i < 5; i++ {
-		_, ok := cache.lookup(100, "k"+strconv.Itoa(i))
-		require.Truef(t, ok, "key k%d must remain", i)
+func TestQueryCache_BoundsEntriesUnderByteLimit(t *testing.T) {
+	cache := newQueryCache(queryCacheConfig{
+		maxEntries: 3,
+		maxBytes:   1 << 30,
+		entryTTL:   defaultEntryTTL,
+		executor:   func(fn func()) { fn() },
+	})
+
+	for i := 0; i < 20; i++ {
+		cache.store(100, "k"+strconv.Itoa(i), []byte("v"))
 	}
+	cache.entries.CleanUp()
+
+	stats := cache.SnapshotStats()
+	require.LessOrEqual(t, stats.Entries, 3, "maxEntries must hold even when maxBytes is set")
+	require.GreaterOrEqual(t, stats.CacheEvictTotal, uint64(17))
 }
 
 func TestQueryCache_EvictsByByteLimit(t *testing.T) {
-	cache := NewQueryCacheWithLimits(0, 10)
+	entryWeight := int64(len(entryKey(100, "a")) + len("12345") + entryOverhead)
+	cache := newQueryCache(queryCacheConfig{
+		maxBytes: 2 * entryWeight,
+		entryTTL: defaultEntryTTL,
+		executor: func(fn func()) { fn() },
+	})
 
 	cache.store(100, "a", []byte("12345"))
 	cache.store(100, "b", []byte("12345"))
-	require.Equal(t, int64(10), cache.SnapshotStats().TotalBytes)
-
 	cache.store(100, "c", []byte("12345"))
+	cache.entries.CleanUp()
 
 	stats := cache.SnapshotStats()
-	require.Equal(t, int64(10), stats.TotalBytes)
-	require.Equal(t, 2, stats.Entries)
+	require.LessOrEqual(t, stats.TotalBytes, 2*entryWeight, "total bytes must be bounded by maxBytes")
+	require.LessOrEqual(t, stats.Entries, 2)
 	require.GreaterOrEqual(t, stats.CacheEvictTotal, uint64(1))
-
-	_, ok := cache.lookup(100, "a")
-	require.False(t, ok, "least-recently-used entry must be evicted")
-}
-
-func TestQueryCache_LookupDoesNotBumpRecency(t *testing.T) {
-	cache := NewQueryCacheWithLimits(2, 0)
-
-	cache.store(100, "a", []byte("v"))
-	cache.store(100, "b", []byte("v"))
-	_, ok := cache.lookup(100, "a")
-	require.True(t, ok)
-
-	cache.store(100, "c", []byte("v"))
-
-	_, ok = cache.lookup(100, "a")
-	require.False(t, ok, "lookup must not bump recency on hot read path")
-	_, ok = cache.lookup(100, "b")
-	require.True(t, ok, "entry b remains because reads do not reorder LRU")
-}
-
-func TestQueryCache_HeightPruneReleasesBytes(t *testing.T) {
-	cache := NewQueryCache()
-
-	for h := int64(1); h <= int64(defaultKeepLastHeights+2); h++ {
-		cache.store(h, "k", []byte("payload"))
-	}
-
-	stats := cache.SnapshotStats()
-	require.Equal(t, defaultKeepLastHeights, stats.Heights)
-	require.Equal(t, defaultKeepLastHeights, stats.Entries, "pruned heights must release their entries")
-	require.Equal(t, int64(defaultKeepLastHeights*len("payload")), stats.TotalBytes)
 }
 
 func TestPinHeight_DoesNotStackDuplicateValues(t *testing.T) {

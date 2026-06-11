@@ -1,19 +1,19 @@
 package cosmosclient
 
 import (
-	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	gogoproto "github.com/cosmos/gogoproto/proto"
+	"github.com/maypok86/otter/v2"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	defaultKeepLastHeights = 3
-	defaultMaxEntries      = 200000
-	defaultMaxBytes        = 1 << 30 // 1 GiB
-	defaultMaxHintAge      = 30 * time.Second
+	defaultMaxEntries = 200000
+	defaultMaxBytes   = 1 << 30 // 1 GiB
+	defaultMaxHintAge = 30 * time.Second
+	defaultEntryTTL   = 30 * time.Second
+	entryOverhead     = 128
 )
 
 type queryCacheBypassKey struct{}
@@ -45,7 +46,6 @@ func shouldBypassQueryCache(ctx context.Context) bool {
 
 type QueryCacheStats struct {
 	HeightHint                   int64  `json:"height_hint"`
-	Heights                      int    `json:"heights"`
 	Entries                      int    `json:"entries"`
 	TotalBytes                   int64  `json:"total_bytes"`
 	MaxEntries                   int    `json:"max_entries"`
@@ -77,30 +77,13 @@ type queryCacheCounters struct {
 	invokeErrorTotal             atomic.Uint64
 }
 
-type lruKey struct {
-	height int64
-	key    string
-}
-
-type lruEntry struct {
-	height int64
-	key    string
-	size   int
-}
-
 type QueryCache struct {
 	hint      atomic.Int64
 	hintSetAt atomic.Int64
 
 	maxHintAge time.Duration
 
-	mu       sync.RWMutex
-	byHeight map[int64]map[string][]byte
-	keepLast int
-
-	lru        *list.List
-	lruIndex   map[lruKey]*list.Element
-	totalBytes int64
+	entries    *otter.Cache[string, []byte]
 	maxEntries int
 	maxBytes   int64
 
@@ -108,20 +91,77 @@ type QueryCache struct {
 	stats   queryCacheCounters
 }
 
+type queryCacheConfig struct {
+	maxEntries int
+	maxBytes   int64
+	entryTTL   time.Duration
+	clock      otter.Clock
+	executor   func(func())
+}
+
 func NewQueryCache() *QueryCache {
 	return NewQueryCacheWithLimits(defaultMaxEntries, defaultMaxBytes)
 }
 
 func NewQueryCacheWithLimits(maxEntries int, maxBytes int64) *QueryCache {
-	return &QueryCache{
-		byHeight:   make(map[int64]map[string][]byte),
-		keepLast:   defaultKeepLastHeights,
-		lru:        list.New(),
-		lruIndex:   make(map[lruKey]*list.Element),
+	return newQueryCache(queryCacheConfig{
 		maxEntries: maxEntries,
 		maxBytes:   maxBytes,
+		entryTTL:   defaultEntryTTL,
+	})
+}
+
+func newQueryCache(cfg queryCacheConfig) *QueryCache {
+	c := &QueryCache{
 		maxHintAge: defaultMaxHintAge,
+		maxEntries: cfg.maxEntries,
+		maxBytes:   cfg.maxBytes,
 	}
+
+	opts := &otter.Options[string, []byte]{
+		ExpiryCalculator: otter.ExpiryCreating[string, []byte](cfg.entryTTL),
+		OnDeletion: func(e otter.DeletionEvent[string, []byte]) {
+			switch e.Cause {
+			case otter.CauseOverflow:
+				c.stats.cacheEvictTotal.Add(1)
+			case otter.CauseExpiration:
+				c.stats.cachePruneTotal.Add(1)
+			}
+		},
+		Executor: cfg.executor,
+		Clock:    cfg.clock,
+	}
+	switch {
+	case cfg.maxBytes > 0:
+		opts.MaximumWeight = uint64(cfg.maxBytes)
+		opts.Weigher = newEntryWeigher(cfg.maxEntries, cfg.maxBytes)
+	case cfg.maxEntries > 0:
+		opts.MaximumSize = cfg.maxEntries
+	}
+
+	c.entries = otter.Must(opts)
+	return c
+}
+
+func newEntryWeigher(maxEntries int, maxBytes int64) func(key string, value []byte) uint32 {
+	var minWeight uint64
+	if maxEntries > 0 {
+		minWeight = (uint64(maxBytes) + uint64(maxEntries) - 1) / uint64(maxEntries)
+	}
+	return func(key string, value []byte) uint32 {
+		weight := uint64(len(key)+len(value)) + entryOverhead
+		if weight < minWeight {
+			weight = minWeight
+		}
+		if weight > math.MaxUint32 {
+			return math.MaxUint32
+		}
+		return uint32(weight)
+	}
+}
+
+func entryKey(height int64, key string) string {
+	return strconv.FormatInt(height, 10) + "|" + key
 }
 
 func (c *QueryCache) SetHeightHint(h int64) {
@@ -158,21 +198,12 @@ func (c *QueryCache) hintFresh() bool {
 func (c *QueryCache) HeightHint() int64 { return c.hint.Load() }
 
 func (c *QueryCache) SnapshotStats() QueryCacheStats {
-	c.mu.RLock()
-	heights := len(c.byHeight)
-	entries := len(c.lruIndex)
-	totalBytes := c.totalBytes
-	maxEntries := c.maxEntries
-	maxBytes := c.maxBytes
-	c.mu.RUnlock()
-
 	return QueryCacheStats{
 		HeightHint:                   c.hint.Load(),
-		Heights:                      heights,
-		Entries:                      entries,
-		TotalBytes:                   totalBytes,
-		MaxEntries:                   maxEntries,
-		MaxBytes:                     maxBytes,
+		Entries:                      c.entries.EstimatedSize(),
+		TotalBytes:                   int64(c.entries.WeightedSize()),
+		MaxEntries:                   c.maxEntries,
+		MaxBytes:                     c.maxBytes,
 		RequestsTotal:                c.stats.requestsTotal.Load(),
 		CacheHitTotal:                c.stats.cacheHitTotal.Load(),
 		CacheCorruptHitTotal:         c.stats.cacheCorruptHitTotal.Load(),
@@ -202,121 +233,15 @@ func (c *QueryCache) ResetStats() {
 }
 
 func (c *QueryCache) lookup(height int64, key string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	bucket, ok := c.byHeight[height]
-	if !ok {
-		return nil, false
-	}
-	v, hit := bucket[key]
-	if !hit {
-		return nil, false
-	}
-	return v, true
+	return c.entries.GetIfPresent(entryKey(height, key))
 }
 
 func (c *QueryCache) store(height int64, key string, data []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	lk := lruKey{height: height, key: key}
-	if el, ok := c.lruIndex[lk]; ok {
-		ent := el.Value.(*lruEntry)
-		c.totalBytes += int64(len(data)) - int64(ent.size)
-		ent.size = len(data)
-		c.lru.MoveToFront(el)
-	} else {
-		ent := &lruEntry{height: height, key: key, size: len(data)}
-		c.lruIndex[lk] = c.lru.PushFront(ent)
-		c.totalBytes += int64(ent.size)
-	}
-
-	bucket, ok := c.byHeight[height]
-	if !ok {
-		bucket = make(map[string][]byte)
-		c.byHeight[height] = bucket
-	}
-	bucket[key] = data
-
-	c.pruneLocked()
-	c.evictLocked()
+	c.entries.Set(entryKey(height, key), data)
 }
 
 func (c *QueryCache) deleteEntry(height int64, key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.removeEntryLocked(height, key)
-}
-
-func (c *QueryCache) removeEntryLocked(height int64, key string) {
-	lk := lruKey{height: height, key: key}
-	if el, ok := c.lruIndex[lk]; ok {
-		c.totalBytes -= int64(el.Value.(*lruEntry).size)
-		c.lru.Remove(el)
-		delete(c.lruIndex, lk)
-	}
-	if bucket, ok := c.byHeight[height]; ok {
-		delete(bucket, key)
-		if len(bucket) == 0 {
-			delete(c.byHeight, height)
-		}
-	}
-}
-
-func (c *QueryCache) pruneLocked() {
-	if c.keepLast <= 0 {
-		return
-	}
-	for len(c.byHeight) > c.keepLast {
-		var oldest int64
-		first := true
-		for h := range c.byHeight {
-			if first || h < oldest {
-				oldest = h
-				first = false
-			}
-		}
-		c.dropHeightLocked(oldest)
-	}
-}
-
-func (c *QueryCache) dropHeightLocked(height int64) {
-	bucket, ok := c.byHeight[height]
-	if !ok {
-		return
-	}
-	for key := range bucket {
-		lk := lruKey{height: height, key: key}
-		if el, ok := c.lruIndex[lk]; ok {
-			c.totalBytes -= int64(el.Value.(*lruEntry).size)
-			c.lru.Remove(el)
-			delete(c.lruIndex, lk)
-		}
-		c.stats.cachePruneTotal.Add(1)
-	}
-	delete(c.byHeight, height)
-}
-
-func (c *QueryCache) evictLocked() {
-	for c.overLimitLocked() {
-		el := c.lru.Back()
-		if el == nil {
-			return
-		}
-		ent := el.Value.(*lruEntry)
-		c.removeEntryLocked(ent.height, ent.key)
-		c.stats.cacheEvictTotal.Add(1)
-	}
-}
-
-func (c *QueryCache) overLimitLocked() bool {
-	if c.maxEntries > 0 && len(c.lruIndex) > c.maxEntries {
-		return true
-	}
-	if c.maxBytes > 0 && c.totalBytes > c.maxBytes {
-		return true
-	}
-	return false
+	c.entries.Invalidate(entryKey(height, key))
 }
 
 type CachingConn struct {
