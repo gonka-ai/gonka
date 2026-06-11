@@ -253,7 +253,7 @@ func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 	// 2. Apply txs and verify post_state_root atomically.
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot)
+	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -261,7 +261,7 @@ func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.applyCore(nonce, txs, nil)
+	return sm.applyCore(nonce, txs, nil, "user")
 }
 
 // ApplyLocalBestEffort applies txs one by one, skipping any that fail.
@@ -342,7 +342,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	// the root is computed, so the user's signed post_state_root commits to the
 	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(nonce) {
-		if _, _, err := sm.autoSealLocked(nonce); err != nil {
+		if _, _, err := sm.autoSealLocked("user", nonce); err != nil {
 			sm.restoreMutable(snap)
 			return nil, nil, fmt.Errorf("auto-seal: %w", err)
 		}
@@ -368,7 +368,7 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 // applyCore validates nonce, applies txs, updates nonce, and returns the state root.
 // If postStateRoot is non-nil, the computed root must match; on mismatch the entire
 // operation is rolled back (including nonce) and an error is returned.
-func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte) ([]byte, error) {
+func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, error) {
 	// 1. Validate nonce.
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
@@ -442,7 +442,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	var sealClockWin stateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(nonce) {
 		var err error
-		_, sealClockWin, err = sm.autoSealLocked(nonce)
+		_, sealClockWin, err = sm.autoSealLocked(side, nonce)
 		if err != nil {
 			sm.restoreMutable(snap)
 			return nil, fmt.Errorf("auto-seal: %w", err)

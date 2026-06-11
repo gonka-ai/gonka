@@ -1,9 +1,13 @@
 package types
 
 const (
-	defaultSealGraceMultiplier        = 10
+	// defaultSealGraceMultiplier        = 10
+	// minSealGraceNonces                = 20
+	// DefaultInferenceClearGraceSeconds = 3600 // 1 hour (give time for long validations)
+
+	defaultSealGraceMultiplier        = 1 // for tests
 	minSealGraceNonces                = 20
-	DefaultInferenceClearGraceSeconds = 3600 // 1 hour (give time for long validations)
+	DefaultInferenceClearGraceSeconds = 120 // 2 minutes (for tests)
 )
 
 // DefaultSealGraceNonces returns the canonical seal grace for a session group.
@@ -82,6 +86,28 @@ func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBi
 	if live.ValidationRate > 0 {
 		cfg.ValidationRate = live.ValidationRate
 	}
+	if live.SealGraceNonces > 0 {
+		cfg.SealGraceNonces = live.SealGraceNonces
+	}
+	if live.InferenceClearGraceSeconds > 0 {
+		cfg.InferenceClearGraceSeconds = live.InferenceClearGraceSeconds
+	}
+	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
+	if live.RefusalTimeout > 0 {
+		cfg.RefusalTimeout = live.RefusalTimeout
+	}
+	if live.ExecutionTimeout > 0 {
+		cfg.ExecutionTimeout = live.ExecutionTimeout
+	}
+	return NormalizeSessionConfig(cfg, groupSize)
+}
+
+// ApplyChainSessionBindParams overlays lane-B fields from a chain Params query
+// at session bind. Unlike ApplyLiveSessionParams, validation_rate=0 from chain
+// is honored (disables validation sampling). Seal/clear grace zero values still
+// fall through to NormalizeSessionConfig defaults.
+func ApplyChainSessionBindParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
+	cfg.ValidationRate = live.ValidationRate
 	if live.SealGraceNonces > 0 {
 		cfg.SealGraceNonces = live.SealGraceNonces
 	}

@@ -1,5 +1,7 @@
 package bridge
 
+import "devshard/types"
+
 // MainnetBridge defines the interface between the devshard and mainnet.
 // Phase 1: interface only, no implementation.
 type MainnetBridge interface {
@@ -16,6 +18,12 @@ type MainnetBridge interface {
 
 	// Actions: devshard -> mainnet
 	SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
+}
+
+// SessionBindParamsBridge supplies lane-B governance fields read from chain
+// Params at session bind time (see devshard/docs/params-dataflow.md).
+type SessionBindParamsBridge interface {
+	GetSessionBindParams() (types.LiveSessionBindParams, error)
 }
 
 type EscrowInfo struct {

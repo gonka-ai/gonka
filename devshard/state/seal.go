@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -294,6 +295,59 @@ func (sm *StateMachine) stateClockLocked() stateClockWindow {
 	}
 }
 
+// autoSealCandidate is one seal-eligible live inference and how the grace gates
+// evaluated at this seal nonce. Emitted in auto-seal info logs on host/user.
+type autoSealCandidate struct {
+	ID               uint64 `json:"id"`
+	Status           uint8  `json:"status"`
+	ConfirmedAt      int64  `json:"confirmed_at"`
+	NonceGateOK      bool   `json:"nonce_gate_ok"`
+	ClockGateSkipped bool   `json:"clock_gate_skipped"`
+	ClockGateOK      bool   `json:"clock_gate_ok"`
+	GraceRemaining   int64  `json:"grace_remaining_sec,omitempty"`
+	Eligible         bool   `json:"eligible"`
+}
+
+func (sm *StateMachine) logAutoSealDiagnosticLocked(
+	side string,
+	sealNonce uint64,
+	clockWin stateClockWindow,
+	sealGraceNonces uint64,
+	graceSeconds int64,
+	stateClock int64,
+	candidates []autoSealCandidate,
+	sealed []uint64,
+) {
+	if len(candidates) == 0 && len(sealed) == 0 {
+		return
+	}
+	candidatesJSON, err := json.Marshal(candidates)
+	if err != nil {
+		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
+	}
+	args := []any{
+		"subsystem", side,
+		"diagnostic", "auto_seal",
+		"escrow_id", sm.state.EscrowID,
+		"seal_nonce", sealNonce,
+		"latest_nonce", sm.state.LatestNonce,
+		"seal_grace_nonces", sealGraceNonces,
+		"clear_grace_seconds", graceSeconds,
+		"state_clock_confirmed_at", stateClock,
+		"candidates", string(candidatesJSON),
+		"sealed_ids", sealed,
+		"sealed_count", len(sealed),
+		"live_inferences_count", len(sm.state.Inferences),
+	}
+	if clockWin.Known {
+		args = append(args,
+			"window_min_confirmed_at", clockWin.MinConfirmedAt,
+			"window_max_confirmed_at", clockWin.MaxConfirmedAt,
+		)
+	}
+	logging.Info("auto-seal evaluation", args...)
+}
+
 // autoSealLocked folds every live inference that has cleared both seal gates
 // into SealedAcc, in ascending id order, and returns the ids it sealed. It is
 // the deterministic replacement for the old host-local, wall-clock prune/seal:
@@ -312,7 +366,7 @@ func (sm *StateMachine) stateClockLocked() stateClockWindow {
 // storage error on one node cannot diverge the deterministic seal. Caller must
 // hold sm.mu and should invoke this only in the Active phase (settlement uses
 // drainLiveIntoSealedAccLocked).
-func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, stateClockWindow, error) {
+func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64, stateClockWindow, error) {
 	if len(sm.state.Inferences) == 0 {
 		return nil, stateClockWindow{}, nil
 	}
@@ -321,20 +375,52 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, stateClockWi
 	clockWin := sm.stateClockLocked()
 	stateClock := clockWin.Clock
 
+	var candidates []autoSealCandidate
 	var eligible []uint64
 	for id, rec := range sm.state.Inferences {
 		if !sealEligibleStatus(rec.Status) {
 			continue
 		}
-		if sealNonce < id+sealGraceNonces {
+		candidate := autoSealCandidate{
+			ID:          id,
+			Status:      uint8(rec.Status),
+			ConfirmedAt: rec.ConfirmedAt,
+		}
+		candidate.NonceGateOK = sealNonce >= id+sealGraceNonces
+		if !candidate.NonceGateOK {
+			candidates = append(candidates, candidate)
 			continue
 		}
-		if !terminalAutoSealStatus(rec.Status) && stateClock-rec.ConfirmedAt < graceSeconds {
+		if terminalAutoSealStatus(rec.Status) {
+			candidate.ClockGateSkipped = true
+			candidate.ClockGateOK = true
+			candidate.Eligible = true
+			candidates = append(candidates, candidate)
+			eligible = append(eligible, id)
+			continue
+		}
+		remaining := graceSeconds - (stateClock - rec.ConfirmedAt)
+		candidate.GraceRemaining = remaining
+		candidate.ClockGateOK = remaining <= 0
+		candidate.Eligible = candidate.ClockGateOK
+		candidates = append(candidates, candidate)
+		if !candidate.ClockGateOK {
 			continue
 		}
 		eligible = append(eligible, id)
 	}
+	slices.SortFunc(candidates, func(a, b autoSealCandidate) int {
+		switch {
+		case a.ID < b.ID:
+			return -1
+		case a.ID > b.ID:
+			return 1
+		default:
+			return 0
+		}
+	})
 	if len(eligible) == 0 {
+		sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, nil)
 		return nil, clockWin, nil
 	}
 	slices.Sort(eligible)
@@ -364,6 +450,7 @@ func (sm *StateMachine) autoSealLocked(sealNonce uint64) ([]uint64, stateClockWi
 		delete(sm.state.Inferences, id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
+	sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)
 	return eligible, clockWin, nil
 }
 

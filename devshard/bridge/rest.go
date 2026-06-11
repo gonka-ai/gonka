@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"devshard/types"
 )
 
 // warmCacheKey is the key for the warm key verification cache.
@@ -88,11 +90,17 @@ type epochGroupDataResponse struct {
 type paramsResponse struct {
 	Params *struct {
 		DevshardEscrowParams *struct {
-			DefaultSealGraceNonces              uint32 `json:"default_seal_grace_nonces"`
+			DefaultSealGraceNonces            uint32 `json:"default_seal_grace_nonces"`
 			DefaultInferenceClearGraceSeconds uint32 `json:"default_inference_clear_grace_seconds"`
+			RefusalTimeout                    int64  `json:"refusal_timeout,string"`
+			ExecutionTimeout                  int64  `json:"execution_timeout,string"`
+			ValidationRate                    uint32 `json:"validation_rate"`
+			VoteThresholdFactor               uint32 `json:"vote_threshold_factor"`
 		} `json:"devshard_escrow_params"`
 	} `json:"params"`
 }
+
+var _ SessionBindParamsBridge = (*RESTBridge)(nil)
 
 // -- helper --
 
@@ -163,6 +171,27 @@ func (b *RESTBridge) GetHostInfo(address string) (*HostInfo, error) {
 	return &HostInfo{
 		Address: resp.Participant.Address,
 		URL:     resp.Participant.InferenceURL,
+	}, nil
+}
+
+func (b *RESTBridge) GetSessionBindParams() (types.LiveSessionBindParams, error) {
+	u := fmt.Sprintf("%s/productscience/inference/inference/params", b.baseURL)
+
+	resp, err := doGet[paramsResponse](b.client, u)
+	if err != nil {
+		return types.LiveSessionBindParams{}, err
+	}
+	if resp == nil || resp.Params == nil || resp.Params.DevshardEscrowParams == nil {
+		return types.LiveSessionBindParams{}, fmt.Errorf("devshard escrow params missing from chain params response")
+	}
+	dep := resp.Params.DevshardEscrowParams
+	return types.LiveSessionBindParams{
+		RefusalTimeout:             dep.RefusalTimeout,
+		ExecutionTimeout:           dep.ExecutionTimeout,
+		ValidationRate:             dep.ValidationRate,
+		SealGraceNonces:            dep.DefaultSealGraceNonces,
+		InferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
+		VoteThresholdFactor:        dep.VoteThresholdFactor,
 	}, nil
 }
 

@@ -109,6 +109,9 @@ const (
 	DefaultDevshardVoteThresholdFactor uint32 = 50
 )
 
+// DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
+const DefaultSealGraceMultiplier uint32 = 10
+
 // DevshardSealGraceFloor is the floor applied when computing the chain-wide
 // default seal grace. Mirrors devshard/types.minSealGraceNonces so the two
 // layers agree without an import dependency.
@@ -117,14 +120,14 @@ const DevshardSealGraceFloor uint32 = 20
 // DefaultDevshardInferenceClearGraceSeconds is the default wall-clock grace
 // before sealing stale-finished or post-terminal inferences. Mirrors
 // devshard/types.DefaultInferenceClearGraceSeconds.
-const DefaultDevshardInferenceClearGraceSeconds uint32 = 120
+const DefaultDevshardInferenceClearGraceSeconds uint32 = 3600
 
 // DefaultDevshardSealGraceNonces returns the canonical default seal grace
 // nonces value derived from the configured group size. This mirrors
 // devshard/types.DefaultSealGraceNonces (10 * groupSize, floor 20). It is
 // used at genesis to seed DevshardEscrowParams.DefaultSealGraceNonces.
 func DefaultDevshardSealGraceNonces(groupSize uint32) uint32 {
-	grace := groupSize * 10
+	grace := groupSize * DefaultSealGraceMultiplier
 	if grace < DevshardSealGraceFloor {
 		grace = DevshardSealGraceFloor
 	}

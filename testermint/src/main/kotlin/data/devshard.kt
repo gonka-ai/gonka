@@ -48,7 +48,21 @@ data class DevshardSessionConfig(
     @SerializedName("vote_threshold")
     val voteThreshold: Int,
     @SerializedName("validation_rate")
-    val validationRate: Int
+    val validationRate: Int,
+    @SerializedName("seal_grace_nonces")
+    val sealGraceNonces: Int? = null,
+    @SerializedName("inference_clear_grace_seconds")
+    val inferenceClearGraceSeconds: Int? = null,
+)
+
+data class DevshardProxyDebugState(
+    val nonce: Long,
+    @SerializedName("live_inferences")
+    val liveInferences: Int,
+    @SerializedName("sealed_inferences")
+    val sealedInferences: Int,
+    @SerializedName("live_status_counts")
+    val liveStatusCounts: Map<String, Int>? = null,
 )
 
 data class DevshardSettlementData(

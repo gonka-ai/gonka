@@ -263,3 +263,41 @@ func TestStubMethods_ReturnNotImplemented(t *testing.T) {
 	assert.ErrorIs(t, b.OnSettlementFinalized(""), ErrNotImplemented)
 	assert.ErrorIs(t, b.SubmitDisputeState("", nil, 0, nil), ErrNotImplemented)
 }
+
+func TestGetSessionBindParams_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/productscience/inference/inference/params", r.URL.Path)
+		json.NewEncoder(w).Encode(map[string]any{
+			"params": map[string]any{
+				"devshard_escrow_params": map[string]any{
+					"default_seal_grace_nonces":             1,
+					"default_inference_clear_grace_seconds": 10,
+					"refusal_timeout":                       "60",
+					"execution_timeout":                     "1200",
+					"validation_rate":                       0,
+					"vote_threshold_factor":                 50,
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	live, err := NewRESTBridge(srv.URL).GetSessionBindParams()
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), live.SealGraceNonces)
+	assert.Equal(t, uint32(10), live.InferenceClearGraceSeconds)
+	assert.Equal(t, uint32(0), live.ValidationRate)
+	assert.Equal(t, int64(60), live.RefusalTimeout)
+	assert.Equal(t, int64(1200), live.ExecutionTimeout)
+	assert.Equal(t, uint32(50), live.VoteThresholdFactor)
+}
+
+func TestGetSessionBindParams_MissingDevshardParams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"params": map[string]any{}})
+	}))
+	defer srv.Close()
+
+	_, err := NewRESTBridge(srv.URL).GetSessionBindParams()
+	require.Error(t, err)
+}

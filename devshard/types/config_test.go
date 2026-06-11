@@ -124,6 +124,22 @@ func TestApplyLiveSessionParams_FreezesLiveFields(t *testing.T) {
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 }
 
+func TestApplyChainSessionBindParams_HonorsZeroValidationRate(t *testing.T) {
+	const groupSize = 16
+	cfg := ApplyChainSessionBindParams(
+		SessionConfigFromEscrow(groupSize, EscrowSessionFields{}),
+		groupSize,
+		LiveSessionBindParams{
+			ValidationRate:             0,
+			SealGraceNonces:            1,
+			InferenceClearGraceSeconds: 10,
+		},
+	)
+	require.Equal(t, uint32(0), cfg.ValidationRate)
+	require.Equal(t, uint32(1), cfg.SealGraceNonces)
+	require.Equal(t, uint32(10), cfg.InferenceClearGraceSeconds)
+}
+
 func TestSessionConfigWithPrice_WrapsBuilder(t *testing.T) {
 	const groupSize = 4
 

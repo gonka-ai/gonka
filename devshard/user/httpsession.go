@@ -72,14 +72,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("get escrow: %w", err)
 	}
 
-	config := types.NormalizeSessionConfig(
-		types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
-			TokenPrice:        escrow.TokenPrice,
-			CreateDevshardFee: escrow.CreateDevshardFee,
-			FeePerNonce:       escrow.FeePerNonce,
-		}),
-		len(group),
-	)
+	config, err := sessionConfigAtBind(len(group), escrow, cfg.Bridge)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	storagePath := resolveHTTPSessionStoragePath(cfg.EscrowID, cfg.StoragePath)
 	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil {

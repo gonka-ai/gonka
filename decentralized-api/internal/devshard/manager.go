@@ -301,7 +301,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	})
 	if m.params != nil {
 		live := m.params.SessionParams()
-		config = types.ApplyLiveSessionParams(config, len(group), types.LiveSessionBindParams{
+		config = types.ApplyChainSessionBindParams(config, len(group), types.LiveSessionBindParams{
 			RefusalTimeout:             live.RefusalTimeout,
 			ExecutionTimeout:           live.ExecutionTimeout,
 			ValidationRate:             live.ValidationRate,

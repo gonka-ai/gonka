@@ -10,11 +10,14 @@ import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 val nameExtractor = "(.+)-node".toRegex()
 
@@ -232,6 +235,82 @@ fun attachDockerLogs(
             .exec(logOutput)
         logOutput
     }
+}
+
+/** Log file path inside the genesis/join *-api* container (not on the test host). */
+fun devshardProxyLogPath(escrowId: Long): String = "/tmp/devshardctl-proxy-$escrowId.log"
+
+private val devshardctlLogFollowers = ConcurrentHashMap<Long, DevshardctlLogFollower>()
+
+/**
+ * Tails devshardctl stdout/stderr from the api container into tinylog with source=devshardctl,
+ * so per-test log files include user-side auto-seal diagnostics alongside dapi host logs.
+ */
+private class DevshardctlLogFollower(
+    private val containerId: String,
+    private val logFile: String,
+    private val pairName: String,
+) {
+    @Volatile
+    private var process: Process? = null
+
+    private val followerThread = thread(name = "devshardctl-log-$logFile", isDaemon = true) {
+        logContext(
+            mapOf(
+                "pair" to pairName,
+                "source" to "devshardctl",
+                "operation" to "base",
+            ),
+        ) {
+            try {
+                val proc = ProcessBuilder("docker", "exec", containerId, "tail", "-n", "0", "-F", logFile)
+                    .redirectErrorStream(true)
+                    .start()
+                process = proc
+                BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        if (Thread.currentThread().isInterrupted) {
+                            break
+                        }
+                        val text = line!!.trim()
+                        if (text.isNotEmpty()) {
+                            Logger.info(text)
+                        }
+                    }
+                }
+            } catch (_: InterruptedException) {
+                // follower stopped
+            } finally {
+                process?.destroyForcibly()
+                process = null
+            }
+        }
+    }
+
+    fun stop() {
+        followerThread.interrupt()
+        process?.destroyForcibly()
+    }
+}
+
+private fun LocalInferencePair.apiContainerId(): String {
+    val exec = api.executor
+    require(exec is DockerExecutor) { "devshardctl log tail requires DockerExecutor-backed api" }
+    return exec.containerId
+}
+
+private fun LocalInferencePair.attachDevshardctlLogs(escrowId: Long) {
+    val logFile = devshardProxyLogPath(escrowId)
+    devshardctlLogFollowers.compute(escrowId) { _, existing ->
+        existing?.stop()
+        DevshardctlLogFollower(apiContainerId(), logFile, config.pairName)
+    }
+    Logger.info("Tailing devshardctl log from api container: {}", logFile)
+}
+
+private fun LocalInferencePair.detachDevshardctlLogs(escrowId: Long) {
+    devshardctlLogFollowers.remove(escrowId)?.stop()
 }
 
 // Admin bearer the test proxies start with. A fresh single-escrow gateway has no
@@ -888,7 +967,7 @@ data class LocalInferencePair(
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
-            val stderrFile = "/tmp/devshardctl-proxy-${escrowId}.log"
+            val stderrFile = devshardProxyLogPath(escrowId)
             // Tests pin the route prefix explicitly so they are not coupled to
             // devshardctl's release-default routing choice.
             val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
@@ -940,6 +1019,7 @@ data class LocalInferencePair(
                 } catch (_: Exception) { "no logs" }
                 error("devshardctl did not start within 15s. Logs:\n$logs")
             }
+            attachDevshardctlLogs(escrowId)
             DevshardProxyHandle(escrowId, port, proxyUrl)
         }
 
@@ -947,6 +1027,7 @@ data class LocalInferencePair(
         try {
             api.executor.exec(listOf("sh", "-c", "pkill -f 'DEVSHARD_ESCROW_ID=$escrowId.*devshardctl' || true"), null)
         } catch (_: Exception) { /* ignore */ }
+        detachDevshardctlLogs(escrowId)
     }
 
     // Returns every inference the gateway knows about, keyed by inference id.
@@ -1019,6 +1100,20 @@ data class LocalInferencePair(
         }
         val json = raw.substring(start, end + 1)
         return Gson().fromJson(json, DevshardProxyStatus::class.java)
+    }
+
+    fun getDevshardProxyDebugState(proxyUrl: String): DevshardProxyDebugState {
+        val raw = api.executor.exec(listOf(
+            "sh", "-c",
+            "curl -sf $proxyUrl/v1/debug/state -H 'Authorization: Bearer $devshardAdminApiKey'",
+        ), null).joinToString("")
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("debug/state returned no JSON object. raw:\n$raw")
+        }
+        val json = raw.substring(start, end + 1)
+        return Gson().fromJson(json, DevshardProxyDebugState::class.java)
     }
 
     fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {

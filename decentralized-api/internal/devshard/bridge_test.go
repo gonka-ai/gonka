@@ -53,6 +53,7 @@ func TestChainBridgeStubs(t *testing.T) {
 
 func TestChainBridgeImplementsInterface(t *testing.T) {
 	var _ bridge.MainnetBridge = (*ChainBridge)(nil)
+	var _ bridge.SessionBindParamsBridge = (*ChainBridge)(nil)
 }
 
 func TestChainBridge_GetEscrow_FeesFromEscrow(t *testing.T) {
@@ -101,4 +102,25 @@ func TestChainBridge_GetEscrow_DoesNotQueryParams(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	qc.AssertNotCalled(t, "Params", mock.Anything, mock.Anything)
+}
+
+func TestChainBridge_GetSessionBindParams(t *testing.T) {
+	qc := &testChainQueryClient{}
+	qc.On("Params", mock.Anything, mock.Anything).Return(&inferenceTypes.QueryParamsResponse{
+		Params: inferenceTypes.Params{
+			DevshardEscrowParams: &inferenceTypes.DevshardEscrowParams{
+				DefaultSealGraceNonces:            1,
+				DefaultInferenceClearGraceSeconds: 10,
+				ValidationRate:                    0,
+				VoteThresholdFactor:               50,
+			},
+		},
+	}, nil)
+
+	cb := NewChainBridge(&stubInferenceQueryProvider{qc: qc})
+	live, err := cb.GetSessionBindParams()
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), live.SealGraceNonces)
+	assert.Equal(t, uint32(10), live.InferenceClearGraceSeconds)
+	assert.Equal(t, uint32(0), live.ValidationRate)
 }

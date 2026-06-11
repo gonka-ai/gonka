@@ -45,6 +45,88 @@ class DevshardTests : TestermintTest() {
                 .merge(devshardEscrowAlwaysValidateSpec)
     )
 
+    private val shortSealGraceConfig = inferenceConfig.copy(
+        genesisSpec = inferenceConfig.genesisSpec
+            ?.merge(devshardNoRestrictionsSpec)
+            ?.merge(devshardShortSealGraceSpec)
+            ?: devshardNoRestrictionsSpec.merge(devshardShortSealGraceSpec),
+    )
+
+    @Test
+    fun `devshard gateway auto-seals inferences after grace timeout`() {
+        val slots = devshardAutoSealGroupSize.toInt()
+        val firstBatch = slots * 2
+        val secondBatch = slots
+
+        val (cluster, genesis) = initCluster(config = shortSealGraceConfig, reboot = true)
+        genesis.waitForNextEpoch()
+        cluster.stubDevshardChatResponse()
+
+        val user = genesis.createFundedDevshardUser("devshard-autoseal-user")
+        genesis.waitForNextInferenceWindow()
+
+        val escrowAmount = 7_000_000_000L
+        val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
+
+        logSection("Starting devshard proxy for auto-seal test")
+        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
+
+        try {
+            genesis.waitForDevshardProxyWarmup()
+
+            val status = genesis.getDevshardProxyStatus(handle.proxyUrl)
+            assertThat(status.config.sealGraceNonces).isEqualTo(devshardAutoSealSealGraceNonces.toInt())
+            assertThat(status.config.inferenceClearGraceSeconds)
+                .isEqualTo(devshardAutoSealClearGraceSeconds.toInt())
+            assertThat(status.config.validationRate).isEqualTo(0)
+
+            logSection("Sending first batch ($firstBatch finished inferences)")
+            for (i in 0 until firstBatch) {
+                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "autoseal batch1 $i")
+                assertThat(response).isNotEmpty()
+            }
+            genesis.waitForFinishedDevshardInferences(handle.proxyUrl, firstBatch)
+
+            val debugBeforeGrace = genesis.getDevshardProxyDebugState(handle.proxyUrl)
+            logSection(
+                "Before grace wait: live=${debugBeforeGrace.liveInferences} " +
+                    "sealed=${debugBeforeGrace.sealedInferences} nonce=${debugBeforeGrace.nonce} " +
+                    "live_status=${debugBeforeGrace.liveStatusCounts}",
+            )
+            assertThat(debugBeforeGrace.liveInferences).isGreaterThanOrEqualTo(firstBatch)
+            assertThat(debugBeforeGrace.sealedInferences).isEqualTo(0)
+
+            logSection("Waiting ${devshardAutoSealClearGraceSeconds}s inference clear grace")
+            Thread.sleep((devshardAutoSealClearGraceSeconds + 2) * 1_000L)
+
+            logSection("Sending second batch ($secondBatch inferences to trigger auto-seal)")
+            for (i in 0 until secondBatch) {
+                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "autoseal batch2 $i")
+                assertThat(response).isNotEmpty()
+            }
+            genesis.waitForFinishedDevshardInferences(handle.proxyUrl, firstBatch + secondBatch)
+
+            val debugAfter = genesis.getDevshardProxyDebugState(handle.proxyUrl)
+            logSection(
+                "After second batch: live=${debugAfter.liveInferences} " +
+                    "sealed=${debugAfter.sealedInferences} nonce=${debugAfter.nonce} " +
+                    "live_status=${debugAfter.liveStatusCounts}",
+            )
+
+            assertThat(debugAfter.sealedInferences)
+                .describedAs("gateway should auto-seal Finished inferences after grace + new nonce")
+                .isGreaterThan(debugBeforeGrace.sealedInferences)
+            assertThat(debugAfter.sealedInferences)
+                .describedAs("at least the first batch of Finished inferences should seal")
+                .isGreaterThanOrEqualTo(firstBatch)
+            assertThat(debugAfter.liveInferences)
+                .describedAs("live map should shrink as sealed inferences are folded into sealed_acc")
+                .isLessThan(debugBeforeGrace.liveInferences)
+        } finally {
+            genesis.stopDevshardProxy(escrowId)
+        }
+    }
+
     @Test
     fun `create devshard escrow and query it`() {
         val (cluster, genesis) = initCluster(reboot = true)

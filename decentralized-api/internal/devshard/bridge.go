@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"devshard/bridge"
+	devshardtypes "devshard/types"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -117,6 +118,28 @@ func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool,
 	return false, nil
 }
 
+func (b *ChainBridge) GetSessionBindParams() (devshardtypes.LiveSessionBindParams, error) {
+	ctx := context.Background()
+	qc := b.client.NewInferenceQueryClient()
+
+	resp, err := qc.Params(ctx, &types.QueryParamsRequest{})
+	if err != nil {
+		return devshardtypes.LiveSessionBindParams{}, fmt.Errorf("query params: %w", err)
+	}
+	if resp == nil || resp.Params.DevshardEscrowParams == nil {
+		return devshardtypes.LiveSessionBindParams{}, fmt.Errorf("devshard escrow params missing from chain params response")
+	}
+	dep := resp.Params.DevshardEscrowParams
+	return devshardtypes.LiveSessionBindParams{
+		RefusalTimeout:             dep.RefusalTimeout,
+		ExecutionTimeout:           dep.ExecutionTimeout,
+		ValidationRate:             dep.ValidationRate,
+		SealGraceNonces:            dep.DefaultSealGraceNonces,
+		InferenceClearGraceSeconds: dep.DefaultInferenceClearGraceSeconds,
+		VoteThresholdFactor:        dep.VoteThresholdFactor,
+	}, nil
+}
+
 func (b *ChainBridge) OnEscrowCreated(_ bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
 func (b *ChainBridge) OnSettlementProposed(_ string, _ []byte, _ uint64) error {
 	return bridge.ErrNotImplemented
@@ -127,4 +150,7 @@ func (b *ChainBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uin
 }
 
 // Compile-time check.
-var _ bridge.MainnetBridge = (*ChainBridge)(nil)
+var (
+	_ bridge.MainnetBridge         = (*ChainBridge)(nil)
+	_ bridge.SessionBindParamsBridge = (*ChainBridge)(nil)
+)
