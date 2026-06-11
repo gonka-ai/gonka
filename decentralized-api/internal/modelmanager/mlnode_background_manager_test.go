@@ -574,7 +574,8 @@ func TestURLFormatting(t *testing.T) {
 	}
 
 	t.Run("Inference URL without version", func(t *testing.T) {
-		url := getInferenceUrl(node)
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{}}
+		url := m.inferenceUrlForNode(node, "")
 		expected := "http://localhost:8081/inference"
 		if url != expected {
 			t.Errorf("expected %s, got %s", expected, url)
@@ -582,8 +583,18 @@ func TestURLFormatting(t *testing.T) {
 	})
 
 	t.Run("Inference URL with version", func(t *testing.T) {
-		url := getInferenceUrlVersioned(node, "v2")
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{}}
+		url := m.inferenceUrlForNode(node, "v2")
 		expected := "http://localhost:8081/v2/inference"
+		if url != expected {
+			t.Errorf("expected %s, got %s", expected, url)
+		}
+	})
+
+	t.Run("Inference URL with mTLS enabled", func(t *testing.T) {
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{mlNodeTLSEnabled: true}}
+		url := m.inferenceUrlForNode(node, "v2")
+		expected := "https://localhost:8081/v2/inference"
 		if url != expected {
 			t.Errorf("expected %s, got %s", expected, url)
 		}

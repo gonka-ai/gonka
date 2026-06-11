@@ -56,7 +56,7 @@ func (e *EngineAdapter) Execute(ctx context.Context, req devshard.ExecuteRequest
 func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
 	resp, err := broker.DoWithLockedNodeHTTPRetry(e.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
-			url := node.InferenceUrlWithVersion(e.nodeVersion) + "/v1/chat/completions"
+			url := e.broker.InferenceUrlForNode(node, e.nodeVersion) + "/v1/chat/completions"
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
 				return nil, broker.NewApplicationActionError(reqErr)

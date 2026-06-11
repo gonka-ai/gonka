@@ -37,6 +37,7 @@ type Server struct {
 	artifactStore       *artifacts.ManagedArtifactStore
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
+	mlNodeHTTPClient    *http.Client
 	statsStorage        statsstorage.StatsStorage
 }
 
@@ -82,6 +83,7 @@ func NewServer(
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
 		httpClient:          NewNoRedirectClient(httpClientTimeout),
+		mlNodeHTTPClient:    nodeBroker.NewMLNodeHTTPClient(httpClientTimeout),
 	}
 
 	for _, opt := range opts {

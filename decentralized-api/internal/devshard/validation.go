@@ -66,7 +66,7 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 func (v *ValidationAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
 	resp, err := broker.DoWithLockedNodeHTTPRetry(v.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
-			url := node.InferenceUrlWithVersion(v.nodeVersion) + "/v1/chat/completions"
+			url := v.broker.InferenceUrlForNode(node, v.nodeVersion) + "/v1/chat/completions"
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
 				return nil, broker.NewApplicationActionError(reqErr)

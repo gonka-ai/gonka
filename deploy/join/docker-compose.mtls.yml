@@ -10,8 +10,13 @@ services:
       - DAPI_API__POC_CALLBACK_URL=${MTLS_POC_CALLBACK_URL:-https://api:9100}
 
   versiond:
+    volumes:
+      - ./mtls-certs:/root/mtls:ro
     environment:
       - VERSIOND_ORACLE_URL=http://api:9200/admin/v1/versions
+      - MLNODE_TLS_CERT_FILE=/root/mtls/dapi.crt
+      - MLNODE_TLS_KEY_FILE=/root/mtls/dapi.key
+      - MLNODE_TLS_PEER_CERT_FILE=/root/mtls/mlnode.crt
 
   inference:
     volumes:
