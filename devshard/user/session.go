@@ -797,6 +797,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 		Side:          "devshardctl",
 		Nonce:         p.diff.Nonce,
 		DiffPostState: p.diff.PostStateRoot,
+		SealClock:     s.sm.AutoSealStateClock(),
 	})
 }
 

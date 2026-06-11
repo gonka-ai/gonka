@@ -236,9 +236,9 @@ func terminalAutoSealStatus(s types.InferenceStatus) bool {
 	}
 }
 
-// stateClockWindow holds the deterministic state-clock value (min ConfirmedAt
+// StateClockWindow holds the deterministic state-clock value (max ConfirmedAt
 // over the tail window) plus min/max extents from that scan for diagnostics.
-type stateClockWindow struct {
+type StateClockWindow struct {
 	Clock          int64
 	MinConfirmedAt int64
 	MaxConfirmedAt int64
@@ -249,9 +249,9 @@ type stateClockWindow struct {
 // the min ConfirmedAt over the latest N*stateClockWindowFactor live inferences
 // (N = group size), plus the min and max ConfirmedAt in that window. Returns
 // Known=false when there are no live inferences. Caller holds sm.mu.
-func (sm *StateMachine) stateClockLocked() stateClockWindow {
+func (sm *StateMachine) stateClockLocked() StateClockWindow {
 	if len(sm.state.Inferences) == 0 {
-		return stateClockWindow{}
+		return StateClockWindow{}
 	}
 	window := len(sm.state.Group) * stateClockWindowFactor
 	if window <= 0 {
@@ -287,12 +287,20 @@ func (sm *StateMachine) stateClockLocked() stateClockWindow {
 			maxConfirmed = c
 		}
 	}
-	return stateClockWindow{
+	return StateClockWindow{
 		Clock:          maxConfirmed, // should be deterministic
 		MinConfirmedAt: minConfirmed,
 		MaxConfirmedAt: maxConfirmed,
 		Known:          true,
 	}
+}
+
+// AutoSealStateClock returns the deterministic state-clock window over the
+// current live inference tail. Used for mismatch forensics on devshardctl.
+func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.stateClockLocked()
 }
 
 // autoSealCandidate is one seal-eligible live inference and how the grace gates
@@ -311,7 +319,7 @@ type autoSealCandidate struct {
 func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	side string,
 	sealNonce uint64,
-	clockWin stateClockWindow,
+	clockWin StateClockWindow,
 	sealGraceNonces uint64,
 	graceSeconds int64,
 	stateClock int64,
@@ -366,9 +374,9 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 // storage error on one node cannot diverge the deterministic seal. Caller must
 // hold sm.mu and should invoke this only in the Active phase (settlement uses
 // drainLiveIntoSealedAccLocked).
-func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64, stateClockWindow, error) {
+func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64, StateClockWindow, error) {
 	if len(sm.state.Inferences) == 0 {
-		return nil, stateClockWindow{}, nil
+		return nil, StateClockWindow{}, nil
 	}
 	sealGraceNonces := uint64(sm.state.Config.SealGraceNonces)
 	graceSeconds := int64(sm.state.Config.InferenceClearGraceSeconds)

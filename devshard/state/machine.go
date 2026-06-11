@@ -439,7 +439,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// folding them into SealedAcc before the root is computed so the seal is
 	// part of post_state_root. The decision reads only state (nonce + the
 	// ConfirmedAt-derived state clock), so user, host and replay all agree.
-	var sealClockWin stateClockWindow
+	var sealClockWin StateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(nonce) {
 		var err error
 		_, sealClockWin, err = sm.autoSealLocked(side, nonce)

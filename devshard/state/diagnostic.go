@@ -27,7 +27,7 @@ type StateRootMismatchOpts struct {
 	Nonce           uint64
 	DiffPostState   []byte
 	ComputedState   []byte
-	SealClock       stateClockWindow
+	SealClock       StateClockWindow
 }
 
 // IsPostStateRootMismatchError reports whether err is a post_state_root mismatch,

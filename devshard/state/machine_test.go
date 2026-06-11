@@ -837,7 +837,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 
 	state := sm.SnapshotState()
 	var finished, timedOut, validated, invalidated int
-	for _, rec := range state.Inferences {
+	for _, rec := range sm.ExportAllInferenceRecords() {
 		switch rec.Status {
 		case types.StatusFinished:
 			finished++
