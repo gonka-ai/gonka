@@ -41,6 +41,49 @@ func TestBasicQueueOperations(t *testing.T) {
 	}
 }
 
+// TestBoundedQueueBackpressureNoDropOrReorder verifies that a bounded queue
+// applies backpressure (a fast producer with a slow consumer never deadlocks
+// and never grows without bound) while still delivering every item exactly
+// once and in FIFO order. This is the core safety property the tx-event queue
+// relies on to avoid the unbounded-memory OOM.
+func TestBoundedQueueBackpressureNoDropOrReorder(t *testing.T) {
+	const capacity = 8
+	q := NewBoundedQueue[int](capacity)
+	defer q.Close()
+
+	const itemCount = 2000
+
+	produceDone := make(chan struct{})
+	go func() {
+		defer close(produceDone)
+		for i := 0; i < itemCount; i++ {
+			q.In <- i // blocks under backpressure once the queue is full
+		}
+	}()
+
+	deadline := time.After(10 * time.Second)
+	for i := 0; i < itemCount; i++ {
+		// Deliberately lag the consumer so the producer must block.
+		if i%100 == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out (possible deadlock) after receiving %d/%d items", i, itemCount)
+		case v := <-q.Out:
+			if v != i {
+				t.Fatalf("FIFO violation: expected %d, got %d", i, v)
+			}
+		}
+	}
+
+	select {
+	case <-produceDone:
+	case <-time.After(time.Second):
+		t.Fatal("producer did not finish after all items were consumed")
+	}
+}
+
 // TestQueueClosing verifies that the queue closes properly
 func TestQueueClosing(t *testing.T) {
 	q := NewUnboundedQueue[int]()

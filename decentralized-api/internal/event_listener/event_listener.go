@@ -117,6 +117,14 @@ func NewEventListener(
 	for _, opt := range opts {
 		opt(el)
 	}
+
+	// Filter out tx events the DAPI has no handler for at the producer, before
+	// they take a slot in the bounded tx queue. This uses the exact same gate
+	// (hasHandler) the consumer applies after dequeue, so it never drops an
+	// event that would have been handled. Barrier events bypass this filter in
+	// processBlock, so per-block progress still advances.
+	bo.SetRelevanceFilter(el.hasHandler)
+
 	return el
 }
 

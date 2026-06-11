@@ -588,6 +588,25 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochIndex := uint64(0)
+	if found {
+		previousEpochIndex = previousEpoch.Index
+	}
+
+	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
+	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
+	}
+
 	// Signal to the collateral module that the epoch has advanced.
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
@@ -612,24 +631,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		if err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
 		}
-	}
-
-	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
-	previousEpochIndex := uint64(0)
-	if found {
-		previousEpochIndex = previousEpoch.Index
-	}
-
-	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"epoch_error",
-			sdk.NewAttribute("stage", "settle_accounts"),
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
-			sdk.NewAttribute("error_category", "settlement"),
-		))
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)

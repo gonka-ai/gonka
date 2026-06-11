@@ -15,6 +15,14 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// txEventQueueCapacity bounds the in-memory backlog of synthetic tx events
+// produced by the BlockObserver. When the queue is full, processBlock blocks
+// (applying backpressure to block fetching) instead of letting the backing
+// slice grow without bound and eventually OOM the process. It is sized to
+// comfortably hold several blocks' worth of *relevant* events (irrelevant ones
+// are filtered out before enqueue) while capping worst-case memory.
+const txEventQueueCapacity = 20000
+
 type BlockObserver struct {
 	lastProcessedBlockHeight atomic.Int64
 	lastQueriedBlockHeight   atomic.Int64
@@ -24,6 +32,20 @@ type BlockObserver struct {
 	caughtUp                 atomic.Bool
 	tmClient                 TmHTTPClient
 	notify                   chan struct{}
+	// relevanceFilter, when set, is consulted before enqueuing a synthetic tx
+	// event. Only events for which it returns true are enqueued; this keeps
+	// chain traffic the DAPI has no handler for from consuming queue capacity
+	// and worker time. Barrier events are always enqueued regardless, so block
+	// progress (lastProcessedBlockHeight) still advances for every block.
+	// A nil filter preserves the legacy behavior of enqueuing every event.
+	relevanceFilter func(*chainevents.JSONRPCResponse) bool
+}
+
+// SetRelevanceFilter installs a predicate used to drop irrelevant tx events at
+// the producer before they enter the queue. It must be safe for concurrent use
+// and is expected to be set once during wiring, before Process starts.
+func (bo *BlockObserver) SetRelevanceFilter(filter func(*chainevents.JSONRPCResponse) bool) {
+	bo.relevanceFilter = filter
 }
 
 // TmHTTPClient abstracts the subset of RPC methods we need
@@ -33,7 +55,7 @@ type TmHTTPClient interface {
 }
 
 func NewBlockObserver(manager *apiconfig.ConfigManager) *BlockObserver {
-	queue := NewUnboundedQueue[*chainevents.JSONRPCResponse]()
+	queue := NewBoundedQueue[*chainevents.JSONRPCResponse](txEventQueueCapacity)
 	// Initialize Tendermint RPC client
 	httpClient, err := cosmosclient.NewRpcClient(manager.GetChainNodeConfig().Url)
 	if err != nil {
@@ -64,7 +86,7 @@ func NewBlockObserver(manager *apiconfig.ConfigManager) *BlockObserver {
 
 // NewBlockObserverWithClient allows injecting a custom Tendermint RPC client (used in tests)
 func NewBlockObserverWithClient(manager *apiconfig.ConfigManager, client TmHTTPClient) *BlockObserver {
-	queue := NewUnboundedQueue[*chainevents.JSONRPCResponse]()
+	queue := NewBoundedQueue[*chainevents.JSONRPCResponse](txEventQueueCapacity)
 
 	bo := &BlockObserver{
 		ConfigManager: manager,
@@ -217,10 +239,20 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 				Events: events,
 			},
 		}
-		// Enqueue for processing
-		bo.Queue.In <- msg
+		// Drop events the DAPI has no handler for before they consume queue
+		// capacity. The consumer applies the same gate (hasHandler) after
+		// dequeue, so this is behavior-preserving for events that matter.
+		if bo.relevanceFilter != nil && !bo.relevanceFilter(msg) {
+			continue
+		}
+		// Enqueue for processing (blocks under backpressure when the queue is full)
+		if !bo.enqueue(ctx, msg) {
+			return false
+		}
 	}
-	// Enqueue a barrier event to signal block completion when consumed
+	// Always enqueue a barrier event to signal block completion when consumed,
+	// even if every tx event in this block was filtered out. The barrier is how
+	// lastProcessedBlockHeight advances, so it must flow for every observed block.
 	barrier := &chainevents.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      "block-" + strconv.FormatInt(height, 10) + "-barrier",
@@ -230,8 +262,28 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 			Events: map[string][]string{"barrier.height": {strconv.FormatInt(height, 10)}},
 		},
 	}
-	bo.Queue.In <- barrier
+	if !bo.enqueue(ctx, barrier) {
+		return false
+	}
 	return true
+}
+
+// enqueue sends an item to the (possibly bounded) queue while honoring context
+// cancellation. Under backpressure the send blocks until a consumer drains an
+// item; selecting on ctx.Done() ensures a backpressured producer can still shut
+// down cleanly instead of deadlocking on a full queue during teardown.
+//
+// Returning false means the item was not enqueued (context cancelled). Callers
+// (processBlock) treat this like a fetch failure: lastQueriedBlockHeight is not
+// advanced, so the block is retried on the next run and no progress is recorded
+// for a partially-enqueued block.
+func (bo *BlockObserver) enqueue(ctx context.Context, msg *chainevents.JSONRPCResponse) bool {
+	select {
+	case bo.Queue.In <- msg:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // signalAllEventsRead is called once the barrier event for a block
