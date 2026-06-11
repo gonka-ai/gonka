@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"decentralized-api/poc/earlyshare"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -297,5 +299,22 @@ type EarlyShareGuardConfig struct {
 	// per-stage pass threshold (default 0.5).
 	ThresholdRatio float64 `koanf:"threshold_ratio" json:"threshold_ratio"`
 	// RequirePrefixProof enables the early-vs-final shared-leaf prefix check.
+	// Defaults to true (set during config load via key existence); set
+	// require_prefix_proof=false explicitly to disable.
 	RequirePrefixProof bool `koanf:"require_prefix_proof" json:"require_prefix_proof"`
+}
+
+// DefaultEarlyShareGuardConfig returns the guard defaults. It is used to
+// pre-seed the config before koanf unmarshalling so that any field absent from
+// yaml/env keeps its default, while explicitly-set values (including
+// require_prefix_proof=false) override. Defaults live once in the earlyshare
+// package to keep a single source of truth.
+func DefaultEarlyShareGuardConfig() EarlyShareGuardConfig {
+	d := earlyshare.DefaultConfig()
+	return EarlyShareGuardConfig{
+		Mode:               string(d.Mode),
+		FirstFraction:      d.FirstFraction,
+		ThresholdRatio:     d.ThresholdRatio,
+		RequirePrefixProof: d.RequirePrefixProof,
+	}
 }
