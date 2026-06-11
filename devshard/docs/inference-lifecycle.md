@@ -207,7 +207,7 @@ only when **both** of:
   `10 * len(group)` with floor 20), and
 - enough wall-clock time has passed since the host observed that
   finish (`InferenceSealGraceSeconds`, governance-pinned at session
-  create, default `120` seconds).
+  create, default `3600` seconds / 1 hour).
 
 A two-gate is needed because nonce growth is traffic-dependent — at
 high throughput a nonce-only gate collapses to near-zero wall-clock

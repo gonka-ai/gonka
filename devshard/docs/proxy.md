@@ -149,7 +149,7 @@ Returns current session state.
     "vote_threshold": 8,
     "validation_rate": 5000,
     "inference_seal_grace_nonces": 160,
-    "inference_seal_grace_seconds": 120
+    "inference_seal_grace_seconds": 3600
   }
 }
 ```

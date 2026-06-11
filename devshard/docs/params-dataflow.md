@@ -29,7 +29,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | `slots`, `epoch_index`, `app_hash` | Group + settlement context |
 | `token_price` | Frozen for the life of the escrow |
 | **`create_devshard_fee`**, **`fee_per_nonce`** | Snapshotted at escrow create; hashed into state root / settlement |
-| **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults; hashed into state root / auto-seal |
+| **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | `settled`, `model_id`, `amount` | Operational / display |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach grace defaults to `EscrowInfo`.

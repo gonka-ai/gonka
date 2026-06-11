@@ -118,7 +118,7 @@ const DefaultSealGraceMultiplier uint32 = 10
 const DevshardSealGraceFloor uint32 = 20
 
 // DefaultDevshardInferenceSealGraceSeconds is the default wall-clock grace
-// before sealing stale-finished or post-terminal inferences. Mirrors
+// before sealing stale-finished or post-terminal inferences (1 hour). Mirrors
 // devshard/types.DefaultInferenceSealGraceSeconds.
 const DefaultDevshardInferenceSealGraceSeconds uint32 = 3600
 

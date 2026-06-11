@@ -1,13 +1,12 @@
 package types
 
 const (
-	// defaultInferenceSealGraceMultiplier        = 10
-	// minInferenceSealGraceNonces                = 20
-	// DefaultInferenceSealGraceSeconds = 3600 // 1 hour (give time for long validations)
-
 	defaultInferenceSealGraceMultiplier = 1 // for tests
 	minInferenceSealGraceNonces         = 20
-	DefaultInferenceSealGraceSeconds    = 120 // 2 minutes (for tests)
+	// DefaultInferenceSealGraceSeconds is the wall-clock grace before sealing
+	// stale-finished inferences. Must match inference-chain
+	// DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
+	DefaultInferenceSealGraceSeconds = 3600
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
