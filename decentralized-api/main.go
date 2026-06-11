@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/pocstream"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -298,6 +299,23 @@ func main() {
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
 	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore), mlserver.WithConfigManager(configManager))
 	mlServer.Start(addr)
+
+	pocStreamTargets := func() ([]pocstream.StreamTarget, error) {
+		if !pocstream.IsVersionStreamCapable(configManager.GetCurrentNodeVersion()) {
+			return nil, nil
+		}
+		nodes, err := nodeBroker.GetNodes()
+		if err != nil {
+			return nil, err
+		}
+		targets := make([]pocstream.StreamTarget, 0, len(nodes))
+		for _, n := range nodes {
+			targets = append(targets, pocstream.StreamTarget{NodeID: n.Node.Id, Address: n.Node.PoCGrpcAddress()})
+		}
+		return targets, nil
+	}
+	pocStreamManager := pocstream.NewManager(mlServer.Handler(), poc.NewStreamPhaseGate(chainPhaseTracker), pocStreamTargets)
+	pocStreamManager.Start(ctx)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)

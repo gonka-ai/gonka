@@ -34,6 +34,10 @@ func (s *stubNodeBroker) GetNodes() ([]broker.NodeResponse, error) {
 	return nil, nil
 }
 
+func (s *stubNodeBroker) GetCurrentNodeVersion() string {
+	return ""
+}
+
 // runValidateParticipant is a helper that runs validateParticipant with fixed
 // test fixtures and returns the captured GenerateV2 request.
 func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoCGenerateRequestV2 {

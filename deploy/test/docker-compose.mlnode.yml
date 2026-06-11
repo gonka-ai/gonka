@@ -46,6 +46,7 @@ services:
     ports:
       - "${PORT:-8080}:8080"
       - "${INFERENCE_PORT:-5050}:5000"
+      - "${POC_GRPC_PORT:-8090}:8090"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     restart: always

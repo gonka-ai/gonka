@@ -1,8 +1,10 @@
 """PoC v2 routes for MLNode - proxies to vLLM PoC API with multi-backend support."""
 import asyncio
+import os
 from typing import List, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from common.logger import create_logger
@@ -12,10 +14,23 @@ from api.proxy import (
     call_backend,
     VLLM_HOST,
 )
+from api.pocstream import callback_buffer
 
 logger = create_logger(__name__)
 
 router = APIRouter(prefix="/inference/pow", tags=["PoC v2"])
+
+LOCAL_SINK_PORT = int(os.getenv("MLNODE_API_PORT", "8080"))
+
+
+def resolve_callback_url(url: Optional[str], model_id: str) -> str:
+    if url:
+        return url
+    encoded = quote(quote(model_id, safe=""), safe="")
+    return (
+        f"http://127.0.0.1:{LOCAL_SINK_PORT}"
+        f"/api/v1/inference/pow/local-sink/v2/poc-batches/{encoded}"
+    )
 
 
 # Request/Response Models (matching vLLM PoC v2 API)
@@ -85,8 +100,11 @@ async def init_generate(body: PoCInitGenerateRequest) -> dict:
     results = []
     errors = []
     
+    callback_url = resolve_callback_url(body.url, body.params.model)
+
     async def call_one(port: int, group_id: int):
         payload = body.model_dump()
+        payload["url"] = callback_url
         payload["group_id"] = group_id
         payload["n_groups"] = n_groups
         try:
@@ -196,8 +214,12 @@ async def generate(body: PoCGenerateRequest) -> dict:
     except RuntimeError:
         raise HTTPException(status_code=503, detail="No vLLM backends available")
     
+    payload = body.model_dump()
+    if not body.wait:
+        payload["url"] = resolve_callback_url(body.url, body.params.model)
+
     try:
-        r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump())
+        r = await call_backend(port, "POST", "/api/v1/pow/generate", payload)
         
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text)
@@ -214,6 +236,18 @@ async def generate(body: PoCGenerateRequest) -> dict:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+@router.post("/local-sink/{path:path}")
+async def local_sink(path: str, request: Request) -> dict:
+    if request.client is None or request.client.host not in LOOPBACK_HOSTS:
+        raise HTTPException(status_code=403, detail="local sink accepts only loopback requests")
+    body = await request.body()
+    callback_id = await callback_buffer.add("/" + path, body)
+    return {"status": "OK", "id": callback_id}
 
 
 @router.get("/generate/{request_id:path}")

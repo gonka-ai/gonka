@@ -25,11 +25,14 @@ httpx = ">=0.27.0"
 huggingface-hub = ">=0.20.0"
 tenacity = ">=8.0.0"
 nvidia-ml-py = ">=12.0.0"
+grpcio = ">=1.68.0"
+protobuf = ">=5.29.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2"
 pytest-asyncio = "^0.23.1"
 wait-for-it = "^2.0.0"
+grpcio-tools = ">=1.68.0"
 
 [tool.pytest.ini_options]
 markers = [

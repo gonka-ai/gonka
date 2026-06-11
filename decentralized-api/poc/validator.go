@@ -17,6 +17,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/pocstream"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,6 +37,7 @@ type proofFetcher interface {
 type nodeBrokerFacade interface {
 	NewNodeClient(node *broker.Node) mlnodeclient.MLNodeClient
 	GetNodes() ([]broker.NodeResponse, error)
+	GetCurrentNodeVersion() string
 }
 
 // OffChainValidator handles off-chain PoC validation using MMR proofs.
@@ -663,6 +665,9 @@ func (v *OffChainValidator) validateParticipant(
 	// Send to ML node for statistical validation
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
 	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	if pocstream.IsVersionStreamCapable(v.nodeBroker.GetCurrentNodeVersion()) {
+		validationCallbackUrl = ""
+	}
 	modelConfig, ok := pocParams.GetModelConfig(work.modelId)
 	if !ok {
 		logging.Warn("OffChainValidator: missing model config for validation work", types.PoC,

@@ -163,6 +163,7 @@ type Node struct {
 	InferencePort    int                  `json:"inference_port"`
 	PoCSegment       string               `json:"poc_segment"`
 	PoCPort          int                  `json:"poc_port"`
+	PoCGrpcPort      int                  `json:"poc_grpc_port,omitempty"`
 	Models           map[string]ModelArgs `json:"models"`
 	Id               string               `json:"id"`
 	MaxConcurrent    int                  `json:"max_concurrent"`
@@ -190,6 +191,16 @@ func (n *Node) PoCUrlWithVersion(version string) string {
 		return n.PoCUrl()
 	}
 	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+}
+
+const DefaultPoCGrpcPortOffset = 10
+
+func (n *Node) PoCGrpcAddress() string {
+	port := n.PoCGrpcPort
+	if port == 0 {
+		port = n.PoCPort + DefaultPoCGrpcPortOffset
+	}
+	return fmt.Sprintf("%s:%d", n.Host, port)
 }
 
 type NodeWithState struct {
@@ -449,8 +460,15 @@ func (b *Broker) QueueMessage(command Command) error {
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
-	version := b.configManager.GetCurrentNodeVersion()
+	version := b.GetCurrentNodeVersion()
 	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+}
+
+func (b *Broker) GetCurrentNodeVersion() string {
+	if b.configManager == nil {
+		return ""
+	}
+	return b.configManager.GetCurrentNodeVersion()
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
