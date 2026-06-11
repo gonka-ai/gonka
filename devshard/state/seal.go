@@ -393,6 +393,12 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	clockWin := sm.stateClockLocked()
 	stateClock := clockWin.Clock
 
+	// It is possible that no confirmed records are in the tail window because
+	// Don't seal in this case as we don't have a deterministic state clock.
+	if stateClock == 0 {
+		return nil, StateClockWindow{}, nil
+	}
+
 	var candidates []autoSealCandidate
 	var eligible []uint64
 	for id, rec := range sm.state.Inferences {
