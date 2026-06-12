@@ -58,8 +58,8 @@ type escrowResponse struct {
 		TokenPrice                uint64 `json:"token_price,string"`
 		CreateDevshardFee         uint64 `json:"create_devshard_fee,string"`
 		FeePerNonce               uint64 `json:"fee_per_nonce,string"`
-		InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces,string"`
-		InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds,string"`
+		InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
+		InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }

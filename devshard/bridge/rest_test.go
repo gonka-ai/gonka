@@ -27,8 +27,8 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 				"token_price":         "1",
 				"create_devshard_fee": "10000",
 				"fee_per_nonce":       "1000",
-				"inference_seal_grace_nonces":  "160",
-				"inference_seal_grace_seconds": "3600",
+				"inference_seal_grace_nonces":  160,
+				"inference_seal_grace_seconds": 3600,
 			},
 			"found": true,
 		})
@@ -50,14 +50,14 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, uint32(3600), info.InferenceSealGraceSeconds)
 }
 
-func TestGetEscrow_GraceFieldsStringified(t *testing.T) {
+func TestGetEscrow_GraceFieldsNumeric(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"escrow": map[string]any{
 				"id": "42", "creator": "c", "amount": "1", "slots": []string{"a"},
 				"epoch_index": "0", "app_hash": "aa", "settled": false, "token_price": "1",
-				"inference_seal_grace_nonces":  "2",
-				"inference_seal_grace_seconds": "10",
+				"inference_seal_grace_nonces":  2,
+				"inference_seal_grace_seconds": 10,
 			},
 			"found": true,
 		})
