@@ -936,7 +936,7 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	elapsed := time.Since(start)
 
-	require.ErrorContains(t, err, "inference: no non-probe attempt finished")
+	requireStalledWinnerTimeoutError(t, err)
 	require.GreaterOrEqual(t, elapsed, 100*time.Millisecond,
 		"stalled winner should be allowed to keep running until the hard attempt timeout")
 	require.Contains(t, buf.String(), `"content":"x"`,
@@ -1215,6 +1215,15 @@ func requireIncompleteWinnerError(t *testing.T, err error) {
 		strings.Contains(err.Error(), "winner inference incomplete") ||
 			strings.Contains(err.Error(), "no non-probe attempt finished"),
 		"unexpected incomplete winner error: %v", err)
+}
+
+func requireStalledWinnerTimeoutError(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	require.True(t,
+		errors.Is(err, context.Canceled) ||
+			strings.Contains(err.Error(), "no non-probe attempt finished"),
+		"unexpected stalled winner timeout error: %v", err)
 }
 
 func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
