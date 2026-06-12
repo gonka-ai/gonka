@@ -215,6 +215,71 @@ func buildTestableLaunchPlans(governanceModels []types.Model, nodeModels map[str
 	return plans, skipped, nil
 }
 
+// LaunchPlanEntry is one model the node would launch, with the final merged
+// argument list (governance args + node-local args) — the same plan the
+// broker's InferenceUpNodeCommand and the pre-PoC test use.
+type LaunchPlanEntry struct {
+	ModelID string   `json:"model_id"`
+	Args    []string `json:"args"`
+}
+
+// LaunchPlanReport answers "what launch plan would this node use right now?"
+// without touching the MLnode: the models that would be launched with their
+// final args, plus the configured models that would NOT launch and why —
+// absent from governance (skipped) or filtered out by the current PoC params
+// (unsupported).
+type LaunchPlanReport struct {
+	NodeId            string            `json:"node_id"`
+	Plans             []LaunchPlanEntry `json:"plans"`
+	SkippedModels     []string          `json:"skipped_models,omitempty"`
+	UnsupportedModels []string          `json:"unsupported_models,omitempty"`
+}
+
+// LaunchPlans computes the launch plans for nodeId using exactly the model
+// selection the pre-PoC test (and the broker) apply: filter the node's
+// configured models by the current PoC params, keep those present in
+// governance, and merge governance args with node-local args. Read-only —
+// no MLnode network calls, nothing recorded. Returns ErrNodeNotFound for an
+// unknown node; a governance query failure propagates as an error.
+func (t *MLNodeTester) LaunchPlans(nodeId string) (*LaunchPlanReport, error) {
+	cfg, ok := t.findNode(nodeId)
+	if !ok {
+		return nil, ErrNodeNotFound
+	}
+	governanceModels, err := t.governanceModels()
+	if err != nil {
+		return nil, err
+	}
+
+	nodeModels := make(map[string]broker.ModelArgs, len(cfg.Models))
+	for modelID, modelConfig := range cfg.Models {
+		nodeModels[modelID] = broker.ModelArgs{Args: modelConfig.Args}
+	}
+	supported := broker.SupportedNodeModels(nodeModels, t.configManager.GetPoCParams())
+	var unsupported []string
+	for modelID := range nodeModels {
+		if _, ok := supported[modelID]; !ok {
+			unsupported = append(unsupported, modelID)
+		}
+	}
+	slices.Sort(unsupported)
+
+	plans, skipped, err := buildTestableLaunchPlans(governanceModels, supported)
+	if err != nil {
+		return nil, err
+	}
+	report := &LaunchPlanReport{
+		NodeId:            cfg.Id,
+		Plans:             make([]LaunchPlanEntry, 0, len(plans)),
+		SkippedModels:     skipped,
+		UnsupportedModels: unsupported,
+	}
+	for _, p := range plans {
+		report.Plans = append(report.Plans, LaunchPlanEntry{ModelID: p.ModelID, Args: p.Args})
+	}
+	return report, nil
+}
+
 func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeConfig) *TestResult {
 	started := time.Now()
 	result := &TestResult{

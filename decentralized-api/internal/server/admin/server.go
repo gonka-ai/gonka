@@ -79,6 +79,11 @@ func NewServer(
 	g.GET("nodes/upgrade-status", s.getUpgradeStatus)
 	g.POST("nodes/version-status", s.postVersionStatus)
 	g.POST("nodes/:id/test", s.postNodeTest)
+	// Read-only fact endpoints (see fact_handlers.go): primitives an
+	// operator/script/AI skill can compose an onboarding flow from.
+	g.GET("nodes/:id/test", s.getNodeTestResult)
+	g.GET("nodes/:id/launch-plan", s.getNodeLaunchPlan)
+	g.GET("poc/timing", s.getPoCTiming)
 	g.GET("nodes", s.getNodes)
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)
