@@ -41,8 +41,11 @@ class NodeDisableInferenceTests : TestermintTest() {
 
         // 3. Wait for INFERENCE phase and disable join-1
         logSection("Waiting for Inference Window")
-        // Require enough blocks before the next PoC so random join-1 assignment has time to land.
-        genesis.waitForNextInferenceWindow(windowSizeInBlocks = 20)
+        // Position early in the epoch with runway before the next PoC so random join-1 assignment has time to land.
+        genesis.waitForMidEpochWindow(
+            minBlocksIntoEpoch = 3,
+            minBlocksBeforeNextPoc = 15,
+        )
 
         val join1 = cluster.joinPairs[0]
         logSection("Disabling join-1")
