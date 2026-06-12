@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -47,6 +48,9 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 	}
 	if msg.DurationBlocks > mp.MaintenanceMaxWindowBlocks {
 		return nil, types.ErrMaintenanceDurationExceeded
+	}
+	if msg.DurationBlocks > math.MaxInt64 || msg.StartHeight > math.MaxInt64-int64(msg.DurationBlocks) {
+		return nil, types.ErrMaintenanceCompletionHeightOverflow
 	}
 
 	// Validate lead time: startHeight must be at least MinScheduleLeadBlocks

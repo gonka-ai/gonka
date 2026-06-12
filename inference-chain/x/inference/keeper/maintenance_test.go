@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"math"
 	"testing"
 
 	cosmossdk_math "cosmossdk.io/math"
@@ -60,12 +61,12 @@ func setupMaintenanceTest(t *testing.T) (keeper.Keeper, types.MsgServer, sdk.Con
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.MaintenanceParams = &types.MaintenanceParams{
-		MaintenanceEnabled:                          true,
-		MaintenanceMinScheduleLeadBlocks:            50,
-		MaintenanceMaxWindowBlocks:                  200,
-		MaintenanceMaxConcurrentValidators:          3,
-		MaintenanceMaxConcurrentPowerBps:            1000,
-		MaintenanceCreditCapBlocks:                  400,
+		MaintenanceEnabled:                            true,
+		MaintenanceMinScheduleLeadBlocks:              50,
+		MaintenanceMaxWindowBlocks:                    200,
+		MaintenanceMaxConcurrentValidators:            3,
+		MaintenanceMaxConcurrentPowerBps:              1000,
+		MaintenanceCreditCapBlocks:                    400,
 		MaintenanceCreditEarnPerSuccessfulEpochBlocks: 20,
 	}
 	require.NoError(t, k.SetParams(ctx, params))
@@ -106,9 +107,9 @@ func TestScheduleMaintenance_Success(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -138,10 +139,10 @@ func TestScheduleMaintenance_Failures(t *testing.T) {
 	unknownAddr := sample.AccAddress()
 
 	tests := []struct {
-		name           string
-		setup          func(t *testing.T, k keeper.Keeper, ctx sdk.Context)
-		msg            *types.MsgScheduleMaintenance
-		expectedErr    error
+		name        string
+		setup       func(t *testing.T, k keeper.Keeper, ctx sdk.Context)
+		msg         *types.MsgScheduleMaintenance
+		expectedErr error
 	}{
 		{
 			name: "disabled",
@@ -237,6 +238,38 @@ func TestScheduleMaintenance_Failures(t *testing.T) {
 	}
 }
 
+func TestScheduleMaintenance_RejectsCompletionHeightOverflowWithoutStateMutation(t *testing.T) {
+	t.Parallel()
+
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.MaintenanceParams.MaintenanceMaxWindowBlocks = 100
+	require.NoError(t, k.SetParams(ctx, params))
+
+	_, err = ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    math.MaxInt64 - 49,
+		DurationBlocks: 50,
+	})
+	require.ErrorIs(t, err, types.ErrMaintenanceCompletionHeightOverflow)
+
+	addr, err := sdk.AccAddressFromBech32(participant)
+	require.NoError(t, err)
+	state, found := k.GetMaintenanceState(ctx, addr)
+	require.True(t, found)
+	require.Equal(t, uint64(100), state.CreditBlocks)
+	require.Zero(t, state.ScheduledReservationId)
+
+	_, found = k.GetMaintenanceReservation(ctx, 1)
+	require.False(t, found)
+}
+
 // --- 7.1: Cancellation Tests ---
 
 func TestCancelMaintenance_Success(t *testing.T) {
@@ -248,9 +281,9 @@ func TestCancelMaintenance_Success(t *testing.T) {
 
 	// Schedule first
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -296,9 +329,9 @@ func TestCancelMaintenance_NotScheduled(t *testing.T) {
 
 	// Schedule and then activate (set status to active manually)
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -325,9 +358,9 @@ func TestCancelMaintenance_CreditCapRespected(t *testing.T) {
 
 	// Schedule to deduct
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -414,9 +447,9 @@ func TestLifecycle_ActivateAndComplete(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -468,9 +501,9 @@ func TestLifecycle_NoTransitionsAtWrongHeight(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -494,8 +527,8 @@ func TestSchedulability_Success(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	resp, err := k.MaintenanceSchedulability(ctx, &types.QueryMaintenanceSchedulabilityRequest{
-		Participant:  participant,
-		StartHeight:  500,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -509,10 +542,10 @@ func TestSchedulability_Failures(t *testing.T) {
 	participant := sample.AccAddress()
 
 	tests := []struct {
-		name             string
-		setup            func(t *testing.T, k keeper.Keeper, ctx sdk.Context)
-		req              *types.QueryMaintenanceSchedulabilityRequest
-		reasonContains   string
+		name           string
+		setup          func(t *testing.T, k keeper.Keeper, ctx sdk.Context)
+		req            *types.QueryMaintenanceSchedulabilityRequest
+		reasonContains string
 	}{
 		{
 			name: "insufficient credit",
@@ -589,9 +622,9 @@ func TestQueryMaintenanceStatus(t *testing.T) {
 
 	// Schedule a reservation
 	schedResp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -615,9 +648,9 @@ func TestQueryMaintenanceScheduled(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	schedResp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -638,9 +671,9 @@ func TestQueryMaintenanceActive(t *testing.T) {
 	grantCredit(t, k, ctx, participant, 100)
 
 	_, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant,
-		Participant:  participant,
-		StartHeight:  500,
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)
@@ -722,9 +755,9 @@ func TestFilterOutMaintenanceParticipants(t *testing.T) {
 
 	// Schedule and activate maintenance for participant1
 	_, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:      participant1,
-		Participant:  participant1,
-		StartHeight:  500,
+		Creator:        participant1,
+		Participant:    participant1,
+		StartHeight:    500,
 		DurationBlocks: 50,
 	})
 	require.NoError(t, err)

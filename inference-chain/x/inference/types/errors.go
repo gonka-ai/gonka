@@ -91,4 +91,5 @@ var (
 	ErrMaintenanceOverlapsDKGPhase           = sdkerrors.Register(ModuleName, 1189, "maintenance window overlaps DKG phase")
 	ErrMaintenanceInvalidParticipant         = sdkerrors.Register(ModuleName, 1190, "invalid participant address")
 	ErrMaintenanceZeroDuration               = sdkerrors.Register(ModuleName, 1191, "duration_blocks must be positive")
+	ErrMaintenanceCompletionHeightOverflow   = sdkerrors.Register(ModuleName, 1192, "maintenance completion height overflows int64")
 )
