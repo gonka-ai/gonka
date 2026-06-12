@@ -36,7 +36,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         waitForClusterOperational(cluster, genesis)
 
         val upgradeLeadBlocks = System.getenv("UPGRADE_REHEARSAL_LEAD_BLOCKS")?.toLongOrNull() ?: 80L
-        val upgradeHeight = genesis.getCurrentBlockHeight() + upgradeLeadBlocks
+        val upgradeHeight = scheduleStageSafeUpgradeHeight(genesis, upgradeLeadBlocks)
         val binaryPath = rehearsalBinaryPath("v2/inferenced/inferenced-amd64.zip")
         val apiBinaryPath = rehearsalBinaryPath("v2/dapi/decentralized-api-amd64.zip")
 
@@ -119,6 +119,37 @@ class UpgradeRehearsalTests : TestermintTest() {
         }
 
         writeCompletionManifest(targetUpgrade, upgradeHeight, postInference.id, escrowId, postUpgradePocResult)
+    }
+
+    private fun scheduleStageSafeUpgradeHeight(
+        genesis: LocalInferencePair,
+        minimumLeadBlocks: Long,
+    ): Long {
+        require(minimumLeadBlocks >= 0) { "UPGRADE_REHEARSAL_LEAD_BLOCKS must be non-negative" }
+
+        val epochData = genesis.getEpochData()
+        val earliestUpgradeBlock = epochData.blockHeight + minimumLeadBlocks
+        val scheduledUpgrade = requireNotNull(
+            epochData.findStageSafeInferenceBlock(
+                earliestBlock = earliestUpgradeBlock,
+                minimumSlackBeforeNextPoc = INFERENCE_STAGE_SLACK_BLOCKS,
+            )
+        ) {
+            "Failed to find a stage-safe upgrade block for height $earliestUpgradeBlock " +
+                "with slack $INFERENCE_STAGE_SLACK_BLOCKS from phase ${epochData.phase}"
+        }
+
+        Logger.info(
+            "Selected stage-safe upgrade height {} from block {} during phase {} " +
+                "(inference window {}..{}, earliest acceptable block {})",
+            scheduledUpgrade.block,
+            epochData.blockHeight,
+            epochData.phase,
+            scheduledUpgrade.inferenceWindowStart,
+            scheduledUpgrade.nextPocStart - 1,
+            earliestUpgradeBlock,
+        )
+        return scheduledUpgrade.block
     }
 
     private data class PocPowerSnapshot(
