@@ -44,3 +44,17 @@ func TestDefaultDevshardInferenceSealGraceNonces_FloorAndScaling(t *testing.T) {
 	require.Equal(t, uint32(1000), types.DefaultDevshardInferenceSealGraceNonces(100),
 		"large groups must scale linearly")
 }
+
+func TestDevshardAutoSealEveryNNoncesForCreate(t *testing.T) {
+	require.Equal(t, types.DefaultDevshardAutoSealEveryNNonces,
+		types.DevshardAutoSealEveryNNoncesForCreate(types.DefaultDevshardEscrowParams()))
+
+	custom := types.DefaultDevshardEscrowParams()
+	custom.DefaultAutoSealEveryNNonces = 16
+	require.Equal(t, uint32(16), types.DevshardAutoSealEveryNNoncesForCreate(custom))
+
+	zero := types.DefaultDevshardEscrowParams()
+	zero.DefaultAutoSealEveryNNonces = 0
+	require.Equal(t, types.DefaultDevshardAutoSealEveryNNonces,
+		types.DevshardAutoSealEveryNNoncesForCreate(zero))
+}

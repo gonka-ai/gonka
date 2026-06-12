@@ -7,6 +7,9 @@ const (
 	// stale-finished inferences. Must match inference-chain
 	// DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
 	DefaultInferenceSealGraceSeconds = 3600
+	// DefaultAutoSealEveryNNonces is how often auto-seal runs during Active phase.
+	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.
+	DefaultAutoSealEveryNNonces uint32 = 150
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -30,6 +33,9 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 	}
 	if cfg.InferenceSealGraceSeconds == 0 {
 		cfg.InferenceSealGraceSeconds = DefaultInferenceSealGraceSeconds
+	}
+	if cfg.AutoSealEveryNNonces == 0 {
+		cfg.AutoSealEveryNNonces = DefaultAutoSealEveryNNonces
 	}
 	return cfg
 }
@@ -58,6 +64,7 @@ type EscrowSessionFields struct {
 	FeePerNonce               uint64
 	InferenceSealGraceNonces  uint32
 	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 }
 
 // LiveSessionBindParams carries governance fields read from the long-poll
@@ -133,6 +140,9 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	}
 	if fields.InferenceSealGraceSeconds > 0 {
 		cfg.InferenceSealGraceSeconds = fields.InferenceSealGraceSeconds
+	}
+	if fields.AutoSealEveryNNonces > 0 {
+		cfg.AutoSealEveryNNonces = fields.AutoSealEveryNNonces
 	}
 	return NormalizeSessionConfig(cfg, groupSize)
 }

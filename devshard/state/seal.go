@@ -16,35 +16,49 @@ import (
 // whose ConfirmedAt timestamps approximate "now".
 const stateClockWindowFactor = 3
 
-// autoSealEveryNNonces controls how often autoSealLocked runs during the
-// Active phase. Production uses 150; set to 1 to seal on every diff (debug).
-const autoSealEveryNNonces uint64 = 150
+func autoSealInterval(cfg types.SessionConfig) uint64 {
+	n := cfg.AutoSealEveryNNonces
+	if n == 0 {
+		return uint64(types.DefaultAutoSealEveryNNonces)
+	}
+	return uint64(n)
+}
 
-func shouldAutoSealAtNonce(nonce uint64) bool {
-	if autoSealEveryNNonces == 0 {
+func (sm *StateMachine) autoSealIntervalLocked() uint64 {
+	return autoSealInterval(sm.state.Config)
+}
+
+func shouldAutoSealAtNonce(interval uint64, nonce uint64) bool {
+	if interval == 0 {
 		return true
 	}
-	return nonce%autoSealEveryNNonces == 0
+	return nonce%interval == 0
 }
 
-// AutoSealEveryNNonces returns the auto-seal sweep interval during Active phase.
+// AutoSealEveryNNonces returns the compiled default auto-seal sweep interval.
 func AutoSealEveryNNonces() uint64 {
-	return autoSealEveryNNonces
+	return uint64(types.DefaultAutoSealEveryNNonces)
 }
 
-// ShouldAutoSealAtNonce reports whether autoSealLocked runs at nonce.
+// ShouldAutoSealAtNonce reports whether autoSealLocked runs at nonce using the
+// compiled default interval.
 func ShouldAutoSealAtNonce(nonce uint64) bool {
-	return shouldAutoSealAtNonce(nonce)
+	return shouldAutoSealAtNonce(AutoSealEveryNNonces(), nonce)
 }
 
-// NextAutoSealNonce returns the smallest nonce >= after+1 that triggers auto-seal.
+// NextAutoSealNonce returns the smallest nonce >= after+1 that triggers auto-seal
+// using the compiled default interval.
 func NextAutoSealNonce(after uint64) uint64 {
+	return nextAutoSealNonceAtInterval(AutoSealEveryNNonces(), after)
+}
+
+func nextAutoSealNonceAtInterval(interval uint64, after uint64) uint64 {
 	n := after + 1
-	if autoSealEveryNNonces == 0 {
+	if interval == 0 {
 		return n
 	}
-	if r := n % autoSealEveryNNonces; r != 0 {
-		n += autoSealEveryNNonces - r
+	if r := n % interval; r != 0 {
+		n += interval - r
 	}
 	return n
 }

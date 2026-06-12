@@ -18,6 +18,7 @@ message DevshardEscrow {
   uint64 fee_per_nonce = 11;
   uint32 inference_seal_grace_nonces = 12;
   uint32 inference_seal_grace_seconds = 13;
+  uint32 auto_seal_every_n_nonces = 14;
 }
 
 message DevshardHostEpochStats {

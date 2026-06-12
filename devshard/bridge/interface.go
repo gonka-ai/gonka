@@ -37,6 +37,7 @@ type EscrowInfo struct {
 	FeePerNonce               uint64
 	InferenceSealGraceNonces  uint32
 	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

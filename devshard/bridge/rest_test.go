@@ -29,6 +29,7 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 				"fee_per_nonce":       "1000",
 				"inference_seal_grace_nonces":  160,
 				"inference_seal_grace_seconds": 3600,
+				"auto_seal_every_n_nonces":     150,
 			},
 			"found": true,
 		})
@@ -48,6 +49,7 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, uint64(1_000), info.FeePerNonce)
 	assert.Equal(t, uint32(160), info.InferenceSealGraceNonces)
 	assert.Equal(t, uint32(3600), info.InferenceSealGraceSeconds)
+	assert.Equal(t, uint32(150), info.AutoSealEveryNNonces)
 }
 
 func TestGetEscrow_GraceFieldsNumeric(t *testing.T) {

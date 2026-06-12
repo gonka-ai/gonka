@@ -393,6 +393,7 @@ message DevshardEscrowParams {
   int64 execution_timeout = 15;
   uint32 validation_rate = 16;
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
+  uint32 default_auto_seal_every_n_nonces = 18;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

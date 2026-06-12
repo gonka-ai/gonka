@@ -306,6 +306,8 @@ data class DevshardEscrowParams(
     val defaultInferenceSealGraceNonces: Long = 0,
     @SerializedName("default_inference_seal_grace_seconds")
     val defaultInferenceSealGraceSeconds: Long = 0,
+    @SerializedName("default_auto_seal_every_n_nonces")
+    val defaultAutoSealEveryNNonces: Long = 0,
     @SerializedName("devshard_requests_enabled")
     val devshardRequestsEnabled: Boolean = true,
     @SerializedName("create_devshard_fee")

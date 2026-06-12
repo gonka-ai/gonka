@@ -15,6 +15,7 @@ message SessionConfigProto {
   uint32 validation_rate = 7;
   uint32 inference_seal_grace_nonces = 8;
   uint32 inference_seal_grace_seconds = 9;
+  uint32 auto_seal_every_n_nonces = 10;
 }
 
 message SlotAssignmentProto {

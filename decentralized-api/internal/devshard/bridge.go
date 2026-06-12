@@ -54,6 +54,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		FeePerNonce:               resp.Escrow.FeePerNonce,
 		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      resp.Escrow.AutoSealEveryNNonces,
 		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }

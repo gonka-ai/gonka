@@ -122,6 +122,10 @@ const DevshardSealGraceFloor uint32 = 20
 // devshard/types.DefaultInferenceSealGraceSeconds.
 const DefaultDevshardInferenceSealGraceSeconds uint32 = 3600
 
+// DefaultDevshardAutoSealEveryNNonces is how often the gateway runs auto-seal
+// during Active phase. Mirrors devshard/types.DefaultAutoSealEveryNNonces.
+const DefaultDevshardAutoSealEveryNNonces uint32 = 150
+
 // DefaultDevshardInferenceSealGraceNonces returns the canonical default seal grace
 // nonces value derived from the configured group size. This mirrors
 // devshard/types.DefaultInferenceSealGraceNonces (10 * groupSize, floor 20). It is
@@ -363,6 +367,7 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		DevshardRequestsEnabled:          DefaultDevshardRequestsEnabled,
 		DefaultInferenceSealGraceNonces:  DefaultDevshardInferenceSealGraceNonces(DefaultDevshardGroupSize),
 		DefaultInferenceSealGraceSeconds: DefaultDevshardInferenceSealGraceSeconds,
+		DefaultAutoSealEveryNNonces:      DefaultDevshardAutoSealEveryNNonces,
 		CreateDevshardFee:                DefaultDevshardCreateDevshardFee,
 		FeePerNonce:                      DefaultDevshardFeePerNonce,
 		RefusalTimeout:                   DefaultDevshardRefusalTimeout,

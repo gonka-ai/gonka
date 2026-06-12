@@ -114,6 +114,7 @@ type SessionConfig struct {
 	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
 	InferenceSealGraceNonces   uint32
 	InferenceSealGraceSeconds  uint32
+	AutoSealEveryNNonces       uint32
 }
 
 // EscrowState is the full state of a devshard session.

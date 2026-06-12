@@ -638,6 +638,7 @@ type statusSessionConfig struct {
 	ValidationRate            uint32 `json:"validation_rate"`
 	InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
 	InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
+	AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -787,6 +788,7 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 			ValidationRate:            cfg.ValidationRate,
 			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
+			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
 		},
 	}
 	if p.phaseGate != nil {

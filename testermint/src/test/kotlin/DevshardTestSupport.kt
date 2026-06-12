@@ -41,8 +41,8 @@ val devshardAlwaysValidateSpec = spec<AppState> {
 const val devshardAutoSealGroupSize = 16L
 const val devshardAutoSealInferenceSealGraceNonces = 1L
 const val devshardAutoSealInferenceSealGraceSeconds = 10L
-/** Must match devshard/state/seal.go autoSealEveryNNonces. */
-const val devshardAutoSealEveryNNonces = 150L
+/** Must match devshardShortSealGraceSpec default_auto_seal_every_n_nonces. */
+const val devshardAutoSealEveryNNonces = 1L
 
 val devshardShortSealGraceSpec = spec<AppState> {
     this[AppState::inference] = spec<InferenceState> {
@@ -50,6 +50,7 @@ val devshardShortSealGraceSpec = spec<AppState> {
             this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
+                this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
                 this[DevshardEscrowParams::validationRate] = 0L
             }
         }
@@ -520,7 +521,7 @@ fun LocalInferencePair.waitForFinishedDevshardInferences(
 /**
  * Drive chat completions until [targetNonce] is reached and at least [minSealed]
  * inferences have been folded into sealed_acc. Auto-seal runs only on nonces that
- * are multiples of [devshardAutoSealEveryNNonces] (see devshard/state/seal.go).
+ * are multiples of [devshardAutoSealEveryNNonces] (escrow snapshot at create).
  */
 fun LocalInferencePair.waitForDevshardAutoSeal(
     proxyUrl: String,

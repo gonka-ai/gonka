@@ -60,6 +60,7 @@ type escrowResponse struct {
 		FeePerNonce               uint64 `json:"fee_per_nonce,string"`
 		InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
 		InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
+		AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -155,6 +156,7 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		FeePerNonce:               resp.Escrow.FeePerNonce,
 		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      resp.Escrow.AutoSealEveryNNonces,
 		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }

@@ -24,3 +24,15 @@ func DevshardInferenceSealGraceSecondsForCreate(ep *DevshardEscrowParams) uint32
 	}
 	return DefaultDevshardInferenceSealGraceSeconds
 }
+
+// DevshardAutoSealEveryNNoncesForCreate returns the auto-seal interval
+// snapshotted onto a DevshardEscrow at create.
+func DevshardAutoSealEveryNNoncesForCreate(ep *DevshardEscrowParams) uint32 {
+	if ep == nil {
+		return DefaultDevshardAutoSealEveryNNonces
+	}
+	if ep.DefaultAutoSealEveryNNonces > 0 {
+		return ep.DefaultAutoSealEveryNNonces
+	}
+	return DefaultDevshardAutoSealEveryNNonces
+}

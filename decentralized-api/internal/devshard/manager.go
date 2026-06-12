@@ -300,6 +300,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		FeePerNonce:               escrow.FeePerNonce,
 		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
 	})
 	if m.params != nil {
 		live := m.params.SessionParams()

@@ -27,6 +27,7 @@ func TestNormalizeSessionConfig_FillsInferenceSealGraceNoncesOnlyWhenUnset(t *te
 
 	require.Equal(t, uint32(20), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(DefaultInferenceSealGraceSeconds), cfg.InferenceSealGraceSeconds)
+	require.Equal(t, DefaultAutoSealEveryNNonces, cfg.AutoSealEveryNNonces)
 	require.Equal(t, int64(7), cfg.RefusalTimeout)
 	require.Equal(t, int64(9), cfg.ExecutionTimeout)
 	require.Equal(t, uint64(11), cfg.TokenPrice)

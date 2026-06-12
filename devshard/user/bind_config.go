@@ -14,6 +14,7 @@ func sessionConfigAtBind(groupSize int, escrow *bridge.EscrowInfo, b bridge.Main
 		FeePerNonce:               escrow.FeePerNonce,
 		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
 	})
 	sb, ok := b.(bridge.SessionBindParamsBridge)
 	if !ok {
