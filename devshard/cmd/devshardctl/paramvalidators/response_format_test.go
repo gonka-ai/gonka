@@ -148,6 +148,9 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "bad pattern not string", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":42}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern too long", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"` + strings.Repeat("a", 513) + `"}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern nested", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"type":"string","pattern":"["}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad patternProperties key", body: jsonSchemaResponseFormatBody(`{"type":"object","patternProperties":{"[":{"type":"string"}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad patternProperties key too long", body: jsonSchemaResponseFormatBody(`{"type":"object","patternProperties":{"` + strings.Repeat("a", 513) + `":{"type":"string"}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad propertyNames pattern", body: jsonSchemaResponseFormatBody(`{"type":"object","propertyNames":{"pattern":"["}}`), wantErr: ErrSchemaPattern},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

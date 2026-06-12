@@ -137,6 +137,9 @@ func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
 	if err := b.validateSchemaPatternField(obj); err != nil {
 		return err
 	}
+	if err := b.validateSchemaPatternPropertiesKeys(obj); err != nil {
+		return err
+	}
 	for _, branchKey := range branchSchemaKeys {
 		if arr, ok := obj[branchKey].([]any); ok && len(arr) > b.MaxBranch {
 			return fmt.Errorf("%w: %s limit %d", ErrSchemaBranch, branchKey, b.MaxBranch)
@@ -294,6 +297,30 @@ func (b SchemaBounds) validateSchemaPatternField(obj map[string]any) error {
 	if !ok {
 		return fmt.Errorf("%w: must be a string", ErrSchemaPattern)
 	}
+	return b.validateSchemaPatternString(s)
+}
+
+func (b SchemaBounds) validateSchemaPatternPropertiesKeys(obj map[string]any) error {
+	if b.MaxPatternLen <= 0 {
+		return nil
+	}
+	raw, present := obj["patternProperties"]
+	if !present {
+		return nil
+	}
+	patterns, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for pattern := range patterns {
+		if err := b.validateSchemaPatternString(pattern); err != nil {
+			return fmt.Errorf("patternProperties key %q: %w", pattern, err)
+		}
+	}
+	return nil
+}
+
+func (b SchemaBounds) validateSchemaPatternString(s string) error {
 	if len(s) > b.MaxPatternLen {
 		return fmt.Errorf("%w: length %d exceeds limit %d", ErrSchemaPattern, len(s), b.MaxPatternLen)
 	}
