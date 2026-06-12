@@ -11,6 +11,10 @@ import (
 // inlined and definition containers stripped. JSON-Schema data keyword values are
 // preserved as-is because callers use the result to validate the effective schema;
 // each caller decides whether to forward the normalized copy or the original request.
+//
+// The no-$ref guarantee applies only where a value is a schema node (properties, items,
+// anyOf arms, etc.). Values under schemaDataKeys (enum, const, default, …) are literal data
+// and are copied without dereferencing, so a "$ref" key inside an enum entry may survive.
 func DereferenceLocalSchemaRefs(schema map[string]any, maxNodes int) (map[string]any, error) {
 	state := dereferenceState{
 		stack:    map[string]struct{}{},

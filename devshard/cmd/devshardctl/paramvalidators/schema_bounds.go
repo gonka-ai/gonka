@@ -45,6 +45,11 @@ var branchSchemaKeys = []string{"anyOf", "oneOf", "allOf"}
 // schemas. They must NOT be recursed into; an attacker could otherwise put a deeply nested
 // object inside `default`/`examples`/`const` and have it counted against the schema budget
 // needlessly, or worse, hide structure the walker treats as schema-shaped.
+//
+// DereferenceLocalSchemaRefs and the post-deref $ref/$defs ban both skip these keys for the
+// same reason. A payload like {"enum":[{"$ref":"#/$defs/A"}]} can therefore still contain
+// the literal key "$ref" after normalization. That is expected: enum/const values are data,
+// not schema positions, and downstream treats them as opaque literals rather than references.
 var schemaDataKeys = map[string]struct{}{
 	"enum":              {},
 	"const":             {},
