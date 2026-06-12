@@ -1,6 +1,7 @@
 package paramvalidators
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,7 @@ func TestDereferenceLocalSchemaRefsRejectsRecursiveRefs(t *testing.T) {
 	require.Contains(t, err.Error(), "recursive reference")
 }
 
-func TestDereferenceLocalSchemaRefsMergesRefSiblings(t *testing.T) {
+func TestDereferenceLocalSchemaRefsIgnoresRefSiblings(t *testing.T) {
 	schema := parseDocument(t, `{"$defs":{"Path":{"type":"string","description":"from ref"}},"properties":{"path":{"$ref":"#/$defs/Path","description":"from sibling"}}}`)
 
 	resolved, err := DereferenceLocalSchemaRefs(schema, 256)
@@ -24,7 +25,20 @@ func TestDereferenceLocalSchemaRefsMergesRefSiblings(t *testing.T) {
 
 	path := resolved["properties"].(map[string]any)["path"].(map[string]any)
 	require.Equal(t, "string", path["type"])
-	require.Equal(t, "from sibling", path["description"])
+	require.Equal(t, "from ref", path["description"])
+}
+
+func TestDereferenceLocalSchemaRefsIgnoresConflictingRefSiblings(t *testing.T) {
+	schema := parseDocument(t, `{"$defs":{"P":{"type":"integer","minimum":1,"maximum":9}},"properties":{"x":{"$ref":"#/$defs/P","type":"string"}}}`)
+
+	resolved, err := DereferenceLocalSchemaRefs(schema, 256)
+	require.NoError(t, err)
+
+	x := resolved["properties"].(map[string]any)["x"].(map[string]any)
+	require.Equal(t, "integer", x["type"])
+	require.Equal(t, json.Number("1"), x["minimum"])
+	require.Equal(t, json.Number("9"), x["maximum"])
+	require.NotContains(t, x, "allOf")
 }
 
 func TestDereferenceLocalSchemaRefsAllowsBooleanSchemaRef(t *testing.T) {

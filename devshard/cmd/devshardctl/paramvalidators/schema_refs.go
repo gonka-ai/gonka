@@ -12,6 +12,10 @@ import (
 // preserved as-is because callers use the result to validate the effective schema;
 // each caller decides whether to forward the normalized copy or the original request.
 //
+// Sibling keywords next to $ref are ignored (JSON Schema draft-07 / OpenAI-style behavior):
+// only the resolved reference target is kept. Put overrides in $defs or use explicit allOf
+// in the source schema when both constraints must apply.
+//
 // The no-$ref guarantee applies only where a value is a schema node (properties, items,
 // anyOf arms, etc.). Values under schemaDataKeys (enum, const, default, …) are literal data
 // and are copied without dereferencing, so a "$ref" key inside an enum entry may survive.
@@ -61,7 +65,7 @@ func (s *dereferenceState) dereferenceSchemaValue(root any, value any, countSche
 			if err != nil {
 				return nil, err
 			}
-			return s.mergeRefSiblings(root, resolvedTarget, typed)
+			return s.finishRefResolution(resolvedTarget)
 		}
 
 		if countSchemaNode && s.expandingDepth > 0 {
@@ -119,41 +123,13 @@ func (s *dereferenceState) dereferenceSchemaChild(root any, key string, value an
 	return out, nil
 }
 
-func (s *dereferenceState) mergeRefSiblings(root any, resolvedTarget any, refNode map[string]any) (any, error) {
-	outMap, isObjectSchema := resolvedTarget.(map[string]any)
-	if !isObjectSchema {
-		hasSiblings := false
-		for key := range refNode {
-			if key != "$ref" && !isDefinitionContainer(key) {
-				hasSiblings = true
-				break
-			}
-		}
-		if hasSiblings {
-			return nil, fmt.Errorf("%w: cannot merge siblings into non-object reference target", ErrSchemaRef)
-		}
-		if _, isBooleanSchema := resolvedTarget.(bool); isBooleanSchema {
-			return resolvedTarget, nil
-		}
+func (s *dereferenceState) finishRefResolution(resolvedTarget any) (any, error) {
+	switch resolvedTarget.(type) {
+	case map[string]any, bool:
+		return resolvedTarget, nil
+	default:
 		return nil, fmt.Errorf("%w: reference target must resolve to an object or boolean schema", ErrSchemaRef)
 	}
-
-	out := cloneMap(outMap)
-	for key, child := range refNode {
-		if key == "$ref" || isDefinitionContainer(key) {
-			continue
-		}
-		if _, isData := schemaDataKeys[key]; isData {
-			out[key] = child
-			continue
-		}
-		resolvedChild, err := s.dereferenceSchemaChild(root, key, child)
-		if err != nil {
-			return nil, err
-		}
-		out[key] = resolvedChild
-	}
-	return out, nil
 }
 
 func (s *dereferenceState) countNode() error {
@@ -199,14 +175,6 @@ func resolveLocalJSONPointer(root any, ref string) (any, error) {
 		}
 	}
 	return current, nil
-}
-
-func cloneMap(input map[string]any) map[string]any {
-	out := make(map[string]any, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
-	return out
 }
 
 func isDefinitionContainer(key string) bool {
