@@ -113,6 +113,20 @@ type (
 		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// Maintenance window collections
+		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
+		MaintenanceReservationCounter collections.Item[uint64]
+		MaintenanceStates             collections.Map[sdk.AccAddress, types.MaintenanceState]
+		MaintenanceTransitions        collections.Map[collections.Pair[int64, uint64], uint32]
+		// MaintenanceActiveIndex is a KeySet of reservation IDs that are
+		// currently in the ACTIVE state. Lets MaintenanceActive query iterate
+		// only the active set instead of scanning every participant's state.
+		MaintenanceActiveIndex collections.KeySet[uint64]
+		// MaintenanceScheduledIndex is a KeySet of reservation IDs that are
+		// currently in the SCHEDULED state. Lets concurrency/schedulability
+		// queries iterate only the bounded set of scheduled reservations
+		// instead of every participant's MaintenanceState (DoS protection).
+		MaintenanceScheduledIndex collections.KeySet[uint64]
 		// PoC delegation collections
 		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
 		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
@@ -561,6 +575,46 @@ func NewKeeper(
 			"devshard_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		// Maintenance window collections
+		MaintenanceReservations: collections.NewMap(
+			sb,
+			types.MaintenanceReservationsPrefix,
+			"maintenance_reservations",
+			collections.Uint64Key,
+			codec.CollValue[types.MaintenanceReservation](cdc),
+		),
+		MaintenanceReservationCounter: collections.NewItem(
+			sb,
+			types.MaintenanceReservationCounterPrefix,
+			"maintenance_reservation_counter",
+			collections.Uint64Value,
+		),
+		MaintenanceStates: collections.NewMap(
+			sb,
+			types.MaintenanceStatesPrefix,
+			"maintenance_states",
+			sdk.AccAddressKey,
+			codec.CollValue[types.MaintenanceState](cdc),
+		),
+		MaintenanceTransitions: collections.NewMap(
+			sb,
+			types.MaintenanceTransitionsPrefix,
+			"maintenance_transitions",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+			collections.Uint32Value,
+		),
+		MaintenanceActiveIndex: collections.NewKeySet(
+			sb,
+			types.MaintenanceActiveIndexPrefix,
+			"maintenance_active_index",
+			collections.Uint64Key,
+		),
+		MaintenanceScheduledIndex: collections.NewKeySet(
+			sb,
+			types.MaintenanceScheduledIndexPrefix,
+			"maintenance_scheduled_index",
+			collections.Uint64Key,
 		),
 		// PoC delegation collections
 		PoCDelegations: collections.NewMap(

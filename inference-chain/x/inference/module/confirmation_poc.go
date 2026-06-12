@@ -441,10 +441,20 @@ func (am AppModule) evaluateConfirmation(
 			"triggerHeight", event.TriggerHeight)
 	}
 
+	// Skip CPoC ratio assignment for maintenance-covered participants — they
+	// are expected to be offline and must not be marked INACTIVE due to
+	// maintenance-covered absence from CPoC duties.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+
 	for _, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
 		ratio, ok := ratios[addr]
 		if !ok {
+			continue
+		}
+		if _, inMaint := maintenanceAddrs[addr]; inMaint {
+			am.LogDebug("Skipping CPoC ratio for maintenance-covered participant", types.PoC,
+				"address", addr)
 			continue
 		}
 		participant, found := am.keeper.GetParticipant(ctx, addr)

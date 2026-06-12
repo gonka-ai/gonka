@@ -103,7 +103,27 @@ var (
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
-	ParamsKey                         = []byte("p_inference")
+	// Maintenance window collections. Prefixes start at 100 to (a) leave room
+	// for upstream's BridgeTransactionValidators (64) and PreservedNodesSnapshot (65)
+	// which shipped first on gm/microrelease, and (b) avoid colliding with
+	// legacy raw-byte string keys whose first byte falls in the ASCII letter
+	// range (e.g. "GenesisOnlyData/value/" — 'G' = 71 — which collides with a
+	// uint64-keyed collection iterator at prefix 71). Byte 100 ('d') is the
+	// first ASCII letter not used as a leading byte of any current legacy
+	// string key in this module; using 'd' onward keeps maintenance prefixes
+	// safely outside the live legacy-key namespace.
+	MaintenanceReservationsPrefix       = collections.NewPrefix(100)
+	MaintenanceReservationCounterPrefix = collections.NewPrefix(101)
+	MaintenanceStatesPrefix             = collections.NewPrefix(102)
+	MaintenanceTransitionsPrefix        = collections.NewPrefix(103)
+	// Index of currently-active maintenance reservations (key = reservationID).
+	// Avoids O(M) full-scan of MaintenanceStates in the MaintenanceActive query.
+	MaintenanceActiveIndexPrefix = collections.NewPrefix(104)
+	// Index of currently-scheduled maintenance reservations (key = reservationID).
+	// Lets concurrency / schedulability queries iterate only the bounded set
+	// of scheduled reservations instead of every participant's MaintenanceState.
+	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
+	ParamsKey                       = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

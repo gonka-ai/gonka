@@ -133,6 +133,14 @@ func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmou
 			ms.LogError("Error setting epoch performance summary", types.Claims, "error", err)
 		}
 	}
+
+	// Grant maintenance credit for this successfully claimed epoch
+	if err := ms.GrantMaintenanceCredit(ctx, settleAmount.Participant, settleAmount.EpochIndex); err != nil {
+		ms.LogError("Error granting maintenance credit", types.Maintenance,
+			"participant", settleAmount.Participant,
+			"epoch", settleAmount.EpochIndex,
+			"error", err)
+	}
 }
 
 func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) (*types.SettleAmount, *types.MsgClaimRewardsResponse) {
@@ -231,6 +239,21 @@ func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, se
 }
 
 func (k msgServer) hasSignificantMissedValidations(ctx sdk.Context, msg *types.MsgClaimRewards) (bool, error) {
+	// Exempt participants who had a maintenance window covering the claimed
+	// epoch. Uses the same coverage check as GrantMaintenanceCredit so the
+	// two paths cannot disagree — otherwise a multi-epoch window's mid/end
+	// epoch could pass credit suppression but fail missed-validation here
+	// (the `==` match used previously only covered the window's start epoch).
+	participantAddr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err == nil {
+		state, found := k.GetMaintenanceState(ctx, participantAddr)
+		if found && k.maintenanceStateCoversEpoch(ctx, state, msg.EpochIndex) {
+			k.LogInfo("Skipping missed validation check: participant had maintenance in this epoch",
+				types.Maintenance, "participant", msg.Creator, "epoch", msg.EpochIndex)
+			return false, nil
+		}
+	}
+
 	//nolint:forbidigo // Must in different context
 	mustBeValidated, err := k.getMustBeValidatedInferences(ctx, msg)
 	if err != nil {
