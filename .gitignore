@@ -20,6 +20,8 @@ inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api
 /decentralized-api/devshardd
+/devshard/devshardctl
+/devshard/devshardd
 chain-venv/
 .inference/
 prod-genesis/
