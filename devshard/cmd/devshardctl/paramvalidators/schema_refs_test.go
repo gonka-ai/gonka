@@ -27,6 +27,26 @@ func TestDereferenceLocalSchemaRefsMergesRefSiblings(t *testing.T) {
 	require.Equal(t, "from sibling", path["description"])
 }
 
+func TestDereferenceLocalSchemaRefsAllowsBooleanSchemaRef(t *testing.T) {
+	schema := parseDocument(t, `{"$defs":{"Anything":true,"Nothing":false},"properties":{"allowed":{"$ref":"#/$defs/Anything"},"blocked":{"$ref":"#/$defs/Nothing"}}}`)
+
+	resolved, err := DereferenceLocalSchemaRefs(schema, 256)
+	require.NoError(t, err)
+
+	properties := resolved["properties"].(map[string]any)
+	require.Equal(t, true, properties["allowed"])
+	require.Equal(t, false, properties["blocked"])
+}
+
+func TestDereferenceLocalSchemaRefsRejectsNonSchemaRefTarget(t *testing.T) {
+	schema := parseDocument(t, `{"$defs":{"S":"justastring"},"properties":{"x":{"$ref":"#/$defs/S"}}}`)
+
+	_, err := DereferenceLocalSchemaRefs(schema, 256)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSchemaRef)
+	require.Contains(t, err.Error(), "object or boolean schema")
+}
+
 func TestDereferenceLocalSchemaRefsEnforcesExpandedNodeBudget(t *testing.T) {
 	schema := parseDocument(t, `{"$defs":{"Obj":{"type":"object","properties":{"x":{"type":"string"}}}},"properties":{"a":{"$ref":"#/$defs/Obj"},"b":{"$ref":"#/$defs/Obj"}}}`)
 

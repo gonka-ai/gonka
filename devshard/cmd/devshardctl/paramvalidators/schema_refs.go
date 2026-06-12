@@ -116,8 +116,9 @@ func (s *dereferenceState) dereferenceSchemaChild(root any, key string, value an
 }
 
 func (s *dereferenceState) mergeRefSiblings(root any, resolvedTarget any, refNode map[string]any) (any, error) {
-	outMap, hasSiblings := resolvedTarget.(map[string]any)
-	if !hasSiblings {
+	outMap, isObjectSchema := resolvedTarget.(map[string]any)
+	if !isObjectSchema {
+		hasSiblings := false
 		for key := range refNode {
 			if key != "$ref" && !isDefinitionContainer(key) {
 				hasSiblings = true
@@ -127,7 +128,10 @@ func (s *dereferenceState) mergeRefSiblings(root any, resolvedTarget any, refNod
 		if hasSiblings {
 			return nil, fmt.Errorf("%w: cannot merge siblings into non-object reference target", ErrSchemaRef)
 		}
-		return resolvedTarget, nil
+		if _, isBooleanSchema := resolvedTarget.(bool); isBooleanSchema {
+			return resolvedTarget, nil
+		}
+		return nil, fmt.Errorf("%w: reference target must resolve to an object or boolean schema", ErrSchemaRef)
 	}
 
 	out := cloneMap(outMap)
