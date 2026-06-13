@@ -46,7 +46,7 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 64, req.MaxTokens)
 	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.NotContains(t, string(body), `"max_tokens"`)
+	require.Contains(t, string(body), `"max_tokens":64`)
 	require.Contains(t, string(body), `"max_completion_tokens":64`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
@@ -126,7 +126,7 @@ func TestPrepareChatRequestBodyAdminAuthKeepsMaxCompletionTokensAboveDefault(t *
 	require.NoError(t, err)
 	require.EqualValues(t, 30_000, chatReq.MaxTokens)
 	require.EqualValues(t, 30_000, chatReq.MaxCompletionTokens)
-	require.NotContains(t, string(body), `"max_tokens"`)
+	require.Contains(t, string(body), `"max_tokens":30000`)
 	require.Contains(t, string(body), `"max_completion_tokens":30000`)
 }
 
@@ -354,6 +354,22 @@ func TestNormalizeChatRequestKimiClampsZeroMaxTokensInsteadOfRejecting(t *testin
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
 	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"])
+}
+
+// Regression (found via e2e against the live Kimi route): a Kimi request that
+// sends only max_completion_tokens must floor it AND mirror into max_tokens, so
+// the thinking_token_budget defaulter (which derives from max_tokens) bounds
+// reasoning. Without the mirror the whole budget is spent thinking → empty content.
+func TestNormalizeChatRequestKimiMaxCompletionTokensZeroMirrorsToMaxTokens(t *testing.T) {
+	body, req, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`), kimiK26ModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"], "max_tokens mirrored + floored")
+	require.EqualValues(t, kimiMaxTokensMin, raw["max_completion_tokens"], "max_completion_tokens floored")
+	require.EqualValues(t, kimiMaxTokensMin, req.MaxTokens)
+	require.Contains(t, raw, "thinking_token_budget", "thinking budget derives from the mirrored max_tokens")
 }
 
 func TestNormalizeChatRequestRejectsNonBoolFlags(t *testing.T) {

@@ -342,18 +342,11 @@ func (ctx *RequestFilterContext) DecodeRequest() error {
 	return nil
 }
 
-// SyncRequestView refreshes ctx.Request after PostLimits rules ran. Why we explicitly
-// preserve the token fields instead of re-reading them from the document:
-//
-//   - When the client sends only `max_completion_tokens` (no `max_tokens`),
-//     `applyOutputTokenLimits` sets `ctx.Request.MaxTokens` from the resolved
-//     `max_completion_tokens` (see request_filters.go:139) but does NOT write a
-//     corresponding `max_tokens` key into the document. Re-reading the document would
-//     therefore reset `req.MaxTokens` to 0.
-//   - In the other three branches of `applyOutputTokenLimits`, the document DOES carry
-//     the same value, so preserving from `ctx.Request` is a no-op. Net effect: this
-//     branch only matters for the max-completion-only path, locked in by
-//     TestNormalizeChatRequestDefaultsAndCapsOutputTokens.
+// SyncRequestView refreshes ctx.Request after PostLimits rules ran. The token fields
+// are preserved from ctx.Request rather than re-read because applyOutputTokenLimits is
+// their source of truth; all four of its branches now write the same max_tokens /
+// max_completion_tokens into the document (the max-completion-only branch mirrors into
+// max_tokens too), so this preservation is a harmless no-op safety net.
 //
 // Other fields are re-read so caps applied by PostLimits rules (for example `n` via
 // paramvalidators.CapUintParameter through the adapter) propagate into the projection.
