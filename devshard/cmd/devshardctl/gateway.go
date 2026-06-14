@@ -56,7 +56,7 @@ type Gateway struct {
 	baseStorageDir        string
 	rotatorStop           chan struct{}
 	rotatorDone           chan struct{}
-	rotationFailures      map[string]struct{}
+	rotationBreakers      map[string]*rotationBreaker
 	finalizeMu            sync.Mutex
 	settlementMu          sync.Mutex
 	settlementInFlight    map[string]struct{}
@@ -478,7 +478,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		settings: GatewaySettings{
 			DefaultModel: defaultModel,
 		},
-		rotationFailures:   make(map[string]struct{}),
+		rotationBreakers:   make(map[string]*rotationBreaker),
 		settlementInFlight: make(map[string]struct{}),
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
@@ -526,6 +526,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	for _, rt := range g.runtimeOrder {
 		g.attachEscrowChecker(rt)
 	}
+	go g.reconcileCommitments(context.Background(), settings)
 	g.startEscrowRotatorIfEnabled()
 	// Settle escrows left pending by a pre-restart drain. Runs synchronously
 	// so the store read completes before the gateway serves traffic; the
@@ -2649,7 +2650,7 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	result, err := txClient.CreateDevshardEscrow(r.Context(), signer, req.Amount, modelID)
+	result, err := txClient.CreateDevshardEscrow(r.Context(), signer, req.Amount, modelID, nil)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
 		return
@@ -2729,7 +2730,7 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 		return record, fmt.Errorf("gateway state is not initialized")
 	}
 	if _, exists := g.runtimes[record.ID]; exists {
-		return record, fmt.Errorf("devshard %s already exists", record.ID)
+		return record, fmt.Errorf("devshard %s: %w", record.ID, errDevshardAlreadyExists)
 	}
 	if record.Model == "" {
 		record.Model = state.Settings.DefaultModel

@@ -20,6 +20,7 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 	require.NoError(t, err)
 
 	var broadcastSeen bool
+	var expectedHash string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cosmos/auth/v1beta1/accounts/" + signer.Address():
@@ -44,18 +45,20 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 			require.NotEmpty(t, txBytes)
 			assertUnorderedTx(t, txBytes)
 			broadcastSeen = true
+			// A real node returns SHA-256(txBytes); the client precomputes the same.
+			expectedHash = txHashFromBytes(txBytes)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "ABC123",
+					"txhash": expectedHash,
 				},
 			})
-		case "/cosmos/tx/v1beta1/txs/ABC123":
+		case "/cosmos/tx/v1beta1/txs/" + expectedHash:
 			require.True(t, broadcastSeen)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "ABC123",
+					"txhash": expectedHash,
 					"events": []map[string]any{{
 						"type": "devshard_escrow_created",
 						"attributes": []map[string]string{{
@@ -81,10 +84,11 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test")
+	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test", nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), result.EscrowID)
-	require.Equal(t, "ABC123", result.TxHash)
+	require.NotEmpty(t, expectedHash)
+	require.Equal(t, expectedHash, result.TxHash)
 	require.Equal(t, signer.Address(), result.Creator)
 }
 
@@ -93,6 +97,7 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	require.NoError(t, err)
 
 	var broadcastSeen bool
+	var expectedHash string
 	broadcastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cosmos/auth/v1beta1/accounts/" + signer.Address():
@@ -116,13 +121,14 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 			require.NoError(t, err)
 			assertUnorderedTx(t, txBytes)
 			broadcastSeen = true
+			expectedHash = txHashFromBytes(txBytes)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "FALLBACK123",
+					"txhash": expectedHash,
 				},
 			})
-		case "/cosmos/tx/v1beta1/txs/FALLBACK123":
+		case "/cosmos/tx/v1beta1/txs/" + expectedHash:
 			http.Error(w, `{"code":2,"message":"transaction indexing is disabled"}`, http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
@@ -131,12 +137,12 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	defer broadcastServer.Close()
 
 	queryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/cosmos/tx/v1beta1/txs/FALLBACK123", r.URL.Path)
+		require.Equal(t, "/cosmos/tx/v1beta1/txs/"+expectedHash, r.URL.Path)
 		require.True(t, broadcastSeen)
 		writeTestJSON(t, w, map[string]any{
 			"tx_response": map[string]any{
 				"code":   0,
-				"txhash": "FALLBACK123",
+				"txhash": expectedHash,
 				"events": []map[string]any{{
 					"type": "devshard_escrow_created",
 					"attributes": []map[string]string{{
@@ -160,10 +166,11 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test")
+	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test", nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(43), result.EscrowID)
-	require.Equal(t, "FALLBACK123", result.TxHash)
+	require.NotEmpty(t, expectedHash)
+	require.Equal(t, expectedHash, result.TxHash)
 	require.Equal(t, signer.Address(), result.Creator)
 }
 

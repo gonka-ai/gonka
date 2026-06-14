@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,7 +115,39 @@ func NewRESTChainTxClient(cfg RESTChainTxConfig) (*RESTChainTxClient, error) {
 	}, nil
 }
 
-func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string) (*CreateDevshardEscrowResult, error) {
+// txHashFromBytes returns the cosmos tx hash (uppercase-hex SHA-256 of the tx
+// bytes), computable before broadcast and equal to the hash the node returns.
+func txHashFromBytes(txBytes []byte) string {
+	sum := sha256.Sum256(txBytes)
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// GetTxEscrowID resolves a create tx hash to its escrow_id in one lookup;
+// found=false when the tx is absent or failed (no escrow), error when unreachable.
+func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (uint64, bool, error) {
+	var lastErr error
+	for _, baseURL := range c.txQueryBaseURLs() {
+		var payload txResponseEnvelope
+		err := c.getJSONFromBaseURL(ctx, baseURL, "/cosmos/tx/v1beta1/txs/"+url.PathEscape(txHash), &payload)
+		if err != nil {
+			if isNotFoundError(err) {
+				return 0, false, nil // tx never landed → no escrow created
+			}
+			lastErr = fmt.Errorf("%s: %w", baseURL, err)
+			continue
+		}
+		if payload.TxResponse.Code != 0 {
+			return 0, false, nil // tx committed but failed → no escrow created
+		}
+		if escrowID, ok := payload.TxResponse.createdEscrowID(); ok {
+			return escrowID, true, nil
+		}
+		lastErr = fmt.Errorf("tx %s committed via %s but escrow_id event was not found", txHash, baseURL)
+	}
+	return 0, false, lastErr
+}
+
+func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string, onPrepared func(txHash string) error) (*CreateDevshardEscrowResult, error) {
 	if c == nil {
 		return nil, fmt.Errorf("chain tx client is nil")
 	}
@@ -145,9 +179,19 @@ func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *si
 	if err != nil {
 		return nil, err
 	}
-	txHash, err := c.broadcastTx(ctx, txBytes)
+	// Record the intent (precomputed hash) before the irreversible broadcast; abort if it fails.
+	txHash := txHashFromBytes(txBytes)
+	if onPrepared != nil {
+		if err := onPrepared(txHash); err != nil {
+			return nil, fmt.Errorf("record escrow create intent before broadcast: %w", err)
+		}
+	}
+	broadcastHash, err := c.broadcastTx(ctx, txBytes)
 	if err != nil {
 		return nil, err
+	}
+	if !strings.EqualFold(broadcastHash, txHash) {
+		return nil, fmt.Errorf("tx hash mismatch: precomputed %s, node returned %s", txHash, broadcastHash)
 	}
 	escrowID, err := c.waitForCreatedEscrowID(ctx, txHash)
 	if err != nil {
@@ -330,6 +374,16 @@ func (c *RESTChainTxClient) getJSONFromBaseURL(ctx context.Context, baseURL, pat
 		return fmt.Errorf("GET %s status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// isNotFoundError reports whether a chain GET failed with 404 / not-found rather
+// than a transient error.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "status 404") || strings.Contains(s, "not found")
 }
 
 func (c *RESTChainTxClient) postJSON(ctx context.Context, path string, in any, out any) error {
