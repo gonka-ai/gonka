@@ -503,8 +503,14 @@ func (g *Gateway) clearCommitment(txHash string) {
 	}
 }
 
+// commitmentReconcileGrace is how long a not-found tx is given before the
+// commitment is cleared: the unordered-tx TTL plus margin for index lag. Until
+// it elapses, a 404 may be a pending/unindexed tx that still creates an escrow.
+const commitmentReconcileGrace = defaultUnorderedTxTTL + 2*time.Minute
+
 // reconcileCommitments recovers escrows from pending commitments via tx hash:
-// found → persist + clear; tx absent → clear; chain error → keep for next pass.
+// found → persist + clear; committed-failed → clear; not-found → clear only once
+// the tx can no longer land; chain error → keep for next pass.
 func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySettings) {
 	if g == nil || g.store == nil {
 		return
@@ -516,12 +522,23 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 	}
 	for _, c := range commitments {
 		escrowID, found, err := gatewayQueryTxEscrowID(ctx, settings, c.TxHash)
+		if errors.Is(err, errTxNotFound) {
+			// Tx not on chain. An unordered tx can still land until its TTL
+			// elapses, so a fresh 404 is likely mempool/index lag — keep it.
+			if commitmentTxMayStillLand(c) {
+				log.Printf("escrow_commitment_tx_pending tx=%s model=%q", c.TxHash, c.Model)
+				continue
+			}
+			log.Printf("escrow_commitment_no_escrow tx=%s model=%q clearing=true", c.TxHash, c.Model)
+			g.clearCommitment(c.TxHash)
+			continue
+		}
 		if err != nil {
 			log.Printf("escrow_commitment_tx_query_failed tx=%s model=%q error=%v", c.TxHash, c.Model, err)
 			continue // chain unreachable — retry next pass
 		}
 		if !found {
-			log.Printf("escrow_commitment_no_escrow tx=%s model=%q clearing=true", c.TxHash, c.Model)
+			log.Printf("escrow_commitment_tx_failed tx=%s model=%q clearing=true", c.TxHash, c.Model)
 			g.clearCommitment(c.TxHash)
 			continue
 		}
@@ -533,6 +550,17 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 		g.resetRotationBreaker(c.Model, c.Role)
 		log.Printf("escrow_commitment_recovered tx=%s escrow=%d model=%q role=%s", c.TxHash, escrowID, c.Model, c.Role)
 	}
+}
+
+// commitmentTxMayStillLand reports whether a not-found tx could yet be committed
+// (within the unordered-tx window) — if so, the commitment must be kept. An
+// unparseable timestamp is treated as still-pending so we never clear too early.
+func commitmentTxMayStillLand(c GatewayEscrowCommitment) bool {
+	createdAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(c.CreatedAt))
+	if err != nil {
+		return true
+	}
+	return time.Since(createdAt) <= commitmentReconcileGrace
 }
 
 func defaultQueryTxEscrowID(ctx context.Context, settings GatewaySettings, txHash string) (uint64, bool, error) {

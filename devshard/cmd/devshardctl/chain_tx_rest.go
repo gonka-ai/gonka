@@ -122,6 +122,10 @@ func txHashFromBytes(txBytes []byte) string {
 	return strings.ToUpper(hex.EncodeToString(sum[:]))
 }
 
+// errTxNotFound marks a tx that is not on chain (404) — distinct from one that
+// committed but failed. The tx may still land until its unordered TTL elapses.
+var errTxNotFound = errors.New("tx not found on chain")
+
 // GetTxEscrowID resolves a create tx hash to its escrow_id in one lookup;
 // found=false when the tx is absent or failed (no escrow), error when unreachable.
 func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (uint64, bool, error) {
@@ -131,7 +135,7 @@ func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (u
 		err := c.getJSONFromBaseURL(ctx, baseURL, "/cosmos/tx/v1beta1/txs/"+url.PathEscape(txHash), &payload)
 		if err != nil {
 			if isNotFoundError(err) {
-				return 0, false, nil // tx never landed → no escrow created
+				return 0, false, errTxNotFound // not on chain (yet) — caller decides by age
 			}
 			lastErr = fmt.Errorf("%s: %w", baseURL, err)
 			continue

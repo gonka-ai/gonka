@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,8 +189,9 @@ func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 	assert.Empty(t, commitments)
 }
 
-// A commitment whose tx never landed (no escrow on chain) is cleared.
-func TestReconcileCommitmentsClearsWhenTxAbsent(t *testing.T) {
+// A commitment whose tx committed but failed (no escrow created) is cleared
+// immediately — the failure is final, the tx can never produce an escrow.
+func TestReconcileCommitmentsClearsWhenTxCommittedFailed(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
 	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXEEE", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, nil })
@@ -197,7 +199,41 @@ func TestReconcileCommitmentsClearsWhenTxAbsent(t *testing.T) {
 	g.reconcileCommitments(context.Background(), settings)
 
 	commitments, _ := store.LoadCommitments()
-	assert.Empty(t, commitments, "commitment cleared when no escrow exists on chain")
+	assert.Empty(t, commitments, "commitment cleared when tx committed but created no escrow")
+}
+
+// A fresh commitment whose tx is not (yet) on chain must be KEPT: an unordered
+// tx can still land until its TTL elapses, and a fresh 404 is usually mempool /
+// index lag, not a failed broadcast. Clearing now would orphan a real escrow.
+func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXFRESH", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
+
+	g.reconcileCommitments(context.Background(), settings)
+
+	commitments, err := store.LoadCommitments()
+	require.NoError(t, err)
+	require.Len(t, commitments, 1, "fresh not-found commitment retained until its tx can no longer land")
+	assert.Equal(t, "TXFRESH", commitments[0].TxHash)
+}
+
+// Once the commitment is older than the unordered-tx window, a not-found tx can
+// never land — only then is it safe to clear.
+func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	old := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339Nano)
+	_, err := store.db.Exec(`
+		INSERT INTO escrow_rotation_commitments (tx_hash, model, role, epoch, private_key_env, block_height, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"TXOLD", "Qwen/Test", rotationRoleTemp, 0, "", 0, old)
+	require.NoError(t, err)
+	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
+
+	g.reconcileCommitments(context.Background(), settings)
+
+	commitments, _ := store.LoadCommitments()
+	assert.Empty(t, commitments, "commitment cleared once the unordered tx can no longer land")
 }
 
 // A transient chain error leaves the commitment for the next pass.
