@@ -7,6 +7,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | HTTP / behavior | Common cause | Anchor |
 |-----------------|--------------|--------|
 | 400 `"<param>" is currently rejected by the Gonka network` | non-allowlist parameter | [#reject-unknown-param](#reject-unknown-param) |
+| 400 `...name must be a non-empty string` on a whitespace-only name | names are trimmed before the non-empty check | [#reject-whitespace-names](#reject-whitespace-names) |
 | 400 `messages[N].tool_calls[M].id is duplicated` | Kimi-K2.6 model-side bug | [#reject-duplicate-tool-call-id](#reject-duplicate-tool-call-id) |
 | 400 on `tags` | undocumented field | [#reject-tags](#reject-tags) |
 | 400 on `guided_json` / `guided_regex` / etc. | vLLM-native structured decoding | [#reject-guided-decoding](#reject-guided-decoding) |
@@ -455,17 +456,29 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ---
 
-### #reject-structured_outputs-minimax
+### #accept-structured_outputs-minimax
 
-**What**: HTTP 400 on `structured_outputs` when the route resolves to `MiniMaxAI/MiniMax-M2.7`.
+**What**: `structured_outputs` is accepted on the `MiniMaxAI/MiniMax-M2.7` route (not rejected). Only Kimi-K2.6 rejects the field.
 
-**Why**: Same pattern as Kimi. The MiniMax OpenAI-Compatible API ([[MiniMax-5]](references.md#minimax)) does not declare `structured_outputs` in its surface; forwarding the field would lean on the upstream vLLM `minimax_m2` path which has known parser fragility ([[vLLM-28]](references.md#vllm), [[SGLang-2]](references.md#sglang)). Mirrors the Kimi policy.
+**Why**: The vLLM structured-output manager actively enforces the constraint on this route — verified end-to-end with paired discriminating/control requests: the `json`, `regex`, `choice`, `grammar`, and `json_object` kinds each steered output away from the natural answer the control produced. The engine holds the constraint, so there is no need to gate the field at the gateway.
 
-**When to restore**: when MiniMax adds `structured_outputs` to their declared API contract.
+**Caveat — `structural_tag` must be the OBJECT form**: a JSON-encoded *string* `structural_tag` crashes vLLM with an HTTP 500 on the request handler, so the gateway rejects the string form with a 400 on every route. Send the object shape (`{"type":"structural_tag","structures":[...],"triggers":[...]}`).
 
-**Fix (client-side)**: use `response_format` with `type: "json_schema"` for M2.7 (xgrammar-based, supported on this route via the universal contract).
+**Caveat — `response_format` conflict**: `structured_outputs` still cannot be combined with `response_format` (see [#reject-structured_outputs-with-response_format](#reject-structured_outputs-with-response_format)).
 
 **Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #reject-whitespace-names
+
+**What**: HTTP 400 on a name field that is present but contains only whitespace — e.g. `tools[].function.name`, `tool_choice.function.name`, `response_format.json_schema.name`, or a MiniMax tool-result entry `name`. The error reads `...name must be a non-empty string`.
+
+**Why**: Every name validator trims with `strings.TrimSpace` *before* its non-empty check. Without the trim a whitespace-only name passes the gateway, reaches the engine as an effectively empty / nonexistent tool or schema name, and the request produces no usable output — it hangs until the deadline (0 bytes) and ties up a request slot/escrow. This is the same hang class as `max_tokens: 0` and `n: 0`. The engine is not crashed; the request just never completes.
+
+**Maintainer note**: when adding any new name/identifier field to a validator, check it with `strings.TrimSpace(value) == ""` (or `messagevalidators.RequiredNonEmptyString`), never a bare `== ""` — a bare empty-string check is a whitespace-bypass that re-opens this hang.
+
+**Fix (client-side)**: send a real (non-blank) name.
 
 ---
 

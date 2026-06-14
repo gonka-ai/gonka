@@ -65,6 +65,15 @@ func TestMinimaxToolMessage_RejectsBlankName(t *testing.T) {
 	}
 }
 
+// A whitespace-only name must be rejected too: it otherwise passes the gateway,
+// reaches the MiniMax tool parser, and hangs the request until the deadline.
+func TestMinimaxToolMessage_RejectsWhitespaceName(t *testing.T) {
+	content := []any{map[string]any{"name": "   ", "type": "text", "text": "result"}}
+	if err := validatorForTest().Validate(content); !errors.Is(err, ErrMinimaxToolEntryShape) {
+		t.Fatalf("expected ErrMinimaxToolEntryShape, got %v", err)
+	}
+}
+
 func TestMinimaxToolMessage_RejectsOverlongName(t *testing.T) {
 	v := MinimaxToolMessage{MaxEntries: 16, NameMaxLen: 8, TextMaxSize: 1024}
 	content := []any{map[string]any{"name": "way_too_long_function_name", "type": "text", "text": "ok"}}

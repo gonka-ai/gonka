@@ -3,6 +3,7 @@ package messagevalidators
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // MiniMax-M2.7 tool result messages carry per-call results as an array of
@@ -54,7 +55,7 @@ func (v MinimaxToolMessage) validateEntry(index int, raw any) error {
 		}
 	}
 	name, ok := entry["name"].(string)
-	if !ok || name == "" {
+	if !ok || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%w: [%d].name must be a non-empty string", ErrMinimaxToolEntryShape, index)
 	}
 	if v.NameMaxLen > 0 && len(name) > v.NameMaxLen {

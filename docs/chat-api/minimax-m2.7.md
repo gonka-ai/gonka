@@ -70,7 +70,7 @@ Infrastructure-level constraints that must hold BEFORE this route is served — 
 | Field | Status | Note |
 |-------|--------|------|
 | `response_format` | ✅ supported (see universal) | xgrammar via vLLM; full schema bounds enforced. Compatible with thinking models since xgrammar runs on the `content`-emission phase, after thinking. |
-| `structured_outputs` | ❌ **rejected on this route** | MiniMax's OpenAI-compatible API does not declare the vLLM-native `structured_outputs` envelope ([[MiniMax-5]](references.md#minimax)); forwarding would lean on parser paths with known fragility ([[vLLM-28]](references.md#vllm), [[SGLang-2]](references.md#sglang)). Mirrors the Kimi-K2.6 policy. See [reject-structured_outputs-minimax](troubleshooting.md#reject-structured_outputs-minimax). |
+| `structured_outputs` | ✅ **accepted on this route** | vLLM enforces the constraint on M2.7 (verified with discriminating/control requests across `json`/`regex`/`choice`/`grammar`/`json_object`). `structural_tag` must be the object form — the JSON-encoded string form is rejected (crashes the engine). See [accept-structured_outputs-minimax](troubleshooting.md#accept-structured_outputs-minimax). |
 
 ## Known model-side bugs we work around
 

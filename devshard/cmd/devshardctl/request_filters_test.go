@@ -2811,16 +2811,17 @@ func TestNormalizeForMinimaxPassesReasoningSplitTopLevel(t *testing.T) {
 }
 
 func TestNormalizeStripsReasoningSplitOnDefaultRoute(t *testing.T) {
-	// Kimi/Qwen vLLM serves do not know reasoning_split; gateway strips it so
-	// stray clients don't trip an upstream parser error.
-	body := `{"messages":[{"role":"user","content":"hi"}],"reasoning_split":true}`
-	out, _, err := normalizeChatRequest([]byte(body))
-	require.NoError(t, err)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(out, &raw))
-	so, _ := raw["structured_outputs"].(map[string]any)
-	require.NotContains(t, so, "_backend")
-	require.NotContains(t, so, "_backend_was_auto")
+	// Kimi/Qwen vLLM servers do not know reasoning_split; the gateway strips it so
+	// stray clients don't trip an upstream parser error. Assert it is actually gone
+	// on both the empty default route and an explicit non-MiniMax (Kimi) route.
+	for _, routedModel := range []string{"", kimiK26ModelID} {
+		body := `{"messages":[{"role":"user","content":"hi"}],"reasoning_split":true}`
+		out, _, err := normalizeChatRequestForModel([]byte(body), routedModel)
+		require.NoError(t, err)
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(out, &raw))
+		require.NotContains(t, raw, "reasoning_split", "route=%q", routedModel)
+	}
 }
 
 func TestNormalizeForMinimaxPreservesReasoningDetailsOnAssistantTurn(t *testing.T) {
