@@ -295,6 +295,42 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
 				},
 				{
+					RpcMethod:      "MaintenanceCredit",
+					Use:            "maintenance-credit [participant]",
+					Short:          "Query maintenance credit for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceScheduled",
+					Use:            "maintenance-scheduled [participant]",
+					Short:          "Query scheduled maintenance windows for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceActive",
+					Use:            "maintenance-active",
+					Short:          "Query all currently active maintenance windows",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "MaintenanceStatus",
+					Use:            "maintenance-status [participant]",
+					Short:          "Query maintenance status for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceConcurrency",
+					Use:            "maintenance-concurrency [target-height]",
+					Short:          "Query concurrent reserved participant count and power at a given height",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
+				},
+				{
+					RpcMethod:      "MaintenanceSchedulability",
+					Use:            "maintenance-schedulability [participant] [start-height] [duration-blocks]",
+					Short:          "Query whether a proposed maintenance window is schedulable",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "start_height"}, {ProtoField: "duration_blocks"}},
+				},
+				{
 					RpcMethod:      "PoCDelegation",
 					Use:            "poc-delegation [participant] [model-id]",
 					Short:          "Query PoC delegation state for a participant",

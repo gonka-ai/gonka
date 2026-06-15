@@ -4,6 +4,17 @@ VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= dev
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
+PLATFORM ?= linux/amd64
+GOOS ?= linux
+GOARCH ?= amd64
+UPGRADE_ARCHES ?= amd64 arm64
+ifdef GITHUB_ACTIONS
+# PR-comment integration runs load the reusable workflow from main, so keep
+# upgrade test artifacts on amd64 unless a workflow explicitly overrides this.
+UPGRADE_TEST_ARCHES ?= amd64
+else
+UPGRADE_TEST_ARCHES ?= $(UPGRADE_ARCHES)
+endif
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
@@ -120,9 +131,9 @@ devshardctl-build:
 devshardd-build:
 	@echo "Building devshardd..."
 	@mkdir -p build
-	@$(_DEVSHARDD_BUILD_CMD) --platform linux/amd64 --target builder \
-		--build-arg GOOS=linux \
-		--build-arg GOARCH=amd64 \
+	@$(_DEVSHARDD_BUILD_CMD) --platform $(PLATFORM) --target builder \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		-f decentralized-api/Dockerfile . \
@@ -194,11 +205,19 @@ local-build: api-local-build node-local-build api-test node-test
 	@rm -f api-test-output.log node-test-output.log
 
 build-for-upgrade:
-	@rm public-html/v2/checksums.txt || true
-	@rm public-html/v2/urls.txt || true
-	@make -C inference-chain build-for-upgrade
-	@make -C decentralized-api build-for-upgrade
+	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@for arch in $(UPGRADE_ARCHES); do \
+		make -C inference-chain build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
+		make -C decentralized-api build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
+	done
 
 build-for-upgrade-tests:
-	@make -C inference-chain build-for-upgrade TESTS=1
-	@make -C decentralized-api build-for-upgrade TESTS=1
+	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@for arch in $(UPGRADE_TEST_ARCHES); do \
+		make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
+		make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
+	done

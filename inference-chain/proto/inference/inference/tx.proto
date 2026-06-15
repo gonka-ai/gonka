@@ -12,6 +12,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/devshard_escrow.proto";
+import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -61,6 +62,8 @@ service Msg {
   rpc CreateDevshardEscrow             (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
   rpc SettleDevshardEscrow             (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
   rpc SetDevshardRequestsEnabled       (MsgSetDevshardRequestsEnabled) returns (MsgSetDevshardRequestsEnabledResponse);
+  rpc ScheduleMaintenance              (MsgScheduleMaintenance) returns (MsgScheduleMaintenanceResponse);
+  rpc CancelMaintenance                (MsgCancelMaintenance) returns (MsgCancelMaintenanceResponse);
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
@@ -514,3 +517,25 @@ message MsgSetDevshardRequestsEnabled {
 }
 
 message MsgSetDevshardRequestsEnabledResponse {}
+
+// MsgScheduleMaintenance schedules a maintenance window for a participant.
+message MsgScheduleMaintenance {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator       = 1;
+  string participant   = 2;
+  int64  start_height  = 3;
+  uint64 duration_blocks = 4;
+}
+
+message MsgScheduleMaintenanceResponse {
+  uint64 reservation_id = 1;
+}
+
+// MsgCancelMaintenance cancels a not-yet-active maintenance reservation.
+message MsgCancelMaintenance {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  uint64 reservation_id = 2;
+}
+
+message MsgCancelMaintenanceResponse {}

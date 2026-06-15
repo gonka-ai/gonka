@@ -49,3 +49,4 @@ run-parallel-tests/
 inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
+/inference-chain/.docker-context/

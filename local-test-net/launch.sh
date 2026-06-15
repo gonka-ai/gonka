@@ -37,7 +37,7 @@ sleep 40
 # seed node parameters for both joining nodes
 export SEED_API_URL="http://genesis-api:9000"
 export SEED_NODE_RPC_URL="http://genesis-node:26657"
-export SEED_NODE_P2P_URL="http://genesis-node:26656"
+export SEED_NODE_P2P_URL="tcp://genesis-node:26656"
 export IS_GENESIS=false
 
 # join node 'join1'
@@ -55,7 +55,7 @@ export P2P_PORT=8201
 export PROXY_PORT=$PUBLIC_SERVER_PORT
 export PUBLIC_URL="http://${KEY_NAME}-proxy"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
+export P2P_EXTERNAL_ADDRESS="${KEY_NAME}-node:26656"
 ./launch_add_network_node.sh
 
 # join node 'join2'
@@ -72,5 +72,5 @@ export P2P_PORT=8202
 export PROXY_PORT=$PUBLIC_SERVER_PORT
 export PUBLIC_URL="http://${KEY_NAME}-proxy"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
+export P2P_EXTERNAL_ADDRESS="${KEY_NAME}-node:26656"
 ./launch_add_network_node.sh

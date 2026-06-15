@@ -33,6 +33,7 @@ import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
 import "inference/inference/devshard_escrow.proto";
+import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 
@@ -447,6 +448,36 @@ service Query {
 
   rpc PoCDelegation (QueryPoCDelegationRequest) returns (QueryPoCDelegationResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_delegation/{participant}";
+  }
+
+  // Queries the maintenance credit balance for a participant.
+  rpc MaintenanceCredit (QueryMaintenanceCreditRequest) returns (QueryMaintenanceCreditResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_credit/{participant}";
+  }
+
+  // Queries scheduled maintenance windows for a participant.
+  rpc MaintenanceScheduled (QueryMaintenanceScheduledRequest) returns (QueryMaintenanceScheduledResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_scheduled/{participant}";
+  }
+
+  // Queries all currently active maintenance windows.
+  rpc MaintenanceActive (QueryMaintenanceActiveRequest) returns (QueryMaintenanceActiveResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_active";
+  }
+
+  // Queries the full maintenance status for a participant at the current height.
+  rpc MaintenanceStatus (QueryMaintenanceStatusRequest) returns (QueryMaintenanceStatusResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_status/{participant}";
+  }
+
+  // Queries the concurrent reserved participant count and power at a given height.
+  rpc MaintenanceConcurrency (QueryMaintenanceConcurrencyRequest) returns (QueryMaintenanceConcurrencyResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_concurrency/{height}";
+  }
+
+  // Queries whether a proposed maintenance window is schedulable.
+  rpc MaintenanceSchedulability (QueryMaintenanceSchedulabilityRequest) returns (QueryMaintenanceSchedulabilityResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_schedulability/{participant}/{start_height}/{duration_blocks}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1199,4 +1230,61 @@ message QueryGetDevshardHostEpochStatsRequest {
 message QueryGetDevshardHostEpochStatsResponse {
   DevshardHostEpochStats stats = 1;
   bool found = 2;
+}
+
+// Maintenance query messages
+
+message QueryMaintenanceCreditRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceCreditResponse {
+  uint64 credit_blocks = 1;
+  bool   found         = 2;
+}
+
+message QueryMaintenanceScheduledRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceScheduledResponse {
+  MaintenanceReservation reservation = 1;
+  bool found = 2;
+}
+
+message QueryMaintenanceActiveRequest {}
+
+message QueryMaintenanceActiveResponse {
+  repeated MaintenanceReservation reservations = 1;
+}
+
+message QueryMaintenanceStatusRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceStatusResponse {
+  MaintenanceState state = 1;
+  MaintenanceReservation active_reservation    = 2;
+  MaintenanceReservation scheduled_reservation = 3;
+  bool found = 4;
+}
+
+message QueryMaintenanceConcurrencyRequest {
+  int64 height = 1;
+}
+
+message QueryMaintenanceConcurrencyResponse {
+  uint32 concurrent_count     = 1;
+  int64  concurrent_power_bps = 2;
+}
+
+message QueryMaintenanceSchedulabilityRequest {
+  string participant     = 1;
+  int64  start_height    = 2;
+  uint64 duration_blocks = 3;
+}
+
+message QueryMaintenanceSchedulabilityResponse {
+  bool   schedulable        = 1;
+  string rejection_reason   = 2;
 }

@@ -7,6 +7,9 @@ VERSION ?= $(shell git describe --always)
 BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+PLATFORM ?= linux/amd64
+GOOS ?= linux
+GOARCH ?= amd64
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
@@ -166,30 +169,29 @@ docker-push:
 	fi
 
 build-for-upgrade:
-	$(eval PLATFORM=linux/amd64)
-	$(eval GOOS=linux)
-	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
 	$(DOCKER_BUILD_UPGRADE)
-	@echo "--> clearing out ../public-html/v2/inferenced"
-	@rm -rf ../public-html/v2/inferenced/*
+	@echo "--> staging inferenced binary and dependencies for $(GOARCH)"
 	@mkdir -p ../public-html/v2/inferenced
-	@echo "--> copying built inferenced binary and dependencies to ../public-html/v2/inferenced/"
-	@cp ./output/build_output/* ../public-html/v2/inferenced/
+	@rm -rf ./output/upgrade-package-$(GOARCH)
+	@mkdir -p ./output/upgrade-package-$(GOARCH)
+	@cp ./output/build_output/* ./output/upgrade-package-$(GOARCH)/
+	@echo "--> zipping inferenced binary with dependencies for $(GOARCH)"
+	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC find ./output/upgrade-package-$(GOARCH) -type f -exec touch -t 200001010000 {} \;
+	@archive_path="$$(pwd)/../public-html/v2/inferenced/inferenced-$(GOARCH).zip"; \
+		rm -f "$$archive_path"; \
+		cd ./output/upgrade-package-$(GOARCH) && zip -X -r "$$archive_path" .
+	@echo "--> generating shasum for inferenced-$(GOARCH).zip"
+	@shasum -a 256 ../public-html/v2/inferenced/inferenced-$(GOARCH).zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@checksum=$$(shasum -a 256 ../public-html/v2/inferenced/inferenced-$(GOARCH).zip | awk '{print $$1}'); \
+		echo "inferenced-$(GOARCH).zip $$checksum" >> ../public-html/v2/checksums.txt
 	@echo "--> cleaning up intermediate build output"
 	@rm -rf ./output
-	@echo "--> zipping inferenced binary with dependencies"
-	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC find ../public-html/v2/inferenced -type f -exec touch -t 200001010000 {} \;
-	@cd ../public-html/v2/inferenced && zip -X -r inferenced-amd64.zip .
-	@echo "--> generating shasum for inferenced-amd64.zip"
-	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
-	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
 
-# Disabled ARM builds as requested
 build-for-upgrade-arm:
-	@echo "ARM builds disabled"
+	@$(MAKE) build-for-upgrade PLATFORM=linux/arm64 GOOS=linux GOARCH=arm64
 
 #################################################
 # CROSS-COMPILATION SECTION
