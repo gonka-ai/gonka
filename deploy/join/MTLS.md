@@ -39,13 +39,20 @@ aborts the handshake. There's no silent fallback to plain HTTP.
 
 ## Remote ML node (separate machine)
 
+Put each machine's public IP in its cert SAN (the SAN must match the address the
+other side connects to).
+
 ```bash
-DAPI_SANS="DNS:api,DNS:dapi.example.com" MLNODE_SANS="DNS:inference,DNS:mlnode.example.com" ./gen-mlnode-certs.sh
+DAPI_SANS="DNS:api,IP:<DAPI_PUBLIC_IP>" MLNODE_SANS="DNS:inference,IP:<MLNODE_PUBLIC_IP>" ./gen-mlnode-certs.sh
 ```
 
-Copy `mtls-certs/` to both machines, set
-`export MTLS_POC_CALLBACK_URL=https://dapi.example.com:9100` on the DAPI host,
-and use the ML node's public name as `host` in `node-config.json`.
+Then:
+1. Copy `mtls-certs/` to both machines.
+2. On the DAPI host: `export MTLS_POC_CALLBACK_URL=https://<DAPI_PUBLIC_IP>:9100` (must be `https`).
+3. Use the ML node's public IP as `host` in `node-config.json`.
+
+Hostnames work the same way: use `DNS:<name>` in the SANs and the matching names
+in `MTLS_POC_CALLBACK_URL` / `node-config.json`.
 
 ## Rotate certs (only on key compromise / host migration)
 
