@@ -15,16 +15,6 @@ import (
 var (
 	// WITHDRAW_OPERATION hash - calculated once at package initialization using keccak256
 	withdrawOperationHash = keccak256Hash([]byte("WITHDRAW_OPERATION"))
-
-	// Chain ID mapping: string identifier → numeric chain ID
-	chainIdMapping = map[string]string{
-		"ethereum": "1",        // Ethereum mainnet
-		"sepolia":  "11155111", // Ethereum Sepolia testnet
-		"polygon":  "137",      // Polygon mainnet
-		"mumbai":   "80001",    // Polygon Mumbai testnet
-		"arbitrum": "42161",    // Arbitrum One
-		"optimism": "10",       // Optimism mainnet
-	}
 )
 
 func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.MsgRequestBridgeWithdrawal) (*types.MsgRequestBridgeWithdrawalResponse, error) {
@@ -67,10 +57,10 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	}
 
 	// 7. Prepare BLS signature data according to Ethereum bridge format
-	// Get numeric chain ID from metadata's string chain identifier
-	destinationChainId, found := chainIdMapping[bridgeWrappedTokenContract.ChainId]
-	if !found {
-		return nil, fmt.Errorf("unsupported destination chain: %s", bridgeWrappedTokenContract.ChainId)
+	// Resolve numeric EVM chain ID from destination bridge registration (prefer sepolia over generic "ethereum").
+	destinationChainId, err := k.resolveDestinationEVMChainID(ctx, msg.DestinationBridgeAddress, bridgeWrappedTokenContract.ChainId)
+	if err != nil {
+		return nil, err
 	}
 
 	// Prepare data for BLS signing - only the parts after epochId/chainId/requestId

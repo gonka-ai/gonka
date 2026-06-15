@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -61,6 +62,39 @@ func chainIdToBytes32(chainId string) ([]byte, error) {
 	}
 	bigInt.FillBytes(chainIdBytes) // Big endian format
 	return chainIdBytes, nil
+}
+
+// bridgeEVMChainIDMapping maps bridge chain names to numeric EVM chain IDs for BLS signing.
+// Wrapped token metadata may use the generic bridge-geth label "ethereum" even on Sepolia;
+// resolveDestinationEVMChainID prefers specific network names when the bridge is registered there.
+var bridgeEVMChainIDMapping = map[string]string{
+	"ethereum": "1",
+	"sepolia":  "11155111",
+	"polygon":  "137",
+	"mumbai":   "80001",
+	"arbitrum": "42161",
+	"optimism": "10",
+}
+
+// resolveDestinationEVMChainID returns the numeric EVM chain ID for BLS signature hashing.
+// When a bridge contract is registered under a specific testnet/mainnet name (e.g. sepolia),
+// that mapping takes precedence over the wrapped token's logical chain label (often "ethereum").
+func (k Keeper) resolveDestinationEVMChainID(ctx context.Context, bridgeAddress, fallbackChain string) (string, error) {
+	preferredChains := []string{"sepolia", "mumbai", "arbitrum", "optimism", "polygon"}
+	for _, chain := range preferredChains {
+		if !k.IsBridgeContractAddress(ctx, chain, bridgeAddress) {
+			continue
+		}
+		if id, ok := bridgeEVMChainIDMapping[chain]; ok {
+			return id, nil
+		}
+	}
+
+	id, ok := bridgeEVMChainIDMapping[fallbackChain]
+	if !ok {
+		return "", fmt.Errorf("unsupported destination chain: %s", fallbackChain)
+	}
+	return id, nil
 }
 
 // amountToBytes32 converts an amount string to bytes32 format (uint256)
