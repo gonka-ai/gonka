@@ -102,6 +102,20 @@ func StatePrefixCatalog() []StatePrefix {
 		{Name: "GenesisOnlyData", Bytes: []byte(GenesisOnlyDataKey)},
 		{Name: "MLNodeVersion", Bytes: []byte(MLNodeVersionKey)},
 
+		// Developer inference statistics indexes. String literals mirror the
+		// constants in keeper/developer_stats_store.go (referenced here directly
+		// to avoid a types->keeper import cycle). These indexes are written per
+		// inference and are NOT pruned, so they dominate state size on busy
+		// chains; keep them labeled so state-stats attributes them precisely.
+		{Name: "DeveloperStatsByInference", Bytes: []byte("stats/developers/inference")},
+		{Name: "DeveloperStatsByEpoch", Bytes: []byte("stats/developers/epoch")},
+		{Name: "DeveloperStatsByTime", Bytes: []byte("stats/developers/time")},
+		{Name: "DeveloperStatsByModel", Bytes: []byte("stats/model/inference")},
+
+		// Hardware node registrations. Literal mirrors
+		// keeper.HardwareNodesKeysPrefix (same import-cycle reason as above).
+		{Name: "HardwareNodes", Bytes: []byte("HardwareNodesValues/value/")},
+
 		// Removed training feature: raw string-key prefixes.
 		{Name: "TrainingTask", Bytes: []byte(TrainingTaskKeyPrefix), Legacy: true},
 		{Name: "TrainingTaskSequence", Bytes: []byte(TrainingTaskSequenceKey), Legacy: true},

@@ -56,6 +56,16 @@ func TestMatchStatePrefixLongestWins(t *testing.T) {
 	require.NotNil(t, match)
 	require.Equal(t, "Params", match.Name)
 
+	// Developer-stats indexes (the dominant live state on mainnet) must be
+	// attributed to their own buckets rather than left unmatched.
+	match = MatchStatePrefix(catalog, append([]byte("stats/developers/inference"), []byte("inf-id")...))
+	require.NotNil(t, match)
+	require.Equal(t, "DeveloperStatsByInference", match.Name)
+
+	match = MatchStatePrefix(catalog, append([]byte("stats/model/inference"), []byte("k")...))
+	require.NotNil(t, match)
+	require.Equal(t, "DeveloperStatsByModel", match.Name)
+
 	// An unknown leading byte returns no match.
 	require.Nil(t, MatchStatePrefix(catalog, []byte{0xff, 0x00}))
 }
