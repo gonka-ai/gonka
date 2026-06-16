@@ -115,7 +115,8 @@ services:
       - JWT_SECRET_PATH=/data/jwt/jwt.hex
       - BRIDGE_POSTBLOCK=http://api:9200/admin/v1/bridge/block
       - BRIDGE_GETADDRESSES=http://api:9000/v1/bridge/addresses
-      - BEACON_STATE_URL=https://beaconstate.info/
+      - ETHEREUM_NETWORK=${ETHEREUM_NETWORK:-sepolia}
+      - BEACON_STATE_URL=${BEACON_STATE_URL:-https://sepolia.checkpoint-sync.ethpandaops.io}
       - PERSISTENT_DB_DIR=/persistent-db
     volumes:
       - .inference-eth/geth:/data/geth

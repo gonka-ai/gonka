@@ -512,6 +512,10 @@ def create_env_override():
     
     is_test_net = CONFIG_ENV.get("IS_TEST_NET", "true")
     chain_id = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    ethereum_network = CONFIG_ENV.get("ETHEREUM_NETWORK", "sepolia")
+    beacon_state_url = CONFIG_ENV.get(
+        "BEACON_STATE_URL", "https://sepolia.checkpoint-sync.ethpandaops.io"
+    )
     
     override_content = f"""# Auto-generated environment override - do not commit
 services:
@@ -541,6 +545,10 @@ services:
   explorer:
     environment:
       - IS_TEST_NET={is_test_net}
+  bridge:
+    environment:
+      - ETHEREUM_NETWORK={ethereum_network}
+      - BEACON_STATE_URL={beacon_state_url}
 """
     
     with open(override_file, 'w') as f:
