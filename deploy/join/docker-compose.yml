@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.11-testnet
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.13
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -107,7 +107,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.5-post5@sha256:8d2f217115c65b27fcb6fe1497471c30891534f18685bd3007d168aa7f1a9371
+    image: ghcr.io/product-science/bridge:0.2.13
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -230,5 +230,3 @@ services:
     expose:
       - "5173"
     restart: unless-stopped
-
-
