@@ -42,6 +42,8 @@ testermint/parallel-test-results/
 run-parallel-tests/
 **/node_modules/
 **/target/
+/tmp
+.worklog
 
 # Generated proto artifacts (buf output in wrong location)
 inference-chain/proto/github.com/

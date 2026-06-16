@@ -186,11 +186,7 @@ func TestSlashingForInvalidStatus_Integration(t *testing.T) {
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-<<<<<<< HEAD
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, gomock.Any()).
-=======
 		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, expectedRequiredCollateral).
->>>>>>> origin/testnet/latest-in-v0.2.12
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
@@ -227,11 +223,7 @@ func TestSlashingForDowntime_Integration(t *testing.T) {
 	expectedSlashFraction, err := slashFraction.ToLegacyDec()
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().
-<<<<<<< HEAD
-		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonDowntime, gomock.Any()).
-=======
 		Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonDowntime, expectedRequiredCollateral).
->>>>>>> origin/testnet/latest-in-v0.2.12
 		Return(sdk.NewCoin(types.BaseCoin, math.NewInt(0)), nil).Times(1)
 
 	// Execute the function under test directly
@@ -304,13 +296,9 @@ func TestInvalidateInference_FullFlow_WithStatefulMock(t *testing.T) {
 	require.NoError(t, err)
 	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), participantAcc, expectedSlashFraction, types.SlashReasonInvalidation, gomock.Any()).DoAndReturn(
 		func(ctx sdk.Context, pa sdk.AccAddress, fraction math.LegacyDec, reason string, requiredCollateral math.Int) (sdk.Coin, error) {
-<<<<<<< HEAD
-			slashedAmount := fakeCollateralAmount.ToLegacyDec().Mul(fraction).TruncateInt()
-=======
 			require.Equal(t, expectedRequiredCollateral, requiredCollateral)
 			base := math.MinInt(requiredCollateral, fakeCollateralAmount)
 			slashedAmount := math.LegacyNewDecFromInt(base).Mul(fraction).TruncateInt()
->>>>>>> origin/testnet/latest-in-v0.2.12
 			fakeCollateralAmount = fakeCollateralAmount.Sub(slashedAmount)
 			return sdk.NewCoin(types.BaseCoin, slashedAmount), nil
 		}).Times(1)

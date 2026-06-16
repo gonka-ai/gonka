@@ -34,11 +34,7 @@ var MigratedFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(100
 // MigratedFeeAllowanceExpiration is how long the auto-granted allowance lasts.
 const MigratedFeeAllowanceExpiration = 365 * 24 * time.Hour
 
-const (
-	isTestnet      = true
-	kimiModelID    = "moonshotai/Kimi-K2.6"
-	testnetModelID = "Qwen/Qwen2.5-7B-Instruct"
-)
+const kimiModelID = "moonshotai/Kimi-K2.6"
 
 // Initial approved devshard binary registered by the v0.2.12 upgrade so that
 // `versiond` has at least one approved version to download and run after the
@@ -346,9 +342,6 @@ func adjustParameters(ctx context.Context, k keeper.Keeper) error {
 		params.EpochParams = types.DefaultEpochParams()
 	}
 	params.EpochParams.ConfirmationPocSafetyWindow = 500
-	if isTestnet {
-		params.EpochParams.ConfirmationPocSafetyWindow = 5
-	}
 
 	err = k.SetParams(ctx, params)
 	if err != nil {
@@ -596,11 +589,11 @@ func kimiPoCModelConfig(baseWeightScaleFactor *types.Decimal, penaltyStartEpoch 
 	}
 }
 
-func modelActivationEpoch(ctx context.Context, k keeper.Keeper, modelID string) uint64 {
+func kimiPenaltyStartEpoch(ctx context.Context, k keeper.Keeper) uint64 {
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
-		k.LogInfo("no effective epoch for model activation; using fallback", types.Upgrades,
-			"model_id", modelID, "penalty_start_epoch", 2)
+		k.LogInfo("no effective epoch for Kimi penalty start; using fallback", types.Upgrades,
+			"model_id", kimiModelID, "penalty_start_epoch", 2)
 		return 2
 	}
 	return epochIndex + 3
@@ -615,34 +608,7 @@ func ensureKimiPoCModelConfig(ctx context.Context, k keeper.Keeper, poc *types.P
 			return false
 		}
 	}
-	poc.Models = append(poc.Models, kimiPoCModelConfig(poc.WeightScaleFactor, modelActivationEpoch(ctx, k, kimiModelID)))
-	return true
-}
-
-func testnetPoCModelConfig(penaltyStartEpoch uint64) *types.PoCModelConfig {
-	return &types.PoCModelConfig{
-		ModelId: testnetModelID,
-		SeqLen:  256,
-		StatTest: &types.PoCStatTestParams{
-			DistThreshold:   types.DecimalFromFloat(0.4),
-			PMismatch:       types.DecimalFromFloat(0.1),
-			PValueThreshold: types.DecimalFromFloat(0.05),
-		},
-		WeightScaleFactor: types.DecimalFromFloat(4.475),
-		PenaltyStartEpoch: penaltyStartEpoch,
-	}
-}
-
-func ensureTestnetPoCModelConfig(ctx context.Context, k keeper.Keeper, poc *types.PocParams) bool {
-	if !isTestnet || poc == nil {
-		return false
-	}
-	for _, model := range poc.Models {
-		if model != nil && model.ModelId == testnetModelID {
-			return false
-		}
-	}
-	poc.Models = append(poc.Models, testnetPoCModelConfig(modelActivationEpoch(ctx, k, testnetModelID)))
+	poc.Models = append(poc.Models, kimiPoCModelConfig(poc.WeightScaleFactor, kimiPenaltyStartEpoch(ctx, k)))
 	return true
 }
 
@@ -674,10 +640,6 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 		k.LogInfo("added Kimi model to PocParams models[]", types.Upgrades,
 			"model_id", kimiModelID, "seq_len", 1024)
 	}
-	if ensureTestnetPoCModelConfig(ctx, k, poc) {
-		k.LogInfo("added testnet model to PocParams models[]", types.Upgrades,
-			"model_id", testnetModelID, "seq_len", 256)
-	}
 
 	if params.DelegationParams == nil {
 		defaults := types.DefaultDelegationParams()
@@ -691,9 +653,6 @@ func migrateParams(ctx context.Context, k keeper.Keeper) error {
 	params.DelegationParams.DelegationShare = types.DecimalFromFloat(0.05)
 	params.DelegationParams.CapFactor = types.DecimalFromFloat(0.75)
 	params.DelegationParams.DeployWindow = 500
-	if isTestnet {
-		params.DelegationParams.DeployWindow = 5
-	}
 	if poc != nil && params.DelegationParams.InitialModelId == "" {
 		params.DelegationParams.InitialModelId = poc.ModelId
 	}
@@ -734,20 +693,6 @@ func kimiGovernanceModel(authority string) *types.Model {
 	}
 }
 
-func testnetGovernanceModel(authority string) *types.Model {
-	return &types.Model{
-		ProposedBy:             authority,
-		Id:                     testnetModelID,
-		UnitsOfComputePerToken: 100,
-		HfRepo:                 testnetModelID,
-		HfCommit:               "a09a35458c702b33eeacc393d103063234e8bc28",
-		ModelArgs:              []string{"--quantization", "fp8"},
-		VRam:                   24,
-		ThroughputPerNonce:     10000,
-		ValidationThreshold:    &types.Decimal{Value: 85, Exponent: -2},
-	}
-}
-
 func updateGovernanceModels(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -766,9 +711,6 @@ func updateGovernanceModels(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	k.SetModel(ctx, kimiGovernanceModel(k.GetAuthority()))
-	if isTestnet {
-		k.SetModel(ctx, testnetGovernanceModel(k.GetAuthority()))
-	}
 
 	models, err := k.GetGovernanceModels(ctx)
 	if err != nil {

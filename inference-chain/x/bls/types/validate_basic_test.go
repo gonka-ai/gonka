@@ -142,66 +142,6 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 		}}
 		require.Error(t, msg.ValidateBasic())
 	})
-
-	t.Run("invalid commitment length", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{make([]byte, commitmentCompressedG2Len-1)},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{validShare},
-			}},
-		}
-		require.Error(t, msg.ValidateBasic())
-	})
-
-	t.Run("all-zero commitment", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{make([]byte, commitmentCompressedG2Len)},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{validShare},
-			}},
-		}
-		require.Error(t, msg.ValidateBasic())
-	})
-
-	t.Run("empty encrypted shares for participant", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: nil,
-			}},
-		}
-		require.Error(t, msg.ValidateBasic())
-	})
-
-	t.Run("empty encrypted share ciphertext", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{{}},
-			}},
-		}
-		require.Error(t, msg.ValidateBasic())
-	})
-
-	t.Run("oversized encrypted share ciphertext", func(t *testing.T) {
-		msg := &MsgSubmitDealerPart{
-			Creator:     creator,
-			EpochId:     1,
-			Commitments: [][]byte{validCommitment},
-			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
-				EncryptedShares: [][]byte{make([]byte, maxEncryptedShareCiphertextLen+1)},
-			}},
-		}
-		require.Error(t, msg.ValidateBasic())
-	})
 }
 
 func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
@@ -250,8 +190,6 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 		msg := &MsgSubmitVerificationVector{Creator: creator, EpochId: 1, DealerValidity: tooMany}
 		require.Error(t, msg.ValidateBasic())
 	})
-<<<<<<< HEAD
-=======
 
 	t.Run("complaint dealer index out of range", func(t *testing.T) {
 		msg := &MsgSubmitVerificationVector{
@@ -398,7 +336,6 @@ func TestMsgSubmitVerificationVector_ValidateBasic(t *testing.T) {
 		}
 		require.Error(t, msg.ValidateBasic())
 	})
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 func TestMsgSubmitGroupKeyValidationSignature_ValidateBasic(t *testing.T) {
@@ -663,8 +600,6 @@ func TestMsgRequestThresholdSignature_ValidateBasic(t *testing.T) {
 			RequestId:      requestID,
 			Data:           tooMany,
 		}
-<<<<<<< HEAD
-=======
 		require.Error(t, msg.ValidateBasic())
 	})
 }
@@ -748,7 +683,6 @@ func TestMsgRespondDealerComplaints_ValidateBasic(t *testing.T) {
 				},
 			},
 		}
->>>>>>> origin/testnet/latest-in-v0.2.12
 		require.Error(t, msg.ValidateBasic())
 	})
 }

@@ -52,7 +52,7 @@ func (e *devshardEngine) Execute(ctx context.Context, req devshard.ExecuteReques
 		ctx,
 		req,
 		e.payloadStore,
-		0,
+		req.EpochID,
 		e.executeMLRequest,
 		e.chainParams,
 	)

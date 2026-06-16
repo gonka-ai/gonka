@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"runtime"
 	"slices"
 	"sync"
@@ -41,7 +42,7 @@ type ConcurrentClient struct {
 	wg    sync.WaitGroup
 }
 
-func (c *ConcurrentClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
+func (c *ConcurrentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	type result struct {
 		resp *host.HostResponse
 		err  error
@@ -50,7 +51,7 @@ func (c *ConcurrentClient) Send(ctx context.Context, req host.HostRequest) (*hos
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		resp, err := c.inner.Send(ctx, req)
+		resp, err := c.inner.Send(ctx, req, stream, receiptHandler)
 		ch <- result{resp, err}
 	}()
 	r := <-ch

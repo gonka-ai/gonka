@@ -88,13 +88,6 @@ func WindowBlocksToSize(windowBlocks uint64) int64 {
 }
 
 const (
-<<<<<<< HEAD
-	DefaultSubnetEscrowMinAmount    uint64 = 5_000_000_000
-	DefaultSubnetEscrowMaxAmount    uint64 = 10_000_000_000
-	DefaultSubnetMaxEscrowsPerEpoch uint32 = 100
-	DefaultSubnetGroupSize          uint32 = 16
-	DefaultSubnetTokenPrice         uint64 = 1
-=======
 	LogprobsModeProcessed = "processed_logprobs"
 	LogprobsModeRaw       = "raw_logprobs"
 	DefaultLogprobsMode   = LogprobsModeProcessed
@@ -106,7 +99,8 @@ const (
 	DefaultDevshardMaxEscrowsPerEpoch uint32 = 100
 	DefaultDevshardGroupSize          uint32 = 16
 	DefaultDevshardTokenPrice         uint64 = 1
->>>>>>> origin/testnet/latest-in-v0.2.12
+	DefaultDevshardMaxNonce           uint32 = 20_000
+	DefaultDevshardRequestsEnabled    bool   = true
 )
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
@@ -166,12 +160,8 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-<<<<<<< HEAD
-		SubnetEscrowParams: DefaultSubnetEscrowParams(),
-=======
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
 		DelegationParams:     DefaultDelegationParams(),
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 }
 
@@ -222,10 +212,7 @@ func DefaultValidationParams() *ValidationParams {
 		QuickFailureThreshold:          DecimalFromFloat(0.000001),
 		BinomTestP0:                    DecimalFromFloat(0.10),
 		ClaimValidationEnabled:         false,
-<<<<<<< HEAD
-=======
 		LogprobsMode:                   DefaultLogprobsMode,
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 }
 
@@ -333,28 +320,6 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 	}
 }
 
-<<<<<<< HEAD
-func DefaultSubnetEscrowParams() *SubnetEscrowParams {
-	return &SubnetEscrowParams{
-		MinAmount:               DefaultSubnetEscrowMinAmount,
-		MaxAmount:               DefaultSubnetEscrowMaxAmount,
-		MaxEscrowsPerEpoch:      DefaultSubnetMaxEscrowsPerEpoch,
-		GroupSize:               DefaultSubnetGroupSize,
-		AllowedCreatorAddresses: nil,
-		TokenPrice:              DefaultSubnetTokenPrice,
-	}
-}
-
-func (p *SubnetEscrowParams) Validate() error {
-	if p.MinAmount == 0 {
-		return fmt.Errorf("subnet escrow min_amount must be positive")
-	}
-	if p.MaxAmount < p.MinAmount {
-		return fmt.Errorf("subnet escrow max_amount (%d) must be >= min_amount (%d)", p.MaxAmount, p.MinAmount)
-	}
-	if p.GroupSize == 0 {
-		return fmt.Errorf("subnet escrow group_size must be positive")
-=======
 func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	return &DevshardEscrowParams{
 		MinAmount:               DefaultDevshardEscrowMinAmount,
@@ -363,6 +328,8 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		GroupSize:               DefaultDevshardGroupSize,
 		AllowedCreatorAddresses: nil,
 		TokenPrice:              DefaultDevshardTokenPrice,
+		MaxNonce:                DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: DefaultDevshardRequestsEnabled,
 	}
 }
 
@@ -375,6 +342,9 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.GroupSize == 0 {
 		return fmt.Errorf("devshard escrow group_size must be positive")
+	}
+	if p.MaxNonce == 0 {
+		return fmt.Errorf("devshard escrow max_nonce must be positive")
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {
@@ -430,7 +400,6 @@ func validateDecimalFraction(d *Decimal, name string) error {
 	}
 	if dec.IsNegative() || dec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("%s must be between 0 and 1, got %s", name, dec.String())
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return nil
 }
@@ -603,10 +572,6 @@ func (p Params) Validate() error {
 		}
 	}
 
-<<<<<<< HEAD
-	if p.SubnetEscrowParams != nil {
-		if err := p.SubnetEscrowParams.Validate(); err != nil {
-=======
 	if p.DevshardEscrowParams != nil {
 		if err := p.DevshardEscrowParams.Validate(); err != nil {
 			return err
@@ -652,7 +617,6 @@ func (p Params) Validate() error {
 
 	if p.FeeParams != nil {
 		if err := p.FeeParams.Validate(); err != nil {
->>>>>>> origin/testnet/latest-in-v0.2.12
 			return err
 		}
 	}
@@ -1186,6 +1150,24 @@ func (d *Decimal) ToFloat() float64 {
 	return d.ToDecimal().InexactFloat64()
 }
 
+func (d *Decimal) CloneOrOne() *Decimal {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return &Decimal{Value: 1, Exponent: 0}
+	}
+	return &Decimal{Value: d.Value, Exponent: d.Exponent}
+}
+
+func (d *Decimal) LegacyDecOrOne() sdkmath.LegacyDec {
+	if d == nil || (d.Value == 0 && d.Exponent == 0) {
+		return sdkmath.LegacyOneDec()
+	}
+	dec, err := d.ToLegacyDec()
+	if err != nil {
+		return sdkmath.LegacyOneDec()
+	}
+	return dec
+}
+
 func DecimalFromFloat(f float64) *Decimal {
 	d := decimal.NewFromFloat(f)
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
@@ -1202,10 +1184,6 @@ func DecimalFromFloat32(f float32) *Decimal {
 	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }
 
-<<<<<<< HEAD
-func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
-=======
 func (p *PocParams) GetModelConfigs() []*PoCModelConfig {
 	if p == nil {
 		return nil
@@ -1239,15 +1217,10 @@ func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 }
 
 func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p == nil || p.WeightScaleFactor == nil || (p.WeightScaleFactor.Value == 0 && p.WeightScaleFactor.Exponent == 0) {
->>>>>>> origin/testnet/latest-in-v0.2.12
+	if p == nil {
 		return sdkmath.LegacyOneDec()
 	}
-	dec, err := p.WeightScaleFactor.ToLegacyDec()
-	if err != nil {
-		return sdkmath.LegacyOneDec()
-	}
-	return dec
+	return p.WeightScaleFactor.LegacyDecOrOne()
 }
 
 var (

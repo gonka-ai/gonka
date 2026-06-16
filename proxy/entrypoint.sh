@@ -361,7 +361,7 @@ GONKA_API_BURST=${GONKA_API_BURST:-600}
 EXEMPT_RATE_LIMIT_VAL=${EXEMPT_RATE_LIMIT_RPS:-500}
 EXEMPT_RATE_UNIT=${EXEMPT_RATE_UNIT:-s}
 EXEMPT_BURST=${EXEMPT_BURST:-2000}
-GONKA_API_EXEMPT_ROUTES=${GONKA_API_EXEMPT_ROUTES:-"chat inference training"}
+GONKA_API_EXEMPT_ROUTES=${GONKA_API_EXEMPT_ROUTES:-"chat inference poc/proofs subnet devshard"}
 CHAIN_API_EXEMPT_ROUTES=${CHAIN_API_EXEMPT_ROUTES:-""}
 CHAIN_RPC_EXEMPT_ROUTES=${CHAIN_RPC_EXEMPT_ROUTES:-""}
 CHAIN_GRPC_EXEMPT_ROUTES=${CHAIN_GRPC_EXEMPT_ROUTES:-""}
@@ -499,14 +499,31 @@ export FAIL2BAN_SCORE_400=${FAIL2BAN_SCORE_400:-2}
 
 # Initialize default whitelist properties (Fail-Safe: Apply limits to everyone by default)
 # This ensures that if the sidecar is slow to start, Nginx doesn't fail or run open.
+#
+# IMPORTANT: nginx's geo module does NOT expand variables in values.
+# "geo $var { default $binary_remote_addr; }" sets the LITERAL STRING
+# "$binary_remote_addr" as the key for ALL clients, collapsing every IP
+# into a single shared rate-limit bucket.
+# Fix: use geo for 0/1 classification, then map to expand $binary_remote_addr.
 if [ ! -s /etc/nginx/conf.d/whitelist_ips.conf ]; then
-    echo "geo \$whitelist_limit_key { default \$binary_remote_addr; }" > /etc/nginx/conf.d/whitelist_ips.conf
-    echo "geo \$whitelist_log_type { default \"EXT\"; }" >> /etc/nginx/conf.d/whitelist_ips.conf
+    cat > /etc/nginx/conf.d/whitelist_ips.conf <<'WLEOF'
+geo $whitelist_class {
+    default 0;
+}
+map $whitelist_class $whitelist_limit_key {
+    0 $binary_remote_addr;
+    1 "";
+}
+geo $whitelist_log_type {
+    default "EXT";
+}
+WLEOF
 fi
 
-# Initialize JSON Log file for Sidecar
+# Initialize sidecar log artifacts
 touch /var/log/nginx/access_json.log
 chmod 644 /var/log/nginx/access_json.log
+rm -f /var/log/nginx/rpc_method_log.sock
 
 # Initialize Blacklist file (Startup Integrity)
 # Start with a clean slate for bans on every restart

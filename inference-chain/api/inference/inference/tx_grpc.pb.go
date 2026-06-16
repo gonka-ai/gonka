@@ -36,10 +36,6 @@ const (
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
 	Msg_DeleteGovernanceModel_FullMethodName            = "/inference.inference.Msg/DeleteGovernanceModel"
-<<<<<<< HEAD
-	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
 	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
 	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
@@ -57,16 +53,12 @@ const (
 	Msg_RemoveParticipantsFromAllowList_FullMethodName  = "/inference.inference.Msg/RemoveParticipantsFromAllowList"
 	Msg_ApproveIbcTokenForTrading_FullMethodName        = "/inference.inference.Msg/ApproveIbcTokenForTrading"
 	Msg_RegisterIbcTokenMetadata_FullMethodName         = "/inference.inference.Msg/RegisterIbcTokenMetadata"
-<<<<<<< HEAD
-	Msg_CreateSubnetEscrow_FullMethodName               = "/inference.inference.Msg/CreateSubnetEscrow"
-	Msg_SettleSubnetEscrow_FullMethodName               = "/inference.inference.Msg/SettleSubnetEscrow"
-=======
 	Msg_CreateDevshardEscrow_FullMethodName             = "/inference.inference.Msg/CreateDevshardEscrow"
 	Msg_SettleDevshardEscrow_FullMethodName             = "/inference.inference.Msg/SettleDevshardEscrow"
+	Msg_SetDevshardRequestsEnabled_FullMethodName       = "/inference.inference.Msg/SetDevshardRequestsEnabled"
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
->>>>>>> origin/testnet/latest-in-v0.2.12
 )
 
 // MsgClient is the client API for Msg service.
@@ -94,10 +86,6 @@ type MsgClient interface {
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 	DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error)
-<<<<<<< HEAD
-	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwareDiff, opts ...grpc.CallOption) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error)
 	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
@@ -115,16 +103,12 @@ type MsgClient interface {
 	RemoveParticipantsFromAllowList(ctx context.Context, in *MsgRemoveParticipantsFromAllowList, opts ...grpc.CallOption) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	ApproveIbcTokenForTrading(ctx context.Context, in *MsgApproveIbcTokenForTrading, opts ...grpc.CallOption) (*MsgApproveIbcTokenForTradingResponse, error)
 	RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegisterIbcTokenMetadata, opts ...grpc.CallOption) (*MsgRegisterIbcTokenMetadataResponse, error)
-<<<<<<< HEAD
-	CreateSubnetEscrow(ctx context.Context, in *MsgCreateSubnetEscrow, opts ...grpc.CallOption) (*MsgCreateSubnetEscrowResponse, error)
-	SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetEscrow, opts ...grpc.CallOption) (*MsgSettleSubnetEscrowResponse, error)
-=======
 	CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error)
+	SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDevshardRequestsEnabled, opts ...grpc.CallOption) (*MsgSetDevshardRequestsEnabledResponse, error)
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 type msgClient struct {
@@ -282,18 +266,6 @@ func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opt
 func (c *msgClient) DeleteGovernanceModel(ctx context.Context, in *MsgDeleteGovernanceModel, opts ...grpc.CallOption) (*MsgDeleteGovernanceModelResponse, error) {
 	out := new(MsgDeleteGovernanceModelResponse)
 	err := c.cc.Invoke(ctx, Msg_DeleteGovernanceModel_FullMethodName, in, out, opts...)
-<<<<<<< HEAD
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error) {
-	out := new(MsgCreateTrainingTaskResponse)
-	err := c.cc.Invoke(ctx, Msg_CreateTrainingTask_FullMethodName, in, out, opts...)
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
@@ -453,29 +425,27 @@ func (c *msgClient) RegisterIbcTokenMetadata(ctx context.Context, in *MsgRegiste
 	return out, nil
 }
 
-<<<<<<< HEAD
-func (c *msgClient) CreateSubnetEscrow(ctx context.Context, in *MsgCreateSubnetEscrow, opts ...grpc.CallOption) (*MsgCreateSubnetEscrowResponse, error) {
-	out := new(MsgCreateSubnetEscrowResponse)
-	err := c.cc.Invoke(ctx, Msg_CreateSubnetEscrow_FullMethodName, in, out, opts...)
-=======
 func (c *msgClient) CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error) {
 	out := new(MsgCreateDevshardEscrowResponse)
 	err := c.cc.Invoke(ctx, Msg_CreateDevshardEscrow_FullMethodName, in, out, opts...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-<<<<<<< HEAD
-func (c *msgClient) SettleSubnetEscrow(ctx context.Context, in *MsgSettleSubnetEscrow, opts ...grpc.CallOption) (*MsgSettleSubnetEscrowResponse, error) {
-	out := new(MsgSettleSubnetEscrowResponse)
-	err := c.cc.Invoke(ctx, Msg_SettleSubnetEscrow_FullMethodName, in, out, opts...)
-=======
 func (c *msgClient) SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error) {
 	out := new(MsgSettleDevshardEscrowResponse)
 	err := c.cc.Invoke(ctx, Msg_SettleDevshardEscrow_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDevshardRequestsEnabled, opts ...grpc.CallOption) (*MsgSetDevshardRequestsEnabledResponse, error) {
+	out := new(MsgSetDevshardRequestsEnabledResponse)
+	err := c.cc.Invoke(ctx, Msg_SetDevshardRequestsEnabled_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +473,6 @@ func (c *msgClient) RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDel
 func (c *msgClient) DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error) {
 	out := new(MsgDeclarePoCIntentResponse)
 	err := c.cc.Invoke(ctx, Msg_DeclarePoCIntent_FullMethodName, in, out, opts...)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err != nil {
 		return nil, err
 	}
@@ -535,10 +504,6 @@ type MsgServer interface {
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 	DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error)
-<<<<<<< HEAD
-	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error)
 	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
@@ -556,16 +521,12 @@ type MsgServer interface {
 	RemoveParticipantsFromAllowList(context.Context, *MsgRemoveParticipantsFromAllowList) (*MsgRemoveParticipantsFromAllowListResponse, error)
 	ApproveIbcTokenForTrading(context.Context, *MsgApproveIbcTokenForTrading) (*MsgApproveIbcTokenForTradingResponse, error)
 	RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error)
-<<<<<<< HEAD
-	CreateSubnetEscrow(context.Context, *MsgCreateSubnetEscrow) (*MsgCreateSubnetEscrowResponse, error)
-	SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error)
-=======
 	CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error)
+	SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error)
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -623,12 +584,6 @@ func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) 
 }
 func (UnimplementedMsgServer) DeleteGovernanceModel(context.Context, *MsgDeleteGovernanceModel) (*MsgDeleteGovernanceModelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteGovernanceModel not implemented")
-<<<<<<< HEAD
-}
-func (UnimplementedMsgServer) CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainingTask not implemented")
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 func (UnimplementedMsgServer) SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitHardwareDiff not implemented")
@@ -681,18 +636,14 @@ func (UnimplementedMsgServer) ApproveIbcTokenForTrading(context.Context, *MsgApp
 func (UnimplementedMsgServer) RegisterIbcTokenMetadata(context.Context, *MsgRegisterIbcTokenMetadata) (*MsgRegisterIbcTokenMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterIbcTokenMetadata not implemented")
 }
-<<<<<<< HEAD
-func (UnimplementedMsgServer) CreateSubnetEscrow(context.Context, *MsgCreateSubnetEscrow) (*MsgCreateSubnetEscrowResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateSubnetEscrow not implemented")
-}
-func (UnimplementedMsgServer) SettleSubnetEscrow(context.Context, *MsgSettleSubnetEscrow) (*MsgSettleSubnetEscrowResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SettleSubnetEscrow not implemented")
-=======
 func (UnimplementedMsgServer) CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateDevshardEscrow not implemented")
 }
 func (UnimplementedMsgServer) SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleDevshardEscrow not implemented")
+}
+func (UnimplementedMsgServer) SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetDevshardRequestsEnabled not implemented")
 }
 func (UnimplementedMsgServer) SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetPoCDelegation not implemented")
@@ -702,7 +653,6 @@ func (UnimplementedMsgServer) RefusePoCDelegation(context.Context, *MsgRefusePoC
 }
 func (UnimplementedMsgServer) DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeclarePoCIntent not implemented")
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1007,27 +957,6 @@ func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(i
 
 func _Msg_DeleteGovernanceModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgDeleteGovernanceModel)
-<<<<<<< HEAD
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).DeleteGovernanceModel(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_DeleteGovernanceModel_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).DeleteGovernanceModel(ctx, req.(*MsgDeleteGovernanceModel))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_CreateTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgCreateTrainingTask)
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1350,27 +1279,12 @@ func _Msg_RegisterIbcTokenMetadata_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-<<<<<<< HEAD
-func _Msg_CreateSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgCreateSubnetEscrow)
-=======
 func _Msg_CreateDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgCreateDevshardEscrow)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-<<<<<<< HEAD
-		return srv.(MsgServer).CreateSubnetEscrow(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_CreateSubnetEscrow_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).CreateSubnetEscrow(ctx, req.(*MsgCreateSubnetEscrow))
-=======
 		return srv.(MsgServer).CreateDevshardEscrow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -1379,32 +1293,16 @@ func _Msg_CreateDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).CreateDevshardEscrow(ctx, req.(*MsgCreateDevshardEscrow))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-<<<<<<< HEAD
-func _Msg_SettleSubnetEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSettleSubnetEscrow)
-=======
 func _Msg_SettleDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSettleDevshardEscrow)
->>>>>>> origin/testnet/latest-in-v0.2.12
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-<<<<<<< HEAD
-		return srv.(MsgServer).SettleSubnetEscrow(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SettleSubnetEscrow_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SettleSubnetEscrow(ctx, req.(*MsgSettleSubnetEscrow))
-=======
 		return srv.(MsgServer).SettleDevshardEscrow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
@@ -1413,6 +1311,24 @@ func _Msg_SettleDevshardEscrow_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SettleDevshardEscrow(ctx, req.(*MsgSettleDevshardEscrow))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetDevshardRequestsEnabled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetDevshardRequestsEnabled)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetDevshardRequestsEnabled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetDevshardRequestsEnabled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetDevshardRequestsEnabled(ctx, req.(*MsgSetDevshardRequestsEnabled))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1467,7 +1383,6 @@ func _Msg_DeclarePoCIntent_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).DeclarePoCIntent(ctx, req.(*MsgDeclarePoCIntent))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1546,13 +1461,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteGovernanceModel",
 			Handler:    _Msg_DeleteGovernanceModel_Handler,
-<<<<<<< HEAD
-		},
-		{
-			MethodName: "CreateTrainingTask",
-			Handler:    _Msg_CreateTrainingTask_Handler,
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 		},
 		{
 			MethodName: "SubmitHardwareDiff",
@@ -1623,20 +1531,16 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_RegisterIbcTokenMetadata_Handler,
 		},
 		{
-<<<<<<< HEAD
-			MethodName: "CreateSubnetEscrow",
-			Handler:    _Msg_CreateSubnetEscrow_Handler,
-		},
-		{
-			MethodName: "SettleSubnetEscrow",
-			Handler:    _Msg_SettleSubnetEscrow_Handler,
-=======
 			MethodName: "CreateDevshardEscrow",
 			Handler:    _Msg_CreateDevshardEscrow_Handler,
 		},
 		{
 			MethodName: "SettleDevshardEscrow",
 			Handler:    _Msg_SettleDevshardEscrow_Handler,
+		},
+		{
+			MethodName: "SetDevshardRequestsEnabled",
+			Handler:    _Msg_SetDevshardRequestsEnabled_Handler,
 		},
 		{
 			MethodName: "SetPoCDelegation",
@@ -1649,7 +1553,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeclarePoCIntent",
 			Handler:    _Msg_DeclarePoCIntent_Handler,
->>>>>>> origin/testnet/latest-in-v0.2.12
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

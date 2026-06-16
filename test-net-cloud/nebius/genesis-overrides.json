@@ -38,6 +38,27 @@
           "symbol": "GNK",
           "uri": "",
           "uri_hash": ""
+        },
+        {
+          "description": "Synthetic Kava USDT for Gonka testnet bounty testing.",
+          "denom_units": [
+            {
+              "denom": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
+              "exponent": 0,
+              "aliases": []
+            },
+            {
+              "denom": "USDT",
+              "exponent": 6,
+              "aliases": []
+            }
+          ],
+          "base": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
+          "display": "USDT",
+          "name": "USDT",
+          "symbol": "USDT",
+          "uri": "",
+          "uri_hash": ""
         }
       ]
     },
@@ -62,7 +83,7 @@
     },
     "restrictions": {
       "params": {
-        "restriction_end_block": "12"
+        "restriction_end_block": "0"
       }
     },
     "inference": {
@@ -130,20 +151,6 @@
               "weight_scale_factor": { "value": "25", "exponent": -1 }
             },
             {
-              "model_id": "moonshotai/Kimi-K2.6",
-              "seq_len": "1024",
-              "stat_test": {
-                "dist_threshold": { "value": "4", "exponent": -1 },
-                "p_mismatch": { "value": "1", "exponent": -1 },
-                "p_value_threshold": { "value": "5", "exponent": -2 }
-              },
-              "weight_scale_factor": {
-                "value": "87815587266739846",
-                "exponent": -16
-              },
-              "penalty_start_epoch": "46"
-            },
-            {
               "model_id": "Qwen/Qwen2.5-7B-Instruct",
               "seq_len": "256",
               "stat_test": {
@@ -207,7 +214,7 @@
         },
         "delegation_params": {
           "deploy_window": "5",
-          "initial_model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "initial_model_id": "Qwen/Qwen3-4B-Instruct-2507",
           "v_min": "3",
           "refusal_penalty": { "value": "1", "exponent": -1 },
           "no_participation_penalty": { "value": "15", "exponent": -2 },

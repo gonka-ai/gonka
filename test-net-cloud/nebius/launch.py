@@ -22,8 +22,9 @@ class AccountKey:
     name: str
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
 CUSTOM_BASE_DIR = os.environ.get("TESTNET_BASE_DIR", None)
-BASE_DIR = Path(CUSTOM_BASE_DIR) if CUSTOM_BASE_DIR else Path(os.environ["HOME"]).absolute()
+BASE_DIR = Path(CUSTOM_BASE_DIR).expanduser().resolve() if CUSTOM_BASE_DIR else SCRIPT_DIR
 GENESIS_VAL_NAME = "testnet-genesis"
 GONKA_REPO_DIR = BASE_DIR / "gonka"
 DEPLOY_DIR = GONKA_REPO_DIR / "deploy/join"
@@ -31,8 +32,8 @@ COLD_KEY_NAME = "gonka-account-key"
 
 INFERENCED_BINARY = SimpleNamespace(
     zip_file=BASE_DIR / "inferenced-linux-amd64.zip",
-    url="https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.12/inferenced-linux-amd64.zip",
-    checksum="e3722223e8ce4a5a60533012144016a55a0815f5efc5e9f943a09858e89b15e3",
+    url="https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13/inferenced-linux-amd64.zip",
+    checksum="c2d73ababe63dc344ecf5e7e6e0a31408fa36498c6f0aebd3d96d9b182f9906e",
     path=BASE_DIR / "inferenced",
 )
 
@@ -44,19 +45,19 @@ def load_config_from_env(hf_home: str = None):
         "KEY_NAME": "genesis",
         "KEYRING_PASSWORD": "12345678",
         "API_PORT": "8000",
-        "PUBLIC_URL": "http://xj7-5.s.filfox.io:19246",
-        "P2P_EXTERNAL_ADDRESS": "tcp://xj7-5.s.filfox.io:19245",
+        "PUBLIC_URL": "http://xj7-5.s.filfox.io:19244",
+        "P2P_EXTERNAL_ADDRESS": "tcp://xj7-5.s.filfox.io:19243",
         "ACCOUNT_PUBKEY": "", # will be populated later
         "NODE_CONFIG": "./node-config.json",
         "HF_HOME": Path(hf_home) if hf_home else (Path(os.environ["HOME"]).absolute() / "hf-cache").__str__(),
-        "SEED_API_URL": "http://xj7-5.s.filfox.io:19246",
-        "SEED_NODE_RPC_URL": "http://xj7-5.s.filfox.io:19246/chain-rpc/",
+        "SEED_API_URL": "http://xj7-5.s.filfox.io:19244",
+        "SEED_NODE_RPC_URL": "http://xj7-5.s.filfox.io:19244/chain-rpc/",
         "DAPI_API__POC_CALLBACK_URL": "http://api:9100",
         "DAPI_CHAIN_NODE__URL": "http://node:26657",
         "DAPI_CHAIN_NODE__P2P_URL": "http://node:26656",
-        "SEED_NODE_P2P_URL": "tcp://xj7-5.s.filfox.io:19245",
-        "RPC_SERVER_URL_1": "http://xj7-5.s.filfox.io:19246/chain-rpc/",
-        "RPC_SERVER_URL_2": "http://xj7-5.s.filfox.io:19246/chain-rpc/",
+        "SEED_NODE_P2P_URL": "tcp://xj7-5.s.filfox.io:19243",
+        "RPC_SERVER_URL_1": "http://xj7-5.s.filfox.io:19244/chain-rpc/",
+        "RPC_SERVER_URL_2": "http://xj7-5.s.filfox.io:19244/chain-rpc/",
         "NODE_RPC_URL": "http://127.0.0.1:26657",
         "PORT": "8080",
         "INFERENCE_PORT": "5050",
@@ -72,6 +73,20 @@ def load_config_from_env(hf_home: str = None):
         # Only checked when TX_GAS_PRICES is set (paid txs need funded cold key).
         "GRANT_MIN_SPENDABLE_NGONKA": "20000000000",
         "JOIN_FUND_WAIT_SECONDS": "600",
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "payloads",
+        "POSTGRES_USER": "payloads",
+        "POSTGRES_PASSWORD": "payloads",
+        "BOUNTY_POOL_ENABLED": "true",
+        "BOUNTY_POOL_IBC_DENOM": "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
+        "BOUNTY_POOL_CHAIN_ID": "kava_2222-10",
+        "BOUNTY_POOL_NAME": "USDT",
+        "BOUNTY_POOL_SYMBOL": "USDT",
+        "BOUNTY_POOL_DECIMALS": "6",
+        "BOUNTY_POOL_AMOUNT": "1500000000000",
+        "BOUNTY_POOL_COMMUNITY_SALE_LABEL": "community-sale-testnet-v1",
+        "BOUNTY_POOL_GOV_AUTHORITY": "gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33",
     }
     
     config = default_config.copy()
@@ -109,6 +124,10 @@ def clean_state():
         print(f"Removing {GONKA_REPO_DIR}")
         os.system(f"sudo rm -rf {GONKA_REPO_DIR}")
     
+    if BOUNTY_POOL_STATE_FILE.exists():
+        print(f"Removing {BOUNTY_POOL_STATE_FILE}")
+        os.system(f"sudo rm -f {BOUNTY_POOL_STATE_FILE}")
+
     if INFERENCED_BINARY.zip_file.exists():
         print(f"Removing {BASE_DIR / 'inferenced-linux-amd64.zip'}")
         os.system(f"sudo rm -f {BASE_DIR / 'inferenced-linux-amd64.zip'}")
@@ -128,25 +147,46 @@ def docker_compose_down():
         print("Stopping any running Docker containers...")
         
         compose_files = ["-f", "docker-compose.yml", "-f", "docker-compose.mlnode.yml"]
+        config_file = DEPLOY_DIR / "config.env"
         for override_name in (
+            "docker-compose.postgres.yml",
             "docker-compose.env-override.yml",
             "docker-compose.rpc-override.yml",
             "docker-compose.runtime-override.yml",
             "docker-compose.genesis-override.yml",
         ):
             override_path = DEPLOY_DIR / override_name
-            if override_path.exists():
-                compose_files.extend(["-f", override_name])
-        
+            if not override_path.exists():
+                continue
+            # postgres.yml requires POSTGRES_* from config.env; skip it on pre-config teardown
+            # so compose down still stops tmkms/node from a prior run.
+            if override_name == "docker-compose.postgres.yml" and not config_file.exists():
+                continue
+            compose_files.extend(["-f", override_name])
+
         try:
-            # First try to stop containers gracefully
-            result = subprocess.run(
-                ["docker", "compose"] + compose_files + ["down"],
-                cwd=DEPLOY_DIR,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            if config_file.exists():
+                down_cmd = (
+                    f"bash -c 'source {config_file} && docker compose "
+                    + " ".join(compose_files)
+                    + " down'"
+                )
+                result = subprocess.run(
+                    down_cmd,
+                    shell=True,
+                    cwd=DEPLOY_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            else:
+                result = subprocess.run(
+                    ["docker", "compose"] + compose_files + ["down"],
+                    cwd=DEPLOY_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
             if result.returncode == 0:
                 print("Docker containers stopped successfully")
             else:
@@ -472,6 +512,10 @@ def create_env_override():
     
     is_test_net = CONFIG_ENV.get("IS_TEST_NET", "true")
     chain_id = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    ethereum_network = CONFIG_ENV.get("ETHEREUM_NETWORK", "sepolia")
+    beacon_state_url = CONFIG_ENV.get(
+        "BEACON_STATE_URL", "https://sepolia.checkpoint-sync.ethpandaops.io"
+    )
     
     override_content = f"""# Auto-generated environment override - do not commit
 services:
@@ -501,6 +545,10 @@ services:
   explorer:
     environment:
       - IS_TEST_NET={is_test_net}
+  bridge:
+    environment:
+      - ETHEREUM_NETWORK={ethereum_network}
+      - BEACON_STATE_URL={beacon_state_url}
 """
     
     with open(override_file, 'w') as f:
@@ -532,7 +580,11 @@ def standard_compose_files(include_mlnode=True):
     if include_mlnode:
         files.append("docker-compose.mlnode.yml")
     deploy_dir = GONKA_REPO_DIR / "deploy/join"
-    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+    for name in (
+        "docker-compose.postgres.yml",
+        "docker-compose.env-override.yml",
+        "docker-compose.rpc-override.yml",
+    ):
         path = deploy_dir / name
         if path.exists() and name not in files:
             files.append(name)
@@ -543,7 +595,11 @@ def ensure_compose_overrides(compose_files):
     """Append generated override files to an explicit compose file list."""
     files = list(compose_files)
     deploy_dir = GONKA_REPO_DIR / "deploy/join"
-    for name in ("docker-compose.env-override.yml", "docker-compose.rpc-override.yml"):
+    for name in (
+        "docker-compose.postgres.yml",
+        "docker-compose.env-override.yml",
+        "docker-compose.rpc-override.yml",
+    ):
         if (deploy_dir / name).exists() and name not in files:
             files.append(name)
     return files
@@ -797,24 +853,24 @@ def extract_consensus_key():
         print("Errors/Warnings:")
         print(pubkey_result.stderr)
     print("=" * 50)
+
+    if pubkey_result.returncode != 0:
+        print(f"Consensus key extraction failed with return code: {pubkey_result.returncode}")
+        raise subprocess.CalledProcessError(pubkey_result.returncode, pubkey_cmd)
     
     # Extract consensus key from output
     full_output = pubkey_result.stdout + pubkey_result.stderr if pubkey_result.stderr else pubkey_result.stdout
     consensus_key_match = re.search(r'([A-Za-z0-9+/=]{40,})', full_output)
-    if consensus_key_match:
-        consensus_key = consensus_key_match.group(1)
-        print(f"Extracted consensus key: {consensus_key}")
-        # Store in CONFIG_ENV for potential future use
-        CONFIG_ENV["CONSENSUS_KEY"] = consensus_key
-    else:
+    if not consensus_key_match:
         print("Warning: Could not extract consensus key from output")
         print("Full output for debugging:")
         print(full_output)
         raise ValueError("Could not extract consensus key from output")
-    
-    if pubkey_result.returncode != 0:
-        print(f"Consensus key extraction failed with return code: {pubkey_result.returncode}")
-        raise subprocess.CalledProcessError(pubkey_result.returncode, pubkey_cmd)
+
+    consensus_key = consensus_key_match.group(1)
+    print(f"Extracted consensus key: {consensus_key}")
+    # Store in CONFIG_ENV for potential future use
+    CONFIG_ENV["CONSENSUS_KEY"] = consensus_key
     
     print("Consensus key extraction completed successfully!")
     return consensus_key
@@ -1081,6 +1137,142 @@ def fund_distribution_module_account(community_pool_amount="120000000000000000")
     print(f"Address: {distribution_address}")
     print(f"Bank balance: {community_pool_amount}ngonka")
     print(f"Community pool: {community_pool_amount}.000000000000000000ngonka")
+
+
+def fund_genesis_ibc_balance(address: str):
+    """Add synthetic IBC token balance and supply to genesis for bounty pool bootstrap."""
+    if CONFIG_ENV.get("BOUNTY_POOL_ENABLED", "true").lower() != "true":
+        print("Bounty pool genesis funding skipped (BOUNTY_POOL_ENABLED is not true)")
+        return
+
+    denom = CONFIG_ENV.get("BOUNTY_POOL_IBC_DENOM", "")
+    amount = CONFIG_ENV.get("BOUNTY_POOL_AMOUNT", "")
+    if not denom or not amount:
+        raise ValueError("BOUNTY_POOL_IBC_DENOM and BOUNTY_POOL_AMOUNT must be set")
+
+    print(f"Funding genesis account {address} with {amount}{denom} for bounty pool...")
+
+    genesis_file = INFERENCED_STATE_DIR / "config/genesis.json"
+    if not genesis_file.exists():
+        raise FileNotFoundError(f"Genesis file not found at {genesis_file}")
+
+    with open(genesis_file, "r") as f:
+        genesis_data = json.load(f)
+
+    bank = genesis_data.setdefault("app_state", {}).setdefault("bank", {})
+    balances = bank.setdefault("balances", [])
+
+    balance_exists = False
+    for balance_entry in balances:
+        if balance_entry.get("address") == address:
+            coins = balance_entry.setdefault("coins", [])
+            coin_exists = False
+            for coin in coins:
+                if coin.get("denom") == denom:
+                    coin["amount"] = str(int(coin.get("amount", 0)) + int(amount))
+                    coin_exists = True
+                    break
+            if not coin_exists:
+                coins.append({"denom": denom, "amount": amount})
+            balance_exists = True
+            break
+
+    if not balance_exists:
+        balances.append({
+            "address": address,
+            "coins": [{"denom": denom, "amount": amount}],
+        })
+
+    supply = bank.setdefault("supply", [])
+    supply_exists = False
+    for supply_entry in supply:
+        if supply_entry.get("denom") == denom:
+            supply_entry["amount"] = str(int(supply_entry.get("amount", 0)) + int(amount))
+            supply_exists = True
+            break
+    if not supply_exists:
+        supply.append({"denom": denom, "amount": amount})
+
+    with open(genesis_file, "w") as f:
+        json.dump(genesis_data, f, indent=2, separators=(",", ": "))
+
+    print(f"Genesis IBC balance added: {amount} {denom} -> {address}")
+
+
+BOUNTY_POOL_STATE_FILE = BASE_DIR / "bounty-pool-state.json"
+
+
+def setup_bounty_pool():
+    """Store community_sale, fund it with synthetic USDT, write bounty-pool-state.json."""
+    if CONFIG_ENV.get("BOUNTY_POOL_ENABLED", "true").lower() != "true":
+        print("Bounty pool post-start setup skipped (BOUNTY_POOL_ENABLED is not true)")
+        return
+
+    denom = CONFIG_ENV.get("BOUNTY_POOL_IBC_DENOM", "")
+    amount = CONFIG_ENV.get("BOUNTY_POOL_AMOUNT", "")
+    if BOUNTY_POOL_STATE_FILE.exists():
+        try:
+            with open(BOUNTY_POOL_STATE_FILE, "r") as f:
+                state = json.load(f)
+            contract = state.get("community_sale_address", "")
+            if contract:
+                rpc = CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
+                result = subprocess.run(
+                    [
+                        str(INFERENCED_BINARY.path),
+                        "q", "bank", "balances", contract,
+                        "--node", rpc, "-o", "json",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    balances = json.loads(result.stdout).get("balances", [])
+                    for coin in balances:
+                        if coin.get("denom") == denom and int(coin.get("amount", 0)) >= int(amount):
+                            print(f"Bounty pool already ready at {contract}")
+                            return
+                raise RuntimeError(
+                    f"bounty-pool-state.json exists but contract {contract} "
+                    f"does not have expected {amount} {denom}"
+                )
+        except (json.JSONDecodeError, RuntimeError) as exc:
+            if isinstance(exc, RuntimeError):
+                raise
+            print(f"Warning: could not parse {BOUNTY_POOL_STATE_FILE}, re-running setup")
+
+    script = GONKA_REPO_DIR / "test-net-cloud/nebius/bridge/bridge-setup-community-sale.sh"
+    if not script.exists():
+        raise FileNotFoundError(f"Bounty pool setup script not found: {script}")
+
+    print("Running bounty pool setup (community_sale store/instantiate/fund)...")
+    env = os.environ.copy()
+    env.update(CONFIG_ENV)
+    env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    env["TESTNET_BASE_DIR"] = str(BASE_DIR)
+    env["KEY_NAME"] = COLD_KEY_NAME
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=str(BASE_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, script)
+
+    if BOUNTY_POOL_STATE_FILE.exists():
+        with open(BOUNTY_POOL_STATE_FILE, "r") as f:
+            state = json.load(f)
+        print("Bounty pool ready:")
+        print(f"  contract: {state.get('community_sale_address')}")
+        print(f"  denom: {state.get('ibc_denom')}")
+        print(f"  amount: {state.get('amount')}")
 
 
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str, chain_id: str):
@@ -2254,6 +2446,8 @@ def genesis_route(account_key: AccountKey, chain_id: str) -> AccountKey:
         genesis_overrides_path = repo_overrides
         
     apply_genesis_overrides(genesis_overrides_path)
+
+    fund_genesis_ibc_balance(account_key.address)
     
     set_chain_id_in_genesis(chain_id)
 
@@ -2422,6 +2616,8 @@ def main():
             account_key.address, warm_key.address, rpc_url_for_grant
         )
     grant_key_permissions(warm_key.address)
+    if is_genesis:
+        setup_bounty_pool()
     if not is_genesis:
         print_join_deploy_summary(account_key, warm_key, args.chainid)
 

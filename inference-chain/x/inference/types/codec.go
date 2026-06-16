@@ -55,12 +55,6 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgDeleteGovernanceModel{},
-<<<<<<< HEAD
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgCreateTrainingTask{},
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitHardwareDiff{},

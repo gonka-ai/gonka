@@ -52,11 +52,7 @@ from matplotlib.lines import Line2D
 from validation.data import load_from_jsonl, ValidationItem
 from validation.analysis import process_data, find_optimal_bounds_parallel
 
-<<<<<<< HEAD
-DATA_ROOT = BENCHMARKS_DIR / "data" / "inference_validation"
-=======
 DATA_ROOT = BENCHMARKS_DIR / "data" / "experiments"
->>>>>>> origin/testnet/latest-in-v0.2.12
 DEFAULT_PLOTS_DIR = BENCHMARKS_DIR / "data" / "plots"
 
 
@@ -73,17 +69,6 @@ def resolve_path(raw: str) -> Path:
 def _select_validation_artifact(exp_dir: Path) -> Optional[Path]:
     """Pick validation artifact from an experiment directory.
 
-<<<<<<< HEAD
-    Supports both default and tagged filenames:
-    - inference_validation_results.jsonl
-    - inference_validation_results__<tag>.jsonl
-    """
-    default_path = exp_dir / "inference_validation_results.jsonl"
-    if default_path.exists():
-        return default_path
-
-    tagged = sorted(exp_dir.glob("inference_validation_results*.jsonl"))
-=======
     Supports both old and new filenames:
     - validation_results.jsonl (new)
     - inference_validation_results.jsonl (legacy)
@@ -98,7 +83,6 @@ def _select_validation_artifact(exp_dir: Path) -> Optional[Path]:
         list(exp_dir.glob("validation_results*.jsonl"))
         + list(exp_dir.glob("inference_validation_results*.jsonl"))
     )
->>>>>>> origin/testnet/latest-in-v0.2.12
     if not tagged:
         return None
     # Most recent tagged artifact is typically the one we want.
@@ -171,17 +155,12 @@ def discover_experiments() -> Tuple[Dict[str, Path], Dict[str, Path]]:
 def load_experiment(
     exp_dir: Path,
     n: Optional[int] = None,
-<<<<<<< HEAD
-) -> Tuple[List[ValidationItem], List[float], List[float]]:
-    jsonl = _select_validation_artifact(exp_dir)
-=======
     artifact_path: Optional[Path] = None,
 ) -> Tuple[List[ValidationItem], List[float], List[float]]:
     if artifact_path is not None:
         jsonl = artifact_path
     else:
         jsonl = _select_validation_artifact(exp_dir)
->>>>>>> origin/testnet/latest-in-v0.2.12
     if jsonl is None:
         raise RuntimeError(f"No validation artifact found in {exp_dir}")
     items = load_from_jsonl(str(jsonl), n=n)
@@ -348,23 +327,6 @@ def main() -> None:
                         help=f"Output directory for plots (default: {DEFAULT_PLOTS_DIR})")
     args = parser.parse_args()
 
-<<<<<<< HEAD
-    if args.honest is not None or args.fraud is not None:
-        honest_dirs = {_make_label(resolve_path(p)): resolve_path(p) for p in (args.honest or [])}
-        fraud_dirs = {_make_label(resolve_path(p)): resolve_path(p) for p in (args.fraud or [])}
-    else:
-        honest_dirs, fraud_dirs = discover_experiments()
-
-    if not honest_dirs and not fraud_dirs:
-        print(f"Error: no experiment directories found under {DATA_ROOT}")
-        sys.exit(1)
-
-    print(f"Honest experiments ({len(honest_dirs)}):")
-    for name in honest_dirs:
-        print(f"  - {name}")
-    print(f"Fraud experiments ({len(fraud_dirs)}):")
-    for name in fraud_dirs:
-=======
     def _parse_entries(raw_paths: Optional[List[str]]) -> List[Tuple[str, Path, Optional[Path]]]:
         """Parse CLI paths into (label, exp_dir, artifact_path_or_None).
 
@@ -407,7 +369,6 @@ def main() -> None:
         print(f"  - {name}")
     print(f"Fraud experiments ({len(fraud_entries)}):")
     for name, _, _ in fraud_entries:
->>>>>>> origin/testnet/latest-in-v0.2.12
         print(f"  - {name}")
     print()
 
@@ -419,21 +380,6 @@ def main() -> None:
     all_honest_distances: List[float] = []
     all_fraud_distances: List[float] = []
 
-<<<<<<< HEAD
-    for name, d in honest_dirs.items():
-        print(f"Loading honest: {name}")
-        items, distances, _ = load_experiment(d, args.n_items)
-        honest_items_dict[name] = items
-        honest_distances_dict[name] = distances
-        all_honest_distances.extend(distances)
-
-    for name, d in fraud_dirs.items():
-        print(f"Loading fraud: {name}")
-        items, distances, _ = load_experiment(d, args.n_items)
-        fraud_items_dict[name] = items
-        fraud_distances_dict[name] = distances
-        all_fraud_distances.extend(distances)
-=======
     honest_dirs: Dict[str, Path] = {}
     fraud_dirs: Dict[str, Path] = {}
 
@@ -452,7 +398,6 @@ def main() -> None:
         fraud_distances_dict[name] = distances
         all_fraud_distances.extend(distances)
         fraud_dirs[name] = d
->>>>>>> origin/testnet/latest-in-v0.2.12
 
     bounds = None
     if args.lower_bound is not None and args.upper_bound is not None:
@@ -469,9 +414,6 @@ def main() -> None:
         bounds = (lower, upper)
 
     title = args.title or "Inference Validation"
-<<<<<<< HEAD
-    plots_dir = Path(args.out) if args.out else DEFAULT_PLOTS_DIR
-=======
     if args.out:
         plots_dir = Path(args.out)
     else:
@@ -481,7 +423,6 @@ def main() -> None:
         elif honest_dirs:
             primary_dir = next(iter(honest_dirs.values()))
         plots_dir = (primary_dir / "plots") if primary_dir else DEFAULT_PLOTS_DIR
->>>>>>> origin/testnet/latest-in-v0.2.12
 
     plot_length_vs_distance(
         title=title,

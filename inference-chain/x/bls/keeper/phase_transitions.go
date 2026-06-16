@@ -350,31 +350,6 @@ func (k Keeper) determineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 	}
 
 	validDealers := make([]bool, participantCount)
-<<<<<<< HEAD
-	requiredApprovals := participantCount/2 + 1
-
-	// For each dealer, count approvals against a fixed denominator of all participants.
-	// Missing verification submissions or short DealerValidity vectors are treated as "no" votes.
-	for dealerIndex := 0; dealerIndex < participantCount; dealerIndex++ {
-		validVotes := 0
-
-		// Count approvals from all participants.
-		for verifierIndex := 0; verifierIndex < participantCount; verifierIndex++ {
-			if verifierIndex >= len(epochBLSData.VerificationSubmissions) {
-				continue
-			}
-			verification := epochBLSData.VerificationSubmissions[verifierIndex]
-			if verification == nil || dealerIndex >= len(verification.DealerValidity) {
-				continue
-			}
-			if verification.DealerValidity[dealerIndex] {
-				validVotes++
-			}
-		}
-
-		// Dealer is valid if strict majority of all participants approve.
-		dealerIsValid := validVotes >= requiredApprovals
-=======
 	totalSlots := uint64(epochBLSData.ITotalSlots)
 
 	for dealerIndex := 0; dealerIndex < participantCount; dealerIndex++ {
@@ -442,7 +417,6 @@ func (k Keeper) determineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 		}
 
 		dealerIsValid := effectiveTotalSlots > 0 && validVotingSlots >= quorumSlots
->>>>>>> origin/testnet/latest-in-v0.2.12
 		dealerSubmittedParts := dealerIndex < len(epochBLSData.DealerParts) &&
 			epochBLSData.DealerParts[dealerIndex] != nil &&
 			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&

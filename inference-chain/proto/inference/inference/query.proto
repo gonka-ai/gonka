@@ -32,13 +32,9 @@ import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
-<<<<<<< HEAD
-import "inference/inference/subnet_escrow.proto";
-=======
 import "inference/inference/devshard_escrow.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -430,14 +426,6 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
   }
 
-<<<<<<< HEAD
-  rpc SubnetEscrow (QueryGetSubnetEscrowRequest) returns (QueryGetSubnetEscrowResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/subnet_escrow/{id}";
-  }
-
-  rpc SubnetHostEpochStats (QueryGetSubnetHostEpochStatsRequest) returns (QueryGetSubnetHostEpochStatsResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/subnet_host_epoch_stats/{epoch_index}/{participant}";
-=======
   rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_escrow/{id}";
   }
@@ -453,7 +441,6 @@ service Query {
 
   rpc PoCDelegation (QueryPoCDelegationRequest) returns (QueryPoCDelegationResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_delegation/{participant}";
->>>>>>> origin/testnet/latest-in-v0.2.12
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1175,18 +1162,6 @@ message QueryPoCValidationSnapshotResponse {
   bool found = 2;
 }
 
-<<<<<<< HEAD
-message QueryGetSubnetEscrowRequest {
-  uint64 id = 1;
-}
-
-message QueryGetSubnetEscrowResponse {
-  SubnetEscrow escrow = 1;
-  bool found = 2;
-}
-
-message QueryGetSubnetHostEpochStatsRequest {
-=======
 message QueryPreservedNodesSnapshotRequest {}
 
 message QueryPreservedNodesSnapshotResponse {
@@ -1204,17 +1179,11 @@ message QueryGetDevshardEscrowResponse {
 }
 
 message QueryGetDevshardHostEpochStatsRequest {
->>>>>>> origin/testnet/latest-in-v0.2.12
   uint64 epoch_index = 1;
   string participant = 2;
 }
 
-<<<<<<< HEAD
-message QueryGetSubnetHostEpochStatsResponse {
-  SubnetHostEpochStats stats = 1;
-=======
 message QueryGetDevshardHostEpochStatsResponse {
   DevshardHostEpochStats stats = 1;
->>>>>>> origin/testnet/latest-in-v0.2.12
   bool found = 2;
 }

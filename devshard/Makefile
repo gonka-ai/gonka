@@ -10,7 +10,7 @@ integration-test:
 	go test ./user/ -tags stress -run 'TestStress|TestFault' -v -timeout 30m -count=1
 
 stress-test:
-	go test ./user/ -tags stress -run TestStress -v -timeout 30m -count=1
+	go test ./user/ ./storage/ -tags stress -run TestStress -v -timeout 30m -count=1
 
 fault-test:
 	go test ./user/ -tags stress -run TestFault -v -timeout 10m -count=1

@@ -134,22 +134,6 @@ func requireKimiPoCModelConfig(
 	require.Equal(t, penaltyStartEpoch, kimi.PenaltyStartEpoch)
 }
 
-func requireTestnetPoCModelConfig(
-	t *testing.T,
-	models []*inferencetypes.PoCModelConfig,
-	penaltyStartEpoch uint64,
-) {
-	t.Helper()
-	model := requirePoCModelConfig(t, models, testnetModelID)
-	require.Equal(t, int64(256), model.SeqLen)
-	require.NotNil(t, model.StatTest)
-	require.Equal(t, inferencetypes.DecimalFromFloat(0.4), model.StatTest.DistThreshold)
-	require.Equal(t, inferencetypes.DecimalFromFloat(0.1), model.StatTest.PMismatch)
-	require.Equal(t, inferencetypes.DecimalFromFloat(0.05), model.StatTest.PValueThreshold)
-	require.Equal(t, inferencetypes.DecimalFromFloat(4.475), model.WeightScaleFactor)
-	require.Equal(t, penaltyStartEpoch, model.PenaltyStartEpoch)
-}
-
 func requireDeprecatedPoCParamsCleared(t *testing.T, poc *inferencetypes.PocParams) {
 	t.Helper()
 	require.NotNil(t, poc)
@@ -180,7 +164,7 @@ func TestMigrateParams(t *testing.T) {
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got.PocParams.Models, 3)
+	require.Len(t, got.PocParams.Models, 2)
 	m := requirePoCModelConfig(t, got.PocParams.Models, "founding-model")
 	require.Equal(t, "founding-model", m.ModelId)
 	require.Equal(t, int64(512), m.SeqLen)
@@ -190,13 +174,12 @@ func TestMigrateParams(t *testing.T) {
 	require.Equal(t, "0.750000000000000000", wsf.String())
 	require.NotNil(t, m.StatTest)
 	require.Equal(t, uint64(0), m.PenaltyStartEpoch)
-	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 11)
-	requireTestnetPoCModelConfig(t, got.PocParams.Models, 11)
+	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 12)
 
 	require.NotNil(t, got.DelegationParams)
 	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
 	defaults := inferencetypes.DefaultDelegationParams()
-	require.Equal(t, int64(5), got.DelegationParams.DeployWindow)
+	require.Equal(t, int64(500), got.DelegationParams.DeployWindow)
 	require.Equal(t, defaults.VMin, got.DelegationParams.VMin)
 	require.Equal(t, defaults.WThreshold, got.DelegationParams.WThreshold)
 	require.Equal(t, inferencetypes.DecimalFromFloat(0.75), got.DelegationParams.CapFactor)
@@ -210,11 +193,10 @@ func TestMigrateParams(t *testing.T) {
 	require.NoError(t, migrateParams(ctx, k))
 	got2, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got2.PocParams.Models, 3)
+	require.Len(t, got2.PocParams.Models, 2)
 	founder := requirePoCModelConfig(t, got2.PocParams.Models, "founding-model")
 	require.Equal(t, int64(512), founder.SeqLen)
-	requireKimiPoCModelConfig(t, got2.PocParams.Models, params.PocParams.WeightScaleFactor, 11)
-	requireTestnetPoCModelConfig(t, got2.PocParams.Models, 11)
+	requireKimiPoCModelConfig(t, got2.PocParams.Models, params.PocParams.WeightScaleFactor, 12)
 	requireDeprecatedPoCParamsCleared(t, got2.PocParams)
 }
 
@@ -228,8 +210,6 @@ func TestUpdateGovernanceModels(t *testing.T) {
 			WeightScaleFactor: inferencetypes.DecimalFromFloat(1.0)},
 		{ModelId: kimiModelID, SeqLen: 1024, StatTest: inferencetypes.DefaultPoCStatTestParams(),
 			WeightScaleFactor: inferencetypes.DecimalFromFloat(1.0)},
-		{ModelId: testnetModelID, SeqLen: 256, StatTest: inferencetypes.DefaultPoCStatTestParams(),
-			WeightScaleFactor: inferencetypes.DecimalFromFloat(4.475)},
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
@@ -271,21 +251,10 @@ func TestUpdateGovernanceModels(t *testing.T) {
 	require.Equal(t, uint64(1500), kimi.ThroughputPerNonce)
 	require.Equal(t, &inferencetypes.Decimal{Value: 920, Exponent: -3}, kimi.ValidationThreshold)
 
-	testnetModel, found := k.GetGovernanceModel(ctx, testnetModelID)
-	require.True(t, found)
-	require.Equal(t, k.GetAuthority(), testnetModel.ProposedBy)
-	require.Equal(t, uint64(100), testnetModel.UnitsOfComputePerToken)
-	require.Equal(t, testnetModelID, testnetModel.HfRepo)
-	require.Equal(t, "a09a35458c702b33eeacc393d103063234e8bc28", testnetModel.HfCommit)
-	require.Equal(t, []string{"--quantization", "fp8"}, testnetModel.ModelArgs)
-	require.Equal(t, uint64(24), testnetModel.VRam)
-	require.Equal(t, uint64(10000), testnetModel.ThroughputPerNonce)
-	require.Equal(t, &inferencetypes.Decimal{Value: 85, Exponent: -2}, testnetModel.ValidationThreshold)
-
 	require.NoError(t, updateGovernanceModels(ctx, k))
 	models, err := k.GetGovernanceModels(ctx)
 	require.NoError(t, err)
-	require.Len(t, models, 3)
+	require.Len(t, models, 2)
 }
 
 func setupBackfillFixture(t *testing.T, k inferencekeeper.Keeper, ctx sdk.Context, modelID string, addr1, addr2 string) {
@@ -581,18 +550,15 @@ func TestMigrationSequence(t *testing.T) {
 	// Params migrated.
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Len(t, got.PocParams.Models, 3)
+	require.Len(t, got.PocParams.Models, 2)
 	requirePoCModelConfig(t, got.PocParams.Models, "founding-model")
-	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 7)
-	requireTestnetPoCModelConfig(t, got.PocParams.Models, 7)
+	requireKimiPoCModelConfig(t, got.PocParams.Models, params.PocParams.WeightScaleFactor, 8)
 	require.NotNil(t, got.DelegationParams)
 	require.Equal(t, "founding-model", got.DelegationParams.InitialModelId)
 	requireDeprecatedPoCParamsCleared(t, got.PocParams)
 	_, found := k.GetGovernanceModel(ctx, "unapproved-model")
 	require.False(t, found)
 	_, found = k.GetGovernanceModel(ctx, kimiModelID)
-	require.True(t, found)
-	_, found = k.GetGovernanceModel(ctx, testnetModelID)
 	require.True(t, found)
 
 	// Backfill picked up the migrated model id (proves ordering dependency).

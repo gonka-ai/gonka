@@ -1,6 +1,49 @@
 # Bridge Testnet Setup Guide (Sepolia)
 
-This guide covers the steps to deploy the bridge contract on Sepolia, register it on Gonka, register the USDC Sepolia implementation, and instantiate the Liquidity Pool.
+This guide covers the steps to deploy the bridge contract on Sepolia, register it on Gonka, register the USDC Sepolia implementation, instantiate the Liquidity Pool, and perform bridging operations (wrap/unwrap) between the chains.
+
+## 0. Bounty pool (community_sale + synthetic USDT)
+
+Genesis launch automatically sets up a governance-controlled `community_sale` contract with 1.5M synthetic USDT when you run:
+
+```bash
+cd /srv/dai/ && python3 launch.py --mode genesis --branch origin/testnet/v0.2.13-devshard --chainid "$CHAIN_ID"
+```
+
+No extra flag is required. `BOUNTY_POOL_ENABLED` defaults to `true`.
+
+What happens:
+
+1. Genesis seeds `1500000000000` of `ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4` to the cold key.
+2. Genesis overrides register USDT bank metadata and IBC trade approval (`kava_2222-10`).
+3. After RPC is ready, `bridge-setup-community-sale.sh` stores `community_sale.wasm`, instantiates with governance as admin, and funds the contract.
+4. State is written to `/srv/dai/bounty-pool-state.json`.
+
+Verify:
+
+```bash
+ADDR=$(jq -r .community_sale_address /srv/dai/bounty-pool-state.json)
+/srv/dai/inferenced q bank balances "$ADDR" --node http://localhost:8000/chain-rpc/ -o json
+/srv/dai/inferenced q wasm contract-state smart "$ADDR" '{"config":{}}' --node http://localhost:8000/chain-rpc/ -o json
+/srv/dai/inferenced q inference validate-ibc-token-for-trade \
+  "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4" \
+  --node http://localhost:8000/chain-rpc/ -o json
+```
+
+For testnet bounty governance proposals, pass the testnet contract to `governance-16/generate.py`:
+
+```bash
+python3 governance-16/generate.py v2 <archive-url> <node-url> \
+  --community-sale-contract "$(jq -r .community_sale_address /srv/dai/bounty-pool-state.json)"
+```
+
+Disable automatic setup: `export BOUNTY_POOL_ENABLED=false` before launch.
+
+Manual rerun (if launch was interrupted after chain start):
+
+```bash
+bash /srv/dai/gonka/test-net-cloud/nebius/bridge/bridge-setup-community-sale.sh
+```
 
 ## 1. Register (Deploy) Bridge Contract on Sepolia
 
@@ -320,3 +363,86 @@ Once the Liquidity Pool is funded and an IBC token is approved, you can verify t
     *This executes a CW20 "Send" to the Liquidity Pool with the purchase hook payload.*
 
     **Verification:** Look for **"SUCCESS! Wrapped Token Trade executed successfully."** in the output.
+
+---
+
+## 12. Bridging GNK (Gonka -> Ethereum)
+
+This process wraps native GNK into WGNK on Ethereum/Sepolia.
+
+1.  **Initiate Wrap on Gonka**:
+    Run the wrap script to lock GNK on Gonka and request a mint on Ethereum.
+    ```bash
+    # Usage: ./bridge-gnk-wrap.sh --amount <AMT_NGONKA> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--local]
+    ./bridge-gnk-wrap.sh --amount 1000000000000000000 --destination 0xYourEthAddr --bridge 0xBridgeAddr --local
+    ```
+    *This creates a `MsgRequestBridgeMint` transaction. Record the **Transaction Hash** from the output.*
+
+2.  **Finalize Mint on Ethereum**:
+    Wait ~1 minute for the BLS signature to be generated (threshold signing completion), then run the finalization tool:
+    ```bash
+    # Usage: node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+    node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key 0xYourEthKey --bridge 0xBridgeAddr
+    ```
+    *This script fetches the uncompressed BLS signature from Gonka and executes the `mintWithSignature` call on Sepolia.*
+
+---
+
+## 13. Bridging Wrapped Tokens (Gonka -> Ethereum)
+
+This process unwraps tokens (like bridged USDC) from Gonka back to their Ethereum implementation.
+
+1.  **Initiate Unwrap on Gonka**:
+    ```bash
+    # Usage: ./bridge-token-unwrap.sh --cw20 <CW20_ADDR> --amount <AMT> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--local]
+    ./bridge-token-unwrap.sh --cw20 gonka1... --amount 1000000 --destination 0xYourEthAddr --bridge 0xBridgeAddr --local
+    ```
+    *This executes a `withdraw` call on the wrapped token contract. Record the **Transaction Hash**.*
+
+2.  **Finalize Withdrawal on Ethereum**:
+    ```bash
+    # Uses the same finalization tool as GNK wrapping
+    node bridge-mint-eth.js --tx <GONKA_TX_HASH> --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+    ```
+    *The tool automatically detects whether it's a native GNK mint or a CW20 token withdrawal.*
+
+---
+
+## 14. Bridging WGNK (Ethereum -> Gonka)
+
+This process burns WGNK on Ethereum and releases native GNK on Gonka.
+
+1.  **Burn WGNK on Ethereum**:
+    ```bash
+    # Usage: node bridge-wgnk-unwrap.js --amount <AMT> --eth-key <ETH_KEY> --gonka-recipient <GONKA_ADDR>
+    node bridge-wgnk-unwrap.js --amount 1000000000000000000 --eth-key 0xYourEthKey --gonka-recipient gonka1...
+    ```
+    *This transfers WGNK to the bridge contract (burning it). Note the **Block Number** and **Log Index** from the output.*
+
+2.  **Release GNK on Gonka (Manual Simulation)**:
+    In a testnet environment, use the simulation tool to trigger the release on the Gonka side:
+    ```bash
+    # The full command is provided by the output of bridge-wgnk-unwrap.js
+    ./bridge-token-mint-sim.sh --contract 0xBridgeAddr --owner 0xYourEthAddr --amount 1000000000000000000 --block <BLOCK> --index <INDEX> --local
+    ```
+
+---
+
+## 15. Bridge Maintenance & Troubleshooting
+
+### Enable Normal Operation Manually
+If the bridge contract is stuck in `ADMIN_CONTROL` or if you need to manually sync epochs:
+```bash
+# Usage: node bridge-enable-normal-op.js --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
+node bridge-enable-normal-op.js --eth-key 0xYourEthKey --bridge 0xBridgeAddr
+```
+*This script fetches the current epoch data from Gonka and transitions the contract to `NORMAL_OPERATION`.*
+
+### Cancel Pending Bridge Operation
+If a bridge operation (mint/withdraw) is stuck or you want to refund the escrowed tokens to the sender:
+```bash
+# Usage: ./bridge-cancel-operation.sh --tx <GONKA_TX_HASH> [--local]
+./bridge-cancel-operation.sh --tx <GONKA_TX_HASH> --local
+```
+*This submits a `MsgCancelBridgeOperation` on Gonka. Only the original sender can cancel.*
+

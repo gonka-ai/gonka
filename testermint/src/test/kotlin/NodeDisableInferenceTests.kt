@@ -1,10 +1,7 @@
 import com.productscience.*
 import com.productscience.assertions.assertThat
 import com.productscience.data.getParticipant
-<<<<<<< HEAD
-=======
 import com.github.kittinunf.fuel.core.FuelError
->>>>>>> origin/testnet/latest-in-v0.2.12
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -61,10 +58,6 @@ class NodeDisableInferenceTests : TestermintTest() {
         val rewardSeed = join1.api.getConfig().currentSeed
         logSection("Waiting for an inference assigned to disabled join-1 in the current epoch")
         val join1Address = join1.node.getColdAddress()
-<<<<<<< HEAD
-        val earnedInference = generateSequence { getInferenceResult(genesis) }
-            .take(20)
-=======
         val earnedInference = (1..20)
             .asSequence()
             .mapNotNull { attempt ->
@@ -84,7 +77,6 @@ class NodeDisableInferenceTests : TestermintTest() {
                     }
                     .getOrNull()
             }
->>>>>>> origin/testnet/latest-in-v0.2.12
             .firstOrNull { result ->
                 result.inference.assignedTo == join1Address || result.inference.executedBy == join1Address
             }

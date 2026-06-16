@@ -443,16 +443,6 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-<<<<<<< HEAD
-	// Expected results:
-	// Majority is measured against all participants (5), not just submitters (3):
-	// required approvals = floor(5/2)+1 = 3.
-	// Dealer 0: 3 approvals -> VALID
-	// Dealer 1: 2 approvals -> INVALID
-	// Dealer 2: 2 approvals -> INVALID
-	// Dealer 3: 1 approval -> INVALID
-	// Dealer 4: 0 approvals -> INVALID
-=======
 	// Expected results under slot-weighted quorum implicitly including dealer self.
 	// Quorum is 51/100 slots.
 	// Dealer 0: gets votes from verifier 1 (20) and 2 (20), plus implicitly self (20). Total = 60 slots (>= 51) -> true
@@ -460,7 +450,6 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	// Dealer 2: gets votes from verifier 0 (20), plus implicitly self (20). Total = 40 slots (< 51) -> false
 	// Dealer 3: gets votes from verifier 2 (20), plus implicitly self (20). Total = 40 slots (< 51) -> false
 	// Dealer 4: implicitly self (20), but no dealer part submitted -> false
->>>>>>> origin/testnet/latest-in-v0.2.12
 	expectedValidDealers := []bool{true, false, false, false, false}
 	require.Equal(t, expectedValidDealers, validDealers)
 }
@@ -490,8 +479,6 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 
-<<<<<<< HEAD
-=======
 func TestDetermineValidDealersWithConsensus_DealerOwnsExactlyHalfSlots(t *testing.T) {
 	k, _ := keepertest.BlsKeeper(t)
 
@@ -516,7 +503,6 @@ func TestDetermineValidDealersWithConsensus_DealerOwnsExactlyHalfSlots(t *testin
 	require.Equal(t, []bool{true, false}, validDealers)
 }
 
->>>>>>> origin/testnet/latest-in-v0.2.12
 func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) {
 	k, _ := keepertest.BlsKeeper(t)
 
@@ -536,18 +522,11 @@ func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) 
 	validDealers, err := k.DetermineValidDealersWithConsensus(&epochBLSData)
 	require.NoError(t, err)
 
-<<<<<<< HEAD
-	// Need 2 of 3 approvals:
-	// Dealer 0 gets approvals from verifiers 0 and 1 => VALID
-	// Dealers 1 and 2 only have verifier 0 approval => INVALID
-	expectedValidDealers := []bool{true, false, false}
-=======
 	// Under slot-weighted quorum including implicit dealer self weight:
 	// Dealer 0: verifier 1 votes yes (33), verifier 2 abstains, and dealer 0 implicitly contributes self weight (33) = 66 slots (Valid)
 	// Dealer 1: verifier 0 votes yes (33), verifier 2 abstains, and dealer 1 implicitly contributes self weight (33) = 66 slots (Valid)
 	// Dealer 2: verifier 0 votes yes (33), verifier 1's short vector omits dealer 2, and dealer 2 implicitly contributes self weight (34) = 67 slots (Valid)
 	expectedValidDealers := []bool{true, true, true}
->>>>>>> origin/testnet/latest-in-v0.2.12
 	require.Equal(t, expectedValidDealers, validDealers)
 }
 

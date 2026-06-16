@@ -51,7 +51,7 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
 
 COPY decentralized-api/. .
 
-# ARG LDFLAGS
+ARG LDFLAGS
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache3,target=/go/pkg/mod \
     if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \

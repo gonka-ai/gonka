@@ -8,8 +8,9 @@ import (
 )
 
 // SettlementPayload contains the data needed for on-chain settlement.
-// Mainnet recomputes the state root from HostStats + Fees + RestHash +
-// VersionHash + phase byte; it is not included in the payload.
+// Mainnet recomputes the state root from the payload using
+// HostStats + Fees + RestHash + VersionHash + phase byte.
+// The state root itself is not included in the payload.
 type SettlementPayload struct {
 	EscrowID string
 	Version  string

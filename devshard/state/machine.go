@@ -87,7 +87,8 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver WarmKeyResolver // optional, nil = no warm key support
+	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	protocolVersion types.ProtocolVersion // surfaced for gateway status/config compatibility
 }
 
 // SMOption configures optional StateMachine behavior.
@@ -103,6 +104,25 @@ func WithVersion(version string) SMOption {
 	return func(sm *StateMachine) {
 		sm.state.Version = types.NormalizeSessionVersion(version)
 	}
+}
+
+// WithProtocolVersion records the configured protocol version and enables
+// status/config reporting.
+func WithProtocolVersion(v types.ProtocolVersion) SMOption {
+	return func(sm *StateMachine) {
+		if v == "" {
+			v = types.ProtocolV1
+		}
+		sm.protocolVersion = v
+	}
+}
+
+// ProtocolVersion returns the configured protocol version.
+func (sm *StateMachine) ProtocolVersion() types.ProtocolVersion {
+	if sm.protocolVersion == "" {
+		return types.ProtocolV1
+	}
+	return sm.protocolVersion
 }
 
 func NewStateMachine(
@@ -163,6 +183,7 @@ func NewStateMachine(
 		addressToSlotCount: addrToSlotCount,
 		addressToSlots:     addrToSlots,
 		totalSlots:         uint32(len(group)),
+		protocolVersion:    types.ProtocolV1,
 	}
 	for _, o := range opts {
 		o(sm)
@@ -177,6 +198,7 @@ func NewStateMachine(
 		"token_price", config.TokenPrice,
 		"vote_threshold", config.VoteThreshold,
 		"user_address", userAddress,
+		"protocol_version", sm.ProtocolVersion(),
 	)
 
 	return sm, nil
@@ -250,6 +272,10 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 	var applied []*types.DevshardTx
 	for _, tx := range txs {
 		if err := sm.applyTx(tx); err != nil {
+			if tx.GetStartInference() != nil {
+				sm.restoreMutable(snap)
+				return nil, nil, fmt.Errorf("mandatory start inference: %w", err)
+			}
 			continue
 		}
 		applied = append(applied, tx)
@@ -411,35 +437,63 @@ func (sm *StateMachine) Phase() types.SessionPhase {
 	return sm.state.Phase
 }
 
+// Balance returns the current escrow balance.
+func (sm *StateMachine) Balance() uint64 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.Balance
+}
+
 // SnapshotState returns a deep copy of the current escrow state.
 func (sm *StateMachine) SnapshotState() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	s := *sm.state
+	return *cloneEscrowState(sm.state)
+}
+
+// ExportState returns a deep-copied pointer form used by recovery snapshots.
+func (sm *StateMachine) ExportState() *types.EscrowState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return cloneEscrowState(sm.state)
+}
+
+// RestoreState replaces the current escrow state with a deep copy from storage.
+func (sm *StateMachine) RestoreState(state *types.EscrowState) {
+	if state == nil {
+		return
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.state = cloneEscrowState(state)
+}
+
+func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
+	s := *src
 
 	// Deep copy Group.
-	s.Group = make([]types.SlotAssignment, len(sm.state.Group))
-	copy(s.Group, sm.state.Group)
+	s.Group = make([]types.SlotAssignment, len(src.Group))
+	copy(s.Group, src.Group)
 
 	// Deep copy HostStats.
-	s.HostStats = make(map[uint32]*types.HostStats, len(sm.state.HostStats))
-	for k, v := range sm.state.HostStats {
+	s.HostStats = make(map[uint32]*types.HostStats, len(src.HostStats))
+	for k, v := range src.HostStats {
 		cp := *v
 		s.HostStats[k] = &cp
 	}
 
 	// Deep copy RevealedSeeds.
-	s.RevealedSeeds = make(map[uint32]int64, len(sm.state.RevealedSeeds))
-	maps.Copy(s.RevealedSeeds, sm.state.RevealedSeeds)
+	s.RevealedSeeds = make(map[uint32]int64, len(src.RevealedSeeds))
+	maps.Copy(s.RevealedSeeds, src.RevealedSeeds)
 
 	// Deep copy WarmKeys.
-	s.WarmKeys = make(map[uint32]string, len(sm.state.WarmKeys))
-	maps.Copy(s.WarmKeys, sm.state.WarmKeys)
+	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
+	maps.Copy(s.WarmKeys, src.WarmKeys)
 
 	// Deep copy Inferences.
-	s.Inferences = copyInferences(sm.state.Inferences)
+	s.Inferences = copyInferences(src.Inferences)
 
-	return s
+	return &s
 }
 
 // mutableSnapshot holds the mutable fields of EscrowState for rollback.
@@ -585,7 +639,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
-	logging.Debug("new inference", "subsystem", "state", "inference_id", msg.InferenceId, "executor_slot", executorSlot)
+	logging.Debug("inference -> pending", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", executorSlot,
+		"model", msg.Model,
+		"reserved_cost", reservedCost,
+	)
 	return nil
 }
 
@@ -629,6 +688,11 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
+	logging.Debug("inference pending -> started", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"confirmed_at", msg.ConfirmedAt,
+	)
 	return nil
 }
 
@@ -680,6 +744,13 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
+	logging.Debug("inference started -> finished", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", msg.ExecutorSlot,
+		"input_tokens", msg.InputTokens,
+		"output_tokens", msg.OutputTokens,
+		"actual_cost", actualCost,
+	)
 	return nil
 }
 
@@ -721,6 +792,13 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	}
 
 	// Mutation: set bitmap, count vote weight.
+	// TODO: only the validator's emitting slot is set here, while
+	// applyValidationVote sets every slot owned by the voter address.
+	// Consumers (collectValidationJobs, addressHasValidated,
+	// recomputeCompliance) all use "any slot of this address" semantics so
+	// the asymmetry is benign, but the unified bitmap would be more
+	// consistent. Changing it shifts state-machine output, so it requires a
+	// coordinated upgrade.
 	rec.ValidatedBy.Set(msg.ValidatorSlot)
 
 	// Count vote weight for Finished state (tallies accumulate before any challenge).
@@ -732,6 +810,10 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			logging.Debug("inference finished -> challenged", "subsystem", "state",
+				"inference_id", msg.InferenceId,
+				"validator_slot", msg.ValidatorSlot,
+			)
 		}
 	}
 
@@ -810,8 +892,18 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 			hs.Cost -= rec.ActualCost
 		}
 		sm.state.Balance += rec.ActualCost
+		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
+			"inference_id", msg.InferenceId,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
+		logging.Debug("inference challenged -> validated", "subsystem", "state",
+			"inference_id", msg.InferenceId,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
 	}
 
 	return nil
@@ -894,6 +986,11 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	// Release reserved cost back to escrow.
 	sm.state.Balance += rec.ReservedCost
 
+	logging.Debug("inference -> timed_out", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"reason", msg.Reason.String(),
+	)
 	return nil
 }
 
@@ -1002,7 +1099,6 @@ func (sm *StateMachine) recomputeCompliance() {
 
 // penalizeUnrevealedSeeds sets RequiredValidations for unrevealed hosts.
 // Mirrors applyRevealSeed with penaltyValidationRate. CompletedValidations stays 0.
-// Uses integer math only (no float64/math.Ceil) to avoid architecture-dependent state root splits.
 func (sm *StateMachine) penalizeUnrevealedSeeds() {
 	revealedAddrs := make(map[string]bool, len(sm.state.RevealedSeeds))
 	for slot := range sm.state.RevealedSeeds {
@@ -1034,8 +1130,8 @@ func (sm *StateMachine) penalizeUnrevealedSeeds() {
 			denom := uint64(sm.totalSlots - executorSlotCount)
 			probSumScaled += penalizePerInferenceScaled32(uint64(penaltyValidationRate), uint64(validatorSlotCount), denom)
 		}
-
 		required := uint32CeilScaledSum32(probSumScaled)
+
 		for _, slot := range slots {
 			if hs, ok := sm.state.HostStats[slot]; ok {
 				hs.RequiredValidations = required
@@ -1140,6 +1236,11 @@ func (sm *StateMachine) CheckWarmKey(warmAddr, coldAddr string) bool {
 
 func (sm *StateMachine) TotalSlots() uint32 {
 	return sm.totalSlots
+}
+
+// QuorumThreshold returns the minimum slot-weighted signature count for 2/3+1 quorum.
+func (sm *StateMachine) QuorumThreshold() uint32 {
+	return 2*sm.totalSlots/3 + 1
 }
 
 func (sm *StateMachine) SlotAddress(slotID uint32) string {

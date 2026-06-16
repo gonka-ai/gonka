@@ -72,12 +72,8 @@ var (
 	ErrDevComponentMismatch                  = sdkerrors.Register(ModuleName, 1170, "developer signature components mismatch")
 	ErrTAComponentMismatch                   = sdkerrors.Register(ModuleName, 1171, "transfer agent signature components mismatch")
 	ErrInferenceRoleMismatch                 = sdkerrors.Register(ModuleName, 1172, "inference role/address invariant mismatch")
-<<<<<<< HEAD
-	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create subnet escrows for subnets")
-=======
 	ErrNotAllowedEscrowCreator               = sdkerrors.Register(ModuleName, 1173, "address is not allowed to create devshard escrows for devshards")
 	ErrEpochIndexOutOfRange                  = sdkerrors.Register(ModuleName, 1174, "epoch index can only be current or upcoming epoch")
 	ErrSelfDelegation                        = sdkerrors.Register(ModuleName, 1175, "self-delegation not allowed")
 	ErrInvalidDelegateTarget                 = sdkerrors.Register(ModuleName, 1176, "invalid delegation target")
->>>>>>> origin/testnet/latest-in-v0.2.12
 )

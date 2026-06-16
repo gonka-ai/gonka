@@ -23,13 +23,6 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type PruningState struct {
-<<<<<<< HEAD
-	PocBatchesPrunedEpoch            int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
-	PocValidationsPrunedEpoch        int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
-	InferencePrunedEpoch             int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
-	EpochGroupValidationsPrunedEpoch int64 `protobuf:"varint,4,opt,name=epoch_group_validations_pruned_epoch,json=epochGroupValidationsPrunedEpoch,proto3" json:"epoch_group_validations_pruned_epoch,omitempty"`
-	SubnetPrunedEpoch                int64 `protobuf:"varint,5,opt,name=subnet_pruned_epoch,json=subnetPrunedEpoch,proto3" json:"subnet_pruned_epoch,omitempty"`
-=======
 	PocBatchesPrunedEpoch                int64 `protobuf:"varint,1,opt,name=poc_batches_pruned_epoch,json=pocBatchesPrunedEpoch,proto3" json:"poc_batches_pruned_epoch,omitempty"`
 	PocValidationsPrunedEpoch            int64 `protobuf:"varint,2,opt,name=poc_validations_pruned_epoch,json=pocValidationsPrunedEpoch,proto3" json:"poc_validations_pruned_epoch,omitempty"`
 	InferencePrunedEpoch                 int64 `protobuf:"varint,3,opt,name=inference_pruned_epoch,json=inferencePrunedEpoch,proto3" json:"inference_pruned_epoch,omitempty"`
@@ -39,7 +32,6 @@ type PruningState struct {
 	MlnodeWeightDistributionsPrunedEpoch int64 `protobuf:"varint,7,opt,name=mlnode_weight_distributions_pruned_epoch,json=mlnodeWeightDistributionsPrunedEpoch,proto3" json:"mlnode_weight_distributions_pruned_epoch,omitempty"`
 	PocValidationsV2PrunedEpoch          int64 `protobuf:"varint,8,opt,name=poc_validations_v2_pruned_epoch,json=pocValidationsV2PrunedEpoch,proto3" json:"poc_validations_v2_pruned_epoch,omitempty"`
 	PocValidationSnapshotsPrunedEpoch    int64 `protobuf:"varint,9,opt,name=poc_validation_snapshots_pruned_epoch,json=pocValidationSnapshotsPrunedEpoch,proto3" json:"poc_validation_snapshots_pruned_epoch,omitempty"`
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 func (m *PruningState) Reset()         { *m = PruningState{} }
@@ -103,11 +95,6 @@ func (m *PruningState) GetEpochGroupValidationsPrunedEpoch() int64 {
 	return 0
 }
 
-<<<<<<< HEAD
-func (m *PruningState) GetSubnetPrunedEpoch() int64 {
-	if m != nil {
-		return m.SubnetPrunedEpoch
-=======
 func (m *PruningState) GetDevshardPrunedEpoch() int64 {
 	if m != nil {
 		return m.DevshardPrunedEpoch
@@ -139,7 +126,6 @@ func (m *PruningState) GetPocValidationsV2PrunedEpoch() int64 {
 func (m *PruningState) GetPocValidationSnapshotsPrunedEpoch() int64 {
 	if m != nil {
 		return m.PocValidationSnapshotsPrunedEpoch
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return 0
 }
@@ -153,27 +139,6 @@ func init() {
 }
 
 var fileDescriptor_f3e942f788f930ee = []byte{
-<<<<<<< HEAD
-	// 276 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x52, 0xcf, 0xcc, 0x4b, 0x4b,
-	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x0a, 0x8a, 0x4a, 0xf3, 0x32, 0xf3, 0xd2, 0xe3,
-	0x8b, 0x4b, 0x12, 0x4b, 0x52, 0xf5, 0x0a, 0x8a, 0xf2, 0x4b, 0xf2, 0x85, 0x84, 0xe1, 0xd2, 0x7a,
-	0x70, 0x96, 0xd2, 0x3e, 0x26, 0x2e, 0x9e, 0x00, 0x88, 0xe2, 0x60, 0x90, 0x5a, 0x21, 0x73, 0x2e,
-	0x89, 0x82, 0xfc, 0xe4, 0xf8, 0xa4, 0xc4, 0x92, 0xe4, 0x8c, 0xd4, 0xe2, 0x78, 0x90, 0x41, 0xa9,
-	0x29, 0xf1, 0xa9, 0x05, 0xf9, 0xc9, 0x19, 0x12, 0x8c, 0x0a, 0x8c, 0x1a, 0xcc, 0x41, 0xa2, 0x05,
-	0xf9, 0xc9, 0x4e, 0x10, 0xe9, 0x00, 0xb0, 0xac, 0x2b, 0x48, 0x52, 0xc8, 0x9e, 0x4b, 0x06, 0xa4,
-	0xb1, 0x2c, 0x31, 0x27, 0x33, 0x25, 0xb1, 0x24, 0x33, 0x3f, 0x0f, 0x4d, 0x33, 0x13, 0x58, 0xb3,
-	0x64, 0x41, 0x7e, 0x72, 0x18, 0x42, 0x09, 0xb2, 0x01, 0x26, 0x5c, 0x62, 0x70, 0x77, 0xa1, 0x6a,
-	0x65, 0x06, 0x6b, 0x15, 0x81, 0xcb, 0x22, 0xeb, 0xf2, 0xe3, 0x52, 0x01, 0x2b, 0x8a, 0x4f, 0x2f,
-	0xca, 0x2f, 0x2d, 0xc0, 0x6d, 0x3d, 0x0b, 0xd8, 0x0c, 0x05, 0x30, 0xc7, 0x1d, 0xa4, 0x14, 0x87,
-	0x2b, 0xf4, 0xb8, 0x84, 0x8b, 0x4b, 0x93, 0xf2, 0x52, 0x4b, 0x50, 0xb5, 0xb3, 0x82, 0xb5, 0x0b,
-	0x42, 0xa4, 0x90, 0xd4, 0x3b, 0xf9, 0x9f, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91, 0x1c, 0xe3, 0x83,
-	0x47, 0x72, 0x8c, 0x13, 0x1e, 0xcb, 0x31, 0x5c, 0x78, 0x2c, 0xc7, 0x70, 0xe3, 0xb1, 0x1c, 0x43,
-	0x94, 0x69, 0x7a, 0x66, 0x49, 0x46, 0x69, 0x92, 0x5e, 0x72, 0x7e, 0xae, 0x7e, 0x41, 0x51, 0x7e,
-	0x4a, 0x69, 0x72, 0x49, 0x71, 0x72, 0x26, 0x5a, 0x44, 0x55, 0x20, 0xb1, 0x4b, 0x2a, 0x0b, 0x52,
-	0x8b, 0x93, 0xd8, 0xc0, 0xb1, 0x65, 0x0c, 0x08, 0x00, 0x00, 0xff, 0xff, 0x10, 0x6e, 0x31, 0x58,
-	0xd8, 0x01, 0x00, 0x00,
-=======
 	// 395 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x92, 0x41, 0x6b, 0xe2, 0x40,
 	0x18, 0x86, 0xcd, 0xba, 0xba, 0xbb, 0xc3, 0x9e, 0x74, 0x5d, 0x5c, 0xb6, 0xa4, 0x5a, 0x2c, 0xf5,
@@ -200,7 +165,6 @@ var fileDescriptor_f3e942f788f930ee = []byte{
 	0x5e, 0x86, 0x44, 0x45, 0x89, 0x3f, 0x40, 0x2c, 0x1e, 0x72, 0xc1, 0x82, 0x04, 0x29, 0x89, 0x48,
 	0xe9, 0xe9, 0xbf, 0x18, 0x67, 0xf5, 0xca, 0xb1, 0xf4, 0xeb, 0xfa, 0xfd, 0x9f, 0x7f, 0x06, 0x00,
 	0x00, 0xff, 0xff, 0x45, 0x0c, 0x1e, 0xba, 0x2a, 0x03, 0x00, 0x00,
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 func (m *PruningState) Marshal() (dAtA []byte, err error) {
@@ -223,10 +187,6 @@ func (m *PruningState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-<<<<<<< HEAD
-	if m.SubnetPrunedEpoch != 0 {
-		i = encodeVarintPruningState(dAtA, i, uint64(m.SubnetPrunedEpoch))
-=======
 	if m.PocValidationSnapshotsPrunedEpoch != 0 {
 		i = encodeVarintPruningState(dAtA, i, uint64(m.PocValidationSnapshotsPrunedEpoch))
 		i--
@@ -249,7 +209,6 @@ func (m *PruningState) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	}
 	if m.DevshardPrunedEpoch != 0 {
 		i = encodeVarintPruningState(dAtA, i, uint64(m.DevshardPrunedEpoch))
->>>>>>> origin/testnet/latest-in-v0.2.12
 		i--
 		dAtA[i] = 0x28
 	}
@@ -305,10 +264,6 @@ func (m *PruningState) Size() (n int) {
 	if m.EpochGroupValidationsPrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.EpochGroupValidationsPrunedEpoch))
 	}
-<<<<<<< HEAD
-	if m.SubnetPrunedEpoch != 0 {
-		n += 1 + sovPruningState(uint64(m.SubnetPrunedEpoch))
-=======
 	if m.DevshardPrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.DevshardPrunedEpoch))
 	}
@@ -323,7 +278,6 @@ func (m *PruningState) Size() (n int) {
 	}
 	if m.PocValidationSnapshotsPrunedEpoch != 0 {
 		n += 1 + sovPruningState(uint64(m.PocValidationSnapshotsPrunedEpoch))
->>>>>>> origin/testnet/latest-in-v0.2.12
 	}
 	return n
 }
@@ -441,15 +395,9 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 			}
 		case 5:
 			if wireType != 0 {
-<<<<<<< HEAD
-				return fmt.Errorf("proto: wrong wireType = %d for field SubnetPrunedEpoch", wireType)
-			}
-			m.SubnetPrunedEpoch = 0
-=======
 				return fmt.Errorf("proto: wrong wireType = %d for field DevshardPrunedEpoch", wireType)
 			}
 			m.DevshardPrunedEpoch = 0
->>>>>>> origin/testnet/latest-in-v0.2.12
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPruningState
@@ -459,9 +407,6 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-<<<<<<< HEAD
-				m.SubnetPrunedEpoch |= int64(b&0x7F) << shift
-=======
 				m.DevshardPrunedEpoch |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
@@ -539,7 +484,6 @@ func (m *PruningState) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.PocValidationSnapshotsPrunedEpoch |= int64(b&0x7F) << shift
->>>>>>> origin/testnet/latest-in-v0.2.12
 				if b < 0x80 {
 					break
 				}

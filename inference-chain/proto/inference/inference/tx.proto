@@ -11,12 +11,8 @@ import "inference/inference/params.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/bridge.proto";
 import "inference/inference/poc_v2.proto";
-<<<<<<< HEAD
-import "inference/inference/subnet_escrow.proto";
-=======
 import "inference/inference/devshard_escrow.proto";
 import "inference/inference/poc_delegation.proto";
->>>>>>> origin/testnet/latest-in-v0.2.12
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -45,10 +41,6 @@ service Msg {
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel) returns (MsgRegisterModelResponse);
   rpc DeleteGovernanceModel            (MsgDeleteGovernanceModel) returns (MsgDeleteGovernanceModelResponse);
-<<<<<<< HEAD
-  rpc CreateTrainingTask               (MsgCreateTrainingTask) returns (MsgCreateTrainingTaskResponse);
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff) returns (MsgSubmitHardwareDiffResponse);
   rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade) returns (MsgCreatePartialUpgradeResponse);
   rpc BridgeExchange                   (MsgBridgeExchange) returns (MsgBridgeExchangeResponse);
@@ -66,16 +58,12 @@ service Msg {
   rpc RemoveParticipantsFromAllowList  (MsgRemoveParticipantsFromAllowList) returns (MsgRemoveParticipantsFromAllowListResponse);
   rpc ApproveIbcTokenForTrading        (MsgApproveIbcTokenForTrading) returns (MsgApproveIbcTokenForTradingResponse);
   rpc RegisterIbcTokenMetadata         (MsgRegisterIbcTokenMetadata) returns (MsgRegisterIbcTokenMetadataResponse);
-<<<<<<< HEAD
-  rpc CreateSubnetEscrow               (MsgCreateSubnetEscrow) returns (MsgCreateSubnetEscrowResponse);
-  rpc SettleSubnetEscrow               (MsgSettleSubnetEscrow) returns (MsgSettleSubnetEscrowResponse);
-=======
-  rpc CreateDevshardEscrow               (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
-  rpc SettleDevshardEscrow               (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
+  rpc CreateDevshardEscrow             (MsgCreateDevshardEscrow) returns (MsgCreateDevshardEscrowResponse);
+  rpc SettleDevshardEscrow             (MsgSettleDevshardEscrow) returns (MsgSettleDevshardEscrowResponse);
+  rpc SetDevshardRequestsEnabled       (MsgSetDevshardRequestsEnabled) returns (MsgSetDevshardRequestsEnabledResponse);
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -294,18 +282,6 @@ message MsgDeleteGovernanceModel {
   option (cosmos.msg.v1.signer) = "authority";
   string authority = 1;
   string id = 2;
-<<<<<<< HEAD
-}
-
-message MsgDeleteGovernanceModelResponse {}
-
-message MsgCreateTrainingTask {
-  option (cosmos.msg.v1.signer) = "creator";
-  string                    creator = 1;
-  repeated TrainingHardwareResources hardware_resources = 2;
-  TrainingConfig            config = 3;
-=======
->>>>>>> origin/testnet/latest-in-v0.2.12
 }
 
 message MsgDeleteGovernanceModelResponse {}
@@ -505,30 +481,6 @@ message MsgRegisterIbcTokenMetadata {
 
 message MsgRegisterIbcTokenMetadataResponse {}
 
-<<<<<<< HEAD
-message MsgCreateSubnetEscrow {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  uint64 amount = 2;
-}
-
-message MsgCreateSubnetEscrowResponse {
-  uint64 escrow_id = 1;
-}
-
-message MsgSettleSubnetEscrow {
-  option (cosmos.msg.v1.signer) = "settler";
-  string settler = 1;
-  uint64 escrow_id = 2;
-  bytes state_root = 3;
-  uint64 nonce = 4;
-  bytes rest_hash = 5;
-  repeated SubnetSettlementHostStats host_stats = 6;
-  repeated SubnetSlotSignature signatures = 7;
-}
-
-message MsgSettleSubnetEscrowResponse {}
-=======
 message MsgCreateDevshardEscrow {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
@@ -554,4 +506,11 @@ message MsgSettleDevshardEscrow {
 }
 
 message MsgSettleDevshardEscrowResponse {}
->>>>>>> origin/testnet/latest-in-v0.2.12
+
+message MsgSetDevshardRequestsEnabled {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  bool enabled = 2;
+}
+
+message MsgSetDevshardRequestsEnabledResponse {}

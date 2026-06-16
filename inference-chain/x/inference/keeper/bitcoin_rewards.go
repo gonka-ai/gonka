@@ -32,13 +32,7 @@ func GetBitcoinSettleAmounts(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
-<<<<<<< HEAD
-	participantMLNodes map[string][]*types.MLNodeInfo,
-	collateralAdjustmentActive bool,
-=======
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
-	coefficients map[string]mathsdk.LegacyDec,
->>>>>>> origin/testnet/latest-in-v0.2.12
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	if participants == nil {
@@ -67,11 +61,6 @@ func GetBitcoinSettleAmounts(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
-<<<<<<< HEAD
-		collateralAdjustmentActive,
-=======
-		coefficients,
->>>>>>> origin/testnet/latest-in-v0.2.12
 		logger,
 	)
 	if err != nil {
@@ -127,7 +116,7 @@ func GetBitcoinSettleAmounts(
 }
 
 func saturatingAddUint64Max(a int64, b uint64) int64 {
-	if a >= math.MaxInt64 {
+	if a == math.MaxInt64 {
 		return math.MaxInt64
 	}
 	headroom := uint64(math.MaxInt64 - a) // safe because a >= 0
@@ -553,13 +542,7 @@ func CalculateParticipantBitcoinRewards(
 	epochGroupData *types.EpochGroupData,
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
-<<<<<<< HEAD
-	participantMLNodes map[string][]*types.MLNodeInfo,
-	collateralAdjustmentActive bool,
-=======
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
-	coefficients map[string]mathsdk.LegacyDec,
->>>>>>> origin/testnet/latest-in-v0.2.12
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	// Parameter validation
@@ -588,6 +571,7 @@ func CalculateParticipantBitcoinRewards(
 	// 2. Calculate effective weights with confirmation capping
 	participantWeights := make(map[string]uint64)
 	participantFullWeights := make(map[string]uint64) // Track full weights for denominator (prevents redistribution)
+	confirmationWeightCoefficients := types.ConfirmationWeightCoefficients(epochGroupData.ConfirmationWeightScales)
 
 	// Calculate effectiveWeight for each participant using helper function
 	effectiveWeights := make([]*types.ActiveParticipant, 0, len(participants))
@@ -626,44 +610,30 @@ func CalculateParticipantBitcoinRewards(
 			continue
 		}
 
-		// Rescale ConfirmationWeight (raw MLNode scale) into fullWeight's
-		// (consensus-weight) scale so the numerator matches the denominator.
-		effectiveWeight := vw.ConfirmationWeight
-		if effectiveWeight < 0 {
+		effectiveWeight := fullWeight
+		if len(epochGroupData.ConfirmationWeightScales) == 0 {
+			logger.Info("Bitcoin Rewards: no confirmation weight scales, skipping confirmation rescale",
+				"participant", participant.Address,
+				"fullWeight", fullWeight)
+		} else {
+			rawTotal := types.ConfirmationWeightOfModelNodesWithCoefficients(
+				participantMLNodes[participant.Address],
+				confirmationWeightCoefficients,
+			)
 			effectiveWeight = 0
-		}
-		rawTotal := CoefficientAdjustedWeight(participantMLNodes[participant.Address], coefficients, nil)
-		if rawTotal > 0 && vw.Weight < rawTotal {
-			ewBig := big.NewInt(effectiveWeight)
-			ewBig.Mul(ewBig, big.NewInt(vw.Weight))
-			ewBig.Div(ewBig, big.NewInt(rawTotal))
-			effectiveWeight = ewBig.Int64()
+			if rawTotal > 0 {
+				confirmed := vw.ConfirmationWeight
+				if confirmed < 0 {
+					confirmed = 0
+				}
+				ewBig := big.NewInt(confirmed)
+				ewBig.Mul(ewBig, big.NewInt(vw.Weight))
+				ewBig.Div(ewBig, big.NewInt(rawTotal))
+				effectiveWeight = ewBig.Int64()
+			}
 		}
 		if effectiveWeight > int64(fullWeight) {
 			effectiveWeight = int64(fullWeight)
-		}
-
-		if collateralAdjustmentActive {
-			// When collateral adjustment is active, mlNode.PocWeight values remain raw while
-			// vw.Weight already reflects collateral-adjusted voting power. Scale the
-			// confirmation-recomputed effective weight back into the same adjusted space.
-			rawTotalWeight := int64(0)
-			rawNodes := mlNodes
-			if len(rawNodes) == 0 {
-				rawNodes = vw.MlNodes
-			}
-			for _, mlNode := range rawNodes {
-				if mlNode != nil {
-					rawTotalWeight += mlNode.PocWeight
-				}
-			}
-			if rawTotalWeight > 0 && vw.Weight < rawTotalWeight {
-				// Use big.Int to prevent overflow: effectiveWeight * vw.Weight can exceed int64
-				ewBig := big.NewInt(effectiveWeight)
-				ewBig = ewBig.Mul(ewBig, big.NewInt(vw.Weight))
-				ewBig = ewBig.Div(ewBig, big.NewInt(rawTotalWeight))
-				effectiveWeight = ewBig.Int64()
-			}
 		}
 
 		logger.Info("Bitcoin Rewards: Calculated effective weight",

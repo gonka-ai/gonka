@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"devshard"
 	"devshard/bridge"
 	"devshard/gossip"
 	"devshard/host"
@@ -280,6 +282,9 @@ func (s *Server) HandleInference(c echo.Context) error {
 	resp, err := s.host.HandleRequest(c.Request().Context(), req)
 	if err != nil {
 		logging.Error("HandleInference", "error", "handle request: "+err.Error())
+		if errors.Is(err, devshard.ErrRequestsDisabled) {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
@@ -370,6 +375,9 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) error {
 	}
 	if !s.isOwner(sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	if !s.host.CompletionRequestsEnabled() {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, devshard.ErrRequestsDisabled.Error())
 	}
 
 	body, err := getBody(c)

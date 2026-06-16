@@ -137,6 +137,13 @@ jobs:
           docker --version
           docker compose version
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Make
         run: |
           sudo apt-get update
@@ -157,9 +164,11 @@ jobs:
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
           DEVSHARD_VERSION: "v0.2.11"
+          USE_REGISTRY_CACHE: "1"
         run: |
           make build-docker
-          make devshardd-build
+          # devshardd self-checks build_version == the version versiond forces (v1 in DevshardStandaloneTests).
+          DEVSHARD_VERSION=v1 make devshardd-build
           echo "=== Images immediately after build ==="
           docker images | head -20
 

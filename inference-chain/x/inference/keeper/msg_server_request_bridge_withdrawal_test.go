@@ -67,8 +67,6 @@ func TestMsgServer_RequestBridgeWithdrawal_Permissions(t *testing.T) {
 	err = keeper.CheckPermission(msPassed, wctx, msg, keeper.ContractPermission)
 	require.NoError(t, err)
 }
-<<<<<<< HEAD
-=======
 
 func TestMsgServer_RequestBridgeWithdrawal_Behavior(t *testing.T) {
 	k, _, ctx, _ := setupKeeperWithMocks(t)
@@ -110,4 +108,3 @@ func TestMsgServer_RequestBridgeWithdrawal_Behavior(t *testing.T) {
 	_, err := ms.RequestBridgeWithdrawal(ctx, msg)
 	require.Error(t, err)
 }
->>>>>>> origin/testnet/latest-in-v0.2.12
