@@ -87,6 +87,7 @@ def load_config_from_env(hf_home: str = None):
         "BOUNTY_POOL_AMOUNT": "1500000000000",
         "BOUNTY_POOL_COMMUNITY_SALE_LABEL": "community-sale-testnet-v1",
         "BOUNTY_POOL_GOV_AUTHORITY": "gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33",
+        "WRAPPED_TOKEN_SETUP_ENABLED": "true",
     }
     
     config = default_config.copy()
@@ -1273,6 +1274,73 @@ def setup_bounty_pool():
         print(f"  contract: {state.get('community_sale_address')}")
         print(f"  denom: {state.get('ibc_denom')}")
         print(f"  amount: {state.get('amount')}")
+
+
+def setup_wrapped_token_registration():
+    """Upload wrapped_token.wasm and submit a governance proposal to register its code ID."""
+    if CONFIG_ENV.get("WRAPPED_TOKEN_SETUP_ENABLED", "true").lower() != "true":
+        print("Wrapped token registration skipped (WRAPPED_TOKEN_SETUP_ENABLED is not true)")
+        return
+
+    script = GONKA_REPO_DIR / "test-net-cloud/nebius/bridge/bridge-register-wrapped.sh"
+    if not script.exists():
+        raise FileNotFoundError(f"Wrapped token registration script not found: {script}")
+
+    print("Running wrapped token registration (store WASM + governance proposal + vote)...")
+    env = os.environ.copy()
+    env.update(CONFIG_ENV)
+    env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    env["TESTNET_BASE_DIR"] = str(BASE_DIR)
+    env["KEY_NAME"] = COLD_KEY_NAME
+
+    result = subprocess.run(
+        ["bash", str(script), "--use-repo"],
+        cwd=str(BASE_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, script)
+
+    voting_period = "10m"
+    try:
+        overrides_path = GONKA_REPO_DIR / "test-net-cloud/nebius/genesis-overrides.json"
+        local_overrides = BASE_DIR / "genesis-overrides.json"
+        if local_overrides.exists():
+            overrides_path = local_overrides
+        with open(overrides_path, "r") as f:
+            gov_params = json.load(f).get("app_state", {}).get("gov", {}).get("params", {})
+            voting_period = gov_params.get("voting_period", voting_period)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+
+    print("")
+    print("=" * 72)
+    print("Wrapped token code ID registration: vote submitted (async)")
+    print("=" * 72)
+    print(
+        f"The governance proposal was submitted and voted YES by the genesis key, "
+        f"but launch.py does not wait for the voting period to finish "
+        f"(currently {voting_period} in genesis-overrides.json)."
+    )
+    print(
+        "Check proposal status asynchronously, for example:"
+    )
+    print(
+        f"  {INFERENCED_BINARY.path} q gov proposals "
+        f"--node {CONFIG_ENV.get('NODE_RPC_URL', 'http://127.0.0.1:26657')} -o json | jq '.proposals[-1]'"
+    )
+    print(
+        "Once the proposal shows PROPOSAL_STATUS_PASSED, wrapped_token code ID is registered. "
+        "USDC/USDT CW20 contracts are created later on the first bridge deposit (or via bridge-token-mint-sim.sh)."
+    )
+    print("=" * 72)
+    print("")
 
 
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str, chain_id: str):
@@ -2618,6 +2686,7 @@ def main():
     grant_key_permissions(warm_key.address)
     if is_genesis:
         setup_bounty_pool()
+        setup_wrapped_token_registration()
     if not is_genesis:
         print_join_deploy_summary(account_key, warm_key, args.chainid)
 

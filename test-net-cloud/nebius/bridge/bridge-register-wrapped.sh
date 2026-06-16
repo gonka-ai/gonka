@@ -9,7 +9,7 @@ set -e
 # Resolve Base Directory (Logic matches launch.py)
 export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 export KEY_DIR="$BASE_DIR/.inference"
-export CHAIN_ID="gonka-testnet"
+export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
 export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
 
@@ -30,13 +30,6 @@ else
         export APP_NAME="inferenced"
     fi
 fi
-
-export KEY_DIR="$BASE_DIR/.inference"
-export CHAIN_ID="gonka-testnet"
-export KEY_NAME="${KEY_NAME:-gonka-account-key}"
-
-# Port 26657 is closed on host; node is running in Docker, protecting its RPC endpoint behind proxy on port 8000.
-export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
 
 # Function to verify key exists and determine its backend
 # Usage:
@@ -74,7 +67,7 @@ echo "Key:     $KEY_NAME"
 echo "Key Dir: $KEY_DIR"
 
 # Default Password
-PASSWORD="12345678"
+PASSWORD="${KEYRING_PASSWORD:-12345678}"
 CODE_ID=""
 WASM_PATH=""
 PROPOSAL_ID_ARG=""

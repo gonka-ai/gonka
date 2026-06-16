@@ -354,6 +354,41 @@
           }
         }
       ],
+      "bridge": {
+        "contract_addresses": [
+          {
+            "id": "sepolia-bridge-1",
+            "chainId": "ethereum",
+            "address": "0x8395733b8ecc2d1d3a7eb1b8b921d71ee4620b02"
+          }
+        ],
+        "token_metadata": [
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
+            "name": "USD Coin (Sepolia)",
+            "symbol": "USDC",
+            "decimals": 6
+          },
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0x7169d38820dfd117c3fa1f22a697dba58d90ba06",
+            "name": "Tether USD (Sepolia)",
+            "symbol": "USDT",
+            "decimals": 6
+          }
+        ],
+        "trade_approved_tokens": [
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238"
+          },
+          {
+            "chainId": "ethereum",
+            "contractAddress": "0x7169d38820dfd117c3fa1f22a697dba58d90ba06"
+          }
+        ]
+      },
       "genesis_only_params": {
         "total_supply": "1000000000000000000",
         "originator_supply": "160000000000000000",
