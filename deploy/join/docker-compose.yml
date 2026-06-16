@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.13
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.11-testnet
     container_name: tmkms
     restart: unless-stopped
     environment:
