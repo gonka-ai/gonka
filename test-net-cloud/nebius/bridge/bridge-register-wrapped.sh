@@ -11,7 +11,7 @@ export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 export KEY_DIR="$BASE_DIR/.inference"
 export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
-export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
+export NODE_OPTS="${NODE_OPTS:---node http://localhost:8000/chain-rpc/}"
 
 # Local and key-string support
 LOCAL_MODE=false
@@ -68,6 +68,7 @@ echo "Key Dir: $KEY_DIR"
 
 # Default Password
 PASSWORD="${KEYRING_PASSWORD:-12345678}"
+WRAPPED_TOKEN_CHECKSUM="d9598eb08e9379b81dea6474a12566671338561b5394ec9d5c019a8995d02e9d"
 CODE_ID=""
 WASM_PATH=""
 PROPOSAL_ID_ARG=""
@@ -135,9 +136,48 @@ if [ "$USE_REPO_WASM" = true ] && [ -z "$WASM_PATH" ]; then
     
     if [ -z "$WASM_PATH" ]; then
         echo "Error: Could not find $SEARCH_PATH in potential repo locations: ${POTENTIAL_REPO_PATHS[*]}"
+        echo "Build it with: cd inference-chain/contracts/wrapped-token && ./build.sh"
         exit 1
     fi
 fi
+
+if [ -n "$WASM_PATH" ] && [ ! -s "$WASM_PATH" ]; then
+    echo "Error: WASM file is missing or empty: $WASM_PATH"
+    echo "Build it with: cd inference-chain/contracts/wrapped-token && ./build.sh"
+    exit 1
+fi
+
+find_existing_wrapped_code_id() {
+    local codes_json want
+    want=$(echo "$WRAPPED_TOKEN_CHECKSUM" | tr '[:upper:]' '[:lower:]')
+    codes_json=$($APP_NAME query wasm list-code --output json $NODE_OPTS 2>/dev/null || echo "")
+    if [ -z "$codes_json" ]; then
+        return 1
+    fi
+    echo "$codes_json" | jq -r --arg sum "$want" \
+        '.code_infos[] | select((.data_hash | ascii_downcase) == $sum) | .code_id' 2>/dev/null | head -n1
+}
+
+extract_code_id_from_tx_json() {
+    local json="$1"
+    echo "$json" | jq -r '
+        [
+          (.events[]? | select(.type=="store_code") | .attributes[]? | select(.key=="code_id") | .value),
+          (.events[]? | select(.type=="message") | .attributes[]? | select(.key=="code_id") | .value),
+          (.logs[]?.events[]? | select(.type=="store_code") | .attributes[]? | select(.key=="code_id") | .value)
+        ] | map(select(. != null and . != "")) | first // empty
+    ' 2>/dev/null
+}
+
+LAST_TX_RC=0
+run_tx_json() {
+    local out
+    set +e
+    out=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | "$@" 2>&1)
+    LAST_TX_RC=$?
+    set -e
+    printf '%s\n' "$out"
+}
 
 # Function to run keys command safely
 run_keys_cmd() {
@@ -148,7 +188,7 @@ run_keys_cmd() {
 get_keyring_backend "$PASSWORD" || exit 1
 
 # Get Key Address
-MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" 2>/dev/null)
+MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" 2>/dev/null)
 
 if [ -z "$MY_ADDR" ]; then
     echo "Error: Could not retrieve address for key '$KEY_NAME'"
@@ -162,21 +202,26 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
     
     # Optional: Upload WASM if path provided
     if [ -n "$WASM_PATH" ] && [ -z "$CODE_ID" ]; then
-        echo "Storing WASM contract: $WASM_PATH..."
+        EXISTING_CODE_ID="$(find_existing_wrapped_code_id || true)"
+        if [ -n "$EXISTING_CODE_ID" ] && [ "$EXISTING_CODE_ID" != "null" ]; then
+            CODE_ID="$EXISTING_CODE_ID"
+            echo "Wrapped token WASM already on chain. Reusing code ID: $CODE_ID"
+        fi
+    fi
+
+    if [ -n "$WASM_PATH" ] && [ -z "$CODE_ID" ]; then
+        echo "Storing WASM contract: $WASM_PATH ($(wc -c < "$WASM_PATH") bytes)..."
         
-        # Capture raw output
-        RAW_STORE_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | $APP_NAME tx wasm store "$WASM_PATH" \
+        RAW_STORE_OUT=$(run_tx_json "$APP_NAME" tx wasm store "$WASM_PATH" \
           --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-          --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" $NODE_OPTS 2>&1)
+          --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
+        STORE_RC=$LAST_TX_RC
         
-        # Try to extract JSON part if there's noise (warnings/logs)
-        # We look for the first '{' and capture everything from there
         STORE_TX=$(echo "$RAW_STORE_OUT" | sed -n '/{/,$p')
+        TX_HASH=$(echo "$STORE_TX" | jq -r '.txhash // empty' 2>/dev/null)
         
-        TX_HASH=$(echo "$STORE_TX" | jq -r '.txhash' 2>/dev/null || echo "null")
-        
-        if [ "$TX_HASH" == "null" ] || [ -z "$TX_HASH" ]; then
-            echo "Error: WASM store transaction failed or output was not valid JSON."
+        if [ "$STORE_RC" -ne 0 ] || [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+            echo "Error: WASM store transaction failed (exit $STORE_RC)."
             echo "Raw output from command:"
             echo "$RAW_STORE_OUT"
             exit 1
@@ -185,21 +230,20 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
         
         echo "Waiting for code_id extraction..."
         CODE_ID=""
-        for i in $(seq 1 15); do
+        for i in $(seq 1 30); do
             TX_QUERY=$($APP_NAME query tx "$TX_HASH" $NODE_OPTS --output json 2>/dev/null || echo "")
-            # Again, extract JSON from possible noise
             JSON_QUERY=$(echo "$TX_QUERY" | sed -n '/{/,$p')
-            
-            CODE_ID=$(echo "$JSON_QUERY" | jq -r '.events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value' 2>/dev/null | head -n1)
-            
+            CODE_ID=$(extract_code_id_from_tx_json "$JSON_QUERY")
             if [ -n "$CODE_ID" ] && [ "$CODE_ID" != "null" ]; then
                 break
             fi
             sleep 2
         done
         
-        if [ -z "$CODE_ID" ] || [ "$CODE_ID" == "null" ]; then
+        if [ -z "$CODE_ID" ] || [ "$CODE_ID" = "null" ]; then
             echo "Error: Could not extract code_id from transaction $TX_HASH"
+            echo "Query the tx manually:"
+            echo "  $APP_NAME query tx $TX_HASH $NODE_OPTS -o json | jq ."
             echo "Last TX query output:"
             echo "$TX_QUERY"
             exit 1
@@ -240,15 +284,23 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
 
     # 4. Submit Proposal
     echo "Submitting Proposal..."
-    printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | $APP_NAME tx gov submit-proposal "$PROPOSAL_FILE" \
+    SUBMIT_OUT=$(run_tx_json "$APP_NAME" tx gov submit-proposal "$PROPOSAL_FILE" \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" $NODE_OPTS > submit_wrapped_output.json
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
+    SUBMIT_RC=$LAST_TX_RC
+    echo "$SUBMIT_OUT" > submit_wrapped_output.json
 
-    if [ ! -s submit_wrapped_output.json ]; then
-        echo "Error: No output generated from submit-proposal."
+    if [ "$SUBMIT_RC" -ne 0 ]; then
+        echo "Error: submit-proposal failed (exit $SUBMIT_RC)."
+        echo "$SUBMIT_OUT"
         exit 1
     fi
-    TX_HASH=$(cat submit_wrapped_output.json | jq -r .txhash)
+    TX_HASH=$(echo "$SUBMIT_OUT" | sed -n '/{/,$p' | jq -r '.txhash // empty' 2>/dev/null)
+    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+        echo "Error: submit-proposal did not return a txhash."
+        echo "$SUBMIT_OUT"
+        exit 1
+    fi
     echo "TX Hash: $TX_HASH"
 
     echo "Waiting 6 seconds..."
@@ -274,11 +326,12 @@ RETRY_COUNT=0
 VOTE_SUCCESS=false
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    VOTE_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | $APP_NAME tx gov vote "$PROPOSAL_ID" yes \
+    VOTE_OUT=$(run_tx_json "$APP_NAME" tx gov vote "$PROPOSAL_ID" yes \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$BASE_DIR/.inference" $NODE_OPTS 2>&1)
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
+    VOTE_RC=$LAST_TX_RC
     
-    if echo "$VOTE_OUT" | grep -q '"code":0' || echo "$VOTE_OUT" | grep -q "txhash"; then
+    if [ "$VOTE_RC" -eq 0 ] && echo "$VOTE_OUT" | grep -qE '"txhash"|"code":0'; then
         echo "$VOTE_OUT"
         VOTE_SUCCESS=true
         break

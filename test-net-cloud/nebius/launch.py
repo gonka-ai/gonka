@@ -1292,6 +1292,9 @@ def setup_wrapped_token_registration():
     env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
     env["TESTNET_BASE_DIR"] = str(BASE_DIR)
     env["KEY_NAME"] = COLD_KEY_NAME
+    env["KEYRING_PASSWORD"] = CONFIG_ENV.get("KEYRING_PASSWORD", "12345678")
+    api_port = CONFIG_ENV.get("API_PORT", "8000")
+    env["NODE_OPTS"] = f"--node http://localhost:{api_port}/chain-rpc/"
 
     result = subprocess.run(
         ["bash", str(script), "--use-repo"],
@@ -1300,12 +1303,37 @@ def setup_wrapped_token_registration():
         capture_output=True,
         text=True,
     )
+    combined_output = ""
     if result.stdout:
         print(result.stdout)
+        combined_output += result.stdout
     if result.stderr:
         print(result.stderr)
+        combined_output += result.stderr
     if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, script)
+        print("")
+        print("=" * 72)
+        print("WARNING: Wrapped token registration failed (genesis launch continues)")
+        print("=" * 72)
+        print("Bounty pool setup succeeded; only wrapped-token code ID registration failed.")
+        print("Retry manually after checking the error above:")
+        print(
+            f"  cd {BASE_DIR} && "
+            f"CHAIN_ID={env['CHAIN_ID']} TESTNET_BASE_DIR={BASE_DIR} "
+            f"KEYRING_PASSWORD=$KEYRING_PASSWORD "
+            f"bash {script} --use-repo"
+        )
+        print("Common causes:")
+        print("  - wrapped_token.wasm missing/empty (build: inference-chain/contracts/wrapped-token/build.sh)")
+        print("  - cold key short on ngonka for gas/gov deposit")
+        print(f"  - API/chain RPC not reachable at http://localhost:{api_port}/chain-rpc/")
+        if combined_output.strip():
+            print("")
+            print("Last script output tail:")
+            print("\n".join(combined_output.strip().splitlines()[-20:]))
+        print("=" * 72)
+        print("")
+        return
 
     voting_period = "10m"
     try:
