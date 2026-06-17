@@ -63,7 +63,7 @@ val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-comp
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
     val rpcUrl = "http://$keyName-node:26657"
-    val p2pUrl = "http://$keyName-node:26656"
+    val p2pUrl = "tcp://$keyName-node:26656"
 }
 
 data class DockerGroup(
@@ -93,7 +93,7 @@ data class DockerGroup(
     val pocCallbackUrl: String = "http://$pairName-api:9100",
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
-    val p2pExternalAddress: String = "http://$pairName-node:26656",
+    val p2pExternalAddress: String = "$pairName-node:26656",
 ) {
     val warmKeyName = "$pairName-WARM"
     val coldKeyName = pairName

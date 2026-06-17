@@ -68,5 +68,9 @@ func (msg *MsgSetPoCDelegation) GetSignersStrings() []string    { return []strin
 func (msg *MsgRefusePoCDelegation) GetSignersStrings() []string { return []string{msg.Sender} }
 func (msg *MsgDeclarePoCIntent) GetSignersStrings() []string    { return []string{msg.Sender} }
 
+// Maintenance messages
+func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }
+func (msg *MsgCancelMaintenance) GetSignersStrings() []string   { return []string{msg.Creator} }
+
 // And one validator signed message?
 func (msg *MsgBridgeExchange) GetSignersStrings() []string { return []string{msg.Validator} }

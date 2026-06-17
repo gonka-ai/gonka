@@ -160,6 +160,15 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "ml-node-version"))
     }
 
+    fun getLastUpgradeHeight(): LastUpgradeHeightQueryResponse = wrapLog("getLastUpgradeHeight", infoLevel = false) {
+        val canonicalExecName = "${config.stateDirName}/cosmovisor/current/bin/${config.appName}"
+        val command = "$canonicalExecName query inference last-upgrade-height --output json"
+        Logger.debug("Executing shell command for last-upgrade-height: {}", command)
+        val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+        Logger.debug("Output: {}", output)
+        cosmosJson.fromJson(output, LastUpgradeHeightQueryResponse::class.java)
+    }
+
     var coldAccountKey: Validator? = null
     var warmAccountKey: Validator? = null
 
@@ -416,7 +425,11 @@ data class ApplicationCLI(
         return cosmosJson.fromJson(output, T::class.java)
     }
 
-    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn: String? = null): String {
+    fun execCli(
+        args: List<String>,
+        includeOutputFlag: Boolean = true,
+        stdIn: String? = null
+    ): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
@@ -479,7 +492,12 @@ data class ApplicationCLI(
             operationAccountAddress) + getTransactionArgs(coldAccountName)
         val response = this.exec(commands, passwordInjection)
         val fullResponse = response.joinToString("\n")
-        if (!fullResponse.contains("Transaction confirmed successfully!")) {
+        val alreadyGranted =
+            response.any {
+                it.contains("fee allowance already exists") ||
+                    it.contains("authorization already exists")
+            }
+        if (!fullResponse.contains("Transaction confirmed successfully!") && !alreadyGranted) {
             if ((fullResponse.contains(NOT_READY_MESSAGE) || fullResponse.contains("not found: key not found")) && retries > 0) {
                 Thread.sleep(Duration.ofSeconds(5))
                 this.grantMlOpsPermissionsToWarmAccount(retries-1)
