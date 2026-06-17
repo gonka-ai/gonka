@@ -179,6 +179,34 @@ run_tx_json() {
     printf '%s\n' "$out"
 }
 
+tx_output_has_sequence_mismatch() {
+    echo "$1" | grep -qi "account sequence mismatch"
+}
+
+run_tx_json_retry() {
+    local max="${1:-5}"
+    shift
+    local attempt=0 out tx_hash
+    while [ "$attempt" -lt "$max" ]; do
+        out=$(run_tx_json "$@")
+        tx_hash=$(echo "$out" | sed -n '/{/,$p' | jq -r '.txhash // empty' 2>/dev/null)
+        if [ -n "$tx_hash" ] && [ "$tx_hash" != "null" ]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        if tx_output_has_sequence_mismatch "$out"; then
+            attempt=$((attempt + 1))
+            echo "Account sequence mismatch, retrying in 3s ($attempt/$max)..."
+            sleep 3
+            continue
+        fi
+        printf '%s\n' "$out"
+        return 1
+    done
+    echo "Error: transaction failed after $max attempts (sequence mismatch)."
+    return 1
+}
+
 # Function to run keys command safely
 run_keys_cmd() {
     local cmd_args="$@"
@@ -212,16 +240,20 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
     if [ -n "$WASM_PATH" ] && [ -z "$CODE_ID" ]; then
         echo "Storing WASM contract: $WASM_PATH ($(wc -c < "$WASM_PATH") bytes)..."
         
-        RAW_STORE_OUT=$(run_tx_json "$APP_NAME" tx wasm store "$WASM_PATH" \
+        if ! RAW_STORE_OUT=$(run_tx_json_retry 5 "$APP_NAME" tx wasm store "$WASM_PATH" \
           --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-          --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
-        STORE_RC=$LAST_TX_RC
+          --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
+            echo "Error: WASM store transaction failed."
+            echo "Raw output from command:"
+            echo "$RAW_STORE_OUT"
+            exit 1
+        fi
         
         STORE_TX=$(echo "$RAW_STORE_OUT" | sed -n '/{/,$p')
         TX_HASH=$(echo "$STORE_TX" | jq -r '.txhash // empty' 2>/dev/null)
         
-        if [ "$STORE_RC" -ne 0 ] || [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
-            echo "Error: WASM store transaction failed (exit $STORE_RC)."
+        if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+            echo "Error: WASM store transaction failed (no txhash)."
             echo "Raw output from command:"
             echo "$RAW_STORE_OUT"
             exit 1
@@ -284,17 +316,15 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
 
     # 4. Submit Proposal
     echo "Submitting Proposal..."
-    SUBMIT_OUT=$(run_tx_json "$APP_NAME" tx gov submit-proposal "$PROPOSAL_FILE" \
+    if ! SUBMIT_OUT=$(run_tx_json_retry 5 "$APP_NAME" tx gov submit-proposal "$PROPOSAL_FILE" \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
-    SUBMIT_RC=$LAST_TX_RC
-    echo "$SUBMIT_OUT" > submit_wrapped_output.json
-
-    if [ "$SUBMIT_RC" -ne 0 ]; then
-        echo "Error: submit-proposal failed (exit $SUBMIT_RC)."
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
+        echo "Error: submit-proposal failed."
         echo "$SUBMIT_OUT"
         exit 1
     fi
+    echo "$SUBMIT_OUT" > submit_wrapped_output.json
+
     TX_HASH=$(echo "$SUBMIT_OUT" | sed -n '/{/,$p' | jq -r '.txhash // empty' 2>/dev/null)
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         echo "Error: submit-proposal did not return a txhash."
@@ -326,12 +356,9 @@ RETRY_COUNT=0
 VOTE_SUCCESS=false
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    VOTE_OUT=$(run_tx_json "$APP_NAME" tx gov vote "$PROPOSAL_ID" yes \
+    if VOTE_OUT=$(run_tx_json_retry 3 "$APP_NAME" tx gov vote "$PROPOSAL_ID" yes \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS)
-    VOTE_RC=$LAST_TX_RC
-    
-    if [ "$VOTE_RC" -eq 0 ] && echo "$VOTE_OUT" | grep -qE '"txhash"|"code":0'; then
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
         echo "$VOTE_OUT"
         VOTE_SUCCESS=true
         break

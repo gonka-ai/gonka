@@ -1276,6 +1276,59 @@ def setup_bounty_pool():
         print(f"  amount: {state.get('amount')}")
 
 
+def _query_account_sequence(address: str, node_rpc_url: str) -> int | None:
+    """Return account sequence from chain, or None if account/query unavailable."""
+    result = subprocess.run(
+        [
+            str(INFERENCED_BINARY.path),
+            "q", "auth", "account", address,
+            "--node", _normalize_node_rpc_url(node_rpc_url),
+            "-o", "json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    account = payload.get("account") or {}
+    if "base_account" in account:
+        account = account["base_account"]
+    seq = account.get("sequence")
+    if seq is None:
+        return None
+    return int(seq)
+
+
+def wait_for_cold_account_sequence_settled(
+    address: str,
+    node_rpc_url: str,
+    timeout_seconds: int = 60,
+) -> None:
+    """Wait until cold-key sequence is stable on RPC (avoids post-bounty race)."""
+    deadline = time.time() + timeout_seconds
+    last_seq: int | None = None
+    while time.time() < deadline:
+        seq = _query_account_sequence(address, node_rpc_url)
+        if seq is None:
+            time.sleep(2)
+            continue
+        if last_seq is not None and seq == last_seq:
+            time.sleep(2)
+            if _query_account_sequence(address, node_rpc_url) == seq:
+                print(f"Cold account sequence settled at {seq} ({node_rpc_url})")
+                return
+        last_seq = seq
+        time.sleep(2)
+    print(
+        f"Warning: cold account sequence may still be changing "
+        f"(last seen={last_seq}); proceeding with wrapped-token setup"
+    )
+
+
 def setup_wrapped_token_registration():
     """Upload wrapped_token.wasm and submit a governance proposal to register its code ID."""
     if CONFIG_ENV.get("WRAPPED_TOKEN_SETUP_ENABLED", "true").lower() != "true":
@@ -1294,7 +1347,14 @@ def setup_wrapped_token_registration():
     env["KEY_NAME"] = COLD_KEY_NAME
     env["KEYRING_PASSWORD"] = CONFIG_ENV.get("KEYRING_PASSWORD", "12345678")
     api_port = CONFIG_ENV.get("API_PORT", "8000")
-    env["NODE_OPTS"] = f"--node http://localhost:{api_port}/chain-rpc/"
+    node_rpc_url = f"http://localhost:{api_port}/chain-rpc/"
+    env["NODE_OPTS"] = f"--node {node_rpc_url}"
+
+    try:
+        cold_address = load_existing_cold_account_key().address
+        wait_for_cold_account_sequence_settled(cold_address, node_rpc_url)
+    except Exception as exc:
+        print(f"Note: could not wait for cold account sequence: {exc}")
 
     result = subprocess.run(
         ["bash", str(script), "--use-repo"],
@@ -1324,6 +1384,7 @@ def setup_wrapped_token_registration():
             f"bash {script} --use-repo"
         )
         print("Common causes:")
+        print("  - account sequence mismatch after bounty pool (retry usually fixes it)")
         print("  - wrapped_token.wasm missing/empty (build: inference-chain/contracts/wrapped-token/build.sh)")
         print("  - cold key short on ngonka for gas/gov deposit")
         print(f"  - API/chain RPC not reachable at http://localhost:{api_port}/chain-rpc/")
