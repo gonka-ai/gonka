@@ -37,7 +37,7 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Devs
 	}
 
 	for _, addr := range order {
-		recipient, err := k.ResolveClaimRecipientAddress(ctx, addr, escrow.EpochIndex)
+		recipient, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			k.LogError("failed to resolve unsettled escrow recipient", types.Pruning,
 				"escrow_id", escrow.Id, "address", addr, "epoch", escrow.EpochIndex, "error", err)
