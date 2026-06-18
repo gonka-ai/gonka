@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"slices"
 	"sort"
@@ -171,25 +172,33 @@ type Node struct {
 }
 
 func (n *Node) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
+	return n.inferenceUrlWithScheme("http", "")
 }
 
 func (n *Node) InferenceUrlWithVersion(version string) string {
+	return n.inferenceUrlWithScheme("http", version)
+}
+
+func (n *Node) inferenceUrlWithScheme(scheme, version string) string {
 	if version == "" {
-		return n.InferenceUrl()
+		return fmt.Sprintf("%s://%s:%d%s", scheme, n.Host, n.InferencePort, n.InferenceSegment)
 	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, version, n.InferenceSegment)
+	return fmt.Sprintf("%s://%s:%d/%s%s", scheme, n.Host, n.InferencePort, version, n.InferenceSegment)
 }
 
 func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+	return n.pocUrlWithScheme("http", "")
 }
 
 func (n *Node) PoCUrlWithVersion(version string) string {
+	return n.pocUrlWithScheme("http", version)
+}
+
+func (n *Node) pocUrlWithScheme(scheme, version string) string {
 	if version == "" {
-		return n.PoCUrl()
+		return fmt.Sprintf("%s://%s:%d%s", scheme, n.Host, n.PoCPort, n.PoCSegment)
 	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+	return fmt.Sprintf("%s://%s:%d/%s%s", scheme, n.Host, n.PoCPort, version, n.PoCSegment)
 }
 
 type NodeWithState struct {
@@ -450,7 +459,26 @@ func (b *Broker) QueueMessage(command Command) error {
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 	version := b.configManager.GetCurrentNodeVersion()
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+	return b.mlNodeClientFactory.CreateClient(b.pocUrlForNode(node, version), b.InferenceUrlForNode(node, version))
+}
+
+func (b *Broker) NewMLNodeHTTPClient(timeout time.Duration) *http.Client {
+	return b.mlNodeClientFactory.NewHTTPClient(timeout)
+}
+
+func (b *Broker) mlNodeScheme() string {
+	if b.configManager != nil {
+		return b.configManager.GetApiConfig().MLNodeTLS.Scheme()
+	}
+	return "http"
+}
+
+func (b *Broker) pocUrlForNode(node *Node, version string) string {
+	return node.pocUrlWithScheme(b.mlNodeScheme(), version)
+}
+
+func (b *Broker) InferenceUrlForNode(node *Node, version string) string {
+	return node.inferenceUrlWithScheme(b.mlNodeScheme(), version)
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {

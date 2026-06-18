@@ -2,6 +2,7 @@ package mlnodeclient
 
 import (
 	"context"
+	"crypto/tls"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -28,12 +29,22 @@ type Client struct {
 }
 
 func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
+	return NewNodeClientWithTLS(pocUrl, inferenceUrl, nil)
+}
+
+func NewNodeClientWithTLS(pocUrl string, inferenceUrl string, tlsConfig *tls.Config) *Client {
+	httpClient := http.Client{
+		Timeout: 15 * time.Minute,
+	}
+	if tlsConfig != nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = tlsConfig.Clone()
+		httpClient.Transport = transport
+	}
 	return &Client{
-		pocUrl:       pocUrl,
-		inferenceUrl: inferenceUrl,
-		client: http.Client{
-			Timeout: 15 * time.Minute,
-		},
+		pocUrl:                pocUrl,
+		inferenceUrl:          inferenceUrl,
+		client:                httpClient,
 		mlGrpcCallbackAddress: "api-private:9300", // TODO: PRTODO: make this configurable
 	}
 }

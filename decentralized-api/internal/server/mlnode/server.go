@@ -1,6 +1,7 @@
 package mlnode
 
 import (
+	"crypto/tls"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
@@ -72,4 +73,14 @@ func (s *Server) getVersions(c echo.Context) error {
 
 func (s *Server) Start(addr string) {
 	go s.e.Start(addr)
+}
+
+func (s *Server) StartTLS(addr string, tlsConfig *tls.Config) error {
+	listener, err := tls.Listen("tcp", addr, tlsConfig)
+	if err != nil {
+		return err
+	}
+	s.e.Listener = listener
+	go s.e.Start("")
+	return nil
 }

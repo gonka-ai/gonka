@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"decentralized-api/apiconfig"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -146,46 +145,6 @@ func TestGenerateSummary_MLNodeWithUnavailableGPU(t *testing.T) {
 
 // Caching and integration tests omitted due to complex mocking requirements.
 // The caching logic is tested in production usage.
-
-// Test Helper Functions
-
-func TestURLHelperFunctions(t *testing.T) {
-	node := apiconfig.InferenceNodeConfig{
-		Host:       "localhost",
-		PoCPort:    8080,
-		PoCSegment: "/api/v1",
-	}
-
-	t.Run("formatURL", func(t *testing.T) {
-		url := formatURL("localhost", 8080, "/api/v1")
-		assert.Equal(t, "http://localhost:8080/api/v1", url)
-	})
-
-	t.Run("formatURLWithVersion", func(t *testing.T) {
-		url := formatURLWithVersion("localhost", 8080, "v2", "/api/v1")
-		assert.Equal(t, "http://localhost:8080/v2/api/v1", url)
-	})
-
-	t.Run("getPoCUrl", func(t *testing.T) {
-		url := getPoCUrl(node)
-		assert.Equal(t, "http://localhost:8080/api/v1", url)
-	})
-
-	t.Run("getPoCUrlVersioned", func(t *testing.T) {
-		url := getPoCUrlVersioned(node, "v2")
-		assert.Equal(t, "http://localhost:8080/v2/api/v1", url)
-	})
-
-	t.Run("getPoCUrlWithVersion empty version", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "")
-		assert.Equal(t, "http://localhost:8080/api/v1", url)
-	})
-
-	t.Run("getPoCUrlWithVersion with version", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "v2")
-		assert.Equal(t, "http://localhost:8080/v2/api/v1", url)
-	})
-}
 
 func TestBuildRecommendationMap(t *testing.T) {
 	recMap := buildRecommendationMap()

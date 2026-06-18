@@ -498,7 +498,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 	}
 
 	response, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, model, nil, 1, func(node *broker.Node) (*http.Response, *broker.ActionError) {
-		tokenizeUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "/tokenize")
+		tokenizeUrl, err := url.JoinPath(s.nodeBroker.InferenceUrlForNode(node, s.configManager.GetCurrentNodeVersion()), "/tokenize")
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
@@ -512,7 +512,7 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			return nil, broker.NewApplicationActionError(err)
 		}
 
-		resp, postErr := s.httpClient.Post(
+		resp, postErr := s.mlNodeHTTPClient.Post(
 			tokenizeUrl,
 			"application/json",
 			bytes.NewReader(jsonData),
@@ -605,14 +605,15 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		inferencePath = chatCompletionsPath
 	}
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
+		inferenceUrl := s.nodeBroker.InferenceUrlForNode(node, s.configManager.GetCurrentNodeVersion())
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
-			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
+			"inferenceId", inferenceId, "node", node.Id, "url", inferenceUrl)
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), inferencePath)
+		completionsUrl, err := url.JoinPath(inferenceUrl, inferencePath)
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := s.httpClient.Post(
+		resp, postErr := s.mlNodeHTTPClient.Post(
 			completionsUrl,
 			request.Request.Header.Get("Content-Type"),
 			bytes.NewReader(modifiedRequestBody.NewBody),

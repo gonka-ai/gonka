@@ -60,17 +60,32 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port                      int    `koanf:"port" json:"port"`
-	PoCCallbackUrl            string `koanf:"poc_callback_url" json:"poc_callback_url"`
-	MlGrpcCallbackAddress     string `koanf:"ml_grpc_callback_address" json:"ml_grpc_callback_address"`
-	PublicUrl                 string `koanf:"public_url" json:"public_url"`
-	PublicServerPort          int    `koanf:"public_server_port" json:"public_server_port"`
-	MLServerPort              int    `koanf:"ml_server_port" json:"ml_server_port"`
-	AdminServerPort           int    `koanf:"admin_server_port" json:"admin_server_port"`
-	MlGrpcServerPort          int    `koanf:"ml_grpc_server_port" json:"ml_grpc_server_port"`
-	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
-	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
-	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+	Port                      int             `koanf:"port" json:"port"`
+	PoCCallbackUrl            string          `koanf:"poc_callback_url" json:"poc_callback_url"`
+	MlGrpcCallbackAddress     string          `koanf:"ml_grpc_callback_address" json:"ml_grpc_callback_address"`
+	PublicUrl                 string          `koanf:"public_url" json:"public_url"`
+	PublicServerPort          int             `koanf:"public_server_port" json:"public_server_port"`
+	MLServerPort              int             `koanf:"ml_server_port" json:"ml_server_port"`
+	AdminServerPort           int             `koanf:"admin_server_port" json:"admin_server_port"`
+	MlGrpcServerPort          int             `koanf:"ml_grpc_server_port" json:"ml_grpc_server_port"`
+	TestMode                  bool            `koanf:"test_mode" json:"test_mode"`
+	NodeManagerGrpcPort       int             `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
+	NodeManagerLockTTLSeconds int             `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+	MLNodeTLS                 MLNodeTLSConfig `koanf:"mlnode_tls" json:"mlnode_tls"`
+}
+
+type MLNodeTLSConfig struct {
+	Enabled      bool   `koanf:"enabled" json:"enabled"`
+	CertFile     string `koanf:"cert_file" json:"cert_file"`
+	KeyFile      string `koanf:"key_file" json:"key_file"`
+	PeerCertFile string `koanf:"peer_cert_file" json:"peer_cert_file"`
+}
+
+func (c MLNodeTLSConfig) Scheme() string {
+	if c.Enabled {
+		return "https"
+	}
+	return "http"
 }
 
 type ChainNodeConfig struct {

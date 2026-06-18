@@ -7,6 +7,7 @@ import (
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
+	"decentralized-api/mlnodeclient"
 	"decentralized-api/payloadstorage"
 
 	"cosmossdk.io/x/feegrant"
@@ -26,14 +27,15 @@ import (
 )
 
 type Server struct {
-	e              *echo.Echo
-	nodeBroker     *broker.Broker
-	configManager  *apiconfig.ConfigManager
-	recorder       cosmos_client.CosmosMessageClient
-	validator      *validation.InferenceValidator
-	cdc            *codec.ProtoCodec
-	blockQueue     *pserver.BridgeQueue
-	payloadStorage payloadstorage.PayloadStorage
+	e                   *echo.Echo
+	nodeBroker          *broker.Broker
+	configManager       *apiconfig.ConfigManager
+	recorder            cosmos_client.CosmosMessageClient
+	validator           *validation.InferenceValidator
+	cdc                 *codec.ProtoCodec
+	blockQueue          *pserver.BridgeQueue
+	payloadStorage      payloadstorage.PayloadStorage
+	mlNodeClientFactory mlnodeclient.ClientFactory
 }
 
 func NewServer(
@@ -42,20 +44,22 @@ func NewServer(
 	configManager *apiconfig.ConfigManager,
 	validator *validation.InferenceValidator,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	mlNodeClientFactory mlnodeclient.ClientFactory) *Server {
 	cdc := getCodec()
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		validator:      validator,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:                   e,
+		nodeBroker:          nodeBroker,
+		configManager:       configManager,
+		recorder:            recorder,
+		validator:           validator,
+		cdc:                 cdc,
+		blockQueue:          blockQueue,
+		payloadStorage:      payloadStorage,
+		mlNodeClientFactory: mlNodeClientFactory,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -82,6 +86,8 @@ func NewServer(
 
 	// Export DB state (human-readable JSON) for admin purposes
 	g.GET("export/db", s.exportDb)
+
+	g.GET("versions", s.getVersions)
 
 	// Return current unsanitized config as JSON
 	g.GET("config", s.getConfig)
@@ -125,4 +131,8 @@ func (s *Server) Start(addr string) {
 func (s *Server) getConfig(c echo.Context) error {
 	cfg := s.configManager.GetConfig()
 	return c.JSONPretty(200, cfg, "  ")
+}
+
+func (s *Server) getVersions(c echo.Context) error {
+	return c.JSON(200, s.configManager.GetDevshardVersions())
 }

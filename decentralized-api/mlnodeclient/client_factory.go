@@ -1,15 +1,38 @@
 package mlnodeclient
 
-import "sync"
+import (
+	"crypto/tls"
+	"net/http"
+	"sync"
+	"time"
+)
 
 type ClientFactory interface {
 	CreateClient(pocUrl string, inferenceUrl string) MLNodeClient
+	NewHTTPClient(timeout time.Duration) *http.Client
 }
 
-type HttpClientFactory struct{}
+type HttpClientFactory struct {
+	TLSConfig *tls.Config
+}
 
 func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
-	return NewNodeClient(pocUrl, inferenceUrl)
+	return NewNodeClientWithTLS(pocUrl, inferenceUrl, f.TLSConfig)
+}
+
+func (f *HttpClientFactory) NewHTTPClient(timeout time.Duration) *http.Client {
+	client := &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: noRedirects,
+	}
+	if f.TLSConfig != nil {
+		client.Transport = &http.Transport{TLSClientConfig: f.TLSConfig}
+	}
+	return client
+}
+
+func noRedirects(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 type MockClientFactory struct {
@@ -33,6 +56,10 @@ func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLN
 	client := NewMockClient()
 	f.clients[key] = client
 	return client
+}
+
+func (f *MockClientFactory) NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, CheckRedirect: noRedirects}
 }
 
 func (f *MockClientFactory) GetClientForNode(pocUrl string) *MockClient {

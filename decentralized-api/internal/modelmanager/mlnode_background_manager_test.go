@@ -7,6 +7,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -18,10 +19,17 @@ type mockConfigManager struct {
 	nodes              []apiconfig.InferenceNodeConfig
 	currentNodeVersion string
 	setNodesError      error
+	mlNodeTLSEnabled   bool
 }
 
 func (m *mockConfigManager) GetNodes() []apiconfig.InferenceNodeConfig {
 	return m.nodes
+}
+
+func (m *mockConfigManager) GetApiConfig() apiconfig.ApiConfig {
+	return apiconfig.ApiConfig{
+		MLNodeTLS: apiconfig.MLNodeTLSConfig{Enabled: m.mlNodeTLSEnabled},
+	}
 }
 
 func (m *mockConfigManager) GetCurrentNodeVersion() string {
@@ -76,6 +84,10 @@ type mockClientFactory struct {
 
 func (m *mockClientFactory) CreateClient(pocUrl, inferenceUrl string) mlnodeclient.MLNodeClient {
 	return m.client
+}
+
+func (m *mockClientFactory) NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
 }
 
 // Custom mock client for testing error handling
@@ -561,24 +573,9 @@ func TestURLFormatting(t *testing.T) {
 		InferenceSegment: "/inference",
 	}
 
-	t.Run("PoC URL without version", func(t *testing.T) {
-		url := getPoCUrl(node)
-		expected := "http://localhost:8080/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("PoC URL with version", func(t *testing.T) {
-		url := getPoCUrlVersioned(node, "v2")
-		expected := "http://localhost:8080/v2/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
 	t.Run("Inference URL without version", func(t *testing.T) {
-		url := getInferenceUrl(node)
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{}}
+		url := m.inferenceUrlForNode(node, "")
 		expected := "http://localhost:8081/inference"
 		if url != expected {
 			t.Errorf("expected %s, got %s", expected, url)
@@ -586,24 +583,18 @@ func TestURLFormatting(t *testing.T) {
 	})
 
 	t.Run("Inference URL with version", func(t *testing.T) {
-		url := getInferenceUrlVersioned(node, "v2")
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{}}
+		url := m.inferenceUrlForNode(node, "v2")
 		expected := "http://localhost:8081/v2/inference"
 		if url != expected {
 			t.Errorf("expected %s, got %s", expected, url)
 		}
 	})
 
-	t.Run("URL with version helper", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "v2")
-		expected := "http://localhost:8080/v2/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("URL without version helper (empty string)", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "")
-		expected := "http://localhost:8080/api/v1"
+	t.Run("Inference URL with mTLS enabled", func(t *testing.T) {
+		m := &MLNodeBackgroundManager{configManager: &mockConfigManager{mlNodeTLSEnabled: true}}
+		url := m.inferenceUrlForNode(node, "v2")
+		expected := "https://localhost:8081/v2/inference"
 		if url != expected {
 			t.Errorf("expected %s, got %s", expected, url)
 		}

@@ -37,11 +37,14 @@ import (
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
 
+const mlNodeRequestTimeout = 20 * time.Minute
+
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
 	nodeBroker    *broker.Broker
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
+	mlNodeClient  *http.Client
 }
 
 func NewInferenceValidator(
@@ -54,6 +57,7 @@ func NewInferenceValidator(
 		configManager: configManager,
 		recorder:      recorder,
 		phaseTracker:  phaseTracker,
+		mlNodeClient:  nodeBroker.NewMLNodeHTTPClient(mlNodeRequestTimeout),
 	}
 }
 
@@ -917,13 +921,14 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "v1/chat/completions")
+	inferenceUrl := s.nodeBroker.InferenceUrlForNode(inferenceNode, s.configManager.GetCurrentNodeVersion())
+	completionsUrl, err := url.JoinPath(inferenceUrl, "v1/chat/completions")
 	if err != nil {
-		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "error", err)
+		logging.Error("Failed to join url", types.Validation, "url", inferenceUrl, "error", err)
 		return nil, err
 	}
 
-	resp, err := http.Post(
+	resp, err := s.mlNodeClient.Post(
 		completionsUrl,
 		"application/json",
 		bytes.NewReader(requestBody),

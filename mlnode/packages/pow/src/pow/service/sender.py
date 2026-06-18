@@ -14,6 +14,7 @@ from pow.compute.controller import (
     Phase,
 )
 from common.logger import create_logger
+from common.mtls import client_kwargs
 
 logger = create_logger(__name__)
 
@@ -58,6 +59,7 @@ class Sender(Process):
                 response = requests.post(
                     f"{self.url}/generated",
                     json=batch.__dict__,
+                    **client_kwargs(),
                 )
                 response.raise_for_status()
                 logger.info("Successfully sent generated batch")
@@ -79,6 +81,7 @@ class Sender(Process):
                 response = requests.post(
                     f"{self.url}/validated",
                     json=batch.__dict__,
+                    **client_kwargs(),
                 )
                 response.raise_for_status()
                 logger.info("Successfully sent validated batch")

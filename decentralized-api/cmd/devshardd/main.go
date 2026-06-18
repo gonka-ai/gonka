@@ -38,6 +38,7 @@ import (
 
 	"decentralized-api/apiconfig"
 	internaldevshard "decentralized-api/internal/devshard"
+	"decentralized-api/internal/mtls"
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/payloadstorage"
 
@@ -135,7 +136,10 @@ func main() {
 		3*time.Minute,
 	)
 
-	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
+	httpClient, err := newMLNodeHTTPClient()
+	if err != nil {
+		log.Fatalf("mlnode http client: %v", err)
+	}
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
 	chainParams := newChainParamsProvider(ctx, recorder, availabilityTracker)
@@ -411,6 +415,27 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func newMLNodeHTTPClient() (*http.Client, error) {
+	client := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
+
+	certFile := os.Getenv("MLNODE_TLS_CERT_FILE")
+	keyFile := os.Getenv("MLNODE_TLS_KEY_FILE")
+	peerCertFile := os.Getenv("MLNODE_TLS_PEER_CERT_FILE")
+	if certFile == "" && keyFile == "" && peerCertFile == "" {
+		return client, nil
+	}
+
+	tlsConfig, err := mtls.ClientConfig(certFile, keyFile, peerCertFile)
+	if err != nil {
+		return nil, err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
+	client.Transport = transport
+	slog.Info("mlnode mTLS client enabled", "cert", certFile, "pinned_peer_cert", peerCertFile)
+	return client, nil
 }
 
 func expandHome(path string) (string, error) {
