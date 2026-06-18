@@ -21,6 +21,21 @@ func (s *Server) getVersions(ctx echo.Context) error {
 	}
 	nodeVersion := resp.ApplicationVersion
 
+	mlnodes := make([]map[string]any, 0)
+	if s.nodeBroker != nil {
+		if nodes, nerr := s.nodeBroker.GetNodes(); nerr != nil {
+			logging.Error("Failed to list ML nodes for /v1/versions", types.Server, "error", nerr)
+		} else {
+			for _, nodeResp := range nodes {
+				mlnodes = append(mlnodes, map[string]any{
+					"node_id":                  nodeResp.Node.Id,
+					"version":                  nodeResp.State.MlNodeVersion,
+					"poc_validation_inference": nodeResp.State.PoCValidationInference,
+				})
+			}
+		}
+	}
+
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"api_version": map[string]string{
@@ -33,5 +48,6 @@ func (s *Server) getVersions(ctx echo.Context) error {
 			"version":          nodeVersion.Version,
 			"commit":           nodeVersion.GitCommit,
 		},
+		"mlnodes": mlnodes,
 	})
 }

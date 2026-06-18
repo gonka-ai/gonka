@@ -937,10 +937,20 @@ func (g *Gateway) currentMaxConcurrentPer10000Weight() float64 {
 	g.mu.Lock()
 	settings := g.settings.WithTuningDefaults()
 	g.mu.Unlock()
-	if g.pocOrConfirmationPoCActive() {
+	if g.pocGenerationActive() {
 		return settings.PoCMaxConcurrentPer10000Weight
 	}
 	return settings.MaxConcurrentPer10000Weight
+}
+
+func (g *Gateway) pocGenerationActive() bool {
+	if g != nil && g.phaseGate != nil {
+		snap := g.phaseGate.Snapshot()
+		if rawPoCGenerationState(snap.EpochPhase, snap.ConfirmationPoCPhase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) pocOrConfirmationPoCActive() bool {
