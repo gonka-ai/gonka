@@ -3278,6 +3278,36 @@ func removeRuntime(runtimes []*devshardRuntime, id string) []*devshardRuntime {
 	return out
 }
 
+// retireRuntime drops a runtime from the in-memory registry and closes it,
+// releasing its user. Session and the per-runtime SQLite handles that session owns.
+func (g *Gateway) retireRuntime(id, reason string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.retireRuntimeLocked(id, reason)
+}
+
+// retireRuntimeLocked is retireRuntime's body; callers must already hold g.mu.
+func (g *Gateway) retireRuntimeLocked(id, reason string) bool {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		return false
+	}
+	if inFlight := rt.activeRequests.Load(); inFlight > 0 {
+		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d", id, reason, inFlight)
+		return false
+	}
+	delete(g.runtimes, id)
+	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+	if g.capacity != nil {
+		g.capacity.RemoveEscrow(id)
+	}
+	if err := rt.close(); err != nil {
+		log.Printf("runtime_retire_close_error escrow=%s reason=%q error=%v", id, reason, err)
+	}
+	log.Printf("runtime_retired escrow=%s reason=%q", id, reason)
+	return true
+}
+
 func (g *Gateway) sortRuntimeOrderLocked() {
 	slices.SortFunc(g.runtimeOrder, func(a, b *devshardRuntime) int {
 		return strings.Compare(a.id, b.id)
@@ -3301,13 +3331,17 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
 			go g.escrowChecker.TriggerCheck(escrowID, func() {
-				g.deactivateDevshardByID(escrowID)
+				if g.deactivateDevshardByID(escrowID) {
+					// Escrow no longer exists on chain -- nothing to settle.
+					g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+				}
 			})
 		}
 	}
 	rt.proxy.redundancy.onBalanceExhausted = func() {
 		if !g.escrowRotationEnabled() {
 			g.deactivateDevshardByIDWithReason(escrowID, "escrow balance exhausted")
+			g.retireRuntime(escrowID, "escrow balance exhausted")
 			return
 		}
 		log.Printf("gateway_replacing_exhausted_escrow escrow=%s", escrowID)
@@ -3452,12 +3486,14 @@ func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, 
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
+		g.retireRuntime(id, reason)
 		return false, nil
 	}
 	log.Printf("escrow_rotation_settling escrow=%s reason=%q", id, reason)
 	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
 		return false, err
 	}
+	g.retireRuntime(id, reason)
 	return true, nil
 }
 
@@ -3522,6 +3558,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
+		g.retireRuntime(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)
 	}
@@ -3573,11 +3610,16 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 				g.clearSettlementPending(id)
 				log.Printf("auto_settle_submitted escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
+				g.retireRuntime(id, reason)
 				return
 			}
 			log.Printf("auto_settle_failed escrow=%s reason=%s attempt=%d/%d error=%v",
 				id, reason, attempt, autoSettlementMaxAttempts, err)
 			if attempt == autoSettlementMaxAttempts {
+				// Settlement exhausted its retries; free the in-memory runtime
+				// anyway so a permanently-unsettleable escrow cannot leak its
+				// SQLite store. On-disk state is preserved for manual recovery.
+				g.retireRuntime(id, reason)
 				return
 			}
 			time.Sleep(autoSettlementRetryInterval)
