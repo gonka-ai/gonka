@@ -111,6 +111,45 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.Equal(t, uint64(1), count)
 }
 
+// TestCreateDevshardEscrow_ExcludesFullyReservedHost excludes reserved hosts
+func TestCreateDevshardEscrow_ExcludesFullyReservedHost(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+
+	rootAddrs := makeDevshardAddrs(1, 20)
+	subgroupAddrs := rootAddrs[:4]
+	setupEpochGroupForDevshard(ctx, k, 5, "", rootAddrs)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, subgroupAddrs)
+
+	reserved := subgroupAddrs[0]
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 5,
+		Participants: []*types.ActiveParticipant{{
+			Index:   reserved,
+			Models:  []string{testDevshardModelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1"}}}},
+		}},
+	}))
+	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(reserved, "n1"), uint64(1)))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xFF
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromAccountToModule(gomock.Any(), creator, types.ModuleName, gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	resp, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		ModelId: testDevshardModelID,
+	})
+	require.NoError(t, err)
+
+	escrow, found := k.GetDevshardEscrow(ctx, resp.EscrowId)
+	require.True(t, found)
+	require.NotEmpty(t, escrow.Slots)
+	require.NotContains(t, escrow.Slots, reserved)
+}
+
 func TestCreateDevshardEscrow_AmountBelowMin(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
 

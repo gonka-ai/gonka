@@ -128,20 +128,22 @@ type (
 		// instead of every participant's MaintenanceState (DoS protection).
 		MaintenanceScheduledIndex collections.KeySet[uint64]
 		// PoC delegation collections
-		PoCDelegations                   collections.Map[collections.Pair[string, string], types.PoCDelegation]
-		PoCRefusals                      collections.KeySet[collections.Pair[string, string]]
-		PoCDirectIntents                 collections.KeySet[collections.Pair[string, string]]
-		DelegationSnapshot               collections.Item[types.DelegationSnapshot]
-		BootstrapDelegationSnapshot      collections.Item[types.BootstrapDelegationSnapshot]
-		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
-		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
-		// Set by cold key via MsgSetClaimRecipients; retained after claim so
-		// late same-epoch payouts can resolve the same recipient, then pruned
-		// once the epoch is safely stale.
-		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
-		// Secondary index for pruning stale recipient overrides by epoch.
-		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		// Trainshard collections
+		Trainshards               collections.Map[uint64, types.Trainshard]
+		TrainshardCounter         collections.Item[uint64]
+		TrainshardActiveIndex     collections.KeySet[uint64]
+		TrainshardExpiryIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardClosedIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardReservations    collections.Map[collections.Pair[string, string], uint64]
+		TrainingNodeOptIns        collections.KeySet[collections.Pair[string, string]]
+		TrainshardProposals       collections.Map[uint64, types.TrainshardProposal]
+		TrainshardProposalCounter collections.Item[uint64]
+		TrainshardCreatorCooldown collections.Map[string, int64]
 	}
 )
 
@@ -657,24 +659,70 @@ func NewKeeper(
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
-		DelegationRewardTransferSnapshot: collections.NewItem(
+		// Trainshard collections
+		Trainshards: collections.NewMap(
 			sb,
-			types.DelegationRewardTransferSnapshotPrefix,
-			"delegation_reward_transfer_snapshot",
-			codec.CollValue[types.DelegationRewardTransferSnapshot](cdc),
+			types.TrainshardsPrefix,
+			"trainshards",
+			collections.Uint64Key,
+			codec.CollValue[types.Trainshard](cdc),
 		),
-		ClaimRecipients: collections.NewMap(
+		TrainshardCounter: collections.NewItem(
 			sb,
-			types.ClaimRecipientsPrefix,
-			"claim_recipients",
-			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
-			collections.StringValue,
+			types.TrainshardCounterPrefix,
+			"trainshard_counter",
+			collections.Uint64Value,
 		),
-		ClaimRecipientsByEpoch: collections.NewKeySet(
+		TrainshardActiveIndex: collections.NewKeySet(
 			sb,
-			types.ClaimRecipientsByEpochPrefix,
-			"claim_recipients_by_epoch",
-			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			types.TrainshardActiveIndexPrefix,
+			"trainshard_active_index",
+			collections.Uint64Key,
+		),
+		TrainshardExpiryIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardExpiryIndexPrefix,
+			"trainshard_expiry_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardClosedIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardClosedIndexPrefix,
+			"trainshard_closed_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardReservations: collections.NewMap(
+			sb,
+			types.TrainshardReservationsPrefix,
+			"trainshard_reservations",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Uint64Value,
+		),
+		TrainingNodeOptIns: collections.NewKeySet(
+			sb,
+			types.TrainingNodeOptInsPrefix,
+			"training_node_opt_ins",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+		),
+		TrainshardProposals: collections.NewMap(
+			sb,
+			types.TrainshardProposalsPrefix,
+			"trainshard_proposals",
+			collections.Uint64Key,
+			codec.CollValue[types.TrainshardProposal](cdc),
+		),
+		TrainshardProposalCounter: collections.NewItem(
+			sb,
+			types.TrainshardProposalCounterPrefix,
+			"trainshard_proposal_counter",
+			collections.Uint64Value,
+		),
+		TrainshardCreatorCooldown: collections.NewMap(
+			sb,
+			types.TrainshardCreatorCooldownPrefix,
+			"trainshard_creator_cooldown",
+			collections.StringKey,
+			collections.Int64Value,
 		),
 	}
 	// Build the collections schema

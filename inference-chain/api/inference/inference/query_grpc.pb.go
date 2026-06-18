@@ -103,7 +103,9 @@ const (
 	Query_MaintenanceStatus_FullMethodName                         = "/inference.inference.Query/MaintenanceStatus"
 	Query_MaintenanceConcurrency_FullMethodName                    = "/inference.inference.Query/MaintenanceConcurrency"
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
-	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
+	Query_Trainshard_FullMethodName                                = "/inference.inference.Query/Trainshard"
+	Query_ActiveTrainshards_FullMethodName                         = "/inference.inference.Query/ActiveTrainshards"
+	Query_TrainshardProposal_FullMethodName                        = "/inference.inference.Query/TrainshardProposal"
 )
 
 // QueryClient is the client API for Query service.
@@ -252,8 +254,12 @@ type QueryClient interface {
 	MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error)
 	// Queries whether a proposed maintenance window is schedulable.
 	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
-	// Lists the scheduled per-epoch claim recipient overrides for a participant.
-	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
+	// Queries a single trainshard by id
+	Trainshard(ctx context.Context, in *QueryGetTrainshardRequest, opts ...grpc.CallOption) (*QueryGetTrainshardResponse, error)
+	// Queries all active trainshards
+	ActiveTrainshards(ctx context.Context, in *QueryActiveTrainshardsRequest, opts ...grpc.CallOption) (*QueryActiveTrainshardsResponse, error)
+	// Queries a training proposal by id
+	TrainshardProposal(ctx context.Context, in *QueryGetTrainshardProposalRequest, opts ...grpc.CallOption) (*QueryGetTrainshardProposalResponse, error)
 }
 
 type queryClient struct {
@@ -1020,9 +1026,27 @@ func (c *queryClient) MaintenanceSchedulability(ctx context.Context, in *QueryMa
 	return out, nil
 }
 
-func (c *queryClient) ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error) {
-	out := new(QueryListClaimRecipientsResponse)
-	err := c.cc.Invoke(ctx, Query_ListClaimRecipients_FullMethodName, in, out, opts...)
+func (c *queryClient) Trainshard(ctx context.Context, in *QueryGetTrainshardRequest, opts ...grpc.CallOption) (*QueryGetTrainshardResponse, error) {
+	out := new(QueryGetTrainshardResponse)
+	err := c.cc.Invoke(ctx, Query_Trainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ActiveTrainshards(ctx context.Context, in *QueryActiveTrainshardsRequest, opts ...grpc.CallOption) (*QueryActiveTrainshardsResponse, error) {
+	out := new(QueryActiveTrainshardsResponse)
+	err := c.cc.Invoke(ctx, Query_ActiveTrainshards_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainshardProposal(ctx context.Context, in *QueryGetTrainshardProposalRequest, opts ...grpc.CallOption) (*QueryGetTrainshardProposalResponse, error) {
+	out := new(QueryGetTrainshardProposalResponse)
+	err := c.cc.Invoke(ctx, Query_TrainshardProposal_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1175,8 +1199,12 @@ type QueryServer interface {
 	MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error)
 	// Queries whether a proposed maintenance window is schedulable.
 	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
-	// Lists the scheduled per-epoch claim recipient overrides for a participant.
-	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
+	// Queries a single trainshard by id
+	Trainshard(context.Context, *QueryGetTrainshardRequest) (*QueryGetTrainshardResponse, error)
+	// Queries all active trainshards
+	ActiveTrainshards(context.Context, *QueryActiveTrainshardsRequest) (*QueryActiveTrainshardsResponse, error)
+	// Queries a training proposal by id
+	TrainshardProposal(context.Context, *QueryGetTrainshardProposalRequest) (*QueryGetTrainshardProposalResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1436,8 +1464,14 @@ func (UnimplementedQueryServer) MaintenanceConcurrency(context.Context, *QueryMa
 func (UnimplementedQueryServer) MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceSchedulability not implemented")
 }
-func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListClaimRecipients not implemented")
+func (UnimplementedQueryServer) Trainshard(context.Context, *QueryGetTrainshardRequest) (*QueryGetTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Trainshard not implemented")
+}
+func (UnimplementedQueryServer) ActiveTrainshards(context.Context, *QueryActiveTrainshardsRequest) (*QueryActiveTrainshardsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActiveTrainshards not implemented")
+}
+func (UnimplementedQueryServer) TrainshardProposal(context.Context, *QueryGetTrainshardProposalRequest) (*QueryGetTrainshardProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainshardProposal not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2964,20 +2998,56 @@ func _Query_MaintenanceSchedulability_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_ListClaimRecipients_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryListClaimRecipientsRequest)
+func _Query_Trainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTrainshardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).ListClaimRecipients(ctx, in)
+		return srv.(QueryServer).Trainshard(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Query_ListClaimRecipients_FullMethodName,
+		FullMethod: Query_Trainshard_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).ListClaimRecipients(ctx, req.(*QueryListClaimRecipientsRequest))
+		return srv.(QueryServer).Trainshard(ctx, req.(*QueryGetTrainshardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ActiveTrainshards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryActiveTrainshardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ActiveTrainshards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ActiveTrainshards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ActiveTrainshards(ctx, req.(*QueryActiveTrainshardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainshardProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTrainshardProposalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainshardProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainshardProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainshardProposal(ctx, req.(*QueryGetTrainshardProposalRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3326,8 +3396,16 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_MaintenanceSchedulability_Handler,
 		},
 		{
-			MethodName: "ListClaimRecipients",
-			Handler:    _Query_ListClaimRecipients_Handler,
+			MethodName: "Trainshard",
+			Handler:    _Query_Trainshard_Handler,
+		},
+		{
+			MethodName: "ActiveTrainshards",
+			Handler:    _Query_ActiveTrainshards_Handler,
+		},
+		{
+			MethodName: "TrainshardProposal",
+			Handler:    _Query_TrainshardProposal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

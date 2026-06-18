@@ -57,6 +57,10 @@ const (
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
+	Msg_CreateTrainshardProposal_FullMethodName         = "/inference.inference.Msg/CreateTrainshardProposal"
+	Msg_AssembleTrainshard_FullMethodName               = "/inference.inference.Msg/AssembleTrainshard"
+	Msg_SettleTrainshard_FullMethodName                 = "/inference.inference.Msg/SettleTrainshard"
+	Msg_SetTrainingNodeOptIn_FullMethodName             = "/inference.inference.Msg/SetTrainingNodeOptIn"
 )
 
 // MsgClient is the client API for Msg service.
@@ -105,6 +109,10 @@ type MsgClient interface {
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
+	CreateTrainshardProposal(ctx context.Context, in *MsgCreateTrainshardProposal, opts ...grpc.CallOption) (*MsgCreateTrainshardProposalResponse, error)
+	AssembleTrainshard(ctx context.Context, in *MsgAssembleTrainshard, opts ...grpc.CallOption) (*MsgAssembleTrainshardResponse, error)
+	SettleTrainshard(ctx context.Context, in *MsgSettleTrainshard, opts ...grpc.CallOption) (*MsgSettleTrainshardResponse, error)
+	SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error)
 }
 
 type msgClient struct {
@@ -457,6 +465,42 @@ func (c *msgClient) DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCInten
 	return out, nil
 }
 
+func (c *msgClient) CreateTrainshardProposal(ctx context.Context, in *MsgCreateTrainshardProposal, opts ...grpc.CallOption) (*MsgCreateTrainshardProposalResponse, error) {
+	out := new(MsgCreateTrainshardProposalResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateTrainshardProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) AssembleTrainshard(ctx context.Context, in *MsgAssembleTrainshard, opts ...grpc.CallOption) (*MsgAssembleTrainshardResponse, error) {
+	out := new(MsgAssembleTrainshardResponse)
+	err := c.cc.Invoke(ctx, Msg_AssembleTrainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SettleTrainshard(ctx context.Context, in *MsgSettleTrainshard, opts ...grpc.CallOption) (*MsgSettleTrainshardResponse, error) {
+	out := new(MsgSettleTrainshardResponse)
+	err := c.cc.Invoke(ctx, Msg_SettleTrainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error) {
+	out := new(MsgSetTrainingNodeOptInResponse)
+	err := c.cc.Invoke(ctx, Msg_SetTrainingNodeOptIn_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -503,6 +547,10 @@ type MsgServer interface {
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
+	CreateTrainshardProposal(context.Context, *MsgCreateTrainshardProposal) (*MsgCreateTrainshardProposalResponse, error)
+	AssembleTrainshard(context.Context, *MsgAssembleTrainshard) (*MsgAssembleTrainshardResponse, error)
+	SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error)
+	SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -623,6 +671,18 @@ func (UnimplementedMsgServer) RefusePoCDelegation(context.Context, *MsgRefusePoC
 }
 func (UnimplementedMsgServer) DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeclarePoCIntent not implemented")
+}
+func (UnimplementedMsgServer) CreateTrainshardProposal(context.Context, *MsgCreateTrainshardProposal) (*MsgCreateTrainshardProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainshardProposal not implemented")
+}
+func (UnimplementedMsgServer) AssembleTrainshard(context.Context, *MsgAssembleTrainshard) (*MsgAssembleTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssembleTrainshard not implemented")
+}
+func (UnimplementedMsgServer) SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleTrainshard not implemented")
+}
+func (UnimplementedMsgServer) SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingNodeOptIn not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1321,6 +1381,78 @@ func _Msg_DeclarePoCIntent_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreateTrainshardProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateTrainshardProposal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreateTrainshardProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateTrainshardProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateTrainshardProposal(ctx, req.(*MsgCreateTrainshardProposal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_AssembleTrainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAssembleTrainshard)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AssembleTrainshard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AssembleTrainshard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AssembleTrainshard(ctx, req.(*MsgAssembleTrainshard))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SettleTrainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSettleTrainshard)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SettleTrainshard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SettleTrainshard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SettleTrainshard(ctx, req.(*MsgSettleTrainshard))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetTrainingNodeOptIn)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetTrainingNodeOptIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetTrainingNodeOptIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetTrainingNodeOptIn(ctx, req.(*MsgSetTrainingNodeOptIn))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1479,6 +1611,22 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeclarePoCIntent",
 			Handler:    _Msg_DeclarePoCIntent_Handler,
+		},
+		{
+			MethodName: "CreateTrainshardProposal",
+			Handler:    _Msg_CreateTrainshardProposal_Handler,
+		},
+		{
+			MethodName: "AssembleTrainshard",
+			Handler:    _Msg_AssembleTrainshard_Handler,
+		},
+		{
+			MethodName: "SettleTrainshard",
+			Handler:    _Msg_SettleTrainshard_Handler,
+		},
+		{
+			MethodName: "SetTrainingNodeOptIn",
+			Handler:    _Msg_SetTrainingNodeOptIn_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

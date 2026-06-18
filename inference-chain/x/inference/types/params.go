@@ -208,6 +208,7 @@ func DefaultParams() Params {
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
 		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
+		TrainingParams:       DefaultTrainingParams(),
 	}
 }
 
@@ -399,6 +400,88 @@ func DefaultMaintenanceParams() *MaintenanceParams {
 		MaintenanceCreditCapBlocks:                    DefaultMaintenanceCreditCapBlocks,
 		MaintenanceCreditEarnPerSuccessfulEpochBlocks: DefaultMaintenanceCreditEarnPerEpochBlocks,
 	}
+}
+
+const (
+	DefaultTrainingEnabled                     = false
+	DefaultTrainingMaxNodesPerShard     uint32 = 64
+	DefaultTrainingMaxActiveShards      uint32 = 16
+	DefaultTrainingMinDurationBlocks    int64  = 40
+	DefaultTrainingMaxDurationBlocks    int64  = 100_000
+	DefaultTrainingMaxActivePerCreator  uint32 = 4
+	DefaultTrainingCreatorCooldown      int64  = 0
+	DefaultTrainingMaxTotalReserved     uint32 = 256
+	DefaultTrainingMaxModelShareBps     uint32 = 5000
+	DefaultTrainingMaxProfileShareBps   uint32 = 5000
+	DefaultTrainingMaxExpirationsPerBlk uint32 = 32
+	DefaultTrainingRetentionBlocks      int64  = 80
+)
+
+func DefaultTrainingParams() *TrainingParams {
+	return &TrainingParams{
+		TrainingEnabled:               DefaultTrainingEnabled,
+		MaxNodesPerShard:              DefaultTrainingMaxNodesPerShard,
+		MaxActiveShards:               DefaultTrainingMaxActiveShards,
+		MinDurationBlocks:             DefaultTrainingMinDurationBlocks,
+		MaxDurationBlocks:             DefaultTrainingMaxDurationBlocks,
+		AllowedGpuProfileIds:          nil,
+		MaxActiveShardsPerCreator:     DefaultTrainingMaxActivePerCreator,
+		CreatorCooldownBlocks:         DefaultTrainingCreatorCooldown,
+		MaxTotalReservedNodes:         DefaultTrainingMaxTotalReserved,
+		MaxReservedSharePerModelBps:   DefaultTrainingMaxModelShareBps,
+		MaxReservedSharePerProfileBps: DefaultTrainingMaxProfileShareBps,
+		MaxExpirationsPerBlock:        DefaultTrainingMaxExpirationsPerBlk,
+		SettledShardRetentionBlocks:   DefaultTrainingRetentionBlocks,
+	}
+}
+
+// maxTrainingBlocksParam keeps *Blocks height math within int64
+const maxTrainingBlocksParam = int64(1e15)
+
+func (p *TrainingParams) Validate(epochParams *EpochParams) error {
+	if p == nil {
+		return nil
+	}
+	if p.MaxNodesPerShard == 0 {
+		return fmt.Errorf("training max_nodes_per_shard must be positive")
+	}
+	if p.MinDurationBlocks <= 0 {
+		return fmt.Errorf("training min_duration_blocks must be positive")
+	}
+	if p.MaxDurationBlocks < p.MinDurationBlocks {
+		return fmt.Errorf("training max_duration_blocks (%d) must be >= min_duration_blocks (%d)", p.MaxDurationBlocks, p.MinDurationBlocks)
+	}
+	if p.MaxDurationBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training max_duration_blocks (%d) exceeds safe upper bound %d", p.MaxDurationBlocks, maxTrainingBlocksParam)
+	}
+	if p.CreatorCooldownBlocks < 0 {
+		return fmt.Errorf("training creator_cooldown_blocks must not be negative")
+	}
+	if p.CreatorCooldownBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training creator_cooldown_blocks (%d) exceeds safe upper bound %d", p.CreatorCooldownBlocks, maxTrainingBlocksParam)
+	}
+	if p.MaxReservedSharePerModelBps > 10000 {
+		return fmt.Errorf("training max_reserved_share_per_model_bps cannot exceed 10000")
+	}
+	if p.MaxReservedSharePerProfileBps > 10000 {
+		return fmt.Errorf("training max_reserved_share_per_profile_bps cannot exceed 10000")
+	}
+	if p.MaxExpirationsPerBlock == 0 {
+		return fmt.Errorf("training max_expirations_per_block must be positive")
+	}
+	if p.SettledShardRetentionBlocks < 0 {
+		return fmt.Errorf("training settled_shard_retention_blocks must not be negative")
+	}
+	if p.SettledShardRetentionBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training settled_shard_retention_blocks (%d) exceeds safe upper bound %d", p.SettledShardRetentionBlocks, maxTrainingBlocksParam)
+	}
+	if epochParams != nil && epochParams.EpochLength > 0 {
+		minRetention := 2 * epochParams.EpochLength
+		if p.SettledShardRetentionBlocks < minRetention {
+			return fmt.Errorf("training settled_shard_retention_blocks (%d) must be at least two epoch lengths (%d)", p.SettledShardRetentionBlocks, minRetention)
+		}
+	}
+	return nil
 }
 
 // maxMaintenanceBlocksParam bounds every governance-controlled *Blocks field.
@@ -846,6 +929,12 @@ func (p Params) Validate() error {
 
 	if p.MaintenanceParams != nil {
 		if err := p.MaintenanceParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.TrainingParams != nil {
+		if err := p.TrainingParams.Validate(p.EpochParams); err != nil {
 			return err
 		}
 	}

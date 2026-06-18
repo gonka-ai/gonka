@@ -337,6 +337,77 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	require.Equal(t, uint64(6), participantH2.CurrentEpochStats.ValidatedInferences)
 }
 
+// TestSettleDevshardEscrow_ShieldsFullyReservedHost shields reserved hosts
+func TestSettleDevshardEscrow_ShieldsFullyReservedHost(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+
+	keyH1, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	keyH2, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+	addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+	setParticipantForDevshardTest(t, k, ctx, addrH1)
+	setParticipantForDevshardTest(t, k, ctx, addrH2)
+
+	const epoch = uint64(5)
+	const model = "llama3"
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 500}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 1, PocStartBlockHeight: 600}))
+
+	// H1 has both model nodes reserved; H2 is free
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: addrH1, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1"}, {NodeId: "n2"}}}}},
+			{Index: addrH2, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "m1"}}}}},
+		},
+	}))
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 510,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: addrH1, NodeId: "n1", ModelId: model},
+			{Participant: addrH1, NodeId: "n2", ModelId: model},
+		},
+	}))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x31
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: creator.String(), Amount: 5_000,
+		Slots: []string{addrH1, addrH2}, EpochIndex: epoch, ModelId: model,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	hostStats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 2, Invalid: 1},
+		{SlotId: 1, Missed: 2, Invalid: 1},
+	}
+	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH2}, hostStats, 0, 8)
+
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).Return(nil)
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	participantH1, found := k.GetParticipant(ctx, addrH1)
+	require.True(t, found)
+	require.Equal(t, uint64(0), participantH1.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(0), participantH1.CurrentEpochStats.InvalidatedInferences)
+
+	participantH2, found := k.GetParticipant(ctx, addrH2)
+	require.True(t, found)
+	require.Equal(t, uint64(2), participantH2.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.InvalidatedInferences)
+}
+
 func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")

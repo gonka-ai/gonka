@@ -193,6 +193,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 	}
 
+	// devshard miss penalties are a penalty path, so a model reservation at any
+	// point in the epoch shields the host from miss/invalid aggregation
+	reservedHosts := k.CollectEpochReservedHostsForModel(goCtx, escrow.EpochIndex, escrow.ModelId, ReservationScopeShield)
+
 	// Aggregate host stats per validator per epoch (deterministic: iterate msg.HostStats by slot_id order)
 	seenValidators := make(map[string]bool)
 	for _, hs := range msg.HostStats {
@@ -206,7 +210,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
-		if treatAsCurrentEpochSettle[addr] {
+		if _, reserved := reservedHosts[addr]; treatAsCurrentEpochSettle[addr] && !reserved {
 			participant, found := participantByAddr[addr]
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)

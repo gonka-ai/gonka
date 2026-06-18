@@ -566,6 +566,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 			noDecayParams,
 			nil,
 			modelNodesFromVW(noScaleData.ValidationWeights),
+			nil,
 			logger,
 		)
 
@@ -578,7 +579,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 
 	t.Run("Successful Bitcoin reward distribution", func(t *testing.T) {
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -668,7 +669,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(invalidParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(invalidParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -715,7 +716,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -740,7 +741,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -810,7 +811,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(multiParticipants, multiEpochData, bitcoinParams, nil, modelNodesAndScales(multiEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(multiParticipants, multiEpochData, bitcoinParams, nil, modelNodesAndScales(multiEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -845,7 +846,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(negativeParticipants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -904,7 +905,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(zeroWeightParticipants, zeroWeightEpochData, bitcoinParams, nil, modelNodesAndScales(zeroWeightEpochData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(zeroWeightParticipants, zeroWeightEpochData, bitcoinParams, nil, modelNodesAndScales(zeroWeightEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -925,17 +926,17 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		logger := createTestLogger(t)
 
 		// Nil participants
-		_, _, err := CalculateParticipantBitcoinRewards(nil, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		_, _, err := CalculateParticipantBitcoinRewards(nil, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "participants cannot be nil")
 
 		// Nil epoch group data
-		_, _, err = CalculateParticipantBitcoinRewards(participants, nil, bitcoinParams, nil, modelNodesAndScales(nil), logger)
+		_, _, err = CalculateParticipantBitcoinRewards(participants, nil, bitcoinParams, nil, modelNodesAndScales(nil), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "epoch group data cannot be nil")
 
 		// Nil bitcoin params
-		_, _, err = CalculateParticipantBitcoinRewards(participants, epochGroupData, nil, nil, modelNodesAndScales(epochGroupData), logger)
+		_, _, err = CalculateParticipantBitcoinRewards(participants, epochGroupData, nil, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bitcoin parameters cannot be nil")
 	})
@@ -974,7 +975,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(genesisParticipants, genesisEpochData, bitcoinParams, nil, modelNodesAndScales(genesisEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(genesisParticipants, genesisEpochData, bitcoinParams, nil, modelNodesAndScales(genesisEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -1076,7 +1077,7 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(remainderParticipants, remainderEpochData, oddRewardParams, nil, modelNodesAndScales(remainderEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(remainderParticipants, remainderEpochData, oddRewardParams, nil, modelNodesAndScales(remainderEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -1152,12 +1153,12 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 	t.Run("Main entry point function works correctly", func(t *testing.T) {
 		// Call the main entry point function
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
 		// Verify it returns same results as the underlying function
-		expectedResults, expectedBitcoinResult, expectedErr := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		expectedResults, expectedBitcoinResult, expectedErr := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Equal(t, expectedErr, err)
 		require.Equal(t, expectedBitcoinResult, bitcoinResult)
 		require.Equal(t, len(expectedResults), len(results))
@@ -1186,22 +1187,22 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 		logger := createTestLogger(t)
 
 		// Nil participants
-		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams, nil, settleParams, modelNodesAndScales(epochGroupData), logger)
+		_, _, err := GetBitcoinSettleAmounts(nil, epochGroupData, bitcoinParams, nil, settleParams, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "participants cannot be nil")
 
 		// Nil epoch group data
-		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams, nil, settleParams, modelNodesAndScales(nil), logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, nil, bitcoinParams, nil, settleParams, modelNodesAndScales(nil), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "epochGroupData cannot be nil")
 
 		// Nil bitcoin params
-		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil, nil, settleParams, modelNodesAndScales(epochGroupData), logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, nil, nil, settleParams, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bitcoinParams cannot be nil")
 
 		// Nil settle params
-		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, nil, modelNodesAndScales(epochGroupData), logger)
+		_, _, err = GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "settleParams cannot be nil")
 	})
@@ -1215,7 +1216,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 		// Call with supply cap constraints
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, supplyCappedParams, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, supplyCappedParams, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// Verify the amount was reduced to fit within cap
@@ -1245,7 +1246,7 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 
 		// Call with supply cap already reached
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, capReachedParams, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, capReachedParams, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// Verify no rewards are minted
@@ -1478,7 +1479,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 
 		// Should handle large number of participants efficiently
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeEpochData, bitcoinParams, nil, modelNodesAndScales(largeEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeEpochData, bitcoinParams, nil, modelNodesAndScales(largeEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, numParticipants, len(results))
 
@@ -1564,7 +1565,7 @@ func TestLargeValueEdgeCases(t *testing.T) {
 		largeWeightData.EpochIndex = 1 // First reward epoch for no decay (epochsSinceGenesis = 1 - 1 = 0)
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams, nil, modelNodesAndScales(largeWeightData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(largeParticipants, largeWeightData, bitcoinParams, nil, modelNodesAndScales(largeWeightData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -1647,7 +1648,7 @@ func TestMathematicalPrecision(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(primeParticipants, primeEpochData, primeRewardParams, nil, modelNodesAndScales(primeEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(primeParticipants, primeEpochData, primeRewardParams, nil, modelNodesAndScales(primeEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 3, len(results))
 
@@ -1695,7 +1696,7 @@ func TestMathematicalPrecision(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(evenParticipants, evenEpochData, evenRewardParams, nil, modelNodesAndScales(evenEpochData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(evenParticipants, evenEpochData, evenRewardParams, nil, modelNodesAndScales(evenEpochData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -1746,7 +1747,7 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -1791,7 +1792,7 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// Effective: P1=100, P2=200. Power capping: P2 at 200/300 = 66.7% > 50%,
@@ -1853,7 +1854,7 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationAndPowerCapping(t *testi
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// Effective weights (no collateral scaling, Weight == sum(PocWeights)):
@@ -1903,7 +1904,7 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationEdgeCases(t *testing.T) 
 		}
 
 		logger := createTestLogger(t)
-		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 1, len(results))
 
@@ -1944,7 +1945,7 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationEdgeCases(t *testing.T) 
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// With zero effective weight, participant gets no reward coins (but still gets work coins)
@@ -1994,7 +1995,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
@@ -2045,7 +2046,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// Weight == rawTotal for both -> no scaling. effective = 500 each.
@@ -2083,7 +2084,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// effectiveWeight = 1000 * 600/1000 = 600. totalFullWeight = 600.
@@ -2120,7 +2121,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// effective = Weight(1200) * ConfirmationWeight(1000) / rawTotal(1000) = 1200.
@@ -2154,7 +2155,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 
 		// effectiveWeight = 0 (no preserved, no confirmed) -> scaling produces 0
@@ -2208,7 +2209,7 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		}
 
 		logger := createTestLogger(t)
-		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), nil, logger)
 		require.NoError(t, err)
 		require.Len(t, results, 3)
 
@@ -2217,6 +2218,54 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		require.Equal(t, uint64(200), results[0].Settle.RewardCoins)
 		require.Equal(t, uint64(200), results[1].Settle.RewardCoins)
 		require.Equal(t, uint64(250), results[2].Settle.RewardCoins)
+	})
+}
+
+func TestApplyTrainingReservationAdjustment(t *testing.T) {
+	t.Run("mid-epoch reserved node strips numerator, no denominator addend", func(t *testing.T) {
+		participantWeights := map[string]uint64{"host": 100}
+		mlNodes := map[string]map[string][]*types.MLNodeInfo{
+			"host": {"m": {{NodeId: "free", PocWeight: 60}, {NodeId: "resv", PocWeight: 40}}},
+		}
+		reserved := map[string][]*types.TrainshardReservedNode{
+			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 40}},
+		}
+		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
+		require.Equal(t, uint64(0), extra)
+		require.Equal(t, uint64(60), participantWeights["host"])
+	})
+
+	t.Run("pre-formation reserved node adds frozen weight to denominator, numerator untouched", func(t *testing.T) {
+		participantWeights := map[string]uint64{"host": 60}
+		mlNodes := map[string]map[string][]*types.MLNodeInfo{
+			"host": {"m": {{NodeId: "free", PocWeight: 60}}},
+		}
+		reserved := map[string][]*types.TrainshardReservedNode{
+			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 40}},
+		}
+		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
+		require.Equal(t, uint64(40), extra)
+		require.Equal(t, uint64(60), participantWeights["host"])
+	})
+
+	t.Run("fully reserved host has its numerator zeroed", func(t *testing.T) {
+		participantWeights := map[string]uint64{"host": 100}
+		mlNodes := map[string]map[string][]*types.MLNodeInfo{
+			"host": {"m": {{NodeId: "resv", PocWeight: 100}}},
+		}
+		reserved := map[string][]*types.TrainshardReservedNode{
+			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 100}},
+		}
+		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
+		require.Equal(t, uint64(0), extra)
+		require.Equal(t, uint64(0), participantWeights["host"])
+	})
+
+	t.Run("no reservations is a no-op", func(t *testing.T) {
+		participantWeights := map[string]uint64{"host": 100}
+		extra := applyTrainingReservationAdjustment(participantWeights, nil, nil, nil)
+		require.Equal(t, uint64(0), extra)
+		require.Equal(t, uint64(100), participantWeights["host"])
 	})
 }
 

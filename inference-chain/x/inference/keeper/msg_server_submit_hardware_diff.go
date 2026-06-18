@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/slices"
@@ -52,8 +53,24 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		nodeMap[node.LocalId] = node
 	}
 
+	// a node held by an active trainshard may not be removed or operationally changed
+	for _, node := range msg.NewOrModified {
+		if k.IsNodeReserved(goCtx, msg.Creator, node.LocalId) &&
+			!hardwareNodeOperationalEqual(node, nodeMap[node.LocalId]) {
+			return nil, types.ErrTrainshardNodeReserved
+		}
+	}
+	for _, node := range msg.Removed {
+		if k.IsNodeReserved(goCtx, msg.Creator, node.LocalId) {
+			return nil, types.ErrTrainshardNodeReserved
+		}
+	}
+
 	for _, nodeToRemove := range msg.Removed {
 		delete(nodeMap, nodeToRemove.LocalId)
+		if err := k.TrainingNodeOptIns.Remove(goCtx, collections.Join(msg.Creator, nodeToRemove.LocalId)); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, node := range msg.NewOrModified {

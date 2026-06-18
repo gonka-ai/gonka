@@ -14,7 +14,7 @@ import "inference/inference/poc_v2.proto";
 import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
-import "inference/inference/claim_recipient.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -64,6 +64,10 @@ service Msg {
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
+  rpc CreateTrainshardProposal         (MsgCreateTrainshardProposal) returns (MsgCreateTrainshardProposalResponse);
+  rpc AssembleTrainshard               (MsgAssembleTrainshard) returns (MsgAssembleTrainshardResponse);
+  rpc SettleTrainshard                 (MsgSettleTrainshard) returns (MsgSettleTrainshardResponse);
+  rpc SetTrainingNodeOptIn             (MsgSetTrainingNodeOptIn) returns (MsgSetTrainingNodeOptInResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -468,3 +472,47 @@ message MsgCancelMaintenance {
 }
 
 message MsgCancelMaintenanceResponse {}
+
+// MsgCreateTrainshardProposal stores an approved training proposal
+message MsgCreateTrainshardProposal {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string creator = 2;
+  string gpu_profile_id = 3;
+  uint32 max_nodes = 4;
+  int64 max_duration_blocks = 5;
+}
+
+message MsgCreateTrainshardProposalResponse {
+  uint64 proposal_id = 1;
+}
+
+// MsgAssembleTrainshard opens an ACTIVE shard from an OPEN proposal
+message MsgAssembleTrainshard {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 proposal_id = 2;
+}
+
+message MsgAssembleTrainshardResponse {
+  uint64 trainshard_id = 1;
+}
+
+// MsgSettleTrainshard releases reserved nodes of an active shard
+message MsgSettleTrainshard {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 trainshard_id = 2;
+}
+
+message MsgSettleTrainshardResponse {}
+
+// MsgSetTrainingNodeOptIn opts a node in or out of training eligibility
+message MsgSetTrainingNodeOptIn {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string node_id = 2;
+  bool opt_in = 3;
+}
+
+message MsgSetTrainingNodeOptInResponse {}

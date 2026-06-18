@@ -295,6 +295,23 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
 				},
 				{
+					RpcMethod:      "Trainshard",
+					Use:            "show-trainshard [trainshard-id]",
+					Short:          "Query a trainshard by ID",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "trainshard_id"}},
+				},
+				{
+					RpcMethod: "ActiveTrainshards",
+					Use:       "active-trainshards",
+					Short:     "List all active trainshards",
+				},
+				{
+					RpcMethod:      "TrainshardProposal",
+					Use:            "show-trainshard-proposal [proposal-id]",
+					Short:          "Query a training proposal by ID",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},
+				},
+				{
 					RpcMethod:      "MaintenanceCredit",
 					Use:            "maintenance-credit [participant]",
 					Short:          "Query maintenance credit for a participant",
@@ -438,6 +455,28 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "create-devshard-escrow [amount] [model-id]",
 					Short:          "Create a devshard escrow",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}, {ProtoField: "model_id"}},
+				},
+				{
+					RpcMethod: "CreateTrainshardProposal",
+					Skip:      true, // governance gated
+				},
+				{
+					RpcMethod:      "AssembleTrainshard",
+					Use:            "assemble-trainshard [proposal-id]",
+					Short:          "Assemble a trainshard from an approved proposal",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},
+				},
+				{
+					RpcMethod:      "SettleTrainshard",
+					Use:            "settle-trainshard [trainshard-id]",
+					Short:          "Settle (release) an active trainshard",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "trainshard_id"}},
+				},
+				{
+					RpcMethod:      "SetTrainingNodeOptIn",
+					Use:            "set-training-node-opt-in [node-id] [opt-in]",
+					Short:          "Opt one of your nodes in or out of training eligibility",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "node_id"}, {ProtoField: "opt_in"}},
 				},
 				{
 					RpcMethod: "SettleDevshardEscrow",

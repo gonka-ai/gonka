@@ -451,6 +451,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
+	am.keeper.ProcessTrainshardEndBlock(ctx)
+
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {
@@ -1044,6 +1046,9 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		liveMemberSet[m.Member.Address] = true
 	}
 
+	// subtract reserved frozen weight from network total and per-model voting power
+	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotals(ctx, epochIndex)
+
 	rootGroupData := currentGroup.GroupData
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
 	totalWeight := int64(0)
@@ -1052,11 +1057,15 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		if vw == nil || !liveMemberSet[vw.MemberAddress] {
 			continue
 		}
-		consensusWeights[vw.MemberAddress] = vw.Weight
-		totalWeight += vw.Weight
+		weight := vw.Weight - reservedByHost[vw.MemberAddress]
+		if weight < 0 {
+			weight = 0
+		}
+		consensusWeights[vw.MemberAddress] = weight
+		totalWeight += weight
 		participants = append(participants, &types.ActiveParticipant{
 			Index:  vw.MemberAddress,
-			Weight: vw.Weight,
+			Weight: weight,
 		})
 	}
 
@@ -1078,11 +1087,12 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 			if vw == nil || !liveSubSet[vw.MemberAddress] {
 				continue
 			}
-			if vw.VotingPower > 0 {
+			votingPower := vw.VotingPower - reservedByModelHost[modelID][vw.MemberAddress]
+			if votingPower > 0 {
 				if modelVPMap[modelID] == nil {
 					modelVPMap[modelID] = make(map[string]int64)
 				}
-				modelVPMap[modelID][vw.MemberAddress] = vw.VotingPower
+				modelVPMap[modelID][vw.MemberAddress] = votingPower
 			}
 		}
 	}

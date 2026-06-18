@@ -123,10 +123,18 @@ var (
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
 	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
-	ClaimRecipientsPrefix           = collections.NewPrefix(106)
-	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
-	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
-	ParamsKey                              = []byte("p_inference")
+	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
+	TrainshardsPrefix               = collections.NewPrefix(130)
+	TrainshardCounterPrefix         = collections.NewPrefix(131)
+	TrainshardActiveIndexPrefix     = collections.NewPrefix(132)
+	TrainshardExpiryIndexPrefix     = collections.NewPrefix(133)
+	TrainshardClosedIndexPrefix     = collections.NewPrefix(134)
+	TrainshardReservationsPrefix    = collections.NewPrefix(135)
+	TrainingNodeOptInsPrefix        = collections.NewPrefix(136)
+	TrainshardProposalsPrefix       = collections.NewPrefix(137)
+	TrainshardProposalCounterPrefix = collections.NewPrefix(138)
+	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
+	ParamsKey                       = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

@@ -33,6 +33,7 @@ func GetBitcoinSettleAmounts(
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservedNodes map[string][]*types.TrainshardReservedNode,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	return GetBitcoinSettleAmountsWithTransfers(
@@ -85,8 +86,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
-		delegationRewardTransfers,
-		delegationRewardPenalties,
+		reservedNodes,
 		logger,
 	)
 	if err != nil {
@@ -330,6 +330,108 @@ func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coeffi
 		total += coeff.MulInt64(rawModel).TruncateInt64()
 	}
 	return total
+}
+
+func weightedModelNodeTotal(modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec) int64 {
+	if len(modelNodes) == 0 {
+		return 0
+	}
+	if len(coefficients) == 0 {
+		total := int64(0)
+		for _, nodes := range modelNodes {
+			for _, node := range nodes {
+				if node != nil {
+					total += node.PocWeight
+				}
+			}
+		}
+		return total
+	}
+	return types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
+}
+
+// applyTrainingReservationAdjustment zeroes reserved payouts
+func applyTrainingReservationAdjustment(
+	participantWeights map[string]uint64,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservedNodes map[string][]*types.TrainshardReservedNode,
+	coefficients map[string]mathsdk.LegacyDec,
+) uint64 {
+	extraDenominator := uint64(0)
+	for host, reserved := range reservedNodes {
+		if len(reserved) == 0 {
+			continue
+		}
+
+		hostModelNodes := participantMLNodes[host]
+		totalHost := weightedModelNodeTotal(hostModelNodes, coefficients)
+		if totalHost < 0 {
+			totalHost = 0
+		}
+
+		reservedByModel := make(map[string]map[string]int64)
+		for _, node := range reserved {
+			if node == nil || node.ModelId == "" || node.NodeId == "" {
+				continue
+			}
+			modelSet, ok := reservedByModel[node.ModelId]
+			if !ok {
+				modelSet = make(map[string]int64)
+				reservedByModel[node.ModelId] = modelSet
+			}
+			if current, exists := modelSet[node.NodeId]; !exists || node.PocWeight > current {
+				modelSet[node.NodeId] = node.PocWeight
+			}
+		}
+
+		reservedInEpochModelNodes := make(map[string][]*types.MLNodeInfo)
+		reservedMissingModelNodes := make(map[string][]*types.MLNodeInfo)
+		for modelID, nodes := range reservedByModel {
+			present := make(map[string]struct{})
+			for _, epochNode := range hostModelNodes[modelID] {
+				if epochNode == nil || epochNode.NodeId == "" {
+					continue
+				}
+				if _, ok := nodes[epochNode.NodeId]; !ok {
+					continue
+				}
+				reservedInEpochModelNodes[modelID] = append(reservedInEpochModelNodes[modelID], &types.MLNodeInfo{
+					NodeId:    epochNode.NodeId,
+					PocWeight: epochNode.PocWeight,
+				})
+				present[epochNode.NodeId] = struct{}{}
+			}
+			for nodeID, frozenWeight := range nodes {
+				if _, ok := present[nodeID]; ok || frozenWeight <= 0 {
+					continue
+				}
+				reservedMissingModelNodes[modelID] = append(reservedMissingModelNodes[modelID], &types.MLNodeInfo{
+					NodeId:    nodeID,
+					PocWeight: frozenWeight,
+				})
+			}
+		}
+
+		reservedInEpoch := weightedModelNodeTotal(reservedInEpochModelNodes, coefficients)
+		if reservedInEpoch < 0 {
+			reservedInEpoch = 0
+		}
+		if reservedMissing := weightedModelNodeTotal(reservedMissingModelNodes, coefficients); reservedMissing > 0 {
+			extraDenominator += uint64(reservedMissing)
+		}
+
+		if reservedInEpoch > 0 {
+			if totalHost > reservedInEpoch {
+				kept := new(big.Int).SetUint64(participantWeights[host])
+				kept.Mul(kept, big.NewInt(totalHost-reservedInEpoch))
+				kept.Div(kept, big.NewInt(totalHost))
+				participantWeights[host] = kept.Uint64()
+			} else {
+				participantWeights[host] = 0
+			}
+		}
+	}
+	return extraDenominator
 }
 
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
@@ -722,6 +824,7 @@ func CalculateParticipantBitcoinRewards(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservedNodes map[string][]*types.TrainshardReservedNode,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	return CalculateParticipantBitcoinRewardsWithTransfers(
@@ -901,6 +1004,16 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	logger.Info("Bitcoin Rewards: weights after delegation reward transfers", "participants", participantWeights)
 	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,
 	// invalidation, or CPoC reductions. Any "missed" share becomes undistributed and transferred to governance.
+
+	// 4b. Training reservations: reserved nodes earn nothing, free nodes keep their share
+	if len(reservedNodes) > 0 {
+		extraDenominator := applyTrainingReservationAdjustment(participantWeights, participantMLNodes, reservedNodes, confirmationWeightCoefficients)
+		totalPoCWeightBeforeDowntime += extraDenominator
+		logger.Info("Bitcoin Rewards: applied training reservation adjustment",
+			"reservedHosts", len(reservedNodes),
+			"denominatorAddend", extraDenominator,
+			"totalDenominator", totalPoCWeightBeforeDowntime)
+	}
 
 	// 5. Create settle results for each participant
 	settleResults := make([]*SettleResult, 0, len(participants))

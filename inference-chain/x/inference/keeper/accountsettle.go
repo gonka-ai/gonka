@@ -206,15 +206,15 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
 	var bitcoinResult BitcoinResult
-	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
+	reservedNodes := k.CollectEpochReservedNodeWeights(ctx, currentEpochIndex)
+	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(
 		allParticipants,
 		&data,
 		params.BitcoinRewardParams,
 		inputs.ValidationParams,
 		settleParameters,
-		inputs.ParticipantMLNodes,
-		inputs.RewardTransfers,
-		inputs.RewardPenalties,
+		participantMLNodes,
+		reservedNodes,
 		k.Logger(),
 	)
 	if err != nil {
