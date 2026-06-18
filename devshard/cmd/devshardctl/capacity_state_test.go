@@ -329,7 +329,7 @@ func TestGatewaySelectsPoCWeightConcurrencyRate(t *testing.T) {
 	require.InDelta(t, 5.0, regular.MaxConcurrentPer10000Weight, 1e-9)
 
 	g.phaseGate = &ChainPhaseGate{}
-	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{BlockReason: "confirmation_poc"})
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochPhase: epochPhasePoCGenerate, BlockReason: "poc"})
 	t.Cleanup(func() { setPoCPhaseState(false, "") })
 	poc := g.limiterCapacityForModel("Model/A")
 	require.InDelta(t, 10.0, poc.MaxConcurrentPer10000Weight, 1e-9)

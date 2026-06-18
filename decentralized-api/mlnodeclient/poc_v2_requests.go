@@ -234,6 +234,42 @@ func (c *Client) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, erro
 	return &resp, nil
 }
 
+// PoCVersionsResponse is the response from /api/v1/inference/pow/versions.
+// PoCValidationInference reports whether the MLNode can serve inference while
+// PoC validation runs inside vLLM. Self-reported; used only for routing.
+type PoCVersionsResponse struct {
+	VllmVersion            string `json:"vllm_version"`
+	PoCValidationInference bool   `json:"poc_validation_inference"`
+}
+
+// GetPocVersions retrieves the MLNode PoC capability/version info.
+func (c *Client) GetPocVersions(ctx context.Context) (*PoCVersionsResponse, error) {
+	requestUrl, err := url.JoinPath(c.pocUrl, "/api/v1/inference/pow/versions")
+	if err != nil {
+		return nil, err
+	}
+
+	httpResp, err := utils.SendGetRequest(ctx, &c.client, requestUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if httpResp.StatusCode >= 400 {
+		return nil, fmt.Errorf("GetPocVersions failed with status %d: %s", httpResp.StatusCode, string(body))
+	}
+
+	var resp PoCVersionsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // StopPowV2 stops PoC v2 generation on the MLNode.
 // This fans out to all vLLM backends via the MLNode /api/v1/inference/pow/stop endpoint.
 func (c *Client) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {

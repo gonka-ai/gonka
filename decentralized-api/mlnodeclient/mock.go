@@ -476,5 +476,11 @@ func (m *MockClient) SetV2Status(status string) {
 	m.PowStatusV2 = status
 }
 
+func (m *MockClient) GetPocVersions(ctx context.Context) (*PoCVersionsResponse, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return &PoCVersionsResponse{}, nil
+}
+
 // Ensure MockClient implements MLNodeClient
 var _ MLNodeClient = (*MockClient)(nil)

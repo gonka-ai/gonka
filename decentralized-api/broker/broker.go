@@ -218,6 +218,8 @@ type NodeState struct {
 	AdminState      AdminState `json:"admin_state"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion string `json:"ml_node_version"`
+	// Self-reported by the node. Informational only - can serve inference while PoC validation runs inside vLLM.
+	PoCValidationInference bool `json:"poc_validation_inference"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
@@ -1331,13 +1333,15 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 
 			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus ||
-				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion {
+				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion ||
+				nodeResp.State.PoCValidationInference != queryStatusResult.PoCValidationInference {
 				statusUpdates = append(statusUpdates, StatusUpdate{
-					NodeId:        nodeResp.Node.Id,
-					PrevStatus:    queryStatusResult.PrevStatus,
-					NewStatus:     queryStatusResult.CurrentStatus,
-					Timestamp:     timestamp,
-					MlNodeVersion: queryStatusResult.MlNodeVersion,
+					NodeId:                 nodeResp.Node.Id,
+					PrevStatus:             queryStatusResult.PrevStatus,
+					NewStatus:              queryStatusResult.CurrentStatus,
+					Timestamp:              timestamp,
+					MlNodeVersion:          queryStatusResult.MlNodeVersion,
+					PoCValidationInference: queryStatusResult.PoCValidationInference,
 				})
 			}
 		}
@@ -1355,9 +1359,10 @@ func nodeStatusQueryWorker(broker *Broker) {
 }
 
 type statusQueryResult struct {
-	PrevStatus    types.HardwareNodeStatus
-	CurrentStatus types.HardwareNodeStatus
-	MlNodeVersion string
+	PrevStatus             types.HardwareNodeStatus
+	CurrentStatus          types.HardwareNodeStatus
+	MlNodeVersion          string
+	PoCValidationInference bool
 }
 
 // Pass by value, because this is supposed to be a readonly function
@@ -1421,10 +1426,22 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		}
 	}
 
+	pocValidationInference := state.PoCValidationInference
+	vctx, vcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
+	defer vcancel()
+	if versions, verr := client.GetPocVersions(vctx); verr != nil {
+		// Fail-closed: older nodes (404) or unreachable nodes are not advertised.
+		pocValidationInference = false
+		logging.Debug("queryNodeStatus. GetPocVersions failed", types.Nodes, "nodeId", nodeId, "error", verr)
+	} else if versions != nil {
+		pocValidationInference = versions.PoCValidationInference
+	}
+
 	return &statusQueryResult{
-		PrevStatus:    prevStatus,
-		CurrentStatus: currentStatus,
-		MlNodeVersion: mlNodeVersion,
+		PrevStatus:             prevStatus,
+		CurrentStatus:          currentStatus,
+		MlNodeVersion:          mlNodeVersion,
+		PoCValidationInference: pocValidationInference,
 	}, nil
 }
 
