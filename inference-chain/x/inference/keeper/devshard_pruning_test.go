@@ -263,3 +263,52 @@ func TestPruneDevshardData_TracksProgress(t *testing.T) {
 	_, found = k.GetDevshardEscrow(ctx, 3)
 	require.False(t, found)
 }
+
+// TestPruneDevshardData_UnequalSlotsPaidPerSlot verifies unsettled-escrow funds are split per
+// slot: a validator holding 12 of 16 slots receives 12/16 of the escrow and one holding 4 of 16
+// receives 4/16, rather than an equal split across the two unique addresses.
+func TestPruneDevshardData_UnequalSlotsPaidPerSlot(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	addrA := sdk.AccAddress(make([]byte, 20))
+	addrA[0] = 0x0A
+	addrB := sdk.AccAddress(make([]byte, 20))
+	addrB[0] = 0x0B
+
+	slots := make([]string, keeper.DevshardGroupSize) // 16
+	for i := 0; i < 12; i++ {
+		slots[i] = addrA.String()
+	}
+	for i := 12; i < keeper.DevshardGroupSize; i++ {
+		slots[i] = addrB.String()
+	}
+
+	escrow := &types.DevshardEscrow{
+		Creator:    "gonka1creator",
+		Amount:     16_000_000_000, // 16 GNK -> per-slot share = 1 GNK
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+
+	shareA, err := types.GetCoins(12_000_000_000) // 12 slots
+	require.NoError(t, err)
+	shareB, err := types.GetCoins(4_000_000_000) // 4 slots
+	require.NoError(t, err)
+
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addrA, shareA, gomock.Eq("devshard_escrow_unsettled_distribution")).
+		Return(nil)
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addrB, shareB, gomock.Eq("devshard_escrow_unsettled_distribution")).
+		Return(nil)
+
+	require.NoError(t, pruneDevshard(k, ctx, 5))
+
+	_, found := k.GetDevshardEscrow(ctx, 1)
+	require.False(t, found)
+}
