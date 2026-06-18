@@ -29,6 +29,16 @@ async function getProviderAndSigner() {
     return { provider, signer, ethers };
 }
 
+async function buildTransferOwnershipOverrides(bridge, newOwnerAddress, feeData) {
+    const gasLimit = await bridge.transferOwnership.estimateGas(newOwnerAddress);
+
+    return {
+        gasLimit,
+        maxFeePerGas: feeData.maxFeePerGas,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+    };
+}
+
 async function transferOwnership(contractAddress, newOwnerAddress) {
     console.log("=== Transfer Ownership of Bridge Contract ===\n");
     
@@ -93,15 +103,14 @@ async function transferOwnership(contractAddress, newOwnerAddress) {
     console.log("Gas fees:");
     console.log("- Max Fee:", ethers.formatUnits(feeData.maxFeePerGas, "gwei"), "gwei");
     console.log("- Priority Fee:", ethers.formatUnits(feeData.maxPriorityFeePerGas, "gwei"), "gwei");
+    const overrides = await buildTransferOwnershipOverrides(bridge, newOwnerAddress, feeData);
+    console.log("- Gas Limit:", overrides.gasLimit.toString());
     console.log();
     
     // Transfer ownership
     console.log(`Transferring ownership to ${newOwnerAddress}...`);
     console.log("(Confirm the transaction on your Ledger if using hardware wallet)");
-    const tx = await bridge.transferOwnership(newOwnerAddress, {
-        maxFeePerGas: feeData.maxFeePerGas,
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-    });
+    const tx = await bridge.transferOwnership(newOwnerAddress, overrides);
     
     console.log("✓ Transaction sent:", tx.hash);
     console.log("Waiting for confirmation...");
@@ -169,6 +178,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export {
+    buildTransferOwnershipOverrides,
     transferOwnership
 };
 
