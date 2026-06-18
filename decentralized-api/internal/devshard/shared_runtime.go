@@ -229,6 +229,8 @@ func BuildValidationBody(
 		return nil, fmt.Errorf("get enforced tokens: %w", err)
 	}
 
+	// enforced_tokens replays this exact sequence; unless it already ends on a stop token
+	// (e.g. <|im_end|>), the engine appends a terminator, making the response one token longer.
 	requestMap["enforced_tokens"] = enforcedTokens
 	requestMap["stream"] = false
 	delete(requestMap, "stream_options")

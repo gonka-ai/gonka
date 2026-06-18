@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -334,4 +335,216 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 	// Verify the prompt hash is computed correctly for test data (sanity check).
 	_, err = devshard.CanonicalPromptHash(testutil.TestPrompt)
 	require.NoError(t, err)
+}
+
+// buildRecoveryClients creates a fresh set of in-process host clients for
+// recovery, mirroring setupRecoverableSession's client factory.
+func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group []types.SlotAssignment, user *signing.Secp256k1Signer) []HostClient {
+	t.Helper()
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	clients := make([]HostClient, len(hosts))
+	for i := range hosts {
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+		require.NoError(t, err)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+	return clients
+}
+
+// TestRecoverSession_NewFormatSnapshot_RestoresHostCursor verifies that
+// when the snapshot was written in the new wrapper format with a populated
+// HostSyncNonce, recovery restores that cursor verbatim into the session.
+// This is the primary fix for the post-restart "invalid nonce: must be
+// sequential" cascade observed on mainnet 2026-04-24.
+func TestRecoverSession_NewFormatSnapshot_RestoresHostCursor(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 4
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	// Manually save a new-format snapshot with a non-trivial cursor that
+	// pretends host 0 is two diffs behind, host 1 is current, host 2 is
+	// one diff behind.
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(numHosts)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	cursor := map[int]uint64{
+		0: uint64(numInferences) - 2,
+		1: uint64(numInferences),
+		2: uint64(numInferences) - 1,
+	}
+	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(numInferences), session.Nonce())
+
+	session.mu.Lock()
+	got := make(map[int]uint64, len(session.hostSyncNonce))
+	for k, v := range session.hostSyncNonce {
+		got[k] = v
+	}
+	session.mu.Unlock()
+	require.Equal(t, cursor, got, "hostSyncNonce must round-trip through snapshot")
+}
+
+// TestRecoverSession_NewFormatSnapshot_BackfillsStrandedHost reproduces
+// the mainnet bug: a snapshot is taken at nonce N; the proxy restarts;
+// host X had only applied diffs up to N-2 because it was offline during
+// nonce N-1 and N. Recovery must keep diffs (X.cursor, N] in sess.diffs
+// so the next outgoing request can resend the gap, otherwise the host
+// rejects the new diff with "invalid nonce: must be sequential".
+func TestRecoverSession_NewFormatSnapshot_BackfillsStrandedHost(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 6
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(numHosts)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	// Host 0 is stranded 3 diffs behind the snapshot; others are current.
+	stranded := uint64(numInferences) - 3
+	cursor := map[int]uint64{
+		0: stranded,
+		1: uint64(numInferences),
+		2: uint64(numInferences),
+	}
+	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(numInferences), session.Nonce())
+
+	// sess.diffs must cover (stranded, LatestNonce] so that diffsForHost
+	// can return the catch-up window for host 0.
+	diffs := session.Diffs()
+	require.Equal(t, int(uint64(numInferences)-stranded), len(diffs),
+		"sess.diffs must span (stranded=%d, latest=%d] for catch-up", stranded, numInferences)
+	require.Equal(t, stranded+1, diffs[0].Nonce, "first diff must be stranded+1")
+	require.Equal(t, uint64(numInferences), diffs[len(diffs)-1].Nonce, "last diff must be latest")
+}
+
+func TestRecoverSession_NewFormatSnapshot_ProcessResponseUsesActualDiffNonce(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 6
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(numHosts)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+
+	cursor := map[int]uint64{
+		0: uint64(numInferences) - 3,
+		1: uint64(numInferences),
+		2: uint64(numInferences),
+	}
+	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+
+	diffs := session.Diffs()
+	require.Len(t, diffs, 3)
+	require.Equal(t, uint64(4), diffs[0].Nonce)
+	require.Equal(t, uint64(5), diffs[1].Nonce)
+
+	err = session.ProcessResponse(0, &host.HostResponse{
+		Nonce:     diffs[1].Nonce,
+		StateHash: diffs[1].PostStateRoot,
+	}, diffs[1].Nonce)
+	require.NoError(t, err)
+}
+
+// TestRecoverSession_LegacySnapshot_BackwardCompat verifies that a
+// snapshot blob written in the old bare-EscrowState format is loaded
+// successfully, that the host cursor is treated as unknown (forcing
+// full diff backfill into sess.diffs), and that the snapshot is
+// upgraded to the new wrapper format on disk so subsequent restarts
+// pay the full-backfill cost only once.
+func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 5
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	// Write a legacy bare-EscrowState snapshot, bypassing the new helper.
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(numHosts)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
+	require.NoError(t, err)
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	bareData, err := json.Marshal(sm.ExportState())
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot("escrow-1", uint64(numInferences), bareData))
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", types.LegacySessionVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(numInferences), session.Nonce())
+
+	// Cursor must be empty (legacy snapshot has no cursor info).
+	session.mu.Lock()
+	cursorLen := len(session.hostSyncNonce)
+	session.mu.Unlock()
+	require.Equal(t, 0, cursorLen, "legacy snapshot must produce empty cursor")
+
+	// sess.diffs must contain the entire history so any stranded host
+	// (cursor unknown) can self-heal on the next outgoing request.
+	require.Len(t, session.Diffs(), numInferences, "legacy recovery must load full diff history into sess.diffs")
+
+	// The on-disk snapshot must have been upgraded to the new wrapper
+	// format -- decoding as sessionSnapshot should now yield a non-nil
+	// State (the new format always sets State), proving the upgrade.
+	_, snapData, err := store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	var blob sessionSnapshot
+	require.NoError(t, json.Unmarshal(snapData, &blob))
+	require.NotNil(t, blob.State, "snapshot must be upgraded to wrapper format on legacy recovery")
+}
+
+func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
+	pv, ok := recoveredProtocolVersion(string(types.ProtocolV1))
+	require.True(t, ok)
+	require.Equal(t, types.ProtocolV1, pv)
+
+	pv, ok = recoveredProtocolVersion(types.LegacySessionVersion)
+	require.True(t, ok)
+	require.Equal(t, types.ProtocolV1, pv)
+
+	_, ok = recoveredProtocolVersion("")
+	require.False(t, ok)
 }
