@@ -312,11 +312,12 @@ func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActual
 }
 
 type StatusUpdate struct {
-	NodeId        string
-	PrevStatus    types.HardwareNodeStatus
-	NewStatus     types.HardwareNodeStatus
-	Timestamp     time.Time
-	MlNodeVersion string
+	NodeId                 string
+	PrevStatus             types.HardwareNodeStatus
+	NewStatus              types.HardwareNodeStatus
+	Timestamp              time.Time
+	MlNodeVersion          string
+	PoCValidationInference bool
 }
 
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
@@ -350,6 +351,7 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 
 		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
 		node.State.MlNodeVersion = update.MlNodeVersion
+		node.State.PoCValidationInference = update.PoCValidationInference
 	}
 
 	c.Response <- true
