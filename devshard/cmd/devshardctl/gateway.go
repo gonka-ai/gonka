@@ -3279,7 +3279,7 @@ func removeRuntime(runtimes []*devshardRuntime, id string) []*devshardRuntime {
 }
 
 // retireRuntime drops a runtime from the in-memory registry and closes it,
-// releasing its user. Session and the per-runtime SQLite handles that session owns.
+// releasing its user session and the per-runtime SQLite handles that session owns.
 func (g *Gateway) retireRuntime(id, reason string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -3331,10 +3331,9 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
 			go g.escrowChecker.TriggerCheck(escrowID, func() {
-				if g.deactivateDevshardByID(escrowID) {
-					// Escrow no longer exists on chain -- nothing to settle.
-					g.retireRuntime(escrowID, "escrow confirmed missing on chain")
-				}
+				g.deactivateDevshardByID(escrowID)
+ 				// Escrow no longer exists on chain -- nothing to settle.
+ 				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
 			})
 		}
 	}
