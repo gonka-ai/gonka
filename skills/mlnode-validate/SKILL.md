@@ -1,6 +1,6 @@
 ---
 name: mlnode-validate
-description: Validate a deployed MLNode end-to-end against a known-honest reference for a specific model. The caller picks the MLNode URL and the target model; the skill ensures the model is downloaded, deploys it, measures full-system PoC throughput, and verifies a pre-computed honest PoC vector set is accepted under an L2 threshold. Produces a JSON + text report. Self-contained inside the gonka repo (no external code, no callback receiver).
+description: Validate a deployed MLNode against pre-computed honest PoC vectors for a specific model. Caller provides the MLNode URL, model id, and the deploy config to use (typically deploy/join/node-config-<model>-<gpu>.json). The skill ensures the model is downloaded, deploys it with the caller's config, measures full-system PoC throughput, and verifies the honest vectors are accepted by the binomial fraud test. Produces a JSON + text report. Self-contained inside the gonka repo (no external code, no callback receiver).
 ---
 
 # MLNode PoC v2 Validation
@@ -20,9 +20,12 @@ The skill works with two distinct artifact kinds. Do not conflate:
 - **Golden reference** (committed in repo): one JSON per supported
   model under
   `mlnode/packages/benchmarks/scripts/poc_validation/artifacts/<sanitized model>.json`.
-  Pre-computed by the project: contains the honest PoC vectors,
-  canonical PoC params, consensus-default `additional_args`, and the
-  consensus-default `stat_test` block. Read-only at validate time.
+  Pre-computed by the project: honest PoC vectors, PoC params they
+  were computed under, and the `stat_test` thresholds. The
+  `additional_args` field is FYI metadata (the flags used on the
+  server that generated the vectors), NOT a deploy default for
+  validating new servers -- see "Deploy config: from the caller, not
+  the golden" below. Read-only at validate time.
 - **Per-run report** (produced on the caller's machine, NOT
   committed): one experiment directory per `validate.py` invocation
   under `mlnode/packages/benchmarks/data/experiments/<exp_name>_<ts>/`.
@@ -43,17 +46,24 @@ one is keyed by model id; the auto-lookup `<sanitized model>.json`
 picks one filename per model. Variants beyond the default require an
 explicit `--reference <path>`.
 
-| Model | Filename | Vectors | Deploy notes |
-|-------|----------|---------|--------------|
+The "Recording context" column describes the server that generated
+the vectors (FYI only -- these flags are NOT a deploy default for
+your validation; see "Deploy config: from the caller, not the
+golden").
+
+| Model | Filename | Vectors | Recording context |
+|-------|----------|---------|-------------------|
 | `Qwen/Qwen3-0.6B` | `qwen-qwen3-0.6b.json` | 32 | local dev / single GPU |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (default lookup) | `qwen-qwen3-235b-a22b-instruct-2507-fp8.json` | 32 | tp=4, FlashInfer baseline. Quick smoke test. |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (extended) | `qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json` | 2000 | tp=2, DeepGEMM MoE backend (`VLLM_USE_DEEP_GEMM=1`, `VLLM_MOE_USE_DEEP_GEMM=1`), recorded on 4xB200. Pass with `--reference`. |
+| `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (pubkey-v2) | `qwen-qwen3-235b-a22b-instruct-2507-fp8-h200-pubkey-v2.json` | 200 | tp=4, recorded on 4xH200 with `public_key=test_pub_keys_v2`. Pass with `--reference`. |
+| `MiniMaxAI/MiniMax-M2.7` (default lookup) | `minimaxai-minimax-m2.7.json` | 200 | tp=2, FLASHINFER attention, fp8 kv-cache, max-model-len 180000, `--trust-remote-code`, minimax_m2 tool/reasoning parsers. Recorded on 2xH200. |
+| `moonshotai/Kimi-K2.6` (default lookup) | `moonshotai-kimi-k2.6.json` | 200 | tp=4 + expert-parallel, FLASHINFER_MLA attention, gpu-mem 0.95, max-model-len 240000, kimi_k2 tool/reasoning parsers, `--disable-custom-all-reduce`, `--trust-remote-code`. Recorded on 4xB200. |
 
-For Qwen3-235B the same model id has two references, and they
-exercise different code paths (tp-size + MoE backend). When
-validating qwen235b, run `validate.py` **twice** -- once with the
-default lookup, once with the deepgemm variant -- and report both
-verdicts. Example:
+For Qwen3-235B the same model id has multiple references, and they
+exercise different code paths (tp-size, MoE backend, public_key).
+When validating qwen235b, run `validate.py` against each relevant
+variant and report all verdicts. Example:
 
 ```bash
 # Run 1: default 32-nonce reference (FlashInfer, tp=4)
@@ -90,20 +100,21 @@ caller's behalf.
 
 ### Where every other parameter comes from
 
-Beyond `MLNODE_URL` and `MODEL`, **the caller does not need to pass
-anything**. Every other parameter has a documented source:
+Beyond `MLNODE_URL`, `MODEL`, and the deploy config (passed as
+`--reference <custom>`, see below), the caller does not need to pass
+anything. Every other parameter has a documented source:
 
 - `seq_len`, `k_dim`, `block_hash`, `public_key`, `node_id`,
   `node_count` -- all read from the golden reference for `MODEL`.
   The reference pins the exact PoC inputs its vectors were computed
   under.
-- vLLM `additional_args` -- the consensus-default deploy args for
-  this model are saved in the reference's `additional_args` field
-  and used as-is. The caller can pass extra flags only if they ask
-  for them: `--tp-size` and `--max-model-len` add-or-update the
-  reference baseline (the same flag's existing value is replaced,
-  otherwise appended); `--extra-arg <token>` appends arbitrary
-  tokens.
+- vLLM `additional_args` -- come from the caller's deploy config
+  (typically `deploy/join/node-config-<model>-<gpu>.json`), NOT from
+  the golden. The golden's `additional_args` field is informational
+  only: it records which flags produced the recorded vectors on the
+  server where the golden was generated. Using those flags as a
+  deploy default is wrong -- different hardware needs different
+  flags. See "Deploy config: from the caller, not the golden" below.
 - `stat_test.dist_threshold` / `p_mismatch` / `fraud_threshold` --
   resolved per-key with provenance: server default (0.02 / 0.001 /
   0.01) is the floor; the reference's `stat_test` block (which
@@ -131,15 +142,16 @@ pass these flags when the caller asks for them:
   - `--fraud-threshold <float>` (e.g. `0.01`) -- `probability_honest`
     cutoff at which the server flags fraud. Default: artifact's
     `stat_test.fraud_threshold` if present, else server default.
-- Deploy overrides (only pass when the caller explicitly asks; the
-  artifact's `additional_args` already encode the consensus-default
-  deploy config for this model):
+- Small deploy tweaks on top of an already-baked reference (the
+  reference -- custom or golden -- is the source of `additional_args`;
+  these flags ride on top):
   - `--dtype <auto|float16|bfloat16|fp8>` -- vLLM dtype.
   - `--tp-size <int>` -- add-or-update `--tensor-parallel-size`.
   - `--max-model-len <int>` -- add-or-update `--max-model-len`.
-  - `--extra-arg <token>` -- pass once per token to append additional
-    vLLM args. The caller owns avoiding conflicts with the artifact
-    baseline.
+  - `--extra-arg <token>` -- append a token to additional_args.
+  These cannot REMOVE flags the reference already carries. If the
+  deploy shape differs from the reference, bake a custom reference
+  (see "Deploy config: from the caller, not the golden").
 - Phase skips. By default all four phases run; each flag drops one phase:
   - `--skip-download` -- the model is known to be cached already.
   - `--skip-deploy` -- vLLM is known to already be serving `MODEL`.
@@ -158,20 +170,63 @@ pass these flags when the caller asks for them:
     testing custom references). Default: looked up from `MODEL`.
     `--artifact` is accepted as a legacy alias.
 
+## Deploy config: from the caller, not the golden
+
+The golden artifact supplies vectors, PoC params, and `stat_test` --
+nothing else. Its `additional_args` field records which flags were
+used on the server that generated the vectors and is FYI only. It
+must not be used as a deploy default on a different server.
+
+The caller passes a deploy config (typically
+`deploy/join/node-config-<model>-<gpu>.json`) matching the GPU class
+of the server under test. Standard flow: bake a custom reference
+combining golden vectors+params+stat_test with the caller's `args`,
+then pass it via `--reference`.
+
+```python
+import json, pathlib
+src = pathlib.Path('mlnode/packages/benchmarks/scripts/poc_validation/artifacts/<golden>.json')
+node_cfg = json.loads(pathlib.Path('deploy/join/node-config-<model>-<gpu>.json').read_text())
+
+d = json.loads(src.read_text())
+d['additional_args'] = list(node_cfg[0]['models']['<HF model id>']['args'])
+d['source'] = f"vectors from {src.name}; additional_args from deploy/join/node-config-<model>-<gpu>.json"
+dst = src.with_name(src.stem + '-<gpu>.json')
+dst.write_text(json.dumps(d, indent=2))
+```
+
+```bash
+python3 mlnode/packages/benchmarks/scripts/poc_validation/validate.py \
+    --mlnode-url "$MLNODE_URL" --model "$MODEL" --reference <dst>
+```
+
+The custom reference is per-deployment, not committed. The report's
+`reference.source` line should make clear which node-config supplied
+the deploy args, so the audit trail explains what was actually
+deployed.
+
+The CLI flags `--tp-size`, `--max-model-len`, `--extra-arg`,
+`--dtype` exist for small one-off tweaks on top of a reference, but
+they cannot remove flags the reference already carries -- so they
+are not a substitute for baking a custom reference when the
+deployment shape differs from the golden's.
+
 ## How to run
 
-Bare minimum (recommended starting form):
+Standard form (custom reference baked from the caller's deploy config):
 
 ```bash
 python3 mlnode/packages/benchmarks/scripts/poc_validation/validate.py \
     --mlnode-url "$MLNODE_URL" \
-    --model     "$MODEL"
+    --model     "$MODEL" \
+    --reference <custom reference baked per "Deploy config: from the caller, not the golden">
 ```
 
-Add overrides only when the caller asks for them. The deploy config the
-caller sees is the artifact's `additional_args` plus any of `--dtype`,
-`--tp-size`, `--max-model-len`, `--extra-arg` they passed; the caller
-does not need to know what's in the artifact's baseline.
+The golden reference can be passed directly (without baking) only
+when the server under test is the same hardware class as the golden's
+recording server -- in that case the golden's `additional_args`
+happen to be a usable deploy config. That's the exception, not the
+default.
 
 ## What the script does, in order
 
@@ -264,7 +319,8 @@ PoC params (from reference)
   throughput_batch_size=<poc_params.throughput_batch_size> (cli)
   validation_batch_size=<poc_params.validation_batch_size> (cli)
 
-deploy config (reference.additional_args + CLI overrides)
+deploy config (from the caller's reference; for custom references,
+state which node-config supplied the args)
   dtype=<>, additional_args=<list>
   applied? <yes if deploy.action=="deployed", "no - vLLM was already running" otherwise>
 
