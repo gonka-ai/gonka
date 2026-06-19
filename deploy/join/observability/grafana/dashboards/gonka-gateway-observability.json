@@ -9,14 +9,14 @@
   "panels": [
     {
       "gridPos": {
-        "h": 4,
+        "h": 5,
         "w": 24,
         "x": 0,
         "y": 0
       },
       "id": 1,
       "options": {
-        "content": "Use this dashboard from top to bottom. Start by selecting a `model`. First check scrape health, user health, and model capacity. Then inspect top reasons. Only after a reason looks important, use `drilldown_reason` to inspect participants for that reason.\n\nEmpty data usually means one of three things: Prometheus cannot scrape `devshard-gateway`, the gateway image is older than the metrics change, or no `/v1/chat/completions` traffic has hit the gateway in the selected time range.\n\nGlossary: a user request is what the client sees. An attempt is one real participant send. A hidden failure is a failed attempt protected by another successful attempt. A slot decision is a real send or a no-send burn. Scale factor is current model capacity divided by steady-state model capacity.",
+        "content": "Use this dashboard from top to bottom. First select `model`, then check User Health to see whether clients are protected. Next use reason-preserving panels to identify the largest failure or policy reason. Then narrow `reason`, `participant_key`, or `escrow_id` and inspect participant quality, skipped slots, timeout work, and gateway mechanics.\n\nEvery failure panel keeps the bounded `reason` label. A panel that shows only failed volume is paired with a reason or visibility breakdown. Rows marked diagnostic use existing gateway or host metrics that are useful for operations but do not replace the participant-quality score.\n\nEmpty data usually means Prometheus cannot scrape `devshard-gateway`, the gateway image predates these metrics, or no `/v1/chat/completions` traffic hit the selected time range.",
         "mode": "markdown"
       },
       "title": "Read This First",
@@ -28,11 +28,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "id": 2,
       "panels": [],
-      "title": "At a Glance",
+      "title": "User Health",
       "type": "row"
     },
     {
@@ -40,7 +40,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "1 means Prometheus can scrape the gateway. 0 or no data means the dashboard cannot trust the other panels yet.",
+      "description": "1 means Prometheus can scrape the gateway. 0 or no data means the rest of this dashboard is not trustworthy yet.",
       "fieldConfig": {
         "defaults": {
           "decimals": 0,
@@ -64,7 +64,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "id": 3,
       "options": {
@@ -90,7 +90,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Total user request rate observed by the gateway.",
+      "description": "Total gateway request rate for the selected model. This is the denominator for the request-level ratios in this row.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -101,7 +101,7 @@
         "h": 4,
         "w": 5,
         "x": 4,
-        "y": 5
+        "y": 6
       },
       "id": 4,
       "options": {
@@ -117,7 +117,7 @@
           "refId": "A"
         }
       ],
-      "title": "User Requests / sec",
+      "title": "User Request Rate",
       "type": "stat"
     },
     {
@@ -125,7 +125,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Share of gateway requests that ended as success or cache hit.",
+      "description": "Successful or cached user requests divided by all gateway requests for the selected model.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -138,7 +138,7 @@
         "h": 4,
         "w": 5,
         "x": 9,
-        "y": 5
+        "y": 6
       },
       "id": 5,
       "options": {
@@ -162,7 +162,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "User-visible failures that should stay near zero.",
+      "description": "User-visible failures that should stay near zero. Drill into the adjacent reason panel before changing protocol parameters.",
       "fieldConfig": {
         "defaults": {
           "decimals": 3,
@@ -173,7 +173,7 @@
         "h": 4,
         "w": 5,
         "x": 14,
-        "y": 5
+        "y": 6
       },
       "id": 6,
       "options": {
@@ -189,7 +189,7 @@
           "refId": "A"
         }
       ],
-      "title": "Critical Failures / sec",
+      "title": "Critical User Failure Rate",
       "type": "stat"
     },
     {
@@ -197,7 +197,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Lowest current capacity percentage among selected models. 1 means full capacity; 0.5 means half of steady-state capacity.",
+      "description": "Cached requests divided by all gateway requests. A high value means users are protected by cached output, but winner attribution may be incomplete.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -210,11 +210,10 @@
         "h": 4,
         "w": 5,
         "x": 19,
-        "y": 5
+        "y": 6
       },
       "id": 7,
       "options": {
-        "colorMode": "background",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -223,12 +222,11 @@
       },
       "targets": [
         {
-          "expr": "min(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
-          "instant": true,
+          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome=\"cached\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
           "refId": "A"
         }
       ],
-      "title": "Worst Model Capacity",
+      "title": "Cache Hit Share",
       "type": "stat"
     },
     {
@@ -236,175 +234,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top reasons currently affecting the selected model. Pick one of these reasons in `drilldown_reason` before using the participant drilldown rows.",
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 9
-      },
-      "id": 8,
-      "targets": [
-        {
-          "expr": "topk(5, sum(rate(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
-          "legendFormat": "user failure: {{reason}}",
-          "refId": "A"
-        },
-        {
-          "expr": "topk(5, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
-          "legendFormat": "hidden failure: {{reason}}",
-          "refId": "B"
-        },
-        {
-          "expr": "topk(5, sum(rate(devshard_gateway_timeout_actions_total{model=~\"$model\",action=~\"skipped|failed\"}[$__rate_interval])) by (reason))",
-          "legendFormat": "timeout work: {{reason}}",
-          "refId": "C"
-        }
-      ],
-      "title": "Top Current Problem Reasons",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 15
-      },
-      "id": 9,
-      "panels": [],
-      "title": "Capacity by Model",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Model capacity over time. A drop below 1 means the gateway sees less available capacity than steady state.",
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 16
-      },
-      "id": 10,
-      "targets": [
-        {
-          "expr": "devshard_gateway_capacity_scale_by_model{model=~\"$model\"}",
-          "legendFormat": "{{model}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Capacity % by Model",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Sort by Value to find models with the least available capacity. Current/baseline weight panels below explain the numerator and denominator.",
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 16
-      },
-      "id": 11,
-      "targets": [
-        {
-          "expr": "sort(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
-          "instant": true,
-          "legendFormat": "{{model}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Models Ordered by Capacity %",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Current effective model weight, after PoC and participant availability effects.",
-      "gridPos": {
-        "h": 6,
-        "w": 12,
-        "x": 0,
-        "y": 23
-      },
-      "id": 12,
-      "targets": [
-        {
-          "expr": "sort_desc(devshard_gateway_capacity_total_weight_by_model{model=~\"$model\"})",
-          "instant": true,
-          "legendFormat": "{{model}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Current Model Weight",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Steady-state baseline model weight. Capacity % is current weight divided by this value.",
-      "gridPos": {
-        "h": 6,
-        "w": 12,
-        "x": 12,
-        "y": 23
-      },
-      "id": 13,
-      "targets": [
-        {
-          "expr": "sort_desc(devshard_gateway_capacity_baseline_weight_by_model{model=~\"$model\"})",
-          "instant": true,
-          "legendFormat": "{{model}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Baseline Model Weight",
-      "type": "table"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 29
-      },
-      "id": 14,
-      "panels": [],
-      "title": "What Users Saw",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "User outcomes grouped by the final status seen at the gateway.",
+      "description": "Final user outcomes grouped by bounded reason. Use this to decide whether user-visible problems are transport, policy, runtime, or request-shape issues.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -414,17 +244,17 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 10
       },
-      "id": 15,
+      "id": 8,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])) by (outcome)",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])) by (outcome, reason)",
+          "legendFormat": "{{outcome}} / {{reason}}",
           "refId": "A"
         }
       ],
-      "title": "User Outcomes",
+      "title": "What Users Saw by Outcome and Reason",
       "type": "timeseries"
     },
     {
@@ -432,17 +262,236 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top participants whose output users saw for the selected model. This is grouped by participant only; use model selection above instead of preselecting participants.",
+      "description": "Top user-visible failure reasons in the selected range. Pick one of these in `reason` before inspecting participant and slot rows.",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 10
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "topk(15, sum(increase(devshard_gateway_critical_user_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) by (reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Top User-Visible Failure Reasons",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Gateway route p95 from the existing HTTP histogram. This is not model-aware; use it as a route diagnostic only.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 17
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_http_request_duration_seconds_bucket{path=~\"/v1/.+chat.+\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p95 route latency",
+          "refId": "A"
+        }
+      ],
+      "title": "Gateway Route p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Gateway-wide and participant-budget rejections. A high value means requests are blocked before useful participant work begins.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 17
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_limit_rejections_total[$__rate_interval])) by (reason)",
+          "legendFormat": "gateway / {{reason}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(devshard_gateway_participant_limit_rejections_total[$__rate_interval])) by (scope)",
+          "legendFormat": "participant / {{scope}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Admission Rejections by Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current limiter load and effective caps after capacity scaling. Rising in-flight values near caps explain gateway-limited outcomes.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 17
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "devshard_gateway_inflight_requests",
+          "legendFormat": "inflight requests",
+          "refId": "A"
+        },
+        {
+          "expr": "devshard_gateway_effective_max_concurrent_requests",
+          "legendFormat": "request cap",
+          "refId": "B"
+        },
+        {
+          "expr": "devshard_gateway_inflight_input_tokens",
+          "legendFormat": "inflight input tokens",
+          "refId": "C"
+        },
+        {
+          "expr": "devshard_gateway_effective_max_input_tokens_in_flight",
+          "legendFormat": "input token cap",
+          "refId": "D"
+        }
+      ],
+      "title": "Active Requests and Input Tokens",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Attempt Health",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Real upstream sends by role and reason. Extra attempts are the immediate cost of redundancy and fallback.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "id": 14,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (role, reason)",
+          "legendFormat": "{{role}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Real Attempts Started by Role and Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How real attempts terminated. Visibility separates user-visible winners, suppressed losers, no-winner attempts, and unfinished failures.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "id": 15,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (outcome, visibility)",
+          "legendFormat": "{{outcome}} / {{visibility}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Terminal Attempts by Outcome and Visibility",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Failed attempts with reason and visibility preserved. Select a high-volume reason before moving to Participant Quality.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 24
       },
       "id": 16,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{model=~\"$model\"}[$__range])) by (participant_key))",
+          "expr": "topk(12, sum(rate(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason, visibility))",
+          "legendFormat": "{{reason}} / {{visibility}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Attempts by Reason and Visibility",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participants whose output users actually saw. Cached requests are excluded unless the gateway can safely attribute the source winner.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 31
+      },
+      "id": 17,
+      "targets": [
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
           "instant": true,
           "refId": "A"
         }
@@ -455,71 +504,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top user-visible failure reasons for the selected model in the selected time range.",
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 37
-      },
-      "id": 17,
-      "targets": [
-        {
-          "expr": "topk(10, sum(increase(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__range])) by (reason))",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Top User-Visible Failure Reasons",
-      "type": "table"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 43
-      },
-      "id": 18,
-      "panels": [],
-      "title": "What the Gateway Hid",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Successful user requests that required the gateway to hide a participant or policy failure.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "rps"
-        }
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 44
-      },
-      "id": 19,
-      "targets": [
-        {
-          "expr": "topk(10, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
-          "legendFormat": "{{reason}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Hidden Failures by Reason",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "How many extra real sends are needed per user request.",
+      "description": "Real sends divided by user requests. Values above 1 mean redundancy or recovery is spending extra participant work.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -530,16 +515,17 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 31
       },
-      "id": 20,
+      "id": 18,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\",role=\"extra\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "sent attempts / request",
           "refId": "A"
         }
       ],
-      "title": "Extra Sends per User Request",
+      "title": "Sent Attempts per User Request",
       "type": "timeseries"
     },
     {
@@ -547,22 +533,268 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "After selecting `drilldown_reason`, this shows participants with the highest failed-attempt volume for that reason and model.",
+      "description": "Failed or not-finished sent attempts divided by successful user requests. This shows work hidden from clients by redundancy.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
       "gridPos": {
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 31
+      },
+      "id": 19,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_terminal_total{model=~\"$model\",outcome=~\"failed|not_finished\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome=\"success\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "failed sent attempts / successful request",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed Sent Attempts per Successful Request",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 20,
+      "panels": [],
+      "title": "Existing Performance Diagnostics",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Diagnostic only: receipt p95 is keyed by escrow-local `host_idx`, not participant key. Use it for timeout-window tuning, not participant scoring.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 39
       },
       "id": 21,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key))",
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_receipt_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Diagnostic Receipt p95 by Escrow Host",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Diagnostic only: first-token p95 is host-index based. Future participant-key first-content metrics will replace this for participant quality.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 39
+      },
+      "id": 22,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_first_token_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Diagnostic First Token p95 by Escrow Host",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Diagnostic only: prefill time per input token by escrow-local host index. Do not compare this directly with participant-key failure rates.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 39
+      },
+      "id": 23,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_cttfl_seconds_per_input_token_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Diagnostic CTTFL per Input Token p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Diagnostic only: total attempt time by escrow-local host index. Use with timeout rows to tune windows.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 39
+      },
+      "id": 24,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_total_time_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Diagnostic Total Attempt Time p95",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 25,
+      "panels": [],
+      "title": "Hidden Failures",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Successful user requests that hid participant or policy failures. Severity separates protected pre-winner failures from later winner problems.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 47
+      },
+      "id": 26,
+      "targets": [
+        {
+          "expr": "topk(12, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (severity, reason))",
+          "legendFormat": "{{severity}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Hidden User Successes by Severity and Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Suppressed loser failures by reason. These did not reach the user but still consumed participant work.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 47
+      },
+      "id": 27,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\",visibility=\"suppressed_loser\"}[$__rate_interval])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Hidden Loser Failures by Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "User-visible winner attempts that also recorded a failure reason. Investigate these first because users may have seen partial content or degraded streams.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 47
+      },
+      "id": 28,
+      "targets": [
+        {
+          "expr": "topk(15, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\",visibility=\"user_visible_winner\"}[$__range])) by (participant_key, model, reason))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Participants for Selected Reason",
+      "title": "Winner Failures After User-Visible Content",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participant drilldown for the selected reason. This is the main path from a top reason to specific addresses.",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 29,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason, visibility))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Participants for Selected Failure Reason",
       "type": "table"
     },
     {
@@ -571,9 +803,331 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 61
       },
-      "id": 22,
+      "id": 30,
+      "panels": [],
+      "title": "Overscheduling Cost",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Extra real sends divided by all user requests. This is direct redundancy cost.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 62
+      },
+      "id": 31,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\",role=\"extra\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "extra sends / request",
+          "refId": "A"
+        }
+      ],
+      "title": "Extra Real Sends per User Request",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "No-send or skipped slot burns divided by user requests. This captures scheduling cost before HTTP send.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 62
+      },
+      "id": 32,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\",escrow_id=~\"$escrow_id\",decision!=\"real_send\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "no-send slots / request",
+          "refId": "A"
+        }
+      ],
+      "title": "Ghost or No-Send Slots per User Request",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Suppressed loser terminal attempts divided by user requests. This shows completed work not shown to the user.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 62
+      },
+      "id": 33,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_terminal_total{model=~\"$model\",visibility=\"suppressed_loser\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "suppressed losers / request",
+          "refId": "A"
+        }
+      ],
+      "title": "Suppressed Losers per User Request",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Extra-attempt reasons that are expected to protect users. High values can justify redundancy but should still guide timeout tuning.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 62
+      },
+      "id": 34,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\",role=\"extra\",reason=~\"receipt_timeout|first_token_timeout|primary_unresponsive|attempt_failed|pairwise_budgeted_speedup\"}[$__rate_interval])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Useful Redundancy Reasons",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Exploration-driven extra attempts. Use this to separate protocol learning cost from failure recovery cost.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 69
+      },
+      "id": 35,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\",role=\"extra\",reason=~\"pairwise_ab_sample|poc_probe\"}[$__rate_interval])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Exploration Extra Attempts",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "No-send reasons that indicate policy pressure, capability mismatch, or participant health problems rather than useful recovery.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 69
+      },
+      "id": 36,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\",escrow_id=~\"$escrow_id\",decision!=\"real_send\",reason=~\"participant_throttled_no_send|participant_capability_no_send|no_compatible_request_after_stale|all_hosts_excluded|no_available_host|manual_suspicious|shadow_quarantine|probation\"}[$__rate_interval])) by (reason, quarantine_mode)",
+          "legendFormat": "{{reason}} / {{quarantine_mode}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Waste or Policy Pressure No-Sends",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 37,
+      "panels": [],
+      "title": "Skipped Slots and Quarantine Pressure",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Skipped/no-send slots by participant, model, escrow, reason, and quarantine mode. This answers which scheduling changes happened before any HTTP send.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 38,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (participant_key, model, escrow_id, reason, quarantine_mode))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Skipped Slots by Participant, Model, Escrow, and Reason",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current probe, shadow, probation, or manual no-winner state. A value of 1 means the participant is currently in that mode.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "id": 39,
+      "targets": [
+        {
+          "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Current Quarantine or No-Winner State",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Quarantine and no-winner transitions by reason. Use this to find participants entering probe, shadow, probation, or manual suspicion.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 85
+      },
+      "id": 40,
+      "targets": [
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_participant_quarantine_transitions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, mode, reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Quarantine Transitions by Participant and Reason",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Real no-winner sends by reason and quarantine mode. These participants help availability but should not win unless no clean winner exists.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 85
+      },
+      "id": 41,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason, quarantine_mode)",
+          "legendFormat": "{{reason}} / {{quarantine_mode}}",
+          "refId": "A"
+        }
+      ],
+      "title": "No-Winner Attempts by Reason and Mode",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Escrows blocked by participant budgets. Use with skipped-slot rows to determine whether pressure is participant-local or escrow-local.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 85
+      },
+      "id": 42,
+      "targets": [
+        {
+          "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "devshard_gateway_escrow_participant_limited{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / limited",
+          "refId": "B"
+        }
+      ],
+      "title": "Escrow Participant Budget Pressure",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 92
+      },
+      "id": 43,
       "panels": [],
       "title": "Participant Quality",
       "type": "row"
@@ -583,7 +1137,30 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Worst participants by failure rate, after filtering out low-volume participants with fewer than `$min_attempts` attempts in the selected time range.",
+      "description": "Participants with at least `min_attempts` real sends in the selected range. This is the base volume filter for the quality row.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 93
+      },
+      "id": 44,
+      "targets": [
+        {
+          "expr": "topk(30, sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Sent Attempts by Participant and Model",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Successful terminal attempts divided by all terminal attempts for participants above the volume threshold.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -594,19 +1171,19 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 52
+        "w": 8,
+        "x": 8,
+        "y": 93
       },
-      "id": 23,
+      "id": 45,
       "targets": [
         {
-          "expr": "topk(20, (sum by (participant_key) (increase(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key) (increase(devshard_gateway_attempts_started_total{model=~\"$model\"}[$__range])), 1)) and on (participant_key) (sum by (participant_key) (increase(devshard_gateway_attempts_started_total{model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "topk(30, (sum by (participant_key, model) (increase(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\",outcome=\"success\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Worst Participant Failure Rate",
+      "title": "Participant Success Rate",
       "type": "table"
     },
     {
@@ -614,22 +1191,30 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current probe/shadow/probation state by participant and model.",
+      "description": "Selected-reason failures divided by sent attempts for participants above the volume threshold.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        }
+      },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 52
+        "w": 8,
+        "x": 16,
+        "y": 93
       },
-      "id": 24,
+      "id": 46,
       "targets": [
         {
-          "expr": "sum(devshard_gateway_participant_quarantine_state{model=~\"$model\"}) by (participant_key, mode)",
+          "expr": "topk(30, (sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Current Quarantine / No-Winner State",
+      "title": "Selected-Reason Failure Rate",
       "type": "table"
     },
     {
@@ -637,23 +1222,100 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "No-winner sends are real sends where the participant is allowed to help but cannot win unless no clean winner exists.",
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 60
+      "description": "No-receipt and empty-stream rates by participant. These are common quarantine inputs.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        }
       },
-      "id": 25,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 101
+      },
+      "id": 47,
       "targets": [
         {
-          "expr": "topk(10, sum(rate(devshard_gateway_no_winner_attempts_total{model=~\"$model\"}[$__rate_interval])) by (reason, quarantine_mode))",
-          "legendFormat": "{{reason}} / {{quarantine_mode}}",
+          "expr": "topk(20, sum by (participant_key, model, reason) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"no_receipt|empty_stream\"}[$__range])) / clamp_min(sum by (participant_key, model, reason) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1))",
+          "instant": true,
           "refId": "A"
         }
       ],
-      "title": "No-Winner Attempts",
-      "type": "timeseries"
+      "title": "No-Receipt and Empty-Stream Rates",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Transport and EOF failure rates by participant. These usually point to upstream connectivity or stream truncation.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 101
+      },
+      "id": 48,
+      "targets": [
+        {
+          "expr": "topk(20, sum by (participant_key, model, reason) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\".*transport.*|eof.*|error_stream\"}[$__range])) / clamp_min(sum by (participant_key, model, reason) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Transport and EOF Failure Rates",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Timeout action pressure, user-visible wins, no-winner attempts, quarantine skips, and current mode. Use this as the quality summary before opening escrow diagnostics.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 101
+      },
+      "id": 49,
+      "targets": [
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, action, reason))",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, reason, quarantine_mode))",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
+          "instant": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Participant Quality Detail Signals",
+      "type": "table"
     },
     {
       "collapsed": false,
@@ -661,11 +1323,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 109
       },
-      "id": 26,
+      "id": 50,
       "panels": [],
-      "title": "Timeout and Settlement Work",
+      "title": "Model and Escrow Heatmaps",
       "type": "row"
     },
     {
@@ -673,22 +1335,160 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Timeout work grouped by kind and action. Failed or skipped timeout work should be investigated before tuning protocol timeouts.",
+      "description": "Heatmap-style table of participant x model failures by reason. Sort by value to find model-localized bad addresses.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 110
+      },
+      "id": 51,
+      "targets": [
+        {
+          "expr": "topk(40, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Participant x Model Failure Heatmap",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Heatmap-style table of participant x escrow skipped slots. This is diagnostic and should not replace the participant+model quality view.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 110
+      },
+      "id": 52,
+      "targets": [
+        {
+          "expr": "topk(40, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (participant_key, escrow_id, reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Participant x Escrow Skipped-Slot Heatmap",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Model x escrow ghost/no-send pressure. High values indicate localized routing, capability, or quarantine pressure.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 110
+      },
+      "id": 53,
+      "targets": [
+        {
+          "expr": "topk(40, sum(increase(devshard_gateway_slot_decisions_total{model=~\"$model\",escrow_id=~\"$escrow_id\",decision!=\"real_send\"}[$__range])) by (model, escrow_id, reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Model x Escrow No-Send Pressure",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Capacity-aware picker choices by model and escrow. Use this to confirm traffic is flowing to expected escrows.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 68
+        "y": 118
       },
-      "id": 27,
+      "id": 54,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_timeout_actions_total{model=~\"$model\"}[$__rate_interval])) by (kind, action)",
+          "expr": "sum(rate(devshard_gateway_picker_choice_total{model=~\"$model\"}[$__rate_interval])) by (devshard_id, model)",
+          "legendFormat": "{{devshard_id}} / {{model}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Runtime Picker Choices by Model and Escrow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Capability no-send skips by model and participant. This uses the existing bounded slot-decision reason, not the future capability-subreason metric.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 118
+      },
+      "id": 55,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\".*capability.*\"}[$__range])) by (participant_key, model, escrow_id, reason))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Capability Skips by Model and Participant",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 125
+      },
+      "id": 56,
+      "panels": [],
+      "title": "Timeout Actions",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Timeout work grouped by kind and action. Failed or skipped actions should be understood before tuning timeouts.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 126
+      },
+      "id": 57,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (kind, action)",
           "legendFormat": "{{kind}} / {{action}}",
           "refId": "A"
         }
       ],
-      "title": "Timeout Actions",
+      "title": "Expected, Started, Completed, Skipped, or Failed Timeout Work",
       "type": "timeseries"
     },
     {
@@ -696,23 +1496,51 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top timeout skip/failure reasons in the selected time range.",
+      "description": "Top timeout skip and failure reasons in the selected range.",
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 68
+        "w": 8,
+        "x": 8,
+        "y": 126
       },
-      "id": 28,
+      "id": 58,
       "targets": [
         {
-          "expr": "topk(10, sum(increase(devshard_gateway_timeout_actions_total{model=~\"$model\",action=~\"skipped|failed\"}[$__range])) by (kind, action, reason))",
+          "expr": "topk(20, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__range])) by (participant_key, model, kind, action, reason))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Top Timeout Problems",
+      "title": "Timeout Skip and Failure Reasons",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Terminal attempts that did not finish, shown next to timeout actions. If this rises without timeout work, timeout handling is missing or skipped.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 126
+      },
+      "id": 59,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\",outcome=\"not_finished\"}[$__rate_interval])) by (participant_key, model, role, visibility)",
+          "legendFormat": "{{participant_key}} / {{model}} / {{role}} / {{visibility}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Not-Finished Attempts Beside Timeout Work",
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -720,11 +1548,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 133
       },
-      "id": 29,
+      "id": 60,
       "panels": [],
-      "title": "Raw Drilldown",
+      "title": "Diagnostic Gateway Mechanics",
       "type": "row"
     },
     {
@@ -732,22 +1560,32 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Lower-level slot decisions. Use this after the summary panels point to no-send or overscheduling pressure.",
+      "description": "Cache hit and total request rates. This is diagnostic because cache hits may not carry fresh participant attribution.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 76
+        "y": 134
       },
-      "id": 30,
+      "id": 61,
       "targets": [
         {
-          "expr": "topk(20, sum(rate(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\"}[$__rate_interval])) by (decision, reason, quarantine_mode, escrow_id))",
-          "legendFormat": "{{decision}} / {{reason}} / {{escrow_id}}",
+          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome=\"cached\"}[$__rate_interval])) by (reason)",
+          "legendFormat": "cache / {{reason}}",
           "refId": "A"
+        },
+        {
+          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])) by (outcome)",
+          "legendFormat": "request / {{outcome}}",
+          "refId": "B"
         }
       ],
-      "title": "Slot Decisions",
+      "title": "Cache and Request Lifecycle",
       "type": "timeseries"
     },
     {
@@ -755,22 +1593,266 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Raw terminal attempt outcomes. Useful for debugging label combinations after a summary panel finds a problem.",
+      "description": "Participant-bound transport errors by path kind and upstream status. Use this before blaming model quality.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 76
+        "w": 8,
+        "x": 8,
+        "y": 134
       },
-      "id": 31,
+      "id": 62,
       "targets": [
         {
-          "expr": "topk(30, sum(rate(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (participant_key, model, role, outcome, visibility))",
-          "legendFormat": "{{participant_key}} / {{model}} / {{outcome}} / {{visibility}}",
+          "expr": "sum(rate(devshard_gateway_participant_transport_errors_total[$__rate_interval])) by (path_kind, status)",
+          "legendFormat": "{{path_kind}} / {{status}}",
           "refId": "A"
         }
       ],
-      "title": "Attempt Terminal Outcomes",
+      "title": "Upstream Transport Errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Speculative decisions and attempt starts by reason. This explains why the gateway decided to race or explore.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 134
+      },
+      "id": 63,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_speculative_decisions_total[$__rate_interval])) by (reason)",
+          "legendFormat": "decision / {{reason}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(devshard_speculative_attempt_starts_total[$__rate_interval])) by (reason)",
+          "legendFormat": "attempt / {{reason}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Speculative Routing Mechanics",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Runtime active state, active requests, and reserved tokens by model and escrow. Use this when picker or capacity panels look wrong.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 141
+      },
+      "id": 64,
+      "targets": [
+        {
+          "expr": "devshard_runtime_active{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / active",
+          "refId": "A"
+        },
+        {
+          "expr": "devshard_runtime_active_requests{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / requests",
+          "refId": "B"
+        },
+        {
+          "expr": "devshard_runtime_reserved_tokens{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / tokens",
+          "refId": "C"
+        }
+      ],
+      "title": "Runtime Activity and Reserved Tokens",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current capacity scale and weights. Scale is current weight divided by baseline; values below 1 explain lower effective caps.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 141
+      },
+      "id": 65,
+      "targets": [
+        {
+          "expr": "devshard_gateway_capacity_scale_by_model{model=~\"$model\"}",
+          "legendFormat": "{{model}} / scale",
+          "refId": "A"
+        },
+        {
+          "expr": "devshard_gateway_capacity_total_weight_by_model{model=~\"$model\"}",
+          "legendFormat": "{{model}} / current weight",
+          "refId": "B"
+        },
+        {
+          "expr": "devshard_gateway_capacity_baseline_weight_by_model{model=~\"$model\"}",
+          "legendFormat": "{{model}} / baseline weight",
+          "refId": "C"
+        }
+      ],
+      "title": "Model Capacity Scale and Weights",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Host transport connection state by remote address. This is network plumbing evidence, not participant scoring.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 141
+      },
+      "id": 66,
+      "targets": [
+        {
+          "expr": "devshard_host_transport_open_connections",
+          "legendFormat": "{{address}} / open",
+          "refId": "A"
+        },
+        {
+          "expr": "devshard_host_transport_connections",
+          "legendFormat": "{{address}} / {{state}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Host Transport Connections",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 148
+      },
+      "id": 67,
+      "panels": [],
+      "title": "Protocol Feedback",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Reasons that create extra sends or hidden failures. Use this to tune redundancy and timeout windows by model.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 149
+      },
+      "id": 68,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{model=~\"$model\",role=\"extra\"}[$__rate_interval])) by (model, reason)",
+          "legendFormat": "extra / {{model}} / {{reason}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\"}[$__rate_interval])) by (model, reason)",
+          "legendFormat": "hidden / {{model}} / {{reason}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Redundancy Pressure by Reason and Model",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participants that repeatedly require extra sends, no-winner handling, or quarantine transitions. These are candidates for incentive and quarantine tuning.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 149
+      },
+      "id": 69,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\",role=\"extra\"}[$__range])) by (participant_key, model, reason))",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, reason, quarantine_mode))",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_participant_quarantine_transitions_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, mode, reason))",
+          "instant": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Participant Protocol-Tuning Candidates",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Escrow sizing pressure from model capacity, runtime load, and blocked participants. Use this to decide whether capacity or routing needs adjustment.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 149
+      },
+      "id": 70,
+      "targets": [
+        {
+          "expr": "sort(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
+          "legendFormat": "{{model}} / capacity scale",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(devshard_runtime_active_requests{model=~\"$model\"}) by (devshard_id, model)",
+          "legendFormat": "{{devshard_id}} / active requests",
+          "refId": "B"
+        },
+        {
+          "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\"}",
+          "legendFormat": "{{devshard_id}} / blocked participants",
+          "refId": "C"
+        }
+      ],
+      "title": "Escrow Sizing and Capacity Pressure",
       "type": "timeseries"
     }
   ],
@@ -794,13 +1876,13 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(devshard_gateway_capacity_scale_by_model, model)",
+        "definition": "label_values({__name__=~\"devshard_gateway_capacity_scale_by_model|devshard_gateway_requests_total|devshard_gateway_attempts_started_total|devshard_gateway_attempt_failures_total|devshard_gateway_slot_decisions_total|devshard_gateway_timeout_actions_total\"}, model)",
         "hide": 0,
         "includeAll": true,
         "label": "model",
         "name": "model",
         "query": {
-          "query": "label_values(devshard_gateway_capacity_scale_by_model, model)",
+          "query": "label_values({__name__=~\"devshard_gateway_capacity_scale_by_model|devshard_gateway_requests_total|devshard_gateway_attempts_started_total|devshard_gateway_attempt_failures_total|devshard_gateway_slot_decisions_total|devshard_gateway_timeout_actions_total\"}, model)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -817,36 +1899,36 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}, participant_key)",
-        "hide": 2,
-        "includeAll": true,
-        "label": "participant_key drilldown",
-        "name": "participant_key",
-        "query": {
-          "query": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}, participant_key)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "definition": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\"}, reason)",
+        "definition": "label_values({__name__=~\"devshard_gateway_attempts_started_total|devshard_gateway_attempts_terminal_total|devshard_gateway_attempt_failures_total|devshard_gateway_user_visible_wins_total|devshard_gateway_slot_decisions_total|devshard_gateway_no_winner_attempts_total|devshard_gateway_participant_quarantine_state|devshard_gateway_timeout_actions_total\",model=~\"$model\"}, participant_key)",
         "hide": 0,
         "includeAll": true,
-        "label": "drilldown_reason",
+        "label": "participant_key",
+        "name": "participant_key",
+        "query": {
+          "query": "label_values({__name__=~\"devshard_gateway_attempts_started_total|devshard_gateway_attempts_terminal_total|devshard_gateway_attempt_failures_total|devshard_gateway_user_visible_wins_total|devshard_gateway_slot_decisions_total|devshard_gateway_no_winner_attempts_total|devshard_gateway_participant_quarantine_state|devshard_gateway_timeout_actions_total\",model=~\"$model\"}, participant_key)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values({__name__=~\"devshard_gateway_attempt_failures_total|devshard_gateway_user_requests_with_hidden_failure_total|devshard_gateway_slot_decisions_total|devshard_gateway_timeout_actions_total|devshard_gateway_critical_user_failures_total|devshard_gateway_no_winner_attempts_total\",model=~\"$model\"}, reason)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "reason",
         "name": "reason",
         "query": {
-          "query": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\"}, reason)",
+          "query": "label_values({__name__=~\"devshard_gateway_attempt_failures_total|devshard_gateway_user_requests_with_hidden_failure_total|devshard_gateway_slot_decisions_total|devshard_gateway_timeout_actions_total|devshard_gateway_critical_user_failures_total|devshard_gateway_no_winner_attempts_total\",model=~\"$model\"}, reason)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -864,9 +1946,9 @@
           "uid": "prometheus"
         },
         "definition": "label_values(devshard_gateway_slot_decisions_total{model=~\"$model\"}, escrow_id)",
-        "hide": 2,
+        "hide": 0,
         "includeAll": true,
-        "label": "escrow_id drilldown",
+        "label": "escrow_id",
         "name": "escrow_id",
         "query": {
           "query": "label_values(devshard_gateway_slot_decisions_total{model=~\"$model\"}, escrow_id)",
@@ -896,6 +1978,6 @@
   "timezone": "",
   "title": "Gonka Gateway Observability",
   "uid": "gonka-gateway-observability",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

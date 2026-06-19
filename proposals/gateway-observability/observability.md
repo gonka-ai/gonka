@@ -59,6 +59,8 @@ Core V1 is implemented as the first pass:
 Deferred from Core V1:
 
 - Diagnostic V1 metric families not needed for the first dashboard.
+- Core inference performance metric families listed below. They are design
+  targets, not emitted metrics in the current implementation.
 - Decode-token histograms and token/s calculations that require actual output
   token plumbing.
 - Lifecycle database, request drilldown APIs, OTEL/Jaeger traces,
@@ -549,6 +551,10 @@ model-aware duration is added later.
 
 ### Core Inference Performance Metrics
 
+Status: not implemented in Core V1. These metric names are future
+instrumentation targets and should not be referenced by the current dashboard
+until `devshardctl` emits them.
+
 ```text
 devshard_gateway_attempt_receipt_seconds{participant_key,model,outcome}
 devshard_gateway_attempt_total_seconds{participant_key,model,outcome}
@@ -657,6 +663,10 @@ failed_sent_attempts_per_successful_user_request =
 Diagnostic metrics explain localized or lower-level gateway behavior. They can
 appear in gateway mechanics, heatmaps, or drilldown panels, but should not drive
 the default participant-quality score unless explicitly stated.
+
+Status: not implemented in Core V1. Treat metric names in this section as future
+metric contracts. Dashboards should not reference them until implementation and
+dashboard lint confirm they are emitted.
 
 #### Runtime Selection
 
