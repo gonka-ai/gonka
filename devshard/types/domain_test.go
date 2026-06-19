@@ -5,33 +5,33 @@ import (
 	"testing"
 )
 
-func TestParseProtocolVersion_DefaultsToV1(t *testing.T) {
+func TestParseProtocolVersion_DefaultsToV2(t *testing.T) {
 	got, err := ParseProtocolVersion("")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != ProtocolV1 {
-		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV1, got)
+	if got != ProtocolV2 {
+		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV2, got)
 	}
 }
 
-func TestParseProtocolVersion_AcceptsRouteStyleV1(t *testing.T) {
-	got, err := ParseProtocolVersion("v1")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != ProtocolV1 {
-		t.Fatalf("expected v1 to normalize to %s, got %s", ProtocolV1, got)
+func TestParseProtocolVersion_RejectsV1(t *testing.T) {
+	for _, value := range []string{string(ProtocolV1), "v1"} {
+		if _, err := ParseProtocolVersion(value); err == nil {
+			t.Fatalf("expected %q to be rejected", value)
+		}
 	}
 }
 
 func TestParseProtocolVersion_AcceptsRouteStyleV2(t *testing.T) {
-	got, err := ParseProtocolVersion("v2")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != ProtocolV2 {
-		t.Fatalf("expected v2 to normalize to %s, got %s", ProtocolV2, got)
+	for _, value := range []string{string(ProtocolV2), "v2"} {
+		got, err := ParseProtocolVersion(value)
+		if err != nil {
+			t.Fatalf("expected no error for %q, got %v", value, err)
+		}
+		if got != ProtocolV2 {
+			t.Fatalf("expected %q to normalize to %s, got %s", value, ProtocolV2, got)
+		}
 	}
 }
 

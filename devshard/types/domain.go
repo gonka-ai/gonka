@@ -91,13 +91,15 @@ const (
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
-// Empty string defaults to ProtocolV1.
+// Empty string defaults to ProtocolV2. ProtocolV1 is no longer compatible.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
-	case "", string(ProtocolV1), "v1":
-		return ProtocolV1, nil
+	case "":
+		return ProtocolV2, nil
 	case string(ProtocolV2), "v2":
 		return ProtocolV2, nil
+	case string(ProtocolV1), "v1":
+		return "", fmt.Errorf("protocol version %q is not supported; only v2 is supported", s)
 	default:
 		return "", fmt.Errorf("unknown protocol version %q", s)
 	}

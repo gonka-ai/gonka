@@ -261,8 +261,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 }
 
 // recoveredProtocolVersion derives protocol compatibility only from explicit
-// protocol-version tokens. Route versions like "v1" stay on the normal path
-// unless the caller provided WithProtocolVersion in smOpts.
+// supported protocol-version tokens. Legacy v1 values are intentionally ignored.
 func recoveredProtocolVersion(boundVersion string) (types.ProtocolVersion, bool) {
 	raw := strings.TrimSpace(boundVersion)
 	if raw == "" {

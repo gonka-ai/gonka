@@ -248,7 +248,10 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
-	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	routePrefix := gatewayHostRoutePrefix(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	if err := validateGatewayHostRoutePrefix(routePrefix); err != nil {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
+	}
 	participantAdmission := modelScopedParticipantAdmission{
 		limiter: sharedParticipantRequestLimiter,
 		modelID: model,
@@ -304,6 +307,25 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 
 func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {
 	return bridge.NewRESTBridge(chainREST)
+}
+
+func gatewayHostRoutePrefix(override string) string {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		return override
+	}
+	version := strings.TrimSpace(Version)
+	if version == "" {
+		version = "dev"
+	}
+	return devshardpkg.VersionedRoutePrefix(version)
+}
+
+func validateGatewayHostRoutePrefix(routePrefix string) error {
+	if routePrefix == devshardpkg.LegacyRoutePrefix {
+		return fmt.Errorf("devshardctl cannot use legacy route prefix %s; use /devshard/<version>", routePrefix)
+	}
+	return nil
 }
 
 // hostSlotCounts builds a slot-count map from a per-slot participant

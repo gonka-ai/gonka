@@ -22,9 +22,9 @@ type HTTPSessionConfig struct {
 	Bridge           bridge.MainnetBridge
 	StoragePath      string                          // SQLite path for session persistence; default ~/.cache/gonka/devshard-<escrowID>
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
-	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default /devshard/v2.
 	RequestAdmission transport.RequestAdmissionController
-	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV1
+	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV2
 }
 
 func resolveHTTPSessionStoragePath(escrowID, configured string) string {
@@ -50,16 +50,15 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	pv := cfg.ProtocolVersion
 	if pv == "" {
-		pv = types.ProtocolV1
+		pv = types.ProtocolV2
+	}
+	if pv == types.ProtocolV1 {
+		return nil, nil, fmt.Errorf("protocol version %q is not supported; only v2 is supported", pv)
 	}
 	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, cfg.RoutePrefix)
-	sessionVersion := devshardpkg.ProtocolSessionVersion(pv)
-	if cfg.ProtocolVersion == "" && cfg.RoutePrefix != "" {
-		var versionErr error
-		sessionVersion, versionErr = devshardpkg.VersionForRoutePrefix(cfg.RoutePrefix)
-		if versionErr != nil {
-			return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
-		}
+	sessionVersion, versionErr := devshardpkg.VersionForRoutePrefix(routePrefix)
+	if versionErr != nil {
+		return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
 	}
 
 	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)

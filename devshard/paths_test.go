@@ -22,23 +22,23 @@ func TestResolveVersionedRoutePrefix(t *testing.T) {
 }
 
 func TestResolveHostRoutePrefix(t *testing.T) {
-	if got := ResolveHostRoutePrefix(types.ProtocolV1, ""); got != LegacyRoutePrefix {
-		t.Fatalf("ResolveHostRoutePrefix(v1) = %q, want %q", got, LegacyRoutePrefix)
+	if got := ResolveHostRoutePrefix("", ""); got != VersionedRoutePrefix("v2") {
+		t.Fatalf("ResolveHostRoutePrefix(empty) = %q, want %q", got, VersionedRoutePrefix("v2"))
 	}
-	if got := ResolveHostRoutePrefix(types.ProtocolV1, LegacyRoutePrefix); got != LegacyRoutePrefix {
-		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
+	if got := ResolveHostRoutePrefix(types.ProtocolV2, ""); got != VersionedRoutePrefix("v2") {
+		t.Fatalf("ResolveHostRoutePrefix(v2) = %q, want %q", got, VersionedRoutePrefix("v2"))
 	}
 }
 
 func TestProtocolSessionVersion(t *testing.T) {
-	if got := ProtocolSessionVersion(types.ProtocolV1); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(v1) = %q, want %q", got, "v1")
+	if got := ProtocolSessionVersion(types.ProtocolV2); got != "v2" {
+		t.Fatalf("ProtocolSessionVersion(v2) = %q, want %q", got, "v2")
 	}
-	if got := ProtocolSessionVersion("v1"); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(route-style v1) = %q, want %q", got, "v1")
+	if got := ProtocolSessionVersion("v2"); got != "v2" {
+		t.Fatalf("ProtocolSessionVersion(route-style v2) = %q, want %q", got, "v2")
 	}
-	if got := ProtocolSessionVersion(""); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(\"\") = %q, want %q", got, "v1")
+	if got := ProtocolSessionVersion(""); got != "v2" {
+		t.Fatalf("ProtocolSessionVersion(\"\") = %q, want %q", got, "v2")
 	}
 }
 
@@ -65,7 +65,17 @@ func TestVersionForRoutePrefix(t *testing.T) {
 			wantErr:     true,
 		},
 		{
-			name:        "versioned",
+			name:        "v2",
+			routePrefix: VersionedRoutePrefix("v2"),
+			want:        "v2",
+		},
+		{
+			name:        "dev versioned",
+			routePrefix: VersionedRoutePrefix("dev"),
+			want:        "dev",
+		},
+		{
+			name:        "other versioned route",
 			routePrefix: VersionedRoutePrefix("v2.1.0"),
 			want:        "v2.1.0",
 		},
@@ -110,9 +120,9 @@ func TestSessionPayloadPath(t *testing.T) {
 		},
 		{
 			name:        "versioned",
-			routePrefix: VersionedRoutePrefix("v1"),
+			routePrefix: VersionedRoutePrefix("dev"),
 			escrowID:    "1",
-			want:        "devshard/v1/sessions/1/payloads",
+			want:        "devshard/dev/sessions/1/payloads",
 		},
 	}
 

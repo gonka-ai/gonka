@@ -290,21 +290,26 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 	if err != nil {
 		return nil, err
 	}
-	record := GatewayDevshardState{
-		RuntimeConfig: RuntimeConfig{
-			ID:            strconv.FormatUint(result.EscrowID, 10),
-			PrivateKeyEnv: strings.TrimSpace(model.PrivateKeyEnv),
-			Model:         model.ModelID,
-		},
-		Active:        true,
-		RotationRole:  role,
-		RotationEpoch: epoch,
-	}
+	record := newRotationDevshardState(result, model, role, epoch)
 	if _, err := g.addCreatedEscrowRuntime(record); err != nil {
 		return nil, err
 	}
 	log.Printf("escrow_rotation_created role=%s epoch=%d model=%q escrow=%d tx_hash=%s", role, epoch, model.ModelID, result.EscrowID, result.TxHash)
 	return result, nil
+}
+
+func newRotationDevshardState(result *CreateDevshardEscrowResult, model EscrowRotationModelSettings, role string, epoch uint64) GatewayDevshardState {
+	return GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{
+			ID:              strconv.FormatUint(result.EscrowID, 10),
+			PrivateKeyEnv:   strings.TrimSpace(model.PrivateKeyEnv),
+			Model:           strings.TrimSpace(model.ModelID),
+			ProtocolVersion: string(types.ProtocolV2),
+		},
+		Active:        true,
+		RotationRole:  role,
+		RotationEpoch: epoch,
+	}
 }
 
 func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationModelSettings {

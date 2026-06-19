@@ -44,7 +44,7 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 
 func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
 	if protocol == "" {
-		protocol = types.ProtocolV1
+		protocol = types.ProtocolV2
 	}
 	version := string(protocol)
 	if strings.HasPrefix(version, "v") {
@@ -55,7 +55,7 @@ func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
 
 func ProtocolSessionVersion(protocol types.ProtocolVersion) string {
 	if protocol == "" {
-		protocol = types.ProtocolV1
+		protocol = types.ProtocolV2
 	}
 	return ProtocolRouteVersion(protocol)
 }

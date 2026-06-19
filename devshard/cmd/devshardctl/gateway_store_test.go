@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
@@ -371,6 +373,21 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	require.Equal(t, rotationRoleTemp, byID["12"].RotationRole)
 	require.EqualValues(t, 10, byID["12"].RotationEpoch)
 	require.Equal(t, rotationRoleRegular, byID["13"].RotationRole)
+}
+
+func TestNewRotationDevshardStatePersistsProtocolV2(t *testing.T) {
+	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
+		ModelID:       "Qwen/Test",
+		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+	}, rotationRoleTemp, 10)
+
+	require.Equal(t, "99", record.ID)
+	require.Equal(t, "Qwen/Test", record.Model)
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
+	require.Equal(t, string(types.ProtocolV2), record.ProtocolVersion)
+	require.True(t, record.Active)
+	require.Equal(t, rotationRoleTemp, record.RotationRole)
+	require.EqualValues(t, 10, record.RotationEpoch)
 }
 
 func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.T) {

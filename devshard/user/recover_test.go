@@ -532,13 +532,12 @@ func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
 }
 
 func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
-	pv, ok := recoveredProtocolVersion(string(types.ProtocolV1))
+	pv, ok := recoveredProtocolVersion(string(types.ProtocolV2))
 	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
+	require.Equal(t, types.ProtocolV2, pv)
 
-	pv, ok = recoveredProtocolVersion(types.LegacyRouteSessionVersion)
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
+	_, ok = recoveredProtocolVersion(types.LegacyRouteSessionVersion)
+	require.False(t, ok)
 
 	_, ok = recoveredProtocolVersion("")
 	require.False(t, ok)

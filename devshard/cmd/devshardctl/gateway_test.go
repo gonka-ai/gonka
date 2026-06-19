@@ -893,6 +893,32 @@ func TestAdminAddDevshardWiresSharedPhaseGate(t *testing.T) {
 	require.Equal(t, "confirmation_poc", addedStatus.BlockReason)
 }
 
+func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	previousVersion := Version
+	Version = "dev"
+	t.Cleanup(func() { Version = previousVersion })
+
+	require.Equal(t, "/devshard/dev", gatewayHostRoutePrefix(""))
+	require.Equal(t, "/devshard/v2", gatewayHostRoutePrefix("/devshard/v2"))
+	require.Equal(t, "/v1/devshard", gatewayHostRoutePrefix("/v1/devshard"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/dev"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/v2"))
+	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
+}
+
+func TestBuildRuntimeRejectsExplicitProtocolV1(t *testing.T) {
+	_, err := buildRuntime(RuntimeConfig{
+		ID:              "12",
+		PrivateKeyHex:   "secret",
+		Model:           "Qwen/Test",
+		StoragePath:     t.TempDir(),
+		ProtocolVersion: "1",
+	}, "http://node:1317", "Qwen/Test", nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only v2 is supported")
+}
+
 func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

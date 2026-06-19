@@ -87,8 +87,8 @@ type StateMachine struct {
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
 	// validation lives in committedEntries (and on disk in the snapshot).
-	sealedNonces map[uint64]uint64
-	inferenceStore    storage.Storage
+	sealedNonces   map[uint64]uint64
+	inferenceStore storage.Storage
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -132,7 +132,7 @@ func (sm *StateMachine) EffectiveV2Composition() bool {
 func WithProtocolVersion(v types.ProtocolVersion) SMOption {
 	return func(sm *StateMachine) {
 		if v == "" {
-			v = types.ProtocolV1
+			v = types.ProtocolV2
 		}
 		sm.protocolVersion = v
 	}
@@ -141,7 +141,7 @@ func WithProtocolVersion(v types.ProtocolVersion) SMOption {
 // ProtocolVersion returns the configured protocol version.
 func (sm *StateMachine) ProtocolVersion() types.ProtocolVersion {
 	if sm.protocolVersion == "" {
-		return types.ProtocolV1
+		return types.ProtocolV2
 	}
 	return sm.protocolVersion
 }
@@ -192,15 +192,15 @@ func NewStateMachine(
 
 	sm := &StateMachine{
 		state: &types.EscrowState{
-			EscrowID:   escrowID,
+			EscrowID:                    escrowID,
 			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
-			Config:     config,
-			Group:      groupCopy,
-			Balance:    initialBalance,
-			Fees:       config.CreateDevshardFee,
-			Inferences: make(map[uint64]*types.InferenceRecord),
-			HostStats:  hostStats,
-			WarmKeys:   make(map[uint32]string),
+			Config:                      config,
+			Group:                       groupCopy,
+			Balance:                     initialBalance,
+			Fees:                        config.CreateDevshardFee,
+			Inferences:                  make(map[uint64]*types.InferenceRecord),
+			HostStats:                   hostStats,
+			WarmKeys:                    make(map[uint32]string),
 		},
 		verifier:           verifier,
 		userAddress:        userAddress,
@@ -211,7 +211,7 @@ func NewStateMachine(
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
 		inferenceStore:     store,
-		protocolVersion:    types.ProtocolV1,
+		protocolVersion:    types.ProtocolV2,
 	}
 	for _, o := range opts {
 		o(sm)
