@@ -1995,9 +1995,10 @@ func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
 	require.False(t, limiter.IsBlocked("empty-host"))
 	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
+	emptyStreamQuarantineAt := time.Now()
 	require.False(t, limiter.IsBlocked("empty-host"))
 	require.True(t, limiter.IsShadowQuarantined("empty-host"))
-	require.True(t, limiter.allow("empty-host", now.Add(151*time.Millisecond)))
+	require.True(t, limiter.allow("empty-host", emptyStreamQuarantineAt.Add(151*time.Millisecond)))
 }
 
 func TestParticipantRequestLimiterSuccessfulInferenceDecrementsFailureStrikes(t *testing.T) {
