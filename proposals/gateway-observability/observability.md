@@ -41,8 +41,14 @@ Core V1 is implemented as the first pass:
   attempt start/terminal/failure counters, no-winner attempt counters,
   timeout action counters, and participant quarantine state/transition metrics
   are emitted from the gateway's in-memory Prometheus registry.
+- Per-model capacity gauges expose current scale, current weight, and baseline
+  weight so the dashboard can show reduced capacity by model instead of only an
+  aggregate gateway scale.
 - The focused dashboard is
   `deploy/join/observability/grafana/dashboards/gonka-gateway-observability.json`.
+  It is organized summary-first with top-N tables, minimum-volume filters, and
+  lower-level drilldown rows so high-cardinality participant and reason data
+  remains readable.
 - Metrics are recorded at existing lifecycle boundaries in `gateway.go`,
   `redundancy.go`, `session_picker.go` via `runGhostProbe`, and
   `participant_limiter.go`.

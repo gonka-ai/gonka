@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -549,6 +550,9 @@ type gatewayMetricsCollector struct {
 	capacityScaleDesc              *prometheus.Desc
 	capacityTotalDesc              *prometheus.Desc
 	capacityBaselineDesc           *prometheus.Desc
+	capacityScaleByModelDesc       *prometheus.Desc
+	capacityTotalByModelDesc       *prometheus.Desc
+	capacityBaselineByModelDesc    *prometheus.Desc
 	escrowWeightDesc               *prometheus.Desc
 	runtimeActiveDesc              *prometheus.Desc
 	runtimeRequestsDesc            *prometheus.Desc
@@ -614,6 +618,24 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			"devshard_gateway_capacity_baseline_weight",
 			"Baseline gateway-wide host weight (W_ref) snapshotted during steady-state Inference.",
 			nil,
+			nil,
+		),
+		capacityScaleByModelDesc: prometheus.NewDesc(
+			"devshard_gateway_capacity_scale_by_model",
+			"Ratio W_tot(model) / W_ref(model) for each model (1.0 = full model capacity).",
+			[]string{"model"},
+			nil,
+		),
+		capacityTotalByModelDesc: prometheus.NewDesc(
+			"devshard_gateway_capacity_total_weight_by_model",
+			"Current gateway-wide effective host weight (W_tot) for each model.",
+			[]string{"model"},
+			nil,
+		),
+		capacityBaselineByModelDesc: prometheus.NewDesc(
+			"devshard_gateway_capacity_baseline_weight_by_model",
+			"Baseline gateway-wide host weight (W_ref) for each model.",
+			[]string{"model"},
 			nil,
 		),
 		escrowWeightDesc: prometheus.NewDesc(
@@ -693,6 +715,9 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.capacityScaleDesc
 	ch <- c.capacityTotalDesc
 	ch <- c.capacityBaselineDesc
+	ch <- c.capacityScaleByModelDesc
+	ch <- c.capacityTotalByModelDesc
+	ch <- c.capacityBaselineByModelDesc
 	ch <- c.escrowWeightDesc
 	ch <- c.runtimeActiveDesc
 	ch <- c.runtimeRequestsDesc
@@ -711,6 +736,10 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
+	c.gateway.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), c.gateway.runtimeOrder...)
+	c.gateway.mu.Unlock()
+
 	if c.gateway.limiter != nil {
 		snapshot := c.gateway.limiter.Snapshot()
 		ch <- prometheus.MustNewConstMetric(c.inflightRequestsDesc, prometheus.GaugeValue, float64(snapshot.InFlightRequests))
@@ -726,6 +755,11 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		for id, w := range capSnap.EscrowWeights {
 			ch <- prometheus.MustNewConstMetric(c.escrowWeightDesc, prometheus.GaugeValue, w, id)
 		}
+		for _, model := range capacityMetricModels(c.gateway.capacity, runtimes) {
+			ch <- prometheus.MustNewConstMetric(c.capacityScaleByModelDesc, prometheus.GaugeValue, c.gateway.capacity.ScaleFactorForModel(model), model)
+			ch <- prometheus.MustNewConstMetric(c.capacityTotalByModelDesc, prometheus.GaugeValue, c.gateway.capacity.TotalWeightForModel(model), model)
+			ch <- prometheus.MustNewConstMetric(c.capacityBaselineByModelDesc, prometheus.GaugeValue, c.gateway.capacity.BaselineWeightForModel(model), model)
+		}
 	}
 	if c.gateway.participantLimiter != nil {
 		ch <- prometheus.MustNewConstMetric(
@@ -740,9 +774,7 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		)
 	}
 
-	c.gateway.mu.Lock()
-	runtimes := append([]*devshardRuntime(nil), c.gateway.runtimeOrder...)
-	c.gateway.mu.Unlock()
+	emittedParticipantStates := make(map[string]struct{})
 	for _, rt := range runtimes {
 		active := 0.0
 		if rt.active.Load() {
@@ -759,13 +791,20 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 				if !participantSnapshotAppliesToModel(snapshot, rt.model) {
 					continue
 				}
+				model := metricLabel(rt.model, "unknown")
+				mode := participantSnapshotMode(snapshot)
+				stateKey := participantKey + "\x00" + model + "\x00" + mode
+				if _, ok := emittedParticipantStates[stateKey]; ok {
+					continue
+				}
+				emittedParticipantStates[stateKey] = struct{}{}
 				ch <- prometheus.MustNewConstMetric(
 					c.participantQuarantineStateDesc,
 					prometheus.GaugeValue,
 					1,
 					participantKey,
-					metricLabel(rt.model, "unknown"),
-					participantSnapshotMode(snapshot),
+					model,
+					mode,
 				)
 			}
 		}
@@ -802,6 +841,33 @@ func participantSnapshotAppliesToModel(snapshot ParticipantThrottleSnapshot, mod
 		}
 	}
 	return false
+}
+
+func capacityMetricModels(capacity *CapacityState, runtimes []*devshardRuntime) []string {
+	seen := make(map[string]struct{})
+	if capacity != nil {
+		for _, model := range capacity.Models() {
+			model = strings.TrimSpace(model)
+			if model != "" {
+				seen[model] = struct{}{}
+			}
+		}
+	}
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		model := strings.TrimSpace(rt.model)
+		if model != "" {
+			seen[model] = struct{}{}
+		}
+	}
+	models := make([]string, 0, len(seen))
+	for model := range seen {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models
 }
 
 func participantSnapshotMode(snapshot ParticipantThrottleSnapshot) string {

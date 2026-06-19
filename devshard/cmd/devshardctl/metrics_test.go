@@ -93,6 +93,77 @@ func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T)
 	requireMetricGaugeValue(t, families, "devshard_gateway_participant_quarantine_state", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "mode": "shadow"}, 1)
 }
 
+func TestGatewayMetricsCollectorDedupesParticipantQuarantineState(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+		limiter.ObserveEmptyStreamForModel("participant-1", "Qwen/Test")
+	}
+
+	g := &Gateway{
+		participantLimiter: limiter,
+		runtimeOrder: []*devshardRuntime{
+			{
+				id:              "12",
+				model:           "Qwen/Test",
+				participantKeys: []string{"participant-1"},
+			},
+			{
+				id:              "44",
+				model:           "Qwen/Test",
+				participantKeys: []string{"participant-1"},
+			},
+		},
+	}
+	collector := newGatewayMetricsCollectorWithHostConnections(g, fakeHostConnectionSnapshotter(nil))
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_participant_quarantine_state", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "mode": "shadow"}, 1)
+}
+
+func TestGatewayMetricsCollectorIncludesModelCapacityScales(t *testing.T) {
+	capacity := NewCapacityState()
+	capacity.SetEscrowMembership("qwen", map[string]int{"host-q": 1})
+	capacity.SetEscrowMembership("kimi", map[string]int{"host-k": 1})
+	capacity.SetHostWeightViews(
+		map[string]float64{"host-q": 40, "host-k": 50},
+		map[string]float64{"host-q": 150, "host-k": 50},
+		map[string]map[string]float64{
+			"Qwen/Test": {"host-q": 40},
+			"Kimi/Test": {"host-k": 50},
+		},
+		map[string]map[string]float64{
+			"Qwen/Test": {"host-q": 150},
+			"Kimi/Test": {"host-k": 50},
+		},
+	)
+	g := &Gateway{
+		capacity: capacity,
+		runtimeOrder: []*devshardRuntime{
+			{id: "qwen", model: "Qwen/Test"},
+			{id: "kimi", model: "Kimi/Test"},
+			{id: "runtime-only", model: "Runtime/Only"},
+		},
+	}
+	collector := newGatewayMetricsCollectorWithHostConnections(g, fakeHostConnectionSnapshotter(nil))
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_scale_by_model", map[string]string{"model": "Qwen/Test"}, 40.0/150.0)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_total_weight_by_model", map[string]string{"model": "Qwen/Test"}, 40)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_baseline_weight_by_model", map[string]string{"model": "Qwen/Test"}, 150)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_scale_by_model", map[string]string{"model": "Kimi/Test"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_total_weight_by_model", map[string]string{"model": "Kimi/Test"}, 50)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_baseline_weight_by_model", map[string]string{"model": "Kimi/Test"}, 50)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_scale_by_model", map[string]string{"model": "Runtime/Only"}, 90.0/200.0)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_total_weight_by_model", map[string]string{"model": "Runtime/Only"}, 90)
+	requireMetricGaugeValue(t, families, "devshard_gateway_capacity_baseline_weight_by_model", map[string]string{"model": "Runtime/Only"}, 200)
+}
+
 func TestParticipantLimiterRecordsQuarantineTransitions(t *testing.T) {
 	m := NewDevshardMetrics()
 	limiter := NewParticipantRequestLimiter(10, 10)
