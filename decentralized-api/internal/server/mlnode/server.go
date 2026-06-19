@@ -73,3 +73,7 @@ func (s *Server) getVersions(c echo.Context) error {
 func (s *Server) Start(addr string) {
 	go s.e.Start(addr)
 }
+
+func (s *Server) Handler() http.Handler {
+	return s.e
+}

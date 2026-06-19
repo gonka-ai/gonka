@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/pocstream"
 	"net/url"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -245,6 +246,11 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		}
 	}
 
+	callbackUrl := c.CallbackUrl + "/" + encodeCallbackModelID(c.Model)
+	if pocstream.IsVersionStreamCapable(worker.broker.GetCurrentNodeVersion()) {
+		callbackUrl = ""
+	}
+
 	req := mlnodeclient.PoCInitGenerateRequestV2{
 		BlockHash:   c.BlockHash,
 		BlockHeight: c.BlockHeight,
@@ -255,7 +261,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
 		},
-		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
+		URL:            callbackUrl,
 		PocStrongerRng: c.PocStrongerRng,
 	}
 

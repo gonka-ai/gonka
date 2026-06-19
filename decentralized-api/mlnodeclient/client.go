@@ -21,10 +21,9 @@ const (
 )
 
 type Client struct {
-	pocUrl                string
-	inferenceUrl          string
-	client                http.Client
-	mlGrpcCallbackAddress string
+	pocUrl       string
+	inferenceUrl string
+	client       http.Client
 }
 
 func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
@@ -34,7 +33,6 @@ func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
 		client: http.Client{
 			Timeout: 15 * time.Minute,
 		},
-		mlGrpcCallbackAddress: "api-private:9300", // TODO: PRTODO: make this configurable
 	}
 }
 

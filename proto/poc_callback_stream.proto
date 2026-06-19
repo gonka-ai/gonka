@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package mlnode.poc.v1;
+
+option go_package = "decentralized-api/pocstream/gen";
+
+service PoCCallbackStream {
+  rpc StreamCallbacks(StreamCallbacksRequest) returns (stream Callback);
+  rpc AckCallbacks(AckCallbacksRequest) returns (AckCallbacksResponse);
+}
+
+message StreamCallbacksRequest {
+  string resume_after_id = 1;
+}
+
+message Callback {
+  string id = 1;
+  string path = 2;
+  bytes body = 3;
+}
+
+message AckCallbacksRequest {
+  repeated string ids = 1;
+}
+
+message AckCallbacksResponse {}

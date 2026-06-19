@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
@@ -29,9 +30,12 @@ from api.service_management import (
 from api.routes import router as api_router
 from api.watcher import watch_managers
 from api.proxy import ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
+from api.pocstream import callback_buffer
+from api.pocstream.server import start_poc_stream_server
 
 
 WATCH_INTERVAL = 2
+POC_STREAM_GRPC_PORT = int(os.getenv("MLNODE_POC_GRPC_PORT", "8090"))
 
 
 @asynccontextmanager
@@ -44,6 +48,8 @@ async def lifespan(app: FastAPI):
     app.state.gpu_manager = GPUManager()
 
     await start_vllm_proxy()
+
+    poc_stream_server = await start_poc_stream_server(callback_buffer, POC_STREAM_GRPC_PORT)
 
     monitor_task = asyncio.create_task(
         watch_managers(
@@ -71,6 +77,7 @@ async def lifespan(app: FastAPI):
 
     await stop_vllm_proxy()
     await stop_backward_compatibility()
+    await poc_stream_server.stop(grace=1)
 
     monitor_task.cancel()
     try:
