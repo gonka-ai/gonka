@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/payloadstorage"
 
 	"devshard"
+	"devshard/observability"
 	devshardserver "devshard/server"
 )
 
@@ -54,15 +56,26 @@ func (e *EngineAdapter) Execute(ctx context.Context, req devshard.ExecuteRequest
 }
 
 func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
+	lastReason := observability.ReasonAcquireErr
 	resp, err := broker.DoWithLockedNodeHTTPRetry(e.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
 			url := node.InferenceUrlWithVersion(e.nodeVersion) + "/v1/chat/completions"
+			started := time.Now()
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
+				lastReason = observability.ReasonApplicationErr
+				observability.IncMLNodeAttempt(observability.PathExecute, lastReason, node.Id)
 				return nil, broker.NewApplicationActionError(reqErr)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			observability.InjectRequestContext(ctx, httpReq.Header)
+			observability.AttachRequestID(httpReq)
 			httpResp, postErr := e.httpClient.Do(httpReq)
+			if postErr == nil {
+				observability.ObserveMLNodeCall(observability.PathExecute, node.Id, observability.MetricPhaseTotal, started)
+			}
+			lastReason = observability.ClassifyMLNodeHTTP(httpResp, postErr, ctx.Err())
+			observability.IncMLNodeAttempt(observability.PathExecute, lastReason, node.Id)
 			if postErr != nil {
 				return nil, broker.NewTransportActionError(postErr)
 			}
@@ -70,7 +83,10 @@ func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("broker execute: %w", err)
+		if lastReason == observability.ReasonOK {
+			lastReason = observability.ReasonTransportErr
+		}
+		return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, fmt.Errorf("broker execute: %w", err))
 	}
 	return resp, nil
 }

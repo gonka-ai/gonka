@@ -80,3 +80,98 @@ func TestMempool_DuplicateAdd(t *testing.T) {
 
 	require.Equal(t, 1, m.Len(), "duplicate tx should overwrite, not double-add")
 }
+
+func TestMempool_StaleFinishes(t *testing.T) {
+	buildMixedMempool := func() *Mempool {
+		m := NewMempool()
+		m.Add(MempoolEntry{Tx: finishTx(1), ProposedAt: 5}) // local finish
+		m.Add(MempoolEntry{Tx: validationTx(1, 0), ProposedAt: 5})
+		m.AddTx(finishTx(2)) // peer-imported finish (ProposedAt=0 sentinel)
+		return m
+	}
+	staleFinishIDs := func(txs []*types.DevshardTx) []uint64 {
+		var ids []uint64
+		for _, tx := range txs {
+			fi := tx.GetFinishInference()
+			if fi != nil {
+				ids = append(ids, fi.InferenceId)
+			}
+		}
+		return ids
+	}
+
+	tests := []struct {
+		name         string
+		build        func() *Mempool
+		currentNonce uint64
+		grace        uint64
+		wantNil      bool
+		wantFinishID []uint64
+	}{
+		{
+			name:         "empty mempool returns nil",
+			build:        func() *Mempool { return NewMempool() },
+			currentNonce: 10,
+			grace:        0,
+			wantNil:      true,
+		},
+		{
+			name:         "at proposed nonce not stale",
+			build:        buildMixedMempool,
+			currentNonce: 5,
+			grace:        0,
+			wantFinishID: nil,
+		},
+		{
+			name:         "past proposed nonce stale local finish only",
+			build:        buildMixedMempool,
+			currentNonce: 6,
+			grace:        0,
+			wantFinishID: []uint64{1},
+		},
+		{
+			name:         "grace boundary not exceeded",
+			build:        buildMixedMempool,
+			currentNonce: 7,
+			grace:        2,
+			wantFinishID: nil,
+		},
+		{
+			name:         "grace exceeded marks stale",
+			build:        buildMixedMempool,
+			currentNonce: 8,
+			grace:        2,
+			wantFinishID: []uint64{1},
+		},
+		{
+			name:         "non-finish tx types never returned",
+			build:        buildMixedMempool,
+			currentNonce: 99,
+			grace:        0,
+			wantFinishID: []uint64{1},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.build()
+			got := m.StaleFinishes(tc.currentNonce, tc.grace)
+			if tc.wantNil {
+				require.Nil(t, got)
+				return
+			}
+			require.Equal(t, tc.wantFinishID, staleFinishIDs(got))
+		})
+	}
+
+	t.Run("peer-imported finish is never returned across nonce range", func(t *testing.T) {
+		m := buildMixedMempool()
+		for n := uint64(1); n < 100; n++ {
+			for _, tx := range m.StaleFinishes(n, 0) {
+				require.NotEqual(t, uint64(2), tx.GetFinishInference().InferenceId,
+					"peer-imported Finish must be excluded")
+			}
+		}
+	})
+}

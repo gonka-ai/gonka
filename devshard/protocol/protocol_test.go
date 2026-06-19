@@ -43,7 +43,7 @@ func setupEnv(t *testing.T, numHosts int, balance, grace uint64, engines ...devs
 	hosts := make([]*host.Host, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 		require.NoError(t, err)
 		var engine devshard.InferenceEngine
 		if len(engines) > 0 {
@@ -57,7 +57,7 @@ func setupEnv(t *testing.T, numHosts int, balance, grace uint64, engines ...devs
 		clients[i] = &user.InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -80,6 +80,19 @@ func defaultParams() user.InferenceParams {
 		MaxTokens:   50,
 		StartedAt:   1000,
 	}
+}
+
+// drainSessionPending applies pending host txs (e.g. MsgFinishInference) left in
+// the session queue by pipelined SendInference before asserting on live state.
+func drainSessionPending(t *testing.T, ctx context.Context, session *user.Session) {
+	t.Helper()
+	for attempt := 0; attempt < 30; attempt++ {
+		if len(session.PendingTxs()) == 0 {
+			return
+		}
+		require.NoError(t, session.SendPendingDiff(ctx))
+	}
+	require.Empty(t, session.PendingTxs(), "pending txs did not drain")
 }
 
 // --- Integration tests ---
@@ -202,7 +215,7 @@ func TestProtocol_SignatureWithholding(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Create host at slot 1 with grace=2.
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm, hostSigners[1], engine, "escrow-1", group, nil, host.WithGrace(2))
@@ -259,7 +272,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	config := testutil.DefaultConfig(3)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	h, err := host.NewHost(sm, hostSigners[1], engine, "escrow-1", group, nil, host.WithGrace(2))
@@ -354,7 +367,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	}
 
 	// Replay diffs through a fresh StateMachine to get state roots at each nonce.
-	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier)
+	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", env.user.Address(), env.config, env.group, 100000))
 	require.NoError(t, err)
 	roots := make(map[uint64][]byte)
 	for _, diff := range env.session.Diffs() {
@@ -429,7 +442,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	// Create all hosts.
 	hosts := make([]*host.Host, 5)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, host.WithGrace(100))
@@ -473,7 +486,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify via a fresh state machine.
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	_, err = sm.ApplyDiff(diff1)
 	require.NoError(t, err)
@@ -496,15 +509,19 @@ func TestProtocol_Finalize_AllInferencesFinished(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
-	// ALL 15 must be finished (not just >= 13 as in the non-finalized case).
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences)
+	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
 }
 
 func TestProtocol_VaryingInferenceCosts(t *testing.T) {
@@ -552,36 +569,37 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Finalize to ensure all inferences complete.
-	err := env.session.Finalize(ctx)
-	require.NoError(t, err)
+	drainSessionPending(t, ctx, env.session)
+	// Snapshot before finalize: per-inference costs live in the map until settlement drain.
+	preFinalize := env.session.StateMachine().SnapshotState()
+	for id := uint64(1); id <= 6; id++ {
+		rec := preFinalize.Inferences[id]
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
+		o := overrides[id]
+		require.Equal(t, o.InputTokens+o.OutputTokens, rec.ActualCost, "inference %d cost", id)
+	}
 
-	st := env.session.StateMachine().SnapshotState()
-
-	// Compute expected cumulative cost (token_price=1).
 	expectedTotal := uint64(0)
 	for id := uint64(1); id <= 6; id++ {
 		o := overrides[id]
 		expectedTotal += o.InputTokens + o.OutputTokens
 	}
 
-	// Verify balance = initial - sum(actual_costs).
-	require.Equal(t, uint64(1000000)-expectedTotal, st.Balance)
+	err := env.session.Finalize(ctx)
+	require.NoError(t, err)
 
-	// Verify per-host cost stats.
+	st := env.session.StateMachine().SnapshotState()
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences)
+	require.Equal(t, 6, len(env.session.StateMachine().ExportSealedNonces()))
+
+	// Balance and host stats survive settlement drain.
+	require.Equal(t, uint64(1000000)-expectedTotal, st.Balance)
 	totalHostCost := uint64(0)
 	for _, hs := range st.HostStats {
 		totalHostCost += hs.Cost
 	}
 	require.Equal(t, expectedTotal, totalHostCost)
-
-	// Verify individual inference costs.
-	for id := uint64(1); id <= 6; id++ {
-		rec := st.Inferences[id]
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
-		o := overrides[id]
-		require.Equal(t, o.InputTokens+o.OutputTokens, rec.ActualCost, "inference %d cost", id)
-	}
 }
 
 func TestProtocol_Finalize_SignaturesFromAllHosts(t *testing.T) {
@@ -647,7 +665,7 @@ func TestProtocol_SignatureThreshold(t *testing.T) {
 	}
 }
 
-func TestProtocol_Finalize_WithSeedReveal(t *testing.T) {
+func TestProtocol_Finalize_DeadlineOnly(t *testing.T) {
 	env := setupEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
 	params := defaultParams()
@@ -660,20 +678,11 @@ func TestProtocol_Finalize_WithSeedReveal(t *testing.T) {
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
-	// After finalization, hosts should have produced seed reveals.
-	// Check final state for revealed seeds and compliance.
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-
-	// At least some seeds should be revealed.
-	require.True(t, len(st.RevealedSeeds) > 0, "expected seed reveals after finalization, got %d", len(st.RevealedSeeds))
-
-	// HostStats for revealed slots should have RequiredValidations set.
-	for slotID := range st.RevealedSeeds {
-		hs := st.HostStats[slotID]
-		// With 50% rate and multiple inferences, RequiredValidations should be > 0
-		// in most cases (statistically). We just verify the fields were written.
-		require.NotNil(t, hs, "host stats should exist for revealed slot %d", slotID)
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	for slotID, hs := range st.HostStats {
+		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slotID)
+		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slotID)
 	}
 }
 

@@ -5,12 +5,11 @@ import (
 	"devshard/types"
 )
 
-// BuildGroup fetches escrow data to construct a session group.
+// BuildGroupFromEscrow constructs slot assignments from an already-fetched escrow.
 // Slots come from the chain (stored in DevshardEscrow), no re-derivation needed.
-func BuildGroup(escrowID string, b MainnetBridge) ([]types.SlotAssignment, error) {
-	escrow, err := b.GetEscrow(escrowID)
-	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
+func BuildGroupFromEscrow(escrow *EscrowInfo) ([]types.SlotAssignment, error) {
+	if escrow == nil {
+		return nil, fmt.Errorf("escrow is nil")
 	}
 
 	group := make([]types.SlotAssignment, len(escrow.Slots))
@@ -25,4 +24,13 @@ func BuildGroup(escrowID string, b MainnetBridge) ([]types.SlotAssignment, error
 		return nil, err
 	}
 	return group, nil
+}
+
+// BuildGroup fetches escrow data and constructs a session group.
+func BuildGroup(escrowID string, b MainnetBridge) ([]types.SlotAssignment, error) {
+	escrow, err := b.GetEscrow(escrowID)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+	return BuildGroupFromEscrow(escrow)
 }

@@ -104,6 +104,10 @@ func TestSQLite_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, newTestSQLite(t))
 }
 
+func TestSQLite_CreateSession_EmptyVersionRejected(t *testing.T) {
+	runCreateSession_EmptyVersionRejected(t, newTestSQLite(t))
+}
+
 func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }
@@ -118,6 +122,10 @@ func TestSQLite_MarkFinalized_LastFinalized(t *testing.T) {
 
 func TestSQLite_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestSQLite(t))
+}
+
+func TestSQLite_SealedInferenceLifecycle(t *testing.T) {
+	runSealedInferenceLifecycle(t, newTestSQLite(t))
 }
 
 func TestSQLite_AddSignature(t *testing.T) {
@@ -230,6 +238,7 @@ func TestSQLite_ConcurrentSessions(t *testing.T) {
 			params := CreateSessionParams{
 				EscrowID:       escrowID,
 				EpochID:        7,
+				Version:        storageTestVersion,
 				CreatorAddr:    "creator",
 				Config:         types.SessionConfig{},
 				Group:          defaultGroup(),
@@ -517,6 +526,7 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 		params := CreateSessionParams{
 			EscrowID:       escrowID,
 			EpochID:        uint64(s % 2),
+			Version:        storageTestVersion,
 			CreatorAddr:    fmt.Sprintf("creator-%d", s),
 			Config:         types.SessionConfig{TokenPrice: 1},
 			Group:          defaultGroup(),
@@ -700,7 +710,7 @@ func TestSQLite_MetaIndex_DuplicateEscrowAcrossEpochFiles(t *testing.T) {
 	_, err = p.writeDB.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		"dup", types.LegacySessionVersion, "creator", `{}`, `[]`, 1000,
+		"dup", storageTestVersion, "creator", `{}`, `[]`, 1000,
 	)
 	require.NoError(t, err)
 	require.NoError(t, p.close())

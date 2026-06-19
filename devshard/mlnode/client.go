@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"devshard/mlnode/gen"
+	"devshard/nodemanager/gen"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -30,7 +30,21 @@ func NewClient(addr string) (*Client, error) {
 
 // Close releases the underlying gRPC connection.
 func (c *Client) Close() error {
+	if c.conn == nil {
+		return nil
+	}
 	return c.conn.Close()
+}
+
+// NodeManagerClient returns the underlying gRPC stub for sharing with runtimeconfig.
+func (c *Client) NodeManagerClient() gen.NodeManagerClient {
+	return c.client
+}
+
+// ClientForTest wires an existing NodeManagerClient without owning a connection.
+// conn.Close is a no-op when conn is nil.
+func ClientForTest(client gen.NodeManagerClient) *Client {
+	return &Client{client: client}
 }
 
 // Acquire reserves an available ML node for the given model.

@@ -298,13 +298,19 @@ tasks.test {
 
     outputs.upToDateWhen { false }
     useJUnitPlatform {
-        val includeTags = System.getProperty("includeTags")
-        val excludeTags = System.getProperty("excludeTags")
-        if (includeTags != null) {
-            includeTags(*includeTags.split(",").toTypedArray())
+        val includeTags = System.getProperty("includeTags")?.trim()
+        val excludeTags = System.getProperty("excludeTags")?.trim()
+        if (!includeTags.isNullOrEmpty()) {
+            val tags = includeTags.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (tags.isNotEmpty()) {
+                includeTags(*tags.toTypedArray())
+            }
         }
-        if (excludeTags != null) {
-            excludeTags(*excludeTags.split(",").toTypedArray())
+        if (!excludeTags.isNullOrEmpty()) {
+            val tags = excludeTags.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (tags.isNotEmpty()) {
+                excludeTags(*tags.toTypedArray())
+            }
         }
     }
     systemProperty("java.net.preferIPv6Addresses", "true")

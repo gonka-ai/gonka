@@ -41,7 +41,11 @@ class NodeDisableInferenceTests : TestermintTest() {
 
         // 3. Wait for INFERENCE phase and disable join-1
         logSection("Waiting for Inference Window")
-        genesis.waitForNextInferenceWindow()
+        // Position early in the epoch with runway before the next PoC so random join-1 assignment has time to land.
+        genesis.waitForMidEpochWindow(
+            minBlocksIntoEpoch = 3,
+            minBlocksBeforeNextPoc = 15,
+        )
 
         val join1 = cluster.joinPairs[0]
         logSection("Disabling join-1")
@@ -58,29 +62,47 @@ class NodeDisableInferenceTests : TestermintTest() {
         val rewardSeed = join1.api.getConfig().currentSeed
         logSection("Waiting for an inference assigned to disabled join-1 in the current epoch")
         val join1Address = join1.node.getColdAddress()
-        val earnedInference = (1..20)
-            .asSequence()
-            .mapNotNull { attempt ->
-                runCatching { getInferenceResult(genesis) }
-                    .onFailure { error ->
-                        val isTemporary500 = error is FuelError &&
-                            error.message.orEmpty().contains("500 Internal Server Error")
-                        val isChainLag = error is IllegalStateException &&
-                            error.message.orEmpty().contains("Inference never logged in chain")
-                        if (!isTemporary500 && !isChainLag) {
-                            throw error
-                        }
-                        Logger.info(
-                            "Inference attempt $attempt hit a transient response while waiting for join-1 assignment; retrying on the next block: ${error.message}"
+        var earnedInference: InferenceResult? = null
+        var attempt = 0
+        while (earnedInference == null) {
+            val epoch = genesis.getEpochData()
+            if (!epoch.safeForInference) {
+                error(
+                    "Inference window ended before join-1 received an assignment " +
+                        "(phase=${epoch.phase}, height=${epoch.blockHeight}, " +
+                        "nextPoc=${epoch.nextEpochStages.pocStart})"
+                )
+            }
+            attempt++
+            if (attempt > 50) {
+                error("Disabled join-1 did not receive an inference after $attempt attempts")
+            }
+            val result = runCatching { getInferenceResult(genesis) }
+                .onFailure { error ->
+                    val currentEpoch = genesis.getEpochData()
+                    if (!currentEpoch.safeForInference) {
+                        error(
+                            "Inference window ended before join-1 received an assignment " +
+                                "(phase=${currentEpoch.phase}, height=${currentEpoch.blockHeight})"
                         )
-                        genesis.waitForBlock(1) { true }
                     }
-                    .getOrNull()
+                    val isTemporary500 = error is FuelError &&
+                        error.message.orEmpty().contains("500 Internal Server Error")
+                    val isChainLag = error is IllegalStateException &&
+                        error.message.orEmpty().contains("Inference never logged in chain")
+                    if (!isTemporary500 && !isChainLag) {
+                        throw error
+                    }
+                    Logger.info(
+                        "Inference attempt $attempt hit a transient response while waiting for join-1 assignment; retrying on the next block: ${error.message}"
+                    )
+                    genesis.waitForBlock(1) { true }
+                }
+                .getOrNull() ?: continue
+            if (result.inference.assignedTo == join1Address || result.inference.executedBy == join1Address) {
+                earnedInference = result
             }
-            .firstOrNull { result ->
-                result.inference.assignedTo == join1Address || result.inference.executedBy == join1Address
-            }
-            ?: error("Disabled join-1 did not receive an inference in the current epoch")
+        }
 
         assertThat(earnedInference.inference.assignedTo).isEqualTo(join1Address)
         logSection("join-1 served inference ${earnedInference.inference.inferenceId} after disable")

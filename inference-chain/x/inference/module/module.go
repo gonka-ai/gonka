@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
+	"strconv"
+	"sync"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/appmodule"
@@ -58,6 +61,12 @@ var (
 const (
 	defaultInferencePruningThreshold = 4
 	defaultPocPruningThreshold       = 4
+	envExitAfterOneBlock             = "INFERENCE_EXIT_AFTER_ONE_BLOCK"
+)
+
+var (
+	exitAfterOneBlockOnce sync.Once
+	exitAfterBlockHeight  int64
 )
 
 // ----------------------------------------------------------------------------
@@ -177,6 +186,21 @@ func (AppModule) ConsensusVersion() uint64 { return 14 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	height := sdkCtx.BlockHeight()
+
+	// Exit after one block is committed and computed (for debugging: set INFERENCE_EXIT_AFTER_ONE_BLOCK=1).
+	// We exit at the start of the next block's BeginBlock, so the previous block has already been committed.
+	if v := os.Getenv(envExitAfterOneBlock); v != "" {
+		if on, _ := strconv.ParseBool(v); on {
+			exitAfterOneBlockOnce.Do(func() { exitAfterBlockHeight = height + 1 })
+			if height == exitAfterBlockHeight {
+				sdkCtx.Logger().Info("Exiting after one block committed (INFERENCE_EXIT_AFTER_ONE_BLOCK)", "height", height)
+				os.Exit(0)
+			}
+		}
+	}
+
 	// Precompute SPRT values for the block
 	err := am.keeper.PrecomputeSPRTValues(ctx)
 	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but

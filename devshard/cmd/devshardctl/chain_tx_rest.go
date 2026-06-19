@@ -554,7 +554,7 @@ func encodeMsgSettleDevshardEscrow(settler string, settlement SettlementJSON) ([
 		out = appendBytesField(out, 7, encoded)
 	}
 	out = appendVarintField(out, 8, settlement.Fees)
-	out = appendBytesField(out, 9, []byte(settlement.Version))
+	out = appendBytesField(out, 9, []byte(settlement.StateRootAndProtocolVersion))
 	return out, nil
 }
 

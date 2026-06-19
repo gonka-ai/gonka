@@ -19,11 +19,14 @@ and the operational consequence.
 ```
 HostManager
   -> ManagedStorage
-       -> SQLite
-       -> HybridStorage when PGHOST is set
-            -> Postgres
-            -> SQLite fallback
+       -> HybridStorage (thin wrapper)
+            -> exactly one backend chosen at boot:
+                 SQLite  OR  Postgres
 ```
+
+`NewStorage` in `devshard/storage/factory.go` picks the backend once per process.
+See [Storage mode selection](#storage-mode-selection) and
+[storage-modes-plan.md](./storage-modes-plan.md).
 
 The storage interface lives in `devshard/storage/interface.go`. `CreateSession`
 is the only method that introduces an `EpochID`; all later calls use `escrow_id`
@@ -57,14 +60,23 @@ devshard_session_index(escrow_id PRIMARY KEY, epoch_id)
 devshard_sessions   PARTITION BY RANGE (epoch_id)
 devshard_diffs      PARTITION BY RANGE (epoch_id)
 devshard_signatures PARTITION BY RANGE (epoch_id)
+devshard_snapshots  PARTITION BY RANGE (epoch_id)
+devshard_sealed_inferences PARTITION BY RANGE (epoch_id)
 ```
 
 Why: This matches `decentralized-api/payloadstorage/postgres_storage.go` and
 keeps pruning as partition drops.
 
-Consequence: `PruneEpoch` drops the three epoch partitions. Range prune lists
-existing devshard partitions through `pg_inherits` and drops only partitions
-older than the cutoff.
+Consequence: Devshard parent tables are created once at process startup via
+`MigratePostgres` in `devshard/storage/postgres_migrate.go` (payload parent
+`inferences` uses `ensureSchema` in `payloadstorage/postgres_storage.go`).
+Per-epoch child
+partitions are created lazily on first write through `ensurePartition` only —
+no `CREATE TABLE` on hot paths. `PruneEpoch` drops epoch partitions at runtime;
+that is retention, not schema migration (also described in
+[Schema Evolution Across Devshard Versions](#schema-evolution-across-devshard-versions)).
+Range prune lists existing devshard partitions through `pg_inherits` and drops
+only partitions older than the cutoff.
 
 ### SQLite Uses One File Per Epoch
 
@@ -81,7 +93,10 @@ epoch_<N>.db-shm
 Why: Removing a whole epoch is a file delete, not a row scan or VACUUM.
 
 Consequence: SQLite pruning closes the epoch pool, deletes the epoch DB and WAL
-sidecars, then removes `_meta.db` rows for that epoch.
+sidecars, then removes `_meta.db` rows for that epoch. Schema for `_meta.db` and
+each `epoch_<N>.db` is applied at first open via `MigrateMeta` /
+`MigrateEpochPool` (see
+[Schema Evolution Across Devshard Versions](#schema-evolution-across-devshard-versions)).
 
 ### SQLite Reconciles Eagerly On Startup
 
@@ -96,52 +111,48 @@ Consequence: SQLite startup is not fully lazy. It opens epoch files during
 reconciliation. With N=3 retention this is bounded by the intended operating
 window; if old files accumulate, startup work grows until pruning catches up.
 
-### Hybrid Routing Is Sticky
+### Storage Mode Selection
 
-Decision: When `PGHOST` is set, `HybridStorage` checks Postgres first when it is
-available, then SQLite. Once an escrow is found or created in one backend, every
-future session-keyed operation for that escrow uses the same backend.
+Decision: At boot, `NewStorage` selects **one** backend for the entire process.
+There is no per-request routing and no mid-run fallback between SQLite and
+Postgres.
 
-Why: Devshard state is mutable append-log state. Falling back for an existing
-Postgres-backed escrow would fork diffs, signatures, and finalized nonce.
+| Condition | Backend |
+| --- | --- |
+| `escrow_epoch` has rows in `_meta.db` | SQLite (drain transition if `PGHOST` set) |
+| `PGHOST` set and meta empty | Postgres (boot fails if PG unreachable) |
+| `PGHOST` unset, no `.pg-bound` | SQLite (fresh local store) |
+| `.pg-bound` present, `PGHOST` unset | Boot fails (set `PGHOST` or delete `.pg-bound`) |
 
-Consequence:
+Postgres-mode boot writes `<storeDir>/.pg-bound`. While SQLite is draining,
+boot logs a WARN when `PGHOST` is set and `escrow_epoch` still has rows.
 
-- Existing Postgres-backed escrow + Postgres unavailable: fail the operation.
-- Existing SQLite-backed escrow + Postgres reconnects: continue using SQLite.
-- Same active escrow in both backends during startup scan: log a warning, keep
-  the SQLite-routed copy, and continue recovering other sessions.
+Why: Dual-backend hybrid routing lost the in-memory route table on reboot and
+could fork append logs when Postgres was briefly down.
 
-### SQLite Fallback Is Local-Only
-
-Decision: If Postgres is unreachable and a new escrow is created in SQLite, that
-escrow is local-only. It is not migrated or merged into Postgres later.
-
-Why: When Postgres cannot be checked, storage cannot prove the escrow is absent
-there. The fallback is an availability tradeoff for new sessions, not a
-replication scheme.
-
-Consequence: Operators must not assume SQLite fallback data will appear in
-Postgres after reconnect. The session remains SQLite-routed until it settles or
-is pruned.
+Consequence: Postgres outage after boot fails operations on that store; it does
+not silently create sessions in SQLite. SQLite → Postgres promotion happens when
+`escrow_epoch` empties after settle/prune and the process restarts.
 
 ### Managed Pruning Starts After Recovery
 
-Decision: `NewManagedStorage` constructs the wrapper only. Callers start the
-background pruner after legacy migration and `HostManager.RecoverSessions`.
+Decision: `NewManagedStorage` constructs the wrapper only. Pruning runs on
+**epoch change** (runtime-config publish / long-poll) via `PruneOnce`, plus one
+catch-up `Start()` after recovery — not on a periodic ticker.
 
 Why: Pruning before recovery can delete old-but-active sessions before the host
-has had a chance to replay them.
+has had a chance to replay them. Epoch transitions are already observed on the
+dapi event-listener path.
 
 Consequence: dapi and `devshardd` wire storage in this order:
 
 1. Create inner storage.
 2. Run legacy migration.
-3. Create `ManagedStorage`.
+3. Create `ManagedStorage` and register epoch-change → `PruneOnce`.
 4. Run `RecoverSessions`.
-5. Call `ManagedStorage.Start`.
+5. Call `ManagedStorage.Start()` (one-shot catch-up prune).
 
-Tests can use `PruneOnce` without starting the background loop.
+Tests can call `PruneOnce` directly.
 
 ### Prune Cursor Advances Only After Full Success
 
@@ -150,10 +161,8 @@ returns success.
 
 Why: A failed backend must remain retryable.
 
-Consequence: In hybrid mode, if Postgres is unavailable during prune, SQLite may
-delete local old files but the prune returns an error. The managed cursor does
-not advance. When Postgres reconnects, a later range prune drops all partitions
-older than the current cutoff.
+Consequence: A failed prune leaves `prunedUpTo` unchanged so a later
+`PruneOnce` can retry.
 
 ### Legacy Migration Is Resumable
 
@@ -199,6 +208,62 @@ Consequence: Callers that attempt to create the same escrow with different
 non-version metadata keep the first row. Conflicting epoch or version creates
 return an error.
 
+### Schema Evolution Across Devshard Versions
+
+Decision: **Devshard session storage** uses a **forward-only, append-only**
+migration list recorded in `schema_migrations`. Schema changes are applied
+**once at startup** (or on first open of a per-epoch SQLite file), not on
+request, diff, or payload write paths. Other dapi SQL (`gonka.db` /
+`apiconfig`, `inference_stats` / `statsstorage`, off-chain `payloadstorage`)
+keeps inline `EnsureSchema` (or equivalent `CREATE TABLE IF NOT EXISTS`) at
+boot and is out of scope for this framework.
+
+Why:
+
+1. **`versiond` can run multiple `devshardd` versions in parallel.** Escrow
+   routing pins a session to one binary version, but **Postgres is shared**
+   across processes — every version in the retention window may read and write
+   the same database.
+2. **SQLite per-epoch files are shared** when two versions still own escrows in
+   the same epoch (`epoch_<N>.db` is not per-binary).
+3. While any older binary in the deployed set may still touch a table, schema
+   must remain **additive**: new tables, new columns (with defaults), new
+   indexes — never in-place drops or renames on live tables.
+4. **Destructive shape changes** use a new table (e.g. `*_v2`), dual-write,
+   switch reads in the new binary, stop dual-write only after every active
+   version has upgraded, and defer physical drop to a separate GC pass.
+5. **Migration entries** live only in devshard `*_migrate.go` and
+   `devshard/storage/migrate/`. They are append-only ordered steps; CI runs
+   `scripts/check-storage-ddl.sh` to block stray `CREATE TABLE` / `CREATE INDEX`
+   in store code and destructive keywords inside migration files.
+
+Consequence:
+
+- Implementers add a new `Step` with `id = max(existing) + 1`; never reuse an
+  ID. New columns use `ALTER TABLE ... ADD COLUMN` with a default or nullable
+  type; new indexes use `CREATE INDEX IF NOT EXISTS`. While an older binary may
+  still write the table, do not `DROP`, `RENAME`, or narrow columns; do not add
+  `NOT NULL` without a default.
+- **`PruneEpoch` is not a migration.** It drops per-epoch partitions (Postgres)
+  or deletes per-epoch files (SQLite) that no surviving binary still needs.
+  That is bounded retention (N=3), not schema evolution.
+- Lazy **`CREATE TABLE ... PARTITION OF`** for a new epoch is allowed only in
+  `ensurePartition` (devshard Postgres; dapi payload Postgres uses the same
+  pattern inline in `payloadstorage/postgres_storage.go`), not in migrate files
+  and not duplicated on individual write methods.
+
+#### Schema migration tooling
+
+We use a small in-repo helper at `devshard/storage/migrate/` (`ApplyPG`,
+`ApplySQLite`, `schema_migrations` table). We do **not** use `golang-migrate`
+or `goose` for these stores — the schema surface is small and the critical
+requirement is a strict forward-only contract across parallel binary versions.
+`ApplySQLite` enables `journal_mode=WAL`; still assume **one devshardd process
+per store directory** — two processes on the same `_meta.db` can race
+`schema_migrations` despite per-step transactions.
+Revisit an external tool only if a single store grows past roughly twenty
+migration steps.
+
 ## Load Readiness
 
 This design is not an early prototype. It is the production storage shape for
@@ -206,6 +271,13 @@ devshard session state under the assumption that every escrow lives inside one
 epoch. The important production invariant is epoch-bounded lifetime: old shards
 are removed by dropping an epoch partition or deleting an epoch file, not by
 scanning individual escrows or nonces.
+
+Schema is applied at **process startup** (and on first open of each SQLite epoch
+file) through the migration helpers — not during steady-state reads or writes.
+That keeps hot paths free of DDL and, together with the forward-only rule in
+[Schema Evolution Across Devshard Versions](#schema-evolution-across-devshard-versions),
+allows multiple `devshardd` versions to share Postgres and SQLite files safely
+while any older version still holds unsettled escrows in the retention window.
 
 For a high-load epoch with 1000 active shards and 100000 nonces per shard:
 
@@ -236,15 +308,20 @@ single-file SQLite store:
   detection, and bounded retention.
 
 So SQLite is not the target for the largest sustained deployment, but it is no
-longer an unbounded local database. For local mode and Postgres outage fallback,
-it is more ready for high load than the main-branch implementation because data
-growth is bounded by retained epochs and pruning is file-level.
+longer an unbounded local database. For local development and draining legacy
+SQLite state during a Postgres transition, it remains supported. Data growth is
+bounded by retained epochs and pruning is file-level.
+
+Production deployments target Postgres-only mode (`PGHOST` set, empty
+`escrow_epoch`). SQLite is not used as a runtime fallback when Postgres goes
+down after boot.
 
 ## Operational Notes
 
 - Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
-- Hybrid retry knobs: `PG_RETRY_INTERVAL` default `240s`,
-  `PG_CONNECT_TIMEOUT` default `2s`.
+- Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Storage mode helpers and `.pg-bound`: `devshard/storage/storage_mode.go`.
+- Drain check: `HasSQLiteSessions(storeDir)` or presence of rows in `_meta.db` `escrow_epoch`.
 - Production retention is `retain=3`: current epoch plus two previous epochs.
 - No SQLite VACUUM is used for pruning.
 
@@ -254,10 +331,14 @@ growth is bounded by retained epochs and pruning is file-level.
 |---|---|
 | Storage interface | `devshard/storage/interface.go` |
 | SQLite backend | `devshard/storage/sqlite.go` |
+| SQLite meta / epoch schema | `devshard/storage/sqlite_meta_migrate.go`, `sqlite_epoch_migrate.go` |
 | Postgres backend | `devshard/storage/postgres.go` |
+| Postgres parent schema | `devshard/storage/postgres_migrate.go` |
+| Shared migrate framework | `devshard/storage/migrate/` |
+| DDL placement CI guard | `scripts/check-storage-ddl.sh` |
 | Hybrid backend | `devshard/storage/hybrid.go` |
 | Managed pruning | `devshard/storage/managed.go` |
-| Legacy migration | `devshard/storage/migrate.go` |
-| Factory | `devshard/storage/factory.go` |
+| Legacy data copy | `devshard/storage/migrate.go` |
+| Factory / mode selection | `devshard/storage/factory.go`, `storage_mode.go` |
 | dapi wiring | `decentralized-api/main.go` |
 | devshardd wiring | `decentralized-api/cmd/devshardd/main.go` |

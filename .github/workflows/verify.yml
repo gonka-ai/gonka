@@ -9,6 +9,24 @@ on:
       - main
 
 jobs:
+  check-storage-ddl:
+    # Pinned runner because the ripgrep apt version below only exists in the
+    # 22.04 (jammy) package archive. Bumping the runner requires bumping the
+    # pinned ripgrep version in lockstep.
+    runs-on: ubuntu-22.04
+    name: Storage schema DDL guard
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install ripgrep
+        # Pin the package version so the DDL guard runs against a known
+        # ripgrep build (reproducible CI). Update both pins together.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2
+
+      - name: Check storage DDL placement
+        run: bash scripts/check-storage-ddl.sh
+
   build-and-test:
     runs-on: ubuntu-latest
     name: Build and Test chain
@@ -194,7 +212,7 @@ jobs:
           reporter: java-junit
 
   build-and-test-devshard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Build and Test Devshard
     permissions:
       contents: read
@@ -222,6 +240,10 @@ jobs:
 
       - name: Install dependencies
         run: go mod download
+
+      - name: Install ripgrep
+        # Pin the package version for reproducible CI; keep in sync with runner image.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2
 
       - name: Build
         run: go build ./...

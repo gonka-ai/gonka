@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"devshard/logging"
-	"devshard/mlnode/gen"
+	"devshard/nodemanager/gen"
 )
 
 // NodeLock acquires and releases ML node locks via node-manager.

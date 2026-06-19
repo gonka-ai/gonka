@@ -59,11 +59,17 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 	stores := make([]*storage.Memory, numHosts)
 
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		store := storage.NewMemory()
-		require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: balance}))
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       "escrow-1",
+			Version:        testutil.RuntimeTestVersion,
+			Config:         config,
+			Group:          group,
+			InitialBalance: balance,
+		}))
 		stores[i] = store
 
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,
@@ -118,7 +124,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		srv.SetGossip(g)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, userClients, verifier)
 	require.NoError(t, err)
@@ -150,16 +156,20 @@ func TestHTTP_HappyPath(t *testing.T) {
 		require.NotNil(t, result)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	require.Equal(t, 15, len(preFinalize.Inferences))
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	require.Equal(t, 15, len(st.Inferences))
-
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences, "v2 drains live inferences at settlement")
+	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
 
 	// After finalize, check signatures for the settlement nonce
 	// (last Phase A nonce -- all hosts have seen it via Phase B catch-up).
@@ -503,14 +513,18 @@ func TestHTTP_Finalize(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences)
 
 	// Verify signatures collected from all hosts.
 	sigs := env.session.Signatures()
@@ -797,21 +811,21 @@ func TestHTTP_StateHashVerification(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Build a normal host for slot 0.
-	sm0, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm0, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine0 := stub.NewInferenceEngine()
 	h0, err := host.NewHost(sm0, hostSigners[0], engine0, "escrow-1", group, nil, host.WithGrace(100))
 	require.NoError(t, err)
 
 	// Build a tampered host for slot 1 with different initial balance -> different state hash.
-	sm1, err := state.NewStateMachine("escrow-1", config, group, 99999, userSigner.Address(), verifier)
+	sm1, err := state.NewStateMachine("escrow-1", config, group, 99999, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 99999))
 	require.NoError(t, err)
 	engine1 := stub.NewInferenceEngine()
 	h1, err := host.NewHost(sm1, hostSigners[1], engine1, "escrow-1", group, nil, host.WithGrace(100))
 	require.NoError(t, err)
 
 	// Build a normal host for slot 2.
-	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine2 := stub.NewInferenceEngine()
 	h2, err := host.NewHost(sm2, hostSigners[2], engine2, "escrow-1", group, nil, host.WithGrace(100))
@@ -823,7 +837,7 @@ func TestHTTP_StateHashVerification(t *testing.T) {
 		&user.InProcessClient{Host: h2},
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)

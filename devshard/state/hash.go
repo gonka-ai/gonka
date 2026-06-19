@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/types"
@@ -41,18 +42,19 @@ func ComputeStateRoot(
 	phase types.SessionPhase,
 	warmKeys map[uint32]string,
 	fees uint64,
-	version ...string,
+	version string,
 ) ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(hostStats)
 	if err != nil {
 		return nil, err
 	}
-	restHash, err := computeRestHash(balance, inferences, warmKeys)
+	acc := sealedAccBytes32(nil)
+	restHash, err := ComputeRestHashV2(balance, acc, inferences, warmKeys)
 	if err != nil {
 		return nil, err
 	}
 
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version...), nil
+	return ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, phase, version), nil
 }
 
 // ComputeHostStatsHash computes sha256(proto(sorted host stats)).
@@ -67,13 +69,76 @@ func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 	return computeRestHash(balance, inferences, warmKeys)
 }
 
+// ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash)
+// where live_inferences_hash is the same encoding as v1's inference-set hash
+// over the live map only (sorted by inference id).
+func ComputeInferencesHashV2(sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord) ([]byte, error) {
+	liveHash, err := computeInferencesHash(liveInferences)
+	if err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	h.Write(sealedAcc[:])
+	h.Write(liveHash)
+	return h.Sum(nil), nil
+}
+
+// ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash)
+// for Phase 1 v2 sessions (sealed accumulator + live inference set).
+func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
+	infHash, err := ComputeInferencesHashV2(sealedAcc, liveInferences)
+	if err != nil {
+		return nil, err
+	}
+	warmKeysHash := computeWarmKeysHash(warmKeys)
+
+	balBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(balBytes, balance)
+
+	h := sha256.New()
+	h.Write(balBytes)
+	h.Write(infHash)
+	h.Write(warmKeysHash)
+	return h.Sum(nil), nil
+}
+
+func sealedAccBytes32(b []byte) [32]byte {
+	var z [32]byte
+	if len(b) >= 32 {
+		copy(z[:], b[:32])
+	} else {
+		copy(z[:], b)
+	}
+	return z
+}
+
+// FoldSealedAccumulator updates the v2 sealed accumulator:
+//
+//	out = sha256(acc || seal_nonce_be || inf_id_be || committed_entry)
+//
+// committed_entry must be the canonical protobuf bytes for that inference at
+// seal time (same bytes that contributed to the v1 inference hash).
+func FoldSealedAccumulator(acc [32]byte, sealNonce, infID uint64, committedEntry []byte) [32]byte {
+	h := sha256.New()
+	h.Write(acc[:])
+	var u64be [8]byte
+	binary.BigEndian.PutUint64(u64be[:], sealNonce)
+	h.Write(u64be[:])
+	binary.BigEndian.PutUint64(u64be[:], infID)
+	h.Write(u64be[:])
+	h.Write(committedEntry)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
 // ComputeStateRootFromRestHash computes the canonical state root when host
 // stats hash and rest hash are already available.
-func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version ...string) []byte {
+func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees uint64, phase types.SessionPhase, version string) []byte {
 	// Encode fees as fixed-width big-endian to preserve deterministic hashing.
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, fees)
-	versionHash := ComputeVersionHash(resolveVersion(version...))
+	versionHash := ComputeVersionHash(version)
 
 	h := sha256.New()
 	h.Write(hostStatsHash)
@@ -86,15 +151,8 @@ func ComputeStateRootFromRestHash(hostStatsHash []byte, restHash []byte, fees ui
 
 // ComputeVersionHash computes sha256 over the bound session version string.
 func ComputeVersionHash(version string) []byte {
-	sum := sha256.Sum256([]byte(types.NormalizeSessionVersion(version)))
+	sum := sha256.Sum256([]byte(version))
 	return sum[:]
-}
-
-func resolveVersion(version ...string) string {
-	if len(version) == 0 {
-		return types.LegacySessionVersion
-	}
-	return types.NormalizeSessionVersion(version[0])
 }
 
 // computeWarmKeysHash computes sha256 over sorted (slotID, address) pairs.
@@ -174,43 +232,84 @@ func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 }
 
 func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte, error) {
-	// Sort inference IDs for determinism.
-	ids := make([]uint64, 0, len(inferences))
-	for id := range inferences {
+	entries := make(map[uint64][]byte, len(inferences))
+	for id, rec := range inferences {
+		entry, err := marshalInferenceEntry(id, rec)
+		if err != nil {
+			return nil, err
+		}
+		entries[id] = entry
+	}
+	return computeInferencesHashFromEntries(entries), nil
+}
+
+func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
+	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
+		InferenceId:  id,
+		Status:       uint32(r.Status),
+		ExecutorSlot: r.ExecutorSlot,
+		Model:        r.Model,
+		PromptHash:   r.PromptHash,
+		ResponseHash: r.ResponseHash,
+		InputLength:  r.InputLength,
+		MaxTokens:    r.MaxTokens,
+		InputTokens:  r.InputTokens,
+		OutputTokens: r.OutputTokens,
+		ReservedCost: r.ReservedCost,
+		ActualCost:   r.ActualCost,
+		StartedAt:    r.StartedAt,
+		ConfirmedAt:  r.ConfirmedAt,
+		VotesValid:   r.VotesValid,
+		VotesInvalid: r.VotesInvalid,
+		ValidatedBy:  r.ValidatedBy.Bytes(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
+	}
+	return data, nil
+}
+
+func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error) {
+	msg := &types.InferenceRecordProto{}
+	if err := proto.Unmarshal(data, msg); err != nil {
+		return 0, nil, fmt.Errorf("unmarshal inference entry: %w", err)
+	}
+	rec := &types.InferenceRecord{
+		Status:       types.InferenceStatus(msg.Status),
+		ExecutorSlot: msg.ExecutorSlot,
+		Model:        msg.Model,
+		PromptHash:   append([]byte(nil), msg.PromptHash...),
+		ResponseHash: append([]byte(nil), msg.ResponseHash...),
+		InputLength:  msg.InputLength,
+		MaxTokens:    msg.MaxTokens,
+		InputTokens:  msg.InputTokens,
+		OutputTokens: msg.OutputTokens,
+		ReservedCost: msg.ReservedCost,
+		ActualCost:   msg.ActualCost,
+		StartedAt:    msg.StartedAt,
+		ConfirmedAt:  msg.ConfirmedAt,
+		VotesValid:   msg.VotesValid,
+		VotesInvalid: msg.VotesInvalid,
+		ValidatedBy:  types.Bitmap128FromBytes(msg.ValidatedBy),
+	}
+	return msg.InferenceId, rec, nil
+}
+
+func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
+	ids := make([]uint64, 0, len(entries))
+	for id := range entries {
 		ids = append(ids, id)
 	}
 	slices.SortFunc(ids, func(a, b uint64) int { return cmp.Compare(a, b) })
 
-	entries := make([]*types.InferenceRecordProto, 0, len(ids))
+	buf := make([]byte, 0, len(entries)*64)
 	for _, id := range ids {
-		r := inferences[id]
-
-		entries = append(entries, &types.InferenceRecordProto{
-			InferenceId:  id,
-			Status:       uint32(r.Status),
-			ExecutorSlot: r.ExecutorSlot,
-			Model:        r.Model,
-			PromptHash:   r.PromptHash,
-			ResponseHash: r.ResponseHash,
-			InputLength:  r.InputLength,
-			MaxTokens:    r.MaxTokens,
-			InputTokens:  r.InputTokens,
-			OutputTokens: r.OutputTokens,
-			ReservedCost: r.ReservedCost,
-			ActualCost:   r.ActualCost,
-			StartedAt:    r.StartedAt,
-			ConfirmedAt:  r.ConfirmedAt,
-			VotesValid:   r.VotesValid,
-			VotesInvalid: r.VotesInvalid,
-			ValidatedBy:  r.ValidatedBy.Bytes(),
-		})
+		entry := entries[id]
+		buf = protowire.AppendTag(buf, 1, protowire.BytesType)
+		buf = protowire.AppendVarint(buf, uint64(len(entry)))
+		buf = append(buf, entry...)
 	}
 
-	msg := &types.InferencesMapProto{Entries: entries}
-	data, err := deterministicMarshal.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal inferences: %w", err)
-	}
-	hash := sha256.Sum256(data)
-	return hash[:], nil
+	sum := sha256.Sum256(buf)
+	return sum[:]
 }

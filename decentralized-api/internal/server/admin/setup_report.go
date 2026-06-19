@@ -75,6 +75,14 @@ var (
 	cachedReportMutex sync.RWMutex
 )
 
+// GetCachedReport returns the most recently generated setup report, or nil if
+// none has been generated yet. Used by the Prometheus collector.
+func GetCachedReport() *SetupReport {
+	cachedReportMutex.RLock()
+	defer cachedReportMutex.RUnlock()
+	return cachedReport
+}
+
 // EXPERIMENTAL: Setup report endpoint for participant onboarding validation
 func (s *Server) getSetupReport(c echo.Context) error {
 	ctx := c.Request().Context()

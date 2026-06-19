@@ -61,6 +61,7 @@ message MsgValidationVote {
   string escrow_id = 5;
 }
 
+// Deprecated: retained for wire compatibility; reveal-seed txs are ignored at runtime.
 message MsgRevealSeed {
   uint32 slot_id = 1;
   bytes  signature = 2;

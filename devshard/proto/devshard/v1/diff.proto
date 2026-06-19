@@ -21,6 +21,7 @@ message DevshardTx {
     MsgTimeoutInference timeout_inference = 4;
     MsgValidation validation = 5;
     MsgValidationVote validation_vote = 6;
+    // Deprecated: retained for wire compatibility; reveal-seed txs are ignored at runtime.
     MsgRevealSeed reveal_seed = 7;
     MsgFinalizeRound finalize_round = 8;
   }

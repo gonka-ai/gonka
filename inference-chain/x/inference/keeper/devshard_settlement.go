@@ -27,6 +27,21 @@ const (
 	DevshardSettlementPhase = byte(0x02)
 )
 
+// validateDevshardSettlementVersionApproved enforces that the settlement
+// version tag is in the chain's approved-versions allowlist (when one is
+// configured). An empty allowlist is permissive (used in tests / dev).
+func validateDevshardSettlementVersionApproved(approved []*types.DevshardApprovedVersion, version string) error {
+	if len(approved) == 0 {
+		return nil
+	}
+	for _, v := range approved {
+		if v != nil && v.Name == version {
+			return nil
+		}
+	}
+	return fmt.Errorf("settlement version %q is not listed in devshard_escrow_params.approved_versions", version)
+}
+
 // DevshardQuorumFor returns the minimum slot votes required for a given group size.
 func DevshardQuorumFor(groupSize int) int {
 	return 2*groupSize/3 + 1
@@ -63,22 +78,30 @@ type WarmKeyChecker func(granter, grantee string) bool
 
 // VerifyDevshardSettlement verifies settlement proof: state root, signatures, quorum, cost.
 // If isWarmKey is non-nil, mismatched signatures are checked against authz grants.
-func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, maxNonce uint32, isWarmKey WarmKeyChecker) error {
+// params must be non-nil (includes MaxNonce and ApprovedVersions for settlement tag checks).
+func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, isWarmKey WarmKeyChecker) error {
+	if params == nil {
+		return fmt.Errorf("devshard escrow params is required")
+	}
 	if escrow.Settled {
 		return fmt.Errorf("escrow %d already settled", escrow.Id)
 	}
 	if msg.Settler != escrow.Creator {
 		return fmt.Errorf("settler %s is not the escrow creator %s", msg.Settler, escrow.Creator)
 	}
-	if msg.Version == "" {
+	if msg.StateRootAndProtocolVersion == "" {
 		return fmt.Errorf("version is required")
 	}
-	if msg.Nonce > uint64(maxNonce) {
-		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, maxNonce)
+	if msg.Nonce > uint64(params.MaxNonce) {
+		return fmt.Errorf("nonce %d exceeds maximum %d", msg.Nonce, params.MaxNonce)
 	}
 	const maxVersionLength = 128
-	if len(msg.Version) > maxVersionLength {
+	if len(msg.StateRootAndProtocolVersion) > maxVersionLength {
 		return fmt.Errorf("version exceeds maximum length of %d", maxVersionLength)
+	}
+
+	if err := validateDevshardSettlementVersionApproved(params.ApprovedVersions, msg.StateRootAndProtocolVersion); err != nil {
+		return err
 	}
 
 	// Recompute host_stats_hash
@@ -90,7 +113,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	// Verify state_root = sha256(host_stats_hash || fees_be || rest_hash || version_hash || 0x02)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, msg.Fees)
-	versionHash := sha256.Sum256([]byte(msg.Version))
+	versionHash := sha256.Sum256([]byte(msg.StateRootAndProtocolVersion))
 	rootInput := make([]byte, 0, len(hostStatsHash)+len(feesBytes)+len(msg.RestHash)+len(versionHash)+1)
 	rootInput = append(rootInput, hostStatsHash...)
 	rootInput = append(rootInput, feesBytes...)

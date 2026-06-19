@@ -97,6 +97,59 @@ func TestFileStorage_PruneEpoch(t *testing.T) {
 	}
 }
 
+func TestFileStorage_DeleteInference(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewFileStorage(dir)
+	ctx := context.Background()
+
+	prompt := []byte(`{"prompt":1}`)
+	response := []byte(`{"resp":1}`)
+	if err := storage.Store(ctx, "inf-1", 5, prompt, response); err != nil {
+		t.Fatalf("Store inf-1 failed: %v", err)
+	}
+	if err := storage.Store(ctx, "inf-2", 5, []byte(`{"p":2}`), []byte(`{"r":2}`)); err != nil {
+		t.Fatalf("Store inf-2 failed: %v", err)
+	}
+
+	if err := storage.DeleteInference(ctx, "inf-1", 5); err != nil {
+		t.Fatalf("DeleteInference failed: %v", err)
+	}
+
+	if _, _, err := storage.Retrieve(ctx, "inf-1", 5); err != ErrNotFound {
+		t.Errorf("expected ErrNotFound after delete, got %v", err)
+	}
+
+	if _, _, err := storage.Retrieve(ctx, "inf-2", 5); err != nil {
+		t.Errorf("sibling inference must remain readable: %v", err)
+	}
+}
+
+func TestFileStorage_DeleteInferenceMissing(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewFileStorage(dir)
+	ctx := context.Background()
+
+	if err := storage.DeleteInference(ctx, "nope", 1); err != ErrNotFound {
+		t.Errorf("expected ErrNotFound for missing payload, got %v", err)
+	}
+}
+
+func TestFileStorage_DeleteInferenceWrongEpoch(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewFileStorage(dir)
+	ctx := context.Background()
+
+	if err := storage.Store(ctx, "inf-1", 5, []byte("p"), []byte("r")); err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	if err := storage.DeleteInference(ctx, "inf-1", 6); err != ErrNotFound {
+		t.Errorf("expected ErrNotFound for wrong epoch, got %v", err)
+	}
+	if _, _, err := storage.Retrieve(ctx, "inf-1", 5); err != nil {
+		t.Errorf("payload must still exist under correct epoch: %v", err)
+	}
+}
+
 func TestFileStorage_AtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	storage := NewFileStorage(dir)

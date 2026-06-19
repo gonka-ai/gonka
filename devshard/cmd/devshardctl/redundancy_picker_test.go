@@ -23,7 +23,7 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	env.killables[2].Kill()
 
 	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf)
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	require.NoError(t, err, "host 3 should accept and produce a result")
 
 	requests := env.proxy.perf.RecentRequests()

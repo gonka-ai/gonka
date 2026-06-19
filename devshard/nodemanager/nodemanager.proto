@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package nodemanager;
+
+option go_package = "devshard/nodemanager/gen";
+
+service NodeManager {
+  rpc AcquireMLNode(AcquireMLNodeRequest) returns (AcquireMLNodeResponse);
+  rpc ReleaseMLNode(ReleaseMLNodeRequest) returns (ReleaseMLNodeResponse);
+  rpc GetRuntimeConfig(GetRuntimeConfigRequest) returns (GetRuntimeConfigResponse);
+}
+
+message AcquireMLNodeRequest {
+  string model                   = 1;
+  repeated string excluded_nodes = 2;
+}
+
+message AcquireMLNodeResponse {
+  string lock_id  = 1;
+  string endpoint = 2;
+  string node_id  = 3;
+}
+
+enum ReleaseOutcome {
+  SUCCESS           = 0;
+  TRANSPORT_ERROR   = 1;
+  APPLICATION_ERROR = 2;
+  TIMEOUT           = 3;
+}
+
+message ReleaseMLNodeRequest {
+  string lock_id         = 1;
+  ReleaseOutcome outcome = 2;
+}
+
+message ReleaseMLNodeResponse {}
+
+message GetRuntimeConfigRequest {
+  // Last params_block_height the client applied. 0 = always return full config.
+  int64 client_params_block_height = 1;
+  // Max time the server should hold the request waiting for a cache change.
+  //
+  // Wire contract (do NOT reinterpret 0):
+  //   0 default; IMMEDIATE reply.
+  //   > 0 = long-poll up to N seconds (capped server-side).
+  //   < 0 = RESERVED; immediate reply.
+  int32 max_wait_seconds = 2;
+}
+
+message GetRuntimeConfigResponse {
+  bool unchanged = 1;
+  RuntimeConfig config = 2;
+}
+
+message RuntimeConfig {
+  int64 params_block_height = 1;
+  uint64 current_epoch_id = 2;
+  string logprobs_mode = 3;
+  bool devshard_requests_enabled = 4;
+  uint32 max_nonce = 5;
+  repeated ApprovedVersion approved_versions = 6;
+  int64 served_at_unix = 7;
+  int64 refusal_timeout = 8;
+  int64 execution_timeout = 9;
+  uint32 validation_rate = 10;
+  uint32 vote_threshold_factor = 11;
+}
+
+message ApprovedVersion {
+  string name = 1;
+  string binary = 2;
+  string sha256 = 3;
+}

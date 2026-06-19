@@ -14,6 +14,11 @@ message DevshardEscrow {
   bool settled = 7;
   uint64 token_price = 8;
   string model_id = 9;
+  uint64 create_devshard_fee = 10;
+  uint64 fee_per_nonce = 11;
+  uint32 inference_seal_grace_nonces = 12;
+  uint32 inference_seal_grace_seconds = 13;
+  uint32 auto_seal_every_n_nonces = 14;
 }
 
 message DevshardHostEpochStats {

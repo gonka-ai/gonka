@@ -35,8 +35,8 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{
-		EscrowID:   "42",
-		Version:    "dev",
+		EscrowID:                    "42",
+		StateRootAndProtocolVersion: "dev",
 		Nonce:      5,
 		Fees:       321,
 		RestHash:   restHash,
@@ -69,7 +69,7 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	}
 	hsHash, err := state.ComputeHostStatsHash(parsedHostStats)
 	require.NoError(t, err)
-	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, parsed.Fees, types.PhaseSettlement, parsed.Version)
+	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, parsed.Fees, types.PhaseSettlement, parsed.StateRootAndProtocolVersion)
 
 	require.Equal(t, expectedRoot, stateRoot,
 		"state_root mismatch: sha256(host_stats_hash || fees_be || rest_hash || version_hash || 0x02) != state_root")
@@ -95,7 +95,7 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{
-		EscrowID: "42", Version: "dev", Nonce: 5, Fees: 321, RestHash: restHash,
+		EscrowID: "42", StateRootAndProtocolVersion: "dev", Nonce: 5, Fees: 321, RestHash: restHash,
 		HostStats:  hostStats,
 		Signatures: map[uint32][]byte{0: []byte("sig0")},
 	}
@@ -130,7 +130,7 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 	}
 	hsHash, err := state.ComputeHostStatsHash(parsedHostStats)
 	require.NoError(t, err)
-	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, reparsed.Fees, types.PhaseSettlement, reparsed.Version)
+	expectedRoot := state.ComputeStateRootFromRestHash(hsHash, parsedRestHash, reparsed.Fees, types.PhaseSettlement, reparsed.StateRootAndProtocolVersion)
 
 	require.Equal(t, expectedRoot, stateRoot,
 		"state_root mismatch after Kotlin-style re-serialization")

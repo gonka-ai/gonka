@@ -11,6 +11,8 @@ The nginx proxy routes requests to different backend services based on URL paths
 - `/chain-rpc/` → Blockchain RPC endpoint (port 26657)
 - `/chain-api/` → Blockchain REST API (port 1317)
 - `/chain-grpc/` → Blockchain gRPC endpoint (port 9090)
+- `/jaeger/` → Jaeger UI when `JAEGER_ENABLED=true` and the observability overlay is running (nginx basic auth required)
+- `/grafana/` → Grafana UI when `GRAFANA_ENABLED=true` and the observability overlay is running (Grafana login required)
 - `/health` → Nginx health check endpoint
 - `/` → Explorer dashboard when `DASHBOARD_PORT` is set, otherwise a simple "dashboard not configured" page
 
@@ -55,6 +57,17 @@ Key runtime environment variables:
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
 | `EXPLORER_SERVICE_NAME` | explorer | Service name for explorer upstream |
+| `JAEGER_ENABLED` | false | Enables proxy routing for the Jaeger UI under `/jaeger/`. Requires `JAEGER_BASIC_AUTH_USER` and `JAEGER_BASIC_AUTH_PASSWORD`. |
+| `JAEGER_SERVICE_NAME` | jaeger | Service name for Jaeger UI upstream |
+| `JAEGER_PORT` | 16686 | Jaeger UI upstream port |
+| `JAEGER_BASE_PATH` | /jaeger | Base path used by proxied Jaeger UI |
+| `JAEGER_BASIC_AUTH_USER` | - | HTTP basic auth username for `/jaeger/`. Required when `JAEGER_ENABLED=true`. |
+| `JAEGER_BASIC_AUTH_PASSWORD` | - | HTTP basic auth password for `/jaeger/`. Required when `JAEGER_ENABLED=true`. Jaeger has no built-in login; nginx enforces this gate. |
+| `GRAFANA_ENABLED` | false | Enables proxy routing for Grafana under `/grafana/`. Requires a non-default `GRAFANA_ADMIN_PASSWORD`. |
+| `GRAFANA_SERVICE_NAME` | grafana | Service name for Grafana upstream |
+| `GRAFANA_PORT` | 3000 | Grafana upstream port |
+| `GRAFANA_BASE_PATH` | /grafana | Base path used by proxied Grafana UI |
+| `GRAFANA_ADMIN_PASSWORD` | - | Passed to the proxy startup check when `GRAFANA_ENABLED=true`. Must be set to a strong value before enabling public Grafana UI. Also configure on the `grafana` service. |
 | `KEY_NAME` | - | Optional stack key; when set, service names are prefixed as `<KEY_NAME>-*` |
 | `RESOLVER` | 127.0.0.11 | DNS resolver for dynamic upstream resolution (override if needed) |
 | `PROXY_REAL_IP_FROM` | - | Space-separated trusted proxy CIDRs/IPs for nginx `set_real_ip_from` (for example `172.18.0.1/32`). Empty by default (real IP parsing disabled). |
@@ -93,6 +106,28 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
+
+### Observability UI security
+
+Jaeger and Grafana UIs are **disabled by default** (`JAEGER_ENABLED=false`, `GRAFANA_ENABLED=false` in `deploy/join/config.env.template`). The observability stack (Prometheus, Loki, trace export) can run without exposing UIs on the public proxy.
+
+When enabling public UI routes, set credentials **before** flipping the enable flags:
+
+1. **Jaeger** — Jaeger has no application login. Set `JAEGER_BASIC_AUTH_USER` and `JAEGER_BASIC_AUTH_PASSWORD`, then set `JAEGER_ENABLED=true`. The proxy refuses to start if Jaeger is enabled without basic auth credentials.
+2. **Grafana** — Set a strong `GRAFANA_ADMIN_PASSWORD` (and optionally `GRAFANA_ADMIN_USER`), then set `GRAFANA_ENABLED=true`. The proxy refuses to start if Grafana is enabled with a missing or placeholder password (`admin1`, `<FILLIN>`, etc.).
+
+Example (`deploy/join/config.env`):
+
+```bash
+export JAEGER_BASIC_AUTH_USER=jaeger
+export JAEGER_BASIC_AUTH_PASSWORD='your-jaeger-basic-auth-secret'
+export GRAFANA_ADMIN_USER=admin
+export GRAFANA_ADMIN_PASSWORD='your-grafana-admin-secret'
+export JAEGER_ENABLED=true
+export GRAFANA_ENABLED=true
+```
+
+See `docs/observability/observability-overview.md` for the full join-stack setup.
 
 > **Note**: `GLOBAL_RATE_LIMIT_RPS` acts as a total ceiling for a single IP. It must be higher than your highest specific limit (e.g. higher than Exempt limit).
 
@@ -161,7 +196,6 @@ Below are minimal environment configurations for the compose stack under `deploy
 NGINX_MODE=http
 API_PORT=8000
 ```
-
 #### HTTPS only via proxy-ssl (443 → 8443)
 
 ```
@@ -266,6 +300,20 @@ mkdir -p secrets/nginx-ssl secrets/certbot
 ```
 source ./config.env && \
 docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d
+```
+
+- Initial start with observability overlay:
+
+```
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.mlnode.yml -f docker-compose.observability.yml up -d
+```
+
+- Access the observability UIs through the proxy after startup:
+
+```
+${PUBLIC_URL}/jaeger/
+${PUBLIC_URL}/grafana/
 ```
 
 - Update currently running node:

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,9 +19,7 @@ func (f *fixedEpoch) CurrentEpochID() uint64 { return f.n }
 func newManagedForTest(t *testing.T, retain uint64, ep EpochProvider) (*ManagedStorage, *Memory) {
 	t.Helper()
 	mem := NewMemory()
-	// Long pruneInterval because tests drive pruning with explicit PruneOnce
-	// calls instead of starting the background loop.
-	m := NewManagedStorage(mem, retain, time.Hour, ep)
+	m := NewManagedStorage(mem, retain, ep)
 	t.Cleanup(func() { _ = m.Close() })
 	return m, mem
 }
@@ -109,6 +106,24 @@ func (s *legacyOnlyStorage) SaveSnapshot(escrowID string, nonce uint64, data []b
 }
 func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return s.inner.LoadSnapshot(escrowID)
+}
+func (s *legacyOnlyStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return s.inner.InsertSealedInference(escrowID, row)
+}
+func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	return s.inner.GetSealedInference(escrowID, inferenceID)
+}
+func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
+	return s.inner.DeleteSealedInferences(escrowID)
+}
+func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
+}
+func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	return s.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+func (s *legacyOnlyStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	return s.inner.GetValidationObservability(escrowID)
 }
 func (s *legacyOnlyStorage) PruneEpoch(epochID uint64) error {
 	s.pruneEpochCalls++
@@ -217,7 +232,7 @@ func TestManaged_PrunedUpToMonotonic(t *testing.T) {
 
 func TestManaged_RetriesFailedPrune(t *testing.T) {
 	inner := &failOncePruneStorage{Memory: NewMemory(), epoch: 0}
-	m := NewManagedStorage(inner, 1, time.Hour, nil)
+	m := NewManagedStorage(inner, 1, nil)
 	t.Cleanup(func() { _ = m.Close() })
 
 	require.NoError(t, m.CreateSession(paramsForEpoch("old", 0)))
@@ -232,7 +247,7 @@ func TestManaged_RetriesFailedPrune(t *testing.T) {
 
 func TestManaged_RetriesFailedPrune_LegacyLoopPath(t *testing.T) {
 	inner := &legacyOnlyStorage{inner: NewMemory(), failEpoch: 0}
-	m := NewManagedStorage(inner, 1, time.Hour, nil)
+	m := NewManagedStorage(inner, 1, nil)
 	t.Cleanup(func() { _ = m.Close() })
 
 	require.NoError(t, m.CreateSession(paramsForEpoch("old", 0)))
@@ -249,7 +264,7 @@ func TestManaged_RetriesFailedPrune_LegacyLoopPath(t *testing.T) {
 
 func TestManaged_UsesRangePruneWhenAvailable(t *testing.T) {
 	inner := &rangeCountingStorage{Memory: NewMemory()}
-	m := NewManagedStorage(inner, 3, time.Hour, nil)
+	m := NewManagedStorage(inner, 3, nil)
 	t.Cleanup(func() { _ = m.Close() })
 
 	require.NoError(t, m.CreateSession(paramsForEpoch("old", 1)))

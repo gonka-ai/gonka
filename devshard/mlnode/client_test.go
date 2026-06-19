@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"devshard/mlnode/gen"
+	"devshard/nodemanager/gen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

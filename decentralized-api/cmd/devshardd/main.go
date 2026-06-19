@@ -9,10 +9,7 @@
 // block queue, no config sync, no NodeManager gRPC server, no NATS, and no
 // transaction manager. devshardd never writes to mainnet.
 //
-// TODO(devshard): when devshardd moves under the devshard/ module, replace the
-// dapi-owned chainParamsProvider/AvailabilityTracker wiring with a devshard-owned
-// mainnet params snapshot. The current shape is temporary while devshardd reuses
-// dapi internals.
+// Runtime params come from dapi NodeManager long-poll (runtimeconfig) only.
 //
 // Versiond's process manager invokes this binary with `--port <N>` and
 // `--data-dir <PATH>` as its contract (see versioned/internal/process/manager.go).
@@ -32,7 +29,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -43,7 +39,6 @@ import (
 
 	igniteclient "github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/labstack/echo/v4"
-	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -54,8 +49,10 @@ import (
 	devshardpkg "devshard"
 	devshardbridge "devshard/bridge"
 	mlnodeclient "devshard/mlnode"
+	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
+
+	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
 // Version is the devshardd version. Set via ldflags
@@ -68,19 +65,19 @@ func main() {
 	dataDir := flag.String("data-dir", "/var/lib/devshardd", "data directory for sqlite/payloads (set by versiond)")
 	flag.Parse()
 
-	prefix := os.Getenv("DEVSHARD_LOG_PREFIX")
-	runtimeVersion, err := resolveRuntimeVersion(prefix, Version)
+	oracleVersion := os.Getenv("DEVSHARD_BINARY_VERSION")
+	runtimeVersion, err := resolveRuntimeVersion(oracleVersion, Version)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("devshardd starting",
 		"build_version", Version,
-		"selected_version", prefix,
+		"oracle_version", oracleVersion,
 		"runtime_version", runtimeVersion,
 		"port", *port,
 		"data-dir", *dataDir)
 	if err != nil {
 		slog.Error("devshardd version mismatch",
 			"build_version", Version,
-			"selected_version", prefix,
+			"oracle_version", oracleVersion,
 			"runtime_version", runtimeVersion)
 		log.Fatalf("resolve runtime version: %v", err)
 	}
@@ -91,6 +88,21 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	shutdownObservability, err := devshardobservability.Init(ctx, devshardobservability.Config{
+		ServiceName:    devshardobservability.ServiceName,
+		ServiceVersion: runtimeVersion,
+	})
+	if err != nil {
+		log.Fatalf("init observability: %v", err)
+	}
+	devshardobservability.SetRuntime("devshardd", runtimeVersion, "standalone_devshardd")
+	devshardobservability.SetBuildInfo("devshardd", Version, "")
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = shutdownObservability(shutdownCtx)
+	}()
 
 	nodeConfig := loadNodeConfigFromEnv()
 	slog.Info("chain node", "url", nodeConfig.Url, "keyring_backend", nodeConfig.KeyringBackend, "keyring_dir", nodeConfig.KeyringDir)
@@ -115,8 +127,6 @@ func main() {
 		log.Fatalf("devshard signer: %v", err)
 	}
 
-	br := internaldevshard.NewChainBridge(recorder)
-
 	nmAddr := envOr("NODE_MANAGER_ADDR", "localhost:9400")
 	slog.Info("nodemanager", "addr", nmAddr)
 	mlClient, err := mlnodeclient.NewClient(nmAddr)
@@ -138,7 +148,16 @@ func main() {
 	httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 
 	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
-	chainParams := newChainParamsProvider(ctx, recorder, availabilityTracker)
+
+	seedAvailabilityFromChain(ctx, recorder, availabilityTracker)
+
+	paramsSetup, err := newParamsProvider(ctx, recorder, mlClient, availabilityTracker, slog.Default())
+	if err != nil {
+		log.Fatalf("runtime params provider: %v", err)
+	}
+	chainParams := paramsSetup.Provider
+
+	br := internaldevshard.NewChainBridge(recorder)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
@@ -163,11 +182,18 @@ func main() {
 	} else if migrated > 0 {
 		slog.Info("devshardd legacy migration complete", "sessions_migrated", migrated)
 	}
-	store := devshardstorage.NewManagedStorage(inner, 3, 30*time.Second, chainParams)
+	store := devshardstorage.NewManagedStorage(inner, 3, chainParams)
 	defer store.Close()
+	if paramsSetup.RegisterEpochPrune != nil {
+		cancelEpochPrune := paramsSetup.RegisterEpochPrune(store)
+		defer cancelEpochPrune()
+	}
 
-	manager := internaldevshard.NewHostManager(store, signer, engine, validator, devshardtypes.NormalizeSessionVersion(runtimeVersion), br, payloadStore, recorder)
+	manager := internaldevshard.NewHostManager(store, signer, engine, validator, runtimeVersion, br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
+	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
+	manager.SetRuntimeParamsProvider(internaldevshard.RuntimeConfigRuntimeParams(chainParams))
+
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}
@@ -177,7 +203,15 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Server.ConnState = devshardobservability.ConnState("devshardd")
+	// Register Go/process collectors only here (standalone devshardd): this
+	// registry is not merged with any other, so it owns the runtime metrics.
+	devshardobservability.RegisterRuntimeCollectors()
+	// /healthz and /metrics intentionally have no EchoMiddleware so they don't
+	// emit server spans. Session routes get EchoMiddleware from
+	// RegisterLazySessionRoutes inside manager.Register below.
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/metrics", echo.WrapHandler(devshardobservability.MetricsHandler()))
 	// Mount HostManager routes at the root. Versiond strips the /<version>/
 	// prefix before forwarding, so devshardd sees /sessions/:id/* directly.
 	manager.Register(e.Group(""))
@@ -257,20 +291,20 @@ func buildApiAccount(ignite *igniteclient.Client, keyName string) (apiconfig.Api
 	}, nil
 }
 
-func resolveRuntimeVersion(selectedVersion, buildVersion string) (string, error) {
-	if selectedVersion == "" {
+func resolveRuntimeVersion(oracleVersion, buildVersion string) (string, error) {
+	if oracleVersion == "" {
 		if buildVersion == "" {
 			return "", fmt.Errorf("empty build version")
 		}
 		return buildVersion, nil
 	}
 	if buildVersion == "" {
-		return "", fmt.Errorf("selected version %q provided but build version is empty", selectedVersion)
+		return "", fmt.Errorf("oracle version %q provided but build version is empty", oracleVersion)
 	}
-	if selectedVersion != buildVersion {
-		return selectedVersion, fmt.Errorf("selected version %q does not match build version %q", selectedVersion, buildVersion)
+	if oracleVersion != buildVersion {
+		return oracleVersion, fmt.Errorf("oracle version %q does not match build version %q", oracleVersion, buildVersion)
 	}
-	return selectedVersion, nil
+	return oracleVersion, nil
 }
 
 // newIgniteClient builds an ignite cosmosclient.Client with the same options
@@ -321,89 +355,37 @@ func newIgniteClient(ctx context.Context, nodeConfig apiconfig.ChainNodeConfig) 
 	return &c, nil
 }
 
-// chainParamsProvider implements internaldevshard.ChainParamsProvider and
-// devshardstorage.EpochProvider for the standalone devshardd binary. It
-// queries chain params + the latest epoch on construction and refreshes in
-// the background every 60s so long-lived processes pick up governance changes
-// (and so the storage pruner advances even when the host is quiet) without a
-// restart.
-type chainParamsProvider struct {
-	mu           sync.Mutex
-	logprobsMode string
-	currentEpoch uint64
-	availability *devshardpkg.AvailabilityTracker
-}
+// availabilitySeedTimeout bounds the synchronous chain query used to seed
+// AvailabilityTracker at startup. Short so a misconfigured / unreachable chain
+// does not delay devshardd boot; the long-lived params provider (grpc or
+// chain) corrects the value afterwards on its normal cadence.
+const availabilitySeedTimeout = 3 * time.Second
 
-func newChainParamsProvider(ctx context.Context, recorder internaldevshard.PayloadAuthClient, availability *devshardpkg.AvailabilityTracker) *chainParamsProvider {
-	p := &chainParamsProvider{logprobsMode: chaintypes.DefaultLogprobsMode, availability: availability}
-
-	refresh := func() {
-		qc := recorder.NewInferenceQueryClient()
-		var requestsEnabled *bool
-		resp, err := qc.Params(ctx, &chaintypes.QueryParamsRequest{})
-		if err != nil {
-			slog.Warn("failed to query chain params, keeping current values", "error", err)
-		} else {
-			mode := resp.Params.ValidationParams.GetLogprobsMode()
-			if mode == "" {
-				mode = chaintypes.DefaultLogprobsMode
-			}
-			if resp.Params.DevshardEscrowParams != nil {
-				enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
-				requestsEnabled = &enabled
-			}
-			p.mu.Lock()
-			if mode != p.logprobsMode {
-				slog.Info("logprobs_mode updated from chain", "old", p.logprobsMode, "new", mode)
-				p.logprobsMode = mode
-			}
-			p.mu.Unlock()
-		}
-
-		epochResp, eErr := qc.EpochInfo(ctx, &chaintypes.QueryEpochInfoRequest{})
-		if eErr != nil {
-			slog.Warn("failed to query current epoch", "error", eErr)
-			return
-		}
-		idx := epochResp.LatestEpoch.Index
-		p.mu.Lock()
-		if idx != p.currentEpoch {
-			p.currentEpoch = idx
-		}
-		p.mu.Unlock()
-		if requestsEnabled != nil && p.availability != nil {
-			p.availability.Record(*requestsEnabled, time.Now().Unix(), idx)
-		}
+// seedAvailabilityFromChain queries chain params once and records
+// DevshardRequestsEnabled into tracker. Errors are logged at warn level; we
+// preserve the constructor seed (Enabled=true) so a temporary chain hiccup
+// does not refuse all requests until the provider catches up.
+func seedAvailabilityFromChain(ctx context.Context, qcp internaldevshard.InferenceQueryClientProvider, tracker *devshardpkg.AvailabilityTracker) {
+	if qcp == nil || tracker == nil {
+		return
 	}
+	seedCtx, cancel := context.WithTimeout(ctx, availabilitySeedTimeout)
+	defer cancel()
 
-	refresh()
-
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refresh()
-			}
-		}
-	}()
-
-	return p
-}
-
-func (p *chainParamsProvider) LogprobsMode() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.logprobsMode
-}
-
-func (p *chainParamsProvider) CurrentEpochID() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentEpoch
+	qc := qcp.NewInferenceQueryClient()
+	resp, err := qc.Params(seedCtx, &chaintypes.QueryParamsRequest{})
+	if err != nil {
+		slog.Warn("availability seed: chain Params query failed; keeping optimistic seed",
+			"err", err)
+		return
+	}
+	if resp.Params.DevshardEscrowParams == nil {
+		slog.Warn("availability seed: chain returned no DevshardEscrowParams; keeping optimistic seed")
+		return
+	}
+	enabled := resp.Params.DevshardEscrowParams.DevshardRequestsEnabled
+	tracker.Record(enabled, time.Now().Unix(), 0)
+	slog.Info("availability seed: applied from chain", "devshard_requests_enabled", enabled)
 }
 
 func envOr(key, fallback string) string {

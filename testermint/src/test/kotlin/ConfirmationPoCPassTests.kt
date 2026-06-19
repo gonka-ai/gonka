@@ -7,6 +7,8 @@ import org.assertj.core.data.Percentage
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 
+// Keep resetMlNodes=false: production nodes are never reset mid-run; default true swaps
+// wiremock for wiremock2@ml-0000.*.test (STOPPED) and breaks confirmation PoC validation.
 class ConfirmationPoCPassTests : TestermintTest() {
     // 12m
     @Test
@@ -19,7 +21,8 @@ class ConfirmationPoCPassTests : TestermintTest() {
         val (cluster, genesis) = initCluster(
             joinCount = 2,
             mergeSpec = confirmationSpec,  // Merge with defaults instead of replacing
-            reboot = true
+            reboot = true,
+            resetMlNodes = false,
         )
 
         logSection("✅ Cluster Initialized Successfully!")

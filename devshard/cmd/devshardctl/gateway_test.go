@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -42,8 +43,7 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-gateway-test", testutil.DefaultConfig(len(hosts)), group, 1_000_000, userKey.Address(), verifier)
-	require.NoError(t, err)
+	sm := statetest.MustStateMachine(t, "escrow-gateway-test", testutil.DefaultConfig(len(hosts)), group, 1_000_000, userKey.Address(), verifier)
 
 	if phase == types.PhaseActive {
 		return sm
@@ -52,7 +52,7 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	diff := testutil.SignDiff(t, userKey, "escrow-gateway-test", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
 	})
-	_, err = sm.ApplyDiff(diff)
+	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	if phase == types.PhaseSettlement {
@@ -1918,17 +1918,17 @@ func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
 		StalledWinnerQuarantineMS:      175,
 		EmptyStreamQuarantineThreshold: 2,
 	})
-	now := time.Now()
-
 	limiter.ObserveTransportFailure("transport-host", "/sessions/1/chat/completions", fmt.Errorf("dial tcp: connection refused"))
+	transportQuarantineAt := time.Now()
 	require.True(t, limiter.IsBlocked("transport-host"))
-	require.True(t, limiter.allow("transport-host", now.Add(101*time.Millisecond)))
+	require.True(t, limiter.allow("transport-host", transportQuarantineAt.Add(101*time.Millisecond)))
 
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
+	emptyStreamQuarantineAt := time.Now()
 	require.True(t, limiter.IsBlocked("empty-host"))
-	require.True(t, limiter.allow("empty-host", now.Add(151*time.Millisecond)))
+	require.True(t, limiter.allow("empty-host", emptyStreamQuarantineAt.Add(151*time.Millisecond)))
 }
 
 func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *testing.T) {
@@ -2228,7 +2228,7 @@ func TestMigrateGatewayLegacyStorageRejectsConflictingEpochDB(t *testing.T) {
 	require.NoError(t, sqlStore.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "12",
 		EpochID:        270,
-		Version:        types.LegacySessionVersion,
+		Version:        types.LegacyRouteSessionVersion,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: "a"}},
@@ -2314,7 +2314,7 @@ func writeGatewayLegacyStateDB(t *testing.T, path, escrowID string, latestNonce 
 	_, err = db.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		escrowID, types.LegacySessionVersion, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
+		escrowID, types.LegacyRouteSessionVersion, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
 	)
 	require.NoError(t, err)
 	for nonce := uint64(1); nonce <= latestNonce; nonce++ {
@@ -2344,17 +2344,13 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 
 	oldDefault := DefaultRequestMaxTokens
 	oldCap := RequestMaxTokensCap
-	oldStreamingHardTimeout := StreamingAttemptHardTimeout
-	oldNonStreamNoContentTimeout := nonStreamingNoContentTimeout
-	oldNonStreamMaxAttemptWait := nonStreamingMaxAttemptWait
+	oldRedundancy := captureRedundancyTimingSettings()
 	DefaultRequestMaxTokens = 1000
 	RequestMaxTokensCap = 2000
 	t.Cleanup(func() {
 		DefaultRequestMaxTokens = oldDefault
 		RequestMaxTokensCap = oldCap
-		StreamingAttemptHardTimeout = oldStreamingHardTimeout
-		nonStreamingNoContentTimeout = oldNonStreamNoContentTimeout
-		nonStreamingMaxAttemptWait = oldNonStreamMaxAttemptWait
+		restoreRedundancyTimingSettings(oldRedundancy)
 	})
 
 	limiter := NewGatewayLimiter(2, 200)
@@ -2640,6 +2636,7 @@ func TestGatewayStatusCodeForErrorMapsUpstream503To429(t *testing.T) {
 func TestParticipantLimiterBypassedDuringRelaxedPoC(t *testing.T) {
 	setPoCModeForTest(t, pocRequestModeRelaxed)
 	setPoCPhaseState(true, "poc")
+	t.Cleanup(func() { setPoCPhaseState(false, "") })
 
 	limiter := NewParticipantRequestLimiter(1, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
@@ -2651,6 +2648,7 @@ func TestParticipantLimiterBypassedDuringRelaxedPoC(t *testing.T) {
 func TestGatewayLimiterBypassedDuringRelaxedPoC(t *testing.T) {
 	setPoCModeForTest(t, pocRequestModeRelaxed)
 	setPoCPhaseState(true, "poc")
+	t.Cleanup(func() { setPoCPhaseState(false, "") })
 
 	var forwarded bool
 	rt := &devshardRuntime{

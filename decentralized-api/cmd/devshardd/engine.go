@@ -13,7 +13,8 @@ import (
 
 	"devshard"
 	mlnodeclient "devshard/mlnode"
-	mlnodegen "devshard/mlnode/gen"
+	nmgen "devshard/nodemanager/gen"
+	"devshard/observability"
 )
 
 // devshardEngine implements devshard.InferenceEngine for the standalone
@@ -59,13 +60,15 @@ func (e *devshardEngine) Execute(ctx context.Context, req devshard.ExecuteReques
 }
 
 func (e *devshardEngine) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, model, func(endpoint string) (*http.Response, error) {
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
 			return nil, reqErr
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		observability.InjectRequestContext(ctx, httpReq.Header)
+		observability.AttachRequestID(httpReq)
 		return e.httpClient.Do(httpReq)
 	})
 	if err != nil {
@@ -81,6 +84,7 @@ func (e *devshardEngine) executeMLRequest(ctx context.Context, model string, bod
 // purpose of node rotation. 4xx responses are returned as-is (not retried).
 func (e *devshardEngine) doWithLockedNode(
 	ctx context.Context,
+	path observability.Path,
 	model string,
 	fn func(endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
@@ -90,48 +94,60 @@ func (e *devshardEngine) doWithLockedNode(
 	const maxAcquireAttempts = 10
 	var excluded []string
 	var lastErr error
+	lastReason := observability.ReasonAcquireErr
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
 		acq, err := e.mlClient.Acquire(ctx, model, excluded)
 		if err != nil {
+			lastReason = observability.ReasonAcquireErr
+			observability.IncMLNodeAttempt(path, lastReason, "")
 			// Couldn't acquire any node (likely ResourceExhausted = no
 			// nodes with IntendedStatus=INFERENCE yet). Sleep before
 			// retrying to give the broker time to process epoch events.
 			lastErr = fmt.Errorf("acquire: %w", err)
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				lastReason = observability.ReasonTimeout
+				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 			case <-time.After(2 * time.Second):
 			}
 			continue
 		}
 
+		started := time.Now()
 		resp, httpErr := fn(acq.Endpoint)
-		outcome := mlnodegen.ReleaseOutcome_SUCCESS
+		outcome := nmgen.ReleaseOutcome_SUCCESS
 
-		if httpErr != nil {
-			// Transport-class failure on the outbound HTTP. The node may be
-			// sick; exclude it and retry.
-			outcome = mlnodegen.ReleaseOutcome_TRANSPORT_ERROR
+		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
+		observability.IncMLNodeAttempt(path, lastReason, acq.NodeId)
+		observability.ObserveMLNodeCall(path, acq.NodeId, observability.MetricPhaseTotal, started)
+
+		switch lastReason {
+		case observability.ReasonTransportErr, observability.ReasonTimeout:
+			outcome = nmgen.ReleaseOutcome_TRANSPORT_ERROR
 			lastErr = httpErr
-		} else if resp.StatusCode >= 500 {
+		case observability.ReasonHTTP5xx:
 			// Upstream 5xx: also rotate nodes.
 			resp.Body.Close()
-			outcome = mlnodegen.ReleaseOutcome_TRANSPORT_ERROR
+			outcome = nmgen.ReleaseOutcome_TRANSPORT_ERROR
 			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 			resp = nil
+		case observability.ReasonHTTP4xx:
+			// 4xx surfaced to caller without rotation.
 		}
 
 		// Release must fire regardless of outcome to release the lock.
 		if releaseErr := e.mlClient.Release(ctx, acq.LockId, outcome); releaseErr != nil {
+			observability.IncMLNodeAttempt(path, observability.ReasonReleaseErr, acq.NodeId)
 			// Release failure is logged via lastErr but does not block
 			// retries or the caller -- the lock will eventually expire.
 			if lastErr == nil {
+				lastReason = observability.ReasonReleaseErr
 				lastErr = fmt.Errorf("release: %w", releaseErr)
 			}
 		}
 
-		if outcome == mlnodegen.ReleaseOutcome_SUCCESS {
+		if outcome == nmgen.ReleaseOutcome_SUCCESS {
 			return resp, nil
 		}
 
@@ -144,7 +160,10 @@ func (e *devshardEngine) doWithLockedNode(
 	if lastErr == nil {
 		lastErr = errors.New("no attempts made")
 	}
-	return nil, lastErr
+	if lastReason == observability.ReasonOK {
+		lastReason = observability.ReasonTransportErr
+	}
+	return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
 }
 
 // Compile-time check.

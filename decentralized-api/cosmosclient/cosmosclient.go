@@ -518,15 +518,15 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*inferencetypes.QueryAll
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
-	return upgradetypes.NewQueryClient(icc.manager.GetClientContext())
+	return upgradetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() inferencetypes.QueryClient {
-	return inferencetypes.NewQueryClient(icc.manager.GetClientContext())
+	return inferencetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
-	return cmtservice.NewServiceClient(icc.manager.GetClientContext())
+	return cmtservice.NewServiceClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {
@@ -583,9 +583,9 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
-	return blstypes.NewQueryClient(icc.manager.GetClientContext())
+	return blstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
-	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
+	return restrictionstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }

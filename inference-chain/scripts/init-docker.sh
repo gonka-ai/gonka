@@ -248,6 +248,18 @@ if [ ! -d "$STATE_DIR/cosmovisor" ]; then
 fi
 
 ###############################################################################
+# Restore current binary from image if missing (e.g. upgrade binary was removed)
+###############################################################################
+COSMOVISOR_CURRENT_BIN="$STATE_DIR/cosmovisor/current/bin/inferenced"
+if [ -e "$STATE_DIR/cosmovisor/current" ] && { [ ! -x "$COSMOVISOR_CURRENT_BIN" ] || [ ! -f "$COSMOVISOR_CURRENT_BIN" ]; }; then
+  if [ -x /usr/bin/inferenced ]; then
+    echo "Current cosmovisor binary missing or not executable; restoring from image"
+    mkdir -p "$(dirname "$COSMOVISOR_CURRENT_BIN")"
+    cp -f /usr/bin/inferenced "$COSMOVISOR_CURRENT_BIN"
+  fi
+fi
+
+###############################################################################
 # Launch node
 ###############################################################################
 echo "Starting node"

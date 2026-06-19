@@ -31,10 +31,11 @@ const (
 )
 
 type SettlementJSON struct {
-	EscrowID  string `json:"escrow_id"`
-	Version   string `json:"version"`
-	StateRoot string `json:"state_root"`
-	Nonce     uint64 `json:"nonce"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string `json:"version"`
+	StateRoot                   string `json:"state_root"`
+	Nonce                       uint64 `json:"nonce"`
 	// Fees is the total fee amount deducted during session execution.
 	Fees       uint64              `json:"fees"`
 	RestHash   string              `json:"rest_hash"`
@@ -662,7 +663,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
+	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
@@ -679,7 +680,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 	}
 
 	return SettlementJSON{
-		EscrowID: p.EscrowID, Version: p.Version, StateRoot: base64.StdEncoding.EncodeToString(root),
+		EscrowID: p.EscrowID, StateRootAndProtocolVersion: p.StateRootAndProtocolVersion, StateRoot: base64.StdEncoding.EncodeToString(root),
 		Nonce: p.Nonce, Fees: p.Fees, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
 		HostStats: stats, Signatures: sigs,
 	}, nil

@@ -92,14 +92,19 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	}
 
 	escrow := &types.DevshardEscrow{
-		Creator:    msg.Creator,
-		Amount:     msg.Amount,
-		Slots:      slots,
-		EpochIndex: epochIndex,
-		AppHash:    appHash,
-		Settled:    false,
-		TokenPrice: ep.TokenPrice,
-		ModelId:    msg.ModelId,
+		Creator:                   msg.Creator,
+		Amount:                    msg.Amount,
+		Slots:                     slots,
+		EpochIndex:                epochIndex,
+		AppHash:                   appHash,
+		Settled:                   false,
+		TokenPrice:                ep.TokenPrice,
+		ModelId:                   msg.ModelId,
+		CreateDevshardFee:         ep.CreateDevshardFee,
+		FeePerNonce:               ep.FeePerNonce,
+		InferenceSealGraceNonces:  types.DevshardInferenceSealGraceNoncesForCreate(ep, uint32(len(slots))),
+		InferenceSealGraceSeconds: types.DevshardInferenceSealGraceSecondsForCreate(ep),
+		AutoSealEveryNNonces:      types.DevshardAutoSealEveryNNoncesForCreate(ep),
 	}
 
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)

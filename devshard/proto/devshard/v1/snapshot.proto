@@ -1,0 +1,51 @@
+syntax = "proto3";
+package devshard.v1;
+option go_package = "devshard/types";
+
+import "devshard/v1/state.proto";
+
+// SessionConfigProto is the frozen session config stamped at bind time.
+message SessionConfigProto {
+  int64 refusal_timeout = 1;
+  int64 execution_timeout = 2;
+  uint64 token_price = 3;
+  uint64 create_devshard_fee = 4;
+  uint64 fee_per_nonce = 5;
+  uint32 vote_threshold = 6;
+  uint32 validation_rate = 7;
+  uint32 inference_seal_grace_nonces = 8;
+  uint32 inference_seal_grace_seconds = 9;
+  uint32 auto_seal_every_n_nonces = 10;
+}
+
+message SlotAssignmentProto {
+  uint32 slot_id = 1;
+  string validator_address = 2;
+}
+
+// EscrowStateProto is the full persisted session state.
+message EscrowStateProto {
+  string escrow_id = 1;
+  string state_root_and_protocol_version = 2;
+  SessionConfigProto config = 3;
+  repeated SlotAssignmentProto group = 4;
+  uint64 balance = 5;
+  uint64 fees = 6;
+  uint32 phase = 7;
+  uint64 finalize_nonce = 8;
+  map<uint64, InferenceRecordProto> inferences = 9;
+  map<uint32, HostStatsProto> host_stats = 10;
+  map<uint32, string> warm_keys = 11;
+  uint64 latest_nonce = 12;
+  bytes sealed_acc = 13;
+}
+
+// StateSnapshotProto matches the shared storage/recovery envelope. Hosts do not
+// use host_sync_nonce, but keeping the field makes snapshots portable across
+// proxy and host recovery code.
+message StateSnapshotProto {
+  EscrowStateProto state = 1;
+  map<uint64, bytes> committed_entries = 2;
+  map<uint64, uint64> sealed_nonces = 3;
+  map<int32, uint64> host_sync_nonce = 4;
+}

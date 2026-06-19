@@ -8,8 +8,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar main.go
 # Final Stage
 FROM nginx:1.28-alpine
 
-# Install curl, gettext (for envsubst), jq, and bash (for setup-ssl.sh)
-RUN apk add --no-cache curl gettext jq bash
+# Install curl, gettext (for envsubst), jq, bash (for setup-ssl.sh), and
+# apache2-utils (htpasswd for observability UI basic auth).
+RUN apk add --no-cache curl gettext jq bash apache2-utils
 
 # Copy sidecar binary
 COPY --from=builder /app/sidecar /usr/local/bin/sidecar

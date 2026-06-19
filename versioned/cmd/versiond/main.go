@@ -30,6 +30,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	slog.Info(
+		"versiond startup",
+		"VERSIOND_FORCE", os.Getenv("VERSIOND_FORCE"),
+		"VERSIOND_BINARY_NAME", os.Getenv("VERSIOND_BINARY_NAME"),
+	)
 
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()

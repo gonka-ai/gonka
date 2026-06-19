@@ -136,7 +136,7 @@ func IsUpstreamEscrowNotFound(err error) bool {
 
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		InferenceTimeout: 20 * time.Minute,
+		InferenceTimeout: 30 * time.Minute,
 		GossipTimeout:    10 * time.Second,
 		VerifyTimeout:    3 * time.Minute,
 		QueryTimeout:     30 * time.Second,

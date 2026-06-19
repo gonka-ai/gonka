@@ -93,10 +93,12 @@ Because escrow creation carries no version, deprecation enforcement can only
 happen later in the flow. The intended enforcement point is settlement, not
 escrow creation.
 
-Settlement carries a cleartext `version` field and that same value is part of
-the signed state commitment. Mainnet can read the version directly from the
-settlement message and verify that hosts signed that exact version by
-recomputing the state root with `version_hash = sha256(version_utf8)`.
+Settlement carries a cleartext **state root and protocol version** tag
+(`state_root_and_protocol_version`) and that same value is part of the signed
+state commitment. Mainnet recomputes the root with
+`version_hash = sha256(tag_utf8)`. That tag is independent of versiond runtime
+names in `approved_versions`; bump it only when state-root or settlement protocol
+changes — see [protocol-version.md](./protocol-version.md).
 
 ## Operator overrides
 

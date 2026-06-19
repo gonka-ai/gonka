@@ -106,4 +106,17 @@ func (f *FileStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
 	return nil
 }
 
+func (f *FileStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
+	filename := inferenceIdToFilename(inferenceId)
+	filePath := filepath.Join(f.baseDir, strconv.FormatUint(epochId, 10), filename+".json")
+	if err := os.Remove(filePath); err != nil {
+		if os.IsNotExist(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("remove payload file: %w", err)
+	}
+	logging.Debug("Deleted payload file", types.PayloadStorage, "inferenceId", inferenceId, "epochId", epochId)
+	return nil
+}
+
 var _ PayloadStorage = (*FileStorage)(nil)
