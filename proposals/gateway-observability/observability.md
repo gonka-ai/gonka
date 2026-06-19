@@ -48,7 +48,8 @@ Core V1 is implemented as the first pass:
   `deploy/join/observability/grafana/dashboards/gonka-gateway-observability.json`.
   It is organized summary-first with top-N tables, minimum-volume filters, and
   lower-level drilldown rows so high-cardinality participant and reason data
-  remains readable.
+  remains readable. The interaction flow is model-first: select a model, inspect
+  top reasons, then drill into participants for the selected reason.
 - Metrics are recorded at existing lifecycle boundaries in `gateway.go`,
   `redundancy.go`, `session_picker.go` via `runGhostProbe`, and
   `participant_limiter.go`.

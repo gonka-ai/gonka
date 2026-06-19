@@ -16,7 +16,7 @@
       },
       "id": 1,
       "options": {
-        "content": "Use this dashboard from top to bottom. The first rows answer whether the gateway is being scraped, whether users are protected, and whether model capacity is reduced. Later rows explain why: hidden failures, participant quality, no-send slots, and timeout work. Empty data usually means one of three things: Prometheus cannot scrape `devshard-gateway`, the gateway image is older than the metrics change, or no `/v1/chat/completions` traffic has hit the gateway in the selected time range.\n\nGlossary: a user request is what the client sees. An attempt is one real participant send. A hidden failure is a failed attempt protected by another successful attempt. A slot decision is a real send or a no-send burn. Scale factor is current model capacity divided by steady-state model capacity.",
+        "content": "Use this dashboard from top to bottom. Start by selecting a `model`. First check scrape health, user health, and model capacity. Then inspect top reasons. Only after a reason looks important, use `drilldown_reason` to inspect participants for that reason.\n\nEmpty data usually means one of three things: Prometheus cannot scrape `devshard-gateway`, the gateway image is older than the metrics change, or no `/v1/chat/completions` traffic has hit the gateway in the selected time range.\n\nGlossary: a user request is what the client sees. An attempt is one real participant send. A hidden failure is a failed attempt protected by another successful attempt. A slot decision is a real send or a no-send burn. Scale factor is current model capacity divided by steady-state model capacity.",
         "mode": "markdown"
       },
       "title": "Read This First",
@@ -236,7 +236,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top reasons currently affecting users or forcing protective work. Each target is separate so sparse reasons remain visible.",
+      "description": "Top reasons currently affecting the selected model. Pick one of these reasons in `drilldown_reason` before using the participant drilldown rows.",
       "gridPos": {
         "h": 6,
         "w": 24,
@@ -246,17 +246,17 @@
       "id": 8,
       "targets": [
         {
-          "expr": "topk(5, sum(rate(devshard_gateway_critical_user_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason))",
+          "expr": "topk(5, sum(rate(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
           "legendFormat": "user failure: {{reason}}",
           "refId": "A"
         },
         {
-          "expr": "topk(5, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason))",
+          "expr": "topk(5, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
           "legendFormat": "hidden failure: {{reason}}",
           "refId": "B"
         },
         {
-          "expr": "topk(5, sum(rate(devshard_gateway_timeout_actions_total{model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__rate_interval])) by (reason))",
+          "expr": "topk(5, sum(rate(devshard_gateway_timeout_actions_total{model=~\"$model\",action=~\"skipped|failed\"}[$__rate_interval])) by (reason))",
           "legendFormat": "timeout work: {{reason}}",
           "refId": "C"
         }
@@ -432,7 +432,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top participants whose output users actually saw.",
+      "description": "Top participants whose output users saw for the selected model. This is grouped by participant only; use model selection above instead of preselecting participants.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -442,7 +442,7 @@
       "id": 16,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
+          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{model=~\"$model\"}[$__range])) by (participant_key))",
           "instant": true,
           "refId": "A"
         }
@@ -455,7 +455,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Models with the most user-visible failures in the selected time range.",
+      "description": "Top user-visible failure reasons for the selected model in the selected time range.",
       "gridPos": {
         "h": 6,
         "w": 24,
@@ -465,12 +465,12 @@
       "id": 17,
       "targets": [
         {
-          "expr": "topk(10, sum(increase(devshard_gateway_critical_user_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) by (model, reason))",
+          "expr": "topk(10, sum(increase(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__range])) by (reason))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Top User-Visible Failures",
+      "title": "Top User-Visible Failure Reasons",
       "type": "table"
     },
     {
@@ -506,7 +506,7 @@
       "id": 19,
       "targets": [
         {
-          "expr": "topk(10, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason))",
+          "expr": "topk(10, sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\"}[$__rate_interval])) by (reason))",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -547,7 +547,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Participants with the highest failed-attempt volume. This is a participant-level proxy for protected work because hidden-failure counters are intentionally request-level.",
+      "description": "After selecting `drilldown_reason`, this shows participants with the highest failed-attempt volume for that reason and model.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -557,12 +557,12 @@
       "id": 21,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason))",
+          "expr": "topk(20, sum(increase(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Top Failed Attempts",
+      "title": "Participants for Selected Reason",
       "type": "table"
     },
     {
@@ -601,7 +601,7 @@
       "id": 23,
       "targets": [
         {
-          "expr": "topk(20, (sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "topk(20, (sum by (participant_key) (increase(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key) (increase(devshard_gateway_attempts_started_total{model=~\"$model\"}[$__range])), 1)) and on (participant_key) (sum by (participant_key) (increase(devshard_gateway_attempts_started_total{model=~\"$model\"}[$__range])) >= $min_attempts))",
           "instant": true,
           "refId": "A"
         }
@@ -624,7 +624,7 @@
       "id": 24,
       "targets": [
         {
-          "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
+          "expr": "sum(devshard_gateway_participant_quarantine_state{model=~\"$model\"}) by (participant_key, mode)",
           "instant": true,
           "refId": "A"
         }
@@ -647,7 +647,7 @@
       "id": 25,
       "targets": [
         {
-          "expr": "topk(10, sum(rate(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (reason, quarantine_mode))",
+          "expr": "topk(10, sum(rate(devshard_gateway_no_winner_attempts_total{model=~\"$model\"}[$__rate_interval])) by (reason, quarantine_mode))",
           "legendFormat": "{{reason}} / {{quarantine_mode}}",
           "refId": "A"
         }
@@ -683,7 +683,7 @@
       "id": 27,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (kind, action)",
+          "expr": "sum(rate(devshard_gateway_timeout_actions_total{model=~\"$model\"}[$__rate_interval])) by (kind, action)",
           "legendFormat": "{{kind}} / {{action}}",
           "refId": "A"
         }
@@ -706,7 +706,7 @@
       "id": 28,
       "targets": [
         {
-          "expr": "topk(10, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__range])) by (kind, action, reason))",
+          "expr": "topk(10, sum(increase(devshard_gateway_timeout_actions_total{model=~\"$model\",action=~\"skipped|failed\"}[$__range])) by (kind, action, reason))",
           "instant": true,
           "refId": "A"
         }
@@ -817,13 +817,13 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(devshard_gateway_attempts_started_total, participant_key)",
-        "hide": 0,
+        "definition": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}, participant_key)",
+        "hide": 2,
         "includeAll": true,
-        "label": "participant_key",
+        "label": "participant_key drilldown",
         "name": "participant_key",
         "query": {
-          "query": "label_values(devshard_gateway_attempts_started_total, participant_key)",
+          "query": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\",reason=~\"$reason\"}, participant_key)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -840,13 +840,13 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(devshard_gateway_attempt_failures_total, reason)",
+        "definition": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\"}, reason)",
         "hide": 0,
         "includeAll": true,
-        "label": "reason",
+        "label": "drilldown_reason",
         "name": "reason",
         "query": {
-          "query": "label_values(devshard_gateway_attempt_failures_total, reason)",
+          "query": "label_values(devshard_gateway_attempt_failures_total{model=~\"$model\"}, reason)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -863,13 +863,13 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(devshard_gateway_slot_decisions_total, escrow_id)",
-        "hide": 0,
+        "definition": "label_values(devshard_gateway_slot_decisions_total{model=~\"$model\"}, escrow_id)",
+        "hide": 2,
         "includeAll": true,
-        "label": "escrow_id",
+        "label": "escrow_id drilldown",
         "name": "escrow_id",
         "query": {
-          "query": "label_values(devshard_gateway_slot_decisions_total, escrow_id)",
+          "query": "label_values(devshard_gateway_slot_decisions_total{model=~\"$model\"}, escrow_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
