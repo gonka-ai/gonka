@@ -2775,6 +2775,8 @@ func TestGatewayMetricsEndpointExposedAndUpdated(t *testing.T) {
 	require.Contains(t, body, `status="429"`)
 	require.Contains(t, body, `devshard_gateway_limit_rejections_total`)
 	require.Contains(t, body, `reason="max_input_tokens_in_flight"`)
+	require.Contains(t, body, `devshard_gateway_requests_total{model="Qwen/Test",outcome="gateway_limited",reason="max_input_tokens_in_flight"} 1`)
+	require.Contains(t, body, `devshard_gateway_critical_user_failures_total{model="Qwen/Test",reason="max_input_tokens_in_flight"} 1`)
 	require.Contains(t, body, `devshard_gateway_inflight_requests`)
 	require.Contains(t, body, `devshard_runtime_active`)
 	require.Contains(t, body, `devshard_id="12"`)

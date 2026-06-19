@@ -827,6 +827,8 @@ type inflight struct {
 	prepared                   *user.PreparedInference
 	hostIdx                    int
 	hostID                     string
+	role                       string
+	startReason                string
 	nonce                      uint64
 	escrowID                   string
 	sendTime                   time.Time
@@ -1448,6 +1450,8 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 		}
 		return err
 	}
+	primary.role = "primary"
+	primary.startReason = "primary"
 	triedParticipants[e.session.HostParticipantKey(primary.hostIdx)] = true
 
 	decision := e.Decide(primary.hostIdx, params.InputLength)
@@ -1637,6 +1641,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// before awaitRace can observe the attempt.
 	inf.sendTime = time.Now()
 	inf.startedBeforePoCGeneration = !currentPoCGenerationActive()
+	e.recordGatewayAttemptStarted(inf, params)
 	go e.monitorInflight(ctx, inf, race)
 
 	go func() {
@@ -1753,6 +1758,8 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 		return nil
 	}
 	triedParticipants[e.session.HostParticipantKey(next.hostIdx)] = true
+	next.role = "extra"
+	next.startReason = reason
 	if e.metrics != nil {
 		e.metrics.RecordSpeculativeAttemptStart(reason)
 	}
@@ -3230,6 +3237,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
+		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok)
 		if !ok {
 			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
 			failed = append(failed, inf)
@@ -3250,16 +3258,19 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			if inf.phaseTransitionAborted {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", "phase_transition_aborted")
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "phase_transition_aborted")
 				continue
 			}
 			if reason, skip := emptyStreamWithoutWinnerTimeoutSkipReason(inf, e.session); skip {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", reason)
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", reason)
 				continue
 			}
 			if !shouldRunHandleTimeout(inf, e.session) {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", "nonce_already_finished")
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "nonce_already_finished")
 				continue
 			}
 			if e.longResponseFailureExempt(inf) {
@@ -3270,6 +3281,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 					"content_chunks", inf.contentChunks.Load(),
 					"output_bytes", inf.outputBytes.Load(),
 				)
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "long_response_after_content")
 				continue
 			}
 			payload := &host.InferencePayload{
@@ -3279,17 +3291,22 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				MaxTokens:   params.MaxTokens,
 				StartedAt:   params.StartedAt,
 			}
+			e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "started", "none")
 			result, err := e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, payload)
 			if result.Reason != "" && e.metrics != nil {
 				e.metrics.RecordInferenceTimeout(result.Reason)
 			}
 			if err != nil {
+				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_failed", "host", inf.hostID, "error", err)
+			} else {
+				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 			}
 		}
 		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
 			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
 			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
+			e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 			e.completeAccountingRequest(ctx, 0, decision, "failed")
 			e.logRequestSettled(ctx, 0, decision, "failed")
 			e.checkEscrowMissing(ctx, attempts)
@@ -3304,6 +3321,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
 		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
+		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 		e.completeAccountingRequest(ctx, 0, decision, "failed")
 		e.logRequestSettled(ctx, 0, decision, "failed")
 		e.checkEscrowMissing(ctx, attempts)
@@ -3353,16 +3371,19 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 					if inf.phaseTransitionAborted {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", "phase_transition_aborted")
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "phase_transition_aborted")
 						continue
 					}
 					if reason, blocked := e.escrowStateBlockReason(e.participantKeyForHost(inf.hostIdx)); blocked {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", reason)
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", reason)
 						continue
 					}
 					if !shouldRunHandleTimeout(inf, e.session) {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", "nonce_already_finished")
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "nonce_already_finished")
 						continue
 					}
 					if e.longResponseFailureExempt(inf) {
@@ -3373,14 +3394,19 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 							"content_chunks", inf.contentChunks.Load(),
 							"output_bytes", inf.outputBytes.Load(),
 						)
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "long_response_after_content")
 						continue
 					}
+					e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "started", "none")
 					result, err := e.session.HandleTimeout(bgCtx, inf.nonce, inf.sendTime, payload)
 					if result.Reason != "" && e.metrics != nil {
 						e.metrics.RecordInferenceTimeout(result.Reason)
 					}
 					if err != nil {
+						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "background_timeout_failed", "host", inf.hostID, "error", err)
+					} else {
+						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 					}
 				}
 				e.logRequestSettled(bgCtx, winnerNonce, decision, "success")
@@ -3389,6 +3415,9 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	}
 
 	e.completeAccountingRequest(ctx, winnerNonce, decision, "success")
+	e.recordGatewayRequestOutcome(params.Model, "success", "none")
+	e.recordGatewayUserVisibleWin(attempts, params, winnerNonce)
+	e.recordGatewayHiddenFailure(params.Model, failed)
 	logRequestStage(ctx, "request_succeeded", "escrow", e.devshardID, "winner_nonce", winnerNonce, "decision", decision.Reason)
 	if len(failed) == 0 {
 		e.logRequestSettled(ctx, winnerNonce, decision, "success")
@@ -3496,6 +3525,175 @@ func (e *Redundancy) completeAccountingRequest(ctx context.Context, winnerNonce 
 		return
 	}
 	e.perf.CompleteAccountingRequest(requestID, e.devshardID, winnerNonce, decision.Reason, outcome, time.Now())
+}
+
+func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
+	if e == nil || e.metrics == nil {
+		return
+	}
+	e.metrics.RecordGatewayRequest(model, outcome, reason)
+	if outcome == "failed" {
+		e.metrics.RecordCriticalUserFailure(model, reason)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	role := gatewayAttemptRole(inf)
+	reason := gatewayAttemptStartReason(inf)
+	quarantineMode := e.quarantineModeForParticipant(participantKey)
+	e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		EscrowID:       inf.escrowID,
+		Decision:       "real_send",
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	e.metrics.RecordGatewayAttemptStarted(GatewayAttemptStartMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	if inf.suspicious {
+		e.metrics.RecordGatewayNoWinnerAttempt(participantKey, model, inf.noWinnerReason, inf.noWinnerQuarantineMode)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	outcome := "success"
+	if !ok {
+		outcome = "failed"
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	visibility := gatewayAttemptVisibility(inf, winnerNonce, ok)
+	role := gatewayAttemptRole(inf)
+	e.metrics.RecordGatewayAttemptTerminal(GatewayAttemptTerminalMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Outcome:        outcome,
+		Visibility:     visibility,
+	})
+	if !ok {
+		e.metrics.RecordGatewayAttemptFailure(GatewayAttemptFailureMetric{
+			ParticipantKey: participantKey,
+			Model:          model,
+			Role:           role,
+			Reason:         gatewayAttemptFailureReason(inf, e.session),
+			Visibility:     visibility,
+		})
+	}
+}
+
+func (e *Redundancy) recordGatewayUserVisibleWin(attempts []*inflight, params user.InferenceParams, winnerNonce uint64) {
+	if e == nil || e.metrics == nil || winnerNonce == 0 {
+		return
+	}
+	if winner := inflightByNonce(attempts, winnerNonce); winner != nil && !winner.probe {
+		e.metrics.RecordGatewayUserVisibleWin(e.participantKeyForHost(winner.hostIdx), gatewayMetricModel(params, e.model))
+	}
+}
+
+func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight) {
+	if e == nil || e.metrics == nil || len(failed) == 0 {
+		return
+	}
+	for _, inf := range failed {
+		if inf == nil || inf.probe {
+			continue
+		}
+		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session))
+		return
+	}
+}
+
+func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	e.metrics.RecordGatewayTimeoutAction(GatewayTimeoutActionMetric{
+		ParticipantKey: e.participantKeyForHost(inf.hostIdx),
+		Model:          gatewayMetricModel(params, e.model),
+		Kind:           kind,
+		Action:         action,
+		Reason:         reason,
+	})
+}
+
+func (e *Redundancy) quarantineModeForParticipant(participantKey string) string {
+	if e == nil || participantKey == "" {
+		return "none"
+	}
+	if status, ok := e.noWinnerStatusForParticipant(participantKey); ok {
+		if status.quarantineMode != "" {
+			return status.quarantineMode
+		}
+		return "probation"
+	}
+	if e.participantLimiter != nil && e.participantLimiter.IsBlockedForModel(participantKey, e.model) {
+		return participantQuarantineProbe.String()
+	}
+	return "none"
+}
+
+func gatewayMetricModel(params user.InferenceParams, fallback string) string {
+	if params.Model != "" {
+		return params.Model
+	}
+	return fallback
+}
+
+func gatewayAttemptRole(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.role) == "" {
+		return "primary"
+	}
+	return inf.role
+}
+
+func gatewayAttemptStartReason(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.startReason) == "" {
+		return "primary"
+	}
+	return inf.startReason
+}
+
+func gatewayRequestFailureReason(failed []*inflight) string {
+	for _, inf := range failed {
+		if inf != nil && !inf.probe {
+			return gatewayAttemptFailureReason(inf, nil)
+		}
+	}
+	return "unknown"
+}
+
+func timeoutKindForInflight(inf *inflight) string {
+	if inf == nil {
+		return "unknown"
+	}
+	if inf.receiptTime.IsZero() {
+		return "refused"
+	}
+	return "execution"
+}
+
+func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
+	switch result.Reason {
+	case "refused", "execution":
+		return result.Reason
+	default:
+		return timeoutKindForInflight(inf)
+	}
 }
 
 func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params user.InferenceParams) HostInvolvement {
@@ -3639,6 +3837,17 @@ func ghostProbeParams(model string) user.InferenceParams {
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
+	}
+	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: e.quarantineModeForParticipant(participantKey),
+		})
 	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",

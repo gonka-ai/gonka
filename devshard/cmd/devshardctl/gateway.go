@@ -1145,6 +1145,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	body, model, inputTokens, err := g.parseChatReservation(r, g.settings.DefaultModel)
 	if err != nil {
 		logRequestStage(ctx, "gateway_parse_failed", "error", err)
+		g.recordGatewayRequestOutcome(firstNonEmpty(model, g.settings.DefaultModel), "invalid_request", "invalid_request")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), chatRequestErrorStatus(err, http.StatusBadRequest))
 		return
 	}
@@ -1154,11 +1155,13 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	requestModel := firstNonEmpty(model, g.settings.DefaultModel)
 	if err := g.validatePooledRequestedModel(requestModel); err != nil {
 		logRequestStage(ctx, "gateway_model_rejected", "model", requestModel, "error", err)
+		g.recordGatewayRequestOutcome(requestModel, "model_rejected", "model_rejected")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
 	if err := g.modelAccessError(r, requestModel); err != nil {
 		logRequestStage(ctx, "gateway_model_temporarily_unavailable", "model", requestModel, "error", err)
+		g.recordGatewayRequestOutcome(requestModel, "model_rejected", "model_access_rejected")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
@@ -1168,6 +1171,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
 		g.recordCachedAccountingAlias(ctx, entry)
+		g.recordGatewayRequestOutcome(requestModel, "cached", "cache_hit")
 		serveCachedChatResponse(w, r, entry)
 		return
 	}
@@ -1177,8 +1181,10 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		g.refreshCapacityScale()
 		limitModel := requestModel
 		if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
-			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
-			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
+			reason := limiterReasonLabel(err)
+			g.metrics.RecordLimitRejection(reason)
+			g.recordGatewayRequestOutcome(limitModel, "gateway_limited", reason)
+			logRequestStage(ctx, "gateway_limiter_rejected", "reason", reason, "input_tokens", inputTokens)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 			return
 		}
@@ -1194,6 +1200,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		if isParticipantRateLimitError(err) {
 			g.metrics.RecordParticipantLimitRejection("pooled_route")
 		}
+		g.recordGatewayRequestOutcome(requestModel, "runtime_unavailable", gatewayRuntimeUnavailableReason(err))
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
@@ -1253,23 +1260,27 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 	if innerPath == "/v1/chat/completions" {
 		if ok, reason := rt.acceptsNewInferences(); !ok {
 			logRequestStage(ctx, "gateway_devshard_unavailable", "escrow", devshardID, "reason", reason)
+			g.recordGatewayRequestOutcome(firstNonEmpty(rt.model, g.settings.DefaultModel), "runtime_unavailable", runtimeSkipReasonKey(reason))
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is unavailable for new inferences: %s"}}`, devshardID, reason), http.StatusConflict)
 			return
 		}
 		body, model, inputTokens, err := g.parseChatReservation(r, firstNonEmpty(rt.model, g.settings.DefaultModel))
 		if err != nil {
 			logRequestStage(ctx, "gateway_devshard_parse_failed", "escrow", devshardID, "error", err)
+			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "invalid_request", "invalid_request")
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), chatRequestErrorStatus(err, http.StatusBadRequest))
 			return
 		}
 		if err := rt.validateRequestedModel(model); err != nil {
 			logRequestStage(ctx, "gateway_devshard_model_rejected", "escrow", devshardID, "model", model, "error", err)
+			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "model_rejected", "model_rejected")
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}
 		limitModel := firstNonEmpty(model, rt.model, g.settings.DefaultModel)
 		if err := g.modelAccessError(r, limitModel); err != nil {
 			logRequestStage(ctx, "gateway_devshard_model_temporarily_unavailable", "escrow", devshardID, "model", limitModel, "error", err)
+			g.recordGatewayRequestOutcome(limitModel, "model_rejected", "model_access_rejected")
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}
@@ -1278,6 +1289,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
 			g.recordCachedAccountingAlias(ctx, entry)
+			g.recordGatewayRequestOutcome(limitModel, "cached", "cache_hit")
 			serveCachedChatResponse(w, r, entry)
 			return
 		}
@@ -1285,8 +1297,10 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 			g.refreshCapacityScale()
 			if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
-				g.metrics.RecordLimitRejection(limiterReasonLabel(err))
-				logRequestStage(ctx, "gateway_devshard_limiter_rejected", "escrow", devshardID, "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
+				reason := limiterReasonLabel(err)
+				g.metrics.RecordLimitRejection(reason)
+				g.recordGatewayRequestOutcome(limitModel, "gateway_limited", reason)
+				logRequestStage(ctx, "gateway_devshard_limiter_rejected", "escrow", devshardID, "reason", reason, "input_tokens", inputTokens)
 				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 				return
 			}
@@ -1379,6 +1393,28 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	capture := &gatewayChatCacheCapture{ResponseWriter: w}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
+}
+
+func (g *Gateway) recordGatewayRequestOutcome(model, outcome, reason string) {
+	if g == nil || g.metrics == nil {
+		return
+	}
+	g.metrics.RecordGatewayRequest(model, outcome, reason)
+	switch outcome {
+	case "failed", "runtime_unavailable", "gateway_limited", "invalid_request", "model_rejected", "gateway_disabled":
+		g.metrics.RecordCriticalUserFailure(model, reason)
+	}
+}
+
+func gatewayRuntimeUnavailableReason(err error) string {
+	switch {
+	case err == nil:
+		return "runtime_unavailable"
+	case isParticipantRateLimitError(err):
+		return "participant_limited"
+	default:
+		return "runtime_unavailable"
+	}
 }
 
 func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedChatResponse) {

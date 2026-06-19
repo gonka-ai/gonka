@@ -1,0 +1,330 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "Gateway-owned outside-view metrics for protocol developers. Use this dashboard to inspect user outcomes, hidden participant failures, overscheduling, quarantine pressure, and timeout work. It intentionally uses Prometheus metrics only; no request ledger or functional database queries are required.",
+        "mode": "markdown"
+      },
+      "title": "How to Read This",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 3
+      },
+      "id": 2,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])) by (outcome, reason)",
+          "refId": "A"
+        }
+      ],
+      "title": "User Request Outcomes",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 3
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_critical_user_failures_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (model, reason)",
+          "refId": "A"
+        }
+      ],
+      "title": "Critical User Failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 3
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_user_requests_with_hidden_failure_total{model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (model, severity, reason)",
+          "refId": "A"
+        }
+      ],
+      "title": "Successful Requests With Hidden Failure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (participant_key, model, role, reason)",
+          "refId": "A"
+        }
+      ],
+      "title": "Attempt Starts",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (participant_key, model, role, reason, visibility)",
+          "refId": "A"
+        }
+      ],
+      "title": "Attempt Failures by Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\"}[$__rate_interval])) by (decision, reason, quarantine_mode)",
+          "refId": "A"
+        }
+      ],
+      "title": "Slot Decisions and No-Send Pressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
+          "refId": "A"
+        }
+      ],
+      "title": "Current Quarantine and No-Winner State",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__rate_interval])) by (kind, action, reason)",
+          "refId": "A"
+        }
+      ],
+      "title": "Timeout Actions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "topk(20, sum(rate(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (participant_key, model, outcome, visibility))",
+          "refId": "A"
+        }
+      ],
+      "title": "Participant Quality View",
+      "type": "table"
+    },
+    {
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 11,
+      "options": {
+        "content": "Deferred from Core V1: deep diagnostic metric families, decode-token histograms, lifecycle databases, drilldown APIs, OTEL or Jaeger tracing, and Grafana queries against functional stores.",
+        "mode": "markdown"
+      },
+      "title": "Deferred Diagnostics",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "gateway",
+    "devshard",
+    "observability"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "model",
+        "name": "model",
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "participant_key",
+        "name": "participant_key",
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "escrow_id",
+        "name": "escrow_id",
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0,
+        "label": "reason",
+        "name": "reason",
+        "query": ".*",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "Gonka Gateway Observability",
+  "uid": "gonka-gateway-observability",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +33,59 @@ type DevshardMetrics struct {
 	hostFirstTokenSeconds      *prometheus.HistogramVec
 	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
 	hostTotalSeconds           *prometheus.HistogramVec
+
+	gatewayRequests       *prometheus.CounterVec
+	criticalUserFailures  *prometheus.CounterVec
+	hiddenFailures        *prometheus.CounterVec
+	userVisibleWins       *prometheus.CounterVec
+	slotDecisions         *prometheus.CounterVec
+	attemptsStarted       *prometheus.CounterVec
+	attemptsTerminal      *prometheus.CounterVec
+	attemptFailures       *prometheus.CounterVec
+	quarantineTransitions *prometheus.CounterVec
+	noWinnerAttempts      *prometheus.CounterVec
+	timeoutActions        *prometheus.CounterVec
+}
+
+type GatewaySlotDecisionMetric struct {
+	ParticipantKey string
+	Model          string
+	EscrowID       string
+	Decision       string
+	Reason         string
+	QuarantineMode string
+}
+
+type GatewayAttemptStartMetric struct {
+	ParticipantKey string
+	Model          string
+	Role           string
+	Reason         string
+	QuarantineMode string
+}
+
+type GatewayAttemptTerminalMetric struct {
+	ParticipantKey string
+	Model          string
+	Role           string
+	Outcome        string
+	Visibility     string
+}
+
+type GatewayAttemptFailureMetric struct {
+	ParticipantKey string
+	Model          string
+	Role           string
+	Reason         string
+	Visibility     string
+}
+
+type GatewayTimeoutActionMetric struct {
+	ParticipantKey string
+	Model          string
+	Kind           string
+	Action         string
+	Reason         string
 }
 
 func NewDevshardMetrics() *DevshardMetrics {
@@ -137,6 +193,83 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"devshard_id", "host_idx"},
 		),
+		gatewayRequests: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_requests_total",
+				Help: "Total gateway chat requests by model, user-visible outcome, and bounded reason.",
+			},
+			[]string{"model", "outcome", "reason"},
+		),
+		criticalUserFailures: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_critical_user_failures_total",
+				Help: "Total critical user-visible gateway failures by model and bounded reason.",
+			},
+			[]string{"model", "reason"},
+		),
+		hiddenFailures: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_user_requests_with_hidden_failure_total",
+				Help: "Total successful user requests that hid gateway-visible participant or policy failures.",
+			},
+			[]string{"model", "severity", "reason"},
+		),
+		userVisibleWins: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_user_visible_wins_total",
+				Help: "Total user-visible winning responses by participant and model.",
+			},
+			[]string{"participant_key", "model"},
+		),
+		slotDecisions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_slot_decisions_total",
+				Help: "Total gateway slot decisions by participant, model, escrow, decision, reason, and quarantine mode.",
+			},
+			[]string{"participant_key", "model", "escrow_id", "decision", "reason", "quarantine_mode"},
+		),
+		attemptsStarted: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_attempts_started_total",
+				Help: "Total real gateway attempts started by participant, model, role, reason, and quarantine mode.",
+			},
+			[]string{"participant_key", "model", "role", "reason", "quarantine_mode"},
+		),
+		attemptsTerminal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_attempts_terminal_total",
+				Help: "Total real gateway attempts by terminal outcome and visibility.",
+			},
+			[]string{"participant_key", "model", "role", "outcome", "visibility"},
+		),
+		attemptFailures: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_attempt_failures_total",
+				Help: "Total failed real gateway attempts by bounded failure reason and visibility.",
+			},
+			[]string{"participant_key", "model", "role", "reason", "visibility"},
+		),
+		quarantineTransitions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_participant_quarantine_transitions_total",
+				Help: "Total participant quarantine and no-winner state transitions by participant, model, mode, and reason.",
+			},
+			[]string{"participant_key", "model", "mode", "reason"},
+		),
+		noWinnerAttempts: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_no_winner_attempts_total",
+				Help: "Total real no-winner attempts by participant, model, reason, and quarantine mode.",
+			},
+			[]string{"participant_key", "model", "reason", "quarantine_mode"},
+		),
+		timeoutActions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_timeout_actions_total",
+				Help: "Total gateway timeout actions by participant, model, timeout kind, action, and reason.",
+			},
+			[]string{"participant_key", "model", "kind", "action", "reason"},
+		),
 	}
 
 	registry.MustRegister(
@@ -153,6 +286,17 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.hostFirstTokenSeconds,
 		m.hostCTTFLSecondsPerToken,
 		m.hostTotalSeconds,
+		m.gatewayRequests,
+		m.criticalUserFailures,
+		m.hiddenFailures,
+		m.userVisibleWins,
+		m.slotDecisions,
+		m.attemptsStarted,
+		m.attemptsTerminal,
+		m.attemptFailures,
+		m.quarantineTransitions,
+		m.noWinnerAttempts,
+		m.timeoutActions,
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
@@ -244,6 +388,124 @@ func (m *DevshardMetrics) RecordPickerChoice(devshardID, model string) {
 	m.pickerChoices.WithLabelValues(devshardID, model).Inc()
 }
 
+func (m *DevshardMetrics) RecordGatewayRequest(model, outcome, reason string) {
+	if m == nil {
+		return
+	}
+	m.gatewayRequests.WithLabelValues(metricLabel(model, "unknown"), metricLabel(outcome, "unknown"), metricLabel(reason, "none")).Inc()
+}
+
+func (m *DevshardMetrics) RecordCriticalUserFailure(model, reason string) {
+	if m == nil {
+		return
+	}
+	m.criticalUserFailures.WithLabelValues(metricLabel(model, "unknown"), metricLabel(reason, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayHiddenFailure(model, severity, reason string) {
+	if m == nil {
+		return
+	}
+	m.hiddenFailures.WithLabelValues(metricLabel(model, "unknown"), metricLabel(severity, "unknown"), metricLabel(reason, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayUserVisibleWin(participantKey, model string) {
+	if m == nil {
+		return
+	}
+	m.userVisibleWins.WithLabelValues(metricLabel(participantKey, "unknown"), metricLabel(model, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewaySlotDecision(decision GatewaySlotDecisionMetric) {
+	if m == nil {
+		return
+	}
+	m.slotDecisions.WithLabelValues(
+		metricLabel(decision.ParticipantKey, "unknown"),
+		metricLabel(decision.Model, "unknown"),
+		metricLabel(decision.EscrowID, "unknown"),
+		metricLabel(decision.Decision, "unknown"),
+		metricLabel(decision.Reason, "unknown"),
+		metricLabel(decision.QuarantineMode, "none"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayAttemptStarted(start GatewayAttemptStartMetric) {
+	if m == nil {
+		return
+	}
+	m.attemptsStarted.WithLabelValues(
+		metricLabel(start.ParticipantKey, "unknown"),
+		metricLabel(start.Model, "unknown"),
+		metricLabel(start.Role, "unknown"),
+		metricLabel(start.Reason, "none"),
+		metricLabel(start.QuarantineMode, "none"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayAttemptTerminal(terminal GatewayAttemptTerminalMetric) {
+	if m == nil {
+		return
+	}
+	m.attemptsTerminal.WithLabelValues(
+		metricLabel(terminal.ParticipantKey, "unknown"),
+		metricLabel(terminal.Model, "unknown"),
+		metricLabel(terminal.Role, "unknown"),
+		metricLabel(terminal.Outcome, "unknown"),
+		metricLabel(terminal.Visibility, "unknown"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayAttemptFailure(failure GatewayAttemptFailureMetric) {
+	if m == nil {
+		return
+	}
+	m.attemptFailures.WithLabelValues(
+		metricLabel(failure.ParticipantKey, "unknown"),
+		metricLabel(failure.Model, "unknown"),
+		metricLabel(failure.Role, "unknown"),
+		metricLabel(failure.Reason, "unknown"),
+		metricLabel(failure.Visibility, "unknown"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayQuarantineTransition(participantKey, model, mode, reason string) {
+	if m == nil {
+		return
+	}
+	m.quarantineTransitions.WithLabelValues(
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "all"),
+		metricLabel(mode, "none"),
+		metricLabel(reason, "unknown"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayNoWinnerAttempt(participantKey, model, reason, quarantineMode string) {
+	if m == nil {
+		return
+	}
+	m.noWinnerAttempts.WithLabelValues(
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "unknown"),
+		metricLabel(reason, "unknown"),
+		metricLabel(quarantineMode, "none"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutActionMetric) {
+	if m == nil {
+		return
+	}
+	m.timeoutActions.WithLabelValues(
+		metricLabel(action.ParticipantKey, "unknown"),
+		metricLabel(action.Model, "unknown"),
+		metricLabel(action.Kind, "unknown"),
+		metricLabel(action.Action, "unknown"),
+		metricLabel(action.Reason, "none"),
+	).Inc()
+}
+
 func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {
 	if m == nil {
 		return
@@ -264,27 +526,40 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 	}
 }
 
+func metricLabel(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback != "" {
+		return fallback
+	}
+	return "unknown"
+}
+
 type gatewayMetricsCollector struct {
 	gateway         *Gateway
 	hostConnections hostConnectionSnapshotter
 
-	inflightRequestsDesc          *prometheus.Desc
-	inflightTokensDesc            *prometheus.Desc
-	effectiveMaxConcurrentDesc    *prometheus.Desc
-	effectiveMaxInputTokensDesc   *prometheus.Desc
-	capacityScaleDesc             *prometheus.Desc
-	capacityTotalDesc             *prometheus.Desc
-	capacityBaselineDesc          *prometheus.Desc
-	escrowWeightDesc              *prometheus.Desc
-	runtimeActiveDesc             *prometheus.Desc
-	runtimeRequestsDesc           *prometheus.Desc
-	runtimeReservedDesc           *prometheus.Desc
-	participantExhaustedDesc      *prometheus.Desc
-	participantTrackedDesc        *prometheus.Desc
-	escrowParticipantLimitedDesc  *prometheus.Desc
-	escrowBlockedParticipantsDesc *prometheus.Desc
-	hostOpenDesc                  *prometheus.Desc
-	hostStateDesc                 *prometheus.Desc
+	inflightRequestsDesc           *prometheus.Desc
+	inflightTokensDesc             *prometheus.Desc
+	effectiveMaxConcurrentDesc     *prometheus.Desc
+	effectiveMaxInputTokensDesc    *prometheus.Desc
+	capacityScaleDesc              *prometheus.Desc
+	capacityTotalDesc              *prometheus.Desc
+	capacityBaselineDesc           *prometheus.Desc
+	escrowWeightDesc               *prometheus.Desc
+	runtimeActiveDesc              *prometheus.Desc
+	runtimeRequestsDesc            *prometheus.Desc
+	runtimeReservedDesc            *prometheus.Desc
+	participantExhaustedDesc       *prometheus.Desc
+	participantTrackedDesc         *prometheus.Desc
+	participantQuarantineStateDesc *prometheus.Desc
+	escrowParticipantLimitedDesc   *prometheus.Desc
+	escrowBlockedParticipantsDesc  *prometheus.Desc
+	hostOpenDesc                   *prometheus.Desc
+	hostStateDesc                  *prometheus.Desc
 }
 
 func newGatewayMetricsCollector(gateway *Gateway) *gatewayMetricsCollector {
@@ -377,6 +652,12 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			nil,
 			nil,
 		),
+		participantQuarantineStateDesc: prometheus.NewDesc(
+			"devshard_gateway_participant_quarantine_state",
+			"Current participant quarantine or no-winner state by participant and model.",
+			[]string{"participant_key", "model", "mode"},
+			nil,
+		),
 		escrowParticipantLimitedDesc: prometheus.NewDesc(
 			"devshard_gateway_escrow_participant_limited",
 			"Whether an escrow is currently blocked by at least one participant budget.",
@@ -418,6 +699,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.runtimeReservedDesc
 	ch <- c.participantExhaustedDesc
 	ch <- c.participantTrackedDesc
+	ch <- c.participantQuarantineStateDesc
 	ch <- c.escrowParticipantLimitedDesc
 	ch <- c.escrowBlockedParticipantsDesc
 	ch <- c.hostOpenDesc
@@ -473,6 +755,19 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		blocked := 0
 		if c.gateway.participantLimiter != nil {
 			blocked = len(c.gateway.participantLimiter.BlockedParticipants(rt.participantKeys))
+			for participantKey, snapshot := range c.gateway.participantLimiter.Snapshot(rt.participantKeys) {
+				if !participantSnapshotAppliesToModel(snapshot, rt.model) {
+					continue
+				}
+				ch <- prometheus.MustNewConstMetric(
+					c.participantQuarantineStateDesc,
+					prometheus.GaugeValue,
+					1,
+					participantKey,
+					metricLabel(rt.model, "unknown"),
+					participantSnapshotMode(snapshot),
+				)
+			}
 		}
 		limited := 0.0
 		if blocked > 0 {
@@ -491,6 +786,111 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.hostStateDesc, prometheus.GaugeValue, float64(snapshot.Idle), snapshot.Address, "idle")
 		ch <- prometheus.MustNewConstMetric(c.hostStateDesc, prometheus.GaugeValue, float64(snapshot.HoldAfterClose), snapshot.Address, "hold_after_close")
 	}
+}
+
+func participantSnapshotAppliesToModel(snapshot ParticipantThrottleSnapshot, model string) bool {
+	if len(snapshot.ModelIDs) == 0 {
+		return true
+	}
+	model = normalizeModelID(model)
+	if model == "" {
+		return true
+	}
+	for _, modelID := range snapshot.ModelIDs {
+		if normalizeModelID(modelID) == model {
+			return true
+		}
+	}
+	return false
+}
+
+func participantSnapshotMode(snapshot ParticipantThrottleSnapshot) string {
+	switch {
+	case snapshot.ProbeQuarantined:
+		return "probe"
+	case snapshot.ShadowQuarantined:
+		return "shadow"
+	case snapshot.Probationary:
+		return "probation"
+	default:
+		return "none"
+	}
+}
+
+type nonceFinishedChecker interface {
+	IsNonceFinished(uint64) bool
+}
+
+func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) string {
+	if inf == nil {
+		return "unknown"
+	}
+	switch {
+	case inf.phaseTransitionAborted:
+		return "phase_transition_aborted"
+	case isErrorStreamAttempt(inf):
+		return "error_stream"
+	case isEmptyStreamAttempt(inf):
+		return "empty_stream"
+	}
+	if inf.err != nil {
+		var upstreamErr *transport.UpstreamStatusError
+		switch {
+		case errors.As(inf.err, &upstreamErr):
+			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
+		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
+			return "sse_truncated"
+		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
+			return "eof_transport"
+		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):
+			return "client_cancelled"
+		default:
+			return "transport_error"
+		}
+	}
+	if inf.receiptTime.IsZero() {
+		return "no_receipt"
+	}
+	if session != nil && !session.IsNonceFinished(inf.nonce) {
+		return "not_finished"
+	}
+	return "unknown"
+}
+
+func gatewayHTTPFailureReason(statusCode int) string {
+	switch statusCode {
+	case http.StatusTooManyRequests:
+		return "http_429"
+	case http.StatusServiceUnavailable:
+		return "http_503"
+	case http.StatusForbidden:
+		return "http_forbidden"
+	case http.StatusNotFound:
+		return "http_not_found"
+	case http.StatusUnauthorized:
+		return "http_timestamp_drift"
+	default:
+		if statusCode >= 400 {
+			return "http_error"
+		}
+		return "transport_error"
+	}
+}
+
+func gatewayAttemptVisibility(inf *inflight, winnerNonce uint64, successful bool) string {
+	if inf == nil {
+		return "unknown"
+	}
+	if inf.suspicious {
+		return "no_winner"
+	}
+	if successful && winnerNonce != 0 && inf.nonce == winnerNonce {
+		return "user_visible_winner"
+	}
+	if successful {
+		return "suppressed_loser"
+	}
+	return "failed_not_finished"
 }
 
 type metricsResponseWriter struct {

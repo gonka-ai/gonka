@@ -32,6 +32,31 @@ long-term per-request storage. Each user request and gateway/devshard attempt is
 a lifecycle concept used to increment precise Prometheus metrics, then the raw
 event can disappear.
 
+## Implementation Status
+
+Core V1 is implemented as the first pass:
+
+- Gateway request outcome counters, critical user failure counters, hidden
+  failure counters, user-visible winner counters, slot decision counters,
+  attempt start/terminal/failure counters, no-winner attempt counters,
+  timeout action counters, and participant quarantine state/transition metrics
+  are emitted from the gateway's in-memory Prometheus registry.
+- The focused dashboard is
+  `deploy/join/observability/grafana/dashboards/gonka-gateway-observability.json`.
+- Metrics are recorded at existing lifecycle boundaries in `gateway.go`,
+  `redundancy.go`, `session_picker.go` via `runGhostProbe`, and
+  `participant_limiter.go`.
+- The implementation does not add request persistence, new APIs, database
+  writes, or Grafana queries against functional stores.
+
+Deferred from Core V1:
+
+- Diagnostic V1 metric families not needed for the first dashboard.
+- Decode-token histograms and token/s calculations that require actual output
+  token plumbing.
+- Lifecycle database, request drilldown APIs, OTEL/Jaeger traces,
+  Loki-derived panels, and offline protocol-analysis exports.
+
 ## Goal
 
 Gateway observability must answer protocol-development questions without trusting
