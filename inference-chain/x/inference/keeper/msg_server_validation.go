@@ -132,7 +132,10 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	passValue := modelThreshold.ToDecimal()
-	messageValue := getValidationValue(msg)
+	messageValue, err := getValidationValue(msg)
+	if err != nil {
+		return nil, err
+	}
 
 	passed := messageValue.GreaterThan(passValue)
 	k.LogInfo(
@@ -332,11 +335,13 @@ func (k msgServer) submitValidationProposalsWithPolicy(
 	return invalidateResponse, revalidateResponse, nil
 }
 
-func getValidationValue(msg *types.MsgValidation) decimal.Decimal {
+func getValidationValue(msg *types.MsgValidation) (decimal.Decimal, error) {
 	if msg.ValueDecimal != nil {
-		return msg.ValueDecimal.ToDecimal()
+		return msg.ValueDecimal.ToDecimal(), nil
 	}
-	return decimal.NewFromFloat(msg.Value)
+	// Reject float64 fallback: decimal.NewFromFloat can produce platform-dependent
+	// results for certain IEEE 754 values, causing non-deterministic consensus.
+	return decimal.Decimal{}, fmt.Errorf("ValueDecimal is required; float64 fallback removed to prevent non-deterministic consensus")
 }
 
 func (k msgServer) MaximumInvalidationsReached(

@@ -249,7 +249,7 @@ func (k msgServer) hasSignificantMissedValidations(ctx sdk.Context, msg *types.M
 	if err != nil {
 		return false, fmt.Errorf("failed to get params: %w", err)
 	}
-	p0 := decimal.NewFromFloat(0.10)
+	p0, _ := decimal.NewFromString("0.10")
 	if params.ValidationParams != nil && params.ValidationParams.BinomTestP0 != nil {
 		p0 = params.ValidationParams.BinomTestP0.ToDecimal()
 	}
