@@ -62,7 +62,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 6
       },
@@ -90,7 +90,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Total gateway request rate for the selected model. This is the denominator for the request-level ratios in this row.",
+      "description": "Average gateway request rate across the selected time range. This is selected-window volume divided by the selected range duration.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -99,8 +99,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 4,
+        "w": 4,
+        "x": 3,
         "y": 6
       },
       "id": 4,
@@ -113,11 +113,11 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval]))",
+          "expr": "sum(increase(devshard_gateway_requests_total{model=~\"$model\"}[$__range])) / $__range_s",
           "refId": "A"
         }
       ],
-      "title": "User Request Rate",
+      "title": "Average Request Rate",
       "type": "stat"
     },
     {
@@ -125,7 +125,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Successful or cached user requests divided by all gateway requests for the selected model.",
+      "description": "Successful or cached user requests divided by all gateway requests across the selected time range.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -136,8 +136,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 9,
+        "w": 4,
+        "x": 7,
         "y": 6
       },
       "id": 5,
@@ -150,11 +150,11 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome=~\"success|cached\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "expr": "sum(increase(devshard_gateway_requests_total{model=~\"$model\",outcome=~\"success|cached\"}[$__range])) / clamp_min(sum(increase(devshard_gateway_requests_total{model=~\"$model\"}[$__range])), 1)",
           "refId": "A"
         }
       ],
-      "title": "User Success Rate",
+      "title": "Range User Success Rate",
       "type": "stat"
     },
     {
@@ -162,17 +162,17 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "User-visible failures that should stay near zero. Drill into the adjacent reason panel before changing protocol parameters.",
+      "description": "User-visible failures across the selected time range. Drill into the adjacent reason panel before changing protocol parameters.",
       "fieldConfig": {
         "defaults": {
-          "decimals": 3,
-          "unit": "rps"
+          "decimals": 0,
+          "unit": "short"
         }
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 14,
+        "w": 4,
+        "x": 11,
         "y": 6
       },
       "id": 6,
@@ -185,11 +185,11 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__rate_interval]))",
+          "expr": "sum(increase(devshard_gateway_critical_user_failures_total{model=~\"$model\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "Critical User Failure Rate",
+      "title": "Range Critical User Failures",
       "type": "stat"
     },
     {
@@ -197,7 +197,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Cached requests divided by all gateway requests. A high value means users are protected by cached output, but winner attribution may be incomplete.",
+      "description": "Cached requests divided by all gateway requests across the selected time range. A high value means users are protected by cached output, but winner attribution may be incomplete.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -208,8 +208,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 19,
+        "w": 4,
+        "x": 15,
         "y": 6
       },
       "id": 7,
@@ -222,11 +222,89 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome=\"cached\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\"}[$__rate_interval])), 0.001)",
+          "expr": "sum(increase(devshard_gateway_requests_total{model=~\"$model\",outcome=\"cached\"}[$__range])) / clamp_min(sum(increase(devshard_gateway_requests_total{model=~\"$model\"}[$__range])), 1)",
           "refId": "A"
         }
       ],
-      "title": "Cache Hit Share",
+      "title": "Range Cache Hit Share",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current gateway-wide capacity scale used to reduce effective limiter caps. 1 means full configured capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 2,
+        "x": 19,
+        "y": 6
+      },
+      "id": 73,
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "devshard_gateway_capacity_scale",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Gateway Capacity Scale",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Lowest current capacity scale among selected models. This is the fastest way to spot a model with reduced usable capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 6
+      },
+      "id": 74,
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "min(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Worst Model Capacity Scale",
       "type": "stat"
     },
     {
@@ -313,7 +391,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Gateway-wide and participant-budget rejections. A high value means requests are blocked before useful participant work begins.",
+      "description": "Gateway-wide and participant-budget rejections. These metrics do not have a model label, so this panel is not filtered by `model`.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -779,7 +857,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Participant drilldown for the selected reason. This is the main path from a top reason to specific addresses.",
+      "description": "Use the `Localized Failure Drilldowns` row for participant-level failure counts and rates. Keeping that drilldown in one place avoids two tables with the same metric and different names.",
       "gridPos": {
         "h": 7,
         "w": 24,
@@ -787,15 +865,12 @@
         "y": 54
       },
       "id": 29,
-      "targets": [
-        {
-          "expr": "topk(30, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason, visibility))",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Participants for Selected Failure Reason",
-      "type": "table"
+      "options": {
+        "content": "Participant failure drilldowns live in `Localized Failure Drilldowns`:\n\n1. Use `Top Participant Failure Rates by Model` to find bad addresses normalized by sent attempts.\n2. Use `Top Participant Failure Counts by Selected Reason` for raw volume after selecting a reason.",
+        "mode": "markdown"
+      },
+      "title": "Failure Drilldown Guide",
+      "type": "text"
     },
     {
       "collapsed": false,
@@ -1191,13 +1266,11 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Selected-reason failures divided by sent attempts for participants above the volume threshold.",
+      "description": "Timeout actions by participant and model in the selected range. This is a count table; use the timeout row for reason-first trends.",
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
+          "decimals": 0,
+          "unit": "short"
         }
       },
       "gridPos": {
@@ -1209,12 +1282,12 @@
       "id": 46,
       "targets": [
         {
-          "expr": "topk(30, (sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "topk(30, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, action, reason))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Selected-Reason Failure Rate",
+      "title": "Timeout Actions by Participant",
       "type": "table"
     },
     {
@@ -1271,7 +1344,7 @@
       "id": 48,
       "targets": [
         {
-          "expr": "topk(20, sum by (participant_key, model, reason) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\".*transport.*|eof.*|error_stream\"}[$__range])) / clamp_min(sum by (participant_key, model, reason) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1))",
+          "expr": "topk(20, sum by (participant_key, model, reason) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"eof_transport|error_stream|transport_error\"}[$__range])) / clamp_min(sum by (participant_key, model, reason) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1))",
           "instant": true,
           "refId": "A"
         }
@@ -1284,7 +1357,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Timeout action pressure, user-visible wins, no-winner attempts, quarantine skips, and current mode. Use this as the quality summary before opening escrow diagnostics.",
+      "description": "Current quarantine or no-winner mode by participant and model. Other participant signals are shown in their own single-purpose panels.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1294,27 +1367,12 @@
       "id": 49,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, action, reason))",
-          "instant": true,
-          "refId": "A"
-        },
-        {
-          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
-          "instant": true,
-          "refId": "B"
-        },
-        {
-          "expr": "topk(20, sum(increase(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, reason, quarantine_mode))",
-          "instant": true,
-          "refId": "C"
-        },
-        {
           "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
           "instant": true,
-          "refId": "D"
+          "refId": "A"
         }
       ],
-      "title": "Participant Quality Detail Signals",
+      "title": "Current Participant Quarantine Mode",
       "type": "table"
     },
     {
@@ -1442,7 +1500,7 @@
       "id": 55,
       "targets": [
         {
-          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\".*capability.*\"}[$__range])) by (participant_key, model, escrow_id, reason))",
+          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=\"participant_capability_no_send\"}[$__range])) by (participant_key, model, escrow_id, reason))",
           "instant": true,
           "refId": "A"
         }
@@ -1468,7 +1526,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Timeout work grouped by kind and action. Failed or skipped actions should be understood before tuning timeouts.",
+      "description": "Timeout work grouped by kind and action: expected, started, completed, skipped, or failed. Failed or skipped actions should be understood before tuning timeouts.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -1488,7 +1546,7 @@
           "refId": "A"
         }
       ],
-      "title": "Expected, Started, Completed, Skipped, or Failed Timeout Work",
+      "title": "Timeout Actions by Kind",
       "type": "timeseries"
     },
     {
@@ -1588,7 +1646,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Participant-bound transport errors by path kind and upstream status. Use this before blaming model quality.",
+      "description": "Gateway-wide participant-bound transport errors by path kind and upstream status. This metric has no model or participant label, so it is not filtered by `model` or `participant_key`.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -1682,7 +1740,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current capacity scale and weights. Scale is current weight divided by baseline; values below 1 explain lower effective caps.",
+      "description": "Current per-model capacity scale. Scale is current model weight divided by baseline model weight; values below 1 explain lower effective caps.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1695,19 +1753,9 @@
           "expr": "devshard_gateway_capacity_scale_by_model{model=~\"$model\"}",
           "legendFormat": "{{model}} / scale",
           "refId": "A"
-        },
-        {
-          "expr": "devshard_gateway_capacity_total_weight_by_model{model=~\"$model\"}",
-          "legendFormat": "{{model}} / current weight",
-          "refId": "B"
-        },
-        {
-          "expr": "devshard_gateway_capacity_baseline_weight_by_model{model=~\"$model\"}",
-          "legendFormat": "{{model}} / baseline weight",
-          "refId": "C"
         }
       ],
-      "title": "Model Capacity Scale and Weights",
+      "title": "Model Capacity Scale by Model",
       "type": "timeseries"
     },
     {
@@ -1858,7 +1906,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Escrow sizing pressure from model capacity, runtime load, and blocked participants. Use this to decide whether capacity or routing needs adjustment.",
+      "description": "Model capacity weights, runtime load, and blocked participants. Capacity scale itself is shown in User Health and the dedicated model-capacity panel.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -1868,22 +1916,27 @@
       "id": 72,
       "targets": [
         {
-          "expr": "sort(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
-          "legendFormat": "{{model}} / capacity scale",
+          "expr": "devshard_gateway_capacity_total_weight_by_model{model=~\"$model\"}",
+          "legendFormat": "{{model}} / current weight",
           "refId": "A"
+        },
+        {
+          "expr": "devshard_gateway_capacity_baseline_weight_by_model{model=~\"$model\"}",
+          "legendFormat": "{{model}} / baseline weight",
+          "refId": "B"
         },
         {
           "expr": "sum(devshard_runtime_active_requests{model=~\"$model\"}) by (devshard_id, model)",
           "legendFormat": "{{devshard_id}} / active requests",
-          "refId": "B"
+          "refId": "C"
         },
         {
           "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\"}",
           "legendFormat": "{{devshard_id}} / blocked participants",
-          "refId": "C"
+          "refId": "D"
         }
       ],
-      "title": "Escrow Sizing and Capacity Pressure",
+      "title": "Model Weights and Escrow Pressure",
       "type": "timeseries"
     }
   ],
