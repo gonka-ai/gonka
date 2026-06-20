@@ -34,6 +34,10 @@ type DevshardMetrics struct {
 	hostFirstTokenSeconds      *prometheus.HistogramVec
 	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
 	hostTotalSeconds           *prometheus.HistogramVec
+	participantReceiptSeconds  *prometheus.HistogramVec
+	participantFirstContent    *prometheus.HistogramVec
+	participantPrefillPerToken *prometheus.HistogramVec
+	participantTotalSeconds    *prometheus.HistogramVec
 
 	gatewayRequests       *prometheus.CounterVec
 	criticalUserFailures  *prometheus.CounterVec
@@ -194,6 +198,38 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"devshard_id", "host_idx"},
 		),
+		participantReceiptSeconds: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_receipt_seconds",
+				Help:    "Time from gateway inference send until receipt confirmation by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantFirstContent: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_first_content_seconds",
+				Help:    "Time from gateway inference send until first content by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantPrefillPerToken: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_prefill_seconds_per_input_token",
+				Help:    "Time from receipt until first content divided by input tokens, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantTotalSeconds: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_total_attempt_seconds",
+				Help:    "Total inference attempt time observed by the gateway, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
 		gatewayRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_requests_total",
@@ -287,6 +323,10 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.hostFirstTokenSeconds,
 		m.hostCTTFLSecondsPerToken,
 		m.hostTotalSeconds,
+		m.participantReceiptSeconds,
+		m.participantFirstContent,
+		m.participantPrefillPerToken,
+		m.participantTotalSeconds,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -522,17 +562,26 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 	}
 
 	labels := []string{devshardID, strconv.Itoa(sample.HostIdx)}
+	participantLabels := []string{
+		metricLabel(sample.ParticipantKey, "unknown"),
+		metricLabel(sample.Model, "unknown"),
+	}
 	if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
 		m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
+		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
 	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(sample.FirstToken.Sub(sample.SendTime).Seconds())
+		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
+		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
+		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
 		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
+		m.participantPrefillPerToken.WithLabelValues(participantLabels...).Observe(cttfl)
 	}
 	if sample.TotalTime > 0 {
 		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
+		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
 	}
 }
 

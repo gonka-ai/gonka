@@ -3116,6 +3116,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		sample := RequestSample{
 			HostIdx:        inf.hostIdx,
 			ParticipantKey: participantKey,
+			Model:          gatewayMetricModel(params, e.model),
 			Responsive:     false,
 			SendTime:       inf.sendTime,
 			ReceiptTime:    inf.receiptTime,
@@ -3746,6 +3747,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	sample := RequestSample{
 		HostIdx:        inf.hostIdx,
 		ParticipantKey: participantKey,
+		Model:          gatewayMetricModel(params, e.model),
 		Responsive:     responsive,
 		SendTime:       inf.sendTime,
 		ReceiptTime:    inf.receiptTime,

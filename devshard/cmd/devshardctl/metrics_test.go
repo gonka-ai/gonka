@@ -184,6 +184,30 @@ func TestParticipantLimiterRecordsQuarantineTransitions(t *testing.T) {
 	requireMetricCounterValue(t, families, "devshard_gateway_participant_quarantine_transitions_total", map[string]string{"participant_key": "participant-2", "model": "Qwen/Test", "mode": "shadow", "reason": "empty_stream_quarantine"}, 1)
 }
 
+func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
+	m := NewDevshardMetrics()
+	now := time.Now()
+
+	m.ObserveRequestSample("12", RequestSample{
+		HostIdx:        1,
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		SendTime:       now,
+		ReceiptTime:    now.Add(100 * time.Millisecond),
+		FirstToken:     now.Add(300 * time.Millisecond),
+		TotalTime:      900 * time.Millisecond,
+		InputTokens:    10,
+	})
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	labels := map[string]string{"participant_key": "participant-1", "model": "Qwen/Test"}
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_receipt_seconds", labels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_first_content_seconds", labels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_prefill_seconds_per_input_token", labels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_total_attempt_seconds", labels, 1)
+}
+
 func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	now := time.Now()
 
@@ -213,4 +237,21 @@ func requireMetricCounterValue(t *testing.T, families []*dto.MetricFamily, name 
 		}
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
+}
+
+func requireMetricHistogramCount(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string, want uint64) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				require.NotNil(t, metric.Histogram)
+				require.Equal(t, want, metric.Histogram.GetSampleCount())
+				return
+			}
+		}
+	}
+	t.Fatalf("histogram %s with labels %v not found", name, labels)
 }
