@@ -467,7 +467,8 @@
         {
           "expr": "topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "format": "table"
         }
       ],
       "title": "Suspect Participants by Problem Events per Sent Attempt",
@@ -478,11 +479,70 @@
           "links": [
             {
               "title": "Drill into this participant",
-              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__field.labels.model}&var-participant_key=${__field.labels.participant_key}"
+              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__data.fields.model}&var-participant_key=${__data.fields.participant_key}"
             }
           ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "participant_key"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 360
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "problem_events_per_sent_attempt"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "participant_key": 0,
+              "model": 1,
+              "Value": 2
+            },
+            "renameByName": {
+              "participant_key": "participant_key",
+              "model": "model",
+              "Value": "problem_events_per_sent_attempt"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "datasource": {
@@ -501,7 +561,8 @@
         {
           "expr": "topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))))) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "format": "table"
         }
       ],
       "title": "Suspect Participants by Problem Event Count",
@@ -511,11 +572,70 @@
           "links": [
             {
               "title": "Drill into this participant",
-              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__field.labels.model}&var-participant_key=${__field.labels.participant_key}"
+              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__data.fields.model}&var-participant_key=${__data.fields.participant_key}"
             }
           ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "participant_key"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 360
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "problem_event_count"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "participant_key": 0,
+              "model": 1,
+              "Value": 2
+            },
+            "renameByName": {
+              "participant_key": "participant_key",
+              "model": "model",
+              "Value": "problem_event_count"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "datasource": {
@@ -534,7 +654,8 @@
         {
           "expr": "topk(30, histogram_quantile(0.95, sum(rate(devshard_gateway_participant_first_content_seconds_bucket{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (participant_key, model, le)))",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "format": "table"
         }
       ],
       "title": "Slow Participants by p95 First Content",
@@ -545,11 +666,70 @@
           "links": [
             {
               "title": "Drill into this participant",
-              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__field.labels.model}&var-participant_key=${__field.labels.participant_key}"
+              "url": "/d/gonka-gateway-observability/gonka-gateway-observability?var-model=${__data.fields.model}&var-participant_key=${__data.fields.participant_key}"
             }
           ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "participant_key"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 360
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_first_content_seconds"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "participant_key": 0,
+              "model": 1,
+              "Value": 2
+            },
+            "renameByName": {
+              "participant_key": "participant_key",
+              "model": "model",
+              "Value": "p95_first_content_seconds"
+            }
+          }
         }
-      }
+      ]
     },
     {
       "collapsed": false,
@@ -1251,6 +1431,6 @@
   "timezone": "",
   "title": "Gonka Gateway Observability",
   "uid": "gonka-gateway-observability",
-  "version": 11,
+  "version": 12,
   "weekStart": ""
 }
