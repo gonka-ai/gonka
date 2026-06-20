@@ -451,7 +451,7 @@ func (l *ParticipantRequestLimiter) AllowRequestForModel(participantKey, modelID
 		return nil
 	}
 	if l.metrics != nil {
-		l.metrics.RecordParticipantLimitRejection("transport_request")
+		l.metrics.RecordParticipantLimitRejection(participantKey, normalizeModelID(modelID), "transport_request")
 	}
 	log.Printf("participant_limit_rejected participant_key=%s", participantKey)
 	return &ParticipantRateLimitError{ParticipantKey: participantKey}
@@ -533,7 +533,7 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 		return
 	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
-		l.metrics.RecordParticipantTransportError(participantPathKind(path), statusCode)
+		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
 	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
@@ -566,7 +566,7 @@ func (l *ParticipantRequestLimiter) ObserveTransportFailureForModel(participantK
 	}
 	kind := participantPathKind(path)
 	if l.metrics != nil {
-		l.metrics.RecordParticipantTransportError(kind, 0)
+		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), kind, 0)
 	}
 	if kind != "inference" {
 		log.Printf("participant_transport_failure_ignored participant_key=%s path_kind=%s error=%q",

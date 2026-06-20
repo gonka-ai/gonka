@@ -16,7 +16,7 @@
       },
       "id": 1,
       "options": {
-        "content": "Use this dashboard from top to bottom. First select `model`, then check User Health to see whether clients are protected. Next use reason-preserving panels to identify the largest failure or policy reason. Then narrow `reason`, `participant_key`, or `escrow_id` and inspect participant quality, skipped slots, timeout work, and gateway mechanics.\n\nEvery failure panel keeps the bounded `reason` label. A panel that shows only failed volume is paired with a reason or visibility breakdown. Rows marked diagnostic use existing gateway or host metrics that are useful for operations but do not replace the participant-quality score.\n\nEmpty data usually means Prometheus cannot scrape `devshard-gateway`, the gateway image predates these metrics, or no `/v1/chat/completions` traffic hit the selected time range.",
+        "content": "Use this dashboard from top to bottom. First select `model`, then check User Health to see whether clients are protected. Next pick the largest bounded `reason`, then use participant-address tables to find which `participant_key` is responsible. Only after the address-level view is clear should you open escrow and host diagnostics.\n\nAuthoritative participant panels use gateway-owned metric families with `participant_key` and `model`. Rows marked diagnostic use gateway-wide, escrow, remote-address, or `host_idx` metrics. Those panels explain routing or timing symptoms, but they do not replace participant scoring.\n\nEmpty data usually means Prometheus cannot scrape `devshard-gateway`, the gateway image predates these metrics, no `/v1/chat/completions` traffic hit the selected range, or the selected filters exclude the traffic.",
         "mode": "markdown"
       },
       "title": "Read This First",
@@ -363,7 +363,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Gateway route p95 from the existing HTTP histogram. This is not model-aware; use it as a route diagnostic only.",
+      "description": "Gateway-wide HTTP route p95 from the existing route histogram. This is not model-aware and must not be read as participant latency.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -383,7 +383,7 @@
           "refId": "A"
         }
       ],
-      "title": "Gateway Route p95",
+      "title": "HTTP Chat Route p95 (gateway-wide)",
       "type": "timeseries"
     },
     {
@@ -391,7 +391,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Gateway-wide and participant-budget rejections. These metrics do not have a model label, so this panel is not filtered by `model`.",
+      "description": "Gateway limiter rejections by bounded reason. This is gateway-wide admission pressure and does not identify a participant address.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -407,16 +407,11 @@
       "targets": [
         {
           "expr": "sum(rate(devshard_gateway_limit_rejections_total[$__rate_interval])) by (reason)",
-          "legendFormat": "gateway / {{reason}}",
+          "legendFormat": "{{reason}}",
           "refId": "A"
-        },
-        {
-          "expr": "sum(rate(devshard_gateway_participant_limit_rejections_total[$__rate_interval])) by (scope)",
-          "legendFormat": "participant / {{scope}}",
-          "refId": "B"
         }
       ],
-      "title": "Admission Rejections by Reason",
+      "title": "Gateway Admission Rejections by Reason (gateway-wide)",
       "type": "timeseries"
     },
     {
@@ -559,7 +554,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Participants whose output users actually saw. Cached requests are excluded unless the gateway can safely attribute the source winner.",
+      "description": "Share of attributed user-visible wins by participant and model across the selected range. Cached requests are excluded unless the gateway can safely attribute the source winner.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -569,20 +564,28 @@
       "id": 17,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
-          "instant": true,
-          "refId": "A"
+          "expr": "topk(20, (sum by (participant_key, model) (increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) / clamp_min(sum by (model) (increase(devshard_gateway_user_visible_wins_total{model=~\"$model\"}[$__range])), 1)))",
+          "refId": "A",
+          "instant": true
         }
       ],
-      "title": "Top User-Visible Winners",
-      "type": "table"
+      "title": "User-Visible Winner Share by Participant",
+      "type": "table",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "min": 0,
+          "max": 1
+        }
+      }
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Real sends divided by user requests. Values above 1 mean redundancy or recovery is spending extra participant work.",
+      "description": "Gateway-wide real sends divided by user requests. Values above 1 mean redundancy or recovery is spending extra participant work.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -603,7 +606,7 @@
           "refId": "A"
         }
       ],
-      "title": "Sent Attempts per User Request",
+      "title": "Global Sent Attempts per User Request",
       "type": "timeseries"
     },
     {
@@ -611,7 +614,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Failed or not-finished sent attempts divided by successful user requests. This shows work hidden from clients by redundancy.",
+      "description": "Gateway-wide failed or not-finished sent attempts divided by successful user requests. Use participant companion tables to find responsible addresses.",
       "fieldConfig": {
         "defaults": {
           "decimals": 2,
@@ -632,7 +635,7 @@
           "refId": "A"
         }
       ],
-      "title": "Failed Sent Attempts per Successful Request",
+      "title": "Global Failed Sends per Successful User Request",
       "type": "timeseries"
     },
     {
@@ -645,7 +648,7 @@
       },
       "id": 20,
       "panels": [],
-      "title": "Existing Performance Diagnostics",
+      "title": "Host Timing Diagnostics (not participant scoring)",
       "type": "row"
     },
     {
@@ -653,7 +656,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: receipt p95 is keyed by escrow-local slot index `host_idx`, not participant address. Use it for timeout-window tuning, not participant scoring.",
+      "description": "Diagnostic only: receipt p95 is keyed by `devshard_id` and escrow-local `host_idx`, not participant address. Use it for timeout-window tuning only.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -668,12 +671,12 @@
       "id": 21,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_receipt_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_receipt_seconds_bucket{devshard_id=~\"$escrow_id\"}[$__rate_interval])) by (devshard_id, host_idx, le))",
           "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic Receipt p95 by Escrow Slot",
+      "title": "Host Receipt p95 by devshard_id and host_idx (diagnostic)",
       "type": "timeseries"
     },
     {
@@ -681,7 +684,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: first-token p95 is keyed by escrow-local slot index `host_idx`, not participant address. Future participant-key first-content metrics will replace this for participant quality.",
+      "description": "Diagnostic only: first-token p95 is keyed by `devshard_id` and `host_idx`, not participant address. Future participant-key first-content metrics should replace this for scoring.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -696,12 +699,12 @@
       "id": 22,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_first_token_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_first_token_seconds_bucket{devshard_id=~\"$escrow_id\"}[$__rate_interval])) by (devshard_id, host_idx, le))",
           "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic First Token p95 by Escrow Slot",
+      "title": "Host First Token p95 by devshard_id and host_idx (diagnostic)",
       "type": "timeseries"
     },
     {
@@ -709,7 +712,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: prefill time per input token by escrow-local slot index `host_idx`. Do not compare this directly with participant-key failure rates.",
+      "description": "Diagnostic only: prefill-after-receipt time per input token from host-side metrics. This is not user-visible TTFT.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -724,12 +727,12 @@
       "id": 23,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_cttfl_seconds_per_input_token_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_cttfl_seconds_per_input_token_bucket{devshard_id=~\"$escrow_id\"}[$__rate_interval])) by (devshard_id, host_idx, le))",
           "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic CTTFL per Input Token p95",
+      "title": "Host Prefill per Input Token p95 by host_idx (diagnostic)",
       "type": "timeseries"
     },
     {
@@ -737,7 +740,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: total attempt time by escrow-local slot index `host_idx`. Use with timeout rows to tune windows.",
+      "description": "Diagnostic only: total attempt time by `devshard_id` and `host_idx`. Use with timeout rows to tune windows.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -752,12 +755,12 @@
       "id": 24,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_total_time_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
+          "expr": "histogram_quantile(0.95, sum(rate(devshard_host_total_time_seconds_bucket{devshard_id=~\"$escrow_id\"}[$__rate_interval])) by (devshard_id, host_idx, le))",
           "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic Total Attempt Time p95",
+      "title": "Host Total Attempt Time p95 by devshard_id and host_idx (diagnostic)",
       "type": "timeseries"
     },
     {
@@ -1097,29 +1100,6 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current probe, shadow, probation, or manual no-winner state. A value of 1 means the participant is currently in that mode.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 77
-      },
-      "id": 39,
-      "targets": [
-        {
-          "expr": "sum(devshard_gateway_participant_quarantine_state{participant_key=~\"$participant_key\",model=~\"$model\"}) by (participant_key, model, mode)",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Current Quarantine or No-Winner State",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
       "description": "Participant and escrow detail for the selected skipped-slot reason. Use this after the top-reasons table identifies what to investigate.",
       "gridPos": {
         "h": 7,
@@ -1171,7 +1151,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Escrows blocked by participant budgets. Use with skipped-slot rows to determine whether pressure is participant-local or escrow-local.",
+      "description": "Current number of blocked participants within each selected escrow and model. Diagnostic only: use participant tables to identify addresses.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1181,17 +1161,12 @@
       "id": 42,
       "targets": [
         {
-          "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\"}",
+          "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\",devshard_id=~\"$escrow_id\"}",
           "legendFormat": "{{devshard_id}} / {{model}}",
           "refId": "A"
-        },
-        {
-          "expr": "devshard_gateway_escrow_participant_limited{model=~\"$model\"}",
-          "legendFormat": "{{devshard_id}} / limited",
-          "refId": "B"
         }
       ],
-      "title": "Escrow Participant Budget Pressure",
+      "title": "Escrow Blocked Participant Count",
       "type": "timeseries"
     },
     {
@@ -1385,7 +1360,7 @@
       },
       "id": 50,
       "panels": [],
-      "title": "Localized Failure Drilldowns",
+      "title": "Localized Escrow and Failure Diagnostics",
       "type": "row"
     },
     {
@@ -1477,7 +1452,7 @@
       "id": 54,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_picker_choice_total{model=~\"$model\"}[$__rate_interval])) by (devshard_id, model)",
+          "expr": "sum(rate(devshard_gateway_picker_choice_total{model=~\"$model\",devshard_id=~\"$escrow_id\"}[$__rate_interval])) by (devshard_id, model)",
           "legendFormat": "{{devshard_id}} / {{model}}",
           "refId": "A"
         }
@@ -1646,7 +1621,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Gateway-wide participant-bound transport errors by path kind and upstream status. This metric has no model or participant label, so it is not filtered by `model` or `participant_key`.",
+      "description": "Participant-bound transport errors by address, model, path kind, and upstream status. Use this for address-level transport investigation.",
       "fieldConfig": {
         "defaults": {
           "unit": "rps"
@@ -1661,12 +1636,12 @@
       "id": 62,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_participant_transport_errors_total[$__rate_interval])) by (path_kind, status)",
-          "legendFormat": "{{path_kind}} / {{status}}",
+          "expr": "sum(rate(devshard_gateway_participant_transport_errors_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__rate_interval])) by (participant_key, model, path_kind, status)",
+          "legendFormat": "{{participant_key}} / {{model}} / {{path_kind}} / {{status}}",
           "refId": "A"
         }
       ],
-      "title": "Upstream Transport Errors",
+      "title": "Upstream Transport Errors by Participant",
       "type": "timeseries"
     },
     {
@@ -1707,7 +1682,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Runtime active state, active requests, and reserved tokens by model and escrow. Use this when picker or capacity panels look wrong.",
+      "description": "Diagnostic runtime active state by selected escrow and model. 1 means the runtime is currently active.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1717,22 +1692,12 @@
       "id": 64,
       "targets": [
         {
-          "expr": "devshard_runtime_active{model=~\"$model\"}",
-          "legendFormat": "{{devshard_id}} / active",
+          "expr": "devshard_runtime_active{model=~\"$model\",devshard_id=~\"$escrow_id\"}",
+          "legendFormat": "{{devshard_id}} / {{model}}",
           "refId": "A"
-        },
-        {
-          "expr": "devshard_runtime_active_requests{model=~\"$model\"}",
-          "legendFormat": "{{devshard_id}} / requests",
-          "refId": "B"
-        },
-        {
-          "expr": "devshard_runtime_reserved_tokens{model=~\"$model\"}",
-          "legendFormat": "{{devshard_id}} / tokens",
-          "refId": "C"
         }
       ],
-      "title": "Runtime Activity and Reserved Tokens",
+      "title": "Runtime Active State by Escrow",
       "type": "timeseries"
     },
     {
@@ -1906,7 +1871,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Model capacity weights, runtime load, and blocked participants. Capacity scale itself is shown in User Health and the dedicated model-capacity panel.",
+      "description": "Current and baseline capacity weights by selected model. Escrow load and blocked participants are split into diagnostic panels with their own units.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -1924,20 +1889,278 @@
           "expr": "devshard_gateway_capacity_baseline_weight_by_model{model=~\"$model\"}",
           "legendFormat": "{{model}} / baseline weight",
           "refId": "B"
-        },
-        {
-          "expr": "sum(devshard_runtime_active_requests{model=~\"$model\"}) by (devshard_id, model)",
-          "legendFormat": "{{devshard_id}} / active requests",
-          "refId": "C"
-        },
-        {
-          "expr": "devshard_gateway_escrow_blocked_participants{model=~\"$model\"}",
-          "legendFormat": "{{devshard_id}} / blocked participants",
-          "refId": "D"
         }
       ],
-      "title": "Model Weights and Escrow Pressure",
+      "title": "Model Capacity Weights by Model",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participant-budget rejects ranked by address, model, and routing scope. `participant_key=\"unknown\"` means the gateway only knew an escrow-level capacity failure.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "id": 75,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_participant_limit_rejections_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, scope))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Participant-Budget Rejections by Participant and Model",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Range count of attributed user-visible winners by participant and model. Use with winner share to distinguish dominance from low volume.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 48
+      },
+      "id": 76,
+      "targets": [
+        {
+          "expr": "topk(20, sum(increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "User-Visible Winner Count by Participant",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "1 means at least one participant budget currently limits the selected escrow. Diagnostic only; use participant rejection tables for address attribution.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 92
+      },
+      "id": 77,
+      "targets": [
+        {
+          "expr": "devshard_gateway_escrow_participant_limited{model=~\"$model\",devshard_id=~\"$escrow_id\"}",
+          "refId": "A",
+          "legendFormat": "{{devshard_id}} / {{model}}"
+        }
+      ],
+      "title": "Escrow Participant Budget Limited State",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Failure share by participant, model, and reason, normalized by sent attempts and gated by `min_attempts`.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 118
+      },
+      "id": 78,
+      "targets": [
+        {
+          "expr": "topk(30, (sum by (participant_key, model, reason) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / ignoring(reason) group_left clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Participant Failed Sends per Sent Attempt",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Failed sent attempts divided by attributed user-visible wins for each participant and model. High values mean redundancy hides costly failures.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 118
+      },
+      "id": 79,
+      "targets": [
+        {
+          "expr": "topk(30, (sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_user_visible_wins_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Participant Failed Sends per Visible Win",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Suppressed loser failures ranked by participant and reason. These did not reach the user but still consumed participant work.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 118
+      },
+      "id": 80,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\",visibility=\"suppressed_loser\"}[$__range])) by (participant_key, model, reason))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Hidden Loser Failures by Participant",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Quarantine-driven no-send slots by participant and model. Use this to find addresses changing scheduling before HTTP send.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 126
+      },
+      "id": 81,
+      "targets": [
+        {
+          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\",quarantine_mode=~\"probe|shadow|probation\"}[$__range])) by (participant_key, model, reason, quarantine_mode))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Skipped Quarantine Slots by Participant",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Skipped or failed timeout work divided by sent attempts for each participant and model. Use after selecting a timeout reason.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 126
+      },
+      "id": 82,
+      "targets": [
+        {
+          "expr": "topk(30, (sum by (participant_key, model, kind, action, reason) (increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__range])) / ignoring(kind, action, reason) group_left clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Timeout Skipped or Failed by Participant",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current active request count by selected escrow and model.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 141
+      },
+      "id": 83,
+      "targets": [
+        {
+          "expr": "devshard_runtime_active_requests{model=~\"$model\",devshard_id=~\"$escrow_id\"}",
+          "refId": "A",
+          "legendFormat": "{{devshard_id}} / {{model}}"
+        }
+      ],
+      "title": "Runtime Active Requests by Escrow",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current reserved input tokens by selected escrow and model.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 141
+      },
+      "id": 84,
+      "targets": [
+        {
+          "expr": "devshard_runtime_reserved_tokens{model=~\"$model\",devshard_id=~\"$escrow_id\"}",
+          "refId": "A",
+          "legendFormat": "{{devshard_id}} / {{model}}"
+        }
+      ],
+      "title": "Runtime Reserved Tokens by Escrow",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Per-escrow effective picker weight W(e). Use with runtime and blocked-participant panels to assess sizing pressure.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 164
+      },
+      "id": 85,
+      "targets": [
+        {
+          "expr": "topk(30, devshard_gateway_escrow_weight{devshard_id=~\"$escrow_id\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Escrow Sizing Pressure Summary",
+      "type": "table"
     }
   ],
   "refresh": "30s",
@@ -2062,6 +2285,6 @@
   "timezone": "",
   "title": "Gonka Gateway Observability",
   "uid": "gonka-gateway-observability",
-  "version": 3,
+  "version": 6,
   "weekStart": ""
 }

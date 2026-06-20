@@ -123,16 +123,16 @@ func NewDevshardMetrics() *DevshardMetrics {
 		participantLimitRejections: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_participant_limit_rejections_total",
-				Help: "Total participant-budget rejections by routing scope.",
+				Help: "Total participant-budget rejections by participant, model, and routing scope.",
 			},
-			[]string{"scope"},
+			[]string{"participant_key", "model", "scope"},
 		),
 		participantTransportErrors: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_participant_transport_errors_total",
-				Help: "Total participant-bound transport request errors by request kind and upstream status.",
+				Help: "Total participant-bound transport request errors by participant, model, request kind, and upstream status.",
 			},
-			[]string{"path_kind", "status"},
+			[]string{"participant_key", "model", "path_kind", "status"},
 		),
 		speculativeDecisions: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -347,18 +347,27 @@ func (m *DevshardMetrics) RecordLimitRejection(reason string) {
 	m.gatewayLimitRejections.WithLabelValues(reason).Inc()
 }
 
-func (m *DevshardMetrics) RecordParticipantLimitRejection(scope string) {
+func (m *DevshardMetrics) RecordParticipantLimitRejection(participantKey, model, scope string) {
 	if m == nil {
 		return
 	}
-	m.participantLimitRejections.WithLabelValues(scope).Inc()
+	m.participantLimitRejections.WithLabelValues(
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "unknown"),
+		metricLabel(scope, "unknown"),
+	).Inc()
 }
 
-func (m *DevshardMetrics) RecordParticipantTransportError(pathKind string, statusCode int) {
+func (m *DevshardMetrics) RecordParticipantTransportError(participantKey, model, pathKind string, statusCode int) {
 	if m == nil {
 		return
 	}
-	m.participantTransportErrors.WithLabelValues(pathKind, strconv.Itoa(statusCode)).Inc()
+	m.participantTransportErrors.WithLabelValues(
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "unknown"),
+		metricLabel(pathKind, "unknown"),
+		strconv.Itoa(statusCode),
+	).Inc()
 }
 
 func (m *DevshardMetrics) RecordSpeculativeDecision(reason string) {

@@ -1198,7 +1198,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
 		if isParticipantRateLimitError(err) {
-			g.metrics.RecordParticipantLimitRejection("pooled_route")
+			g.metrics.RecordParticipantLimitRejection("", requestModel, "pooled_route")
 		}
 		g.recordGatewayRequestOutcome(requestModel, "runtime_unavailable", gatewayRuntimeUnavailableReason(err))
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))

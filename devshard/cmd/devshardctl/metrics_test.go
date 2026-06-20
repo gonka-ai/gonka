@@ -14,6 +14,8 @@ import (
 func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
 	m := NewDevshardMetrics()
 
+	m.RecordParticipantLimitRejection("participant-1", "Qwen/Test", "transport_request")
+	m.RecordParticipantTransportError("participant-1", "Qwen/Test", "inference", http.StatusServiceUnavailable)
 	m.RecordGatewayRequest("Qwen/Test", "success", "none")
 	m.RecordCriticalUserFailure("Qwen/Test", "runtime_unavailable")
 	m.RecordGatewayHiddenFailure("Qwen/Test", "protected", "empty_stream")
@@ -58,6 +60,8 @@ func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
 
 	families, err := m.registry.Gather()
 	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_participant_limit_rejections_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "scope": "transport_request"}, 1)
+	requireMetricCounterValue(t, families, "devshard_gateway_participant_transport_errors_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "path_kind": "inference", "status": "503"}, 1)
 	requireMetricCounterValue(t, families, "devshard_gateway_requests_total", map[string]string{"model": "Qwen/Test", "outcome": "success", "reason": "none"}, 1)
 	requireMetricCounterValue(t, families, "devshard_gateway_critical_user_failures_total", map[string]string{"model": "Qwen/Test", "reason": "runtime_unavailable"}, 1)
 	requireMetricCounterValue(t, families, "devshard_gateway_user_requests_with_hidden_failure_total", map[string]string{"model": "Qwen/Test", "severity": "protected", "reason": "empty_stream"}, 1)
