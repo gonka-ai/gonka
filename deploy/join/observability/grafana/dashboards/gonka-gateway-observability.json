@@ -575,7 +575,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: receipt p95 is keyed by escrow-local `host_idx`, not participant key. Use it for timeout-window tuning, not participant scoring.",
+      "description": "Diagnostic only: receipt p95 is keyed by escrow-local slot index `host_idx`, not participant address. Use it for timeout-window tuning, not participant scoring.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -591,11 +591,11 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(devshard_host_receipt_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
-          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic Receipt p95 by Escrow Host",
+      "title": "Diagnostic Receipt p95 by Escrow Slot",
       "type": "timeseries"
     },
     {
@@ -603,7 +603,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: first-token p95 is host-index based. Future participant-key first-content metrics will replace this for participant quality.",
+      "description": "Diagnostic only: first-token p95 is keyed by escrow-local slot index `host_idx`, not participant address. Future participant-key first-content metrics will replace this for participant quality.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -619,11 +619,11 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(devshard_host_first_token_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
-          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
-      "title": "Diagnostic First Token p95 by Escrow Host",
+      "title": "Diagnostic First Token p95 by Escrow Slot",
       "type": "timeseries"
     },
     {
@@ -631,7 +631,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: prefill time per input token by escrow-local host index. Do not compare this directly with participant-key failure rates.",
+      "description": "Diagnostic only: prefill time per input token by escrow-local slot index `host_idx`. Do not compare this directly with participant-key failure rates.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -647,7 +647,7 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(devshard_host_cttfl_seconds_per_input_token_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
-          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
@@ -659,7 +659,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Diagnostic only: total attempt time by escrow-local host index. Use with timeout rows to tune windows.",
+      "description": "Diagnostic only: total attempt time by escrow-local slot index `host_idx`. Use with timeout rows to tune windows.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -675,7 +675,7 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(devshard_host_total_time_seconds_bucket[$__rate_interval])) by (devshard_id, host_idx, le))",
-          "legendFormat": "{{devshard_id}} / host {{host_idx}}",
+          "legendFormat": "{{devshard_id}} / slot {{host_idx}}",
           "refId": "A"
         }
       ],
@@ -999,7 +999,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Skipped/no-send slots by participant, model, escrow, reason, and quarantine mode. This answers which scheduling changes happened before any HTTP send.",
+      "description": "Top skipped/no-send slot reasons in the selected range. Start here, choose a high-volume reason, then use the detail table below.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1009,12 +1009,12 @@
       "id": 38,
       "targets": [
         {
-          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (participant_key, model, escrow_id, reason, quarantine_mode))",
+          "expr": "topk(20, sum(increase(devshard_gateway_slot_decisions_total{model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (reason, quarantine_mode))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Skipped Slots by Participant, Model, Escrow, and Reason",
+      "title": "Top Skipped-Slot Reasons",
       "type": "table"
     },
     {
@@ -1045,7 +1045,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Quarantine and no-winner transitions by reason. Use this to find participants entering probe, shadow, probation, or manual suspicion.",
+      "description": "Participant and escrow detail for the selected skipped-slot reason. Use this after the top-reasons table identifies what to investigate.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1055,12 +1055,12 @@
       "id": 40,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_participant_quarantine_transitions_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, mode, reason))",
+          "expr": "topk(30, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (participant_key, model, escrow_id, reason, quarantine_mode))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Quarantine Transitions by Participant and Reason",
+      "title": "Skipped-Slot Detail for Selected Reason",
       "type": "table"
     },
     {
@@ -1327,7 +1327,7 @@
       },
       "id": 50,
       "panels": [],
-      "title": "Model and Escrow Heatmaps",
+      "title": "Localized Failure Drilldowns",
       "type": "row"
     },
     {
@@ -1335,7 +1335,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Heatmap-style table of participant x model failures by reason. Sort by value to find model-localized bad addresses.",
+      "description": "Failure rate by participant and model, normalized by sent attempts and gated by `min_attempts`. Use this before looking at raw failure counts.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1345,12 +1345,12 @@
       "id": 51,
       "targets": [
         {
-          "expr": "topk(40, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason))",
+          "expr": "topk(30, (sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Participant x Model Failure Heatmap",
+      "title": "Top Participant Failure Rates by Model",
       "type": "table"
     },
     {
@@ -1358,7 +1358,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Heatmap-style table of participant x escrow skipped slots. This is diagnostic and should not replace the participant+model quality view.",
+      "description": "Raw failure counts after selecting a reason. This is a volume drilldown, not a score.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1368,12 +1368,12 @@
       "id": 52,
       "targets": [
         {
-          "expr": "topk(40, sum(increase(devshard_gateway_slot_decisions_total{participant_key=~\"$participant_key\",model=~\"$model\",escrow_id=~\"$escrow_id\",reason=~\"$reason\",decision!=\"real_send\"}[$__range])) by (participant_key, escrow_id, reason))",
+          "expr": "topk(40, sum(increase(devshard_gateway_attempt_failures_total{participant_key=~\"$participant_key\",model=~\"$model\",reason=~\"$reason\"}[$__range])) by (participant_key, model, reason, visibility))",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Participant x Escrow Skipped-Slot Heatmap",
+      "title": "Top Participant Failure Counts by Selected Reason",
       "type": "table"
     },
     {
@@ -1496,7 +1496,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Top timeout skip and failure reasons in the selected range.",
+      "description": "Skipped and failed timeout work grouped by action and reason over time. Use this to choose a timeout reason before opening participant detail.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1506,25 +1506,20 @@
       "id": 58,
       "targets": [
         {
-          "expr": "topk(20, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__range])) by (participant_key, model, kind, action, reason))",
-          "instant": true,
+          "expr": "sum(rate(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__rate_interval])) by (action, reason)",
+          "legendFormat": "{{action}} / {{reason}}",
           "refId": "A"
         }
       ],
-      "title": "Timeout Skip and Failure Reasons",
-      "type": "table"
+      "title": "Timeout Skip and Failure Reasons Over Time",
+      "type": "timeseries"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Terminal attempts that did not finish, shown next to timeout actions. If this rises without timeout work, timeout handling is missing or skipped.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "rps"
-        }
-      },
+      "description": "Participant detail for skipped or failed timeout work after a reason is selected. This table intentionally keeps participant detail out of the overview.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1534,13 +1529,13 @@
       "id": 59,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_attempts_terminal_total{participant_key=~\"$participant_key\",model=~\"$model\",outcome=\"not_finished\"}[$__rate_interval])) by (participant_key, model, role, visibility)",
-          "legendFormat": "{{participant_key}} / {{model}} / {{role}} / {{visibility}}",
+          "expr": "topk(30, sum(increase(devshard_gateway_timeout_actions_total{participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\",reason=~\"$reason\"}[$__range])) by (participant_key, model, kind, action, reason))",
+          "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Not-Finished Attempts Beside Timeout Work",
-      "type": "timeseries"
+      "title": "Timeout Participant Detail for Selected Reason",
+      "type": "table"
     },
     {
       "collapsed": false,
@@ -1794,7 +1789,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Participants that repeatedly require extra sends, no-winner handling, or quarantine transitions. These are candidates for incentive and quarantine tuning.",
+      "description": "Participants that repeatedly require extra sends. This ranks one signal only; use with redundancy pressure before tuning timeout or redundancy policy.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1807,19 +1802,55 @@
           "expr": "topk(30, sum(increase(devshard_gateway_attempts_started_total{participant_key=~\"$participant_key\",model=~\"$model\",role=\"extra\"}[$__range])) by (participant_key, model, reason))",
           "instant": true,
           "refId": "A"
-        },
+        }
+      ],
+      "title": "Participants Requiring Extra Sends",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participants with no-winner pressure. These addresses can help availability but should not normally provide the final answer.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 149
+      },
+      "id": 70,
+      "targets": [
         {
           "expr": "topk(30, sum(increase(devshard_gateway_no_winner_attempts_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, reason, quarantine_mode))",
           "instant": true,
-          "refId": "B"
-        },
+          "refId": "A"
+        }
+      ],
+      "title": "Participants with No-Winner Pressure",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Participants entering quarantine or no-winner modes. Use this to tune strike thresholds and quarantine policy.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 156
+      },
+      "id": 71,
+      "targets": [
         {
           "expr": "topk(30, sum(increase(devshard_gateway_participant_quarantine_transitions_total{participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) by (participant_key, model, mode, reason))",
           "instant": true,
-          "refId": "C"
+          "refId": "A"
         }
       ],
-      "title": "Participant Protocol-Tuning Candidates",
+      "title": "Participants Entering Quarantine or No-Winner Modes",
       "type": "table"
     },
     {
@@ -1830,11 +1861,11 @@
       "description": "Escrow sizing pressure from model capacity, runtime load, and blocked participants. Use this to decide whether capacity or routing needs adjustment.",
       "gridPos": {
         "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 149
+        "w": 12,
+        "x": 12,
+        "y": 156
       },
-      "id": 70,
+      "id": 72,
       "targets": [
         {
           "expr": "sort(devshard_gateway_capacity_scale_by_model{model=~\"$model\"})",
