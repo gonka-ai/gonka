@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.4
+
+FROM golang:1.24.2-alpine3.20 AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+
+COPY . .
+RUN --mount=type=tmpfs,target=/go/pkg/mod \
+    --mount=type=tmpfs,target=/root/.cache/go-build \
+    go mod download && \
+    CGO_ENABLED=0 go build -o /devshard-host ./cmd/devshard-host
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates curl && \
+    rm -rf /var/cache/apk/*
+
+COPY --from=builder /devshard-host /usr/bin/devshard-host
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=12 --start-period=3s \
+    CMD curl -f http://localhost:${DEVSHARD_PORT:-8080}/health || exit 1
+
+ENTRYPOINT ["devshard-host"]
