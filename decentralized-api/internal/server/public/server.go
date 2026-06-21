@@ -120,11 +120,10 @@ func NewServer(
 	g.GET("stats/developers/:developer/summary/epochs", s.getStatsDeveloperSummaryEpochs)
 	g.GET("stats/summary/epochs", s.getStatsSummaryEpochs)
 	g.GET("stats/summary/time", s.getStatsSummaryTime)
-	g.GET("stats/debug/developers", s.getStatsDebugDevelopers)
+	// Debug endpoints removed from public server — they leak internal
+	// topology (chain node URL) and should only be accessible via admin.
+	// See: stats/debug/developers, debug/pubkey-to-addr, debug/verify
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
-
-	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
-	g.GET("debug/verify/:height", s.debugVerify)
 
 	g.GET("versions", s.getVersions)
 

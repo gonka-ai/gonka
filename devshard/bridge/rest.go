@@ -19,12 +19,20 @@ type warmCacheKey struct {
 	warm string
 }
 
+// warmCacheEntry stores a cached warm key result with an expiry time.
+type warmCacheEntry struct {
+	value   bool
+	expires time.Time
+}
+
+const warmCacheTTL = 5 * time.Minute
+
 // RESTBridge implements MainnetBridge query methods via the chain's grpc-gateway REST API.
 // Notification and action methods return ErrNotImplemented.
 type RESTBridge struct {
 	baseURL   string
 	client    *http.Client
-	warmCache sync.Map // warmCacheKey -> bool
+	warmCache sync.Map // warmCacheKey -> warmCacheEntry
 }
 
 type Option func(*RESTBridge)
@@ -217,7 +225,12 @@ const warmKeyMsgType = "/inference.inference.MsgStartInference"
 func (b *RESTBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
 	key := warmCacheKey{host: validatorAddress, warm: warmAddress}
 	if cached, ok := b.warmCache.Load(key); ok {
-		return cached.(bool), nil
+		entry := cached.(warmCacheEntry)
+		if time.Now().Before(entry.expires) {
+			return entry.value, nil
+		}
+		// TTL expired — delete stale entry and re-verify
+		b.warmCache.Delete(key)
 	}
 
 	u := fmt.Sprintf("%s/productscience/inference/inference/grantees_by_message_type/%s/%s",
@@ -228,7 +241,7 @@ func (b *RESTBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, 
 		return false, err
 	}
 	if resp == nil {
-		b.warmCache.Store(key, false)
+		b.warmCache.Store(key, warmCacheEntry{value: false, expires: time.Now().Add(warmCacheTTL)})
 		return false, nil
 	}
 
@@ -239,7 +252,7 @@ func (b *RESTBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, 
 			break
 		}
 	}
-	b.warmCache.Store(key, found)
+	b.warmCache.Store(key, warmCacheEntry{value: found, expires: time.Now().Add(warmCacheTTL)})
 	return found, nil
 }
 

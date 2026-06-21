@@ -406,7 +406,13 @@ else
 fi
 
 # CORS Configuration - Single source of truth for all location blocks
-CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-"*"}
+# Default to empty (no CORS header) instead of wildcard "*" to prevent
+# cross-site request abuse. Operators must explicitly set allowed origins.
+if [ -z "${CORS_ALLOW_ORIGIN}" ]; then
+    echo "   ⚠️  CORS: No CORS_ALLOW_ORIGIN set — CORS headers will not be added."
+    echo "   ⚠️  Set CORS_ALLOW_ORIGIN to your domain (e.g., https://app.gonka.ai) for cross-origin access."
+    CORS_ALLOW_ORIGIN=""
+fi
 
 export CORS_CONFIG="
             # CORS setup

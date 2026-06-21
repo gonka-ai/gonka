@@ -14,10 +14,10 @@ import (
 func TestExtractError(t *testing.T) {
 	baseErr := errors.New("inference server is not running")
 
-	// 1. Generic error
+	// 1. Generic error – internal details must not leak; a generic message is returned.
 	status, msg := middleware.ExtractError(baseErr)
 	require.Equal(t, http.StatusInternalServerError, status)
-	require.Equal(t, baseErr.Error(), msg)
+	require.Equal(t, "internal server error", msg)
 
 	// 2. echo.HTTPError preserving original payload and status code
 	httpErr := echo.NewHTTPError(http.StatusBadRequest, baseErr)

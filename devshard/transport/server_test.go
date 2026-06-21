@@ -93,7 +93,17 @@ func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httpte
 
 func (env *serverTestEnv) doGet(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
+
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+
+	ts := time.Now().Unix()
+	// GET requests sign the RequestURI (path + query) as the payload, matching
+	// the server-side AuthMiddleware.
+	sig, err := SignRequest(env.userSigner, "escrow-1", []byte(req.URL.RequestURI()), ts)
+	require.NoError(t, err)
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+
 	rec := httptest.NewRecorder()
 	env.echo.ServeHTTP(rec, req)
 	return rec

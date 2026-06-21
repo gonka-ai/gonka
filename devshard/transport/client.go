@@ -648,34 +648,52 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 	return io.ReadAll(resp.Body)
 }
 
-// doGet sends a GET request and returns the response body.
-// No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
-	if err := c.allowRequest(url); err != nil {
+// doGet sends a signed GET request and returns the response body.
+// The server requires GET requests from group members to authenticate
+// using the same header scheme as POST. For GETs, the signed payload is
+// the request URI ("path?query"), so tampering with query parameters
+// within the timestamp drift window invalidates the signature.
+func (c *HTTPClient) doGet(ctx context.Context, rawURL string) ([]byte, error) {
+	if err := c.allowRequest(rawURL); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+
+	ts := time.Now().Unix()
+	// Must match server-side: c.Request().URL.RequestURI() (path + optional "?query").
+	signedPayload := []byte(parsed.RequestURI())
+	sig, err := SignRequest(c.signer, c.escrowID, signedPayload, ts)
+	if err != nil {
+		return nil, fmt.Errorf("sign request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.observeTransportFailure(url, err)
+		c.observeTransportFailure(rawURL, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
+		c.observeResultWithBody(rawURL, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       url,
+			Path:       rawURL,
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 		}
 	}
-	c.observeResult(url, resp.StatusCode)
+	c.observeResult(rawURL, resp.StatusCode)
 
 	return io.ReadAll(resp.Body)
 }

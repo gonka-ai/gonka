@@ -442,6 +442,13 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (
 		return s.handleExecutorRequest(ctx, request, ctx.Response().Writer)
 	}
 
+	// Validate executor URL against private/internal IP ranges to prevent SSRF.
+	// A malicious participant could register with an internal URL (e.g., http://169.254.169.254).
+	if err := ValidateExecutorURL(executor.Url); err != nil {
+		logging.Error("handleTransferRequest. Executor URL failed SSRF validation", types.Inferences, "error", err, "url", executor.Url)
+		return fmt.Errorf("executor URL rejected: %w", err)
+	}
+
 	req, err := http.NewRequest(http.MethodPost, executor.Url+forwardPath, bytes.NewReader(forwardBody))
 	if err != nil {
 		logging.Error("handleTransferRequest. Failed to create request to the executor node", types.Inferences, "error", err)
