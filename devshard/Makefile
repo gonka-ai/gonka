@@ -1,4 +1,4 @@
-.PHONY: proto test integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-ci e2e-images e2e-mock-chain-image e2e-host-image e2e-devshardctl-image
+.PHONY: proto test integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
 
 DEVSHARD_VERSION ?= dev
 DEVSHARD_PROTOCOL_VERSION ?= v3
@@ -50,38 +50,15 @@ ci-testenv-integration:
 	$(MAKE) -C testenv citest-grpc-transport
 	$(MAKE) -C testenv citest-adversarial
 
-e2e-mock-chain-image:
+e2e-images:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain .
-
-e2e-host-image:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_HOST_IMAGE) -f Dockerfile.host .
-
-e2e-devshardctl-image:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_DEVSHARDCTL_IMAGE) -f Dockerfile .
 
-e2e-images: e2e-mock-chain-image e2e-host-image e2e-devshardctl-image
-	@echo "Built devshard E2E images:"
-	@echo "  DEVSHARD_E2E_MOCK_CHAIN_IMAGE=$(DEVSHARD_E2E_MOCK_CHAIN_IMAGE)"
-	@echo "  DEVSHARD_E2E_HOST_IMAGE=$(DEVSHARD_E2E_HOST_IMAGE)"
-	@echo "  DEVSHARD_E2E_DEVSHARDCTL_IMAGE=$(DEVSHARD_E2E_DEVSHARDCTL_IMAGE)"
+e2e-test:
+	docker compose -f docker-compose.e2e.yml run --rm e2e-test
 
-e2e:
-	docker run --rm \
-		-v "$(CURDIR):/app" \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		--tmpfs /tmp:rw,exec,size=$(DEVSHARD_E2E_GO_TMPFS_SIZE) \
-		-w /app \
-		-e DEVSHARD_E2E=1 \
-		-e DEVSHARD_E2E_MOCK_CHAIN_IMAGE=$(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) \
-		-e DEVSHARD_E2E_HOST_IMAGE=$(DEVSHARD_E2E_HOST_IMAGE) \
-		-e DEVSHARD_E2E_DEVSHARDCTL_IMAGE=$(DEVSHARD_E2E_DEVSHARDCTL_IMAGE) \
-		-e DEVSHARD_E2E_POSTGRES_IMAGE=$(DEVSHARD_E2E_POSTGRES_IMAGE) \
-		-e GOTMPDIR=/tmp \
-		-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
-		$(DEVSHARD_E2E_GO_IMAGE) \
-		go test ./e2e -count=1 -v
-
-e2e-ci: e2e-images e2e
+e2e: e2e-images e2e-test
 
 integration-test:
 	go test ./user/ -tags stress -run 'TestStress|TestFault' -v -timeout 30m -count=1
