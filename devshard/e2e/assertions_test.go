@@ -46,6 +46,20 @@ func requireValidationTargetContract(t *testing.T, settlement map[string]any, ta
 		target, target, summary)
 }
 
+func requireSettlementHostStats(t *testing.T, settlement map[string]any) {
+	t.Helper()
+	stats, ok := settlement["host_stats"].([]any)
+	require.True(t, ok, "host_stats should be a JSON array")
+	require.Len(t, stats, len(e2eHostPrivateKeys), "settlement should include one host_stats entry per host")
+	for _, raw := range stats {
+		stat, ok := raw.(map[string]any)
+		require.True(t, ok, "host_stats entries should be objects")
+		_ = numericField(t, stat, "slot_id")
+		_ = numericField(t, stat, "required_validations")
+		_ = numericField(t, stat, "completed_validations")
+	}
+}
+
 func hasHostValidationTarget(t *testing.T, raw any, target uint64) (bool, string) {
 	t.Helper()
 	found := false

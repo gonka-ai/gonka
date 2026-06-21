@@ -45,6 +45,7 @@ Recommended tools:
 | HTTP client | Go `net/http` plus devshard clients | Drives `devshardctl`, host transport routes, mock-chain controls, and diagnostic endpoints. |
 | JSON handling | Standard `encoding/json` or existing devshard JSON helpers | Parses OpenAI-compatible responses, control responses, and settlement payloads. |
 | Docker images | Explicit `make` targets | Builds images before tests run; individual tests select prebuilt images and fail fast if missing. |
+| Outer test runner | `docker-compose.e2e.yml` | Runs the Go E2E test process in a pinned Go container while mounting the Docker socket for `testcontainers-go`. |
 | Database | Testcontainers Postgres module | Runs the smoke storage backend and deeper recovery scenarios. |
 | Logs | Docker/testcontainers log capture | Collects container logs on test failure for diagnosis. |
 
@@ -55,7 +56,8 @@ Tools to avoid in the first version:
   would create a second test runtime before the E2E contract is stable.
 - Docker Compose as the primary test orchestrator: `testcontainers-go` gives
   each Go test direct control over networks, containers, ports, logs, restarts,
-  and cleanup. Compose can still be useful later for manual reproduction.
+  and cleanup. Compose is acceptable as a thin outer wrapper for the Go test
+  runner container, but it should not start the devshard services under test.
 - live Cosmos chain or Testermint: the first suite should isolate devshard
   protocol and transport behavior from chain startup, block production,
   governance, and unrelated node failures. `mock-chain` covers the bridge
@@ -69,9 +71,16 @@ Tools to avoid in the first version:
 
 ## Test Environment Structure
 
-Each test starts an isolated Docker network. The Go test process stays outside
-the network and controls the environment through Docker APIs and mapped service
+Each test starts an isolated Docker network through `testcontainers-go`. The
+Go test process controls the environment through Docker APIs and mapped service
 ports.
+
+For local and CI consistency, `docker-compose.e2e.yml` may run only the Go test
+runner container. That container mounts the repository and Docker socket, sets
+the `DEVSHARD_E2E_*` image names, and invokes `go test ./e2e`. It must not
+define `mock-chain`, `devshard-host`, `devshardctl`, Postgres, MySQL, or any
+other service under test. Those containers are created by the Go tests with
+`testcontainers-go`.
 
 The default smoke environment should spin up:
 
@@ -79,6 +88,10 @@ The default smoke environment should spin up:
 - three `devshard-host-N` containers
 - one `devshardctl` container
 - one `postgres` container
+
+The first E2E environment includes only the storage backends named in this
+proposal: Postgres for smoke/recovery coverage and SQLite volumes for local
+restart scenarios.
 
 Storage and fault scenarios add containers or volumes as needed:
 
@@ -236,10 +249,17 @@ single-host persistence edge cases.
 Storage scenarios should cover:
 
 - SQLite host restart
+- SQLite all-host restart
 - Postgres host restart
 - all-host restart
 - session version conflict
 - session epoch conflict where applicable
+
+SQLite restart scenarios should be separate from the smoke path. They should
+attach one persistent Docker volume per host, run a session, restart containers
+with the same volumes, continue the session, and then finalize. This keeps the
+fast smoke suite focused on Postgres while still validating host-local
+persistence behavior.
 
 ## Test Binaries
 
@@ -366,7 +386,37 @@ Smoke scenarios should be reliable and fast enough for every CI run.
    preserved, continue the session, and finalize. Assert there is no nonce
    regression and the restarted host signs the final state.
 
-9. **Postgres recovery**
+   Test flow:
+
+   1. Start the default three-host environment with persistent SQLite volumes.
+   2. Send several requests through `devshardctl`.
+   3. Stop one `devshard-host-N` container.
+   4. Start a replacement host container with the same SQLite volume and config.
+   5. Continue sending requests through `devshardctl`.
+   6. Finalize the session.
+   7. Assert nonce monotonicity, stable state root agreement, final signatures,
+      and settlement `host_stats`.
+
+9. **SQLite all-host restart**
+
+   Run several inferences, stop every host, restart every host with its
+   original SQLite volume, continue the session, and finalize. Assert that the
+   group recovers without state root divergence or duplicate nonce handling.
+
+   Test flow:
+
+   1. Start the default three-host environment with persistent SQLite volumes.
+   2. Send several requests through `devshardctl`.
+   3. Stop all `devshard-host-N` containers.
+   4. Restart all hosts with the same SQLite volumes, signer keys, peer URLs,
+      and mock-chain metadata.
+   5. Wait for health checks and gossip/catch-up to settle.
+   6. Continue sending requests through `devshardctl`.
+   7. Finalize the session.
+   8. Assert no nonce regression, no version/epoch conflict, enough final
+      signatures, and a valid settlement contract.
+
+10. **Postgres recovery**
 
    Run the happy path with Postgres storage enabled. Restart all hosts and
    continue the session. Assert state recovery from Postgres works and
@@ -458,16 +508,17 @@ rather than building images per test run.
 Example targets:
 
 ```bash
-make devshard-e2e-images
-go test ./devshard/e2e -run TestE2E_Smoke -count=1
-go test ./devshard/e2e -run TestE2E_Protocol -count=1
-go test ./devshard/e2e -run TestE2E_Storage -count=1
+make -C devshard e2e-images
+make -C devshard e2e-test
+make -C devshard e2e
 ```
 
-`devshard-e2e-images` should be an explicit build target that produces the
-images used by the tests, including `mock-chain`, `devshard-host`, and
-`devshardctl`. The E2E tests should fail fast if those images are missing
-instead of silently rebuilding them inside individual test cases.
+`e2e-images` should be an explicit build target that produces the images used
+by the tests, including `mock-chain`, `devshard-host`, and `devshardctl`.
+`e2e-test` should run only the Go E2E suite through `docker-compose.e2e.yml`
+using already-built images. `e2e` should be the one-command CI target that
+builds images and then runs `e2e-test`. Individual test cases should fail fast
+if required images are missing instead of silently rebuilding them.
 
 Recommended tiers:
 
