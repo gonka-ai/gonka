@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -154,6 +156,9 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	}); err != nil {
 		return nil, err
 	}
+	if err := recoverHostState(store, sm, cfg.escrowID); err != nil {
+		return nil, err
+	}
 
 	h, err := host.NewHost(
 		sm,
@@ -188,6 +193,48 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	srv.SetGossip(gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h)))
 
 	return srv, nil
+}
+
+func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID string) error {
+	meta, err := store.GetSessionMeta(escrowID)
+	if err != nil {
+		return fmt.Errorf("get session meta: %w", err)
+	}
+	if meta.LatestNonce == 0 {
+		return nil
+	}
+
+	replayFrom := uint64(1)
+	if snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID); snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+		snapState, err := host.UnmarshalStateSnapshot(snapData)
+		if err != nil {
+			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)
+		}
+		sm.RestoreState(snapState)
+		replayFrom = snapNonce + 1
+	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
+		return fmt.Errorf("load snapshot: %w", snapErr)
+	}
+
+	if replayFrom > meta.LatestNonce {
+		return nil
+	}
+
+	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+	if err != nil {
+		return fmt.Errorf("get diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
+	}
+	for _, rec := range records {
+		sm.InjectWarmKeys(rec.WarmKeyDelta)
+		root, err := sm.ApplyDiff(rec.Diff)
+		if err != nil {
+			return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
+		}
+		if len(rec.StateHash) > 0 && len(root) > 0 && !bytes.Equal(root, rec.StateHash) {
+			return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+		}
+	}
+	return nil
 }
 
 func groupFromKeys(keys []string) ([]types.SlotAssignment, error) {

@@ -13,6 +13,7 @@ DEVSHARD_E2E_POSTGRES_IMAGE ?= postgres:18.1-bookworm
 DOCKER_BUILD ?= DOCKER_BUILDKIT=1 docker build
 DEVSHARD_E2E_GO_IMAGE ?= golang:1.24.2-alpine3.20
 DEVSHARD_E2E_GO_TMPFS_SIZE ?= 1g
+DEVSHARD_E2E_GOTESTSUM ?= gotest.tools/gotestsum@v1.12.0
 
 devshard-gateway-release:
 	@if [ -z "$(strip $(DEVSHARD_GATEWAY_TAGS))" ]; then \

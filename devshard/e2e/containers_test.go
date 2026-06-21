@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -18,6 +21,10 @@ type e2eEnv struct {
 	network     testcontainers.Network
 	containers  []namedContainer
 	clientURL   string
+
+	images          e2eImages
+	hostURLs        []string
+	hostVolumeNames []string
 }
 
 type namedContainer struct {
@@ -34,9 +41,19 @@ type containerSpec struct {
 	tmpfs    map[string]string
 	waitPath string
 	waitLog  string
+	mounts   []mount.Mount
+}
+
+type e2eEnvOptions struct {
+	hostVolumeNames []string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
+	t.Helper()
+	return startE2EEnv(ctx, t, images, e2eEnvOptions{})
+}
+
+func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEnvOptions) *e2eEnv {
 	t.Helper()
 	debugLogf(t, "E2E images: mock-chain=%s host=%s devshardctl=%s postgres=%s",
 		images.mockChain, images.host, images.devshardctl, images.postgres)
@@ -53,8 +70,13 @@ func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2e
 	t.Cleanup(func() { _ = network.Remove(context.Background()) })
 
 	env := &e2eEnv{
-		networkName: networkName,
-		network:     network,
+		networkName:     networkName,
+		network:         network,
+		images:          images,
+		hostVolumeNames: opts.hostVolumeNames,
+	}
+	if len(opts.hostVolumeNames) > 0 {
+		t.Cleanup(func() { removeDockerVolumes(context.Background(), t, opts.hostVolumeNames) })
 	}
 	t.Cleanup(func() { env.terminate(context.Background(), t) })
 
@@ -89,29 +111,12 @@ func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2e
 		waitLog: "database system is ready to accept connections",
 	})
 
-	hostURLs := make([]string, 3)
-	for i := range hostURLs {
-		hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
+	env.hostURLs = make([]string, 3)
+	for i := range env.hostURLs {
+		env.hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
 	}
-	for i := range hostURLs {
-		env.startContainer(ctx, t, containerSpec{
-			name:    fmt.Sprintf("devshard-host-%d", i),
-			image:   images.host,
-			port:    "8080/tcp",
-			aliases: []string{fmt.Sprintf("devshard-host-%d", i)},
-			env: map[string]string{
-				"DEVSHARD_E2E_MODE":          "1",
-				"DEVSHARD_ESCROW_ID":         defaultEscrowID,
-				"DEVSHARD_HOST_INDEX":        fmt.Sprintf("%d", i),
-				"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(e2eHostPrivateKeys, ","),
-				"DEVSHARD_USER_PRIVATE_KEY":  e2eUserPrivateKey,
-				"DEVSHARD_CHAIN_REST":        "http://" + mockChainAlias + ":8080",
-				"DEVSHARD_PUBLIC_API":        "http://" + mockChainAlias + ":8080",
-				"DEVSHARD_PEER_URLS":         strings.Join(hostURLs, ","),
-				"DEVSHARD_STUB_INFERENCE":    "1",
-			},
-			waitPath: "/health",
-		})
+	for i := range env.hostURLs {
+		env.startHost(ctx, t, i)
 	}
 
 	devshardctl := env.startContainer(ctx, t, containerSpec{
@@ -124,7 +129,7 @@ func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2e
 			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
 			"DEVSHARD_CHAIN_REST":    "http://" + mockChainAlias + ":8080",
 			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":8080",
-			"DEVSHARD_HOST_URLS":     strings.Join(hostURLs, ","),
+			"DEVSHARD_HOST_URLS":     strings.Join(env.hostURLs, ","),
 			"DEVSHARD_PRIVATE_KEY":   envDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", e2eUserPrivateKey),
 			"DEVSHARD_ADMIN_API_KEY": e2eAdminAPIKey,
 			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
@@ -144,6 +149,66 @@ func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2e
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)
 	return env
+}
+
+func hostName(index int) string {
+	return fmt.Sprintf("devshard-host-%d", index)
+}
+
+func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
+	t.Helper()
+	env := map[string]string{
+		"DEVSHARD_E2E_MODE":          "1",
+		"DEVSHARD_ESCROW_ID":         defaultEscrowID,
+		"DEVSHARD_HOST_INDEX":        fmt.Sprintf("%d", index),
+		"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(e2eHostPrivateKeys, ","),
+		"DEVSHARD_USER_PRIVATE_KEY":  e2eUserPrivateKey,
+		"DEVSHARD_CHAIN_REST":        "http://" + mockChainAlias + ":8080",
+		"DEVSHARD_PUBLIC_API":        "http://" + mockChainAlias + ":8080",
+		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
+		"DEVSHARD_STUB_INFERENCE":    "1",
+	}
+	var mounts []mount.Mount
+	if index < len(e.hostVolumeNames) && e.hostVolumeNames[index] != "" {
+		env["DEVSHARD_DATA_DIR"] = "/data/devshard-host"
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: e.hostVolumeNames[index],
+			Target: "/data",
+		})
+	}
+	return e.startContainer(ctx, t, containerSpec{
+		name:     hostName(index),
+		image:    e.images.host,
+		port:     "8080/tcp",
+		aliases:  []string{hostName(index)},
+		env:      env,
+		mounts:   mounts,
+		waitPath: "/health",
+	})
+}
+
+func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
+	t.Helper()
+	name := hostName(index)
+	debugLogf(t, "restarting %s", name)
+	for i := range e.containers {
+		if e.containers[i].name != name {
+			continue
+		}
+		require.NoError(t, e.containers[i].container.Terminate(ctx), "terminate %s", name)
+		e.containers = append(e.containers[:i], e.containers[i+1:]...)
+		e.startHost(ctx, t, index)
+		return
+	}
+	t.Fatalf("container %s not found", name)
+}
+
+func (e *e2eEnv) restartAllHosts(ctx context.Context, t *testing.T) {
+	t.Helper()
+	for i := range e.hostURLs {
+		e.restartHost(ctx, t, i)
+	}
 }
 
 func e2eHostList(t *testing.T) string {
@@ -175,7 +240,10 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			Networks:       []string{e.networkName},
 			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
 			Tmpfs:          spec.tmpfs,
-			WaitingFor:     waitStrategy,
+			HostConfigModifier: func(hostConfig *container.HostConfig) {
+				hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
+			},
+			WaitingFor: waitStrategy,
 		},
 		Started: true,
 	})
@@ -185,6 +253,34 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
 	debugLogf(t, "container %s is ready", spec.name)
 	return container
+}
+
+func sqliteHostVolumeNames(t *testing.T) []string {
+	t.Helper()
+	base := strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
+	names := make([]string, 3)
+	for i := range names {
+		names[i] = fmt.Sprintf("devshard-e2e-%s-sqlite-%d", base, i)
+	}
+	return names
+}
+
+func removeDockerVolumes(ctx context.Context, t *testing.T, names []string) {
+	t.Helper()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		t.Logf("create docker client for volume cleanup: %v", err)
+		return
+	}
+	defer cli.Close()
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if err := cli.VolumeRemove(ctx, name, true); err != nil {
+			t.Logf("remove docker volume %s: %v", name, err)
+		}
+	}
 }
 
 func (e *e2eEnv) terminate(ctx context.Context, t *testing.T) {
