@@ -17,6 +17,11 @@ type RawResponse struct {
 	JSON        map[string]any
 }
 
+func LogRawResponse(t *testing.T, label string, resp RawResponse) {
+	t.Helper()
+	t.Logf("%s response: status=%d content_type=%q body=%s", label, resp.StatusCode, resp.ContentType, resp.Body)
+}
+
 func PostJSON(t *testing.T, client *http.Client, url string, body map[string]any) map[string]any {
 	t.Helper()
 	resp := PostJSONRaw(t, client, url, body, AdminAPIKey)
