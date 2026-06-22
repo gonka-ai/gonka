@@ -37,6 +37,7 @@ type e2eEnv struct {
 	images          e2eImages
 	hostURLs        []string
 	hostVolumeNames []string
+	usePostgres     bool
 }
 
 type namedContainer struct {
@@ -57,7 +58,8 @@ type containerSpec struct {
 }
 
 type e2eEnvOptions struct {
-	hostVolumeNames []string
+	hostVolumeNames    []string
+	usePostgresStorage bool
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -89,6 +91,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		network:         network,
 		images:          images,
 		hostVolumeNames: opts.hostVolumeNames,
+		usePostgres:     opts.usePostgresStorage,
 	}
 	if len(opts.hostVolumeNames) > 0 {
 		t.Cleanup(func() { removeDockerVolumes(context.Background(), t, opts.hostVolumeNames) })
@@ -130,6 +133,9 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	for i := range env.hostURLs {
 		env.hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
 	}
+	if env.usePostgres {
+		env.createPostgresHostDatabases(ctx, t, postgres)
+	}
 	for i := range env.hostURLs {
 		env.startHost(ctx, t, i)
 	}
@@ -170,6 +176,25 @@ func hostName(index int) string {
 	return fmt.Sprintf("devshard-host-%d", index)
 }
 
+func postgresHostDatabaseName(index int) string {
+	return fmt.Sprintf("devshard_host_%d", index)
+}
+
+func (e *e2eEnv) createPostgresHostDatabases(ctx context.Context, t *testing.T, postgres testcontainers.Container) {
+	t.Helper()
+	for i := range e.hostURLs {
+		dbName := postgresHostDatabaseName(i)
+		code, output, err := postgres.Exec(ctx, []string{"createdb", "-U", "devshard", dbName})
+		var body []byte
+		if output != nil {
+			body, _ = io.ReadAll(output)
+		}
+		require.NoError(t, err, "create postgres database %s: %s", dbName, string(body))
+		require.Equal(t, 0, code, "create postgres database %s: %s", dbName, string(body))
+		testutil.DebugLogf(t, "created Postgres database %s for %s", dbName, hostName(i))
+	}
+}
+
 func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
 	t.Helper()
 	env := map[string]string{
@@ -191,6 +216,14 @@ func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcon
 			Source: e.hostVolumeNames[index],
 			Target: "/data",
 		})
+	}
+	if e.usePostgres {
+		env["PGHOST"] = postgresAlias
+		env["PGPORT"] = "5432"
+		env["PGDATABASE"] = postgresHostDatabaseName(index)
+		env["PGUSER"] = "devshard"
+		env["PGPASSWORD"] = "devshard"
+		env["PG_CONNECT_TIMEOUT"] = "10s"
 	}
 	return e.startContainer(ctx, t, containerSpec{
 		name:     hostName(index),

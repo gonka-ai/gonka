@@ -37,7 +37,7 @@ Run one focused test:
 
 ```sh
 DEVSHARD_E2E_DEBUG=1 docker compose -f devshard/docker-compose.e2e.yml run --rm e2e-test \
-  go test ./e2e -run TestE2E_HappyPath -count=1 -v
+  go test ./e2e -run TestE2E_NonStreamingHappyPath -count=1 -v
 ```
 
 ## Debug Output
