@@ -252,6 +252,11 @@ func (am AppModule) expireInferences(
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
 			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
+		} else if inference.Status == types.InferenceStatus_VOTING {
+			// VOTING inferences whose x/group proposals missed quorum
+			// would otherwise be silently dropped here, stranding client
+			// escrow in the inference module account.
+			am.expireInferenceAndIssueRefund(ctx, inference)
 		}
 	}
 	return nil
