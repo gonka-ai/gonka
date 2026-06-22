@@ -21,6 +21,155 @@
       "type": "row"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 110,
+      "panels": [],
+      "title": "Nonce Consumption",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Gateway-observed nonce-consuming actions per accepted non-cache request. This is not voting amount.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 0,
+        "y": 22
+      },
+      "id": 111,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(devshard_gateway_slot_decisions_total{model=~\"$model\"}[$__range])) / clamp_min(sum(increase(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[$__range])), 1)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Total nonces / accepted request",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Real participant sends per accepted non-cache request.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 5,
+        "y": 22
+      },
+      "id": 112,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(devshard_gateway_slot_decisions_total{model=~\"$model\",decision=\"real_send\"}[$__range])) / clamp_min(sum(increase(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[$__range])), 1)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Real sends / accepted request",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Prepared nonces where the gateway intentionally did not contact a participant.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 10,
+        "y": 22
+      },
+      "id": 113,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(devshard_gateway_slot_decisions_total{model=~\"$model\",decision=\"ghost_no_send\"}[$__range])) / clamp_min(sum(increase(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[$__range])), 1)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "No-send burns / accepted request",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Top nonce-consuming gateway actions by kind and reason. This uses the existing slot decision metric but labels it by nonce semantics.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 9,
+        "x": 15,
+        "y": 22
+      },
+      "id": 114,
+      "targets": [
+        {
+          "expr": "topk(10, sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\"}[$__rate_interval])) by (decision, reason))",
+          "legendFormat": "{{decision}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Nonce consumption by reason",
+      "type": "timeseries"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -475,7 +624,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 21
+        "y": 37
       },
       "id": 99,
       "targets": [
@@ -516,18 +665,18 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 38
       },
       "id": 103,
       "targets": [
         {
-          "expr": "sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "A",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "sum by (participant_key, model) (increase(devshard_gateway_attempts_terminal_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(sum by (participant_key, model) (increase(devshard_gateway_attempts_terminal_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "B",
           "instant": true,
           "format": "table"
@@ -545,43 +694,43 @@
           "format": "table"
         },
         {
-          "expr": "(((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "E",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "F",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "G",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "H",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "I",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "J",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts))",
+          "expr": "round(((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) and on (participant_key, model) topk(30, ((((sum by (participant_key, model) (increase(devshard_gateway_attempt_failures_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_slot_decisions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",decision!=\"real_send\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_no_winner_attempts_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_timeout_actions_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",action=~\"skipped|failed\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_transport_errors_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\",path_kind=\"inference\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])))) + ((sum by (participant_key, model) (increase(devshard_gateway_participant_limit_rejections_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))) or on (participant_key, model) (0 * sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range]))))) / clamp_min(sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])), 1)) and on (participant_key, model) (sum by (participant_key, model) (increase(devshard_gateway_attempts_started_total{participant_key!=\"unknown\",participant_key=~\"$participant_key\",model=~\"$model\"}[$__range])) >= $min_attempts)))",
           "refId": "K",
           "instant": true,
           "format": "table"
@@ -710,7 +859,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "id": 106,
       "panels": [],
@@ -732,7 +881,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "id": 14,
       "targets": [
@@ -760,7 +909,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 43
+        "y": 51
       },
       "id": 15,
       "targets": [
@@ -788,7 +937,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 43
+        "y": 51
       },
       "id": 16,
       "targets": [
@@ -811,7 +960,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 51
+        "y": 59
       },
       "id": 17,
       "targets": [
@@ -842,7 +991,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 51
+        "y": 59
       },
       "id": 76,
       "targets": [
@@ -865,7 +1014,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 51
+        "y": 59
       },
       "id": 101,
       "targets": [
@@ -898,7 +1047,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 59
+        "y": 67
       },
       "id": 22,
       "targets": [
@@ -921,7 +1070,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 59
+        "y": 67
       },
       "id": 102,
       "targets": [
@@ -954,7 +1103,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 59
+        "y": 67
       },
       "id": 24,
       "targets": [
@@ -985,7 +1134,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 67
+        "y": 75
       },
       "id": 47,
       "targets": [
@@ -1016,7 +1165,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 67
+        "y": 75
       },
       "id": 48,
       "targets": [
@@ -1039,7 +1188,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 67
+        "y": 75
       },
       "id": 49,
       "targets": [
@@ -1062,7 +1211,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 75
+        "y": 83
       },
       "id": 28,
       "targets": [
@@ -1081,7 +1230,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 91
       },
       "id": 107,
       "panels": [],
@@ -1104,7 +1253,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 84
+        "y": 92
       },
       "id": 18,
       "targets": [
@@ -1133,7 +1282,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 84
+        "y": 92
       },
       "id": 19,
       "targets": [
@@ -1162,7 +1311,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 84
+        "y": 92
       },
       "id": 31,
       "targets": [
@@ -1191,7 +1340,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 92
+        "y": 100
       },
       "id": 32,
       "targets": [
@@ -1214,7 +1363,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 92
+        "y": 100
       },
       "id": 38,
       "targets": [
@@ -1237,7 +1386,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 92
+        "y": 100
       },
       "id": 100,
       "targets": [
@@ -1265,7 +1414,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 100
+        "y": 108
       },
       "id": 58,
       "targets": [
@@ -1284,7 +1433,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 116
       },
       "id": 108,
       "panels": [],
@@ -1301,7 +1450,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 109
+        "y": 117
       },
       "id": 53,
       "targets": [
@@ -1329,7 +1478,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 109
+        "y": 117
       },
       "id": 54,
       "targets": [
@@ -1352,7 +1501,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 109
+        "y": 117
       },
       "id": 42,
       "targets": [
@@ -1380,7 +1529,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 117
+        "y": 125
       },
       "id": 109,
       "targets": [
@@ -1516,6 +1665,6 @@
   "timezone": "",
   "title": "Gonka Gateway Observability",
   "uid": "gonka-gateway-observability",
-  "version": 16,
+  "version": 17,
   "weekStart": ""
 }

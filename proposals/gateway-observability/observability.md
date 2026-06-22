@@ -66,6 +66,14 @@ Deferred from Core V1:
 - Lifecycle database, request drilldown APIs, OTEL/Jaeger traces,
   Loki-derived panels, and offline protocol-analysis exports.
 
+TODO: review naming across gateway metrics, dashboard labels, and docs for
+`slot`, `nonce`, `diff`, `decision`, `attempt`, and `vote`. In particular,
+`devshard_gateway_slot_decisions_total` is currently displayed as gateway nonce
+consumption in the dashboard because it counts real sends and ghost/no-send
+nonce burns, not voting amount. A later cleanup should decide whether to rename
+the emitted metric or keep it as a compatibility name with clearer dashboard
+labels.
+
 ## Goal
 
 Gateway observability must answer protocol-development questions without trusting
