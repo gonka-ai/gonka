@@ -323,7 +323,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, group, nil,
-		m.hostOptions(escrow.EpochID)...,
+		m.hostOptions(escrow.EpochID, config.InferenceSealGraceNonces)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -507,7 +507,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil,
-		m.hostOptions(meta.EpochID)...,
+		m.hostOptions(meta.EpochID, meta.Config.InferenceSealGraceNonces)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
@@ -523,15 +523,19 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	return srv, nil
 }
 
-// hostOptions returns the common HostOption set used when constructing a
-// host either for a fresh session or a recovered one. Keeps the option list
-// in one place so future additions (prune sink, gossip, etc.) stay symmetric.
-func (m *HostManager) hostOptions(epochID uint64) []host.HostOption {
+// hostOptions returns the common HostOption set for a fresh or recovered host.
+// graceNonces installs the StalenessChecker (host.WithGrace): the host withholds
+// its state-root signature once a host-proposed tx has gone un-sequenced past
+// the grace window, the documented "User ignores MsgFinishInference" defense.
+func (m *HostManager) hostOptions(epochID uint64, graceNonces uint32) []host.HostOption {
 	opts := []host.HostOption{
 		host.WithValidator(m.validator),
 		host.WithStorage(m.store),
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
+	}
+	if graceNonces > 0 {
+		opts = append(opts, host.WithGrace(uint64(graceNonces)))
 	}
 	if m.pruneSink != nil {
 		opts = append(opts, host.WithPruneSink(m.pruneSink))
