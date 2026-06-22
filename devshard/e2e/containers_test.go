@@ -264,6 +264,10 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 		Logger:  quietTestcontainersLogger{},
 	})
 	if err != nil {
+		if container != nil {
+			dumpContainerLogs(ctx, t, spec.name, container)
+			_ = container.Terminate(context.Background())
+		}
 		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
 	}
 	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
@@ -316,19 +320,24 @@ func (e *e2eEnv) dumpContainerLogs(ctx context.Context, t *testing.T) {
 	t.Helper()
 	for i := len(e.containers) - 1; i >= 0; i-- {
 		c := e.containers[i]
-		logs, err := c.container.Logs(ctx)
-		if err != nil {
-			t.Logf("debug logs for %s unavailable: %v", c.name, err)
-			continue
-		}
-		body, readErr := io.ReadAll(logs)
-		if closeErr := logs.Close(); closeErr != nil {
-			t.Logf("close debug logs for %s: %v", c.name, closeErr)
-		}
-		if readErr != nil {
-			t.Logf("read debug logs for %s: %v", c.name, readErr)
-			continue
-		}
-		t.Logf("debug logs for %s:\n%s", c.name, string(body))
+		dumpContainerLogs(ctx, t, c.name, c.container)
 	}
+}
+
+func dumpContainerLogs(ctx context.Context, t *testing.T, name string, c testcontainers.Container) {
+	t.Helper()
+	logs, err := c.Logs(ctx)
+	if err != nil {
+		t.Logf("debug logs for %s unavailable: %v", name, err)
+		return
+	}
+	body, readErr := io.ReadAll(logs)
+	if closeErr := logs.Close(); closeErr != nil {
+		t.Logf("close debug logs for %s: %v", name, closeErr)
+	}
+	if readErr != nil {
+		t.Logf("read debug logs for %s: %v", name, readErr)
+		return
+	}
+	t.Logf("debug logs for %s:\n%s", name, string(body))
 }
