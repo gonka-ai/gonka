@@ -1,4 +1,4 @@
-package e2e
+package testutil
 
 import (
 	"encoding/json"
@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func requireSettlementContract(t *testing.T, settlement map[string]any) {
+func RequireSettlementContract(t *testing.T, settlement map[string]any) {
 	t.Helper()
 	require.NotEmpty(t, settlement["escrow_id"])
 	require.NotEmpty(t, settlement["version"])
 	require.NotEmpty(t, settlement["state_root"])
-	require.NotZero(t, numericField(t, settlement, "nonce"))
+	require.NotZero(t, NumericField(t, settlement, "nonce"))
 
 	signatures, ok := settlement["signatures"].([]any)
 	require.True(t, ok, "signatures should be a JSON array")
@@ -22,7 +22,7 @@ func requireSettlementContract(t *testing.T, settlement map[string]any) {
 	for _, raw := range signatures {
 		sig, ok := raw.(map[string]any)
 		require.True(t, ok, "signature entries should be objects")
-		slotID := numericField(t, sig, "slot_id")
+		slotID := NumericField(t, sig, "slot_id")
 		require.NotEmpty(t, sig["signature"])
 		if _, exists := seenSlots[slotID]; exists {
 			t.Fatalf("duplicate settlement signature for slot %d", slotID)
@@ -31,7 +31,7 @@ func requireSettlementContract(t *testing.T, settlement map[string]any) {
 	}
 }
 
-func requireCompletedValidationContract(t *testing.T, settlement map[string]any) {
+func RequireCompletedValidationContract(t *testing.T, settlement map[string]any) {
 	t.Helper()
 	progress := validationProgressFromHostStats(t, settlement["host_stats"])
 	require.Greater(t, progress.required, uint64(0), "settlement should require at least one validation")
@@ -39,24 +39,24 @@ func requireCompletedValidationContract(t *testing.T, settlement map[string]any)
 		"settlement should include every required validation as completed")
 }
 
-func requireValidationTargetContract(t *testing.T, settlement map[string]any, target uint64) {
+func RequireValidationTargetContract(t *testing.T, settlement map[string]any, target uint64) {
 	t.Helper()
 	reached, summary := hasHostValidationTarget(t, settlement["host_stats"], target)
 	require.Truef(t, reached, "settlement should include a host with %d/%d completed validations: %s",
 		target, target, summary)
 }
 
-func requireSettlementHostStats(t *testing.T, settlement map[string]any) {
+func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCount int) {
 	t.Helper()
 	stats, ok := settlement["host_stats"].([]any)
 	require.True(t, ok, "host_stats should be a JSON array")
-	require.Len(t, stats, len(e2eHostPrivateKeys), "settlement should include one host_stats entry per host")
+	require.Len(t, stats, hostCount, "settlement should include one host_stats entry per host")
 	for _, raw := range stats {
 		stat, ok := raw.(map[string]any)
 		require.True(t, ok, "host_stats entries should be objects")
-		_ = numericField(t, stat, "slot_id")
-		_ = numericField(t, stat, "required_validations")
-		_ = numericField(t, stat, "completed_validations")
+		_ = NumericField(t, stat, "slot_id")
+		_ = NumericField(t, stat, "required_validations")
+		_ = NumericField(t, stat, "completed_validations")
 	}
 }
 
@@ -65,8 +65,8 @@ func hasHostValidationTarget(t *testing.T, raw any, target uint64) (bool, string
 	found := false
 	summary := ""
 	visit := func(slotID string, stat map[string]any) {
-		required := numericField(t, stat, "required_validations")
-		completed := numericField(t, stat, "completed_validations")
+		required := NumericField(t, stat, "required_validations")
+		completed := NumericField(t, stat, "completed_validations")
 		if summary != "" {
 			summary += "; "
 		}
@@ -95,31 +95,7 @@ func hasHostValidationTarget(t *testing.T, raw any, target uint64) (bool, string
 	return found, summary
 }
 
-func validationEvidenceFromState(t *testing.T, state map[string]any) validationProgress {
-	t.Helper()
-	inferences, ok := state["inferences"].(map[string]any)
-	require.True(t, ok, "state inferences should be an object")
-	progress := validationProgress{}
-	progress.required = uint64(len(inferences))
-	for inferenceID, raw := range inferences {
-		inference, ok := raw.(map[string]any)
-		require.True(t, ok, "state inference %s should be an object", inferenceID)
-		validatedBy, ok := inference["validated_by"].([]any)
-		if ok && len(validatedBy) > 0 {
-			progress.completed += uint64(len(validatedBy))
-			if progress.summary != "" {
-				progress.summary += "; "
-			}
-			progress.summary += fmt.Sprintf("inference %s validated_by=%v", inferenceID, validatedBy)
-		}
-	}
-	if progress.summary == "" {
-		progress.summary = fmt.Sprintf("%d inferences, none validated yet", len(inferences))
-	}
-	return progress
-}
-
-func hasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
+func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
 	t.Helper()
 	inferences, ok := state["inferences"].(map[string]any)
 	require.True(t, ok, "state inferences should be an object")
@@ -133,7 +109,7 @@ func hasInferenceValidationTarget(t *testing.T, state map[string]any, target uin
 			continue
 		}
 		for _, rawSlot := range validatedBy {
-			slotID := numericValue(t, rawSlot, "validated_by slot")
+			slotID := NumericValue(t, rawSlot, "validated_by slot")
 			counts[slotID]++
 		}
 	}
@@ -185,8 +161,8 @@ func validationProgressFromHostStats(t *testing.T, raw any) validationProgress {
 
 func (p *validationProgress) add(t *testing.T, slotID string, stat map[string]any) {
 	t.Helper()
-	required := numericField(t, stat, "required_validations")
-	completed := numericField(t, stat, "completed_validations")
+	required := NumericField(t, stat, "required_validations")
+	completed := NumericField(t, stat, "completed_validations")
 	p.required += required
 	p.completed += completed
 	if p.summary != "" {
@@ -195,14 +171,14 @@ func (p *validationProgress) add(t *testing.T, slotID string, stat map[string]an
 	p.summary += fmt.Sprintf("slot %s completed=%d required=%d", slotID, completed, required)
 }
 
-func numericField(t *testing.T, obj map[string]any, field string) uint64 {
+func NumericField(t *testing.T, obj map[string]any, field string) uint64 {
 	t.Helper()
 	value, ok := obj[field]
 	require.Truef(t, ok, "missing numeric field %q", field)
-	return numericValue(t, value, field)
+	return NumericValue(t, value, field)
 }
 
-func numericValue(t *testing.T, value any, field string) uint64 {
+func NumericValue(t *testing.T, value any, field string) uint64 {
 	t.Helper()
 	switch v := value.(type) {
 	case float64:
