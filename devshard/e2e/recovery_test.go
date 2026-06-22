@@ -2,13 +2,13 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/e2e/testutil"
 )
 
 // Test flow:
@@ -30,23 +30,19 @@ func TestE2E_SQLiteHostRestartRecovery(t *testing.T) {
 		hostVolumeNames: sqliteHostVolumeNames(t),
 	})
 
-	client := &http.Client{Timeout: defaultRequestTimeout}
-	for i := 0; i < 3; i++ {
-		sendCompletion(t, client, env.clientURL, fmt.Sprintf("sqlite host restart before %d", i+1))
-	}
-	beforeRestart := latestSessionNonce(t, client, env.clientURL)
+	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	testutil.SendCompletions(t, client, env.clientURL, "sqlite host restart before", 3)
+	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
 	env.restartHost(ctx, t, 1)
 
-	for i := 0; i < 3; i++ {
-		sendCompletion(t, client, env.clientURL, fmt.Sprintf("sqlite host restart after %d", i+1))
-	}
-	afterRestart := latestSessionNonce(t, client, env.clientURL)
+	testutil.SendCompletions(t, client, env.clientURL, "sqlite host restart after", 3)
+	afterRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 	require.GreaterOrEqual(t, afterRestart, beforeRestart, "session nonce should not regress after host restart")
 
-	settlement := finalizeSession(t, client, env.clientURL)
-	requireSettlementContract(t, settlement)
-	requireSettlementHostStats(t, settlement)
+	settlement := testutil.FinalizeSession(t, client, env.clientURL)
+	testutil.RequireSettlementContract(t, settlement)
+	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
 }
 
 // Test flow:
@@ -68,39 +64,17 @@ func TestE2E_SQLiteAllHostsRestartRecovery(t *testing.T) {
 		hostVolumeNames: sqliteHostVolumeNames(t),
 	})
 
-	client := &http.Client{Timeout: defaultRequestTimeout}
-	for i := 0; i < 3; i++ {
-		sendCompletion(t, client, env.clientURL, fmt.Sprintf("sqlite all-host restart before %d", i+1))
-	}
-	beforeRestart := latestSessionNonce(t, client, env.clientURL)
+	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	testutil.SendCompletions(t, client, env.clientURL, "sqlite all-host restart before", 3)
+	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
 	env.restartAllHosts(ctx, t)
 
-	for i := 0; i < 3; i++ {
-		sendCompletion(t, client, env.clientURL, fmt.Sprintf("sqlite all-host restart after %d", i+1))
-	}
-	afterRestart := latestSessionNonce(t, client, env.clientURL)
+	testutil.SendCompletions(t, client, env.clientURL, "sqlite all-host restart after", 3)
+	afterRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 	require.GreaterOrEqual(t, afterRestart, beforeRestart, "session nonce should not regress after all-host restart")
 
-	settlement := finalizeSession(t, client, env.clientURL)
-	requireSettlementContract(t, settlement)
-	requireSettlementHostStats(t, settlement)
-}
-
-func latestSessionNonce(t *testing.T, client *http.Client, clientURL string) uint64 {
-	t.Helper()
-	state := getJSON(t, client, clientURL+"/v1/state")
-	session, ok := state["session"].(map[string]any)
-	require.True(t, ok, "state session should be an object")
-	return numericField(t, session, "latest_nonce")
-}
-
-func finalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
-	t.Helper()
-	debugLogf(t, "finalizing devshard session")
-	settlement := postJSON(t, client, clientURL+"/v1/finalize", map[string]any{})
-	settlementJSON, err := json.MarshalIndent(settlement, "", "  ")
-	require.NoError(t, err)
-	t.Logf("SettlementContract:\n%s", settlementJSON)
-	return settlement
+	settlement := testutil.FinalizeSession(t, client, env.clientURL)
+	testutil.RequireSettlementContract(t, settlement)
+	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
 }

@@ -4,31 +4,20 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/e2e/testutil"
 	"devshard/signing"
 )
 
 const (
-	defaultEscrowID       = "1"
-	defaultRequestTimeout = 2 * time.Minute
+	defaultEscrowID = "1"
 
 	mockChainAlias  = "mock-chain"
 	devshardCtlName = "devshardctl"
 	postgresAlias   = "postgres"
 )
-
-var e2eHostPrivateKeys = []string{
-	"0000000000000000000000000000000000000000000000000000000000000011",
-	"0000000000000000000000000000000000000000000000000000000000000012",
-	"0000000000000000000000000000000000000000000000000000000000000013",
-}
-
-const e2eUserPrivateKey = "0000000000000000000000000000000000000000000000000000000000000021"
-
-const e2eAdminAPIKey = "devshard-e2e-admin-key"
 
 type e2eImages struct {
 	mockChain   string
@@ -60,7 +49,7 @@ func requiredImages(t *testing.T) e2eImages {
 		mockChain:   os.Getenv("DEVSHARD_E2E_MOCK_CHAIN_IMAGE"),
 		host:        os.Getenv("DEVSHARD_E2E_HOST_IMAGE"),
 		devshardctl: os.Getenv("DEVSHARD_E2E_DEVSHARDCTL_IMAGE"),
-		postgres:    envDefault("DEVSHARD_E2E_POSTGRES_IMAGE", "postgres:18.1-bookworm"),
+		postgres:    testutil.EnvDefault("DEVSHARD_E2E_POSTGRES_IMAGE", "postgres:18.1-bookworm"),
 	}
 	var missing []string
 	if images.mockChain == "" {
@@ -76,23 +65,4 @@ func requiredImages(t *testing.T) e2eImages {
 		t.Fatalf("DEVSHARD_E2E=1 requires prebuilt e2e images; missing %s", strings.Join(missing, ", "))
 	}
 	return images
-}
-
-func envDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func e2eDebugEnabled() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("DEVSHARD_E2E_DEBUG")))
-	return value == "1" || value == "true" || value == "yes"
-}
-
-func debugLogf(t *testing.T, format string, args ...any) {
-	t.Helper()
-	if e2eDebugEnabled() {
-		t.Logf(format, args...)
-	}
 }

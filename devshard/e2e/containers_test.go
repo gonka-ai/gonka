@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"devshard/e2e/testutil"
 )
 
 type e2eEnv struct {
@@ -55,11 +57,11 @@ func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2e
 
 func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEnvOptions) *e2eEnv {
 	t.Helper()
-	debugLogf(t, "E2E images: mock-chain=%s host=%s devshardctl=%s postgres=%s",
+	testutil.DebugLogf(t, "E2E images: mock-chain=%s host=%s devshardctl=%s postgres=%s",
 		images.mockChain, images.host, images.devshardctl, images.postgres)
 
 	networkName := "devshard-e2e-" + strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
-	debugLogf(t, "creating Docker network %s", networkName)
+	testutil.DebugLogf(t, "creating Docker network %s", networkName)
 	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
 		NetworkRequest: testcontainers.NetworkRequest{
 			Name:           networkName,
@@ -88,7 +90,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env: map[string]string{
 			"MOCK_CHAIN_PORT":              "8080",
 			"DEVSHARD_E2E_ESCROW_ID":       defaultEscrowID,
-			"DEVSHARD_E2E_CREATOR_ADDRESS": signerAddress(t, e2eUserPrivateKey),
+			"DEVSHARD_E2E_CREATOR_ADDRESS": signerAddress(t, testutil.UserPrivateKey),
 			"DEVSHARD_E2E_HOSTS":           e2eHostList(t),
 		},
 		waitPath: "/health",
@@ -130,8 +132,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 			"DEVSHARD_CHAIN_REST":    "http://" + mockChainAlias + ":8080",
 			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":8080",
 			"DEVSHARD_HOST_URLS":     strings.Join(env.hostURLs, ","),
-			"DEVSHARD_PRIVATE_KEY":   envDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", e2eUserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY": e2eAdminAPIKey,
+			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
 			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
 			"DEVSHARD_MODEL":         "stub-model",
 			"GATEWAY_MAX_TOKENS_CAP": "4096",
@@ -144,7 +146,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	port, err := devshardctl.MappedPort(ctx, "8080/tcp")
 	require.NoError(t, err)
 	env.clientURL = "http://" + host + ":" + port.Port()
-	debugLogf(t, "devshardctl client URL: %s", env.clientURL)
+	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
 
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)
@@ -161,8 +163,8 @@ func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcon
 		"DEVSHARD_E2E_MODE":          "1",
 		"DEVSHARD_ESCROW_ID":         defaultEscrowID,
 		"DEVSHARD_HOST_INDEX":        fmt.Sprintf("%d", index),
-		"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(e2eHostPrivateKeys, ","),
-		"DEVSHARD_USER_PRIVATE_KEY":  e2eUserPrivateKey,
+		"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(testutil.HostPrivateKeys, ","),
+		"DEVSHARD_USER_PRIVATE_KEY":  testutil.UserPrivateKey,
 		"DEVSHARD_CHAIN_REST":        "http://" + mockChainAlias + ":8080",
 		"DEVSHARD_PUBLIC_API":        "http://" + mockChainAlias + ":8080",
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
@@ -191,7 +193,7 @@ func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcon
 func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 	t.Helper()
 	name := hostName(index)
-	debugLogf(t, "restarting %s", name)
+	testutil.DebugLogf(t, "restarting %s", name)
 	for i := range e.containers {
 		if e.containers[i].name != name {
 			continue
@@ -213,8 +215,8 @@ func (e *e2eEnv) restartAllHosts(ctx context.Context, t *testing.T) {
 
 func e2eHostList(t *testing.T) string {
 	t.Helper()
-	entries := make([]string, len(e2eHostPrivateKeys))
-	for i, key := range e2eHostPrivateKeys {
+	entries := make([]string, len(testutil.HostPrivateKeys))
+	for i, key := range testutil.HostPrivateKeys {
 		entries[i] = fmt.Sprintf("%s=http://devshard-host-%d:8080", signerAddress(t, key), i)
 	}
 	return strings.Join(entries, ",")
@@ -222,14 +224,14 @@ func e2eHostList(t *testing.T) string {
 
 func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containerSpec) testcontainers.Container {
 	t.Helper()
-	debugLogf(t, "starting container %s image=%s aliases=%s port=%s waitPath=%s waitLog=%q",
+	testutil.DebugLogf(t, "starting container %s image=%s aliases=%s port=%s waitPath=%s waitLog=%q",
 		spec.name, spec.image, strings.Join(spec.aliases, ","), spec.port, spec.waitPath, spec.waitLog)
 
 	var waitStrategy wait.Strategy
 	if spec.waitLog != "" {
-		waitStrategy = wait.ForLog(spec.waitLog).WithOccurrence(2).WithStartupTimeout(defaultRequestTimeout)
+		waitStrategy = wait.ForLog(spec.waitLog).WithOccurrence(2).WithStartupTimeout(testutil.DefaultRequestTimeout)
 	} else {
-		waitStrategy = wait.ForHTTP(spec.waitPath).WithPort(nat.Port(spec.port)).WithStartupTimeout(defaultRequestTimeout)
+		waitStrategy = wait.ForHTTP(spec.waitPath).WithPort(nat.Port(spec.port)).WithStartupTimeout(testutil.DefaultRequestTimeout)
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -251,7 +253,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
 	}
 	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
-	debugLogf(t, "container %s is ready", spec.name)
+	testutil.DebugLogf(t, "container %s is ready", spec.name)
 	return container
 }
 
@@ -285,7 +287,7 @@ func removeDockerVolumes(ctx context.Context, t *testing.T, names []string) {
 
 func (e *e2eEnv) terminate(ctx context.Context, t *testing.T) {
 	t.Helper()
-	if t.Failed() && e2eDebugEnabled() {
+	if t.Failed() && testutil.DebugEnabled() {
 		e.dumpContainerLogs(ctx, t)
 	}
 	for i := len(e.containers) - 1; i >= 0; i-- {

@@ -1,4 +1,4 @@
-package e2e
+package testutil
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func postJSON(t *testing.T, client *http.Client, url string, body map[string]any) map[string]any {
+func PostJSON(t *testing.T, client *http.Client, url string, body map[string]any) map[string]any {
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -18,8 +18,8 @@ func postJSON(t *testing.T, client *http.Client, url string, body map[string]any
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+e2eAdminAPIKey)
-	debugLogf(t, "POST %s request=%s", url, string(data))
+	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
+	DebugLogf(t, "POST %s request=%s", url, string(data))
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -27,7 +27,7 @@ func postJSON(t *testing.T, client *http.Client, url string, body map[string]any
 
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	debugLogf(t, "POST %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+	DebugLogf(t, "POST %s status=%d response=%s", url, resp.StatusCode, string(respBody))
 	require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 
 	var decoded map[string]any
@@ -35,12 +35,12 @@ func postJSON(t *testing.T, client *http.Client, url string, body map[string]any
 	return decoded
 }
 
-func getJSON(t *testing.T, client *http.Client, url string) map[string]any {
+func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+e2eAdminAPIKey)
-	debugLogf(t, "GET %s", url)
+	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
+	DebugLogf(t, "GET %s", url)
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func getJSON(t *testing.T, client *http.Client, url string) map[string]any {
 
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	debugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+	DebugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
 	require.Less(t, resp.StatusCode, 300, "GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
 
 	var decoded map[string]any
