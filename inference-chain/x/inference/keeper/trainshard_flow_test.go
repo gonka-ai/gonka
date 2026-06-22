@@ -177,34 +177,6 @@ func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {
 	require.False(t, view.FullyReservedAt(host, 150)) // only B reserved
 }
 
-// TestCollectFullyReservedHostsForModel keeps only fully reserved hosts
-func TestCollectFullyReservedHostsForModel(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
-	const epoch = uint64(7)
-
-	hostFull := sample.AccAddress()
-	hostPartial := sample.AccAddress()
-	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId: epoch,
-		Participants: []*types.ActiveParticipant{
-			{Index: hostFull, Models: []string{"model1"}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{
-				{NodeId: "fa"}, {NodeId: "fb"},
-			}}}},
-			{Index: hostPartial, Models: []string{"model1"}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{
-				{NodeId: "pa"}, {NodeId: "pb"},
-			}}}},
-		},
-	}))
-	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(hostFull, "fa"), uint64(1)))
-	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(hostFull, "fb"), uint64(1)))
-	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(hostPartial, "pa"), uint64(1)))
-
-	res := k.CollectFullyReservedHostsForModel(ctx, epoch, "model1")
-	require.Contains(t, res, hostFull)
-	require.NotContains(t, res, hostPartial)
-	require.Empty(t, k.CollectFullyReservedHostsForModel(ctx, epoch, "model2"))
-}
-
 // TestCollectEpochFullyReservedHostsForModel keeps hosts ever fully reserved
 func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
@@ -241,7 +213,6 @@ func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 		CreatedAtHeight: 110, ClosedAtHeight: 140,
 		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
 	}))
-	require.Empty(t, k.CollectFullyReservedHostsForModel(ctx, epoch, "model1"))
 	require.Contains(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"), host)
 }
 

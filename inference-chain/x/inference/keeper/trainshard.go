@@ -13,7 +13,6 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 )
@@ -450,6 +449,63 @@ func (k Keeper) CollectReservedNodeIds(ctx context.Context) map[string]map[strin
 	return reserved
 }
 
+func modelFreeWeight(p *types.ActiveParticipant, modelId string, reservedNodes map[string]struct{}) (int64, bool) {
+	modelIndex := -1
+	for i, m := range p.Models {
+		if m == modelId {
+			modelIndex = i
+			break
+		}
+	}
+	if modelIndex < 0 || modelIndex >= len(p.MlNodes) || p.MlNodes[modelIndex] == nil {
+		return 0, false
+	}
+
+	weight := int64(0)
+	counted := make(map[string]struct{})
+	for _, node := range p.MlNodes[modelIndex].MlNodes {
+		if node == nil || node.NodeId == "" {
+			continue
+		}
+		if _, seen := counted[node.NodeId]; seen {
+			continue
+		}
+		counted[node.NodeId] = struct{}{}
+		if _, reserved := reservedNodes[node.NodeId]; reserved {
+			continue
+		}
+		weight += node.PocWeight
+	}
+
+	return weight, true
+}
+
+func (k Keeper) collectModelFreeWeights(ctx context.Context, epochId uint64, modelId string) map[string]int64 {
+	reserved := k.CollectReservedNodeIds(ctx)
+	if len(reserved) == 0 {
+		return nil
+	}
+	active, found := k.GetActiveParticipants(ctx, epochId)
+	if !found {
+		return nil
+	}
+
+	weights := make(map[string]int64)
+	for _, p := range active.Participants {
+		if p == nil || p.Index == "" {
+			continue
+		}
+		reservedNodes := reserved[p.Index]
+		if len(reservedNodes) == 0 {
+			continue
+		}
+		if freeWeight, tracked := modelFreeWeight(p, modelId, reservedNodes); tracked {
+			weights[p.Index] = freeWeight
+		}
+	}
+	return weights
+}
+
 // epochBlockRange returns the epoch block range
 func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, int64) {
 	epoch, found := k.GetEpoch(ctx, epochIndex)
@@ -649,55 +705,6 @@ func (v EpochReservationView) FullyReservedAt(host string, height int64) bool {
 	return hostFullyReservedAtHeight(v.nodes[host], v.intervals[host], height)
 }
 
-func allModelNodesReserved(p *types.ActiveParticipant, modelId string, reservedNodes map[string]struct{}) bool {
-	modelIndex := -1
-	for i, m := range p.Models {
-		if m == modelId {
-			modelIndex = i
-			break
-		}
-	}
-	if modelIndex < 0 || modelIndex >= len(p.MlNodes) || p.MlNodes[modelIndex] == nil {
-		return false
-	}
-	nodes := p.MlNodes[modelIndex].MlNodes
-	if len(nodes) == 0 {
-		return false
-	}
-	for _, n := range nodes {
-		if n == nil {
-			continue
-		}
-		if _, ok := reservedNodes[n.NodeId]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// fullyReservedHostsForModel returns hosts with all model nodes reserved
-func (k Keeper) fullyReservedHostsForModel(ctx context.Context, epochId uint64, modelId string, reserved map[string]map[string]struct{}) map[string]struct{} {
-	fullyReserved := make(map[string]struct{})
-	if len(reserved) == 0 {
-		return fullyReserved
-	}
-	active, found := k.GetActiveParticipants(ctx, epochId)
-	if !found {
-		return fullyReserved
-	}
-	for _, p := range active.Participants {
-		if p != nil && allModelNodesReserved(p, modelId, reserved[p.Index]) {
-			fullyReserved[p.Index] = struct{}{}
-		}
-	}
-	return fullyReserved
-}
-
-// CollectFullyReservedHostsForModel returns hosts fully reserved now
-func (k Keeper) CollectFullyReservedHostsForModel(ctx context.Context, epochId uint64, modelId string) map[string]struct{} {
-	return k.fullyReservedHostsForModel(ctx, epochId, modelId, k.CollectReservedNodeIds(ctx))
-}
-
 // CollectEpochFullyReservedHostsForModel returns epoch-fully-reserved hosts
 func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string) map[string]struct{} {
 	fullyReserved := make(map[string]struct{})
@@ -748,26 +755,4 @@ func hostEverFullyReservedForModel(modelNodes map[string]struct{}, intervals []h
 		}
 	}
 	return false
-}
-
-// filterOutFullyReservedForModel removes members fully reserved for the model
-func (k Keeper) filterOutFullyReservedForModel(ctx context.Context, epochId uint64, modelId string, members []*group.GroupMember) []*group.GroupMember {
-	fullyReserved := k.CollectFullyReservedHostsForModel(ctx, epochId, modelId)
-	if len(fullyReserved) == 0 {
-		return members
-	}
-
-	filtered := make([]*group.GroupMember, 0, len(members))
-	for _, m := range members {
-		if m == nil || m.Member == nil {
-			continue
-		}
-		if _, drop := fullyReserved[m.Member.Address]; drop {
-			k.LogDebug("Excluding fully-reserved host from assignment", types.Training,
-				"participant", m.Member.Address, "model", modelId)
-			continue
-		}
-		filtered = append(filtered, m)
-	}
-	return filtered
 }
