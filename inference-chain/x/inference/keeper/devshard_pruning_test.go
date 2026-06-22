@@ -119,37 +119,24 @@ func TestPruneDevshardData_HostStatsDeleted(t *testing.T) {
 	require.Equal(t, uint64(0), count)
 }
 
-func TestPruneDevshardData_UnsettledEscrowDistributesFunds(t *testing.T) {
+func TestPruneDevshardData_UnsettledEscrowRefundsCreator(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
-	// Create 4 unique validators in 16 slots
-	addr1 := sdk.AccAddress(make([]byte, 20))
-	addr1[0] = 0x01
-	addr2 := sdk.AccAddress(make([]byte, 20))
-	addr2[0] = 0x02
-	addr3 := sdk.AccAddress(make([]byte, 20))
-	addr3[0] = 0x03
-	addr4 := sdk.AccAddress(make([]byte, 20))
-	addr4[0] = 0x04
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xCC
 
+	// Slot ownership is irrelevant: the full amount is refunded to the creator.
 	slots := make([]string, keeper.DevshardGroupSize)
-	for i := 0; i < 4; i++ {
-		slots[i] = addr1.String()
-	}
-	for i := 4; i < 8; i++ {
-		slots[i] = addr2.String()
-	}
-	for i := 8; i < 12; i++ {
-		slots[i] = addr3.String()
-	}
-	for i := 12; i < 16; i++ {
-		slots[i] = addr4.String()
+	for i := range slots {
+		v := sdk.AccAddress(make([]byte, 20))
+		v[0] = byte(i + 1)
+		slots[i] = v.String()
 	}
 
 	escrow := &types.DevshardEscrow{
-		Creator:    "gonka1creator",
+		Creator:    creator.String(),
 		Amount:     8_000_000_000, // 8 GNK
 		Slots:      slots,
 		EpochIndex: 3,
@@ -158,11 +145,14 @@ func TestPruneDevshardData_UnsettledEscrowDistributesFunds(t *testing.T) {
 	_, err := k.StoreDevshardEscrow(ctx, escrow, 1)
 	require.NoError(t, err)
 
-	// Expect 4 payments of 2 GNK each (8 GNK / 4 unique validators)
+	// Expect a single refund of the FULL amount to the creator -- no validator
+	// distribution.
+	refund, err := types.GetCoins(8_000_000_000)
+	require.NoError(t, err)
 	mock.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Eq("devshard_escrow_unsettled_distribution")).
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, refund, gomock.Eq("devshard_escrow_unsettled_refund")).
 		Return(nil).
-		Times(4)
+		Times(1)
 
 	require.NoError(t, pruneDevshard(k, ctx, 5))
 
@@ -171,35 +161,27 @@ func TestPruneDevshardData_UnsettledEscrowDistributesFunds(t *testing.T) {
 	require.False(t, found)
 }
 
-func TestPruneDevshardData_UnsettledDistributionAmounts(t *testing.T) {
+func TestPruneDevshardData_UnsettledRefundFullAmountNoStrandedRemainder(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
-	// Create 4 unique validators in 16 slots (4 slots each)
-	addrs := make([]sdk.AccAddress, 4)
-	for i := range addrs {
-		addrs[i] = sdk.AccAddress(make([]byte, 20))
-		addrs[i][0] = byte(i + 1)
-	}
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xCC
 
+	// Amount is intentionally NOT divisible by the validator count, so the old
+	// equal-split would have stranded a remainder; the refund returns it all.
 	slots := make([]string, keeper.DevshardGroupSize)
-	for i := 0; i < 4; i++ {
-		slots[i] = addrs[0].String()
-	}
-	for i := 4; i < 8; i++ {
-		slots[i] = addrs[1].String()
-	}
-	for i := 8; i < 12; i++ {
-		slots[i] = addrs[2].String()
-	}
-	for i := 12; i < 16; i++ {
-		slots[i] = addrs[3].String()
+	for i := range slots {
+		v := sdk.AccAddress(make([]byte, 20))
+		v[0] = byte((i % 4) + 1)
+		slots[i] = v.String()
 	}
 
+	const amount = uint64(8_000_000_003) // not divisible by 4
 	escrow := &types.DevshardEscrow{
-		Creator:    "gonka1creator",
-		Amount:     8_000_000_000, // 8 GNK
+		Creator:    creator.String(),
+		Amount:     amount,
 		Slots:      slots,
 		EpochIndex: 3,
 		Settled:    false,
@@ -207,15 +189,13 @@ func TestPruneDevshardData_UnsettledDistributionAmounts(t *testing.T) {
 	_, err := k.StoreDevshardEscrow(ctx, escrow, 1)
 	require.NoError(t, err)
 
-	// Each of 4 validators should receive exactly 2 GNK (8 GNK / 4)
-	expectedShare, err := types.GetCoins(2_000_000_000)
+	// The entire locked amount is refunded to the creator -- nothing stranded.
+	expectedRefund, err := types.GetCoins(int64(amount))
 	require.NoError(t, err)
-
-	for _, addr := range addrs {
-		mock.BankKeeper.EXPECT().
-			SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr, expectedShare, gomock.Eq("devshard_escrow_unsettled_distribution")).
-			Return(nil)
-	}
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, expectedRefund, gomock.Eq("devshard_escrow_unsettled_refund")).
+		Return(nil).
+		Times(1)
 
 	require.NoError(t, pruneDevshard(k, ctx, 5))
 }

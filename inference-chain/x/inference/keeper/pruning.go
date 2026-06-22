@@ -253,8 +253,8 @@ func (k Keeper) GetDevshardPruner(params types.Params) Pruner[collections.Pair[u
 
 			escrow, found := k.GetDevshardEscrow(ctx, escrowID)
 			if found && !escrow.Settled {
-				if err := k.distributeUnsettledEscrow(ctx, escrow); err != nil {
-					k.LogError("failed to distribute unsettled escrow", types.Pruning,
+				if err := k.refundUnsettledEscrow(ctx, escrow); err != nil {
+					k.LogError("failed to refund unsettled escrow", types.Pruning,
 						"escrow_id", escrowID, "error", err)
 				}
 			}
