@@ -14,6 +14,7 @@ services:
       DEVSHARD_E2E_DEVSHARDCTL_IMAGE: ${DEVSHARD_E2E_DEVSHARDCTL_IMAGE:-devshardctl:local}
       DEVSHARD_E2E_POSTGRES_IMAGE: ${DEVSHARD_E2E_POSTGRES_IMAGE:-postgres:18.1-bookworm}
       DEVSHARD_E2E_GOTESTSUM: ${DEVSHARD_E2E_GOTESTSUM:-gotest.tools/gotestsum@v1.12.0}
+      DEVSHARD_E2E_DEBUG: ${DEVSHARD_E2E_DEBUG:-}
       GOTMPDIR: /tmp
       TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
     command:
@@ -21,7 +22,11 @@ services:
       - -c
       - |
         mkdir -p build/test-results/e2e
+        format=testname
+        case "$$DEVSHARD_E2E_DEBUG" in
+          1|true|TRUE|yes|YES) format=standard-verbose ;;
+        esac
         go run "$$DEVSHARD_E2E_GOTESTSUM" \
-          --format testname \
+          --format "$$format" \
           --junitfile build/test-results/e2e/junit.xml \
           -- ./e2e -count=1 -v

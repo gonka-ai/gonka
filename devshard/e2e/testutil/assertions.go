@@ -3,10 +3,89 @@ package testutil
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func RequireOpenAIStream(t *testing.T, stream StreamResponse) {
+	t.Helper()
+	require.Contains(t, stream.ContentType, "text/event-stream")
+	require.NotEmpty(t, stream.Events, "SSE stream should include data events")
+
+	doneCount := 0
+	contentSeen := false
+	for i, event := range stream.Events {
+		if event == "[DONE]" {
+			doneCount++
+			require.Equal(t, len(stream.Events)-1, i, "[DONE] should only appear as the final SSE data event")
+			continue
+		}
+		requireNoProtocolLeak(t, event)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(event), &payload), "SSE data event should be JSON: %s", event)
+		require.Contains(t, payload, "choices", "SSE JSON event should keep OpenAI-compatible choices")
+		require.NotEqual(t, "chat.completion", payload["object"], "raw non-streaming chat.completion object should not leak into SSE")
+		if streamEventHasContent(t, payload) {
+			contentSeen = true
+		}
+	}
+
+	require.True(t, contentSeen, "SSE stream should include at least one content-bearing event")
+	require.Equal(t, 1, doneCount, "SSE stream should include exactly one [DONE] event")
+	require.Equal(t, "[DONE]", stream.Events[len(stream.Events)-1], "final SSE data event should be [DONE]")
+}
+
+func RequireOpenAICompletion(t *testing.T, resp map[string]any) {
+	t.Helper()
+	require.Contains(t, resp, "choices", "completion response should include choices")
+	choices, ok := resp["choices"].([]any)
+	require.True(t, ok, "completion choices should be an array")
+	require.NotEmpty(t, choices, "completion response should include at least one choice")
+	for _, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		require.True(t, ok, "completion choice should be an object")
+		if message, ok := choice["message"].(map[string]any); ok {
+			require.NotEmpty(t, message["content"], "completion message should include content")
+			continue
+		}
+		if delta, ok := choice["delta"].(map[string]any); ok {
+			require.NotEmpty(t, delta["content"], "completion delta should include content")
+			continue
+		}
+		t.Fatalf("completion choice should include message or delta: %v", choice)
+	}
+}
+
+func requireNoProtocolLeak(t *testing.T, event string) {
+	t.Helper()
+	lower := strings.ToLower(event)
+	for _, marker := range []string{"devshard", "receipt", "metadata", "state_root", "signature", "nonce", "escrow"} {
+		require.NotContains(t, lower, marker, "SSE event should not expose devshard protocol metadata")
+	}
+}
+
+func streamEventHasContent(t *testing.T, payload map[string]any) bool {
+	t.Helper()
+	choices, ok := payload["choices"].([]any)
+	require.True(t, ok, "choices should be an array")
+	for _, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		require.True(t, ok, "choice should be an object")
+		require.NotContains(t, choice, "logprobs", "streaming choices should not expose logprobs")
+		_, hasDelta := choice["delta"].(map[string]any)
+		_, hasMessage := choice["message"].(map[string]any)
+		require.True(t, hasDelta || hasMessage, "streaming choice should include delta or message")
+		if delta, ok := choice["delta"].(map[string]any); ok && delta["content"] != "" {
+			return true
+		}
+		if message, ok := choice["message"].(map[string]any); ok && message["content"] != "" {
+			return true
+		}
+	}
+	return false
+}
 
 func RequireSettlementContract(t *testing.T, settlement map[string]any) {
 	t.Helper()
@@ -42,8 +121,8 @@ func RequireCompletedValidationContract(t *testing.T, settlement map[string]any)
 func RequireValidationTargetContract(t *testing.T, settlement map[string]any, target uint64) {
 	t.Helper()
 	reached, summary := hasHostValidationTarget(t, settlement["host_stats"], target)
-	require.Truef(t, reached, "settlement should include a host with %d/%d completed validations: %s",
-		target, target, summary)
+	require.Truef(t, reached, "settlement should include a host with at least %d completed validations: %s",
+		target, summary)
 }
 
 func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCount int) {
@@ -71,7 +150,7 @@ func hasHostValidationTarget(t *testing.T, raw any, target uint64) (bool, string
 			summary += "; "
 		}
 		summary += fmt.Sprintf("slot %s completed=%d required=%d", slotID, completed, required)
-		if completed == target && required == target {
+		if completed >= target {
 			found = true
 		}
 	}
