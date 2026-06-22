@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"devshard/bridge"
+	"devshard/types"
 )
 
 const defaultPort = "8090"
@@ -81,6 +82,21 @@ type modelSnapshotJSON struct {
 	ValidationThreshold bridge.Decimal `json:"validation_threshold"`
 }
 
+type paramsResponse struct {
+	Params paramsJSON `json:"params"`
+}
+
+type paramsJSON struct {
+	DevshardEscrowParams devshardEscrowParamsJSON `json:"devshard_escrow_params"`
+}
+
+type devshardEscrowParamsJSON struct {
+	RefusalTimeout      string `json:"refusal_timeout"`
+	ExecutionTimeout    string `json:"execution_timeout"`
+	ValidationRate      uint32 `json:"validation_rate"`
+	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
+}
+
 func main() {
 	port := flag.String("port", envDefault("MOCK_CHAIN_PORT", defaultPort), "listen port")
 	configPath := flag.String("config", os.Getenv("MOCK_CHAIN_CONFIG"), "optional JSON config path")
@@ -148,6 +164,19 @@ func newHandler(cfg mockConfig) http.Handler {
 		writeJSON(w, http.StatusOK, epochGroupDataResponse{
 			EpochGroupData: epochGroupDataJSON{
 				ModelSnapshot: &modelSnapshotJSON{ValidationThreshold: cfg.ValidationThreshold},
+			},
+		})
+	})
+	mux.HandleFunc("/productscience/inference/inference/params", func(w http.ResponseWriter, _ *http.Request) {
+		defaults := types.DefaultSessionConfig(len(cfg.Hosts))
+		writeJSON(w, http.StatusOK, paramsResponse{
+			Params: paramsJSON{
+				DevshardEscrowParams: devshardEscrowParamsJSON{
+					RefusalTimeout:      strconv.FormatInt(defaults.RefusalTimeout, 10),
+					ExecutionTimeout:    strconv.FormatInt(defaults.ExecutionTimeout, 10),
+					ValidationRate:      defaults.ValidationRate,
+					VoteThresholdFactor: 50,
+				},
 			},
 		})
 	})

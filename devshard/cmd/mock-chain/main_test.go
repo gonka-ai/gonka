@@ -51,6 +51,13 @@ func TestMockChain_RESTBridgeContract(t *testing.T) {
 	require.Equal(t, int64(958), threshold.Value)
 	require.Equal(t, int32(-3), threshold.Exponent)
 
+	params, err := client.GetSessionBindParams()
+	require.NoError(t, err)
+	require.Equal(t, int64(60), params.RefusalTimeout)
+	require.Equal(t, int64(1200), params.ExecutionTimeout)
+	require.Equal(t, uint32(5000), params.ValidationRate)
+	require.Equal(t, uint32(50), params.VoteThresholdFactor)
+
 	ok, err := client.VerifyWarmKey("warmA", "valA")
 	require.NoError(t, err)
 	require.True(t, ok)
