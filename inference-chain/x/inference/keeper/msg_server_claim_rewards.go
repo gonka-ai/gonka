@@ -457,6 +457,37 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
+	reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotals(ctx, msg.EpochIndex)
+	for modelId, weightMap := range modelWeightMaps {
+		reserved := reservedByModelHost[modelId]
+		if modelId == "" {
+			reserved = reservedByHost
+		}
+		if len(reserved) == 0 {
+			continue
+		}
+		removed := int64(0)
+		for host, vw := range weightMap {
+			r := reserved[host]
+			if r <= 0 {
+				continue
+			}
+			if r > vw.Weight {
+				r = vw.Weight
+			}
+			vw.Weight -= r
+			weightMap[host] = vw
+			removed += r
+		}
+		if t := modelTotalWeights[modelId] - removed; t > 0 {
+			modelTotalWeights[modelId] = t
+		} else {
+			modelTotalWeights[modelId] = 0
+		}
+	}
+
+	reservedView := k.BuildEpochReservationView(ctx, msg.EpochIndex)
+
 	blockHash := ctx.HeaderInfo().Hash
 	blockHashSeed := int64(binary.BigEndian.Uint64(blockHash[:8]))
 	rng := rand.New(rand.NewSource(blockHashSeed))
@@ -518,6 +549,15 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		totalWeight := modelTotalWeights[modelId]
+		if totalWeight <= 0 {
+			skipped++
+			continue
+		}
+
+		if reservedView.FullyReservedAt(msg.Creator, inference.CreatedAtBlockHeight) {
+			skipped++
+			continue
+		}
 
 		// Inferences that overlap with the PoC window are not validated: the executor was
 		// not required to serve during PoC, so a missed validation there is not a slashing
