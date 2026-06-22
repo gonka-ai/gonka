@@ -207,13 +207,20 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 	t.Helper()
 	name := hostName(index)
 	testutil.DebugLogf(t, "restarting %s", name)
+	e.stopHost(ctx, t, index)
+	e.startHost(ctx, t, index)
+}
+
+func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {
+	t.Helper()
+	name := hostName(index)
+	testutil.DebugLogf(t, "stopping %s", name)
 	for i := range e.containers {
 		if e.containers[i].name != name {
 			continue
 		}
 		require.NoError(t, e.containers[i].container.Terminate(ctx), "terminate %s", name)
 		e.containers = append(e.containers[:i], e.containers[i+1:]...)
-		e.startHost(ctx, t, index)
 		return
 	}
 	t.Fatalf("container %s not found", name)

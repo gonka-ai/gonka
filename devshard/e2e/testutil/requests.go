@@ -16,9 +16,15 @@ import (
 func SendCompletion(t *testing.T, client *http.Client, clientURL, content string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "sending completion request content=%q", content)
-	resp := PostJSON(t, client, clientURL+"/v1/chat/completions", chatCompletionBody(content, false))
+	resp := PostJSON(t, client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false))
 	require.NotEmpty(t, resp["choices"], "completion response should include choices")
 	return resp
+}
+
+func SendCompletionRaw(t *testing.T, client *http.Client, clientURL, content, bearerToken string) RawResponse {
+	t.Helper()
+	DebugLogf(t, "sending raw completion request content=%q bearer_set=%t", content, bearerToken != "")
+	return PostJSONRaw(t, client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
 }
 
 type StreamResponse struct {
@@ -30,7 +36,7 @@ func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, conte
 	t.Helper()
 	DebugLogf(t, "sending streaming completion request content=%q", content)
 
-	data, err := json.Marshal(chatCompletionBody(content, true))
+	data, err := json.Marshal(ChatCompletionBody(content, true))
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, clientURL+"/v1/chat/completions", strings.NewReader(string(data)))
@@ -59,7 +65,7 @@ func SendCompletions(t *testing.T, client *http.Client, clientURL, contentPrefix
 	}
 }
 
-func chatCompletionBody(content string, stream bool) map[string]any {
+func ChatCompletionBody(content string, stream bool) map[string]any {
 	body := map[string]any{
 		"model": "stub-model",
 		"messages": []map[string]string{
