@@ -5,6 +5,8 @@ services:
     volumes:
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - host.docker.internal:host-gateway
     tmpfs:
       - /tmp:rw,exec,size=${DEVSHARD_E2E_GO_TMPFS_SIZE:-1g}
     environment:
