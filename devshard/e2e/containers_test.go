@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -13,10 +14,19 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"devshard/e2e/testutil"
 )
+
+type quietTestcontainersLogger struct{}
+
+func (quietTestcontainersLogger) Printf(string, ...any) {}
+
+func init() {
+	tclog.SetDefault(quietTestcontainersLogger{})
+}
 
 type e2eEnv struct {
 	networkName string
@@ -60,7 +70,10 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	testutil.DebugLogf(t, "E2E images: mock-chain=%s host=%s devshardctl=%s postgres=%s",
 		images.mockChain, images.host, images.devshardctl, images.postgres)
 
-	networkName := "devshard-e2e-" + strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
+	networkName := fmt.Sprintf("devshard-e2e-%s-%d",
+		strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name())),
+		time.Now().UnixNano(),
+	)
 	testutil.DebugLogf(t, "creating Docker network %s", networkName)
 	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
 		NetworkRequest: testcontainers.NetworkRequest{
@@ -248,6 +261,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			WaitingFor: waitStrategy,
 		},
 		Started: true,
+		Logger:  quietTestcontainersLogger{},
 	})
 	if err != nil {
 		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
