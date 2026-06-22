@@ -118,13 +118,6 @@ func RequireCompletedValidationContract(t *testing.T, settlement map[string]any)
 		"settlement should include every required validation as completed")
 }
 
-func RequireValidationTargetContract(t *testing.T, settlement map[string]any, target uint64) {
-	t.Helper()
-	reached, summary := hasHostValidationTarget(t, settlement["host_stats"], target)
-	require.Truef(t, reached, "settlement should include a host with at least %d completed validations: %s",
-		target, summary)
-}
-
 func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCount int) {
 	t.Helper()
 	stats, ok := settlement["host_stats"].([]any)
@@ -137,41 +130,6 @@ func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCou
 		_ = NumericField(t, stat, "required_validations")
 		_ = NumericField(t, stat, "completed_validations")
 	}
-}
-
-func hasHostValidationTarget(t *testing.T, raw any, target uint64) (bool, string) {
-	t.Helper()
-	found := false
-	summary := ""
-	visit := func(slotID string, stat map[string]any) {
-		required := NumericField(t, stat, "required_validations")
-		completed := NumericField(t, stat, "completed_validations")
-		if summary != "" {
-			summary += "; "
-		}
-		summary += fmt.Sprintf("slot %s completed=%d required=%d", slotID, completed, required)
-		if completed >= target {
-			found = true
-		}
-	}
-
-	switch stats := raw.(type) {
-	case []any:
-		for _, rawStat := range stats {
-			stat, ok := rawStat.(map[string]any)
-			require.True(t, ok, "host_stats entries should be objects")
-			visit(fmt.Sprint(stat["slot_id"]), stat)
-		}
-	case map[string]any:
-		for slotID, rawStat := range stats {
-			stat, ok := rawStat.(map[string]any)
-			require.True(t, ok, "host_stats[%s] should be an object", slotID)
-			visit(slotID, stat)
-		}
-	default:
-		t.Fatalf("host_stats has unsupported type %T", raw)
-	}
-	return found, summary
 }
 
 func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
