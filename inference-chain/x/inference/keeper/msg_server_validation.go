@@ -236,6 +236,37 @@ func (k msgServer) revalidateInferenceVote(
 		revalidationOption = group.VOTE_OPTION_YES
 	}
 
+	// Structural membership precheck: the voter may be absent from the epoch
+	// sub-group either at handler entry, or after the first vote triggers a
+	// self-invalidation cascade that removes the voter mid-transaction. Voting
+	// as a non-member makes x/group return an error (voteValidationProposal only
+	// tolerates the "proposal already decided" case), which would fail the whole
+	// MsgValidation. Skip each vote as a no-op unless membership is confirmed at
+	// that point.
+	isMember := func() bool {
+		sg, err := k.GetEpochGroup(ctx, inference.EpochId, inference.Model)
+		if err != nil || sg == nil || sg.GroupData == nil || sg.GroupData.EpochGroupId == 0 {
+			return false
+		}
+		members, mErr := sg.GetGroupMembers(ctx)
+		if mErr != nil {
+			return false
+		}
+		for _, m := range members {
+			if m.Member != nil && m.Member.Address == voter {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !isMember() {
+		k.LogError("Voter not in epoch sub-group at handler entry; skipping both votes",
+			types.Validation, "voter", voter, "inferenceId", inference.InferenceId,
+			"epochId", inference.EpochId, "model", inference.Model)
+		return &types.MsgValidationResponse{}, nil
+	}
+
 	voteMsg := &group.MsgVote{
 		ProposalId: inference.ProposalDetails.InvalidatePolicyId,
 		Voter:      voter,
@@ -245,6 +276,15 @@ func (k msgServer) revalidateInferenceVote(
 	}
 	if err := k.voteValidationProposal(ctx, voteMsg); err != nil {
 		return nil, err
+	}
+
+	// Re-check: the Invalidate vote may have statistically invalidated the
+	// voter themselves, removing them from the group; the Revalidate vote would
+	// then hard-error.
+	if !isMember() {
+		k.LogError("Voter removed from epoch sub-group after Invalidate vote; skipping Revalidate vote",
+			types.Validation, "voter", voter, "inferenceId", inference.InferenceId)
+		return &types.MsgValidationResponse{}, nil
 	}
 
 	voteMsg.ProposalId = inference.ProposalDetails.ReValidatePolicyId

@@ -78,6 +78,22 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 2,
 	}, nil)
+
+	// The membership precheck in revalidateInferenceVote performs a real x/group
+	// membership query. Give the sub-group a non-zero EpochGroupId and stub the
+	// membership query so the revalidation voter is recognized as a member;
+	// otherwise both votes are correctly skipped as no-ops.
+	groupData, _ := k.GetEpochGroupData(ctx, 0, MODEL_ID)
+	groupData.EpochGroupId = 1
+	k.SetEpochGroupData(ctx, groupData)
+	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{
+			Members: []*group.GroupMember{
+				{GroupId: 1, Member: &group.Member{Address: testutil.Requester, Weight: "100"}},
+			},
+		}, nil,
+	).AnyTimes()
+
 	ms := inferenceHelper.MessageServer
 	_, err = ms.Validation(ctx, &types.MsgValidation{
 		InferenceId:  expected.InferenceId,
@@ -118,6 +134,60 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	has, err := k.ActiveInvalidations.Has(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Validator), expected.InferenceId))
 	require.NoError(t, err)
 	require.True(t, has)
+}
+
+// TestMsgServer_Validation_Revalidation_SkipsVoteWhenVoterNotInGroup is the
+// regression reproducer for the membership precheck. When the revalidation
+// voter is absent from the inference's epoch sub-group, the handler must NOT
+// attempt an x/group vote — the real x/group keeper rejects a non-member vote
+// with an error that would fail the whole MsgValidation. Pre-fix the handler
+// voted unconditionally; this test FAILS pre-fix (the stubbed-out Vote is
+// called, violating Times(0)) and passes with the membership precheck.
+func TestMsgServer_Validation_Revalidation_SkipsVoteWhenVoterNotInGroup(t *testing.T) {
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	createParticipants(t, inferenceHelper.MessageServer, ctx)
+	model := &types.Model{Id: MODEL_ID, ValidationThreshold: &types.Decimal{Value: 85, Exponent: -2}}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, inferenceHelper.Mocks, model)
+	addMembersToGroupData(k, ctx)
+
+	expected, err := inferenceHelper.StartInference("promptPayload", model.Id, time.Now().UnixNano(), calculations.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	buildValidationCacheForTest(t, k, ctx)
+
+	mocks := inferenceHelper.Mocks
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 1}, nil)
+	mocks.GroupKeeper.EXPECT().SubmitProposal(gomock.Any(), gomock.Any()).Return(&group.MsgSubmitProposalResponse{ProposalId: 2}, nil)
+
+	ms := inferenceHelper.MessageServer
+	_, err = ms.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Validator,
+		ValueDecimal: types.DecimalFromFloat(0.80),
+	})
+	require.NoError(t, err)
+	inference, found := k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
+
+	// The sub-group's EpochGroupId is left 0 (addMembersToGroupData writes only
+	// ValidationWeights, no real x/group), so the revalidation voter is not a
+	// confirmed member and the handler must skip both votes.
+	mocks.GroupKeeper.EXPECT().Vote(gomock.Any(), gomock.Any()).Times(0)
+
+	_, err = ms.Validation(ctx, &types.MsgValidation{
+		InferenceId:  expected.InferenceId,
+		Creator:      testutil.Requester,
+		ValueDecimal: types.DecimalFromFloat(0.80),
+		Revalidation: true,
+	})
+	require.NoError(t, err, "revalidation by a non-member must be a no-op, not an error")
+
+	inference, found = k.GetInference(ctx, expected.InferenceId)
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
 }
 
 func addMembersToGroupData(k keeper.Keeper, ctx sdk.Context) {
