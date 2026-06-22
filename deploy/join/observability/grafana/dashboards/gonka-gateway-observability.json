@@ -190,7 +190,7 @@
       "id": 115,
       "targets": [
         {
-          "expr": "sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[$__rate_interval])), 0.001)",
+          "expr": "sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\"}[5m])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[5m])), 0.001)",
           "legendFormat": "total nonces / accepted request",
           "refId": "A"
         }
