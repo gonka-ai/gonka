@@ -174,6 +174,35 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Gateway-observed nonce-consuming actions per accepted non-cache request over time. Spikes indicate PoC/cPoC, quarantine, throttling, capability skips, or redundancy pressure. This is not voting amount.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "id": 115,
+      "targets": [
+        {
+          "expr": "sum(rate(devshard_gateway_slot_decisions_total{model=~\"$model\"}[$__rate_interval])) / clamp_min(sum(rate(devshard_gateway_requests_total{model=~\"$model\",outcome!~\"cached|invalid_request|model_rejected|gateway_limited\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "total nonces / accepted request",
+          "refId": "A"
+        }
+      ],
+      "title": "Total nonces / accepted request over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "Prometheus scrape state for the gateway.",
       "fieldConfig": {
         "defaults": {
@@ -624,7 +653,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 37
+        "y": 44
       },
       "id": 99,
       "targets": [
@@ -648,7 +677,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 36
       },
       "id": 105,
       "panels": [],
@@ -665,7 +694,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 45
       },
       "id": 103,
       "targets": [
@@ -859,7 +888,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "id": 106,
       "panels": [],
@@ -881,7 +910,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 51
+        "y": 58
       },
       "id": 14,
       "targets": [
@@ -909,7 +938,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 51
+        "y": 58
       },
       "id": 15,
       "targets": [
@@ -937,7 +966,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 51
+        "y": 58
       },
       "id": 16,
       "targets": [
@@ -960,7 +989,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 59
+        "y": 66
       },
       "id": 17,
       "targets": [
@@ -991,7 +1020,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 59
+        "y": 66
       },
       "id": 76,
       "targets": [
@@ -1014,7 +1043,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 59
+        "y": 66
       },
       "id": 101,
       "targets": [
@@ -1047,7 +1076,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 67
+        "y": 74
       },
       "id": 22,
       "targets": [
@@ -1070,7 +1099,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 67
+        "y": 74
       },
       "id": 102,
       "targets": [
@@ -1103,7 +1132,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 67
+        "y": 74
       },
       "id": 24,
       "targets": [
@@ -1134,7 +1163,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 75
+        "y": 82
       },
       "id": 47,
       "targets": [
@@ -1165,7 +1194,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 75
+        "y": 82
       },
       "id": 48,
       "targets": [
@@ -1188,7 +1217,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 75
+        "y": 82
       },
       "id": 49,
       "targets": [
@@ -1211,7 +1240,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 83
+        "y": 90
       },
       "id": 28,
       "targets": [
@@ -1230,7 +1259,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 91
+        "y": 98
       },
       "id": 107,
       "panels": [],
@@ -1253,7 +1282,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 92
+        "y": 99
       },
       "id": 18,
       "targets": [
@@ -1282,7 +1311,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 92
+        "y": 99
       },
       "id": 19,
       "targets": [
@@ -1311,7 +1340,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 92
+        "y": 99
       },
       "id": 31,
       "targets": [
@@ -1340,7 +1369,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 100
+        "y": 107
       },
       "id": 32,
       "targets": [
@@ -1363,7 +1392,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 100
+        "y": 107
       },
       "id": 38,
       "targets": [
@@ -1386,7 +1415,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 100
+        "y": 107
       },
       "id": 100,
       "targets": [
@@ -1414,7 +1443,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 108
+        "y": 115
       },
       "id": 58,
       "targets": [
@@ -1433,7 +1462,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 123
       },
       "id": 108,
       "panels": [],
@@ -1450,7 +1479,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 117
+        "y": 124
       },
       "id": 53,
       "targets": [
@@ -1478,7 +1507,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 117
+        "y": 124
       },
       "id": 54,
       "targets": [
@@ -1501,7 +1530,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 117
+        "y": 124
       },
       "id": 42,
       "targets": [
@@ -1529,7 +1558,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 125
+        "y": 132
       },
       "id": 109,
       "targets": [
