@@ -17,7 +17,7 @@ import (
 //  4. Finalize the devshard session through devshardctl.
 //  5. Verify the stable settlement contract:
 //     escrow id, version, state root, nonce, signatures, and no duplicate
-//     signature slot ids.
+//     signature slot ids, with one host_stats entry per host.
 func TestE2E_HappyPath(t *testing.T) {
 	requireE2EEnabled(t)
 
@@ -34,4 +34,5 @@ func TestE2E_HappyPath(t *testing.T) {
 
 	settlement := testutil.FinalizeSession(t, client, env.clientURL)
 	testutil.RequireSettlementContract(t, settlement)
+	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
 }
