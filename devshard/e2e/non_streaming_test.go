@@ -21,7 +21,7 @@ import (
 //  5. Verify the stable settlement contract:
 //     escrow id, version, state root, nonce, signatures, and no duplicate
 //     signature slot ids, with one host_stats entry per host.
-func TestE2E_HappyPath(t *testing.T) {
+func TestE2E_NonStreamingHappyPath(t *testing.T) {
 	env, client := startNonStreamingEnv(t)
 	testutil.SendCompletions(t, client, env.clientURL, "hello", 3)
 
