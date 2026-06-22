@@ -3,6 +3,7 @@ package testutil
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -55,6 +56,28 @@ func RequireOpenAICompletion(t *testing.T, resp map[string]any) {
 			continue
 		}
 		t.Fatalf("completion choice should include message or delta: %v", choice)
+	}
+}
+
+func RequireOpenAINonStreamingCompletion(t *testing.T, resp RawResponse) {
+	t.Helper()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "completion should return success: %s", resp.Body)
+	require.NotContains(t, resp.ContentType, "text/event-stream", "non-streaming completion should not return SSE")
+	require.NotContains(t, resp.Body, "data:", "non-streaming completion should not return SSE data lines")
+	require.NotNil(t, resp.JSON, "non-streaming completion should return JSON: %s", resp.Body)
+	requireNoProtocolLeak(t, resp.Body)
+	require.Contains(t, resp.JSON, "choices", "completion response should include choices")
+	choices, ok := resp.JSON["choices"].([]any)
+	require.True(t, ok, "completion choices should be an array")
+	require.NotEmpty(t, choices, "completion response should include at least one choice")
+	for _, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		require.True(t, ok, "completion choice should be an object")
+		require.NotContains(t, choice, "delta", "non-streaming choices should not use streaming delta shape")
+		require.NotContains(t, choice, "logprobs", "non-streaming choices should not expose logprobs")
+		message, ok := choice["message"].(map[string]any)
+		require.True(t, ok, "non-streaming completion choice should include message")
+		require.NotEmpty(t, message["content"], "completion message should include content")
 	}
 }
 

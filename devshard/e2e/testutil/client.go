@@ -10,16 +10,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type RawResponse struct {
+	StatusCode  int
+	ContentType string
+	Body        string
+	JSON        map[string]any
+}
+
 func PostJSON(t *testing.T, client *http.Client, url string, body map[string]any) map[string]any {
+	t.Helper()
+	resp := PostJSONRaw(t, client, url, body, AdminAPIKey)
+	require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
+	require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
+	return resp.JSON
+}
+
+func PostJSONRaw(t *testing.T, client *http.Client, url string, body map[string]any, bearerToken string) RawResponse {
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
+	return PostRaw(t, client, url, "application/json", data, bearerToken)
+}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+func PostRaw(t *testing.T, client *http.Client, url, contentType string, body []byte, bearerToken string) RawResponse {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
-	DebugLogf(t, "POST %s request=%s", url, string(data))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+	DebugLogf(t, "POST %s request=%s", url, string(body))
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -28,11 +51,17 @@ func PostJSON(t *testing.T, client *http.Client, url string, body map[string]any
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	DebugLogf(t, "POST %s status=%d response=%s", url, resp.StatusCode, string(respBody))
-	require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 
 	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
-	return decoded
+	if len(bytes.TrimSpace(respBody)) > 0 {
+		_ = json.Unmarshal(respBody, &decoded)
+	}
+	return RawResponse{
+		StatusCode:  resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        string(respBody),
+		JSON:        decoded,
+	}
 }
 
 func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
