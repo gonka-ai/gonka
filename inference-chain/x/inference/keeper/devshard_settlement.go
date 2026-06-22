@@ -20,6 +20,10 @@ import (
 const (
 	DevshardGroupSize   = 16
 	DevshardQuorumSlots = 2*DevshardGroupSize/3 + 1
+	// DevshardMinDistinctSlotValidators is the minimum number of distinct
+	// validators an escrow's slots must resolve to at creation, so no single
+	// validator can reach settlement quorum alone.
+	DevshardMinDistinctSlotValidators = 2
 	// DevshardSettlementPhase is the phase byte appended to the state root preimage.
 	// The chain hardcodes 0x02 (Settlement) so only fully-finalized devshard states
 	// can pass verification. States at phase Active (0x00) or Finalizing (0x01)
@@ -140,9 +144,18 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 	}
 	sigHash := sha256.Sum256(sigData)
 
-	// Verify signatures and count slot votes
+	// Quorum is over distinct validators, not slots: one validator can own many
+	// slots (weighted sampling with replacement) and the signed payload omits
+	// slot_id, so per-slot counting would let it meet quorum by replaying one sig.
+	distinctValidators := make(map[string]bool, len(escrow.Slots))
+	for _, addr := range escrow.Slots {
+		distinctValidators[addr] = true
+	}
+	requiredQuorum := DevshardQuorumFor(len(distinctValidators))
+
+	// Verify signatures and count distinct validator votes.
 	seenSlots := make(map[uint32]bool, len(msg.Signatures))
-	slotVotes := 0
+	votedValidators := make(map[string]bool, len(distinctValidators))
 	for _, sig := range msg.Signatures {
 		if seenSlots[sig.SlotId] {
 			return fmt.Errorf("duplicate signature for slot %d", sig.SlotId)
@@ -163,13 +176,13 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 			}
 		}
 
-		slotVotes++
+		// One vote per distinct validator (keyed by cold address; warm keys fold in).
+		votedValidators[expectedAddr] = true
 	}
 
-	// Check quorum: derived from actual slot count in escrow.
-	requiredQuorum := DevshardQuorumFor(len(escrow.Slots))
-	if slotVotes < requiredQuorum {
-		return fmt.Errorf("insufficient quorum: %d slot votes, need %d", slotVotes, requiredQuorum)
+	// Check quorum: a supermajority of DISTINCT slot-validators must sign.
+	if len(votedValidators) < requiredQuorum {
+		return fmt.Errorf("insufficient quorum: %d distinct validator votes, need %d", len(votedValidators), requiredQuorum)
 	}
 
 	// Verify total cost + fees does not exceed escrow amount

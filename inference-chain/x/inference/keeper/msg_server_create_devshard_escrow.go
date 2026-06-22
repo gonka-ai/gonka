@@ -77,6 +77,18 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		int(ep.GroupSize),
 	)
 
+	// Reject escrows whose slots resolve to too few distinct validators: slots
+	// are sampled with replacement, so a sole/dominant validator could settle
+	// alone. Reject up front rather than lock funds in an unsettleable escrow.
+	distinctValidators := make(map[string]bool, len(slots))
+	for _, addr := range slots {
+		distinctValidators[addr] = true
+	}
+	if len(distinctValidators) < DevshardMinDistinctSlotValidators {
+		return nil, fmt.Errorf("model %q epoch group too concentrated for devshard: %d distinct slot validators, need >= %d",
+			msg.ModelId, len(distinctValidators), DevshardMinDistinctSlotValidators)
+	}
+
 	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
 		return nil, fmt.Errorf("invalid creator address: %w", err)
