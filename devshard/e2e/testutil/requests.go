@@ -1,26 +1,55 @@
 package testutil
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func SendCompletion(t *testing.T, client *http.Client, clientURL, content string) {
+func SendCompletion(t *testing.T, client *http.Client, clientURL, content string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "sending completion request content=%q", content)
-	resp := PostJSON(t, client, clientURL+"/v1/chat/completions", map[string]any{
-		"model": "stub-model",
-		"messages": []map[string]string{
-			{"role": "user", "content": content},
-		},
-		"max_tokens": 32,
-	})
+	resp := PostJSON(t, client, clientURL+"/v1/chat/completions", chatCompletionBody(content, false))
 	require.NotEmpty(t, resp["choices"], "completion response should include choices")
+	return resp
+}
+
+type StreamResponse struct {
+	ContentType string
+	Events      []string
+}
+
+func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, content string) StreamResponse {
+	t.Helper()
+	DebugLogf(t, "sending streaming completion request content=%q", content)
+
+	data, err := json.Marshal(chatCompletionBody(content, true))
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, clientURL+"/v1/chat/completions", strings.NewReader(string(data)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, events := readSSEEvents(t, resp.Body)
+	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, body)
+
+	return StreamResponse{
+		ContentType: resp.Header.Get("Content-Type"),
+		Events:      events,
+	}
 }
 
 func SendCompletions(t *testing.T, client *http.Client, clientURL, contentPrefix string, count int) {
@@ -28,6 +57,38 @@ func SendCompletions(t *testing.T, client *http.Client, clientURL, contentPrefix
 	for i := 0; i < count; i++ {
 		SendCompletion(t, client, clientURL, fmt.Sprintf("%s %d", contentPrefix, i+1))
 	}
+}
+
+func chatCompletionBody(content string, stream bool) map[string]any {
+	body := map[string]any{
+		"model": "stub-model",
+		"messages": []map[string]string{
+			{"role": "user", "content": content},
+		},
+		"max_tokens": 32,
+	}
+	if stream {
+		body["stream"] = true
+	}
+	return body
+}
+
+func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
+	t.Helper()
+	var raw strings.Builder
+	var events []string
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		raw.WriteString(line)
+		raw.WriteByte('\n')
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		events = append(events, strings.TrimPrefix(line, "data: "))
+	}
+	require.NoError(t, scanner.Err())
+	return raw.String(), events
 }
 
 func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL string) {
@@ -43,8 +104,8 @@ func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL s
 			return
 		}
 		if attempt == maxExtraCompletions {
-			t.Fatalf("no host reached %d/%d validations before finalize after %d extra completion rounds: %s",
-				validationTarget, validationTarget, maxExtraCompletions, summary)
+			t.Fatalf("no host reached at least %d completed validations before finalize after %d extra completion rounds: %s",
+				validationTarget, maxExtraCompletions, summary)
 		}
 		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", attempt+1))
 		time.Sleep(250 * time.Millisecond)

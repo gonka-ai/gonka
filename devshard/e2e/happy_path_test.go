@@ -12,7 +12,8 @@ import (
 // Test flow:
 //  1. Send three OpenAI-style chat completion requests through devshardctl.
 //  2. Assert that every completion response includes choices.
-//  3. Drive extra completion rounds until one host reaches 2/2 validations.
+//  3. Drive extra completion rounds until one host reaches at least two
+//     completed validations.
 //  4. Finalize the devshard session through devshardctl.
 //  5. Verify the stable settlement contract:
 //     escrow id, version, state root, nonce, signatures, and no duplicate
