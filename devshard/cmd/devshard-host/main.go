@@ -121,13 +121,19 @@ func loadConfig() (hostConfig, error) {
 		balance:     uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
 		epochID:     uintEnv("DEVSHARD_EPOCH_ID", 1),
 		tokenPrice:  uintEnv("DEVSHARD_TOKEN_PRICE", 1),
-		version:     envDefault("DEVSHARD_VERSION", types.LegacySessionVersion),
+		version:     envDefault("DEVSHARD_VERSION", types.LegacyRouteSessionVersion),
 	}, nil
 }
 
 func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
 	verifier := signing.NewSecp256k1Verifier()
 	sessionConfig := types.SessionConfigWithPrice(len(cfg.group), cfg.tokenPrice)
+
+	store, err := storage.NewStorage(ctx, cfg.dataDir)
+	if err != nil {
+		return nil, err
+	}
+
 	sm, err := state.NewStateMachine(
 		cfg.escrowID,
 		sessionConfig,
@@ -135,16 +141,14 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		cfg.balance,
 		cfg.userAddress,
 		verifier,
-		state.WithVersion(cfg.version),
+		store,
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
 	)
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 
-	store, err := storage.NewStorage(ctx, cfg.dataDir)
-	if err != nil {
-		return nil, err
-	}
 	if err := store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       cfg.escrowID,
 		EpochID:        cfg.epochID,
