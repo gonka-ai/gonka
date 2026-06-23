@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"devshard/types"
 )
@@ -22,50 +21,42 @@ type rangePruner interface {
 	pruneBefore(cutoff uint64) error
 }
 
-// ManagedStorage wraps a Storage with periodic per-epoch pruning.
+// ManagedStorage wraps a Storage with per-epoch retention pruning.
 //
 // Retention math mirrors payloadstorage.ManagedStorage: keep the highest N
 // epochs, drop everything older. maxObservedEpoch comes from CreateSession
-// calls (and, if provided, from EpochProvider). PruneInterval defaults to 30s
-// to match the payload pruner cadence.
+// calls (and, if provided, from EpochProvider).
+//
+// Pruning runs only when callers invoke PruneOnce — typically from an
+// epoch-change hook (dapi runtime-config publish or devshardd long-poll).
+// Start runs one catch-up PruneOnce after recovery; it does not start a timer.
 type ManagedStorage struct {
-	inner         Storage
-	retain        uint64
-	pruneInterval time.Duration
-	epochs        EpochProvider
+	inner  Storage
+	retain uint64
+	epochs EpochProvider
 
 	maxObservedEpoch atomic.Uint64
 
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	prunedUpTo uint64 // exclusive: every epoch < prunedUpTo has been pruned
-
-	lifecycleMu sync.Mutex
-	started     bool
-	stop        chan struct{}
-	done        chan struct{}
 }
 
 // NewManagedStorage wraps inner with a pruner that retains the last `retain`
 // epochs (current epoch counts as one of them, so retain=3 keeps current + 2
-// previous). Call Start after migration/recovery to enable the background loop.
+// previous). Call Start after migration/recovery for a one-shot catch-up prune,
+// and register epoch-change listeners that call PruneOnce.
 //
-// epochs is optional. If non-nil, the pruner consults it on every tick so the
-// retention horizon advances even on quiet hosts. Pass nil in tests where you
-// want full control over retention from CreateSession alone.
-func NewManagedStorage(inner Storage, retain uint64, pruneInterval time.Duration, epochs EpochProvider) *ManagedStorage {
+// epochs is optional. If non-nil, PruneOnce consults it so the retention horizon
+// advances even on quiet hosts. Pass nil in tests where you drive pruning only
+// via explicit PruneOnce calls.
+func NewManagedStorage(inner Storage, retain uint64, epochs EpochProvider) *ManagedStorage {
 	if retain == 0 {
 		retain = 1
 	}
-	if pruneInterval <= 0 {
-		pruneInterval = 30 * time.Second
-	}
 	m := &ManagedStorage{
-		inner:         inner,
-		retain:        retain,
-		pruneInterval: pruneInterval,
-		epochs:        epochs,
-		stop:          make(chan struct{}),
-		done:          make(chan struct{}),
+		inner:  inner,
+		retain: retain,
+		epochs: epochs,
 	}
 	_, hasRangePrune := inner.(rangePruner)
 	slog.Info("devshard managed storage initialized", "range_prune", hasRangePrune, "retain", retain)
@@ -93,34 +84,27 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 	return m.maxObservedEpoch.Load()
 }
 
-func (m *ManagedStorage) loop() {
-	defer close(m.done)
-	t := time.NewTicker(m.pruneInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-m.stop:
-			return
-		case <-t.C:
-			m.PruneOnce(context.Background())
-		}
-	}
-}
-
-// Start enables the background pruning loop. It is idempotent so callers can
-// wire it after recovery without coordinating ownership.
+// Start runs a single catch-up prune after recovery. Epoch transitions must
+// trigger additional PruneOnce calls via the host's epoch-change hook.
 func (m *ManagedStorage) Start() {
-	m.lifecycleMu.Lock()
-	defer m.lifecycleMu.Unlock()
-	if m.started {
-		return
-	}
-	m.started = true
-	go m.loop()
+	m.PruneOnce(context.Background())
 }
 
-// PruneOnce runs a single retention pass. Exported so tests can drive the
-// pruner deterministically without spinning a real ticker.
+// PruneOnceAsync runs PruneOnce in a background goroutine. Panics are recovered
+// and logged so a storage-driver fault cannot permanently stop epoch pruning.
+func (m *ManagedStorage) PruneOnceAsync(ctx context.Context) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("devshard epoch prune panicked", "panic", r)
+			}
+		}()
+		m.PruneOnce(ctx)
+	}()
+}
+
+// PruneOnce runs a single retention pass. Exported so tests and epoch hooks can
+// drive pruning without a background loop.
 func (m *ManagedStorage) PruneOnce(_ context.Context) {
 	if m.epochs != nil {
 		m.observe(m.epochs.CurrentEpochID())
@@ -157,34 +141,22 @@ func (m *ManagedStorage) PruneOnce(_ context.Context) {
 	}
 }
 
-// Close stops the background pruner and closes the wrapped store.
+// Close closes the wrapped store.
 func (m *ManagedStorage) Close() error {
-	m.lifecycleMu.Lock()
-	if !m.started {
-		m.lifecycleMu.Unlock()
-		return m.inner.Close()
-	}
-	close(m.stop)
-	m.started = false
-	done := m.done
-	m.lifecycleMu.Unlock()
-	<-done
 	return m.inner.Close()
 }
 
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {
-	m.mu.Lock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if params.EpochID < m.prunedUpTo {
-		m.mu.Unlock()
 		return fmt.Errorf("%w: epoch %d below prune cursor %d", ErrEpochPruned, params.EpochID, m.prunedUpTo)
 	}
 	if err := m.inner.CreateSession(params); err != nil {
-		m.mu.Unlock()
 		return err
 	}
-	m.mu.Unlock()
 	m.observe(params.EpochID)
 	return nil
 }
@@ -233,8 +205,32 @@ func (m *ManagedStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return m.inner.LoadSnapshot(escrowID)
 }
 
-// PruneEpoch is exposed so callers can trigger an explicit drop. The managed
-// background pass uses this method too.
+func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return m.inner.InsertSealedInference(escrowID, row)
+}
+
+func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
+	return m.inner.GetSealedInference(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
+	return m.inner.DeleteSealedInferences(escrowID)
+}
+
+func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
+	return m.inner.RecordValidationsAppliedOnce(escrowID, entries)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
+	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
+	return m.inner.GetValidationObservability(escrowID)
+}
+
+// PruneEpoch is exposed so callers can trigger an explicit drop. PruneOnce uses
+// this path when the inner store does not implement rangePruner.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {
 	return m.inner.PruneEpoch(epochID)
 }

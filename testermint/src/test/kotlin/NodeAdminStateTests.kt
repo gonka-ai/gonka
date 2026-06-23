@@ -19,7 +19,9 @@ class NodeAdminStateTests : TestermintTest() {
             ),
         )
         val (_, genesis) = initCluster(config = config, reboot = true)
-        genesis.waitForNextInferenceWindow()
+        // Past set_new_validators so GetRandomExecutor uses all participants, not the
+        // preserved-node PoC filter (which is empty right at that boundary).
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
 
         val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
         assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
@@ -79,8 +81,8 @@ class NodeAdminStateTests : TestermintTest() {
             .isTrue()
             .`as`("Node should be enabled again")
 
-        logSection("Waiting for next inference window after re-enable")
-        genesis.waitForNextInferenceWindow()
+        logSection("Waiting past set_new_validators after re-enable")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         genesis.waitForBlock(10) { pair ->
             pair.api.getNodes()
                 .first { it.node.id == nodeId }

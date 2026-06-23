@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"decentralized-api/broker"
-	"decentralized-api/nodemanager/gen"
+	"devshard/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -32,7 +32,7 @@ func TestAcquireMLNode_Success(t *testing.T) {
 		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
 			return "lock-abc", "http://host:8080/v1", "node-1", nil
 		},
-	})
+	}, nil, nil)
 	resp, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
 	require.NoError(t, err)
 	require.Equal(t, "lock-abc", resp.LockId)
@@ -45,7 +45,7 @@ func TestAcquireMLNode_NoNodes(t *testing.T) {
 		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
 			return "", "", "", broker.ErrNoNodesAvailable
 		},
-	})
+	}, nil, nil)
 	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
 	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 }
@@ -55,7 +55,7 @@ func TestAcquireMLNode_QueueFull(t *testing.T) {
 		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
 			return "", "", "", errors.New("queue full")
 		},
-	})
+	}, nil, nil)
 	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4"})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 }
@@ -67,7 +67,7 @@ func TestReleaseMLNode_Success(t *testing.T) {
 			gotOutcome = outcome
 			return nil
 		},
-	})
+	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{
 		LockId:  "lock-abc",
 		Outcome: gen.ReleaseOutcome_SUCCESS,
@@ -83,7 +83,7 @@ func TestReleaseMLNode_TransportError(t *testing.T) {
 			gotOutcome = outcome
 			return nil
 		},
-	})
+	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{
 		LockId:  "lock-abc",
 		Outcome: gen.ReleaseOutcome_TRANSPORT_ERROR,
@@ -98,7 +98,7 @@ func TestReleaseMLNode_NotFound(t *testing.T) {
 		releaseFunc: func(_ string, _ broker.InferenceResult) error {
 			return broker.ErrLockNotFound
 		},
-	})
+	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: "bad"})
 	require.Equal(t, codes.NotFound, status.Code(err))
 }

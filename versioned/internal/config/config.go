@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -36,11 +37,20 @@ func Load() (Config, error) {
 		ForceVersions: loadForceVersions(),
 	}
 
+	slog.Info(
+		"versiond config loaded",
+		"oracle_url", cfg.OracleURL,
+		"binary_name", cfg.BinaryName,
+		"force_versions", cfg.ForceVersions,
+		"override_versions", sortedOverrideKeys(cfg.Overrides),
+	)
+
 	// Validate: forced versions must have a corresponding override.
 	for _, name := range cfg.ForceVersions {
 		if _, ok := cfg.Overrides[name]; !ok {
 			slog.Error("forced version has no override, will be skipped during reconcile",
 				"version", name,
+				"expected_env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", versionToEnvSuffix(name)),
 				"hint", fmt.Sprintf("set VERSIOND_OVERRIDE_%s=/path/to/binary", versionToEnvSuffix(name)))
 		}
 	}
@@ -123,4 +133,13 @@ func parseDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func sortedOverrideKeys(overrides map[string]string) []string {
+	out := make([]string, 0, len(overrides))
+	for k := range overrides {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

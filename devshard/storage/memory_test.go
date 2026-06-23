@@ -18,6 +18,10 @@ func TestMemory_CreateSession_ConflictingVersion(t *testing.T) {
 	runCreateSession_ConflictingVersion(t, NewMemory())
 }
 
+func TestMemory_CreateSession_EmptyVersionRejected(t *testing.T) {
+	runCreateSession_EmptyVersionRejected(t, NewMemory())
+}
+
 func TestMemory_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, NewMemory())
 }
@@ -32,6 +36,10 @@ func TestMemory_MarkFinalized_LastFinalized(t *testing.T) {
 
 func TestMemory_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, NewMemory())
+}
+
+func TestMemory_SealedInferenceLifecycle(t *testing.T) {
+	runSealedInferenceLifecycle(t, NewMemory())
 }
 
 func TestMemory_AddSignature(t *testing.T) {

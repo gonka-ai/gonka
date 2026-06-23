@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +20,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/host"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -27,10 +31,16 @@ func getTransport(baseURL string) *http.Transport {
 	if t, ok := sharedTransports.Load(baseURL); ok {
 		return t.(*http.Transport)
 	}
+	fallbackAddress := transportAddress(baseURL)
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	t := &http.Transport{
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     120 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
+		DialContext:         DefaultHostConnectionTracker().TrackDialContext(dialer.DialContext, fallbackAddress),
 	}
 	actual, _ := sharedTransports.LoadOrStore(baseURL, t)
 	return actual.(*http.Transport)
@@ -40,6 +50,14 @@ func getTransport(baseURL string) *http.Transport {
 // HostManager under. Versioned binaries use devshard.VersionedRoutePrefix(...).
 const DefaultRoutePrefix = devshardpkg.LegacyRoutePrefix
 
+func transportAddress(baseURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err == nil && parsed != nil && parsed.Host != "" {
+		return parsed.Hostname()
+	}
+	return strings.TrimSpace(baseURL)
+}
+
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
 	InferenceTimeout time.Duration                   // /chat/completions, default 20m
@@ -48,11 +66,77 @@ type ClientConfig struct {
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix      string                          // path prefix for all session routes; default /v1/devshard
+	ProtocolVersion  types.ProtocolVersion           // runtime protocol version configured for the escrow
+	// ParticipantKey is the canonical participant identifier passed to
+	// the admission controller for both AllowRequest and ObserveResult.
+	// Callers MUST use the participant's gonka validator address
+	// (bech32, e.g. "gonka1abc..."); this is the same key used by
+	// chain-side state (CapacityState weights, PoC preservation,
+	// escrow membership) and by the higher-level
+	// ParticipantRequestLimiter. Using anything else (URL host:port,
+	// IP, hostname, etc.) silently breaks throttle/recovery because
+	// the admission controller's bucket map will not align with the
+	// keys those other subsystems use.
+	ParticipantKey string
+	Admission      RequestAdmissionController
+}
+
+// RequestAdmissionController can reject participant-bound transport
+// requests before they are sent to the remote host. The
+// participantKey it receives is the gonka validator address as
+// configured on ClientConfig.ParticipantKey.
+type RequestAdmissionController interface {
+	AllowRequest(participantKey, path string) error
+	ObserveResult(participantKey, path string, statusCode int)
+	// ObserveTransportFailure is called when the request never
+	// received an HTTP response (dial error, connection reset, etc.).
+	// Implementations decide whether to quarantine based on path kind.
+	ObserveTransportFailure(participantKey, path string, err error)
+}
+
+type requestAdmissionBodyObserver interface {
+	ObserveResultWithBody(participantKey, path string, statusCode int, body string)
+}
+
+// ErrSSEStreamTruncated is returned when an SSE inference stream ends (clean EOF)
+// before the upstream emitted any terminator -- neither an OpenAI-style `data: [DONE]`
+// nor a protocol receipt event was observed. Treat it as truncation,
+// not as a successful completion: a typical cause is a peer / middlebox closing the
+// HTTP body early (HTTP/1.1 Connection: close, lying Content-Length, premature
+// HTTP/2 END_STREAM, idle-timeout on a proxy, etc.) which bufio readers cannot
+// distinguish from a normal end-of-response.
+var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
+
+type UpstreamStatusError struct {
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *UpstreamStatusError) Error() string {
+	if e == nil {
+		return "upstream status error"
+	}
+	if e.Body == "" {
+		return fmt.Sprintf("http %s: status %d", e.Path, e.StatusCode)
+	}
+	return fmt.Sprintf("http %s: status %d: %s", e.Path, e.StatusCode, e.Body)
+}
+
+// IsUpstreamEscrowNotFound returns true if err is an UpstreamStatusError
+// whose body indicates the host could not find the escrow on chain.
+func IsUpstreamEscrowNotFound(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	return ue.StatusCode == http.StatusInternalServerError &&
+		strings.Contains(ue.Body, "escrow not found")
 }
 
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		InferenceTimeout: 20 * time.Minute,
+		InferenceTimeout: 30 * time.Minute,
 		GossipTimeout:    10 * time.Second,
 		VerifyTimeout:    3 * time.Minute,
 		QueryTimeout:     30 * time.Second,
@@ -84,10 +168,33 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		escrowID:    escrowID,
 		signer:      signer,
 		http: &http.Client{
-			Transport: getTransport(baseURL),
+			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
 		},
 		config: cfg,
 	}
+}
+
+// WithoutAdmission returns a shallow copy of the client with admission control
+// disabled. Used by finalize/signature collection paths that must reach
+// quarantined hosts to complete settlement. Returns any so callers across
+// package boundaries can duck-type without importing the HostClient interface.
+func (c *HTTPClient) WithoutAdmission() any {
+	cp := *c
+	cp.config.Admission = nil
+	return &cp
+}
+
+// ClearAdmission disables admission control on this client in-place.
+func (c *HTTPClient) ClearAdmission() {
+	c.config.Admission = nil
+}
+
+func (c *HTTPClient) signatureHeader() string {
+	return HeaderSignature
+}
+
+func (c *HTTPClient) timestampHeader() string {
+	return HeaderTimestamp
 }
 
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
@@ -122,8 +229,14 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
-func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.HostResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.InferenceTimeout)
+func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	timeout := c.config.InferenceTimeout
+	if req.Payload == nil {
+		// Finalize/catch-up sends only exchange protocol state, so a dead host
+		// should not hold the caller for the full model inference deadline.
+		timeout = c.config.QueryTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ir, err := HostRequestToJSON(req)
@@ -144,9 +257,12 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
-		result, err := c.parseSSEResponse(resp.Body, req.Nonce)
+		cr := &countingReader{r: resp.Body}
+		result, err := c.parseSSEResponse(cr, stream, receiptHandler)
+		if result != nil {
+			result.StreamBytesRead = cr.n
+		}
 		if err != nil && result != nil {
-			// Partial result: return both so caller can extract receipt from broken stream.
 			return result, err
 		}
 		return result, err
@@ -164,68 +280,190 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest) (*host.Host
 	return HostResponseFromJSON(respJSON)
 }
 
-// parseSSEResponse reads an SSE stream and extracts devshard_receipt and devshard_meta events.
-// Non-protocol data lines are forwarded to StreamCallback if configured.
-func (c *HTTPClient) parseSSEResponse(r io.Reader, nonce uint64) (*host.HostResponse, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1MB max line -- default 64KB breaks on long SSE responses
+// parseSSEResponse reads an SSE stream and extracts protocol receipt/meta events.
+// Non-protocol data lines are forwarded to stream if configured.
+//
+// Uses bufio.Reader (not bufio.Scanner) for two reasons:
+//  1. bufio.Scanner imposes a hard token-size cap (we previously raised it to 1MB);
+//     a single oversized SSE line -- e.g. a large devshard_meta with a base64 mempool,
+//     or a non-streaming server inlining a giant JSON on one line -- would trip
+//     bufio.ErrTooLong and silently truncate. ReadBytes is bounded only by memory.
+//  2. We need to distinguish a clean EOF that arrives *after* a terminator
+//     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
+//     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
+//     a successful completion from a peer / middlebox closing the body early.
+func (c *HTTPClient) parseSSEResponse(r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
+	var writeErrLogged bool
+	var unexpectedLineLogged bool
+	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+	for {
+		raw, readErr := br.ReadBytes('\n')
+		if len(raw) > 0 {
+			line := string(bytes.TrimRight(raw, "\r\n"))
+			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
 		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			if c.config.StreamCallback != nil {
-				c.config.StreamCallback(nonce, line)
-			}
-			continue
-		}
-
-		// Try to parse as devshard protocol envelope.
-		var envelope map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
-			// Not JSON -- forward as-is.
-			if c.config.StreamCallback != nil {
-				c.config.StreamCallback(nonce, line)
-			}
-			continue
-		}
-
-		if raw, ok := envelope["devshard_receipt"]; ok {
-			var receipt DevshardReceiptEvent
-			if err := json.Unmarshal(raw, &receipt); err == nil {
-				result.StateSig = receipt.StateSig
-				result.StateHash = receipt.StateHash
-				result.Nonce = receipt.Nonce
-				result.Receipt = receipt.Receipt
-				result.ConfirmedAt = receipt.ConfirmedAt
-			}
-			continue
-		}
-
-		if raw, ok := envelope["devshard_meta"]; ok {
-			var meta DevshardMetaEvent
-			if err := json.Unmarshal(raw, &meta); err == nil {
-				txs, txErr := DevshardTxsFromBytes(meta.Mempool)
-				if txErr == nil {
-					result.Mempool = txs
+		if readErr != nil {
+			if readErr == io.EOF {
+				if !sawTerminator {
+					return &result, ErrSSEStreamTruncated
 				}
+				return &result, nil
 			}
-			continue
+			return &result, fmt.Errorf("read SSE stream: %w", readErr)
 		}
+	}
+}
 
-		// Inference data line -- forward to callback.
-		if c.config.StreamCallback != nil {
-			c.config.StreamCallback(nonce, line)
+// handleSSELine processes a single SSE line (terminator already stripped).
+// Mutates result / flags in place; never returns an error -- read errors are
+// the caller's job to detect via the underlying reader.
+func (c *HTTPClient) handleSSELine(
+	line string,
+	stream io.Writer,
+	receiptHandler func(),
+	result *host.HostResponse,
+	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
+) {
+	if !strings.HasPrefix(line, "data: ") {
+		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
+			lineLen, lineHex := sseLineBytesForLog(line)
+			if strings.HasPrefix(line, "data:") {
+				logging.Warn("sse_data_line_missing_space", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
+			} else if strings.HasPrefix(line, "event:") || strings.HasPrefix(line, "id:") || strings.HasPrefix(line, "retry:") {
+				// Standard SSE fields we intentionally skip.
+			} else {
+				*unexpectedLineLogged = true
+				logging.Warn("sse_unexpected_line", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
+			}
+		}
+		return
+	}
+	data := strings.TrimPrefix(line, "data: ")
+	if data == "[DONE]" {
+		*sawTerminator = true
+		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "[DONE]", "error", err)
+		}
+		return
+	}
+
+	// Try to parse as devshard protocol envelope.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+		// Not JSON -- forward as-is.
+		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
+		}
+		return
+	}
+
+	if raw, key, ok := c.protocolEnvelope(envelope, "receipt"); ok {
+		*sawTerminator = true
+		var receipt DevshardReceiptEvent
+		if err := json.Unmarshal(raw, &receipt); err != nil {
+			logging.Warn("sse_receipt_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
+		} else {
+			hostLabel := c.config.ParticipantKey
+			if len(hostLabel) > 8 {
+				hostLabel = hostLabel[len(hostLabel)-8:]
+			}
+			logging.Info("sse_devshard_receipt",
+				"subsystem", "transport",
+				"escrow", c.escrowID,
+				"host", hostLabel,
+				"event_key", key,
+				"nonce", receipt.Nonce,
+				"has_state_sig", len(receipt.StateSig) > 0,
+				"state_sig_bytes", len(receipt.StateSig),
+				"has_state_hash", len(receipt.StateHash) > 0,
+				"state_hash_bytes", len(receipt.StateHash),
+				"has_executor_receipt", len(receipt.Receipt) > 0,
+				"executor_receipt_bytes", len(receipt.Receipt),
+				"confirmed_at", receipt.ConfirmedAt,
+			)
+			result.StateSig = receipt.StateSig
+			result.StateHash = receipt.StateHash
+			result.Nonce = receipt.Nonce
+			result.Receipt = receipt.Receipt
+			result.ConfirmedAt = receipt.ConfirmedAt
+		}
+		if receiptHandler != nil {
+			receiptHandler()
+		}
+		return
+	}
+
+	if raw, key, ok := c.protocolEnvelope(envelope, "meta"); ok {
+		var meta DevshardMetaEvent
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
+		} else {
+			txs, txErr := DevshardTxsFromBytes(meta.Mempool)
+			if txErr != nil {
+				logging.Warn("sse_meta_tx_decode_failed", "subsystem", "transport", "escrow", c.escrowID, "mempool_len", len(meta.Mempool), "error", txErr)
+			} else {
+				result.Mempool = txs
+			}
+		}
+		return
+	}
+
+	// Inference data line -- forward to callback.
+	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+		*writeErrLogged = true
+		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
+	}
+}
+
+func (c *HTTPClient) protocolEnvelope(envelope map[string]json.RawMessage, suffix string) (json.RawMessage, string, bool) {
+	keys := []string{"devshard_" + suffix}
+	for _, key := range keys {
+		if raw, ok := envelope[key]; ok {
+			return raw, key, true
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return &result, fmt.Errorf("read SSE stream: %w", err)
+	return nil, "", false
+}
+
+func writeSSELine(w io.Writer, line string) error {
+	if w == nil {
+		return nil
 	}
-	return &result, nil
+	if _, err := fmt.Fprintf(w, "%s\n\n", line); err != nil {
+		return err
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	cr.n += int64(n)
+	return n, err
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func sseLineBytesForLog(line string) (int, string) {
+	b := []byte(line)
+	return len(b), hex.EncodeToString(b)
 }
 
 // GossipNonce sends a nonce notification to a peer.
@@ -361,6 +599,9 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 // Caller is responsible for closing resp.Body.
 func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*http.Response, error) {
 	url := c.baseURL + c.routePrefix + path
+	if err := c.allowRequest(path); err != nil {
+		return nil, err
+	}
 
 	ts := time.Now().Unix()
 	sig, err := SignRequest(c.signer, c.escrowID, body, ts)
@@ -373,19 +614,26 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
-	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
+	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
+	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http post %s: %w", path, err)
+		c.observeTransportFailure(path, err)
+		return nil, fmt.Errorf("POST %s: %w", url, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("http %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
+		return nil, &UpstreamStatusError{
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
+	c.observeResult(path, resp.StatusCode)
 
 	return resp, nil
 }
@@ -403,6 +651,9 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
 func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+	if err := c.allowRequest(url); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -410,13 +661,53 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.observeTransportFailure(url, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get %s: status %d", url, resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
+		return nil, &UpstreamStatusError{
+			Path:       url,
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
+	c.observeResult(url, resp.StatusCode)
 
 	return io.ReadAll(resp.Body)
+}
+
+func (c *HTTPClient) allowRequest(path string) error {
+	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return nil
+	}
+	return c.config.Admission.AllowRequest(c.config.ParticipantKey, path)
+}
+
+func (c *HTTPClient) observeResult(path string, statusCode int) {
+	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return
+	}
+	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
+}
+
+func (c *HTTPClient) observeResultWithBody(path string, statusCode int, body string) {
+	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return
+	}
+	if observer, ok := c.config.Admission.(requestAdmissionBodyObserver); ok {
+		observer.ObserveResultWithBody(c.config.ParticipantKey, path, statusCode, body)
+		return
+	}
+	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
+}
+
+func (c *HTTPClient) observeTransportFailure(path string, err error) {
+	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return
+	}
+	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
 }
