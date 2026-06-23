@@ -17,8 +17,8 @@ import (
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	inference "github.com/productscience/inference/api/inference/inference"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 	testutil "github.com/productscience/inference/testutil/cosmoclient"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -149,6 +149,18 @@ func getTestCodec(t *testing.T) codec.Codec {
 	rpc := mocks.NewRPCClient(t)
 	client := testutil.NewMockClient(t, rpc, network, accountName, mnemonic, passphrase)
 	return client.Context().Codec
+}
+
+func waitForBatchCalls(t *testing.T, mockMgr *mockTxManager, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if len(mockMgr.getBatchCalls()) >= want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %d batch calls (got %d)", want, len(mockMgr.getBatchCalls()))
 }
 
 func TestBatchConsumer_FlushOnSize(t *testing.T) {
@@ -289,8 +301,8 @@ func TestBatchConsumer_Persistence(t *testing.T) {
 	err := consumer.Start()
 	require.NoError(t, err)
 
-	// Wait for messages to be consumed and timeout flush
-	time.Sleep(3 * time.Second)
+	// Wait for backlog delivery plus timeout flush (delivery can lag on CI).
+	waitForBatchCalls(t, mockMgr, 1, 10*time.Second)
 
 	// Messages should be recovered and broadcast
 	assert.Len(t, mockMgr.getBatchCalls(), 1)
