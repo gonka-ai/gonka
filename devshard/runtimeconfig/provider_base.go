@@ -86,13 +86,24 @@ func (b *baseProvider) OnEpochChange(fn EpochChangeListener) (cancel func()) {
 	}
 }
 
-// apply atomically swaps in the new snapshot, records availability into the
-// shared tracker, and dispatches OnEpochChange listeners on a real epoch
-// transition (prev.ParamsBlockHeight > 0 gates the initial-apply case).
+// apply records availability, swaps in the new snapshot, and dispatches
+// OnEpochChange listeners on a real epoch transition (prev.ParamsBlockHeight
+// > 0 gates the initial-apply case). Availability is written before the
+// snapshot is published so readers that observe a new ParamsBlockHeight via
+// Snapshot() never see a stale AvailabilityTracker.
 func (b *baseProvider) apply(next Snapshot) {
 	prev := b.snap.Load()
 	prevEnabled := curDevshardEnabled(prev)
 	nextCopy := next
+
+	if b.availability != nil {
+		var ts int64
+		if !next.ServedAt.IsZero() {
+			ts = next.ServedAt.Unix()
+		}
+		b.availability.Record(next.DevshardRequestsEnabled, ts, next.CurrentEpochID)
+	}
+
 	b.snap.Store(&nextCopy)
 
 	if prev == nil || prevEnabled != next.DevshardRequestsEnabled {
@@ -108,14 +119,6 @@ func (b *baseProvider) apply(next Snapshot) {
 			"paramsBlockHeight", next.ParamsBlockHeight,
 			"epochID", next.CurrentEpochID,
 		)
-	}
-
-	if b.availability != nil {
-		var ts int64
-		if !next.ServedAt.IsZero() {
-			ts = next.ServedAt.Unix()
-		}
-		b.availability.Record(next.DevshardRequestsEnabled, ts, next.CurrentEpochID)
 	}
 
 	if prev != nil && prev.ParamsBlockHeight > 0 && prev.CurrentEpochID != next.CurrentEpochID {
