@@ -44,6 +44,22 @@ var payloadRetrievalClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
+// MaxPayloadResponseSize caps the bytes FetchPayloadsHTTP will read from an
+// executor response. The response wraps two []byte payloads (prompt + response,
+// JSON-encoded as base64) plus signature/id metadata; 32 MiB comfortably covers
+// two raw payloads at the inbound MaxRequestBodySize (10 MiB each) with base64
+// (~33%) and JSON overhead. Without this cap a malicious executor can stream
+// an arbitrarily large body to an honest validating slot and force it to OOM:
+// the 30s client timeout above bounds duration, not bytes.
+//
+// Declared as a var (not const) so tests can lower the cap; production code
+// must not mutate it.
+var MaxPayloadResponseSize int64 = 32 * 1024 * 1024
+
+// maxPayloadErrorBodySize caps the bytes read from non-2xx response bodies,
+// which are only used to format the error string returned to the caller.
+const maxPayloadErrorBodySize = 4 * 1024
+
 // PayloadResponse matches the executor endpoint response.
 // Used by both chain validation and devshard validation paths.
 type PayloadResponse struct {
@@ -90,12 +106,24 @@ func FetchPayloadsHTTP(
 		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxPayloadErrorBodySize))
 		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Read at most MaxPayloadResponseSize+1 bytes so we can distinguish
+	// "exactly at the cap" from "over the cap" with one explicit length check
+	// below. The +1 byte is the minimum needed to detect overrun without
+	// silently truncating a body that decodes to valid-looking JSON.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxPayloadResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if int64(len(body)) > MaxPayloadResponseSize {
+		return nil, fmt.Errorf("executor payload response exceeds maximum size of %d bytes", MaxPayloadResponseSize)
+	}
+
 	var payloadResp PayloadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
+	if err := json.Unmarshal(body, &payloadResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
