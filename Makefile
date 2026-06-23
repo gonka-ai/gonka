@@ -18,14 +18,6 @@ USE_REGISTRY_CACHE ?= 0
 PLATFORM ?= linux/amd64
 GOOS ?= linux
 GOARCH ?= amd64
-UPGRADE_ARCHES ?= amd64 arm64
-ifdef GITHUB_ACTIONS
-# PR-comment integration runs load the reusable workflow from main, so keep
-# upgrade test artifacts on amd64 unless a workflow explicitly overrides this.
-UPGRADE_TEST_ARCHES ?= amd64
-else
-UPGRADE_TEST_ARCHES ?= $(UPGRADE_ARCHES)
-endif
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
@@ -229,16 +221,12 @@ build-for-upgrade:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@for arch in $(UPGRADE_ARCHES); do \
-		make -C inference-chain build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-		make -C decentralized-api build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-	done
+	@make -C inference-chain build-for-upgrade
+	@make -C decentralized-api build-for-upgrade
 
 build-for-upgrade-tests:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@for arch in $(UPGRADE_TEST_ARCHES); do \
-		make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-		make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-	done
+	@make -C inference-chain build-for-upgrade TESTS=1
+	@make -C decentralized-api build-for-upgrade TESTS=1

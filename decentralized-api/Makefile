@@ -139,9 +139,6 @@ build-for-upgrade:
 	@echo "--> cleaning up intermediate build output"
 	@rm -rf ./output
 
-build-for-upgrade-arm:
-	@$(MAKE) build-for-upgrade PLATFORM=linux/arm64 GOOS=linux GOARCH=arm64
-
 download-linux-deps:
 	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."
 	@mkdir -p build/deps

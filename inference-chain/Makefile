@@ -192,9 +192,6 @@ build-for-upgrade:
 	@echo "--> cleaning up intermediate build output"
 	@rm -rf ./output
 
-build-for-upgrade-arm:
-	@$(MAKE) build-for-upgrade PLATFORM=linux/arm64 GOOS=linux GOARCH=arm64
-
 #################################################
 # CROSS-COMPILATION SECTION
 #################################################

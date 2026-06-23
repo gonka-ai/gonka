@@ -210,7 +210,7 @@ jobs:
       - name: Make Upgrade Build
         if: ${{ inputs.enable_upgrades }}
         run: |
-          make build-for-upgrade-tests UPGRADE_ARCHES=amd64
+          make build-for-upgrade-tests
           # Fix ownership of upgrade build files
           sudo chown -R $USER:$USER public-html/ || true
 

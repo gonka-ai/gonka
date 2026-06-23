@@ -18,11 +18,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up QEMU for arm64 upgrade packaging
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Run Makefile build
         run: VERSION="${GITHUB_REF_NAME#release/}" make build-for-upgrade
         # This should produce files in:
