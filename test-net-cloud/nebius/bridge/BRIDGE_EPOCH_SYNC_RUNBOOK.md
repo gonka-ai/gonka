@@ -204,7 +204,9 @@ tail -f /var/log/bridge-epoch-sync.log
 
 | Prefix | Meaning |
 |--------|---------|
-| `INFO  poll=N gonka_epoch=… bridge_epoch=… behind=…` | Each poll: Gonka epoch, Ethereum bridge epoch, lag |
+| `INFO  poll=N gonka_ready=… bridge_epoch=… behind=…` | Each poll: highest BLS-ready Gonka epoch, Ethereum bridge epoch, lag |
+| `INFO  poll=N gonka_ready=… gonka_effective=… gonka_latest=…` | During PoC: ready epoch vs effective vs dashboard latest |
+| `INFO  caught up; PoC in progress (gonka_latest=… BLS pending)` | Dashboard advanced but next epoch BLS not ready — no Ethereum tx attempted |
 | `INFO  catching up: submitting up to N epoch(s)` | Catch-up burst (can take many minutes) |
 | `INFO  sync Submitting epoch …` / `sync Tx:` | Live Ethereum submission |
 | `OK    submitted epoch(s) through …` | Epoch(s) submitted successfully |
@@ -215,11 +217,22 @@ tail -f /var/log/bridge-epoch-sync.log
 
 ### Verify on-chain
 
-**Gonka current epoch:**
+**Gonka epochs** (dashboard shows **latest**; bridge sync submits only **BLS-ready** epochs):
 
 ```bash
+# Effective epoch (validators currently active)
 curl -s http://localhost:8000/chain-api/productscience/inference/inference/get_current_epoch | jq .
+
+# Latest epoch (what the validator dashboard shows during PoC)
+curl -s http://localhost:8000/chain-api/productscience/inference/inference/epoch_info \
+  | jq '{latest_epoch: .latest_epoch.index, block_height: .block_height}'
+
+# BLS readiness for the next epoch (required before submitGroupKey)
+curl -s http://localhost:8000/chain-api/productscience/inference/bls/epoch_data/1368 \
+  | jq '{epoch_id: .epoch_data.epoch_id, has_validation_sig: (.epoch_data.validation_signature != null)}'
 ```
+
+During PoC, `latest_epoch` is often **effective + 1**. The sync daemon waits until `validation_signature` exists for epoch `bridge+1` before calling Ethereum. `behind=0` with `gonka_latest > bridge` is normal while BLS is pending.
 
 **Sepolia bridge** — recent **Submit Group Key** txs on [Etherscan](https://sepolia.etherscan.io/address/0x8395733b8ecc2d1d3a7eb1b8b921d71ee4620b02) from the owner wallet.
 
@@ -255,7 +268,8 @@ With Gonka epochs **~every 30 minutes**: **~0.05 ETH/day** steady state. Keep **
 | `bridge-enable-normal-op.js not found` | Set `ENABLE_SCRIPT=.../gonka/test-net-cloud/nebius/bridge/bridge-enable-normal-op.js` |
 | `Cannot find module 'ethers'` | `cd .../ethereum-bridge-contact && npm install` |
 | Poll 1 then silence for minutes | Normal during catch-up (`behind>0`); watch `sync Submitting epoch` or Etherscan |
-| `WAIT … validation_signature not ready` | Wait for BLS ceremony after epoch flip (~minutes) |
+| Dashboard epoch ahead of logs | Normal during PoC: dashboard shows `latest_epoch`, logs show `gonka_ready` (BLS-ready). Bridge stays on previous epoch until `validation_signature` exists. |
+| `WAIT … validation_signature not ready` | Should be rare now (script skips submit when BLS missing). If seen, BLS ceremony still in progress. |
 | `Signer is not the BridgeContract owner` | Wrong `PRIVATE_KEY` |
 | Permission denied on script | `chmod 750 /srv/dai/bridge-epoch-sync.sh` |
 | Env not readable | `chown root:ubuntu bridge-epoch-sync.env && chmod 640` or run service as user that owns env |

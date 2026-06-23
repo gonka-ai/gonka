@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Sync Gonka BLS epoch group keys to the Ethereum BridgeContract.
 #
-# Steady state (NORMAL_OPERATION): calls bridge-enable-normal-op.js with
-# --target-epoch set to the current Gonka epoch. Retries until BLS
-# validation_signature is available, then submits submitGroupKey on Ethereum.
+# Steady state (NORMAL_OPERATION): finds the highest Gonka epoch whose BLS
+# validation_signature is ready (sequential from bridge+1), then calls
+# bridge-enable-normal-op.js with --target-epoch. Does not submit while BLS
+# for the next epoch is still missing (e.g. dashboard latest during PoC).
 #
 # Usage:
 #   source /srv/dai/bridge-epoch-sync.env   # or copy bridge-epoch-sync.env.example
@@ -106,6 +107,7 @@ fi
 
 POLL_COUNT=0
 LAST_GONKA_EPOCH=""
+LAST_GONKA_LATEST=""
 LAST_BRIDGE_EPOCH=""
 LAST_STATUS=""
 
@@ -136,10 +138,52 @@ log_detail() {
     fi
 }
 
-get_gonka_epoch() {
+get_gonka_effective_epoch() {
     curl -sf --max-time 15 \
         "${GONKA_API%/}/chain-api/productscience/inference/inference/get_current_epoch" \
         | jq -r '.epoch // empty'
+}
+
+# Latest epoch matches the validator dashboard (epoch_info). During PoC it is
+# effective+1 until SetNewValidatorsStage flips the effective pointer.
+get_gonka_latest_epoch() {
+    curl -sf --max-time 15 \
+        "${GONKA_API%/}/chain-api/productscience/inference/inference/epoch_info" \
+        | jq -r '.latest_epoch.index // empty'
+}
+
+bls_epoch_has_validation() {
+    local epoch="$1"
+    local sig
+    sig="$(curl -sf --max-time 15 \
+        "${GONKA_API%/}/chain-api/productscience/inference/bls/epoch_data/${epoch}" \
+        | jq -r '.epoch_data.validation_signature // empty')" || true
+    [[ -n "$sig" && "$sig" != "null" ]]
+}
+
+# Highest epoch we can submit on Ethereum: bridge+1 .. latest, stopping at the
+# first epoch without validation_signature (epochs must be submitted in order).
+get_gonka_bridge_target_epoch() {
+    local bridge_epoch="$1"
+    local latest_epoch="$2"
+    local target="${bridge_epoch:-0}"
+    local epoch
+
+    if [[ -z "$bridge_epoch" || "$bridge_epoch" == "?" ]]; then
+        echo "$latest_epoch"
+        return 0
+    fi
+
+    epoch=$((bridge_epoch + 1))
+    while (( epoch <= latest_epoch )); do
+        if bls_epoch_has_validation "$epoch"; then
+            target="$epoch"
+            epoch=$((epoch + 1))
+        else
+            break
+        fi
+    done
+    echo "$target"
 }
 
 get_bridge_epoch() {
@@ -224,36 +268,63 @@ should_heartbeat() {
 }
 
 sync_once() {
-    local gonka_epoch bridge_epoch behind output rc status tx_hashes
+    local gonka_effective gonka_latest gonka_target bridge_epoch behind output rc status tx_hashes
   POLL_COUNT=$((POLL_COUNT + 1))
 
-    gonka_epoch="$(get_gonka_epoch)" || true
-    if [[ -z "$gonka_epoch" || "$gonka_epoch" == "null" ]]; then
-        log_warn "poll=$POLL_COUNT could not read Gonka epoch from ${GONKA_API%/}/chain-api/.../get_current_epoch"
+    gonka_effective="$(get_gonka_effective_epoch)" || true
+    gonka_latest="$(get_gonka_latest_epoch)" || true
+    if [[ -z "$gonka_latest" || "$gonka_latest" == "null" ]]; then
+        log_warn "poll=$POLL_COUNT could not read latest Gonka epoch from ${GONKA_API%/}/chain-api/.../epoch_info"
         return 1
     fi
 
     bridge_epoch="$(get_bridge_epoch)" || true
+    gonka_target="$(get_gonka_bridge_target_epoch "$bridge_epoch" "$gonka_latest")"
+
     if [[ -z "$bridge_epoch" ]]; then
         bridge_epoch="?"
         behind="?"
     else
-        behind=$((gonka_epoch - bridge_epoch))
+        behind=$((gonka_target - bridge_epoch))
         if (( behind < 0 )); then
             behind=0
         fi
     fi
 
-    log_info "poll=$POLL_COUNT gonka_epoch=$gonka_epoch bridge_epoch=$bridge_epoch behind=$behind bridge=$BRIDGE_ADDRESS"
+    if [[ -n "$gonka_effective" && "$gonka_effective" != "$gonka_latest" ]]; then
+        log_info "poll=$POLL_COUNT gonka_ready=$gonka_target gonka_effective=$gonka_effective gonka_latest=$gonka_latest bridge_epoch=$bridge_epoch behind=$behind bridge=$BRIDGE_ADDRESS"
+    else
+        log_info "poll=$POLL_COUNT gonka_ready=$gonka_target bridge_epoch=$bridge_epoch behind=$behind bridge=$BRIDGE_ADDRESS"
+    fi
 
-    if [[ "$behind" != "?" && "$behind" -gt 0 ]]; then
+    if [[ "$behind" == "0" ]]; then
+        status="caught_up"
+        if [[ "$gonka_target" != "$LAST_GONKA_EPOCH" || "$bridge_epoch" != "$LAST_BRIDGE_EPOCH" || "$gonka_latest" != "$LAST_GONKA_LATEST" || "$status" != "$LAST_STATUS" ]]; then
+            if [[ "$gonka_latest" != "$gonka_target" ]]; then
+                log_info "poll=$POLL_COUNT caught up; PoC in progress (gonka_latest=$gonka_latest BLS pending, bridge=$bridge_epoch)"
+            else
+                log_info "poll=$POLL_COUNT caught up (gonka_ready=$gonka_target bridge=$bridge_epoch)"
+            fi
+        elif should_heartbeat "$status"; then
+            if [[ "$gonka_latest" != "$gonka_target" ]]; then
+                log_info "poll=$POLL_COUNT heartbeat caught_up gonka_ready=$gonka_target gonka_latest=$gonka_latest bridge=$bridge_epoch (BLS pending)"
+            else
+                log_info "poll=$POLL_COUNT heartbeat caught_up gonka_ready=$gonka_target bridge=$bridge_epoch"
+            fi
+        fi
+        LAST_GONKA_EPOCH="$gonka_target"
+        LAST_GONKA_LATEST="$gonka_latest"
+        LAST_BRIDGE_EPOCH="$bridge_epoch"
+        LAST_STATUS="$status"
+        return 0
+    fi
+
+    if [[ "$behind" != "?" ]]; then
         log_info "poll=$POLL_COUNT catching up: submitting up to $behind epoch(s) on Ethereum (may take several minutes)..."
-    elif [[ "$behind" == "0" ]]; then
-        log_info "poll=$POLL_COUNT bridge is caught up; checking for new Gonka epoch..."
     fi
 
     set +e
-    output="$(run_sync_capture "$gonka_epoch")"
+    output="$(run_sync_capture "$gonka_target")"
     rc=$?
     set -e
 
@@ -266,19 +337,19 @@ sync_once() {
         if echo "$output" | grep -q "SUCCESS: Bridge epochs synced"; then
             status="synced"
             tx_hashes="$(echo "$output" | grep -E '^Tx:' | extract_tx_hashes | tr '\n' ' ')"
-            log_ok "poll=$POLL_COUNT submitted epoch(s) through gonka_epoch=$gonka_epoch bridge_epoch_was=$bridge_epoch tx=${tx_hashes:-n/a}"
+            log_ok "poll=$POLL_COUNT submitted epoch(s) through gonka_ready=$gonka_target bridge_epoch_was=$bridge_epoch tx=${tx_hashes:-n/a}"
             echo "$output" | grep -E '^(Submitting epoch|Tx:|Confirmed|SUCCESS)' | while IFS= read -r line; do
                 log_info "$line"
             done
-            LAST_GONKA_EPOCH="$gonka_epoch"
-            LAST_BRIDGE_EPOCH="$gonka_epoch"
+            LAST_GONKA_EPOCH="$gonka_target"
+            LAST_BRIDGE_EPOCH="$gonka_target"
             LAST_STATUS="$status"
             return 0
         fi
         if echo "$output" | grep -q "SUCCESS: Bridge is now in NORMAL_OPERATION"; then
             status="bootstrapped"
             tx_hashes="$(echo "$output" | grep -E '^Tx:' | extract_tx_hashes | tr '\n' ' ')"
-            log_ok "poll=$POLL_COUNT bridge entered NORMAL_OPERATION gonka_epoch=$gonka_epoch tx=${tx_hashes:-n/a}"
+            log_ok "poll=$POLL_COUNT bridge entered NORMAL_OPERATION gonka_ready=$gonka_target tx=${tx_hashes:-n/a}"
             echo "$output" | grep -E '^(Tx:|Confirmed|SUCCESS|Resetting)' | while IFS= read -r line; do
                 log_info "$line"
             done
@@ -287,12 +358,20 @@ sync_once() {
         fi
         if echo "$output" | grep -q "already in NORMAL_OPERATION"; then
             status="caught_up"
-            if [[ "$gonka_epoch" != "$LAST_GONKA_EPOCH" || "$bridge_epoch" != "$LAST_BRIDGE_EPOCH" || "$status" != "$LAST_STATUS" ]]; then
-                log_info "poll=$POLL_COUNT caught up (gonka=$gonka_epoch bridge=$bridge_epoch)"
+            if [[ "$gonka_target" != "$LAST_GONKA_EPOCH" || "$bridge_epoch" != "$LAST_BRIDGE_EPOCH" || "$status" != "$LAST_STATUS" ]]; then
+                if [[ -n "$gonka_effective" && "$gonka_effective" != "$gonka_latest" ]]; then
+                    log_info "poll=$POLL_COUNT caught up (gonka_ready=$gonka_target gonka_effective=$gonka_effective gonka_latest=$gonka_latest bridge=$bridge_epoch)"
+                else
+                    log_info "poll=$POLL_COUNT caught up (gonka_ready=$gonka_target bridge=$bridge_epoch)"
+                fi
             elif should_heartbeat "$status"; then
-                log_info "poll=$POLL_COUNT heartbeat caught_up gonka=$gonka_epoch bridge=$bridge_epoch"
+                if [[ -n "$gonka_effective" && "$gonka_effective" != "$gonka_latest" ]]; then
+                    log_info "poll=$POLL_COUNT heartbeat caught_up gonka_ready=$gonka_target gonka_effective=$gonka_effective gonka_latest=$gonka_latest bridge=$bridge_epoch"
+                else
+                    log_info "poll=$POLL_COUNT heartbeat caught_up gonka_ready=$gonka_target bridge=$bridge_epoch"
+                fi
             fi
-            LAST_GONKA_EPOCH="$gonka_epoch"
+            LAST_GONKA_EPOCH="$gonka_target"
             LAST_BRIDGE_EPOCH="$bridge_epoch"
             LAST_STATUS="$status"
             return 0
@@ -301,14 +380,14 @@ sync_once() {
 
     if echo "$output" | grep -qiE 'validation_signature is missing|missing validation_signature'; then
         status="bls_not_ready"
-        log_wait "poll=$POLL_COUNT gonka_epoch=$gonka_epoch bridge_epoch=$bridge_epoch — BLS validation_signature not ready yet"
+        log_wait "poll=$POLL_COUNT gonka_ready=$gonka_target bridge_epoch=$bridge_epoch — BLS validation_signature not ready yet"
         LAST_STATUS="$status"
         return 1
     fi
 
     if echo "$output" | grep -qiE 'Fatal error|Signer is not the BridgeContract owner|No contract found'; then
         status="fatal"
-        log_err "poll=$POLL_COUNT gonka_epoch=$gonka_epoch rc=$rc"
+        log_err "poll=$POLL_COUNT gonka_ready=$gonka_target rc=$rc"
         echo "$output" | while IFS= read -r line; do
             log_err "$line"
         done
@@ -317,7 +396,7 @@ sync_once() {
     fi
 
     status="error"
-    log_err "poll=$POLL_COUNT gonka_epoch=$gonka_epoch bridge_epoch=$bridge_epoch rc=$rc unexpected response"
+    log_err "poll=$POLL_COUNT gonka_ready=$gonka_target bridge_epoch=$bridge_epoch rc=$rc unexpected response"
     echo "$output" | tail -20 | while IFS= read -r line; do
         log_err "$line"
     done
