@@ -26,13 +26,19 @@ import (
 )
 
 type ConfigManager struct {
-	currentConfig  Config
-	KoanProvider   koanf.Provider
-	WriterProvider WriteCloserProvider
-	sqlDb          SqlDatabase
-	mutex          sync.RWMutex
-	configDumpPath string
-	sqlitePath     string
+	currentConfig            Config
+	KoanProvider             koanf.Provider
+	WriterProvider           WriteCloserProvider
+	sqlDb                    SqlDatabase
+	mutex                    sync.RWMutex
+	runtimePublishMu         sync.RWMutex
+	runtimePublished         runtimePublishedMarker
+	runtimeParamsBlockHeight int64 // last published revision height; guarded by runtimePublishMu
+	runtimeConfigNotifier    *RuntimeConfigNotifier
+	epochOnChangeMu          sync.Mutex
+	epochOnChange            EpochChangeListener // optional; set once at process startup
+	configDumpPath           string
+	sqlitePath               string
 }
 
 type WriteCloserProvider interface {
@@ -58,12 +64,13 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 	}
 
 	manager := ConfigManager{
-		KoanProvider:   file.Provider(configPath),
-		WriterProvider: NewFileWriteCloserProvider(configPath),
-		sqlDb:          db,
-		mutex:          sync.RWMutex{},
-		configDumpPath: filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
-		sqlitePath:     sqlitePath,
+		KoanProvider:          file.Provider(configPath),
+		WriterProvider:        NewFileWriteCloserProvider(configPath),
+		sqlDb:                 db,
+		mutex:                 sync.RWMutex{},
+		runtimeConfigNotifier: NewRuntimeConfigNotifier(),
+		configDumpPath:        filepath.Join(filepath.Dir(sqlitePath), "config-dump.json"),
+		sqlitePath:            sqlitePath,
 	}
 	err := manager.Load()
 	if err != nil {
@@ -288,6 +295,74 @@ type CosmosQueryClient interface {
 	MLNodeVersion(ctx context.Context, req *types.QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*types.QueryGetMLNodeVersionResponse, error)
 }
 
+// SetRuntimeParamsBlockHeight sets params_block_height without notifying (tests only).
+// Production code must use ApplyRuntimeConfigBlockIfChanged.
+func (cm *ConfigManager) SetRuntimeParamsBlockHeight(height int64) {
+	cm.runtimePublishMu.Lock()
+	defer cm.runtimePublishMu.Unlock()
+	if height > cm.runtimeParamsBlockHeight {
+		cm.runtimeParamsBlockHeight = height
+	}
+}
+
+func (cm *ConfigManager) RuntimeParamsBlockHeight() int64 {
+	cm.runtimePublishMu.RLock()
+	defer cm.runtimePublishMu.RUnlock()
+	return cm.runtimeParamsBlockHeight
+}
+
+// RuntimeConfigNotifier returns the broadcast primitive used by GetRuntimeConfig
+// long-poll waiters. Nil only on zero-value ConfigManager used in isolated tests.
+func (cm *ConfigManager) RuntimeConfigNotifier() *RuntimeConfigNotifier {
+	return cm.runtimeConfigNotifier
+}
+
+// EnsureRuntimeConfigNotifier initializes the notifier on zero-value managers (tests).
+func (cm *ConfigManager) EnsureRuntimeConfigNotifier() {
+	if cm.runtimeConfigNotifier == nil {
+		cm.runtimeConfigNotifier = NewRuntimeConfigNotifier()
+	}
+}
+
+// liveRuntimeConfigContent reads the in-memory caches (not yet published). Used only
+// by ApplyRuntimeConfigBlockIfChanged to detect whether a new revision is needed.
+func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	vp := cm.currentConfig.ValidationParams
+	dv := cm.currentConfig.DevshardVersionsCache
+	versions := make([]DevshardVersion, len(dv.Versions))
+	copy(versions, dv.Versions)
+	return runtimeConfigContent{
+		LogprobsMode:            vp.LogprobsMode,
+		DevshardRequestsEnabled: dv.DevshardRequestsEnabled,
+		MaxNonce:                dv.MaxNonce,
+		ApprovedVersions:        versions,
+		RefusalTimeout:          dv.RefusalTimeout,
+		ExecutionTimeout:        dv.ExecutionTimeout,
+		ValidationRate:          dv.ValidationRate,
+		VoteThresholdFactor:     dv.VoteThresholdFactor,
+	}
+}
+
+// RuntimeConfigSnapshot returns the last published runtime revision (content and
+// params_block_height updated together in ApplyRuntimeConfigBlockIfChanged). Until
+// the first publish, it reflects the live caches. currentEpochID comes from
+// ChainPhaseTracker (not ConfigManager).
+func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeConfigSnapshot {
+	cm.runtimePublishMu.RLock()
+	published := cm.runtimePublished
+	height := cm.runtimeParamsBlockHeight
+	cm.runtimePublishMu.RUnlock()
+
+	if published.initialized {
+		return runtimeConfigSnapshotFromContent(height, currentEpochID, published.content)
+	}
+
+	return runtimeConfigSnapshotFromContent(height, currentEpochID, cm.liveRuntimeConfigContent())
+}
+
 func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
@@ -345,7 +420,20 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 func (cm *ConfigManager) SetDevshardVersions(cache DevshardVersionsCache) {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
+	prev := cm.currentConfig.DevshardVersionsCache.DevshardRequestsEnabled
 	cm.currentConfig.DevshardVersionsCache = cache
+	if prev != cache.DevshardRequestsEnabled {
+		logging.Info("runtime_config: devshard_requests_enabled updated from chain", types.Config,
+			"previous", prev,
+			"current", cache.DevshardRequestsEnabled,
+		)
+	} else {
+		logging.Debug("runtime_config: devshard escrow cache refreshed", types.Config,
+			"devshardRequestsEnabled", cache.DevshardRequestsEnabled,
+			"maxNonce", cache.MaxNonce,
+			"approvedVersions", len(cache.Versions),
+		)
+	}
 }
 
 func (cm *ConfigManager) GetDevshardVersions() DevshardVersionsCache {

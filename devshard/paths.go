@@ -29,6 +29,19 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 	return VersionedRoutePrefix(version)
 }
 
+// VersionForRoutePrefix maps an HTTP route prefix to the version tag used when
+// creating a user-side session (state machine + optional SQLite row). This is
+// not the same as the URL path alone:
+//
+//   - LegacyRoutePrefix (/v1/devshard): session tag is types.LegacyRouteSessionVersion
+//     ("v1"), matching embedded dapi HostManager boundVersion (gm/microrelease
+//     used types.LegacySessionVersion for the same value).
+//   - VersionedRoutePrefix (/devshard/<name>): <name> is the versiond runtime
+//     name (must match the host's boundVersion and storage session pin).
+//
+// HTTP clients still use routePrefix on transport.HTTPClient; this function
+// only resolves the session/storage tag. See devshard/docs/protocol-version.md.
+
 func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
 	if protocol == "" {
 		protocol = types.ProtocolV1
@@ -60,7 +73,7 @@ func ResolveHostRoutePrefix(protocol types.ProtocolVersion, routePrefix string) 
 func VersionForRoutePrefix(routePrefix string) (string, error) {
 	normalized := NormalizeRoutePrefix(routePrefix)
 	if normalized == LegacyRoutePrefix {
-		return types.LegacySessionVersion, nil
+		return types.LegacyRouteSessionVersion, nil
 	}
 
 	trimmed := strings.Trim(normalized, "/")

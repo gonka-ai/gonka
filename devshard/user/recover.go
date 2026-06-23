@@ -116,18 +116,20 @@ func RecoverSession(
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
-		recoveredVersion = types.NormalizeSessionVersion(boundVersion)
+		recoveredVersion = boundVersion
+	}
+	if recoveredVersion == "" {
+		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append([]state.SMOption{}, smOpts...)
-	stateOpts = append(stateOpts, state.WithVersion(recoveredVersion))
+	stateOpts := append(smOpts, state.WithVersion(types.EffectiveStateRootAndProtocolVersion))
 	if pv, ok := recoveredProtocolVersion(boundVersion); ok {
 		stateOpts = append(stateOpts, state.WithProtocolVersion(pv))
 	}
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, verifier,
+		meta.CreatorAddr, verifier, store,
 		stateOpts...,
 	)
 	if err != nil {
@@ -140,7 +142,7 @@ func RecoverSession(
 	}
 
 	if meta.LatestNonce == 0 {
-		return sess, sm, nil
+		return finishRecover(sess, sm)
 	}
 
 	// Try to restore from a snapshot to skip replaying old diffs.
@@ -206,7 +208,7 @@ func RecoverSession(
 		if legacySnapshot || snapshotCursor == nil {
 			saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 		}
-		return sess, sm, nil
+		return finishRecover(sess, sm)
 	}
 
 	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
@@ -248,6 +250,13 @@ func RecoverSession(
 		saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 	}
 
+	return finishRecover(sess, sm)
+}
+
+func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.StateMachine, error) {
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
+	}
 	return sess, sm, nil
 }
 

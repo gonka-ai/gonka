@@ -5,14 +5,31 @@ import (
 	"strings"
 )
 
-const LegacySessionVersion = "v1"
+// DevshardStateRootAndProtocolVersion is the devshard state-root and settlement
+// protocol version for this binary. It is stamped into EscrowState and settlement
+// payloads and hashed as version_hash = sha256(tag) in the state-root preimage.
+//
+// This is not the versiond runtime name from DevshardEscrowParams.approved_versions
+// (which binaries may run). Bump this constant and ship a new binary when state-root
+// composition or settlement wire/verification changes. See devshard/docs/protocol-version.md.
+const DevshardStateRootAndProtocolVersion = "v2"
 
-func NormalizeSessionVersion(version string) string {
-	if version == "" {
-		return LegacySessionVersion
+// DefaultStateRootVersion is the tag used when no explicit bind version is provided.
+const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
+
+// NormalizeVersion returns the state-root / settlement protocol tag, defaulting when empty.
+// It is not used for storage session bind (CreateSessionParams.Version); see LegacyRouteSessionVersion.
+func NormalizeVersion(version string) string {
+	if strings.TrimSpace(version) == "" {
+		return DefaultStateRootVersion
 	}
 	return version
 }
+
+// LegacyRouteSessionVersion is the session/storage bind tag for the historical
+// /v1/devshard HTTP mount and embedded dapi hosts (HostManager boundVersion).
+// It is not DevshardStateRootAndProtocolVersion.
+const LegacyRouteSessionVersion = "v1"
 
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
@@ -85,19 +102,30 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout    int64  // seconds before reason=refused timeout
-	ExecutionTimeout  int64  // seconds before reason=execution timeout
-	TokenPrice        uint64 // price per input / output token (flat per session)
-	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce       uint64 // fee charged per applied nonce (diff)
-	VoteThreshold     uint32 // minimum accept votes for timeout (total_slots / 2)
-	ValidationRate    uint32 // basis points (10000 = 100%, 1000 = 10%)
+	RefusalTimeout             int64  // seconds before reason=refused timeout
+	ExecutionTimeout           int64  // seconds before reason=execution timeout
+	TokenPrice                 uint64 // price per input / output token (flat per session)
+	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
+	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
+	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
+	VoteThreshold              uint32
+	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces   uint32
+	InferenceSealGraceSeconds  uint32
+	AutoSealEveryNNonces       uint32
 }
 
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
-	EscrowID      string
-	Version       string
+	EscrowID string
+	// StateRootAndProtocolVersion is the protocol tag stamped at session creation
+	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
+	// is part of the signed state-root preimage (version_hash). Peers in one
+	// session must use the same tag. Storage CreateSessionParams.Version is the
+	// separate runtime/bind version for versiond routing, not this field.
+	StateRootAndProtocolVersion string
 	Config        SessionConfig
 	Group         []SlotAssignment
 	Balance       uint64
@@ -106,9 +134,11 @@ type EscrowState struct {
 	FinalizeNonce uint64
 	Inferences    map[uint64]*InferenceRecord
 	HostStats     map[uint32]*HostStats
-	RevealedSeeds map[uint32]int64
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
+	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
+	// commitments (32 bytes). Updated on each SealInference and settlement drain.
+	SealedAcc []byte `json:"sealed_acc,omitempty"`
 }
 
 // Diff is the protocol primitive: what the user creates and signs.

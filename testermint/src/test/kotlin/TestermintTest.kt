@@ -1,4 +1,5 @@
 import com.productscience.TestFilesWriter
+import com.productscience.dumpInferenceDockerLogsForArtifact
 import com.productscience.logContext
 import com.productscience.logSection
 import org.assertj.core.api.Assertions
@@ -64,6 +65,7 @@ class LogTestWatcher : TestWatcher {
         val displayName = context.testClass.get().simpleName + "-" + context.displayName.trimEnd('(', ')')
         logSection("Test failed: $displayName")
         Logger.error(cause, "Test failed:{}", displayName)
+        dumpInferenceDockerLogsForArtifact(context = displayName)
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testFailed(context, cause)

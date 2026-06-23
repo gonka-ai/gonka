@@ -1,32 +1,29 @@
 package host
 
 import (
-	"encoding/json"
+	"errors"
 
 	"devshard/types"
 )
 
-// StateSnapshot matches the proxy session snapshot envelope. Hosts do not use
-// HostSyncNonce, but keeping the same shape makes snapshots portable across the
-// shared storage/recovery code.
-type StateSnapshot struct {
-	State         *types.EscrowState `json:"state"`
-	HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
-}
+var errEmptySnapshot = errors.New("empty snapshot")
 
 func MarshalStateSnapshot(state *types.EscrowState) ([]byte, error) {
-	return json.Marshal(StateSnapshot{State: state})
+	return types.MarshalStateSnapshotProto(state, nil, nil)
+}
+
+func MarshalStateSnapshotWithCommitted(state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) ([]byte, error) {
+	return types.MarshalStateSnapshotProto(state, committedEntries, sealedNonces)
 }
 
 func UnmarshalStateSnapshot(data []byte) (*types.EscrowState, error) {
-	var wrapped StateSnapshot
-	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.State != nil {
-		return wrapped.State, nil
-	}
+	state, _, _, err := UnmarshalStateSnapshotWithCommitted(data)
+	return state, err
+}
 
-	var bare types.EscrowState
-	if err := json.Unmarshal(data, &bare); err != nil {
-		return nil, err
+func UnmarshalStateSnapshotWithCommitted(data []byte) (*types.EscrowState, map[uint64][]byte, map[uint64]uint64, error) {
+	if len(data) == 0 {
+		return nil, nil, nil, errEmptySnapshot
 	}
-	return &bare, nil
+	return types.UnmarshalStateSnapshotProto(data)
 }

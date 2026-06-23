@@ -20,8 +20,6 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 
-	devshardpkg "devshard"
-
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
@@ -74,7 +72,6 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
 	epochGroupDataCache  *internal.EpochGroupDataCache
-	availability         *devshardpkg.AvailabilityTracker
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -166,10 +163,6 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	return dispatcher
 }
 
-func (d *OnNewBlockDispatcher) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
-	d.availability = tracker
-}
-
 // ProcessNewBlock is the main entry point for processing new block events
 func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainphase.BlockInfo) error {
 	logging.Debug("Processing new block", types.Stages,
@@ -252,20 +245,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				versions := make([]apiconfig.DevshardVersion, len(params.Params.DevshardEscrowParams.ApprovedVersions))
-				for i, v := range params.Params.DevshardEscrowParams.ApprovedVersions {
-					versions[i] = apiconfig.DevshardVersion{
-						Name: v.Name, Binary: v.Binary, SHA256: v.Sha256,
-					}
-				}
-				d.configManager.SetDevshardVersions(apiconfig.DevshardVersionsCache{Versions: versions})
-				if d.availability != nil {
-					d.availability.Record(
-						params.Params.DevshardEscrowParams.DevshardRequestsEnabled,
-						time.Now().Unix(),
-						networkInfo.LatestEpoch.Index,
-					)
-				}
+				d.configManager.SetDevshardVersions(
+					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
+				)
 			}
 		}
 	}
@@ -302,6 +284,13 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	if !epochState.IsSynced {
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
 		return nil
+	}
+
+	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") {
+		d.configManager.ApplyRuntimeConfigBlockIfChanged(
+			blockInfo.Height,
+			uint64(epochState.LatestEpoch.EpochIndex),
+		)
 	}
 
 	// 3. Check for phase transitions and stage events
@@ -362,6 +351,11 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (NetworkInf
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
+	//To work for tests
+	if d.nodeBroker == nil {
+		return
+	}
+
 	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
@@ -566,6 +560,10 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 
 // triggerReconciliation starts node reconciliation with current phase info
 func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
+	//To work for tests
+	if d.nodeBroker == nil {
+		return
+	}
 	cmd, response := getCommandForPhase(epochState)
 	if cmd == nil || response == nil {
 		logging.Info("[triggerReconciliation] No command required for phase", types.Nodes,

@@ -163,12 +163,17 @@ jobs:
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
-          DEVSHARD_VERSION: "v0.2.11"
           USE_REGISTRY_CACHE: "1"
         run: |
           make build-docker
-          # devshardd self-checks build_version == the version versiond forces (v1 in DevshardStandaloneTests).
-          DEVSHARD_VERSION=v1 make devshardd-build
+          # devshardd self-checks build_version == the version versiond forces (dev via build/devshard-version).
+          DEVSHARD_VERSION=dev make devshardd-build
+          echo "=== devshard version (make DEVSHARD_VERSION / build/devshard-version) ==="
+          make -s print-devshard-version
+          cat build/devshard-version
+          echo "=== devshard protocol version (DEVSHARD_PROTOCOL_VERSION / build/devshard-protocol-version) ==="
+          make -s print-devshard-protocol-version
+          cat build/devshard-protocol-version
           echo "=== Images immediately after build ==="
           docker images | head -20
 
@@ -196,7 +201,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: devshardd-host-binary
-          path: build/devshardd
+          path: |
+            build/devshardd
+            build/devshard-version
+            build/devshard-protocol-version
           retention-days: 1
 
       - name: Make Upgrade Build
@@ -262,6 +270,9 @@ jobs:
       - name: Prepare devshardd Host Binary
         run: |
           chmod +x build/devshardd
+          echo "=== devshard version stamp (for Testermint) ==="
+          cat build/devshard-version 2>/dev/null || echo "(missing build/devshard-version)"
+          cat build/devshard-protocol-version 2>/dev/null || echo "(missing build/devshard-protocol-version)"
 
       - name: Install Make
         run: |
@@ -295,17 +306,21 @@ jobs:
         if: ${{ inputs.use_matrix && inputs.test_command == 'run-tests' }}
         run: |
           echo "Running test group: ${{ matrix.test_group }}"
+          echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
           sudo make run-tests TESTS="${{ matrix.test_group }}"
 
       - name: Run Tests (Matrix - Sanity)
         if: ${{ inputs.use_matrix && inputs.test_command == 'run-sanity' }}
         run: |
           echo "Running sanity test group: ${{ matrix.test_group }}"
+          echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
           sudo make run-sanity TESTS="${{ matrix.test_group }}"
 
       - name: Run Tests (Non-Matrix)
         if: ${{ !inputs.use_matrix }}
-        run: sudo make ${{ inputs.test_command }}
+        run: |
+          echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
+          sudo make ${{ inputs.test_command }}
       - name: Archive Test Results XML
         if: always()
         uses: actions/upload-artifact@v4

@@ -35,6 +35,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
+| - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
 
 ## Quick start
 
@@ -134,10 +135,28 @@ broadcast the settlement in one step.
 Returns current session state.
 
 ```json
-{"escrow_id":"42","nonce":15,"phase":"active","balance":5000000000}
+{
+  "escrow_id": "42",
+  "nonce": 15,
+  "phase": "active",
+  "balance": 5000000000,
+  "config": {
+    "refusal_timeout": 60,
+    "execution_timeout": 1200,
+    "token_price": 1,
+    "create_devshard_fee": 10000,
+    "fee_per_nonce": 1000,
+    "vote_threshold": 8,
+    "validation_rate": 5000,
+    "inference_seal_grace_nonces": 160,
+    "inference_seal_grace_seconds": 3600
+  }
+}
 ```
 
 Phase values: `active`, `finalizing`, `settlement`.
+
+`config` mirrors the session's frozen `SessionConfig`, including the paired seal-grace gates (`inference_seal_grace_nonces`, `inference_seal_grace_seconds`).
 
 ### GET /v1/state
 
@@ -372,6 +391,8 @@ The proxy holds the session open until finalization. Once finalized, the session
 Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks from the ML node and returns the final assembled JSON response.
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
+
+If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed.
 
 ## Speculative execution
 

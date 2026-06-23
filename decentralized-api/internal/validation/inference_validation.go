@@ -10,6 +10,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -524,6 +525,10 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 		return
 	}
 
+	_, sampleOp := observability.Inference.StartValidationSample(s.recorder.GetContext(), len(ids))
+	var sampleErr error
+	defer func() { sampleOp.FinishErr(&sampleErr) }()
+
 	logging.Debug("Sampling inf transactions to validate", types.Validation)
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
@@ -535,18 +540,21 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
 		logging.Warn("Failed to query GetInferenceValidationParameters.", types.Validation, "error", err)
+		sampleErr = err
 		return
 	}
 
 	params, err := queryClient.Params(transactionRecorder.GetContext(), &types.QueryParamsRequest{})
 	if err != nil {
 		logging.Error("Failed to get params", types.Validation, "error", err)
+		sampleErr = err
 		return
 	}
 
 	supportedModels, err := s.getCurrentSupportedModels()
 	if err != nil {
 		logging.Error("Failed to get currently available models", types.Validation, "error", err)
+		sampleErr = err
 		return
 	}
 
@@ -556,6 +564,8 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 	currentSeed := s.configManager.GetCurrentSeed().Seed
 	var toValidateIds []string
 
+	totalDecisions := 0
+	selectedDecisions := 0
 	for _, inferenceWithExecutor := range r.Details {
 		if !supportedModels[inferenceWithExecutor.Model] {
 			logging.Debug("Skipping inference by not supported model", types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "model", inferenceWithExecutor.Model)
@@ -579,11 +589,27 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 			params.Params.ValidationParams)
 
 		logging.Info(message, types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed, "validator", address)
-
+		observability.Inference.AddValidationSampleDecision(
+			sampleOp,
+			inferenceWithExecutor.InferenceId,
+			inferenceWithExecutor.Model,
+			inferenceWithExecutor.ExecutorId,
+			address,
+			shouldValidate,
+			message,
+			currentSeed,
+			validatorPower,
+			inferenceWithExecutor.ExecutorPower,
+			inferenceWithExecutor.TotalPower,
+		)
+		totalDecisions++
 		if shouldValidate {
+			selectedDecisions++
 			toValidateIds = append(toValidateIds, inferenceWithExecutor.InferenceId)
 		}
 	}
+	observability.Inference.SetSampledCount(sampleOp, len(toValidateIds))
+	observability.Inference.SetValidationSampleDecisionStats(sampleOp, totalDecisions, selectedDecisions, totalDecisions-selectedDecisions)
 
 	logInferencesToValidate(toValidateIds)
 	if len(toValidateIds) == 0 {
@@ -639,8 +665,14 @@ func logInferencesToValidate(toValidate []string) {
 }
 
 func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
-	promptPayload, responsePayload, err := s.retrievePayloadsWithRetry(inf)
+	ctx, op := observability.Inference.StartValidationExecution(
+		s.recorder.GetContext(), inf.InferenceId, inf.Model, int64(inf.EpochId), revalidation)
+	var execErr error
+	defer func() { op.FinishErr(&execErr) }()
+
+	promptPayload, responsePayload, err := s.retrievePayloadsWithRetry(ctx, inf)
 	if err != nil {
+		execErr = err
 		if errors.Is(err, ErrPayloadUnavailable) {
 			// Post-upgrade inference: executor unavailable after 20 min of retries
 			s.checkAndInvalidateUnavailable(inf, transactionRecorder, revalidation)
@@ -775,12 +807,13 @@ func (s *InferenceValidator) isAlreadyValidated(inferenceId string, epochId uint
 // Returns ErrHashMismatch immediately (no retry) when executor serves wrong payload with valid signature.
 // Returns ErrEpochStale if inference epoch becomes too old during retries.
 // Retries use a short first backoff and longer subsequent backoffs, both with jitter.
-func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]byte, []byte, error) {
+func (s *InferenceValidator) retrievePayloadsWithRetry(ctx context.Context, inf types.Inference) (_ []byte, _ []byte, retErr error) {
 	const maxRetries = 10
 	const firstRetryInterval = 10 * time.Second
 	const subsequentRetryInterval = 2 * time.Minute
 
-	ctx := s.recorder.GetContext()
+	ctx, op := observability.Inference.StartPayloadRetrieval(ctx, inf.InferenceId, inf.ExecutedBy, int64(inf.EpochId))
+	defer func() { op.FinishErr(&retErr) }()
 	var lastErr error
 
 	logging.Debug("Starting payload retrieval from executor", types.Validation,
@@ -794,8 +827,11 @@ func (s *InferenceValidator) retrievePayloadsWithRetry(inf types.Inference) ([]b
 			return nil, nil, ErrEpochStale
 		}
 
+		attemptCtx, attemptOp := observability.Inference.StartPayloadRetrievalAttempt(
+			ctx, inf.InferenceId, inf.ExecutedBy, int64(inf.EpochId), attempt)
 		promptPayload, responsePayload, err := RetrievePayloadsFromExecutor(
-			ctx, inf.InferenceId, inf.ExecutedBy, inf.EpochId, s.recorder)
+			attemptCtx, inf.InferenceId, inf.ExecutedBy, inf.EpochId, s.recorder)
+		attemptOp.Finish(err)
 
 		if err == nil {
 			logging.Debug("Successfully retrieved payloads from executor", types.Validation,
@@ -990,18 +1026,22 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(s.recorder.GetContext(), http.MethodPost, completionsUrl, bytes.NewReader(requestBody))
-	if err != nil {
-		logging.Error("Failed to create ML node validation request", types.Validation, "url", completionsUrl, "error", err)
-		return nil, err
+	mlCtx, mlOp := observability.Inference.StartValidationMLNode(
+		s.recorder.GetContext(), inference.InferenceId, inference.Model, inferenceNode.Id)
+	req, reqErr := http.NewRequestWithContext(mlCtx, http.MethodPost, completionsUrl, bytes.NewReader(requestBody))
+	if reqErr != nil {
+		mlOp.Finish(reqErr)
+		return nil, reqErr
 	}
 	req.Header.Set("Content-Type", "application/json")
-
+	observability.Inference.InjectRequestContext(mlCtx, req.Header)
 	resp, err := validationHTTPClient.Do(req)
 	if err != nil {
+		mlOp.Finish(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	mlOp.Finish(nil)
 
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1050,7 +1090,13 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, errors.New("no logits found in original or validation response")
 	}
 
-	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+	_, cmpOp := observability.Inference.StartCompareLogits(s.recorder.GetContext(), inference.InferenceId)
+	result := CompareLogits(originalLogits, validationLogits, baseResult)
+	if simResult, ok := result.(*SimilarityValidationResult); ok {
+		observability.Inference.SetSimilarity(cmpOp, simResult.Value)
+	}
+	cmpOp.Finish(nil)
+	return result, nil
 }
 
 func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
