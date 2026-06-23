@@ -1,6 +1,7 @@
 package apiconfig
 
 import (
+	"decentralized-api/mlnode"
 	"fmt"
 	"strings"
 
@@ -128,6 +129,11 @@ type InferenceNodeConfig struct {
 	Id               string                 `koanf:"id" json:"id"`
 	MaxConcurrent    int                    `koanf:"max_concurrent" json:"max_concurrent"`
 	Hardware         []Hardware             `koanf:"hardware" json:"hardware"`
+	// BaseURL and AuthToken select BaseURL mode (see mlnode.Endpoint): a stable
+	// full URL to the MLNode with an optional bearer token, instead of
+	// Host+Ports. Stored locally only (SQLite), never on-chain.
+	BaseURL   string `koanf:"base_url" json:"base_url"`
+	AuthToken string `koanf:"auth_token" json:"auth_token"`
 }
 
 // ValidateInferenceNodeBasic validates basic fields of an InferenceNodeConfig without checking for duplicates.
@@ -141,17 +147,9 @@ func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 		errors = append(errors, "node id is required and cannot be empty")
 	}
 
-	if strings.TrimSpace(node.Host) == "" {
-		errors = append(errors, "host is required and cannot be empty")
-	}
-
-	if node.InferencePort <= 0 || node.InferencePort > 65535 {
-		errors = append(errors, fmt.Sprintf("inference_port must be between 1 and 65535, got %d", node.InferencePort))
-	}
-
-	if node.PoCPort <= 0 || node.PoCPort > 65535 {
-		errors = append(errors, fmt.Sprintf("poc_port must be between 1 and 65535, got %d", node.PoCPort))
-	}
+	// Addressing (host+ports XOR base_url, and per-mode validity) is owned by the
+	// mlnode package so the Endpoint seam and validation stay in agreement.
+	errors = append(errors, mlnode.Validate(node.spec())...)
 
 	if node.MaxConcurrent <= 0 {
 		errors = append(errors, fmt.Sprintf("max_concurrent must be greater than 0, got %d", node.MaxConcurrent))

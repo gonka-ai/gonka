@@ -10,6 +10,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
+	apiutils "decentralized-api/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -870,6 +871,10 @@ func (s *InferenceValidator) submitHashMismatchInvalidation(inf types.Inference,
 }
 
 // validateWithPayloads validates inference using provided payloads.
+// HTTP client for re-executing inference during validation. Generous timeout to
+// match the MLNode client, since a full chat completion can be slow.
+var validationInferenceClient = &http.Client{Timeout: 15 * time.Minute}
+
 func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inferenceNode *broker.Node, promptPayload, responsePayload []byte) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
@@ -917,17 +922,21 @@ func (s *InferenceValidator) validateWithPayloads(inference types.Inference, inf
 		return nil, err
 	}
 
-	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "v1/chat/completions")
+	ep := inferenceNode.Endpoint()
+	completionsUrl, err := url.JoinPath(ep.InferenceURL(s.configManager.GetCurrentNodeVersion()), "v1/chat/completions")
 	if err != nil {
-		logging.Error("Failed to join url", types.Validation, "url", inferenceNode.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "error", err)
+		logging.Error("Failed to join url", types.Validation, "url", ep.InferenceURL(s.configManager.GetCurrentNodeVersion()), "error", err)
 		return nil, err
 	}
 
-	resp, err := http.Post(
-		completionsUrl,
-		"application/json",
-		bytes.NewReader(requestBody),
-	)
+	req, err := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	apiutils.SetBearerAuth(req, ep.AuthToken())
+
+	resp, err := validationInferenceClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

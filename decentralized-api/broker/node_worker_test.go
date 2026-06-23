@@ -325,7 +325,7 @@ func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {
 	versionedPocUrl2 := node.Node.PoCUrlWithVersion(version2)
 
 	// Configure the mock client for this version to return an error
-	version2Client := mockFactory.CreateClient(versionedPocUrl2, "").(*mlnodeclient.MockClient)
+	version2Client := mockFactory.MockClientFor(versionedPocUrl2)
 	testErr := errors.New("node not ready")
 	version2Client.NodeStateError = testErr
 

@@ -338,14 +338,12 @@ func (t *MLNodeTester) runOnce(ctx context.Context, cfg apiconfig.InferenceNodeC
 			"node_id", cfg.Id, "skipped_models", skipped)
 	}
 
-	// Build URLs the same way the broker does for versioned (rolling-
-	// upgrade) deployments: insert the current node version into the path
-	// when set, so the test hits the same MLnode routes the broker uses
-	// (an unversioned URL would hit the wrong endpoint and falsely fail).
+	// Build the client the same way the broker does for versioned (rolling-
+	// upgrade) deployments: the Endpoint inserts the current node version into
+	// the path when set, so the test hits the same MLnode routes the broker
+	// uses (an unversioned URL would hit the wrong endpoint and falsely fail).
 	version := t.configManager.GetCurrentNodeVersion()
-	pocUrl := apiconfig.MLNodeURL(cfg.Host, cfg.PoCPort, cfg.PoCSegment, version)
-	inferenceUrl := apiconfig.MLNodeURL(cfg.Host, cfg.InferencePort, cfg.InferenceSegment, version)
-	client := t.factory.CreateClient(pocUrl, inferenceUrl)
+	client := t.factory.CreateClientForNode(cfg.Endpoint(), version)
 
 	// Best-effort cleanup at the end so a successful test leaves the
 	// MLnode idle, not stuck in inference mode.

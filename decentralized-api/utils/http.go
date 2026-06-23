@@ -17,7 +17,20 @@ func NewHttpClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// SetBearerAuth sets the Authorization header to a bearer token, but only when
+// the token is non-empty. This is the single place the "Bearer " prefix and the
+// only-when-present rule live.
+func SetBearerAuth(req *http.Request, token string) {
+	if token != "" {
+		req.Header.Set(AuthorizationHeader, "Bearer "+token)
+	}
+}
+
 func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+	return SendPostJsonRequestWithAuth(ctx, client, url, payload, "")
+}
+
+func SendPostJsonRequestWithAuth(ctx context.Context, client *http.Client, url string, payload any, authToken string) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -40,20 +53,30 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
 	}
+	SetBearerAuth(req, authToken)
 
 	return client.Do(req)
 }
 
 func SendGetRequest(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	return SendGetRequestWithAuth(ctx, client, url, "")
+}
+
+func SendGetRequestWithAuth(ctx context.Context, client *http.Client, url string, authToken string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
+	SetBearerAuth(req, authToken)
 
 	return client.Do(req)
 }
 
 func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+	return SendDeleteJsonRequestWithAuth(ctx, client, url, payload, "")
+}
+
+func SendDeleteJsonRequestWithAuth(ctx context.Context, client *http.Client, url string, payload any, authToken string) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -80,6 +103,7 @@ func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string,
 		logging.Error("SendDeleteJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
 	}
+	SetBearerAuth(req, authToken)
 
 	return client.Do(req)
 }

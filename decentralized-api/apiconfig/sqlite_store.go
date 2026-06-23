@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS inference_nodes (
   max_concurrent INTEGER NOT NULL,
   models_json TEXT NOT NULL,
   hardware_json TEXT NOT NULL,
+  base_url TEXT NOT NULL DEFAULT '',
+  auth_token TEXT NOT NULL DEFAULT '',
   updated_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
   created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now'))
 );
@@ -117,7 +119,45 @@ CREATE TABLE IF NOT EXISTS bls_dealer_openings (
   PRIMARY KEY(epoch_id, recipient_index, ciphertext_index)
 );
 CREATE INDEX IF NOT EXISTS idx_bls_dealer_openings_epoch_id ON bls_dealer_openings(epoch_id);`
-	_, err := db.ExecContext(ctx, stmt)
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
+		return err
+	}
+	// Migrate pre-existing inference_nodes tables that predate BaseURL mode.
+	if err := addColumnIfMissing(ctx, db, "inference_nodes", "base_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "inference_nodes", "auth_token", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing adds column to table only when it is not already present,
+// making the schema migration idempotent (SQLite ADD COLUMN errors on a column
+// that already exists).
+func addColumnIfMissing(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dfltValue        sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+ddl)
 	return err
 }
 
@@ -134,8 +174,8 @@ func UpsertInferenceNodes(ctx context.Context, db *sql.DB, nodes []InferenceNode
 
 	q := `
 INSERT INTO inference_nodes (
-  id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json, base_url, auth_token
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   host = excluded.host,
   inference_segment = excluded.inference_segment,
@@ -145,6 +185,8 @@ ON CONFLICT(id) DO UPDATE SET
   max_concurrent = excluded.max_concurrent,
   models_json = excluded.models_json,
   hardware_json = excluded.hardware_json,
+  base_url = excluded.base_url,
+  auth_token = excluded.auth_token,
   updated_at = (STRFTIME('%Y-%m-%d %H:%M:%f','now'))`
 
 	stmt, err := tx.PrepareContext(ctx, q)
@@ -173,6 +215,8 @@ ON CONFLICT(id) DO UPDATE SET
 			n.MaxConcurrent,
 			string(modelsJSON),
 			string(hardwareJSON),
+			n.BaseURL,
+			n.AuthToken,
 		); err != nil {
 			return err
 		}
@@ -188,7 +232,7 @@ func WriteNodes(ctx context.Context, db *sql.DB, nodes []InferenceNodeConfig) er
 // ReadNodes reads all nodes from the database and reconstructs InferenceNodeConfig entries.
 func ReadNodes(ctx context.Context, db *sql.DB) ([]InferenceNodeConfig, error) {
 	rows, err := db.QueryContext(ctx, `
-SELECT id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json
+SELECT id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json, base_url, auth_token
 FROM inference_nodes ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -207,8 +251,10 @@ FROM inference_nodes ORDER BY id`)
 			maxConc     int
 			modelsRaw   []byte
 			hardwareRaw []byte
+			baseURL     string
+			authToken   string
 		)
-		if err := rows.Scan(&id, &host, &infSeg, &infPort, &pocSeg, &pocPort, &maxConc, &modelsRaw, &hardwareRaw); err != nil {
+		if err := rows.Scan(&id, &host, &infSeg, &infPort, &pocSeg, &pocPort, &maxConc, &modelsRaw, &hardwareRaw, &baseURL, &authToken); err != nil {
 			return nil, err
 		}
 		var models map[string]ModelConfig
@@ -233,6 +279,8 @@ FROM inference_nodes ORDER BY id`)
 			Id:               id,
 			MaxConcurrent:    maxConc,
 			Hardware:         hardware,
+			BaseURL:          baseURL,
+			AuthToken:        authToken,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -259,8 +307,8 @@ func ReplaceInferenceNodes(ctx context.Context, db *sql.DB, nodes []InferenceNod
 
 	q := `
 INSERT INTO inference_nodes (
-  id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  id, host, inference_segment, inference_port, poc_segment, poc_port, max_concurrent, models_json, hardware_json, base_url, auth_token
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
@@ -288,6 +336,8 @@ INSERT INTO inference_nodes (
 			n.MaxConcurrent,
 			string(modelsJSON),
 			string(hardwareJSON),
+			n.BaseURL,
+			n.AuthToken,
 		); err != nil {
 			return err
 		}

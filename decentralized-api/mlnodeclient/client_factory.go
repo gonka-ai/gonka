@@ -1,15 +1,23 @@
 package mlnodeclient
 
-import "sync"
+import (
+	"decentralized-api/mlnode"
+	"sync"
+)
 
 type ClientFactory interface {
-	CreateClient(pocUrl string, inferenceUrl string) MLNodeClient
+	// CreateClientForNode builds a client for the MLNode described by ep at the
+	// given node version. This is the single seam for MLNode client creation.
+	CreateClientForNode(ep mlnode.Endpoint, version string) MLNodeClient
 }
 
 type HttpClientFactory struct{}
 
-func (f *HttpClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
-	return NewNodeClient(pocUrl, inferenceUrl)
+func (f *HttpClientFactory) CreateClientForNode(ep mlnode.Endpoint, version string) MLNodeClient {
+	c := NewNodeClient(ep.PoCURL(version), ep.InferenceURL(version))
+	c.healthUrl = ep.HealthURL(version)
+	c.authToken = ep.AuthToken()
+	return c
 }
 
 type MockClientFactory struct {
@@ -23,15 +31,21 @@ func NewMockClientFactory() *MockClientFactory {
 	}
 }
 
-func (f *MockClientFactory) CreateClient(pocUrl string, inferenceUrl string) MLNodeClient {
-	key := pocUrl
+func (f *MockClientFactory) CreateClientForNode(ep mlnode.Endpoint, version string) MLNodeClient {
+	return f.MockClientFor(ep.PoCURL(version))
+}
+
+// MockClientFor returns the mock client registered for pocUrl, creating one on
+// first use. Test-only helper for seeding and inspecting mock clients keyed by
+// the node's PoC URL.
+func (f *MockClientFactory) MockClientFor(pocUrl string) *MockClient {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if client, exists := f.clients[key]; exists {
+	if client, exists := f.clients[pocUrl]; exists {
 		return client
 	}
 	client := NewMockClient()
-	f.clients[key] = client
+	f.clients[pocUrl] = client
 	return client
 }
 

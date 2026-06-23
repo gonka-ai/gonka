@@ -27,7 +27,7 @@ func (api *Client) CheckModelStatus(ctx context.Context, model Model) (*ModelSta
 		return nil, err
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendPostJsonRequestWithAuth(ctx, &api.client, requestURL, model, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (api *Client) DownloadModel(ctx context.Context, model Model) (*DownloadSta
 		return nil, err
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendPostJsonRequestWithAuth(ctx, &api.client, requestURL, model, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (api *Client) DeleteModel(ctx context.Context, model Model) (*DeleteRespons
 		return nil, err
 	}
 
-	resp, err := utils.SendDeleteJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendDeleteJsonRequestWithAuth(ctx, &api.client, requestURL, model, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (api *Client) ListModels(ctx context.Context) (*ModelListResponse, error) {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (api *Client) GetDiskSpace(ctx context.Context) (*DiskSpaceInfo, error) {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}

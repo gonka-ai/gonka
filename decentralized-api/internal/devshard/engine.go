@@ -9,6 +9,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/payloadstorage"
+	apiutils "decentralized-api/utils"
 
 	"devshard"
 	devshardserver "devshard/server"
@@ -56,12 +57,14 @@ func (e *EngineAdapter) Execute(ctx context.Context, req devshard.ExecuteRequest
 func (e *EngineAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
 	resp, err := broker.DoWithLockedNodeHTTPRetry(e.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
-			url := node.InferenceUrlWithVersion(e.nodeVersion) + "/v1/chat/completions"
+			ep := node.Endpoint()
+			url := ep.InferenceURL(e.nodeVersion) + "/v1/chat/completions"
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
 				return nil, broker.NewApplicationActionError(reqErr)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			apiutils.SetBearerAuth(httpReq, ep.AuthToken())
 			httpResp, postErr := e.httpClient.Do(httpReq)
 			if postErr != nil {
 				return nil, broker.NewTransportActionError(postErr)

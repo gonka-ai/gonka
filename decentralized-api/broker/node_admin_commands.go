@@ -17,29 +17,47 @@ import (
 func (b *Broker) validateInferenceNode(node apiconfig.InferenceNodeConfig, excludeNodeId string) error {
 	errors := apiconfig.ValidateInferenceNodeBasic(node)
 
-	// Check for duplicate host+port combinations
+	// Check for duplicates, scoped to the node's addressing mode so a BaseURL
+	// node and a Host-Port node never falsely collide.
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	// Check inference port uniqueness
-	for id, existingNode := range b.nodes {
-		if excludeNodeId != "" && id == excludeNodeId {
-			continue
+	if node.BaseURL != "" {
+		// BaseURL mode: base_url must be unique among BaseURL-mode nodes.
+		for id, existingNode := range b.nodes {
+			if excludeNodeId != "" && id == excludeNodeId {
+				continue
+			}
+			if existingNode.Node.BaseURL != "" && existingNode.Node.BaseURL == node.BaseURL {
+				errors = append(errors, fmt.Sprintf("duplicate base_url: %s (already used by node '%s')", node.BaseURL, id))
+				break
+			}
 		}
-		if existingNode.Node.Host == node.Host && existingNode.Node.InferencePort == node.InferencePort {
-			errors = append(errors, fmt.Sprintf("duplicate inference host+port combination: %s:%d (already used by node '%s')", node.Host, node.InferencePort, id))
-			break
+	} else {
+		// Host-Port mode: host+port must be unique among Host-Port-mode nodes.
+		for id, existingNode := range b.nodes {
+			if excludeNodeId != "" && id == excludeNodeId {
+				continue
+			}
+			if existingNode.Node.BaseURL != "" {
+				continue
+			}
+			if existingNode.Node.Host == node.Host && existingNode.Node.InferencePort == node.InferencePort {
+				errors = append(errors, fmt.Sprintf("duplicate inference host+port combination: %s:%d (already used by node '%s')", node.Host, node.InferencePort, id))
+				break
+			}
 		}
-	}
-
-	// Check PoC port uniqueness
-	for id, existingNode := range b.nodes {
-		if excludeNodeId != "" && id == excludeNodeId {
-			continue
-		}
-		if existingNode.Node.Host == node.Host && existingNode.Node.PoCPort == node.PoCPort {
-			errors = append(errors, fmt.Sprintf("duplicate PoC host+port combination: %s:%d (already used by node '%s')", node.Host, node.PoCPort, id))
-			break
+		for id, existingNode := range b.nodes {
+			if excludeNodeId != "" && id == excludeNodeId {
+				continue
+			}
+			if existingNode.Node.BaseURL != "" {
+				continue
+			}
+			if existingNode.Node.Host == node.Host && existingNode.Node.PoCPort == node.PoCPort {
+				errors = append(errors, fmt.Sprintf("duplicate PoC host+port combination: %s:%d (already used by node '%s')", node.Host, node.PoCPort, id))
+				break
+			}
 		}
 	}
 
@@ -67,6 +85,11 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
+	// Canonicalize addressing input once, here at the registration boundary, so
+	// the value that is validated, stored (broker.Node + SQLite), duplicate-checked
+	// and turned into an Endpoint is identical.
+	c.Node.Normalize()
+
 	// Validate node configuration
 	if err := b.validateInferenceNode(c.Node, ""); err != nil {
 		logging.Error("RegisterNode. Node validation failed", types.Nodes, "node_id", c.Node.Id, "error", err)
@@ -119,6 +142,8 @@ func (c RegisterNode) Execute(b *Broker) {
 		MaxConcurrent:    c.Node.MaxConcurrent,
 		NodeNum:          curNum,
 		Hardware:         c.Node.Hardware,
+		BaseURL:          c.Node.BaseURL,
+		AuthToken:        c.Node.AuthToken,
 	}
 
 	var currentEpoch uint64
@@ -203,6 +228,9 @@ func (u UpdateNode) GetResponseChannelCapacity() int {
 }
 
 func (c UpdateNode) Execute(b *Broker) {
+	// Canonicalize addressing input at the registration boundary (see RegisterNode).
+	c.Node.Normalize()
+
 	// Fetch existing node first to check if it exists
 	b.mu.RLock()
 	existing, exists := b.nodes[c.Node.Id]
@@ -263,6 +291,8 @@ func (c UpdateNode) Execute(b *Broker) {
 		MaxConcurrent:    c.Node.MaxConcurrent,
 		NodeNum:          existing.Node.NodeNum,
 		Hardware:         c.Node.Hardware,
+		BaseURL:          c.Node.BaseURL,
+		AuthToken:        c.Node.AuthToken,
 	}
 
 	// Apply update

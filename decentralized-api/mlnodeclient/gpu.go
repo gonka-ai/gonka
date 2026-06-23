@@ -24,7 +24,7 @@ func (api *Client) GetGPUDevices(ctx context.Context) (*GPUDevicesResponse, erro
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (api *Client) GetGPUDriver(ctx context.Context) (*DriverInfo, error) {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}

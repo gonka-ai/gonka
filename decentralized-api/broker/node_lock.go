@@ -54,7 +54,7 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 		b.lockMap[lockID] = lockEntry{nodeID: node.Id, createdAt: time.Now()}
 		b.lockMapMu.Unlock()
 		version := b.configManager.GetCurrentNodeVersion()
-		return lockID, node.InferenceUrlWithVersion(version), node.Id, nil
+		return lockID, node.Endpoint().InferenceURL(version), node.Id, nil
 	}
 }
 

@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"encoding/base64"
 	"encoding/json"
@@ -643,7 +642,7 @@ func (s *Server) checkMLNodes(ctx context.Context) []Check {
 	for _, node := range nodes {
 		// Build PoC URL
 		version := s.configManager.GetCurrentNodeVersion()
-		pocUrl := getPoCUrlWithVersion(node, version)
+		pocUrl := node.Endpoint().PoCURL(version)
 
 		// Check health endpoint
 		healthUrl, _ := url.JoinPath(pocUrl, "/health")
@@ -875,29 +874,4 @@ func buildRecommendationMap() map[string]string {
 		"missed_requests_threshold": "Investigate why requests are being missed. Check MLNode health and network connectivity",
 		"block_sync":                "Check chain node is running and syncing properly",
 	}
-}
-
-// Helper Functions (copied from modelmanager for isolation)
-
-func getPoCUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
-	if version == "" {
-		return getPoCUrl(node)
-	}
-	return getPoCUrlVersioned(node, version)
-}
-
-func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
-	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
-}
-
-func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
-	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
-}
-
-func formatURL(host string, port int, segment string) string {
-	return apiconfig.MLNodeURL(host, port, segment, "")
-}
-
-func formatURLWithVersion(host string, port int, version string, segment string) string {
-	return apiconfig.MLNodeURL(host, port, segment, version)
 }

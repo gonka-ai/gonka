@@ -498,7 +498,8 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 	}
 
 	response, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, model, nil, 1, func(node *broker.Node) (*http.Response, *broker.ActionError) {
-		tokenizeUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), "/tokenize")
+		ep := node.Endpoint()
+		tokenizeUrl, err := url.JoinPath(ep.InferenceURL(s.configManager.GetCurrentNodeVersion()), "/tokenize")
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
@@ -512,11 +513,14 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 			return nil, broker.NewApplicationActionError(err)
 		}
 
-		resp, postErr := s.httpClient.Post(
-			tokenizeUrl,
-			"application/json",
-			bytes.NewReader(jsonData),
-		)
+		req, err := http.NewRequest(http.MethodPost, tokenizeUrl, bytes.NewReader(jsonData))
+		if err != nil {
+			return nil, broker.NewApplicationActionError(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		utils.SetBearerAuth(req, ep.AuthToken())
+
+		resp, postErr := s.httpClient.Do(req)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
@@ -606,17 +610,21 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	}
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
-			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
+			"inferenceId", inferenceId, "node", node.Id, "url", node.Endpoint().InferenceURL(s.configManager.GetCurrentNodeVersion()))
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), inferencePath)
+		ep := node.Endpoint()
+		completionsUrl, err := url.JoinPath(ep.InferenceURL(s.configManager.GetCurrentNodeVersion()), inferencePath)
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		resp, postErr := s.httpClient.Post(
-			completionsUrl,
-			request.Request.Header.Get("Content-Type"),
-			bytes.NewReader(modifiedRequestBody.NewBody),
-		)
+		req, err := http.NewRequest(http.MethodPost, completionsUrl, bytes.NewReader(modifiedRequestBody.NewBody))
+		if err != nil {
+			return nil, broker.NewApplicationActionError(err)
+		}
+		req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
+		utils.SetBearerAuth(req, ep.AuthToken())
+
+		resp, postErr := s.httpClient.Do(req)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}

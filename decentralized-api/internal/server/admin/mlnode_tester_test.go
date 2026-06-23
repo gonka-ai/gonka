@@ -89,7 +89,7 @@ func TestMLNodeTester_SuccessRecordsResult(t *testing.T) {
 
 	// Pre-create the mock client at the same pocUrl the tester will
 	// use, and configure it to report healthy.
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceIsHealthy = true
 
 	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
@@ -119,7 +119,7 @@ func TestMLNodeTester_ModelLoadFailure(t *testing.T) {
 		},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceUpError = errors.New("OOM")
 
 	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
@@ -149,7 +149,7 @@ func TestMLNodeTester_MergesGovernanceArgs(t *testing.T) {
 		},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceIsHealthy = true
 	gov := stubGovModels{resp: &types.QueryModelsAllResponse{
 		Model: []types.Model{{Id: "model-a", ModelArgs: []string{"--gov", "1"}}},
@@ -183,7 +183,7 @@ func TestMLNodeTester_MultipleModels(t *testing.T) {
 		},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceIsHealthy = true
 
 	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
@@ -227,7 +227,7 @@ func TestMLNodeTester_FiltersModelsUnsupportedByPoCParams(t *testing.T) {
 		t.Fatalf("SetPoCParams: %v", err)
 	}
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceIsHealthy = true
 	gov := stubGovModels{resp: &types.QueryModelsAllResponse{
 		Model: []types.Model{{Id: "model-a"}, {Id: "model-b"}},
@@ -271,7 +271,7 @@ func TestMLNodeTester_SkipsConfiguredModelsAbsentFromGovernance(t *testing.T) {
 		t.Fatalf("SetPoCParams: %v", err)
 	}
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.InferenceIsHealthy = true
 	gov := stubGovModels{resp: &types.QueryModelsAllResponse{
 		Model: []types.Model{{Id: "model-a"}},
@@ -304,7 +304,7 @@ func TestMLNodeTester_StopsBeforeFirstModel(t *testing.T) {
 		Models:        map[string]apiconfig.ModelConfig{"model-a": {}},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient.InferenceIsHealthy = true
 
@@ -330,7 +330,7 @@ func TestMLNodeTester_StopFailureFailsTest(t *testing.T) {
 		Models:        map[string]apiconfig.ModelConfig{"model-a": {}},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	mockClient.StopError = errors.New("stop failed")
 
 	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
@@ -428,7 +428,7 @@ func TestMLNodeTester_InferenceRequestFailure(t *testing.T) {
 		},
 	}})
 	factory := mlnodeclient.NewMockClientFactory()
-	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient := factory.MockClientFor("http://test-host:8080")
 	// Model loads fine and is healthy, but the inference request fails —
 	// the response-validation step must catch it.
 	mockClient.InferenceIsHealthy = true

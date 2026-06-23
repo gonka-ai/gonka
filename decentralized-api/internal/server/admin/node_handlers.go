@@ -74,6 +74,8 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 			Id:               node.Id,
 			MaxConcurrent:    node.MaxConcurrent,
 			Hardware:         node.Hardware,
+			BaseURL:          node.BaseURL,
+			AuthToken:        node.AuthToken,
 		}
 	}
 	err = config.SetNodes(iNodes)

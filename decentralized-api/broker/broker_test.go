@@ -755,7 +755,7 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	mockClient := mockFactory.GetClientForNode(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort))
 	if mockClient == nil {
 		// If it's not created yet, create it.
-		mockClient = mockFactory.CreateClient(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort), fmt.Sprintf("http://%s:%d", node.Host, node.InferencePort)).(*mlnodeclient.MockClient)
+		mockClient = mockFactory.MockClientFor(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort))
 	}
 	mockClient.Mu.Lock()
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
@@ -1546,6 +1546,82 @@ func TestValidateInferenceNode_StandardConfigs(t *testing.T) {
 			require.NoError(t, broker.validateInferenceNode(node, ""))
 		})
 	}
+}
+
+func TestValidateInferenceNode_BaseURLUniqueness(t *testing.T) {
+	broker := NewTestBroker()
+
+	node1 := apiconfig.InferenceNodeConfig{
+		Id:            "node1",
+		MaxConcurrent: 5,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		BaseURL:       "https://svc.provider.com/path",
+	}
+	cmd := NewRegisterNodeCommand(node1)
+	require.NoError(t, broker.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.NotNil(t, resp)
+	require.Nil(t, resp.Error)
+	time.Sleep(50 * time.Millisecond)
+
+	// Same base_url on a different node id is a duplicate.
+	dup := apiconfig.InferenceNodeConfig{
+		Id:            "node2",
+		MaxConcurrent: 5,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		BaseURL:       "https://svc.provider.com/path",
+	}
+	err := broker.validateInferenceNode(dup, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duplicate base_url")
+
+	// A Host-Port node never conflicts with a BaseURL node (different modes).
+	hostPort := apiconfig.InferenceNodeConfig{
+		Id:            "node3",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		MaxConcurrent: 5,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+	}
+	require.NoError(t, broker.validateInferenceNode(hostPort, ""))
+}
+
+// Registration must canonicalize base_url at the boundary, so (a) the stored
+// node carries the clean value and (b) two registrations that differ only by
+// surrounding whitespace / trailing slash collide on the duplicate check instead
+// of silently pointing two nodes at the same MLNode.
+func TestRegisterNode_NormalizesBaseURL_AndDedups(t *testing.T) {
+	broker := NewTestBroker()
+
+	node1 := apiconfig.InferenceNodeConfig{
+		Id:            "node1",
+		MaxConcurrent: 5,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		BaseURL:       "  https://svc.provider.com/path/  ",
+	}
+	cmd := NewRegisterNodeCommand(node1)
+	require.NoError(t, broker.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.Nil(t, resp.Error)
+	require.NotNil(t, resp.Node)
+	// Stored value is canonical (whitespace + trailing slash stripped).
+	require.Equal(t, "https://svc.provider.com/path", resp.Node.BaseURL)
+	time.Sleep(50 * time.Millisecond)
+
+	// A second node whose base_url differs only by whitespace/trailing slash is
+	// the same MLNode — it must be rejected as a duplicate.
+	node2 := apiconfig.InferenceNodeConfig{
+		Id:            "node2",
+		MaxConcurrent: 5,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {}},
+		BaseURL:       "https://svc.provider.com/path",
+	}
+	cmd2 := NewRegisterNodeCommand(node2)
+	require.NoError(t, broker.QueueMessage(cmd2))
+	resp2 := <-cmd2.Response
+	require.Error(t, resp2.Error)
+	require.Contains(t, resp2.Error.Error(), "duplicate base_url")
 }
 
 func TestValidateInferenceNode_HostPortUniqueness(t *testing.T) {

@@ -524,7 +524,7 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	suite.nodeBroker.UpdateNodeEpochData([]*types.MLNodeInfo{&mlNode}, "test-model", model)
 
 	pocURL := fmt.Sprintf("http://%s:%d", host, port+1)
-	mockClient := mockClientFactory.CreateClient(pocURL, fmt.Sprintf("http://%s:%d", host, port)).(*mlnodeclient.MockClient)
+	mockClient := mockClientFactory.MockClientFor(pocURL)
 	mockClient.Mu.Lock()
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient.InferenceIsHealthy = true

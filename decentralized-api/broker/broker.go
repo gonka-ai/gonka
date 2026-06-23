@@ -168,6 +168,10 @@ type Node struct {
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
 	Hardware         []apiconfig.Hardware `json:"hardware"`
+	// BaseURL and AuthToken select BaseURL mode (see mlnode.Endpoint), mirroring
+	// the same fields on apiconfig.InferenceNodeConfig.
+	BaseURL   string `json:"base_url"`
+	AuthToken string `json:"auth_token"`
 }
 
 func (n *Node) InferenceUrl() string {
@@ -444,7 +448,7 @@ func (b *Broker) QueueMessage(command Command) error {
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 	version := b.configManager.GetCurrentNodeVersion()
-	return b.mlNodeClientFactory.CreateClient(node.PoCUrlWithVersion(version), node.InferenceUrlWithVersion(version))
+	return b.mlNodeClientFactory.CreateClientForNode(node.Endpoint(), version)
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {

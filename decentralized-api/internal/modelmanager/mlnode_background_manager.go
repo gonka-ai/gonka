@@ -125,9 +125,7 @@ func (m *MLNodeBackgroundManager) isInDownloadWindow(epochState *chainphase.Epoc
 // checkNodeModels checks and downloads models for a specific node
 func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeConfig) {
 	version := m.configManager.GetCurrentNodeVersion()
-	pocUrl := getPoCUrlWithVersion(node, version)
-	inferenceUrl := getInferenceUrlWithVersion(node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
+	client := m.mlNodeClientFactory.CreateClientForNode(node.Endpoint(), version)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -192,44 +190,6 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 	}
 }
 
-func getPoCUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
-	if version == "" {
-		return getPoCUrl(node)
-	}
-	return getPoCUrlVersioned(node, version)
-}
-
-func getInferenceUrlWithVersion(node apiconfig.InferenceNodeConfig, version string) string {
-	if version == "" {
-		return getInferenceUrl(node)
-	}
-	return getInferenceUrlVersioned(node, version)
-}
-
-func getPoCUrl(node apiconfig.InferenceNodeConfig) string {
-	return formatURL(node.Host, node.PoCPort, node.PoCSegment)
-}
-
-func getPoCUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
-	return formatURLWithVersion(node.Host, node.PoCPort, version, node.PoCSegment)
-}
-
-func getInferenceUrl(node apiconfig.InferenceNodeConfig) string {
-	return formatURL(node.Host, node.InferencePort, node.InferenceSegment)
-}
-
-func getInferenceUrlVersioned(node apiconfig.InferenceNodeConfig, version string) string {
-	return formatURLWithVersion(node.Host, node.InferencePort, version, node.InferenceSegment)
-}
-
-func formatURL(host string, port int, segment string) string {
-	return apiconfig.MLNodeURL(host, port, segment, "")
-}
-
-func formatURLWithVersion(host string, port int, version string, segment string) string {
-	return apiconfig.MLNodeURL(host, port, segment, version)
-}
-
 // checkAndUpdateGPUs fetches GPU info from all nodes and updates hardware
 func (m *MLNodeBackgroundManager) checkAndUpdateGPUs(ctx context.Context) {
 	nodes := m.configManager.GetNodes()
@@ -289,9 +249,7 @@ func (m *MLNodeBackgroundManager) checkAndUpdateGPUs(ctx context.Context) {
 // fetchNodeGPUHardware fetches GPU devices and transforms to Hardware entries
 func (m *MLNodeBackgroundManager) fetchNodeGPUHardware(ctx context.Context, node *apiconfig.InferenceNodeConfig) ([]apiconfig.Hardware, error) {
 	version := m.configManager.GetCurrentNodeVersion()
-	pocUrl := getPoCUrlWithVersion(*node, version)
-	inferenceUrl := getInferenceUrlWithVersion(*node, version)
-	client := m.mlNodeClientFactory.CreateClient(pocUrl, inferenceUrl)
+	client := m.mlNodeClientFactory.CreateClientForNode(node.Endpoint(), version)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

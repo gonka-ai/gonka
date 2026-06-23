@@ -25,6 +25,8 @@ const (
 type Client struct {
 	pocUrl                string
 	inferenceUrl          string
+	healthUrl             string // when empty, falls back to inferenceUrl + /health
+	authToken             string // bearer token for MLNode requests, or ""
 	client                http.Client
 	mlGrpcCallbackAddress string
 }
@@ -46,7 +48,7 @@ func (api *Client) Stop(ctx context.Context) error {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
+	_, err = utils.SendPostJsonRequestWithAuth(ctx, &api.client, requestUrl, nil, api.authToken)
 	if err != nil {
 		return err
 	}
@@ -73,7 +75,7 @@ func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +116,7 @@ func (api *Client) GetPowStatus(ctx context.Context) (*PowStatusResponse, error)
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -133,12 +135,16 @@ func (api *Client) GetPowStatus(ctx context.Context) (*PowStatusResponse, error)
 }
 
 func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
-	requestURL, err := url.JoinPath(api.inferenceUrl, "/health")
-	if err != nil {
-		return false, err
+	requestURL := api.healthUrl
+	if requestURL == "" {
+		var err error
+		requestURL, err = url.JoinPath(api.inferenceUrl, "/health")
+		if err != nil {
+			return false, err
+		}
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return false, err
 	}
@@ -186,7 +192,7 @@ func (api *Client) Inference(ctx context.Context, model string) error {
 		MaxTokens: 1,
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, req)
+	resp, err := utils.SendPostJsonRequestWithAuth(ctx, &api.client, requestURL, req, api.authToken)
 	if err != nil {
 		return err
 	}
@@ -230,7 +236,7 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
+	_, err = utils.SendPostJsonRequestWithAuth(ctx, &api.client, inferenceUpUrl, dto, api.authToken)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
 	}
@@ -252,7 +258,7 @@ func (api *Client) GetLoadedModels(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
+	resp, err := utils.SendGetRequestWithAuth(ctx, &api.client, requestURL, api.authToken)
 	if err != nil {
 		return nil, err
 	}

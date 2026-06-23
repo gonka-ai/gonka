@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+	"decentralized-api/mlnode"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"testing"
@@ -74,7 +75,7 @@ type mockClientFactory struct {
 	client mlnodeclient.MLNodeClient
 }
 
-func (m *mockClientFactory) CreateClient(pocUrl, inferenceUrl string) mlnodeclient.MLNodeClient {
+func (m *mockClientFactory) CreateClientForNode(ep mlnode.Endpoint, version string) mlnodeclient.MLNodeClient {
 	return m.client
 }
 
@@ -547,65 +548,6 @@ func TestCheckNodeModels(t *testing.T) {
 		// Should download 2 models (model1 and model3 are NOT_FOUND)
 		if mockClient.DownloadModelCalled != 2 {
 			t.Errorf("expected DownloadModel to be called twice, got %d", mockClient.DownloadModelCalled)
-		}
-	})
-}
-
-// Test URL formatting
-func TestURLFormatting(t *testing.T) {
-	node := apiconfig.InferenceNodeConfig{
-		Host:             "localhost",
-		PoCPort:          8080,
-		PoCSegment:       "/api/v1",
-		InferencePort:    8081,
-		InferenceSegment: "/inference",
-	}
-
-	t.Run("PoC URL without version", func(t *testing.T) {
-		url := getPoCUrl(node)
-		expected := "http://localhost:8080/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("PoC URL with version", func(t *testing.T) {
-		url := getPoCUrlVersioned(node, "v2")
-		expected := "http://localhost:8080/v2/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("Inference URL without version", func(t *testing.T) {
-		url := getInferenceUrl(node)
-		expected := "http://localhost:8081/inference"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("Inference URL with version", func(t *testing.T) {
-		url := getInferenceUrlVersioned(node, "v2")
-		expected := "http://localhost:8081/v2/inference"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("URL with version helper", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "v2")
-		expected := "http://localhost:8080/v2/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
-		}
-	})
-
-	t.Run("URL without version helper (empty string)", func(t *testing.T) {
-		url := getPoCUrlWithVersion(node, "")
-		expected := "http://localhost:8080/api/v1"
-		if url != expected {
-			t.Errorf("expected %s, got %s", expected, url)
 		}
 	})
 }

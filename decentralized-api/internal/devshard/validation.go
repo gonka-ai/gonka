@@ -8,6 +8,7 @@ import (
 
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+	apiutils "decentralized-api/utils"
 
 	"devshard"
 	"devshard/bridge"
@@ -66,12 +67,14 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 func (v *ValidationAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
 	resp, err := broker.DoWithLockedNodeHTTPRetry(v.broker, model, nil, 3,
 		func(node *broker.Node) (*http.Response, *broker.ActionError) {
-			url := node.InferenceUrlWithVersion(v.nodeVersion) + "/v1/chat/completions"
+			ep := node.Endpoint()
+			url := ep.InferenceURL(v.nodeVersion) + "/v1/chat/completions"
 			httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 			if reqErr != nil {
 				return nil, broker.NewApplicationActionError(reqErr)
 			}
 			httpReq.Header.Set("Content-Type", "application/json")
+			apiutils.SetBearerAuth(httpReq, ep.AuthToken())
 			httpResp, postErr := v.httpClient.Do(httpReq)
 			if postErr != nil {
 				return nil, broker.NewTransportActionError(postErr)

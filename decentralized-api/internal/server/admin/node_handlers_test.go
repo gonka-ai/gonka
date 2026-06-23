@@ -5,7 +5,6 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"decentralized-api/mlnodeclient"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -85,7 +84,7 @@ func TestPostNodeTest(t *testing.T) {
 	t.Run("model load failure returns 200 with FAILED + failing model", func(t *testing.T) {
 		// Stub the same mock client the tester will use (factory keys by
 		// pocURL) so InferenceUp fails like a misconfigured MLnode.
-		mc := factory.CreateClient(testNodePoCURL, "").(*mlnodeclient.MockClient)
+		mc := factory.MockClientFor(testNodePoCURL)
 		mc.InferenceUpError = errors.New("CUDA out of memory")
 		defer func() { mc.InferenceUpError = nil }()
 
@@ -482,7 +481,7 @@ func TestGetNodesOnboarding(t *testing.T) {
 	t.Run("failed manual test surfaces as TEST_FAILED", func(t *testing.T) {
 		// Make the MLnode fail, then run a manual test so the tester
 		// records a failed result for node-1.
-		mc := factory.CreateClient(testNodePoCURL, "").(*mlnodeclient.MockClient)
+		mc := factory.MockClientFor(testNodePoCURL)
 		mc.InferenceUpError = errors.New("model not found")
 		_, err := s.tester.Run(context.Background(), "node-1")
 		assert.NoError(t, err)
