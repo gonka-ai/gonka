@@ -221,12 +221,12 @@ build-for-upgrade:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@make -C inference-chain build-for-upgrade
-	@make -C decentralized-api build-for-upgrade
+	@make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 
 build-for-upgrade-tests:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@make -C inference-chain build-for-upgrade TESTS=1
-	@make -C decentralized-api build-for-upgrade TESTS=1
+	@make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
