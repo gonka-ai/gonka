@@ -1,0 +1,57 @@
+# Fast amd64-only release path for testnet tags (e.g. release/v0.2.14-testnet-1).
+name: Build and Release to race-releases (testnet)
+
+on:
+  push:
+    tags:
+      - 'release/v*-testnet*'
+
+jobs:
+  build_and_release:
+    if: contains(github.ref_name, 'testnet')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v3.0.0
+        with:
+          go-version: '1.24.2'
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run Makefile build
+        run: VERSION="${GITHUB_REF_NAME#release/}" make build-for-upgrade UPGRADE_ARCHES=amd64
+
+      - name: Generate GitHub App Installation Token for release
+        id: get_release_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: product-science
+          repositories: race-releases
+
+      - name: Create Release in race-releases with softprops/action-gh-release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ steps.get_release_token.outputs.token }}
+          repository: product-science/race-releases
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Automated testnet release from tag ${{ github.ref_name }}.
+            Build artifacts from `build-for-upgrade` (linux/amd64 only).
+          draft: false
+          prerelease: false
+          files: |
+            ./public-html/v2/inferenced/*.zip
+            ./public-html/v2/dapi/*.zip
+
+      - name: Create tag artifact
+        run: echo "${{ github.ref_name }}" > release_tag.txt
+
+      - name: Upload tag artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tag-artifact
+          path: release_tag.txt

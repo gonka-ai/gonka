@@ -8,6 +8,8 @@ on:
       - 'release/v[0-9]*.[0-9]*.[0-9]*-*'
 jobs:
   build_and_release:
+    # Testnet tags use publish_upgrade_binaries_testnet.yml (amd64-only, faster).
+    if: ${{ !contains(github.ref_name, 'testnet') }}
     runs-on: ubuntu-latest
     steps:
       - name: Set up Go
