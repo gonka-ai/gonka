@@ -73,12 +73,14 @@ else
     echo "GENESIS_HOST=$GENESIS_HOST" >> "$ENV_FILE"
 fi
 
+GONKA_CHAIN_ID_VALUE="${GONKA_CHAIN_ID:-${CHAIN_ID:-gonka-testnet}}"
 if grep -q "GONKA_CHAIN_ID=" "$ENV_FILE"; then
-    sed -i.bak "s|GONKA_CHAIN_ID=.*|GONKA_CHAIN_ID=gonka-testnet|" "$ENV_FILE"
+    sed -i.bak "s|GONKA_CHAIN_ID=.*|GONKA_CHAIN_ID=$GONKA_CHAIN_ID_VALUE|" "$ENV_FILE"
     rm "$ENV_FILE.bak"
 else
-    echo "GONKA_CHAIN_ID=gonka-testnet" >> "$ENV_FILE"
+    echo "GONKA_CHAIN_ID=$GONKA_CHAIN_ID_VALUE" >> "$ENV_FILE"
 fi
+echo "GONKA_CHAIN_ID=$GONKA_CHAIN_ID_VALUE"
 
 if grep -q "ETHEREUM_CHAIN_ID=" "$ENV_FILE"; then
     sed -i.bak "s|ETHEREUM_CHAIN_ID=.*|ETHEREUM_CHAIN_ID=1|" "$ENV_FILE"
@@ -128,12 +130,32 @@ fi
 
 echo "Environment setup complete! Values updated in $ENV_FILE"
 
+# Hardhat 3 requires Node 20+; system /usr/bin/node may still be v12.
+ensure_modern_node() {
+    if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+        # shellcheck source=/dev/null
+        . "${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+        if nvm use 22 >/dev/null 2>&1 || nvm use 20 >/dev/null 2>&1; then
+            echo "Using Node $(node -v) via nvm"
+            return 0
+        fi
+    fi
+    local ver
+    ver="$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)"
+    if [ -z "$ver" ] || [ "$ver" -lt 20 ]; then
+        echo "Error: Hardhat 3 requires Node.js 20+. Current: $(node -v 2>/dev/null || echo missing)"
+        echo "Install nvm and run: nvm install 22 && nvm use 22"
+        exit 1
+    fi
+}
+
 echo "Deploying Bridge Contract to Sepolia..."
+ensure_modern_node
 cd "$BRIDGE_DIR"
 # Ensure dependencies are installed (fast check)
-if [ ! -d "node_modules" ]; then
-    echo "Installing dependencies..."
-    npm install
+if [ ! -d "node_modules/ethers" ]; then
+    echo "Installing dependencies (skip native blst postinstall)..."
+    npm install --ignore-scripts || npm install
 fi
 
 echo "Running: npx hardhat run deploy.js --network sepolia"

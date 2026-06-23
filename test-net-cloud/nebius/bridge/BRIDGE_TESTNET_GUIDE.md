@@ -433,10 +433,21 @@ This process burns WGNK on Ethereum and releases native GNK on Gonka.
 ### Enable Normal Operation Manually
 If the bridge contract is stuck in `ADMIN_CONTROL` or if you need to manually sync epochs:
 ```bash
-# Usage: node bridge-enable-normal-op.js --eth-key <ETH_KEY> --bridge <BRIDGE_ADDR>
-node bridge-enable-normal-op.js --eth-key 0xYourEthKey --bridge 0xBridgeAddr
+cd /srv/dai/gonka/proposals/ethereum-bridge-contact
+npm install
+
+NODE_PATH=./node_modules node ../../test-net-cloud/nebius/bridge/bridge-enable-normal-op.js \
+  --bridge 0xYourBridgeAddr \
+  --api http://localhost:8000 \
+  --rpc https://ethereum-sepolia-rpc.publicnode.com
 ```
-*This script fetches the current epoch data from Gonka and transitions the contract to `NORMAL_OPERATION`.*
+*Set `PRIVATE_KEY` in the environment (or pass `--eth-key`). On first bootstrap the script calls `setGroupKey` + `resetToNormalOperation`. When already in `NORMAL_OPERATION`, pass `--target-epoch <N>` to catch up missing epochs via `submitGroupKey`.*
+
+### Automatic epoch sync (recommended after bootstrap)
+
+See **[BRIDGE_EPOCH_SYNC_RUNBOOK.md](BRIDGE_EPOCH_SYNC_RUNBOOK.md)** — install, systemd daemon, logging, troubleshooting.
+
+Repo files: `bridge-epoch-sync.sh`, `bridge-epoch-sync.env.example`, `bridge-epoch-sync.service.example`.
 
 ### Cancel Pending Bridge Operation
 If a bridge operation (mint/withdraw) is stuck or you want to refund the escrowed tokens to the sender:

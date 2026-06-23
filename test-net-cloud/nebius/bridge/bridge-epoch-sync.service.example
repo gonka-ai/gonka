@@ -1,0 +1,17 @@
+[Unit]
+Description=Sync Gonka BLS epochs to Ethereum bridge contract
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/dai
+EnvironmentFile=/srv/dai/bridge-epoch-sync.env
+ExecStart=/srv/dai/bridge-epoch-sync.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

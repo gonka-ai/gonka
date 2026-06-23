@@ -4,9 +4,9 @@ set -e
 # bridge-utils.sh logic
 export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 export KEY_DIR="$BASE_DIR/.inference"
-export CHAIN_ID="gonka-testnet"
+export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
-export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
+export NODE_OPTS="${NODE_OPTS:---node http://localhost:8000/chain-rpc/}"
 
 # Local and key-string support
 LOCAL_MODE=false
@@ -51,11 +51,12 @@ echo "=================================================="
 echo "Wrapping GNK (Gonka -> Ethereum WGNK)"
 echo "=================================================="
 
-PASSWORD="12345678"
+PASSWORD="${KEYRING_PASSWORD:-12345678}"
 AMOUNT=""
 DESTINATION=""
 BRIDGE_ADDR=""
-TARGET_CHAIN="sepolia"
+# Gonka bridge registry chain name (always "ethereum" for Sepolia/mainnet EVM bridge)
+TARGET_CHAIN="ethereum"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -94,7 +95,9 @@ if [ -n "$KEY_STRING" ]; then
 fi
 
 if [ -z "$AMOUNT" ] || [ -z "$DESTINATION" ] || [ -z "$BRIDGE_ADDR" ]; then
-    echo "Usage: ./bridge-gnk-wrap.sh --amount <AMT_NGONKA> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--chain <sepolia|ethereum>] [--key-string <STR>] [--local]"
+    echo "Usage: ./bridge-gnk-wrap.sh --amount <AMT_NGONKA> --destination <ETH_ADDR> --bridge <BRIDGE_ADDR> [--chain <ethereum>] [--key-string <STR>] [--local]"
+    echo ""
+    echo "Note: --chain is the Gonka-registered bridge chain name (use 'ethereum' for Sepolia/mainnet)."
     exit 1
 fi
 

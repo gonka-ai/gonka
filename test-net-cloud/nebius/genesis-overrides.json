@@ -100,7 +100,7 @@
           "poc_exchange_duration": "10",
           "poc_validation_delay": "2",
           "poc_validation_duration": "40",
-          "set_new_validators_delay": "10",
+          "set_new_validators_delay": "20",
           "inference_validation_cutoff": "20",
           "default_unit_of_compute_price": "100",
           "inference_pruning_epoch_threshold": "2",
@@ -355,13 +355,6 @@
         }
       ],
       "bridge": {
-        "contract_addresses": [
-          {
-            "id": "sepolia-bridge-1",
-            "chainId": "ethereum",
-            "address": "0x8395733b8ecc2d1d3a7eb1b8b921d71ee4620b02"
-          }
-        ],
         "token_metadata": [
           {
             "chainId": "ethereum",

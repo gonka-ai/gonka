@@ -17,7 +17,7 @@ else
 fi
 
 export KEY_DIR="${KEY_DIR:-$BASE_DIR/.inference}"
-export CHAIN_ID="gonka-testnet"
+export CHAIN_ID="${CHAIN_ID:-gonka-testnet-4}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
 
 export CHAIN_NAME_ID="${CHAIN_NAME_ID:-ethereum}"
@@ -250,8 +250,14 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
 
     # 5. Vote
     echo "Fetching Proposal ID..."
-    # Removing unsupported flags. Just getting the latest proposal by index -1.
-    PROPOSAL_ID=$($APP_NAME q gov proposals --output json $NODE_OPTS </dev/null | jq -r '.proposals[-1].id')
+    # Prefer the proposal created by our submit tx; fall back to latest only when resuming.
+    if [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+        sleep 4
+        PROPOSAL_ID=$($APP_NAME q tx "$TX_HASH" --output json $NODE_OPTS </dev/null 2>/dev/null | jq -r '.events[]? | select(.type=="submit_proposal") | .attributes[]? | select(.key=="proposal_id") | .value' | head -1)
+    fi
+    if [ -z "$PROPOSAL_ID" ] || [ "$PROPOSAL_ID" == "null" ]; then
+        PROPOSAL_ID=$($APP_NAME q gov proposals --output json $NODE_OPTS </dev/null | jq -r '.proposals[-1].id')
+    fi
 else
     PROPOSAL_ID="$PROPOSAL_ID_ARG"
 fi
