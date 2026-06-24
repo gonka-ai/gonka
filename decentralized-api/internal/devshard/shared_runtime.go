@@ -267,13 +267,17 @@ func EvaluateValidationResponse(
 	originalResponsePayload []byte,
 	thresholds *ValidationThresholdResolver,
 ) (*devshardpkg.ValidateResult, error) {
-	// A 4xx from the validator's own re-execution means the executor-supplied
-	// prompt/enforced_tokens could not be processed, so the inference is
-	// unverifiable and must not be auto-approved (previously failed open to Valid:true).
+	// A 4xx (400/422) from the validator's own re-execution means the validator
+	// could not process the executor-supplied request (e.g. the original inference
+	// failed on upstream payload rejection, or a validator on an older version
+	// cannot re-execute it). Mainnet treats this as autopass (warn + pass), not
+	// invalid: absent proof the executor cheated, it is not punished. Keep mainnet
+	// semantics and rely on the warn logs to surface any cases worth marking
+	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		logging.Warn(logPrefix+" validation failed: validator re-execution rejected request",
+		logging.Warn(logPrefix+" validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
 			chaintypes.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
-		return &devshardpkg.ValidateResult{Valid: false}, nil
+		return &devshardpkg.ValidateResult{Valid: true}, nil
 	}
 
 	respBytes, err := ReadHTTPBody(resp)

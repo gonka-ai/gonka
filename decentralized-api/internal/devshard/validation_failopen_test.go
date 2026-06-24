@@ -14,13 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Regression tests for the two devshard validation fail-opens in
-// EvaluateValidationResponse. Each asserts the SECURE (post-fix) behavior and
-// fails against the unpatched code:
+// Regression tests for EvaluateValidationResponse. The empty-logprobs fail-open
+// is fixed (asserted SECURE / fails against the unpatched code); the 4xx
+// re-execution path intentionally keeps mainnet autopass semantics and is pinned
+// here so it is not silently re-broken:
 //   - empty logprobs in the executor's stored response must be rejected
 //     (unpatched: CompareLogits([],x) == 1.0 similarity -> Valid:true)
-//   - a 4xx from the validator's own re-execution must be rejected
-//     (unpatched: returned Valid:true before any content check)
+//   - a 4xx from the validator's own re-execution autopasses with a warn
+//     (mainnet parity: inference_validation.go ~944, treat-as-passed)
 // A legitimate matching response must still validate (no false-reject regression).
 func newResolver(req devshardpkg.ValidateRequest) *ValidationThresholdResolver {
 	return cachedThresholdResolver(req, &bridge.Decimal{Value: 90, Exponent: -2}) // 0.90
@@ -41,13 +42,15 @@ func TestEvaluateValidationResponse_EmptyOriginalLogits_IsInvalid(t *testing.T) 
 	assert.False(t, res.Valid, "executor response with no logprobs must be rejected, not auto-passed")
 }
 
-func TestEvaluateValidationResponse_4xxReExec_IsInvalid(t *testing.T) {
+func TestEvaluateValidationResponse_4xxReExec_AutoPasses(t *testing.T) {
+	// Mainnet parity: a 4xx from the validator's own re-execution is treated as
+	// passed (warn + autopass), not invalid. See inference_validation.go (~944).
 	req := devshardpkg.ValidateRequest{EscrowID: "e2", EpochID: 7, Model: "model-a"}
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnprocessableEntity} {
 		resp := &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"error":"rejected"}`)), Header: make(http.Header)}
 		res, err := EvaluateValidationResponse(context.Background(), resp, req, "id2", "[t]", []byte(logprobBody), newResolver(req))
 		require.NoError(t, err)
-		assert.False(t, res.Valid, "validator re-exec %d must not auto-approve", status)
+		assert.True(t, res.Valid, "validator re-exec %d must autopass per mainnet 4xx semantics", status)
 	}
 }
 
