@@ -130,6 +130,7 @@ func NewServer(
 
 	g.GET("bridge/status", s.getBridgeStatus)
 	g.GET("bridge/addresses", s.getBridgeAddresses)
+	g.GET("bridge/block/latest", s.getLatestBridgeBlock)
 
 	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
