@@ -221,7 +221,7 @@ func main() {
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
 	// Bridge external block queue
-	blockQueue := pserver.NewBlockQueue(recorder)
+	blockQueue := pserver.NewBlockQueue(recorder, configManager.SqlDb().GetDb())
 
 	// Shared payload storage for both public and admin servers
 	// Uses PostgreSQL if PGHOST is set and accessible, otherwise file-based

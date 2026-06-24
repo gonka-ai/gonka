@@ -3,6 +3,7 @@ package admin
 import (
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	pserver "decentralized-api/internal/server/public"
@@ -43,13 +44,20 @@ func (s *Server) postBridgeBlock(c echo.Context) error {
 		"receiptsRoot", blockData.ReceiptsRoot,
 		"receiptsCount", len(blockData.Receipts))
 
-	// Add the block to the shared queue
-	blockNumber := s.blockQueue.AddBlock(blockData)
+	// Add the block to the shared queue. AddBlock processes the block synchronously
+	// (and any contiguous successors), so an error here means a Cosmos submission
+	// failed. Return HTTP 500 so Geth halts its downloader loop and retries the
+	// failed block range (fail-closed).
+	blockNumber, err := s.blockQueue.AddBlock(blockData)
+	if err != nil {
+		slog.Error("Failed to process bridge block", "blockNumber", blockData.BlockNumber, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 
 	// Return success response
-	return c.JSON(200, map[string]interface{}{
+	return c.JSON(http.StatusOK, map[string]interface{}{
 		"status":        "success",
-		"message":       "Block queued for processing",
+		"message":       "Block processed",
 		"blockNumber":   blockNumber,
 		"receiptsCount": len(blockData.Receipts),
 		"queueSize":     len(s.blockQueue.GetPendingBlocks()),
