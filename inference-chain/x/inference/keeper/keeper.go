@@ -128,11 +128,12 @@ type (
 		// instead of every participant's MaintenanceState (DoS protection).
 		MaintenanceScheduledIndex collections.KeySet[uint64]
 		// PoC delegation collections
-		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
-		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
-		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
-		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
-		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		PoCDelegations                   collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                      collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents                 collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot               collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot      collections.Item[types.BootstrapDelegationSnapshot]
+		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
 	}
 )
 
@@ -647,6 +648,12 @@ func NewKeeper(
 			types.BootstrapDelegationSnapshotPrefix,
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
+		),
+		DelegationRewardTransferSnapshot: collections.NewItem(
+			sb,
+			types.DelegationRewardTransferSnapshotPrefix,
+			"delegation_reward_transfer_snapshot",
+			codec.CollValue[types.DelegationRewardTransferSnapshot](cdc),
 		),
 	}
 	// Build the collections schema

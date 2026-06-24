@@ -293,7 +293,7 @@ class DelegationTests : TestermintTest() {
     }
 
     @Test
-    fun `delegation transfers weight and voting power to delegate target`() {
+    fun `delegation transfers voting power but not consensus weight to delegate target`() {
         val delegationSpec = spec<DelegationParams> {
             this[DelegationParams::deployWindow] = 1L
             this[DelegationParams::refusalPenalty] = Decimal.fromDouble(0.0)
@@ -400,24 +400,23 @@ class DelegationTests : TestermintTest() {
         assertThat(pC.mlNodes).hasSize(1)
 
         // Expected weights:
-        // Consensus before adjustment: A=60, B=60, C=50
-        // C is DELEGATE for model B -> delta=floor(50*0.2)=10
-        //   C: 50-10=40, A: 60+10=70
-        assertThat(pA.weight).isEqualTo(70)
+        // Consensus weight is reward-independent. C is DELEGATE for model B,
+        // but delegation_share is reward-only and must not mutate epoch weight.
+        assertThat(pA.weight).isEqualTo(60)
         assertThat(pB.weight).isEqualTo(60)
-        assertThat(pC.weight).isEqualTo(40)
+        assertThat(pC.weight).isEqualTo(50)
 
-        // Voting powers for model A (all DIRECT, VP = own final weight)
+        // Voting powers for model A (all DIRECT, VP = own consensus weight)
         val vpA = pA.votingPowers!!.associateBy { it.modelId }
         val vpB = pB.votingPowers!!.associateBy { it.modelId }
         val vpC = pC.votingPowers!!.associateBy { it.modelId }
 
-        assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(70)
+        assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(60)
         assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(60)
-        assertThat(vpC[defaultModel]!!.votingPower).isEqualTo(40)
+        assertThat(vpC[defaultModel]!!.votingPower).isEqualTo(50)
 
         // Voting powers for model B:
-        // A (DIRECT): VP = own(70) + delegated(C's final weight 40) = 110
+        // A (DIRECT): VP = own(60) + delegated(C's consensus weight 50) = 110
         // B (DIRECT): VP = own(60)
         // C (DELEGATE): no VP entry for model B
         assertThat(vpA[secondModel]!!.votingPower).isEqualTo(110)
@@ -535,7 +534,7 @@ class DelegationTests : TestermintTest() {
     }
 
     @Test
-    fun `delegation share starts at configured epoch for eligible model`() {
+    fun `delegation share gate does not affect consensus weights for eligible model`() {
         val penaltyStartEpoch = 7L
         val delegationSpec = spec<DelegationParams> {
             this[DelegationParams::deployWindow] = 1L
@@ -575,7 +574,8 @@ class DelegationTests : TestermintTest() {
 
         logSection("Before delegation_share gate: epoch=${beforeGate.activeParticipants.epochId}, A=${beforeA.weight}, B=${beforeB.weight}, C=${beforeC.weight}")
 
-        // secondModel is eligible, but its delegation_share must still be gated off.
+        // secondModel is eligible, but reward-only delegation_share must not
+        // affect consensus weights before the reward gate.
         assertThat(beforeGate.activeParticipants.epochId).isEqualTo(penaltyStartEpoch - 1)
         assertThat(beforeA.weight).isEqualTo(60)
         assertThat(beforeB.weight).isEqualTo(60)
@@ -590,8 +590,8 @@ class DelegationTests : TestermintTest() {
         logSection("At delegation_share gate: epoch=${atGate.activeParticipants.epochId}, A=${atGateA.weight}, B=${atGateB.weight}, C=${atGateC.weight}")
 
         assertThat(atGate.activeParticipants.epochId).isEqualTo(penaltyStartEpoch)
-        assertThat(atGateA.weight).isEqualTo(70)
+        assertThat(atGateA.weight).isEqualTo(60)
         assertThat(atGateB.weight).isEqualTo(60)
-        assertThat(atGateC.weight).isEqualTo(40)
+        assertThat(atGateC.weight).isEqualTo(50)
     }
 }

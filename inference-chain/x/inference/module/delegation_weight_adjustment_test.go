@@ -8,7 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func applyDelegationPenalties(
+func buildRewardTransfersForTest(
+	t *testing.T,
 	participants []*types.ActiveParticipant,
 	dwc *DelegationWeightCalculator,
 	eligibleModels []string,
@@ -16,10 +17,24 @@ func applyDelegationPenalties(
 	params DelegationAdjustmentParams,
 	upcomingEpochIndex uint64,
 	penaltyStartEpochByModel map[string]uint64,
-) {
+) []*types.DelegationRewardTransfer {
+	t.Helper()
 	acc := NewPenaltyAccumulator(participants)
 	AccumulateDelegationPenalties(acc, dwc, eligibleModels, modes, params, upcomingEpochIndex, penaltyStartEpochByModel)
-	acc.Apply(participants)
+	rewardTransfers := BuildDelegationRewardTransfers(dwc, eligibleModels, modes, params, upcomingEpochIndex, penaltyStartEpochByModel)
+	transfers := append(acc.RewardTransfers(), rewardTransfers.Records()...)
+	sortDelegationRewardTransfers(transfers)
+	return transfers
+}
+
+func requireTransfer(t *testing.T, transfer *types.DelegationRewardTransfer, modelID, from, to string, share mathsdk.LegacyDec) {
+	t.Helper()
+	require.Equal(t, modelID, transfer.ModelId)
+	require.Equal(t, from, transfer.From)
+	require.Equal(t, to, transfer.To)
+	got, err := transfer.Share.ToLegacyDec()
+	require.NoError(t, err)
+	require.True(t, share.Equal(got), "expected %s, got %s", share.String(), got.String())
 }
 
 func TestAccumulateDelegationPenalties_NoOp(t *testing.T) {
@@ -33,8 +48,9 @@ func TestAccumulateDelegationPenalties_NoOp(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, nil, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, nil, params, 1, nil)
 	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Empty(t, transfers)
 }
 
 func TestAccumulateDelegationPenalties_DirectNoPenalty(t *testing.T) {
@@ -51,8 +67,9 @@ func TestAccumulateDelegationPenalties_DirectNoPenalty(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.05"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 1, nil)
 	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Empty(t, transfers)
 }
 
 func TestAccumulateDelegationPenalties_RefusePenalty(t *testing.T) {
@@ -69,8 +86,10 @@ func TestAccumulateDelegationPenalties_RefusePenalty(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 1, nil)
-	require.Equal(t, int64(850), participants[0].Weight)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 1, nil)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.15"))
 }
 
 func TestAccumulateDelegationPenalties_DelegateTransfer(t *testing.T) {
@@ -95,11 +114,45 @@ func TestAccumulateDelegationPenalties_DelegateTransfer(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.1"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 1, nil)
 
 	// alice delegates 10% to bob
-	require.Equal(t, int64(900), participants[0].Weight)
-	require.Equal(t, int64(600), participants[1].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Equal(t, int64(500), participants[1].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "model1", "alice", "bob", mathsdk.LegacyMustNewDecFromStr("0.1"))
+}
+
+func TestBuildDelegationRewardTransfers_RewardOnlyDoesNotChangeConsensusWeight(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "alice", Weight: 1000},
+		{Index: "bob", Weight: 500},
+	}
+	dwc := &DelegationWeightCalculator{
+		Delegations: map[string]map[string]string{
+			"model1": {"alice": "bob"},
+		},
+	}
+	modes := map[string]map[string]ParticipationMode{
+		"model1": {
+			"alice": ModeDelegate,
+			"bob":   ModeDirect,
+		},
+	}
+	params := DelegationAdjustmentParams{
+		RefusalPenalty:         mathsdk.LegacyZeroDec(),
+		NoParticipationPenalty: mathsdk.LegacyZeroDec(),
+		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.1"),
+	}
+
+	acc := NewPenaltyAccumulator(participants)
+	AccumulateDelegationPenalties(acc, dwc, []string{"model1"}, modes, params, 1, nil)
+	rewardTransfers := BuildDelegationRewardTransfers(dwc, []string{"model1"}, modes, params, 1, nil)
+
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Equal(t, int64(500), participants[1].Weight)
+	require.Len(t, rewardTransfers.Records(), 1)
+	requireTransfer(t, rewardTransfers.Records()[0], "model1", "alice", "bob", mathsdk.LegacyMustNewDecFromStr("0.1"))
 }
 
 func TestAccumulateDelegationPenalties_MissingRecipientDoesNotBurnTransfer(t *testing.T) {
@@ -123,11 +176,13 @@ func TestAccumulateDelegationPenalties_MissingRecipientDoesNotBurnTransfer(t *te
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.1"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 1, nil)
 
 	// bob is absent from the active participant set, so delegation_share
-	// must be skipped rather than burned.
+	// is recorded for settlement, where zero-rewardable receivers are not revived.
 	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "model1", "alice", "bob", mathsdk.LegacyMustNewDecFromStr("0.1"))
 }
 
 func TestAccumulateDelegationPenalties_TransferClampedByPenalty(t *testing.T) {
@@ -154,18 +209,13 @@ func TestAccumulateDelegationPenalties_TransferClampedByPenalty(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.3"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1", "model2", "model3", "model4"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1", "model2", "model3", "model4"}, modes, params, 1, nil)
 
-	// Penalty: 3 refusals * 0.2 = 0.6, deducts 600 from 1000 -> 400 remaining
-	// Transfer: 0.3 * 1000 = 300 desired, but only 400 available -> transfers 300
-	// Alice: 1000 - 600 - 300 = 100
-	// Bob: 500 + 300 = 800
-	require.Equal(t, int64(100), participants[0].Weight)
-	require.Equal(t, int64(800), participants[1].Weight)
-
-	// Verify weight conservation: total before = 1500, penalty destroys 600
-	// total after should be 1500 - 600 = 900
-	require.Equal(t, int64(900), participants[0].Weight+participants[1].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Equal(t, int64(500), participants[1].Weight)
+	require.Len(t, transfers, 2)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.6"))
+	requireTransfer(t, transfers[1], "model2", "alice", "bob", mathsdk.LegacyMustNewDecFromStr("0.3"))
 }
 
 func TestAccumulateDelegationPenalties_TransferFullyClampedByPenalty(t *testing.T) {
@@ -192,14 +242,13 @@ func TestAccumulateDelegationPenalties_TransferFullyClampedByPenalty(t *testing.
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.3"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1", "model2", "model3", "model4", "model5"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1", "model2", "model3", "model4", "model5"}, modes, params, 1, nil)
 
-	// Penalty: 4 refusals * 0.3 = 1.2, capped at 1.0, deducts 1000 -> 0 remaining
-	// Transfer: 0.3 * 1000 = 300 desired, but 0 available -> transfers 0
-	// Alice: 0
-	// Bob: 500 + 0 = 500
-	require.Equal(t, int64(0), participants[0].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
 	require.Equal(t, int64(500), participants[1].Weight)
+	require.Len(t, transfers, 2)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyOneDec())
+	requireTransfer(t, transfers[1], "model2", "alice", "bob", mathsdk.LegacyMustNewDecFromStr("0.3"))
 }
 
 func TestAccumulateDelegationPenalties_AdditiveAcrossGroups(t *testing.T) {
@@ -217,10 +266,11 @@ func TestAccumulateDelegationPenalties_AdditiveAcrossGroups(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1", "model2"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1", "model2"}, modes, params, 1, nil)
 
-	// Additive: penalty = 0.1 + 0.1 = 0.2, result = 1000 * (1 - 0.2) = 800
-	require.Equal(t, int64(800), participants[0].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.2"))
 }
 
 func TestUnifiedPenalties_DelegationAndBootstrap_Additive(t *testing.T) {
@@ -244,10 +294,11 @@ func TestUnifiedPenalties_DelegationAndBootstrap_Additive(t *testing.T) {
 	acc := NewPenaltyAccumulator(participants)
 	AccumulateDelegationPenalties(acc, dwc, []string{"model1"}, delegationModes, params, 1, nil)
 	AccumulateBootstrapPenalties(acc, bootstrapModes, nil, params, 1, nil)
-	acc.Apply(participants)
+	transfers := acc.RewardTransfers()
 
-	// Additive: 0.1 (delegation) + 0.1 (bootstrap) = 0.2, result = 1000 * 0.8 = 800
-	require.Equal(t, int64(800), participants[0].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.2"))
 }
 
 func TestAccumulatePenalties_CappedAtOne(t *testing.T) {
@@ -269,10 +320,11 @@ func TestAccumulatePenalties_CappedAtOne(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, eligibleModels, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, eligibleModels, modes, params, 1, nil)
 
-	// 11 * 0.1 = 1.1, capped at 1.0, weight -> 0
-	require.Equal(t, int64(0), participants[0].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyOneDec())
 }
 
 func TestResolveBootstrapPenaltyModes_PreEligibleFalse(t *testing.T) {
@@ -352,12 +404,15 @@ func TestAccumulateBootstrapPenalties_MapsIntentMissedAndNone(t *testing.T) {
 
 	acc := NewPenaltyAccumulator(participants)
 	AccumulateBootstrapPenalties(acc, modes, nil, params, 1, nil)
-	acc.Apply(participants)
+	transfers := acc.RewardTransfers()
 
 	require.Equal(t, int64(100), participants[0].Weight) // Direct: no penalty
 	require.Equal(t, int64(80), participants[1].Weight)  // Delegate: no penalty
-	require.Equal(t, int64(25), participants[2].Weight)  // IntentMissed: no_participation_penalty 50*0.5=25
-	require.Equal(t, int64(25), participants[3].Weight)  // None: no_participation_penalty 50*0.5=25
+	require.Equal(t, int64(50), participants[2].Weight)  // IntentMissed: reward-only burn
+	require.Equal(t, int64(50), participants[3].Weight)  // None: reward-only burn
+	require.Len(t, transfers, 2)
+	requireTransfer(t, transfers[0], "", "intent_missed", "", mathsdk.LegacyMustNewDecFromStr("0.5"))
+	requireTransfer(t, transfers[1], "", "none", "", mathsdk.LegacyMustNewDecFromStr("0.5"))
 }
 
 func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalized(t *testing.T) {
@@ -383,10 +438,12 @@ func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalize
 	}
 	acc := NewPenaltyAccumulator(participants)
 	AccumulateBootstrapPenalties(acc, modes, nil, params, 1, nil)
-	acc.Apply(participants)
+	transfers := acc.RewardTransfers()
 
 	require.Equal(t, int64(100), participants[0].Weight) // Direct: untouched
-	require.Equal(t, int64(50), participants[1].Weight)  // None: 100*0.5=50
+	require.Equal(t, int64(100), participants[1].Weight) // None: reward-only burn
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "none", "", mathsdk.LegacyMustNewDecFromStr("0.5"))
 }
 
 func TestAccumulateDelegationPenalties_MixedModesAcrossModels(t *testing.T) {
@@ -404,10 +461,11 @@ func TestAccumulateDelegationPenalties_MixedModesAcrossModels(t *testing.T) {
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1", "model2"}, modes, params, 1, nil)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1", "model2"}, modes, params, 1, nil)
 
-	// Additive: 0.05 (refuse) + 0.1 (none) = 0.15, result = 1000 * 0.85 = 850
-	require.Equal(t, int64(850), participants[0].Weight)
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.15"))
 }
 
 func TestAccumulateDelegationPenalties_SkipsUntilPenaltyStartEpoch(t *testing.T) {
@@ -424,8 +482,9 @@ func TestAccumulateDelegationPenalties_SkipsUntilPenaltyStartEpoch(t *testing.T)
 		DelegationShare:        mathsdk.LegacyMustNewDecFromStr("0.05"),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 4, map[string]uint64{"model1": 5})
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 4, map[string]uint64{"model1": 5})
 	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Empty(t, transfers)
 }
 
 func TestAccumulateDelegationPenalties_UsesUpcomingEpochIndexForPenaltyStart(t *testing.T) {
@@ -442,8 +501,10 @@ func TestAccumulateDelegationPenalties_UsesUpcomingEpochIndexForPenaltyStart(t *
 		DelegationShare:        mathsdk.LegacyZeroDec(),
 	}
 
-	applyDelegationPenalties(participants, dwc, []string{"model1"}, modes, params, 5, map[string]uint64{"model1": 5})
-	require.Equal(t, int64(900), participants[0].Weight)
+	transfers := buildRewardTransfersForTest(t, participants, dwc, []string{"model1"}, modes, params, 5, map[string]uint64{"model1": 5})
+	require.Equal(t, int64(1000), participants[0].Weight)
+	require.Len(t, transfers, 1)
+	requireTransfer(t, transfers[0], "", "alice", "", mathsdk.LegacyMustNewDecFromStr("0.1"))
 }
 
 func TestAccumulateBootstrapPenalties_SkipsUntilPenaltyStartEpoch(t *testing.T) {
@@ -463,7 +524,8 @@ func TestAccumulateBootstrapPenalties_SkipsUntilPenaltyStartEpoch(t *testing.T) 
 
 	acc := NewPenaltyAccumulator(participants)
 	AccumulateBootstrapPenalties(acc, modes, nil, params, 4, map[string]uint64{"bootstrap-model": 5})
-	acc.Apply(participants)
+	transfers := acc.RewardTransfers()
 
 	require.Equal(t, int64(50), participants[0].Weight)
+	require.Empty(t, transfers)
 }

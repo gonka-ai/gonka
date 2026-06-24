@@ -123,7 +123,8 @@ var (
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
 	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
-	ParamsKey                       = []byte("p_inference")
+	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(106)
+	ParamsKey                              = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {
