@@ -156,7 +156,9 @@ func TestExecuteValidation_ExecuteError(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestExecuteValidation_400Response_IsInvalid(t *testing.T) {
+func TestExecuteValidation_400Response_TreatedAsPass(t *testing.T) {
+	// Mainnet parity: a 4xx from the validator's own re-execution is treated as
+	// passed (warn + autopass), not invalid. See inference_validation.go (~944).
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -165,11 +167,11 @@ func TestExecuteValidation_400Response_IsInvalid(t *testing.T) {
 		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
-	require.IsType(t, &InvalidInferenceResult{}, result)
-	assert.False(t, result.IsSuccessful(), "validator re-exec 400 must not auto-approve")
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.True(t, result.IsSuccessful(), "validator re-exec 400 must autopass per mainnet 4xx semantics")
 }
 
-func TestExecuteValidation_422Response_IsInvalid(t *testing.T) {
+func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -178,8 +180,8 @@ func TestExecuteValidation_422Response_IsInvalid(t *testing.T) {
 		0, 0, "processed_logprobs",
 	)
 	require.NoError(t, err)
-	require.IsType(t, &InvalidInferenceResult{}, result)
-	assert.False(t, result.IsSuccessful(), "validator re-exec 422 must not auto-approve")
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.True(t, result.IsSuccessful(), "validator re-exec 422 must autopass per mainnet 4xx semantics")
 }
 
 func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
