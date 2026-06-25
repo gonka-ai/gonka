@@ -336,6 +336,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query PoC delegation state for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "model_id", Optional: true}},
 				},
+				{
+					RpcMethod:      "EstimateBitcoinReward",
+					Use:            "estimate-bitcoin-reward [epoch-index] [participant]",
+					Short:          "Estimate Bitcoin-style reward for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "participant"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
