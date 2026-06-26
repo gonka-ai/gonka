@@ -300,6 +300,12 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
+//
+// Production HostManager intentionally does not use this option: settlement
+// protection comes from deterministic drain accounting (settleLiveRecordLocked),
+// not signature withholding. WithGrace must not be paired with finish-gossip
+// recovery — gossip is a best-effort convenience for the user to sequence a
+// real Finish at actual cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
@@ -646,6 +652,10 @@ func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
 // collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
 // that the user sequencer has not yet included in a diff after the grace
 // period. Caller must hold h.mu. See Mempool.StaleFinishes for the criterion.
+//
+// Recovery gossip (broadcastTxsBestEffort) is independent of WithGrace: it
+// gives the payer another path to pick up a Finish before settlement drain
+// auto-credits at reserved cost. It does not gate signing.
 func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
 	if h.gsp == nil {
 		return nil

@@ -1570,7 +1570,8 @@ func TestHost_SavesSnapshotOnSettlement(t *testing.T) {
 
 // newExecutorHostWithGossip wires host index 1 (executor for inference 1, since
 // 1 % 3 = 1) with a real *gossip.Gossip instance backed by recordingPeer so we
-// can observe the host's recovery-gossip dispatch.
+// can observe the host's recovery-gossip dispatch. Matches production HostManager:
+// no WithGrace (gossip recovery is not paired with signature withholding).
 func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, *recordingPeer) {
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{
@@ -1586,9 +1587,7 @@ func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer,
 	require.NoError(t, err)
 
 	engine := stub.NewInferenceEngine()
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil,
-		WithGrace(100),
-	)
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil)
 	require.NoError(t, err)
 
 	// Build gossip with the host's own mempool as MempoolSink; attach it
@@ -1710,4 +1709,58 @@ func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) 
 	}
 
 	assertNoTxsCallFor(t, peer, 50*time.Millisecond)
+}
+
+// TestHost_FinishGossipRecovery_StillSignsWithoutWithGrace guards Step 4 of the
+// settlement auto-finish plan: stale-finish recovery gossip must not be paired
+// with WithGrace. The host still signs state even when its own Finish sits
+// stale in the mempool past the gossip grace window.
+func TestHost_FinishGossipRecovery_StillSignsWithoutWithGrace(t *testing.T) {
+	h, _, user, peer := newExecutorHostWithGossip(t)
+	require.Nil(t, h.checker, "production-like host must not install StalenessChecker")
+
+	groupSize := uint64(len(h.Group()))
+	grace := finishGossipGraceRotations * groupSize
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff1}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+
+	for nonce := uint64(2); nonce <= 2+grace; nonce++ {
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+		resp, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+		require.NoError(t, err)
+		require.NotNil(t, resp.StateSig, "nonce %d: host must sign without WithGrace", nonce)
+	}
+
+	calls := awaitTxsCall(t, peer, 2*time.Second)
+	require.NotEmpty(t, calls, "recovery gossip should still fire without WithGrace")
+}
+
+// TestHost_ProductionConfig_OmitsWithGrace mirrors HostManager.hostOpts: production
+// hosts omit WithGrace; settlement protection is in the state-machine drain.
+func TestHost_ProductionConfig_OmitsWithGrace(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100_000)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100_000, user.Address(), verifier, store)
+	require.NoError(t, err)
+
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithStorage(store),
+		WithEpochID(7),
+	)
+	require.NoError(t, err)
+	require.Nil(t, h.checker)
 }
