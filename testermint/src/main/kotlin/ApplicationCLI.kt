@@ -156,6 +156,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
     }
 
+    fun listClaimRecipients(participant: String): ClaimRecipientsResponse = wrapLog("listClaimRecipients", false) {
+        execAndParse(listOf("query", "inference", "list-claim-recipients", participant))
+    }
+
     fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
         execAndParse(listOf("query", "inference", "get-all-participant-current-stats"))
     }

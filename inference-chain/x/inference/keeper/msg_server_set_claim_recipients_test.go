@@ -209,23 +209,23 @@ func TestClaimRecipientPruningRemovesPrimaryAndIndex(t *testing.T) {
 	k, _, ctx, creatorAddr := setupSchedule(t, 100)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
-	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 98, testutil.Executor))
-	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 99, testutil.Executor2))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 97, testutil.Executor))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 98, testutil.Executor2))
 
 	require.NoError(t, k.Prune(ctx, 100))
 
-	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 98)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 97)
 	require.NoError(t, err)
 	require.False(t, found)
-	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(98), creatorAddr))
+	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(97), creatorAddr))
 	require.NoError(t, err)
 	require.False(t, hasIndex)
 
-	got, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 99)
+	got, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 98)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, testutil.Executor2, got)
-	hasIndex, err = k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(99), creatorAddr))
+	hasIndex, err = k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(98), creatorAddr))
 	require.NoError(t, err)
 	require.True(t, hasIndex)
 }
