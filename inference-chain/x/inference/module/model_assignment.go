@@ -570,7 +570,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
-		preservedByParticipant := ma.samplePreservedForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction)
+		preservedByParticipant := ma.samplePreservedForModel(modelId, currentEpochData, eligibleNodesData, allocationFraction, epoch)
 		if len(preservedByParticipant) == 0 {
 			continue
 		}
@@ -757,6 +757,7 @@ func (ma *ModelAssigner) samplePreservedForModel(
 	currentEpochData *EpochMLNodeData,
 	eligibleNodesData *EpochMLNodeData,
 	fraction *types.Decimal,
+	epoch types.Epoch,
 ) map[string]map[string]struct{} {
 	allocated := make(map[string]map[string]struct{})
 
@@ -766,6 +767,16 @@ func (ma *ModelAssigner) samplePreservedForModel(
 	eligibleParticipantAddrs := sortedKeys(eligibleNodesData.GetForModel(modelId))
 	if len(eligibleParticipantAddrs) == 0 {
 		return allocated
+	}
+
+	// Rotate start position by hash(epoch, modelId) to avoid alphabetical bias in round-robin.
+	seed := sha256.Sum256([]byte(fmt.Sprintf("poc_alloc_%d_%s", epoch.Index, modelId)))
+	offset := int(binary.BigEndian.Uint64(seed[:8]) % uint64(len(eligibleParticipantAddrs)))
+	if offset > 0 {
+		rotated := make([]string, 0, len(eligibleParticipantAddrs))
+		rotated = append(rotated, eligibleParticipantAddrs[offset:]...)
+		rotated = append(rotated, eligibleParticipantAddrs[:offset]...)
+		eligibleParticipantAddrs = rotated
 	}
 
 	var currentWeight int64
