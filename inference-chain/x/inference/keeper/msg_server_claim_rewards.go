@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/rand"
 
-	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -153,7 +152,7 @@ func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmou
 	// epochs advance. Pairs with MaxClaimRecipientLookahead which caps writes;
 	// together they bound how many entries any one participant can hold.
 	if addr, err := sdk.AccAddressFromBech32(settleAmount.Participant); err == nil {
-		if err := ms.ClaimRecipients.Remove(ctx, collections.Join(addr, settleAmount.EpochIndex)); err != nil {
+		if err := ms.RemoveClaimRecipientForEpoch(ctx, addr, settleAmount.EpochIndex); err != nil {
 			ms.LogError("Error removing claim recipient override", types.Claims, "error", err, "participant", settleAmount.Participant, "epoch", settleAmount.EpochIndex)
 		}
 	}
