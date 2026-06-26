@@ -1234,7 +1234,8 @@ func TestPayoutClaim_WithSchedule(t *testing.T) {
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
 
 	// Entry must be consumed after successful claim.
-	_, found := k.GetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex)
+	_, found, err := k.GetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex)
+	require.NoError(t, err)
 	require.False(t, found, "claim recipient entry must be removed after successful claim")
 }
 

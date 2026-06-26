@@ -36,7 +36,8 @@ func TestSetClaimRecipients_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, epoch := range []uint64{101, 105, 140} {
-		got, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, epoch)
+		got, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, epoch)
+		require.NoError(t, err)
 		require.True(t, found, "epoch %d should be scheduled", epoch)
 		require.Equal(t, recipient, got)
 		hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(epoch, creatorAddr))
@@ -65,7 +66,8 @@ func TestSetClaimRecipients_RejectsCurrentOrPastEpoch(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	_, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
 	require.False(t, found, "future entry in rejected batch must not persist")
 }
 
@@ -102,7 +104,8 @@ func TestSetClaimRecipients_RejectsInvalidRecipient(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	_, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
 	require.False(t, found, "valid entry in rejected batch must not persist")
 }
 
@@ -135,7 +138,8 @@ func TestSetClaimRecipients_EmptyRecipientDeletesEntry(t *testing.T) {
 		Entries: []types.ClaimRecipientEntry{{Epoch: 101, Recipient: testutil.Executor}},
 	})
 	require.NoError(t, err)
-	_, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
 	require.True(t, found)
 
 	// Now clear it with an empty recipient.
@@ -145,7 +149,8 @@ func TestSetClaimRecipients_EmptyRecipientDeletesEntry(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, found = k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	_, found, err = k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
 	require.False(t, found)
 	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(101), creatorAddr))
 	require.NoError(t, err)
@@ -168,11 +173,13 @@ func TestGetClaimRecipientForEpoch(t *testing.T) {
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 
-	_, found := k.GetClaimRecipientForEpoch(ctx, addr, 42)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, addr, 42)
+	require.NoError(t, err)
 	require.False(t, found, "empty map returns not found")
 
 	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, addr, 42, testutil.Executor))
-	got, found := k.GetClaimRecipientForEpoch(ctx, addr, 42)
+	got, found, err := k.GetClaimRecipientForEpoch(ctx, addr, 42)
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, testutil.Executor, got)
 }
@@ -207,13 +214,15 @@ func TestClaimRecipientPruningRemovesPrimaryAndIndex(t *testing.T) {
 
 	require.NoError(t, k.Prune(ctx, 100))
 
-	_, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 98)
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 98)
+	require.NoError(t, err)
 	require.False(t, found)
 	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(98), creatorAddr))
 	require.NoError(t, err)
 	require.False(t, hasIndex)
 
-	got, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 99)
+	got, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 99)
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, testutil.Executor2, got)
 	hasIndex, err = k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(99), creatorAddr))
