@@ -14,4 +14,5 @@ message PruningState {
   int64 mlnode_weight_distributions_pruned_epoch = 7;
   int64 poc_validations_v2_pruned_epoch = 8;
   int64 poc_validation_snapshots_pruned_epoch = 9;
+  int64 claim_recipients_pruned_epoch = 10;
 }

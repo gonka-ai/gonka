@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -26,6 +27,36 @@ func (k Keeper) GetClaimRecipientForEpoch(ctx context.Context, participant sdk.A
 		return "", false
 	}
 	return v, true
+}
+
+// SetClaimRecipientForEpoch writes the primary schedule entry and pruning index
+// atomically. All claim-recipient writes must use this helper to keep the two
+// collections in sync.
+func (k Keeper) SetClaimRecipientForEpoch(ctx sdk.Context, participant sdk.AccAddress, epoch uint64, recipient string) error {
+	cacheCtx, writeFn := ctx.CacheContext()
+	if err := k.ClaimRecipients.Set(cacheCtx, collections.Join(participant, epoch), recipient); err != nil {
+		return errorsmod.Wrapf(err, "failed to set claim recipient for epoch %d", epoch)
+	}
+	if err := k.ClaimRecipientsByEpoch.Set(cacheCtx, collections.Join(epoch, participant)); err != nil {
+		return errorsmod.Wrapf(err, "failed to set claim recipient epoch index for epoch %d", epoch)
+	}
+	writeFn()
+	return nil
+}
+
+// RemoveClaimRecipientForEpoch removes the primary schedule entry and pruning
+// index atomically. Missing rows are treated as already removed so cleanup paths
+// can be idempotent.
+func (k Keeper) RemoveClaimRecipientForEpoch(ctx sdk.Context, participant sdk.AccAddress, epoch uint64) error {
+	cacheCtx, writeFn := ctx.CacheContext()
+	if err := k.ClaimRecipients.Remove(cacheCtx, collections.Join(participant, epoch)); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return errorsmod.Wrapf(err, "failed to remove claim recipient for epoch %d", epoch)
+	}
+	if err := k.ClaimRecipientsByEpoch.Remove(cacheCtx, collections.Join(epoch, participant)); err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return errorsmod.Wrapf(err, "failed to remove claim recipient epoch index for epoch %d", epoch)
+	}
+	writeFn()
+	return nil
 }
 
 // GetClaimRecipientsByParticipant returns every (epoch, recipient) override

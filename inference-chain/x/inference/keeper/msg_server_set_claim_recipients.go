@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -73,15 +72,8 @@ func (ms msgServer) applyClaimRecipientEntry(
 		}
 	}
 
-	key := collections.Join(creatorAddr, entry.Epoch)
 	if entry.Recipient == "" {
-		if err := ms.ClaimRecipients.Remove(ctx, key); err != nil {
-			return errorsmod.Wrapf(err, "failed to remove claim recipient for epoch %d", entry.Epoch)
-		}
-		return nil
+		return ms.RemoveClaimRecipientForEpoch(ctx, creatorAddr, entry.Epoch)
 	}
-	if err := ms.ClaimRecipients.Set(ctx, key, entry.Recipient); err != nil {
-		return errorsmod.Wrapf(err, "failed to set claim recipient for epoch %d", entry.Epoch)
-	}
-	return nil
+	return ms.SetClaimRecipientForEpoch(ctx, creatorAddr, entry.Epoch, entry.Recipient)
 }

@@ -136,12 +136,10 @@ type (
 		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
 		// Set by cold key via MsgSetClaimRecipients; consumed on successful
 		// claim payout (in finishSettle).
-		//
-		// TODO(prune): orphaned entries (no successful claim — skipped, failed,
-		// abandoned) persist by design. Real-world accumulation is unlikely
-		// thanks to the ParticipantPermission collateral requirement on
-		// MsgSetClaimRecipients, not gas cost alone.
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
+		// Secondary index for pruning stale recipient overrides by epoch.
+		// Must be updated atomically with ClaimRecipients.
+		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 	}
 )
 
@@ -663,6 +661,12 @@ func NewKeeper(
 			"claim_recipients",
 			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
 			collections.StringValue,
+		),
+		ClaimRecipientsByEpoch: collections.NewKeySet(
+			sb,
+			types.ClaimRecipientsByEpochPrefix,
+			"claim_recipients_by_epoch",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
 	}
 	// Build the collections schema

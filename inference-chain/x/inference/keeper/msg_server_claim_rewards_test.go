@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -1215,7 +1214,7 @@ func TestPayoutClaim_WithSchedule(t *testing.T) {
 	recipientStr := testutil.Bech32Addr(7)
 	recipientAddr, err := sdk.AccAddressFromBech32(recipientStr)
 	require.NoError(t, err)
-	require.NoError(t, k.ClaimRecipients.Set(sdkCtx, collections.Join(creatorAddr, epochIndex), recipientStr))
+	require.NoError(t, k.SetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex, recipientStr))
 
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creatorAddr).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creatorAddr).Return(mockAccount).AnyTimes()
@@ -1288,7 +1287,7 @@ func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
 	k.SetActiveParticipants(sdkCtx, types.ActiveParticipants{EpochId: currentEpochIndex, Participants: []*types.ActiveParticipant{{Index: testutil.Creator}}})
 
 	recipientStr := testutil.Bech32Addr(8)
-	require.NoError(t, k.ClaimRecipients.Set(sdkCtx, collections.Join(creatorAddr, epochIndex), recipientStr))
+	require.NoError(t, k.SetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex, recipientStr))
 
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creatorAddr).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creatorAddr).Return(mockAccount).AnyTimes()

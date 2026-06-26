@@ -39,6 +39,9 @@ func TestSetClaimRecipients_HappyPath(t *testing.T) {
 		got, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, epoch)
 		require.True(t, found, "epoch %d should be scheduled", epoch)
 		require.Equal(t, recipient, got)
+		hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(epoch, creatorAddr))
+		require.NoError(t, err)
+		require.True(t, hasIndex, "epoch %d should be indexed", epoch)
 	}
 }
 
@@ -144,6 +147,9 @@ func TestSetClaimRecipients_EmptyRecipientDeletesEntry(t *testing.T) {
 
 	_, found = k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
 	require.False(t, found)
+	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(101), creatorAddr))
+	require.NoError(t, err)
+	require.False(t, hasIndex)
 }
 
 func TestSetClaimRecipients_NoEffectiveEpoch(t *testing.T) {
@@ -165,7 +171,7 @@ func TestGetClaimRecipientForEpoch(t *testing.T) {
 	_, found := k.GetClaimRecipientForEpoch(ctx, addr, 42)
 	require.False(t, found, "empty map returns not found")
 
-	require.NoError(t, k.ClaimRecipients.Set(ctx, collections.Join(addr, uint64(42)), testutil.Executor))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, addr, 42, testutil.Executor))
 	got, found := k.GetClaimRecipientForEpoch(ctx, addr, 42)
 	require.True(t, found)
 	require.Equal(t, testutil.Executor, got)
@@ -176,12 +182,12 @@ func TestGetClaimRecipientsByParticipant(t *testing.T) {
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
 
-	require.NoError(t, k.ClaimRecipients.Set(ctx, collections.Join(addr, uint64(10)), testutil.Executor))
-	require.NoError(t, k.ClaimRecipients.Set(ctx, collections.Join(addr, uint64(20)), testutil.Executor2))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, addr, 10, testutil.Executor))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, addr, 20, testutil.Executor2))
 	// Entry for a different participant — must not leak into result.
 	otherAddr, err := sdk.AccAddressFromBech32(testutil.Executor)
 	require.NoError(t, err)
-	require.NoError(t, k.ClaimRecipients.Set(ctx, collections.Join(otherAddr, uint64(15)), testutil.Creator))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, otherAddr, 15, testutil.Creator))
 
 	entries, err := k.GetClaimRecipientsByParticipant(ctx, addr)
 	require.NoError(t, err)
@@ -190,4 +196,27 @@ func TestGetClaimRecipientsByParticipant(t *testing.T) {
 	require.Equal(t, testutil.Executor, entries[0].Recipient)
 	require.Equal(t, uint64(20), entries[1].Epoch)
 	require.Equal(t, testutil.Executor2, entries[1].Recipient)
+}
+
+func TestClaimRecipientPruningRemovesPrimaryAndIndex(t *testing.T) {
+	k, _, ctx, creatorAddr := setupSchedule(t, 100)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 98, testutil.Executor))
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 99, testutil.Executor2))
+
+	require.NoError(t, k.Prune(ctx, 100))
+
+	_, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 98)
+	require.False(t, found)
+	hasIndex, err := k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(98), creatorAddr))
+	require.NoError(t, err)
+	require.False(t, hasIndex)
+
+	got, found := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 99)
+	require.True(t, found)
+	require.Equal(t, testutil.Executor2, got)
+	hasIndex, err = k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(99), creatorAddr))
+	require.NoError(t, err)
+	require.True(t, hasIndex)
 }
