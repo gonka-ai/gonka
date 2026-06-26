@@ -16,17 +16,17 @@ import (
 const MaxClaimRecipientLookahead uint64 = 40
 
 // GetClaimRecipientForEpoch returns the scheduled recipient address for the
-// given (participant, epoch). Returns ("", false) if no override exists, in
-// which case the caller should pay the participant directly.
-func (k Keeper) GetClaimRecipientForEpoch(ctx context.Context, participant sdk.AccAddress, epoch uint64) (string, bool) {
+// given (participant, epoch). Returns ("", false, nil) if no override exists,
+// in which case the caller should pay the participant directly.
+func (k Keeper) GetClaimRecipientForEpoch(ctx context.Context, participant sdk.AccAddress, epoch uint64) (string, bool, error) {
 	v, err := k.ClaimRecipients.Get(ctx, collections.Join(participant, epoch))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
-			return "", false
+			return "", false, nil
 		}
-		return "", false
+		return "", false, err
 	}
-	return v, true
+	return v, true, nil
 }
 
 // SetClaimRecipientForEpoch writes the primary schedule entry and pruning index

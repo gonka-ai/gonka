@@ -72,7 +72,13 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	// Resolve the destination once, using cacheCtx so the lookup view is
 	// consistent with the writes below. Recipient is already bech32-validated
 	// at the SetClaimRecipients write path; if not scheduled, returns msg.Creator.
-	payoutAddress := ms.resolvePayoutAddress(cacheCtx, msg.Creator, msg.EpochIndex)
+	payoutAddress, err := ms.resolvePayoutAddress(cacheCtx, msg.Creator, msg.EpochIndex)
+	if err != nil {
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Claim recipient lookup failed, claim can be retried",
+		}, err
+	}
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
@@ -133,17 +139,20 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 // set by the cold key, otherwise the participant's own address. participant
 // is assumed to be a valid bech32 string — it has already been verified by
 // validateRequest / validateClaim.
-func (ms msgServer) resolvePayoutAddress(ctx context.Context, participant string, epoch uint64) string {
+func (ms msgServer) resolvePayoutAddress(ctx context.Context, participant string, epoch uint64) (string, error) {
 	addr, err := sdk.AccAddressFromBech32(participant)
 	if err != nil {
-		return participant
+		return participant, nil
 	}
-	recipient, found := ms.GetClaimRecipientForEpoch(ctx, addr, epoch)
+	recipient, found, err := ms.GetClaimRecipientForEpoch(ctx, addr, epoch)
+	if err != nil {
+		return "", fmt.Errorf("failed to lookup claim recipient for participant %s epoch %d: %w", participant, epoch, err)
+	}
 	if !found {
-		return participant
+		return participant, nil
 	}
 	ms.LogInfo("Using scheduled claim recipient", types.Claims, "participant", participant, "epoch", epoch, "recipient", recipient)
-	return recipient
+	return recipient, nil
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
