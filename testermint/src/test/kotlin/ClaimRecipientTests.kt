@@ -1,5 +1,4 @@
 import com.productscience.EpochStage
-import com.productscience.TestermintTest
 import com.productscience.assertions.assertThat
 import com.productscience.data.ClaimRecipientEntry
 import com.productscience.data.MsgSetClaimRecipients
