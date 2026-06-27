@@ -2,7 +2,6 @@ import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
 import com.productscience.data.ClaimRecipientEntry
 import com.productscience.data.MsgSetClaimRecipients
-import com.productscience.defaultModel
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
@@ -46,12 +45,11 @@ class ClaimRecipientTests : TestermintTest() {
         }
 
         logSection("Run inference in target epoch")
-        val inference = genesis.makeInferenceRequest(
-            """
-            {"model":"$defaultModel","messages":[{"role":"user","content":"claim recipient routing test"}],"max_tokens":20}
-            """.trimIndent()
-        )
-        genesis.waitForInference(inference.id, finished = true)
+        InferenceTestHelper(
+            cluster = cluster,
+            genesis = genesis,
+            request = """{"messages":[{"role":"user","content":"claim recipient routing test"}],"max_tokens":20}"""
+        ).runFullInference()
 
         logSection("Wait for target epoch claim")
         while (genesis.getEpochData().latestEpoch.index <= targetEpoch) {
@@ -78,10 +76,13 @@ class ClaimRecipientTests : TestermintTest() {
             val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
 
             logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val setRecipient = consumer.pair.submitMessage(
-                MsgSetClaimRecipients(
-                    creator = participant,
-                    entries = listOf(ClaimRecipientEntry(epoch = targetEpoch, recipient = recipient))
+            val entriesJson = """[{"epoch":$targetEpoch,"recipient":"$recipient"}]"""
+            val setRecipient = consumer.pair.submitTransaction(
+                listOf(
+                    "inference",
+                    "set-claim-recipients",
+                    "--entries",
+                    entriesJson
                 )
             )
             assertThat(setRecipient).isSuccess()
