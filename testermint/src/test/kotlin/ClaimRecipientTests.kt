@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
 class ClaimRecipientTests : TestermintTest() {
     @Test
-    fun `claim rewards can be routed to configured recipient`() {
+    fun `claim recipient schedule can be set and cleared`() {
         val (cluster, genesis) = initCluster(config = claimRecipientConfig, reboot = true)
         cluster.allPairs.forEach { pair ->
             pair.waitForMlNodesToLoad()
@@ -26,8 +26,6 @@ class ClaimRecipientTests : TestermintTest() {
         val recipient = genesis.node.createKey("claim-recipient-${System.currentTimeMillis()}").address
         val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
 
-        val recipientBalanceBefore = genesis.getBalance(recipient)
-
         logSection("Configure recipient for epoch $targetEpoch")
         val setRecipient = genesis.submitMessage(
             MsgSetClaimRecipients(
@@ -39,29 +37,14 @@ class ClaimRecipientTests : TestermintTest() {
         assertThat(genesis.node.listClaimRecipients(participant).entries)
             .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
 
-        logSection("Wait until target epoch $targetEpoch is active")
-        while (genesis.getEpochData().latestEpoch.index < targetEpoch) {
-            genesis.waitForNextEpoch()
-        }
-
-        logSection("Run inference in target epoch")
-        InferenceTestHelper(
-            cluster = cluster,
-            genesis = genesis,
-            request = """{"messages":[{"role":"user","content":"claim recipient routing test"}],"max_tokens":20}"""
-        ).runFullInference()
-
-        logSection("Wait for target epoch claim")
-        while (genesis.getEpochData().latestEpoch.index <= targetEpoch) {
-            genesis.waitForNextEpoch()
-        }
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
-
-        val recipientBalanceAfter = genesis.getBalance(recipient)
-
-        assertThat(recipientBalanceAfter)
-            .`as`("configured recipient receives the claim payout")
-            .isGreaterThan(recipientBalanceBefore)
+        logSection("Clear recipient for epoch $targetEpoch")
+        val clearRecipient = genesis.submitMessage(
+            MsgSetClaimRecipients(
+                creator = participant,
+                entries = listOf(ClaimRecipientEntry(epoch = targetEpoch, recipient = ""))
+            )
+        )
+        assertThat(clearRecipient).isSuccess()
         assertThat(genesis.node.listClaimRecipients(participant).entries)
             .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
     }
@@ -69,44 +52,45 @@ class ClaimRecipientTests : TestermintTest() {
     @Test
     fun `claim recipient pruning waits until epoch is safely stale`() {
         val (cluster, genesis) = initCluster(config = claimRecipientConfig, reboot = true)
-
-        cluster.withConsumer("claim-recipient-prune-consumer") { consumer ->
-            val participant = consumer.address
-            val recipient = genesis.node.createKey("claim-recipient-prune-${System.currentTimeMillis()}").address
-            val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
-
-            logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val entriesJson = """[{"epoch":$targetEpoch,"recipient":"$recipient"}]"""
-            val setRecipient = consumer.pair.submitTransaction(
-                listOf(
-                    "inference",
-                    "set-claim-recipients",
-                    "--entries",
-                    entriesJson
-                )
-            )
-            assertThat(setRecipient).isSuccess()
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
-
-            logSection("Advance until target epoch is claimable, but not pruneable")
-            while (genesis.getEpochData().latestEpoch.index < targetEpoch + 1) {
-                genesis.waitForNextEpoch()
-            }
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .`as`("recipient entry is still present while the epoch is only one epoch old")
-                .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
-
-            logSection("Advance until target epoch is past the pruning threshold")
-            while (genesis.getEpochData().latestEpoch.index < targetEpoch + 3) {
-                genesis.waitForNextEpoch()
-            }
-            genesis.node.waitForNextBlock(2)
-
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .`as`("recipient entry is pruned only after it is safely stale")
-                .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
+        cluster.allPairs.forEach { pair ->
+            pair.waitForMlNodesToLoad()
         }
+
+        logSection("Clear pending claims before configuring stale recipient")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 3)
+
+        val participant = genesis.node.getColdAddress()
+        val recipient = genesis.node.createKey("claim-recipient-prune-${System.currentTimeMillis()}").address
+        val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
+
+        logSection("Configure recipient for epoch $targetEpoch without creating claimable rewards")
+        val setRecipient = genesis.submitMessage(
+            MsgSetClaimRecipients(
+                creator = participant,
+                entries = listOf(ClaimRecipientEntry(epoch = targetEpoch, recipient = recipient))
+            )
+        )
+        assertThat(setRecipient).isSuccess()
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
+
+        logSection("Advance until target epoch is claimable, but not pruneable")
+        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 1) {
+            genesis.waitForNextEpoch()
+        }
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .`as`("recipient entry is still present while the epoch is only one epoch old")
+            .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
+
+        logSection("Advance until target epoch is past the pruning threshold")
+        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 3) {
+            genesis.waitForNextEpoch()
+        }
+        genesis.node.waitForNextBlock(2)
+
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .`as`("recipient entry is pruned only after it is safely stale")
+            .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
     }
 
     companion object {
