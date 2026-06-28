@@ -286,6 +286,7 @@ func TestGatewayLimiterDerivesModelConcurrencyFromWeight(t *testing.T) {
 }
 
 func TestGatewaySelectsPoCWeightConcurrencyRate(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
 	g := NewGateway(nil, NewGatewayLimiter(512, 0), "Model/A")
 	g.settings = GatewaySettings{
 		DefaultRequestMaxTokens:        1024,
@@ -307,7 +308,6 @@ func TestGatewaySelectsPoCWeightConcurrencyRate(t *testing.T) {
 
 	g.phaseGate = &ChainPhaseGate{}
 	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{BlockReason: "confirmation_poc"})
-	t.Cleanup(func() { setPoCPhaseState(false, "") })
 	poc := g.limiterCapacityForModel("Model/A")
 	require.InDelta(t, 10.0, poc.MaxConcurrentPer10000Weight, 1e-9)
 }

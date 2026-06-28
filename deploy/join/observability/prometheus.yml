@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+
+  - job_name: decentralized-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:9100
+
+  - job_name: devshardd
+    http_sd_configs:
+      - url: http://api:9100/sd/devshardd
+        refresh_interval: 15s
+
+  - job_name: gonka-node
+    static_configs:
+      - targets:
+          - node:26660
+
+  - job_name: gonka-node-sdk
+    metrics_path: /metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+      - targets:
+          - node:1317
+
+  - job_name: cadvisor
+    static_configs:
+      - targets:
+          - cadvisor:8080
+

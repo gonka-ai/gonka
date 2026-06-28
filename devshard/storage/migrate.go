@@ -138,10 +138,15 @@ func MigrateLegacySQLite(legacyPath string, dest Storage, resolveEpoch EpochReso
 			return migrated, fmt.Errorf("unmarshal group for %s: %w", ls.escrowID, err)
 		}
 
+		version := ls.version
+		if version == "" {
+			// Empty legacy version → embedded dapi runtime bind ("v1"), not protocol tag ("v2").
+			version = types.LegacyRouteSessionVersion
+		}
 		if err := dest.CreateSession(CreateSessionParams{
 			EscrowID:       ls.escrowID,
 			EpochID:        epochID,
-			Version:        ls.version,
+			Version:        version,
 			CreatorAddr:    ls.creatorAddr,
 			Config:         cfg,
 			Group:          group,

@@ -1330,7 +1330,7 @@ func (rw *raceWriter) Flush() {
 
 // RunInference prepares and sends an inference, optionally racing a secondary.
 // It replaces the old retry-based runInference in proxy.go.
-func (e *Redundancy) RunInference(ctx context.Context, params user.InferenceParams, w io.Writer) error {
+func (e *Redundancy) RunInference(ctx context.Context, params user.InferenceParams, w io.Writer, clientFlag *cancelFlag) error {
 	ctx, _ = ensureRequestLogContext(ctx)
 	settleCtx, _ := ensureRequestLogContext(context.Background())
 	settleCtx = logging.PropagateRequestID(settleCtx, ctx)
@@ -1377,7 +1377,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	attempts := []*inflight{primary}
 
 	// Always start the primary.
-	e.startInflight(settleCtx, primary, race, params)
+	e.startInflight(settleCtx, primary, race, params, clientFlag)
 
 	if decision.RunSecondary && decision.Delay == 0 && len(attempts) < maxAttempts {
 		immediateAttempts := decision.ImmediateAttempts
@@ -1393,7 +1393,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 			)
 			trigger := attempts[len(attempts)-1]
 			trigger.escalated = true
-			if secondary := e.startAdditionalInflight(ctx, settleCtx, race, params, "secondary_immediate_start", trigger, decision.Reason, triedParticipants); secondary != nil {
+			if secondary := e.startAdditionalInflight(ctx, settleCtx, race, params, "secondary_immediate_start", trigger, decision.Reason, triedParticipants, clientFlag); secondary != nil {
 				attempts = append(attempts, secondary)
 			} else {
 				break
@@ -1409,7 +1409,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 		)
 	}
 
-	return e.awaitRace(ctx, settleCtx, attempts, race, params, decision, triedParticipants)
+	return e.awaitRace(ctx, settleCtx, attempts, race, params, decision, triedParticipants, clientFlag)
 }
 
 // prepareInflight enqueues a request with the session picker and waits
@@ -1476,14 +1476,14 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 	}
 }
 
-func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams) {
+func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) {
 	// Per-attempt context derived from the settle context so the background
 	// finalizer can cut off stragglers after the winner's grace window expires
 	// without disturbing the settle context itself (which is shared across all
 	// attempts). The cancel is called on the send goroutine's exit path as a
 	// no-op after natural completion; explicit invocation from the finalizer
 	// is what unwinds SendOnly for speculative losers that outlived the winner.
-	attemptCtx, cancel := context.WithCancel(ctx)
+	attemptCtx, cancel := withMetaDrain(ctx, clientFlag)
 	inf.cancel = cancel
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	receiptHandler := func() {
@@ -1589,7 +1589,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 
 // startDelayed waits for receipt or timeout, then starts a secondary if needed.
 // Returns nil if receipt arrived before timeout (no secondary needed).
-func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Context, race *raceGroup, params user.InferenceParams, stage string, trigger *inflight, reason string, triedParticipants map[string]bool) *inflight {
+func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Context, race *raceGroup, params user.InferenceParams, stage string, trigger *inflight, reason string, triedParticipants map[string]bool, clientFlag *cancelFlag) *inflight {
 	if streamCtx.Err() != nil {
 		return nil
 	}
@@ -1633,7 +1633,7 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 	if reason == "pairwise_budgeted_speedup" {
 		e.maybeAddPairwiseWinnerHoldCandidate(race, params, trigger, next)
 	}
-	e.startInflight(settleCtx, next, race, params)
+	e.startInflight(settleCtx, next, race, params, clientFlag)
 	return next
 }
 
@@ -1877,7 +1877,7 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 	return true, fmt.Errorf("inference: winner inference incomplete (nonce_finished=%v)", nonceFinished)
 }
 
-func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []*inflight, race *raceGroup, params user.InferenceParams, decision Decision, triedParticipants map[string]bool) error {
+func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []*inflight, race *raceGroup, params user.InferenceParams, decision Decision, triedParticipants map[string]bool, clientFlag *cancelFlag) error {
 	doneCh := make(chan *inflight, e.maxAttempts()+1)
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
@@ -1989,7 +1989,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if !reducedMaxTokensFallbackStarted && time.Now().Before(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay)) && len(attempts) < maxAttempts {
 					trigger := attempts[len(attempts)-1]
 					trigger.escalated = true
-					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_failed", trigger, "attempt_failed", triedParticipants); next != nil {
+					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_failed", trigger, "attempt_failed", triedParticipants, clientFlag); next != nil {
 						attempts = append(attempts, next)
 						e.watchInflightDone(next, doneCh)
 					}
@@ -2040,7 +2040,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if w == 0 && e.markPhaseTransitionAbort(inf) && phaseTransitionAbortRetryable(inf) {
 				e.reincludePhaseTransitionAbortParticipant(inf, triedParticipants)
 				if len(attempts) < maxAttempts {
-					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "phase_transition_retry", inf, "phase_transition_aborted", triedParticipants); next != nil {
+					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "phase_transition_retry", inf, "phase_transition_aborted", triedParticipants, clientFlag); next != nil {
 						attempts = append(attempts, next)
 						e.watchInflightDone(next, doneCh)
 					}
@@ -2064,7 +2064,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			trigger.inf.escalated = true
 			if len(attempts) < maxAttempts {
-				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants); next != nil {
+				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
 					attempts = append(attempts, next)
 					e.watchInflightDone(next, doneCh)
 				}
@@ -2080,7 +2080,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			trigger := attempts[len(attempts)-1]
 			trigger.escalated = true
-			if next := e.startAdditionalInflight(streamCtx, settleCtx, race, reducedParams, "response_timeout_wait_elapsed", trigger, "response_timeout_reduced_max_tokens", triedParticipants); next != nil {
+			if next := e.startAdditionalInflight(streamCtx, settleCtx, race, reducedParams, "response_timeout_wait_elapsed", trigger, "response_timeout_reduced_max_tokens", triedParticipants, clientFlag); next != nil {
 				next.excludePairwise = true
 				attempts = append(attempts, next)
 				e.watchInflightDone(next, doneCh)

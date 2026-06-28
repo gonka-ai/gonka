@@ -108,6 +108,12 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		}
 		desiredSet[name] = oracle.Version{Name: name}
 	}
+	slog.Info(
+		"reconcile desired versions resolved",
+		"oracle_versions", versionNames(desired),
+		"force_versions", m.cfg.ForceVersions,
+		"desired_versions", versionNamesMap(desiredSet),
+	)
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -276,6 +282,25 @@ type versionAction struct {
 // reconcileOverride handles a version with a local override binary.
 // Does disk I/O outside the lock, then takes the lock to update state.
 func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overrideSrc, binPath string) {
+	if stat, statErr := os.Stat(overrideSrc); statErr != nil {
+		slog.Error(
+			"override path missing or unreadable",
+			"version", v.Name,
+			"path", overrideSrc,
+			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
+			"error", statErr,
+		)
+		return
+	} else if stat.IsDir() {
+		slog.Error(
+			"override path points to directory, expected file",
+			"version", v.Name,
+			"path", overrideSrc,
+			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
+		)
+		return
+	}
+
 	srcHash, err := download.HashFile(overrideSrc)
 	if err != nil {
 		slog.Error("override source unreadable", "version", v.Name, "path", overrideSrc, "error", err)
@@ -323,6 +348,22 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	m.startChild(ctx, v)
 	m.rebuildRoutes()
 	m.mu.Unlock()
+}
+
+func versionNames(vs []oracle.Version) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.Name)
+	}
+	return out
+}
+
+func versionNamesMap(vs map[string]oracle.Version) []string {
+	out := make([]string, 0, len(vs))
+	for name := range vs {
+		out = append(out, name)
+	}
+	return out
 }
 
 // atomicCopy copies src to dst via a temp file + rename.
@@ -575,10 +616,13 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	}
 }
 
+// childEnv sets per-child env vars for devshardd (and testapp in e2e).
+// version is the oracle approved_versions name for this slot.
 func childEnv(version string) []string {
 	return append(
 		os.Environ(),
 		fmt.Sprintf("DEVSHARD_LOG_PREFIX=%s", version),
+		fmt.Sprintf("DEVSHARD_BINARY_VERSION=%s", version),
 	)
 }
 
