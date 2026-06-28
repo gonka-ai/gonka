@@ -31,9 +31,7 @@ class ClaimRecipientTests : TestermintTest() {
         val recipientBalanceBefore = genesis.getBalance(recipient)
 
         logSection("Configure recipient for epoch $targetEpoch")
-        val setRecipient = participantPair.submitTransaction(
-            setClaimRecipientsArgs(targetEpoch, recipient)
-        )
+        val setRecipient = participantPair.node.setClaimRecipients(claimRecipientsJson(targetEpoch, recipient))
         assertThat(setRecipient).isSuccess()
         assertThat(genesis.node.listClaimRecipients(participant).entries)
             .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
@@ -119,9 +117,7 @@ class ClaimRecipientTests : TestermintTest() {
             genesis.node.waitForNextBlock(2)
 
             logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val setRecipient = consumer.pair.submitTransaction(
-                setClaimRecipientsArgs(targetEpoch, recipient)
-            )
+            val setRecipient = consumer.pair.node.setClaimRecipients(claimRecipientsJson(targetEpoch, recipient))
             assertThat(setRecipient).isSuccess()
             assertThat(genesis.node.listClaimRecipients(participant).entries)
                 .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
@@ -151,13 +147,7 @@ class ClaimRecipientTests : TestermintTest() {
             genesisSpec = inferenceConfig.genesisSpec
         )
 
-        private fun setClaimRecipientsArgs(epoch: Long, recipient: String): List<String> {
-            val entriesJson = """[{"epoch":$epoch,"recipient":"$recipient"}]"""
-            return listOf(
-                "inference",
-                "set-claim-recipients",
-                entriesJson
-            )
-        }
+        private fun claimRecipientsJson(epoch: Long, recipient: String): String =
+            """[{"epoch":$epoch,"recipient":"$recipient"}]"""
     }
 }

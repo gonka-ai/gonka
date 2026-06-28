@@ -678,6 +678,19 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
+    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName()): TxResponse =
+        wrapLog("setClaimRecipients", true) {
+            val finalArgs = listOf(config.execName, "tx", "inference", "set-claim-recipients", entriesJson) +
+                getTransactionArgs(from) + listOf("--output", "json")
+            val command = if (passwordInjection != null) {
+                "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
+            } else {
+                finalArgs.joinToString(" ") { shellQuote(it) }
+            }
+            val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+            cosmosJson.fromJson(output, TxResponse::class.java)
+        }
+
     private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
@@ -693,6 +706,9 @@ data class ApplicationCLI(
         "--from",
         from
     )
+
+    private fun shellQuote(arg: String): String =
+        "'" + arg.replace("'", "'\\''") + "'"
 
     // Returns getTransactionArgs with gas-adjustment replaced by a fixed gas
     // and a --fees flag added. Used by tests that need to assert specific
