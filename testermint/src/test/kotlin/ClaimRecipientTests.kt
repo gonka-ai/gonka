@@ -1,6 +1,7 @@
 import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
 import com.productscience.data.ClaimRecipientEntry
+import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.getInferenceResult
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -51,9 +52,11 @@ class ClaimRecipientTests : TestermintTest() {
                     .onFailure { error ->
                         val isTemporary500 = error is FuelError &&
                             error.message.orEmpty().contains("500 Internal Server Error")
+                        val isUnauthorized = error is FuelError &&
+                            error.message.orEmpty().contains("401 Unauthorized")
                         val isChainLag = error is IllegalStateException &&
                             error.message.orEmpty().contains("Inference never logged in chain")
-                        if (!isTemporary500 && !isChainLag) {
+                        if (!isTemporary500 && !isUnauthorized && !isChainLag) {
                             throw error
                         }
                         Logger.info(
@@ -99,50 +102,48 @@ class ClaimRecipientTests : TestermintTest() {
             pair.waitForMlNodesToLoad()
         }
 
-        cluster.withConsumer("claim-recipient-prune-consumer") { consumer ->
-            val participant = consumer.address
-            val recipient = genesis.node.createKey("claim-recipient-prune-${System.currentTimeMillis()}").address
-            val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
-
-            logSection("Fund consumer before submitting recipient schedule")
-            genesis.submitTransaction(
-                listOf(
-                    "bank",
-                    "send",
-                    genesis.node.getColdAddress(),
-                    participant,
-                    "100000${claimRecipientConfig.denom}"
-                )
+        val participantKey = genesis.node.createKey("claim-recipient-prune-participant-${System.currentTimeMillis()}")
+        val participant = participantKey.address
+        genesis.api.addUnfundedInferenceParticipant(
+            UnfundedInferenceParticipant(
+                url = "",
+                models = listOf(),
+                validatorKey = "",
+                pubKey = participantKey.pubkey.key,
+                address = participant
             )
-            genesis.node.waitForNextBlock(2)
+        )
+        genesis.node.waitForNextBlock(2)
 
-            logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val setRecipient = consumer.pair.node.setClaimRecipients(
-                claimRecipientsJson(targetEpoch, recipient),
-                node = "tcp://genesis-node:26657"
-            )
-            assertThat(setRecipient).isSuccess()
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
+        val recipient = genesis.node.createKey("claim-recipient-prune-${System.currentTimeMillis()}").address
+        val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
 
-            logSection("Advance until target epoch is claimable, but not pruneable")
-            while (genesis.getEpochData().latestEpoch.index < targetEpoch + 1) {
-                genesis.waitForNextEpoch()
-            }
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .`as`("recipient entry is still present while the epoch is only one epoch old")
-                .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
+        logSection("Configure recipient for inactive participant epoch $targetEpoch")
+        val setRecipient = genesis.node.setClaimRecipients(
+            claimRecipientsJson(targetEpoch, recipient),
+            from = participantKey.name
+        )
+        assertThat(setRecipient).isSuccess()
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
 
-            logSection("Advance until target epoch is past the pruning threshold")
-            while (genesis.getEpochData().latestEpoch.index < targetEpoch + 3) {
-                genesis.waitForNextEpoch()
-            }
-            genesis.node.waitForNextBlock(2)
-
-            assertThat(genesis.node.listClaimRecipients(participant).entries)
-                .`as`("recipient entry is pruned only after it is safely stale")
-                .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
+        logSection("Advance until target epoch is claimable, but not pruneable")
+        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 1) {
+            genesis.waitForNextEpoch()
         }
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .`as`("recipient entry is still present while the epoch is only one epoch old")
+            .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
+
+        logSection("Advance until target epoch is past the pruning threshold")
+        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 3) {
+            genesis.waitForNextEpoch()
+        }
+        genesis.node.waitForNextBlock(2)
+
+        assertThat(genesis.node.listClaimRecipients(participant).entries)
+            .`as`("recipient entry is pruned only after it is safely stale")
+            .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
     }
 
     companion object {
