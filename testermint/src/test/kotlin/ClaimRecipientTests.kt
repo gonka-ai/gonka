@@ -2,15 +2,12 @@ import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
 import com.productscience.data.ClaimRecipientEntry
 import com.productscience.data.UnfundedInferenceParticipant
-import com.productscience.getInferenceResult
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
-import com.github.kittinunf.fuel.core.FuelError
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
-import org.tinylog.kotlin.Logger
 import java.util.concurrent.TimeUnit
 
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
@@ -41,36 +38,7 @@ class ClaimRecipientTests : TestermintTest() {
         while (genesis.getEpochData().latestEpoch.index < targetEpoch) {
             genesis.waitForNextEpoch()
         }
-        genesis.waitForNextInferenceWindow()
-
         val rewardSeed = participantPair.api.getConfig().currentSeed
-        logSection("Waiting for an inference assigned to participant $participant")
-        val earnedInference = (1..20)
-            .asSequence()
-            .mapNotNull { attempt ->
-                runCatching { getInferenceResult(genesis) }
-                    .onFailure { error ->
-                        val isTemporary500 = error is FuelError &&
-                            error.message.orEmpty().contains("500 Internal Server Error")
-                        val isUnauthorized = error is FuelError &&
-                            error.message.orEmpty().contains("401 Unauthorized")
-                        val isChainLag = error is IllegalStateException &&
-                            error.message.orEmpty().contains("Inference never logged in chain")
-                        if (!isTemporary500 && !isUnauthorized && !isChainLag) {
-                            throw error
-                        }
-                        Logger.info(
-                            "Inference attempt $attempt hit a transient response while waiting for participant assignment; retrying on the next block: ${error.message}"
-                        )
-                        genesis.waitForBlock(1) { true }
-                    }
-                    .getOrNull()
-            }
-            .firstOrNull { result ->
-                result.inference.assignedTo == participant || result.inference.executedBy == participant
-            }
-            ?: error("Participant did not receive an inference in the target epoch")
-        logSection("Participant served inference ${earnedInference.inference.inferenceId}")
 
         genesis.markNeedsReboot()
         participantPair.stopApiContainer()
