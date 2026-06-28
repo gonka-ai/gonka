@@ -156,7 +156,6 @@ class ClaimRecipientTests : TestermintTest() {
             return listOf(
                 "inference",
                 "set-claim-recipients",
-                "--entries",
                 entriesJson
             )
         }

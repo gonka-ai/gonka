@@ -428,6 +428,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Long: "Batch-configures recipient overrides for MsgClaimRewards on future epochs. " +
 						"Pass a JSON array of {epoch, recipient} entries via --entries. " +
 						"An empty recipient clears the override for that epoch.",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "entries"}},
 				},
 				{
 					RpcMethod:      "SubmitPocBatch",
