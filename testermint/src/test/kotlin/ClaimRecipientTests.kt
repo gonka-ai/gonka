@@ -1,7 +1,6 @@
 import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
 import com.productscience.data.ClaimRecipientEntry
-import com.productscience.data.MsgSetClaimRecipients
 import com.productscience.getInferenceResult
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -32,11 +31,8 @@ class ClaimRecipientTests : TestermintTest() {
         val recipientBalanceBefore = genesis.getBalance(recipient)
 
         logSection("Configure recipient for epoch $targetEpoch")
-        val setRecipient = participantPair.submitMessage(
-            MsgSetClaimRecipients(
-                creator = participant,
-                entries = listOf(ClaimRecipientEntry(epoch = targetEpoch, recipient = recipient))
-            )
+        val setRecipient = participantPair.submitTransaction(
+            setClaimRecipientsArgs(targetEpoch, recipient)
         )
         assertThat(setRecipient).isSuccess()
         assertThat(genesis.node.listClaimRecipients(participant).entries)
@@ -123,13 +119,8 @@ class ClaimRecipientTests : TestermintTest() {
             genesis.node.waitForNextBlock(2)
 
             logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val entriesJson = """[{"epoch":$targetEpoch,"recipient":"$recipient"}]"""
             val setRecipient = consumer.pair.submitTransaction(
-                listOf(
-                    "inference",
-                    "set-claim-recipients",
-                    entriesJson
-                )
+                setClaimRecipientsArgs(targetEpoch, recipient)
             )
             assertThat(setRecipient).isSuccess()
             assertThat(genesis.node.listClaimRecipients(participant).entries)
@@ -159,5 +150,15 @@ class ClaimRecipientTests : TestermintTest() {
         private val claimRecipientConfig = inferenceConfig.copy(
             genesisSpec = inferenceConfig.genesisSpec
         )
+
+        private fun setClaimRecipientsArgs(epoch: Long, recipient: String): List<String> {
+            val entriesJson = """[{"epoch":$epoch,"recipient":"$recipient"}]"""
+            return listOf(
+                "inference",
+                "set-claim-recipients",
+                "--entries",
+                entriesJson
+            )
+        }
     }
 }
