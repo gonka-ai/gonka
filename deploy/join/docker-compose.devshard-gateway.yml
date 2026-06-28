@@ -1,0 +1,28 @@
+services:
+  devshard-gateway:
+    container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
+    image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-latest
+    env_file:
+      - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
+    volumes:
+      - ${DEVSHARD_STORAGE_HOST_DIR:-.devshardctl}:/root/.devshardctl
+    expose:
+      - "8080"
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      join_default:
+        aliases:
+          - ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
+          - devshard-pool
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  join_default:
+    external: true

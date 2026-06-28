@@ -255,7 +255,12 @@ On SIGTERM/SIGINT:
 
 ### Logging
 
-Child processes tag their own log output via `DEVSHARD_LOG_PREFIX` env var set by versiond (e.g. `DEVSHARD_LOG_PREFIX=v0.2.11`). The devshard binary prepends this to each log line. Zero overhead in versiond -- child stdout/stderr connect directly to versiond's stdout/stderr. No interleaving issues because each line is already tagged at the source.
+versiond sets two per-child env vars from the oracle version name (e.g. `v0.2.11`):
+
+- `DEVSHARD_LOG_PREFIX` — prepended to each log line by the child binary so mixed stdout/stderr stays identifiable. Zero overhead in versiond: child stdout/stderr connect directly to versiond's stdout/stderr.
+- `DEVSHARD_BINARY_VERSION` — oracle `approved_versions` name for this slot. **devshardd** reads it at startup and checks it matches the binary's link-time `main.Version` (`-X main.Version=...` at build). That value becomes the session storage tag (`boundVersion`); it is not read from `DEVSHARD_LOG_PREFIX`.
+
+Build artifacts must use the same name as governance: `make devshardd-build DEVSHARD_VERSION=v0.2.11` when the oracle lists `v0.2.11`.
 
 ### Configuration
 

@@ -1,7 +1,14 @@
 services:
+  api:
+    environment:
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY:-}
+      - KEYRING_BACKEND=${KEYRING_BACKEND:-test}
+
   versiond:
     container_name: ${KEY_NAME}-versiond
     image: versiond:latest
+    # Must match `make devshardd-build` / `make versiond-build-docker` (see scripts/blst-portable.sh).
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     build:
       context: ./versioned
       dockerfile: Dockerfile
@@ -10,14 +17,14 @@ services:
       VERSIOND_POLL_INTERVAL: "5s"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
-      # Default binary is testapp (VersiondTests). DevshardStandaloneTests
-      # exports VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=v0.2.11,
-      # VERSIOND_OVERRIDE_v0_2_11=/opt/overrides/devshardd before bringing up
-      # the cluster, switching this versiond to run the locally-built
-      # devshardd binary instead.
+      # Default binary is testapp (VersiondTests). Override tests set
+      # VERSIOND_BINARY_NAME=devshardd, VERSIOND_FORCE=<version>, VERSIOND_OVERRIDE_<version>
+      # (from Makefile DEVSHARD_VERSION via Testermint). Compose must list each
+      # override key so the variable reaches the container (host env alone is not enough).
       VERSIOND_BINARY_NAME: ${VERSIOND_BINARY_NAME:-testapp}
       VERSIOND_FORCE: ${VERSIOND_FORCE:-}
-      VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
+      VERSIOND_OVERRIDE_dev: ${VERSIOND_OVERRIDE_dev:-}
+      VERSIOND_OVERRIDE_v1: ${VERSIOND_OVERRIDE_v1:-}
       NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
       # Inherited by child binaries (devshardd reads these). Same env
       # surface dapi's init-docker.sh uses.
@@ -35,9 +42,8 @@ services:
       PGUSER: ${PGUSER:-payloads}
       PGPASSWORD: ${PGPASSWORD:-}
     volumes:
-      # Locally-built devshardd binary, served as version "v0.2.11" via the
-      # VERSIOND_OVERRIDE_v0_2_11 mechanism. Always mounted; inert if
-      # VERSIOND_FORCE is empty (versiond never references it).
+      # Locally-built devshardd binary for VERSIOND_OVERRIDE_<version>. Always mounted;
+      # inert if VERSIOND_FORCE is empty (versiond never references it).
       # Path is relative to --project-directory (repo root), not the
       # compose file location.
       - ./build/devshardd:/opt/overrides/devshardd:ro

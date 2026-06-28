@@ -106,14 +106,15 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 }
 
 type settlementFileJSON struct {
-	EscrowID   string                    `json:"escrow_id"`
-	Version    string                    `json:"version"`
-	StateRoot  string                    `json:"state_root"`
-	Nonce      uint64                    `json:"nonce"`
-	Fees       uint64                    `json:"fees"`
-	RestHash   string                    `json:"rest_hash"`
-	HostStats  []settlementHostStatsJSON `json:"host_stats"`
-	Signatures []slotSignatureJSON       `json:"signatures"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string                    `json:"version"`
+	StateRoot                   string                    `json:"state_root"`
+	Nonce                       uint64                    `json:"nonce"`
+	Fees                        uint64                    `json:"fees"`
+	RestHash                    string                    `json:"rest_hash"`
+	HostStats                   []settlementHostStatsJSON `json:"host_stats"`
+	Signatures                  []slotSignatureJSON       `json:"signatures"`
 }
 
 type settlementHostStatsJSON struct {
@@ -150,8 +151,8 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 			if err := json.Unmarshal(data, &sf); err != nil {
 				return fmt.Errorf("parse settlement JSON: %w", err)
 			}
-			if sf.Version == "" {
-				return fmt.Errorf("settlement JSON missing version")
+			if sf.StateRootAndProtocolVersion == "" {
+				return fmt.Errorf("settlement JSON missing state_root_and_protocol_version")
 			}
 
 			escrowID, err := strconv.ParseUint(sf.EscrowID, 10, 64)
@@ -194,15 +195,15 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 			}
 
 			msg := &types.MsgSettleDevshardEscrow{
-				Settler:    clientCtx.GetFromAddress().String(),
-				EscrowId:   escrowID,
-				Version:    sf.Version,
-				StateRoot:  stateRoot,
-				Nonce:      sf.Nonce,
-				Fees:       sf.Fees,
-				RestHash:   restHash,
-				HostStats:  hostStats,
-				Signatures: sigs,
+				Settler:                     clientCtx.GetFromAddress().String(),
+				EscrowId:                    escrowID,
+				StateRootAndProtocolVersion: sf.StateRootAndProtocolVersion,
+				StateRoot:                   stateRoot,
+				Nonce:                       sf.Nonce,
+				Fees:                        sf.Fees,
+				RestHash:                    restHash,
+				HostStats:                   hostStats,
+				Signatures:                  sigs,
 			}
 
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)

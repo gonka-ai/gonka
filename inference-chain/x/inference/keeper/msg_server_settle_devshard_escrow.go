@@ -35,7 +35,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if devshardParams == nil {
 		return nil, fmt.Errorf("devshard escrow params not configured")
 	}
-	if err := VerifyDevshardSettlement(escrow, msg, devshardParams.MaxNonce, warmKeyChecker); err != nil {
+	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, warmKeyChecker); err != nil {
 		return nil, err
 	}
 
@@ -245,7 +245,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	ctx.EventManager().EmitEvent(sdk.NewEvent(
 		"devshard_escrow_settled",
 		sdk.NewAttribute("escrow_id", fmt.Sprint(escrow.Id)),
-		sdk.NewAttribute("version", msg.Version),
+		sdk.NewAttribute("state_root_and_protocol_version", msg.StateRootAndProtocolVersion),
 		sdk.NewAttribute("settler", msg.Settler),
 		sdk.NewAttribute("total_payout", fmt.Sprint(totalPayout)),
 		sdk.NewAttribute("fees", fmt.Sprint(msg.Fees)),
