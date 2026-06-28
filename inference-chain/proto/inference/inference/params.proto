@@ -396,8 +396,11 @@ message DelegationParams {
 // DevshardApprovedVersion describes a single approved devshard binary.
 message DevshardApprovedVersion {
   option (gogoproto.equal) = true;
+  // State root and devshard protocol version
   string name = 1;
+  // Binary version
   string binary = 2;
+  // Hash of binary to check if update is already installed
   string sha256 = 3;
 }
 
@@ -413,6 +416,15 @@ message DevshardEscrowParams {
   repeated DevshardApprovedVersion approved_versions = 7;
   uint32 max_nonce = 8;
   bool devshard_requests_enabled = 9;
+  uint32 default_inference_seal_grace_nonces = 10;
+  uint32 default_inference_seal_grace_seconds = 11;
+  uint64 create_devshard_fee = 12;
+  uint64 fee_per_nonce = 13;
+  int64 refusal_timeout = 14;
+  int64 execution_timeout = 15;
+  uint32 validation_rate = 16;
+  uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
+  uint32 default_auto_seal_every_n_nonces = 18;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

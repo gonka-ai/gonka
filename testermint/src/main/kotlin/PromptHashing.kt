@@ -60,6 +60,7 @@ object PromptHashing {
         requestMap["max_tokens"] = maxTokens
         requestMap["max_completion_tokens"] = maxTokens
         requestMap["skip_special_tokens"] = false
+        requestMap["return_token_ids"] = true
 
         if (!requestMap.containsKey("seed")) {
             requestMap["seed"] = defaultSeed

@@ -110,13 +110,31 @@ data class ApplicationCLI(
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
+    fun waitForMinimumBlock(
+        minBlockHeight: Long,
+        waitingFor: String = "",
+        staleTimeout: Duration? = null,
+    ): Long {
         return wrapLog("waitForMinimumBlock", false) {
+            val currentHeight = getStatus().syncInfo.latestBlockHeight
+            val blocksRemaining = (minBlockHeight - currentHeight).coerceAtLeast(0)
+            val effectiveTimeout = staleTimeout ?: staleTimeoutForBlockWait(blocksRemaining)
             waitForState(
                 "$waitingFor:block height $minBlockHeight",
-                check = { it.syncInfo.latestBlockHeight >= minBlockHeight }
+                staleTimeout = effectiveTimeout,
+                check = { it.syncInfo.latestBlockHeight >= minBlockHeight },
             )
         }.syncInfo.latestBlockHeight
+    }
+
+    /**
+     * Scale stale tolerance with blocks still to produce. Local Docker + PoC phases
+     * can pause 15–20s between blocks under load; a fixed 20s window is too tight
+     * for firstValidators / waitForNextEpoch style waits.
+     */
+    private fun staleTimeoutForBlockWait(blocksRemaining: Long): Duration {
+        val seconds = minOf(600L, maxOf(60L, blocksRemaining * 15L + 30L))
+        return Duration.ofSeconds(seconds)
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {

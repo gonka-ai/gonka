@@ -18,7 +18,11 @@ data class DevshardEscrow(
     val epochIndex: String,
     @SerializedName("app_hash")
     val appHash: String,
-    val settled: Boolean
+    val settled: Boolean,
+    @SerializedName("inference_seal_grace_nonces")
+    val inferenceSealGraceNonces: String? = null,
+    @SerializedName("inference_seal_grace_seconds")
+    val inferenceSealGraceSeconds: String? = null,
 )
 
 data class DevshardMempoolResponse(
@@ -48,13 +52,29 @@ data class DevshardSessionConfig(
     @SerializedName("vote_threshold")
     val voteThreshold: Int,
     @SerializedName("validation_rate")
-    val validationRate: Int
+    val validationRate: Int,
+    @SerializedName("inference_seal_grace_nonces")
+    val inferenceSealGraceNonces: Int? = null,
+    @SerializedName("inference_seal_grace_seconds")
+    val inferenceSealGraceSeconds: Int? = null,
+)
+
+data class DevshardProxyDebugState(
+    val nonce: Long,
+    @SerializedName("live_inferences")
+    val liveInferences: Int,
+    @SerializedName("sealed_inferences")
+    val sealedInferences: Int,
+    @SerializedName("live_status_counts")
+    val liveStatusCounts: Map<String, Int>? = null,
 )
 
 data class DevshardSettlementData(
     @SerializedName("escrow_id")
     val escrowId: String,
-    val version: String,
+    // devshardctl finalize emits "version" (v1 wire compat); inferenced reads the same key.
+    @SerializedName("version")
+    val stateRootAndProtocolVersion: String,
     @SerializedName("state_root")
     val stateRoot: String,
     val nonce: Long,
@@ -137,6 +157,11 @@ enum class DevshardInferenceStatus(val value: Int) {
         fun fromAny(value: Any?): DevshardInferenceStatus {
             return when (value) {
                 is Number -> fromValue(value.toInt())
+                // /v1/state serializes status as a lowercase name (e.g. "finished",
+                // "timed_out"); /v1/inference used the numeric code. Accept both.
+                is String -> values().find { it.name.equals(value, ignoreCase = true) }
+                    ?: value.toIntOrNull()?.let { fromValue(it) }
+                    ?: UNSPECIFIED
                 else -> UNSPECIFIED
             }
         }
@@ -172,4 +197,24 @@ data class DevshardPayloadJSON(
     val maxTokens: Long,
     @SerializedName("started_at")
     val startedAt: Long,
+)
+
+data class DevshardShardStatsDetail(
+    @SerializedName("escrow_id")
+    val escrowId: String,
+    @SerializedName("validation_observability")
+    val validationObservability: DevshardValidationObservability,
+)
+
+data class DevshardValidationObservability(
+    @SerializedName("by_slot")
+    val bySlot: Map<String, DevshardObservabilitySlotStats> = emptyMap(),
+    val totals: DevshardObservabilitySlotStats = DevshardObservabilitySlotStats(),
+)
+
+data class DevshardObservabilitySlotStats(
+    @SerializedName("required_validations")
+    val requiredValidations: Int = 0,
+    @SerializedName("completed_validations")
+    val completedValidations: Int = 0,
 )

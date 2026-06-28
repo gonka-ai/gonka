@@ -3,8 +3,9 @@
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
-BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORM ?= linux/amd64
@@ -85,6 +86,7 @@ define DOCKER_BUILD
 	@echo "--> building inferenced docker image"
 	@echo "platform:  $(PLATFORM)"
 	@echo "GOARCH:    $(GOARCH)"
+	@echo "BLST_PORTABLE: $(BLST_PORTABLE)"
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
 	@echo "GENESIS_OVERRIDES_FILE: $(GENESIS_OVERRIDES_FILE)"
@@ -113,6 +115,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "--> building inferenced docker image"
 	@echo "platform:  $(PLATFORM)"
 	@echo "GOARCH:    $(GOARCH)"
+	@echo "BLST_PORTABLE: $(BLST_PORTABLE)"
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
 	@echo "TAGS:      $(if $(filter 1,$(TESTS)),upgraded,not set)"
@@ -136,13 +139,12 @@ define DOCKER_BUILD_UPGRADE
 	@rm -rf .docker-context
 endef
 
-NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-DOCKER_GOARCH ?= $(NATIVE_ARCH)
+include ../scripts/blst-portable.mk
 
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/$(DOCKER_GOARCH))
-	$(eval GOOS=linux)
+	$(eval PLATFORM=$(DOCKER_PLATFORM))
+	$(eval GOOS=$(DOCKER_GOOS))
 	$(eval GOARCH=$(DOCKER_GOARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/inferenced:$(VERSION))
@@ -189,9 +191,6 @@ build-for-upgrade:
 		echo "inferenced-$(GOARCH).zip $$checksum" >> ../public-html/v2/checksums.txt
 	@echo "--> cleaning up intermediate build output"
 	@rm -rf ./output
-
-build-for-upgrade-arm:
-	@$(MAKE) build-for-upgrade PLATFORM=linux/arm64 GOOS=linux GOARCH=arm64
 
 #################################################
 # CROSS-COMPILATION SECTION

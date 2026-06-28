@@ -8,11 +8,12 @@ import (
 )
 
 // SettlementPayload contains the data needed for on-chain settlement.
-// Mainnet recomputes the state root from HostStats + Fees + RestHash +
-// VersionHash + phase byte; it is not included in the payload.
+// Mainnet recomputes the state root from the payload using
+// HostStats + Fees + RestHash + VersionHash + phase byte.
+// The state root itself is not included in the payload.
 type SettlementPayload struct {
 	EscrowID string
-	Version  string
+	StateRootAndProtocolVersion string
 	Nonce    uint64
 	// Fees is the cumulative amount deducted from escrow balance as protocol fees.
 	Fees       uint64
@@ -23,14 +24,15 @@ type SettlementPayload struct {
 
 // BuildSettlement constructs a SettlementPayload from the final escrow state.
 func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint32][]byte, nonce uint64) (*SettlementPayload, error) {
-	restHash, err := ComputeRestHash(st.Balance, st.Inferences, st.WarmKeys)
+	acc := sealedAccBytes32(st.SealedAcc)
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SettlementPayload{
-		EscrowID:   escrowID,
-		Version:    types.NormalizeSessionVersion(st.Version),
+		EscrowID:                    escrowID,
+		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
 		Nonce:      nonce,
 		Fees:       st.Fees,
 		RestHash:   restHash,
@@ -53,14 +55,14 @@ func VerifySettlement(
 	}
 
 	// 1. Recompute state root using deterministic settlement root preimage.
-	if payload.Version == "" {
-		return nil, fmt.Errorf("empty version")
+	if payload.StateRootAndProtocolVersion == "" {
+		return nil, fmt.Errorf("empty state_root_and_protocol_version")
 	}
 	hostStatsHash, err := ComputeHostStatsHash(payload.HostStats)
 	if err != nil {
 		return nil, fmt.Errorf("compute host stats hash: %w", err)
 	}
-	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
 
 	// 2. Build the signed message: proto(StateSignatureContent{state_root, escrow_id, nonce}).
 	sigContent := &types.StateSignatureContent{
