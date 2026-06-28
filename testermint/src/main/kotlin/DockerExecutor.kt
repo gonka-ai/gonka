@@ -40,7 +40,7 @@ class DockerExecutor(val containerId: String, val config: ApplicationConfig) : C
         val execCmd = if (stdin != null) {
             // Use shell to pass stdin via printf
             val stdinEscaped = stdin.replace("'", "'\\''")
-            val fullCommand = "printf '%s' '$stdinEscaped' | ${args.joinToString(" ")}"
+            val fullCommand = "printf '%s' '$stdinEscaped' | ${args.joinToString(" ") { shellQuote(it) }}"
             dockerClient.execCreateCmd(targetContainerId)
                 .withAttachStdout(true)
                 .withAttachStderr(true)
@@ -68,6 +68,9 @@ class DockerExecutor(val containerId: String, val config: ApplicationConfig) : C
         Logger.trace("Command complete: output={}", output.output)
         return output.output
     }
+
+    private fun shellQuote(arg: String): String =
+        "'" + arg.replace("'", "'\\''") + "'"
 
     private fun refreshContainerId(): String? {
         val candidateNames = setOf(
