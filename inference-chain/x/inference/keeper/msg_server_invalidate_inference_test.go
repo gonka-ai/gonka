@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"context"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -71,7 +72,8 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 	k.SetParticipant(ctx, payer)
 
 	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor))
-	// Inference with non-zero cost
+	// Inference with non-zero cost. EscrowAmount reflects the real settled state
+	// (escrow >= ActualCost), so the refund is capped to the full ActualCost (no-op cap).
 	inferenceID := "refund-no-slash"
 	actualCost := int64(123)
 	k.SetInference(ctx, types.Inference{
@@ -81,6 +83,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_NoSlash(t *testi
 		RequestedBy:     payerAddr,
 		Status:          types.InferenceStatus_FINISHED,
 		ActualCost:      actualCost,
+		EscrowAmount:    actualCost,
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
 		EpochId:         1,
 	})
@@ -148,6 +151,7 @@ func TestInvalidateInference_ClawsBackValidatorShares(t *testing.T) {
 		RequestedBy:     payerAddr,
 		Status:          types.InferenceStatus_VALIDATED,
 		ActualCost:      actualCost,
+		EscrowAmount:    actualCost, // escrow >= cost: cap is a no-op, clawback uses full cost
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
 		EpochId:         1,
 		ValidatedBy:     []string{validatorOneAddr, validatorTwoAddr},
@@ -219,6 +223,7 @@ func TestInvalidateInference_RefundsRequesterAndChargesExecutor_WithSlash(t *tes
 		RequestedBy:     payerAddr,
 		Status:          types.InferenceStatus_FINISHED,
 		ActualCost:      actualCost,
+		EscrowAmount:    actualCost, // escrow >= cost: cap is a no-op
 		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
 		EpochId:         1,
 	})
@@ -440,4 +445,71 @@ func TestInvalidateInference_AlreadyInvalidated_RemovesActiveInvalidations(t *te
 	has, err = k.ActiveInvalidations.Has(ctx, collections.Join(addr, inferenceID))
 	require.NoError(t, err)
 	require.False(t, has)
+}
+
+// TestInvalidateInference_RefundCappedToEscrow_NoDrain is the keeper-level regression for the
+// uncapped-ActualCost finding: with ActualCost (1_000_010_000) >> escrow (11_000), the invalidation
+// refund and the executor debit must both be capped to escrow (CappedActualCost) so the pool can't drain.
+func TestInvalidateInference_RefundCappedToEscrow_NoDrain(t *testing.T) {
+	k, ms, ctx, mocks := setupInvalidateHarness(t)
+
+	params := types.DefaultParams()
+	k.SetParams(ctx, params)
+	require.NoError(t, setEffectiveEpoch(ctx, k, 1, mocks))
+
+	executorAddr := sample.AccAddress()
+	payerAddr := sample.AccAddress()
+
+	const escrow = int64(11_000)
+	const inflatedActualCost = int64(1_000_010_000)
+
+	executor := types.Participant{
+		Index:                        executorAddr,
+		Address:                      executorAddr,
+		Status:                       types.ParticipantStatus_ACTIVE,
+		ConsecutiveInvalidInferences: 0,
+		CurrentEpochStats:            &types.CurrentEpochStats{},
+		CoinBalance:                  0,
+	}
+	k.SetParticipant(ctx, executor)
+	payer := types.Participant{Index: payerAddr, Address: payerAddr, CurrentEpochStats: &types.CurrentEpochStats{}}
+	k.SetParticipant(ctx, payer)
+	k.SetActiveParticipants(ctx, ParticipantsToActive(1, payer, executor))
+
+	// Legacy/inflated state: a started+finished inference whose ActualCost vastly exceeds the
+	// escrow actually collected for it (start with MaxTokens=1 collects 11_000; an uncapped finish
+	// with CompletionTokenCount=MaxAllowedTokens would have persisted ~1e9).
+	inferenceID := "refund-capped-to-escrow"
+	k.SetInference(ctx, types.Inference{
+		Index:           inferenceID,
+		InferenceId:     inferenceID,
+		AssignedTo:      executorAddr,
+		ExecutedBy:      executorAddr,
+		RequestedBy:     payerAddr,
+		Status:          types.InferenceStatus_FINISHED,
+		ActualCost:      inflatedActualCost,
+		EscrowAmount:    escrow,
+		ProposalDetails: &types.ProposalDetails{PolicyAddress: payerAddr},
+		EpochId:         1,
+	})
+
+	var refunded int64
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ sdk.AccAddress, amt sdk.Coins, _ string) error {
+			refunded = amt.AmountOf(types.BaseCoin).Int64()
+			return nil
+		}).Times(1)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
+	mocks.CollateralKeeper.EXPECT().Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	_, err := ms.InvalidateInference(ctx, &types.MsgInvalidateInference{Creator: payerAddr, InferenceId: inferenceID})
+	require.NoError(t, err)
+
+	// Refund is capped to the escrow actually collected, never the inflated ActualCost.
+	require.Equal(t, escrow, refunded, "refund must be capped to EscrowAmount, not the inflated ActualCost")
+	// Executor is debited the same capped amount (consistent two-sided move), not ~1e9.
+	updatedExecutor, ok := k.GetParticipant(ctx, executorAddr)
+	require.True(t, ok)
+	require.Equal(t, -escrow, updatedExecutor.CoinBalance, "executor clawback must equal the capped refund")
 }

@@ -70,7 +70,9 @@ func (k msgServer) refundInvalidatedInference(executor *types.Participant, infer
 
 	// Attempt refund BEFORE modifying executor balance.
 	// If refund fails (e.g. underfunded escrow), don't corrupt state.
-	err = k.IssueRefund(ctx, inference.ActualCost, inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
+	// SECURITY: refund at most the escrow actually collected (CappedActualCost enforces
+	// ActualCost <= EscrowAmount), so an inflated ActualCost can't over-refund the pool.
+	err = k.IssueRefund(ctx, inference.CappedActualCost(), inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
 	if err != nil {
 		k.LogError("Refund failed", types.Validation, "error", err)
 		return err
@@ -114,7 +116,9 @@ func (k msgServer) loadInvalidatedInferenceClawbacks(ctx context.Context, execut
 
 func invalidatedInferenceClawbackAdjustments(inference *types.Inference) ([]calculations.Adjustment, error) {
 	workers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
-	adjustments := calculations.ShareWork(nil, workers, inference.ActualCost)
+	// SECURITY: claw back at most the escrow-backed amount, so the clawback total matches the
+	// (capped) refund above; CappedActualCost enforces ActualCost <= EscrowAmount.
+	adjustments := calculations.ShareWork(nil, workers, inference.CappedActualCost())
 	for _, adjustment := range adjustments {
 		if adjustment.WorkAdjustment < 0 {
 			return nil, errorsmod.Wrapf(types.ErrIllegalState, "invalidated inference clawback for %s cannot be negative: %d", adjustment.ParticipantId, adjustment.WorkAdjustment)

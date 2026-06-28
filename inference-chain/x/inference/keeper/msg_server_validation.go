@@ -454,7 +454,9 @@ func (k msgServer) inferenceIsBeforeClaimsSet(ctx context.Context, inference typ
 
 func (k msgServer) shareWorkWithValidators(ctx sdk.Context, inference types.Inference, msg *types.MsgValidation, executor *types.Participant) error {
 	originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
-	adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
+	// SECURITY: cap work-sharing to the escrow actually collected (CappedActualCost enforces
+	// ActualCost <= EscrowAmount), so an inflated ActualCost can't over-credit and drain the pool.
+	adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.CappedActualCost())
 	if err := k.validateAdjustments(adjustments, msg); err != nil {
 		return err
 	}

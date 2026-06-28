@@ -179,6 +179,12 @@ func ProcessFinishInference(
 	currentInference.ActualCost = actualCost
 	if currentInference.StartProcessed() {
 		escrowAmount := currentInference.EscrowAmount
+		// SECURITY: clamp ActualCost to the escrow actually collected, mirroring the finish-first
+		// path (setEscrowForFinished). Otherwise a start with MaxTokens=1 + a finish with
+		// CompletionTokenCount=MaxAllowedTokens persists ActualCost >> escrow and drains the pool.
+		if currentInference.ActualCost > escrowAmount {
+			currentInference.ActualCost = escrowAmount
+		}
 		if currentInference.ActualCost >= escrowAmount {
 			payments.ExecutorPayment = escrowAmount
 		} else {
