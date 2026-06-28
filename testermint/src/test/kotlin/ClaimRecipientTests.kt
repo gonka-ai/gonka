@@ -152,7 +152,7 @@ class ClaimRecipientTests : TestermintTest() {
         )
 
         private fun setClaimRecipientsArgs(epoch: Long, recipient: String): List<String> {
-            val entriesJson = """[{"epoch":$epoch,"recipient":"$recipient"}]"""
+            val entriesJson = """{"epoch":$epoch,"recipient":"$recipient"}"""
             return listOf(
                 "inference",
                 "set-claim-recipients",
