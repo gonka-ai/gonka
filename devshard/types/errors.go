@@ -11,6 +11,7 @@ var (
 	ErrMultipleStartMsgs     = errors.New("at most one MsgStartInference per diff")
 	ErrSessionFinalizing     = errors.New("session is finalizing: no new inferences")
 	ErrInferenceNotFound     = errors.New("inference not found")
+	ErrInferenceSealed       = errors.New("inference sealed: late validation not accepted")
 	ErrInvalidTransition     = errors.New("invalid status transition")
 	ErrSelfValidation        = errors.New("validator cannot be the executor")
 	ErrWrongExecutorSlot     = errors.New("executor_slot does not match assigned executor")
@@ -40,4 +41,5 @@ var (
 	ErrSessionSettlement     = errors.New("session is in settlement: seeds are final")
 	ErrInvalidGroup          = errors.New("invalid group")
 	ErrEscrowIDMismatch      = errors.New("escrow_id does not match session")
+	ErrNonceLimitExceeded    = errors.New("nonce exceeds chain max_nonce limit")
 )

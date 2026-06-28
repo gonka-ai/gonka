@@ -53,18 +53,23 @@ func MakeGroup(signers []*signing.Secp256k1Signer) []types.SlotAssignment {
 	return group
 }
 
+// TestInferenceSealGraceSeconds is a tiny wall-clock grace for unit tests so
+// prune/seal scenarios never wait on the production default (3600s).
+const TestInferenceSealGraceSeconds uint32 = 1
+
 // DefaultConfig returns a SessionConfig with VoteThreshold = numHosts/2
 // and ValidationRate = 5000 (50%).
 func DefaultConfig(numHosts int) types.SessionConfig {
-	return types.SessionConfig{
-		RefusalTimeout:   60,
-		ExecutionTimeout: 1200,
-		TokenPrice:       1,
-		VoteThreshold:    uint32(numHosts) / 2,
-		ValidationRate:   5000,
-		CreateDevshardFee:  0,
-		FeePerNonce:      0,
-	}
+	return types.NormalizeSessionConfig(types.SessionConfig{
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              uint32(numHosts) / 2,
+		ValidationRate:             5000,
+		CreateDevshardFee:          0,
+		FeePerNonce:                0,
+		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
+	}, numHosts)
 }
 
 func SignDiff(t *testing.T, signer signing.Signer, escrowID string, nonce uint64, txs []*types.DevshardTx) types.Diff {

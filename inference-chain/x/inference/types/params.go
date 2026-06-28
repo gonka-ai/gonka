@@ -94,13 +94,19 @@ const (
 )
 
 const (
-	DefaultDevshardEscrowMinAmount    uint64 = 5_000_000_000
-	DefaultDevshardEscrowMaxAmount    uint64 = 10_000_000_000
-	DefaultDevshardMaxEscrowsPerEpoch uint32 = 100
-	DefaultDevshardGroupSize          uint32 = 16
-	DefaultDevshardTokenPrice         uint64 = 1
-	DefaultDevshardMaxNonce           uint32 = 20_000
-	DefaultDevshardRequestsEnabled    bool   = true
+	DefaultDevshardEscrowMinAmount     uint64 = 5_000_000_000
+	DefaultDevshardEscrowMaxAmount     uint64 = 10_000_000_000
+	DefaultDevshardMaxEscrowsPerEpoch  uint32 = 100
+	DefaultDevshardGroupSize           uint32 = 16
+	DefaultDevshardTokenPrice          uint64 = 1
+	DefaultDevshardMaxNonce            uint32 = 20_000
+	DefaultDevshardRequestsEnabled     bool   = true
+	DefaultDevshardCreateDevshardFee   uint64 = 10_000
+	DefaultDevshardFeePerNonce         uint64 = 1_000
+	DefaultDevshardRefusalTimeout      int64  = 60
+	DefaultDevshardExecutionTimeout    int64  = 1200
+	DefaultDevshardValidationRate      uint32 = 5000
+	DefaultDevshardVoteThresholdFactor uint32 = 50
 
 	DefaultMaintenanceEnabled                         = false
 	DefaultMaintenanceMinScheduleLeadBlocks    uint64 = 100
@@ -110,6 +116,35 @@ const (
 	DefaultMaintenanceCreditCapBlocks          uint64 = 400
 	DefaultMaintenanceCreditEarnPerEpochBlocks uint64 = 20
 )
+
+// DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
+const DefaultSealGraceMultiplier uint32 = 10
+
+// DevshardSealGraceFloor is the floor applied when computing the chain-wide
+// default seal grace. Mirrors devshard/types.minInferenceSealGraceNonces so the two
+// layers agree without an import dependency.
+const DevshardSealGraceFloor uint32 = 20
+
+// DefaultDevshardInferenceSealGraceSeconds is the default wall-clock grace
+// before sealing stale-finished or post-terminal inferences (1 hour). Mirrors
+// devshard/types.DefaultInferenceSealGraceSeconds.
+const DefaultDevshardInferenceSealGraceSeconds uint32 = 3600
+
+// DefaultDevshardAutoSealEveryNNonces is how often the gateway runs auto-seal
+// during Active phase. Mirrors devshard/types.DefaultAutoSealEveryNNonces.
+const DefaultDevshardAutoSealEveryNNonces uint32 = 150
+
+// DefaultDevshardInferenceSealGraceNonces returns the canonical default seal grace
+// nonces value derived from the configured group size. This mirrors
+// devshard/types.DefaultInferenceSealGraceNonces (10 * groupSize, floor 20). It is
+// used at genesis to seed DevshardEscrowParams.DefaultInferenceSealGraceNonces.
+func DefaultDevshardInferenceSealGraceNonces(groupSize uint32) uint32 {
+	grace := groupSize * DefaultSealGraceMultiplier
+	if grace < DevshardSealGraceFloor {
+		grace = DevshardSealGraceFloor
+	}
+	return grace
+}
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
@@ -331,14 +366,23 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 
 func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	return &DevshardEscrowParams{
-		MinAmount:               DefaultDevshardEscrowMinAmount,
-		MaxAmount:               DefaultDevshardEscrowMaxAmount,
-		MaxEscrowsPerEpoch:      DefaultDevshardMaxEscrowsPerEpoch,
-		GroupSize:               DefaultDevshardGroupSize,
-		AllowedCreatorAddresses: nil,
-		TokenPrice:              DefaultDevshardTokenPrice,
-		MaxNonce:                DefaultDevshardMaxNonce,
-		DevshardRequestsEnabled: DefaultDevshardRequestsEnabled,
+		MinAmount:                        DefaultDevshardEscrowMinAmount,
+		MaxAmount:                        DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:               DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:                        DefaultDevshardGroupSize,
+		AllowedCreatorAddresses:          nil,
+		TokenPrice:                       DefaultDevshardTokenPrice,
+		MaxNonce:                         DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled:          DefaultDevshardRequestsEnabled,
+		DefaultInferenceSealGraceNonces:  DefaultDevshardInferenceSealGraceNonces(DefaultDevshardGroupSize),
+		DefaultInferenceSealGraceSeconds: DefaultDevshardInferenceSealGraceSeconds,
+		DefaultAutoSealEveryNNonces:      DefaultDevshardAutoSealEveryNNonces,
+		CreateDevshardFee:                DefaultDevshardCreateDevshardFee,
+		FeePerNonce:                      DefaultDevshardFeePerNonce,
+		RefusalTimeout:                   DefaultDevshardRefusalTimeout,
+		ExecutionTimeout:                 DefaultDevshardExecutionTimeout,
+		ValidationRate:                   DefaultDevshardValidationRate,
+		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
 	}
 }
 
@@ -436,6 +480,18 @@ func (p *DevshardEscrowParams) Validate() error {
 			return fmt.Errorf("devshard_escrow_params.approved_versions: duplicate name %q", v.Name)
 		}
 		seen[v.Name] = struct{}{}
+	}
+	if p.RefusalTimeout <= 0 {
+		return fmt.Errorf("devshard escrow refusal_timeout must be positive")
+	}
+	if p.ExecutionTimeout <= 0 {
+		return fmt.Errorf("devshard escrow execution_timeout must be positive")
+	}
+	if p.ValidationRate > 10000 {
+		return fmt.Errorf("devshard escrow validation_rate (%d) must be <= 10000 basis points", p.ValidationRate)
+	}
+	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor > 100 {
+		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
 	}
 	return nil
 }

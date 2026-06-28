@@ -1,20 +1,23 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version print-devshard-protocol-version versiond-build-docker testapp-server-build-docker
+
+include scripts/blst-portable.mk
 
 VERSION ?= $(shell git describe --always)
+# devshardd link stamp; Testermint VERSIOND_FORCE follows this via build/devshard-version or `make print-devshard-version`.
 DEVSHARD_VERSION ?= dev
+# State-root / settlement protocol tag (not versiond runtime name). See devshard/docs/protocol-version.md.
+DEVSHARD_PROTOCOL_VERSION ?= v2
+
+print-devshard-version:
+	@echo $(DEVSHARD_VERSION)
+
+print-devshard-protocol-version:
+	@echo $(DEVSHARD_PROTOCOL_VERSION)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
 PLATFORM ?= linux/amd64
 GOOS ?= linux
 GOARCH ?= amd64
-UPGRADE_ARCHES ?= amd64 arm64
-ifdef GITHUB_ACTIONS
-# PR-comment integration runs load the reusable workflow from main, so keep
-# upgrade test artifacts on amd64 unless a workflow explicitly overrides this.
-UPGRADE_TEST_ARCHES ?= amd64
-else
-UPGRADE_TEST_ARCHES ?= $(UPGRADE_ARCHES)
-endif
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
@@ -32,16 +35,21 @@ all: build-docker
 build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker testapp-server-build-docker
 
 api-build-docker:
-	@make -C decentralized-api build-docker SET_LATEST=1
+	@make -C decentralized-api build-docker SET_LATEST=1 \
+		BLST_PORTABLE=$(BLST_PORTABLE) \
+		DOCKER_PLATFORM=$(DOCKER_PLATFORM) DOCKER_GOOS=$(DOCKER_GOOS) DOCKER_GOARCH=$(DOCKER_GOARCH)
 
 node-build-docker:
-	@make -C inference-chain build-docker SET_LATEST=1 $(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
+	@make -C inference-chain build-docker SET_LATEST=1 \
+		BLST_PORTABLE=$(BLST_PORTABLE) \
+		DOCKER_PLATFORM=$(DOCKER_PLATFORM) DOCKER_GOOS=$(DOCKER_GOOS) DOCKER_GOARCH=$(DOCKER_GOARCH) \
+		$(if $(GENESIS_OVERRIDES_FILE),GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE),)
 
 mock-server-build-docker:
 	@echo "Building mock-server JAR file..."
 	@cd testermint/mock_server && ./gradlew clean && ./gradlew shadowJar
 	@echo "Building mock-server docker image..."
-	@$(_MOCK_BUILD_CMD) -t inference-mock-server -f testermint/Dockerfile testermint
+	@$(_MOCK_BUILD_CMD) --platform $(DOCKER_PLATFORM) -t inference-mock-server -f testermint/Dockerfile testermint
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
@@ -53,12 +61,12 @@ bridge-build-docker:
 	@make -C bridge build-docker SET_LATEST=1
 
 versiond-build-docker:
-	@echo "Building versiond docker image..."
-	@docker build -t versiond:latest -f versioned/Dockerfile versioned
+	@echo "Building versiond docker image ($(DOCKER_PLATFORM), matches devshardd-build)..."
+	@docker build --platform $(DOCKER_PLATFORM) -t versiond:latest -f versioned/Dockerfile versioned
 
 testapp-server-build-docker:
-	@echo "Building testapp-server docker image..."
-	@docker build -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
+	@echo "Building testapp-server docker image ($(DOCKER_PLATFORM))..."
+	@docker build --platform $(DOCKER_PLATFORM) -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
 release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release
 	@git tag $(TAG_NAME)
@@ -124,24 +132,29 @@ api-local-build:
 	@echo "Building decentralized-api locally..."
 	@cd decentralized-api && go build -mod=mod -o ./build/dapi
 
+DEVSHARD_PROTOCOL_LDFLAGS = -X devshard/types.buildStateRootProtocolVersion=$(DEVSHARD_PROTOCOL_VERSION)
+
 devshardctl-build:
-	@echo "Building devshardctl..."
-	@cd devshard && go build -ldflags "-X main.Version=$(DEVSHARD_VERSION)" -o ../build/devshardctl ./cmd/devshardctl/
+	@echo "Building devshardctl (DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION))..."
+	@cd devshard && go build -ldflags "-X main.Version=$(DEVSHARD_VERSION) $(DEVSHARD_PROTOCOL_LDFLAGS)" -o ../build/devshardctl ./cmd/devshardctl/
 
 devshardd-build:
-	@echo "Building devshardd..."
+	@echo "Building devshardd (DEVSHARD_VERSION=$(DEVSHARD_VERSION) DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION))..."
 	@mkdir -p build
-	@$(_DEVSHARDD_BUILD_CMD) --platform $(PLATFORM) --target builder \
-		--build-arg GOOS=$(GOOS) \
-		--build-arg GOARCH=$(GOARCH) \
+	@$(_DEVSHARDD_BUILD_CMD) --platform $(DOCKER_PLATFORM) --target builder \
+		--build-arg GOOS=$(DOCKER_GOOS) \
+		--build-arg GOARCH=$(DOCKER_GOARCH) \
 		--build-arg BLST_PORTABLE=1 \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
+		--build-arg DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
 		-f decentralized-api/Dockerfile . \
 		-t devshardd-builder:latest -q >/dev/null
 	@CID=$$(docker create devshardd-builder:latest) && \
 		docker cp $$CID:/app/decentralized-api/build/devshardd build/devshardd && \
 		docker rm $$CID >/dev/null
 	@chmod +x build/devshardd
+	@echo "$(DEVSHARD_VERSION)" > build/devshard-version
+	@echo "$(DEVSHARD_PROTOCOL_VERSION)" > build/devshard-protocol-version
 	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
 
 node-local-build:
@@ -208,16 +221,12 @@ build-for-upgrade:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@for arch in $(UPGRADE_ARCHES); do \
-		make -C inference-chain build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-		make -C decentralized-api build-for-upgrade PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-	done
+	@make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 
 build-for-upgrade-tests:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
 	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
 	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
-	@for arch in $(UPGRADE_TEST_ARCHES); do \
-		make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-		make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/$$arch GOOS=linux GOARCH=$$arch; \
-	done
+	@make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64

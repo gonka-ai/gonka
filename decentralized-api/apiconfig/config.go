@@ -91,8 +91,8 @@ type ChainNodeConfig struct {
 	// When unset (zero), the DAPI auto-discovers the correct value at startup
 	// by querying the chain for FeeParams.MinGasPriceNgonka (see
 	// NewInferenceCosmosClient in cosmosclient/cosmosclient.go). This means
-	// hosts upgrading from v0.2.11 to v0.2.12 do not need to update their
-	// config.env — the DAPI picks up the on-chain default automatically when
+	// hosts upgrading between releases do not need to update their config.env —
+	// the DAPI picks up the on-chain default automatically when
 	// cosmovisor restarts it with the new binary.
 	MinGasPriceNgonka int64 `koanf:"min_gas_price_ngonka" json:"min_gas_price_ngonka"`
 }
@@ -248,9 +248,25 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 	return PoCModelConfigCache{}, false
 }
 
-// DevshardVersionsCache holds approved devshard versions synced from chain params.
+// DevshardVersionsCache holds devshard runtime fields synced from DevshardEscrowParams.
 type DevshardVersionsCache struct {
-	Versions []DevshardVersion `json:"versions"`
+	// Versions are approved devshard binaries (`name`, download URL, sha256)
+	// used by versiond/routing policy.
+	Versions                          []DevshardVersion `json:"versions"`
+	// DevshardRequestsEnabled is the live governance kill-switch for host-side
+	// completion/timeout request handling.
+	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
+	// MaxNonce is the chain upper bound for session nonces.
+	MaxNonce                          uint32            `json:"max_nonce"`
+	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).
+	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	// ExecutionTimeout is the live execution timeout used by runtime-config consumers (seconds).
+	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	// ValidationRate is the validation sampling rate in basis points (0..10000).
+	ValidationRate                    uint32            `json:"validation_rate"`
+	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
+	// converted to slot threshold at bind time.
+	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.

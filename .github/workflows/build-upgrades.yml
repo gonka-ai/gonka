@@ -40,4 +40,4 @@ jobs:
           df -h
 
       - name: Run Makefile build
-        run: make build-for-upgrade UPGRADE_ARCHES=amd64
+        run: make build-for-upgrade

@@ -26,12 +26,12 @@ import kotlin.test.assertNotNull
  *
  *  - docker-compose.versiond.yml is included for every pair so each pair runs
  *    a versiond container that boots the locally-built devshardd binary as
- *    version "v0.2.11" (via VERSIOND_OVERRIDE_v0_2_11 + VERSIOND_FORCE).
+ *    version from DEVSHARD_VERSION (via VERSIOND_OVERRIDE_* + VERSIOND_FORCE).
  *  - VERSIOND_SERVICE_NAME=versiond is exported so each pair's proxy emits a
  *    /devshard/ -> versiond_backend location.
- *  - startDevshardProxy is launched with routePrefix="/devshard/v0.2.11" so
- *    devshardctl builds host URLs as proxy/devshard/v0.2.11/sessions/:id/...
- *    nginx strips /devshard/, versiond strips /v0.2.11/, devshardd handles
+ *  - startDevshardProxy uses routePrefix=/devshard/<DEVSHARD_VERSION>/ so
+ *    devshardctl builds host URLs as proxy/devshard/<version>/sessions/:id/...
+ *    nginx strips /devshard/, versiond strips /<version>/, devshardd handles
  *    /sessions/:id/...
  *  - DAPI's in-process HostManager is still mounted on /v1/devshard for the
  *    legacy path; the new test does not exercise it.
@@ -40,7 +40,7 @@ import kotlin.test.assertNotNull
  *    overrides for the tested version.
  */
 class DevshardStandaloneTests : TestermintTest() {
-    private val standaloneTestVersionName = "v0.2.11"
+    private val standaloneTestVersionName = devshardTestVersion()
     private val devshardEscrowModel = defaultModel
 
     private data class PreparedDevsharddArtifact(
@@ -58,24 +58,19 @@ class DevshardStandaloneTests : TestermintTest() {
 
     // Switches the test cluster from "default" to "devshardd via versiond":
     //  - VERSIOND_BINARY_NAME selects the binary versiond launches per child
-    //  - VERSIOND_OVERRIDE_v0_2_11 points at the bind-mounted host binary
+    //  - VERSIOND_OVERRIDE_<version> points at the bind-mounted host binary
     //  - VERSIOND_FORCE makes versiond run that version even though it is
     //    not in the chain's approved_versions list
     //  - VERSIOND_SERVICE_NAME enables the proxy's /devshard/ -> versiond
     //    upstream block
-    private val overrideVersiondEnv = mapOf(
-        "VERSIOND_BINARY_NAME" to "devshardd",
-        "VERSIOND_OVERRIDE_v0_2_11" to "/opt/overrides/devshardd",
-        "VERSIOND_FORCE" to standaloneTestVersionName,
-        "VERSIOND_SERVICE_NAME" to "versiond",
-    )
+    private val overrideVersiondEnv = versiondOverrideEnv(standaloneTestVersionName)
 
     private val stateDrivenVersiondEnv = mapOf(
         "VERSIOND_BINARY_NAME" to "devshardd",
         "VERSIOND_SERVICE_NAME" to "versiond",
     )
 
-    private val overrideRoutePrefix = "/devshard/$standaloneTestVersionName"
+    private val overrideRoutePrefix = devshardVersionedRoutePrefix(standaloneTestVersionName)
     private val devsharddArtifactDockerUrl =
         "http://${GENESIS_KEY_NAME}-devshardd-artifact-server:8080/devshardd.zip"
     private val devsharddArtifactShaUrl = "$devsharddArtifactDockerUrl.sha256"
@@ -92,8 +87,13 @@ class DevshardStandaloneTests : TestermintTest() {
         env = overrideVersiondEnv,
     )
 
-    private val overrideLongEpochConfig = versiondConfig(
-        genesisSpec = createSpec(epochLength = 40, epochShift = 10).merge(devshardNoRestrictionsSpec),
+    private val streamingLongEpochConfig = versiondConfig(
+        genesisSpec = createSpec(epochLength = 20, epochShift = 10).merge(devshardNoRestrictionsSpec),
+        env = overrideVersiondEnv,
+    )
+
+    private val parallelLongEpochConfig = versiondConfig(
+        genesisSpec = createSpec(epochLength = 25, epochShift = 10).merge(devshardNoRestrictionsSpec),
         env = overrideVersiondEnv,
     )
 
@@ -202,6 +202,7 @@ class DevshardStandaloneTests : TestermintTest() {
     fun `devshard inference e2e with settlement via devshardd`() {
         val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
         genesis.waitForNextEpoch()
+        waitForOverrideVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -233,7 +234,6 @@ class DevshardStandaloneTests : TestermintTest() {
                 user,
                 escrowAmount,
                 requireCompletedValidations = false,
-                expectedVersion = standaloneTestVersionName,
             )
         } finally {
             genesis.stopDevshardProxy(escrowId)
@@ -242,7 +242,7 @@ class DevshardStandaloneTests : TestermintTest() {
 
     @Test
     fun `devshard streaming inference e2e with settlement via devshardd`() {
-        val (cluster, genesis) = initCluster(config = overrideConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = streamingLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
         waitForOverrideVersionedHealth(genesis)
 
@@ -279,19 +279,14 @@ class DevshardStandaloneTests : TestermintTest() {
                 user,
                 escrowAmount,
                 requireCompletedValidations = false,
-                expectedVersion = standaloneTestVersionName,
             )
 
             logSection("Verifying inference statuses")
-            for (inferenceId in 1..numInferences) {
-                val inference = cosmosJson.fromJson(
-                    genesis.getDevshardInferenceState(handle.proxyUrl, inferenceId),
-                    DevshardInferencePayload::class.java,
-                )
-                logSection("Inference $inferenceId: $inference")
-                assertNotNull(inference)
-                assertThat(inference.status).isEqualTo(DevshardInferenceStatus.FINISHED)
-            }
+            val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+                .values.count { it.status == DevshardInferenceStatus.FINISHED }
+            assertThat(finished)
+                .describedAs("finished devshardd inferences")
+                .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
             genesis.stopDevshardProxy(escrowId)
         }
@@ -300,7 +295,7 @@ class DevshardStandaloneTests : TestermintTest() {
     @Test
     fun `parallel devshard sessions with isolated settlement via devshardd`() {
         val sessionCount = 6
-        val (cluster, genesis) = initCluster(config = overrideLongEpochConfig, reboot = true)
+        val (cluster, genesis) = initCluster(config = parallelLongEpochConfig, reboot = true)
         genesis.waitForNextEpoch()
 
         cluster.stubDevshardChatResponse()
@@ -358,24 +353,42 @@ class DevshardStandaloneTests : TestermintTest() {
                 }.awaitAll()
             }
 
+            logSection("Syncing devshard hosts before validation observability")
+            handles.forEach { handle ->
+                genesis.syncDevshardProxyHosts(handle.proxyUrl)
+            }
+
+            logSection("Waiting for validation observability on active escrows")
+            sessions.forEach { session ->
+                genesis.waitForDevshardValidationObservability(
+                    session.escrowId,
+                    minCompleted = 1,
+                    routePrefix = overrideRoutePrefix,
+                )
+            }
+
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
                 val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
                 assertThat(result.parsed.escrowId)
                     .withFailMessage("Escrow ID mismatch for ${session.keyName}")
                     .isEqualTo(session.escrowId.toString())
-                assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
+                assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
                 assertThat(result.parsed.hostStats).isNotEmpty()
                 assertThat(result.parsed.signatures).isNotEmpty()
-                assertThat(result.parsed.hostStats.sumOf { it.completedValidations }).isGreaterThan(0)
+                val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
+                assertThat(obs.validationObservability.totals.completedValidations)
+                    .withFailMessage("validation observability for escrow ${session.escrowId}")
+                    .isGreaterThan(0)
 
                 val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
                 assertThat(settleResp.code)
                     .withFailMessage("Settlement failed for escrow ${session.escrowId}")
                     .isEqualTo(0)
                 val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
-                assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-                    .isEqualTo(standaloneTestVersionName)
+                assertThat(
+                    settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
+                ).isEqualTo(devshardStateRootProtocolVersion())
 
                 val escrow = genesis.node.queryDevshardEscrow(session.escrowId)
                 assertThat(escrow.escrow!!.settled)
@@ -436,7 +449,7 @@ class DevshardStandaloneTests : TestermintTest() {
 
             logSection("Verifying settlement data")
             assertThat(result.parsed.escrowId).isEqualTo("$escrowId")
-            assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
+            assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
             assertThat(result.parsed.nonce).isGreaterThan(0)
             assertThat(result.parsed.hostStats).isNotEmpty()
             assertThat(result.parsed.signatures).isNotEmpty()
@@ -445,17 +458,21 @@ class DevshardStandaloneTests : TestermintTest() {
             val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = user.keyName)
             assertThat(settleResp.code).isEqualTo(0)
             val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
-            assertThat(settleEvent.attributes.firstOrNull { it.key == "version" }?.value)
-                .isEqualTo(standaloneTestVersionName)
+            assertThat(
+                settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
+            ).isEqualTo(devshardStateRootProtocolVersion())
 
             logSection("Verifying escrow settled")
             val escrow = genesis.node.queryDevshardEscrow(escrowId)
             assertThat(escrow.escrow!!.settled).isTrue()
 
             logSection("Verifying inference status")
-            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle, numInferences))
+            val inference = assertNotNull(genesis.findChallengedDevshardInference(handle))
             logSection("Inference: $inference")
-            assertThat(inference.status).isEqualTo(DevshardInferenceStatus.CHALLENGED)
+            assertThat(inference.status).isIn(
+                DevshardInferenceStatus.CHALLENGED,
+                DevshardInferenceStatus.INVALIDATED,
+            )
             assertThat(inference.votesInvalid).isNotZero()
         } finally {
             genesis.stopDevshardProxy(escrowId)

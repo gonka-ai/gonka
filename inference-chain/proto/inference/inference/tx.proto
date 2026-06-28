@@ -499,7 +499,7 @@ message MsgSettleDevshardEscrow {
   option (cosmos.msg.v1.signer) = "settler";
   string settler = 1;
   uint64 escrow_id = 2;
-  string version = 9;
+  string state_root_and_protocol_version = 9;
   bytes state_root = 3;
   uint64 nonce = 4;
   bytes rest_hash = 5;
