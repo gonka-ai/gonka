@@ -678,17 +678,23 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
-    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName()): TxResponse =
+    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName(), node: String? = null): TxResponse =
         wrapLog("setClaimRecipients", true) {
+            val nodeArgs = node?.let { listOf("--node", it) } ?: emptyList()
             val finalArgs = listOf(config.execName, "tx", "inference", "set-claim-recipients", entriesJson) +
-                getTransactionArgs(from) + listOf("--output", "json")
+                getTransactionArgs(from) + nodeArgs + listOf("--output", "json")
             val command = if (passwordInjection != null) {
                 "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
             } else {
                 finalArgs.joinToString(" ") { shellQuote(it) }
             }
             val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
-            cosmosJson.fromJson(output, TxResponse::class.java)
+            val txResponse = cosmosJson.fromJson(output, TxResponse::class.java)
+            if (txResponse.code == 0) {
+                waitForTxProcessed(txResponse.txhash)
+            } else {
+                txResponse
+            }
         }
 
     private fun getTransactionArgs(from: String): List<String> = listOf(

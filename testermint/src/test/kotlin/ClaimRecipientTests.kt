@@ -117,7 +117,10 @@ class ClaimRecipientTests : TestermintTest() {
             genesis.node.waitForNextBlock(2)
 
             logSection("Configure recipient for inactive participant epoch $targetEpoch")
-            val setRecipient = consumer.pair.node.setClaimRecipients(claimRecipientsJson(targetEpoch, recipient))
+            val setRecipient = consumer.pair.node.setClaimRecipients(
+                claimRecipientsJson(targetEpoch, recipient),
+                node = "tcp://genesis-node:26657"
+            )
             assertThat(setRecipient).isSuccess()
             assertThat(genesis.node.listClaimRecipients(participant).entries)
                 .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
