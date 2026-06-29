@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -47,11 +48,65 @@ func TestRetireRuntimeDefersWhileRequestsInFlight(t *testing.T) {
 	require.False(t, g.retireRuntime("12", "busy"))
 	_, stillRegistered := g.runtimes["12"]
 	require.True(t, stillRegistered, "busy runtime must stay registered")
+	require.True(t, rt.retirePending.Load(), "deferred retire must record its intent")
+	require.Equal(t, "busy", rt.retireReason)
 
 	rt.activeRequests.Store(0)
 	require.True(t, g.retireRuntime("12", "drained"))
 	_, stillRegistered = g.runtimes["12"]
 	require.False(t, stillRegistered)
+}
+
+// TestReleaseRuntimeRetiresAfterDrain: a retire deferred while busy fires once
+// the last request drains through releaseRuntime.
+func TestReleaseRuntimeRetiresAfterDrain(t *testing.T) {
+	g, rt := newRetireTestGateway("12")
+	rt.activeRequests.Store(1)
+
+	require.False(t, g.retireRuntime("12", "balance exhausted"))
+	_, stillRegistered := g.runtimes["12"]
+	require.True(t, stillRegistered, "busy runtime must stay registered")
+
+	g.releaseRuntime(rt, 0)
+
+	_, stillRegistered = g.runtimes["12"]
+	require.False(t, stillRegistered, "drained runtime must be retired by releaseRuntime")
+	require.Empty(t, g.runtimeOrder)
+}
+
+// TestReleaseRuntimeRetiresWithOnlyRetirePending exercises the retire branch in
+// isolation: only retirePending set (no settlement), drain → retire.
+func TestReleaseRuntimeRetiresWithOnlyRetirePending(t *testing.T) {
+	g, rt := newRetireTestGateway("12")
+	rt.activeRequests.Store(1)
+	rt.retireReason = "balance exhausted"
+	rt.retirePending.Store(true)
+
+	g.releaseRuntime(rt, 0)
+
+	_, stillRegistered := g.runtimes["12"]
+	require.False(t, stillRegistered, "retire branch must fire on drain")
+	require.Empty(t, g.runtimeOrder)
+}
+
+// TestReleaseRuntimeDefersWhileRequestsRemain: while remaining != 0 nothing
+// fires; settled stays 0 until the last request drains. Uses settlementPending
+// because scheduleAutoSettlement fires regardless of the live count, so a
+// broken guard leaks as settled>0 (retire would self-defer and hide it).
+func TestReleaseRuntimeDefersWhileRequestsRemain(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	g.reserveRuntime(rt, 1)
+	g.reserveRuntime(rt, 1)
+	rt.settlementReason = "low_balance"
+	rt.settlementPending.Store(true)
+
+	g.releaseRuntime(rt, 1) // remaining == 1 → quiet
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+
+	g.releaseRuntime(rt, 1) // remaining == 0 → settles once
+	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
 // TestRetireRotatedDevshardRetiresWithoutSettlement covers the no-settle

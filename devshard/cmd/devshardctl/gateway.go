@@ -91,6 +91,11 @@ type devshardRuntime struct {
 	settlementPending atomic.Bool
 	settlementReason  string
 
+	// retirePending marks a runtime whose retirement was deferred because a
+	// request was still in flight;
+	retirePending atomic.Bool
+	retireReason  string
+
 	activeConfigured bool
 }
 
@@ -1549,9 +1554,19 @@ func (g *Gateway) releaseRuntime(rt *devshardRuntime, inputTokens int64) {
 	// active=false (set during enqueue) blocks new reservations, so the count
 	// only drains downward — remaining==0 is the exact "last request finished"
 	// edge. scheduleAutoSettlement dedups, so a double-fire is harmless.
-	if remaining == 0 && rt.settlementPending.Load() {
+	if remaining != 0 {
+		return
+	}
+
+	if rt.settlementPending.Load() {
 		log.Printf("settlement_drain_complete escrow=%s reason=%s", rt.id, rt.settlementReason)
 		g.scheduleAutoSettlement(rt.id, rt.settlementReason)
+		return
+	}
+
+	if rt.retirePending.Load() {
+		log.Printf("runtime_retire_drain_complete escrow=%s reason=%s", rt.id, rt.retireReason)
+		g.retireRuntime(rt.id, rt.retireReason)
 	}
 }
 
@@ -3282,30 +3297,42 @@ func removeRuntime(runtimes []*devshardRuntime, id string) []*devshardRuntime {
 // releasing its user session and the per-runtime SQLite handles that session owns.
 func (g *Gateway) retireRuntime(id, reason string) bool {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.retireRuntimeLocked(id, reason)
-}
-
-// retireRuntimeLocked is retireRuntime's body; callers must already hold g.mu.
-func (g *Gateway) retireRuntimeLocked(id, reason string) bool {
-	rt, ok := g.runtimes[id]
-	if !ok {
+	rt := g.retireRuntimeLocked(id, reason)
+	g.mu.Unlock()
+	if rt == nil {
 		return false
 	}
+	// Close the per-runtime SQLite store outside g.mu: it is disk I/O and must
+	// not block other gateway operations that contend for the lock.
+	if err := rt.close(); err != nil {
+		log.Printf("runtime_retire_close_error escrow=%s reason=%q error=%v", id, reason, err)
+	}
+	log.Printf("runtime_retired escrow=%s reason=%q", id, reason)
+	return true
+}
+
+// retireRuntimeLocked removes the runtime from the registry and returns it so
+// the caller can close it outside the lock. It returns nil when nothing was
+// retired: the runtime is unknown, or its retirement was deferred because
+// requests are still in flight. Callers must hold g.mu.
+func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		log.Printf("runtime_retire_skipped escrow=%s reason=%q cause=not_registered", id, reason)
+		return nil
+	}
 	if inFlight := rt.activeRequests.Load(); inFlight > 0 {
+		rt.retireReason = reason
+		rt.retirePending.Store(true)
 		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d", id, reason, inFlight)
-		return false
+		return nil
 	}
 	delete(g.runtimes, id)
 	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
 	if g.capacity != nil {
 		g.capacity.RemoveEscrow(id)
 	}
-	if err := rt.close(); err != nil {
-		log.Printf("runtime_retire_close_error escrow=%s reason=%q error=%v", id, reason, err)
-	}
-	log.Printf("runtime_retired escrow=%s reason=%q", id, reason)
-	return true
+	return rt
 }
 
 func (g *Gateway) sortRuntimeOrderLocked() {
@@ -3332,8 +3359,8 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 		rt.proxy.redundancy.onEscrowMissing = func() {
 			go g.escrowChecker.TriggerCheck(escrowID, func() {
 				g.deactivateDevshardByID(escrowID)
- 				// Escrow no longer exists on chain -- nothing to settle.
- 				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+				// Escrow no longer exists on chain -- nothing to settle.
+				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
 			})
 		}
 	}
