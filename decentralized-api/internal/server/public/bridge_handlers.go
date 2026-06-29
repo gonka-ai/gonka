@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	cosmos_client "decentralized-api/cosmosclient"
+	"errors"
 
 	"fmt"
 	"log/slog"
@@ -18,6 +19,23 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
+)
+
+// ErrBridgeQueueFull is the single sentinel that signals back-pressure: the
+// per-chain out-of-order buffer is full, so the block cannot be accepted right
+// now. The admin POST handler maps ONLY this error to HTTP 503 so Geth's
+// sendRangeDirectly stops and resends later; no block is ever dropped while
+// reporting success.
+var ErrBridgeQueueFull = errors.New("Bridge: Queue is full")
+
+// Bridge commit-confirmation tuning. Confirmation is an index-independent
+// module-state poll via the already-deployed BridgeTransaction query (no chain
+// upgrade required), bounded so the drain never blocks forever on a receipt that
+// is not (yet) recorded; on deadline the block is left in the queue and retried
+// on the next POST.
+const (
+	bridgeConfirmTimeout      = 60 * time.Second
+	bridgeConfirmPollInterval = 2 * time.Second
 )
 
 // minBlocksToBootstrap is the number of blocks we buffer on a fresh (uninitialized)
@@ -40,6 +58,7 @@ type BridgeQueue struct {
 	pendingBlocks map[string]*BridgeBlock // Key: "chain:blockNumber"
 	latestBlocks  map[string]uint64       // Key: "chain" -> latest processed block number (in memory)
 	lock          sync.RWMutex            // Protects both maps (RWMutex: handshake GET reads under RLock)
+	drainMu       sync.Mutex              // Serializes drains; held WITHOUT the data lock during network I/O
 	recorder      cosmosclient.CosmosMessageClient
 	db            *sql.DB
 }
@@ -92,10 +111,10 @@ func NewBlockQueue(recorder cosmosclient.CosmosMessageClient, db *sql.DB) *Bridg
 		defer cancel()
 		states, err := apiconfig.LoadAllBridgeLatestBlocks(ctx, db)
 		if err != nil {
-			slog.Error("Failed to load bridge states at startup", "err", err)
+			slog.Error("Bridge: Failed to load bridge states at startup", "err", err)
 		} else {
 			q.latestBlocks = states
-			slog.Info("Loaded bridge states at startup", "states", states)
+			slog.Info("Bridge: Loaded bridge states at startup", "states", states)
 		}
 	}
 
@@ -112,27 +131,45 @@ func (q *BridgeQueue) GetLatestBlock(chain string) (uint64, bool) {
 	return v, ok
 }
 
-// AddBlock adds a block and processes it synchronously if it is the next in
-// sequence. It enforces a strict sequential invariant (latest+1) per chain.
-// Returns the block number echoed back, or an error to signal a fail-closed state
-// (the caller must surface this as HTTP 500 so Geth halts and retries).
+// AddBlock is a receipt-ACK: it accepts a block into the queue (ACCEPT phase,
+// under the data lock) and then triggers the drain (DRAIN phase, under drainMu
+// with NO data lock held during network I/O). The returned error means ONLY that
+// the block could not be accepted:
+//   - malformed input (block-number parse / bootstrap persistence failure), or
+//   - back-pressure (ErrBridgeQueueFull, buffer full).
+//
+// Every received outcome (buffered, duplicate, bootstrapping) returns
+// (blockNumber, nil). Commit success/failure is NOT reported through this call;
+// it is owned by the drain, which advances `latest` only after every receipt of a
+// block is confirmed recorded on-chain.
 func (q *BridgeQueue) AddBlock(block BridgeBlock) (string, error) {
+	if err := q.accept(block); err != nil {
+		return "", err
+	}
+	q.drain(block.OriginChain)
+	return block.BlockNumber, nil
+}
+
+// accept performs the ACCEPT phase under the data lock only: parse/validate,
+// bootstrap, dedup, buffer, and back-pressure. It performs NO network I/O. The
+// only quick disk write here is the bootstrap origin commit (SQLite), which is
+// not network I/O and must be consistent with the in-memory bootstrap value.
+func (q *BridgeQueue) accept(block BridgeBlock) error {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	blockNum, err := strconv.ParseUint(block.BlockNumber, 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("invalid block number %q: %w", block.BlockNumber, err)
+		return fmt.Errorf("Bridge: Invalid block number %q: %w", block.BlockNumber, err)
 	}
 
 	latest, exists := q.latestBlocks[block.OriginChain]
-	justBootstrapped := false
 
 	// Case A: Uninitialized chain (bootstrapping / first run).
 	if !exists {
 		key := fmt.Sprintf("%s:%d", block.OriginChain, blockNum)
 		q.pendingBlocks[key] = &block
-		slog.Info("Buffered block during bootstrapping", "chain", block.OriginChain, "block", blockNum)
+		slog.Info("Bridge: Buffered block during bootstrapping", "chain", block.OriginChain, "block", blockNum)
 
 		// Count buffered blocks for this chain.
 		var chainBlocks []uint64
@@ -146,9 +183,9 @@ func (q *BridgeQueue) AddBlock(block BridgeBlock) (string, error) {
 
 		// Wait until we have enough blocks to establish correct ordering.
 		if len(chainBlocks) < minBlocksToBootstrap {
-			slog.Info("Awaiting more blocks to bootstrap bridge state",
+			slog.Info("Bridge: Awaiting more blocks to bootstrap bridge state",
 				"chain", block.OriginChain, "count", len(chainBlocks), "target", minBlocksToBootstrap)
-			return block.BlockNumber, nil
+			return nil
 		}
 
 		// Sort to find the minimum block number.
@@ -160,72 +197,91 @@ func (q *BridgeQueue) AddBlock(block BridgeBlock) (string, error) {
 		if minBlock > 0 {
 			bootstrapVal = minBlock - 1
 		}
-		slog.Info("Bootstrapping bridge state from buffered blocks", "chain", block.OriginChain, "val", bootstrapVal)
+		slog.Info("Bridge: Bootstrapping bridge state from buffered blocks", "chain", block.OriginChain, "val", bootstrapVal)
 
-		// Commit the bootstrapped origin immediately, BEFORE processing any block.
-		// If the first block (latest+1) later fails on Cosmos, the chain is already
+		// Commit the bootstrapped origin immediately, BEFORE draining any block.
+		// If the first block (latest+1) later fails to commit, the chain is already
 		// marked initialized at `latest`, so Geth's retry is recognized as latest+1
 		// rather than re-entering the bootstrapping buffer loop.
 		if err := apiconfig.SetBridgeLatestBlock(context.Background(), q.db, block.OriginChain, bootstrapVal); err != nil {
-			return "", fmt.Errorf("failed to bootstrap SQLite state: %w", err)
+			return fmt.Errorf("Bridge: failed to bootstrap SQLite state: %w", err)
 		}
 		q.latestBlocks[block.OriginChain] = bootstrapVal
-		latest = bootstrapVal
-		justBootstrapped = true
+		// minBlock = latest+1 is already buffered; the drain (started by AddBlock)
+		// will pick it up at latest+1.
+		return nil
 	}
 
 	// Case B: Initialized-chain guards.
-	// NOTE (C3): skip these when we just bootstrapped. minBlock = latest+1 is already
-	// buffered, so we go straight to the drain loop below. Re-applying the out-of-order
-	// guard to the (arbitrary) triggering block would stall the queue at `latest`.
-	if !justBootstrapped {
-		if blockNum <= latest {
-			slog.Info("Discarding duplicate block", "block", blockNum, "latest", latest)
-			return block.BlockNumber, nil
-		}
-		if blockNum > latest+1 {
-			// Out-of-order: buffer (enforce per-chain cap, M3) and wait.
-			if q.countPendingForChain(block.OriginChain) >= maxBufferedBlocksPerChain {
-				slog.Warn("Dropping out-of-order block: per-chain buffer cap reached",
-					"chain", block.OriginChain, "block", blockNum, "cap", maxBufferedBlocksPerChain)
-				return block.BlockNumber, nil
-			}
-			key := fmt.Sprintf("%s:%d", block.OriginChain, blockNum)
-			q.pendingBlocks[key] = &block
-			slog.Info("Buffered out-of-order block", "block", blockNum, "expected", latest+1)
-			return block.BlockNumber, nil
-		}
-		// Sequential: ensure the incoming block is buffered for the unified drain.
-		q.pendingBlocks[fmt.Sprintf("%s:%d", block.OriginChain, blockNum)] = &block
+	if blockNum <= latest {
+		slog.Info("Bridge: Discarding duplicate block", "block", blockNum, "latest", latest)
+		return nil
 	}
+	if blockNum > latest+1 {
+		// Out-of-order: enforce the per-chain cap as BACK-PRESSURE (never drop).
+		// A full buffer returns ErrBridgeQueueFull -> 503, so Geth stops and resends
+		// later; back-pressure self-clears as the drain confirms blocks and frees
+		// space. This is the ONLY place this sentinel is returned.
+		if q.countPendingForChain(block.OriginChain) >= maxBufferedBlocksPerChain {
+			return fmt.Errorf("%w: chain=%s pending=%d cap=%d",
+				ErrBridgeQueueFull, block.OriginChain,
+				q.countPendingForChain(block.OriginChain), maxBufferedBlocksPerChain)
+		}
+		key := fmt.Sprintf("%s:%d", block.OriginChain, blockNum)
+		q.pendingBlocks[key] = &block
+		slog.Info("Bridge: Buffered out-of-order block", "block", blockNum, "expected", latest+1)
+		return nil
+	}
+	// Sequential: buffer the incoming block for the unified drain.
+	q.pendingBlocks[fmt.Sprintf("%s:%d", block.OriginChain, blockNum)] = &block
+	return nil
+}
 
-	// Drain consecutive blocks starting at latest+1 (NOT at the incoming blockNum).
-	currBlockNum := latest + 1
+// drain commits buffered blocks from latest+1 in strict sequential order. It is
+// serialized by drainMu (one drain at a time) and never holds the data lock
+// across network I/O: the data lock is taken only for quick in-memory reads
+// (peek latest+1) and the advance/delete write. A block whose receipts are not
+// all confirmed is left in the queue and retried on the next POST's drain.
+func (q *BridgeQueue) drain(chain string) {
+	q.drainMu.Lock()
+	defer q.drainMu.Unlock()
+
+	ctx := context.Background()
 	for {
-		key := fmt.Sprintf("%s:%d", block.OriginChain, currBlockNum)
+		// Quick read under the data lock: copy the next block pointer out.
+		q.lock.RLock()
+		latest := q.latestBlocks[chain]
+		key := fmt.Sprintf("%s:%d", chain, latest+1)
 		nextBlock, ok := q.pendingBlocks[key]
+		q.lock.RUnlock()
 		if !ok {
-			break
+			return
 		}
 
-		slog.Info("Processing sequential block", "chain", nextBlock.OriginChain, "block", nextBlock.BlockNumber)
-		if err := q.processBlockReceipts(nextBlock); err != nil {
-			// Fail-closed: halt pipeline and propagate error, leaving the queue
-			// unmodified and uncommitted so the block is retried in the same state.
-			return "", err
+		slog.Info("Bridge: Processing sequential block", "chain", chain, "block", nextBlock.BlockNumber)
+
+		// Network I/O with NO lock held: broadcast + confirm each receipt.
+		if err := q.processBlockReceipts(ctx, nextBlock); err != nil {
+			// Not (yet) confirmed on-chain: leave the block buffered, do NOT advance
+			// latest, do NOT surface to the POST. Retried on the next POST's drain.
+			slog.Warn("Bridge: Block not yet committed; leaving in queue",
+				"chain", chain, "block", latest+1, "err", err)
+			return
 		}
 
-		// Commit progress to SQLite and update in-memory state.
-		if err := apiconfig.SetBridgeLatestBlock(context.Background(), q.db, block.OriginChain, currBlockNum); err != nil {
-			return "", fmt.Errorf("failed to save latest block: %w", err)
+		// Quick write under the data lock: advance latest (SQLite + memory) and
+		// delete the committed block.
+		q.lock.Lock()
+		if err := apiconfig.SetBridgeLatestBlock(ctx, q.db, chain, latest+1); err != nil {
+			q.lock.Unlock()
+			slog.Error("Bridge: Failed to persist latest block; not advancing latest pointer",
+				"chain", chain, "block", latest+1, "err", err)
+			return
 		}
-		q.latestBlocks[block.OriginChain] = currBlockNum
-
+		q.latestBlocks[chain] = latest + 1
 		delete(q.pendingBlocks, key)
-		currBlockNum++
+		q.lock.Unlock()
 	}
-
-	return block.BlockNumber, nil
 }
 
 // countPendingForChain returns the number of buffered blocks for a chain.
@@ -259,31 +315,55 @@ func (q *BridgeQueue) GetQueueSize() int {
 	return len(q.pendingBlocks)
 }
 
-// processBlockReceipts processes every receipt in a block, returning the first error.
-func (q *BridgeQueue) processBlockReceipts(block *BridgeBlock) error {
+// processBlockReceipts commits every receipt in a block. It returns success only
+// when ALL receipts are confirmed recorded on-chain; any unconfirmed receipt
+// returns an error, which the drain turns into log-and-leave-in-queue.
+func (q *BridgeQueue) processBlockReceipts(ctx context.Context, block *BridgeBlock) error {
 	for _, receipt := range block.Receipts {
-		if err := q.processReceipt(receipt, *block); err != nil {
+		if err := q.commitReceipt(ctx, receipt, *block); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// processReceipt handles an individual receipt by submitting a MsgBridgeExchange to
-// Cosmos. It returns any error so the synchronous pipeline can fail closed.
-func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) error {
-	slog.Info("Processing receipt",
+// commitReceipt sends a receipt optimistically (no pre-check) and then treats an
+// index-independent module-state read as the AUTHORITY for whether it is
+// committed. The chain's "already validated" dedup response is treated as success
+// (so re-sent blocks make forward progress instead of stalling on dedup errors).
+func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, block BridgeBlock) error {
+	msg, err := q.buildBridgeExchangeMsg(receipt, block)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("Bridge: Committing receipt",
 		"chain", block.OriginChain,
 		"contract", receipt.ContractAddress,
-		"owner", receipt.OwnerAddress,
-		"publicKey", receipt.OwnerPubKey,
+		"owner", msg.OwnerAddress,
 		"amount", receipt.Amount,
 		"blockNumber", block.BlockNumber,
 		"receiptIndex", receipt.ReceiptIndex)
 
+	// 1. Send optimistically. "already recorded by us" is success, not failure;
+	// any other error is uncertain -> stop and retry on the next POST. We do NOT
+	// rely on the broadcast's own nil (broadcastMessage can swallow Code != 0);
+	// the confirmation read below is the authority.
+	if err := q.recorder.BridgeExchange(msg); err != nil && !isAlreadyRecorded(err) {
+		return fmt.Errorf("Bridge: Exchange submit not confirmable: %w", err)
+	}
+
+	// 2. Confirm via index-independent state read (bounded poll).
+	return q.confirmReceiptRecorded(ctx, msg)
+}
+
+// buildBridgeExchangeMsg builds the MsgBridgeExchange for a receipt, deriving the
+// owner's Cosmos address from its public key. The same content fields feed the
+// confirmation query, so the on-chain content hash matches exactly.
+func (q *BridgeQueue) buildBridgeExchangeMsg(receipt BridgeReceipt, block BridgeBlock) (*types.MsgBridgeExchange, error) {
 	cosmosAddress, err := cosmos_client.PubKeyToAddress(receipt.OwnerPubKey)
 	if err != nil {
-		return fmt.Errorf("failed to derive Cosmos address from public key %q: %w", receipt.OwnerPubKey, err)
+		return nil, fmt.Errorf("Bridge: Failed to derive Cosmos address from public key %q: %w", receipt.OwnerPubKey, err)
 	}
 
 	ownerPubKey := receipt.OwnerPubKey
@@ -291,7 +371,7 @@ func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) e
 		ownerPubKey = "0x" + ownerPubKey
 	}
 
-	msg := &types.MsgBridgeExchange{
+	return &types.MsgBridgeExchange{
 		Validator:       q.recorder.GetAccountAddress(),
 		OriginChain:     block.OriginChain,
 		ContractAddress: receipt.ContractAddress,
@@ -301,12 +381,86 @@ func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) e
 		BlockNumber:     block.BlockNumber,
 		ReceiptIndex:    receipt.ReceiptIndex,
 		ReceiptsRoot:    block.ReceiptsRoot,
-	}
+	}, nil
+}
 
-	if err := q.recorder.BridgeExchange(msg); err != nil {
-		return fmt.Errorf("cosmos transaction failed: %w", err)
+// confirmReceiptRecorded polls the chain (via the already-deployed, index-
+// independent BridgeTransaction query) until our validator's confirmation for
+// this exact receipt content is present, or a bounded deadline elapses. A
+// deadline is "uncertain" -> the receipt is left uncommitted and retried on the
+// next POST's drain.
+func (q *BridgeQueue) confirmReceiptRecorded(ctx context.Context, msg *types.MsgBridgeExchange) error {
+	deadline := time.Now().Add(bridgeConfirmTimeout)
+	for {
+		recorded, err := q.receiptRecorded(ctx, msg)
+		if err == nil && recorded {
+			return nil
+		}
+		if err != nil {
+			slog.Warn("Bridge: Confirmation query failed; will retry",
+				"blockNumber", msg.BlockNumber, "receiptIndex", msg.ReceiptIndex, "err", err)
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Bridge: Receipt not confirmed within %s: chain=%s block=%s receiptIndex=%s",
+				bridgeConfirmTimeout, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(bridgeConfirmPollInterval):
+		}
 	}
-	return nil
+}
+
+// receiptRecorded reports whether our validator's confirmation for this exact
+// receipt content is present in chain state. It uses the existing
+// BridgeTransaction query (filtered by chain/block/receiptIndex) and then matches
+// the remaining content fields, so a conflicting transaction (same receipt
+// location, different content) cannot be mistaken for ours.
+func (q *BridgeQueue) receiptRecorded(ctx context.Context, msg *types.MsgBridgeExchange) (bool, error) {
+	txs, err := q.recorder.BridgeTransactionsByReceipt(ctx, msg.OriginChain, msg.BlockNumber, msg.ReceiptIndex)
+	if err != nil {
+		return false, err
+	}
+	for _, tx := range txs {
+		if !bridgeTxMatchesMsg(tx, msg) {
+			continue
+		}
+		for _, v := range tx.Validators {
+			if v == msg.Validator {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// bridgeTxMatchesMsg reports whether an on-chain bridge transaction has the same
+// content as our message. The query already filters by chain/block/receiptIndex;
+// matching the remaining content fields guards against confirming on a conflicting
+// entry. ContractAddress is compared case-insensitively because the chain
+// normalizes it to lowercase (see msg_server_bridge_exchange.go).
+func bridgeTxMatchesMsg(tx types.BridgeTransaction, msg *types.MsgBridgeExchange) bool {
+	return tx.ChainId == msg.OriginChain &&
+		strings.EqualFold(tx.ContractAddress, msg.ContractAddress) &&
+		tx.OwnerAddress == msg.OwnerAddress &&
+		tx.Amount == msg.Amount &&
+		tx.BlockNumber == msg.BlockNumber &&
+		tx.ReceiptIndex == msg.ReceiptIndex &&
+		tx.ReceiptsRoot == msg.ReceiptsRoot
+}
+
+// isAlreadyRecorded reports whether the broadcast error is the chain's dedup
+// signal that our validator already recorded this exact receipt. This is treated
+// as success (§1.3). The string match is fragile and only an optimization to skip
+// a redundant poll; the confirmation read remains the authority.
+func isAlreadyRecorded(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Bridge: Validator has already validated this transaction")
 }
 
 // getLatestBridgeBlock serves the Geth startup/continuity handshake. It returns ONLY
