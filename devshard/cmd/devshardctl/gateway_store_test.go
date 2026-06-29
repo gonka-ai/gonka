@@ -430,6 +430,136 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 	require.Equal(t, 0, settleAttempts)
 }
 
+func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Enabled:           true,
+			SettlementEnabled: true,
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       "Qwen/Removed",
+				TempCount:     1,
+				TargetCount:   16,
+				Amount:        1000,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+			}},
+		},
+	}.WithTuningDefaults()
+	// A stale temp bridge escrow remains for a model the network no longer
+	// serves; finishing rotation must NOT broadcast a regular create (which
+	// the chain rejects with ErrEpochGroupDataNotFound and still burns the
+	// gas fee) but MUST still settle the stranded temp escrow to recover funds.
+	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Removed"},
+		Active:        true,
+		RotationRole:  rotationRoleTemp,
+		RotationEpoch: 10,
+	}}))
+
+	oldCreate := gatewayCreateRotationEscrow
+	oldSettle := gatewaySettleDevshardOnChain
+	createAttempts := 0
+	var settled []string
+	gatewayCreateRotationEscrow = func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error) {
+		createAttempts++
+		return &CreateDevshardEscrowResult{EscrowID: uint64(90 + createAttempts), TxHash: "OK"}, nil
+	}
+	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		settled = append(settled, id)
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		gatewayCreateRotationEscrow = oldCreate
+		gatewaySettleDevshardOnChain = oldSettle
+	})
+
+	// The network serves a different model; "Qwen/Removed" is positively absent.
+	capacity := NewCapacityState()
+	capacity.SetHostWeightViews(
+		map[string]float64{"host": 1},
+		map[string]float64{"host": 1},
+		map[string]map[string]float64{"Qwen/Present": {"host": 1}},
+		map[string]map[string]float64{"Qwen/Present": {"host": 1}},
+	)
+
+	g := &Gateway{store: store, capacity: capacity, rotationFailures: make(map[string]struct{})}
+	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
+
+	require.Equal(t, 0, createAttempts, "must not create escrow for a model absent from the network")
+	require.Equal(t, []string{"12"}, settled, "stranded temp escrow must still be settled")
+}
+
+func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Enabled:           true,
+			SettlementEnabled: true,
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       "Qwen/Test",
+				TempCount:     1,
+				TargetCount:   2,
+				Amount:        1000,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+			}},
+		},
+	}.WithTuningDefaults()
+	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
+		Active:        true,
+		RotationRole:  rotationRoleTemp,
+		RotationEpoch: 10,
+	}}))
+
+	oldCreate := gatewayCreateRotationEscrow
+	oldSettle := gatewaySettleDevshardOnChain
+	createAttempts := 0
+	gatewayCreateRotationEscrow = func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error) {
+		createAttempts++
+		return &CreateDevshardEscrowResult{EscrowID: uint64(90 + createAttempts), TxHash: "OK"}, nil
+	}
+	gatewaySettleDevshardOnChain = func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		gatewayCreateRotationEscrow = oldCreate
+		gatewaySettleDevshardOnChain = oldSettle
+	})
+
+	capacity := NewCapacityState()
+	capacity.SetHostWeightViews(
+		map[string]float64{"host": 1},
+		map[string]float64{"host": 1},
+		map[string]map[string]float64{"Qwen/Test": {"host": 1}},
+		map[string]map[string]float64{"Qwen/Test": {"host": 1}},
+	)
+
+	g := &Gateway{store: store, capacity: capacity, rotationFailures: make(map[string]struct{})}
+	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
+
+	require.Equal(t, 2, createAttempts, "must create escrows for a model the network serves")
+}
+
 func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
