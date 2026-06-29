@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -44,22 +45,28 @@ func (s *Server) postBridgeBlock(c echo.Context) error {
 		"receiptsRoot", blockData.ReceiptsRoot,
 		"receiptsCount", len(blockData.Receipts))
 
-	// Add the block to the shared queue. AddBlock processes the block synchronously
-	// (and any contiguous successors), so an error here means a Cosmos submission
-	// failed. Return HTTP 500 so Geth halts its downloader loop and retries the
-	// failed block range (fail-closed).
+	// The POST is a receipt-ACK, not a commit report. AddBlock returns an error
+	// ONLY when the block could not be accepted into the queue:
+	//   - ErrBridgeQueueFull -> 503 back-pressure (Geth's sendRangeDirectly stops
+	//     and resends later; nothing is dropped),
+	//   - any other error -> 400 (malformed / unexpected input).
+	// Otherwise the block is received (buffered/duplicate/bootstrapping) -> 200.
+	// Commit success/failure is owned by the drain and never reported here.
 	blockNumber, err := s.blockQueue.AddBlock(blockData)
-	if err != nil {
-		slog.Error("Failed to process bridge block", "blockNumber", blockData.BlockNumber, "error", err)
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	switch {
+	case err == nil:
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status":        "received",
+			"message":       "Block received",
+			"blockNumber":   blockNumber,
+			"receiptsCount": len(blockData.Receipts),
+			"queueSize":     len(s.blockQueue.GetPendingBlocks()),
+		})
+	case errors.Is(err, pserver.ErrBridgeQueueFull):
+		slog.Warn("Bridge: back-pressure, rejecting block", "blockNumber", blockData.BlockNumber, "error", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	default:
+		slog.Error("Bridge: malformed/unexpected block", "blockNumber", blockData.BlockNumber, "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-
-	// Return success response
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"status":        "success",
-		"message":       "Block processed",
-		"blockNumber":   blockNumber,
-		"receiptsCount": len(blockData.Receipts),
-		"queueSize":     len(s.blockQueue.GetPendingBlocks()),
-	})
 }

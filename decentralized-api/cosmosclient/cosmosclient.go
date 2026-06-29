@@ -271,6 +271,7 @@ type CosmosMessageClient interface {
 	SubmitUnitOfComputePriceProposal(transaction *inferenceapi.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error
 	GetBridgeAddresses(ctx context.Context, chainId string) ([]inferencetypes.BridgeContractAddress, error)
+	BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error)
 	NewInferenceQueryClient() inferencetypes.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -482,6 +483,18 @@ func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainI
 	}
 
 	return resp.Addresses, nil
+}
+
+func (icc *InferenceCosmosClient) BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error) {
+	resp, err := icc.NewInferenceQueryClient().BridgeTransaction(ctx, &inferencetypes.QueryGetBridgeTransactionRequest{
+		OriginChain:  originChain,
+		BlockNumber:  blockNumber,
+		ReceiptIndex: receiptIndex,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.BridgeTransactions, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {

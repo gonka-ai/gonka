@@ -13,9 +13,12 @@ PRYSM_P2P_TCP_PORT=${PRYSM_P2P_TCP_PORT:-13000}
 PRYSM_P2P_UDP_PORT=${PRYSM_P2P_UDP_PORT:-12000}
 
 # Bridge continuity settings.
-# BRIDGE_GETLASTBLOCK is OPTIONAL: when unset, continuity is disabled and geth
-# behaves exactly as before (direct posting, no restarts). BRIDGE_CACHE_RANGES is
-# the in-RAM recovery window (default 4) and only matters when continuity is on.
+# Default endpoints and beacon URL to local production API service if unset.
+BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-http://api:9200/admin/v1/bridge/block}
+BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-http://api:9000/v1/bridge/addresses}
+BRIDGE_GETLASTBLOCK=${BRIDGE_GETLASTBLOCK:-http://api:9000/v1/bridge/block/latest}
+BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.info/}
+
 BRIDGE_CACHE_RANGES=${BRIDGE_CACHE_RANGES:-4}
 
 # Build the optional --bridge.getlastblock flag only when the URL is set, so an empty
