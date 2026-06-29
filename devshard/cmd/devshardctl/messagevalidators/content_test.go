@@ -44,50 +44,50 @@ func TestValidateNonEmptyContent(t *testing.T) {
 	}
 }
 
-func TestValidateRequiredContent(t *testing.T) {
+func TestValidateRequiredContentField(t *testing.T) {
 	t.Run("missing-rejected", func(t *testing.T) {
-		err := ValidateRequiredContent(map[string]any{})
+		err := ValidateRequiredContentField(map[string]any{})
 		if err == nil || !strings.Contains(err.Error(), "is required") {
 			t.Fatalf("want 'is required', got %v", err)
 		}
 	})
 	t.Run("nil-rejected", func(t *testing.T) {
-		err := ValidateRequiredContent(map[string]any{"content": nil})
+		err := ValidateRequiredContentField(map[string]any{"content": nil})
 		if err == nil || !strings.Contains(err.Error(), "is required") {
 			t.Fatalf("want 'is required', got %v", err)
 		}
 	})
 	t.Run("string-ok", func(t *testing.T) {
-		err := ValidateRequiredContent(map[string]any{"content": "hi"})
+		err := ValidateRequiredContentField(map[string]any{"content": "hi"})
 		if err != nil {
 			t.Fatalf("want no error, got %v", err)
 		}
 	})
 }
 
-func TestValidateAssistantContent(t *testing.T) {
+func TestValidateAssistantContentField(t *testing.T) {
 	t.Run("missing-with-canBeEmpty-ok", func(t *testing.T) {
 		// Assistant turn with tool_calls/function_call can omit content.
-		err := ValidateAssistantContent(map[string]any{}, true)
+		err := ValidateAssistantContentField(map[string]any{}, true)
 		if err != nil {
 			t.Fatalf("want no error, got %v", err)
 		}
 	})
 	t.Run("missing-without-canBeEmpty-rejected", func(t *testing.T) {
-		err := ValidateAssistantContent(map[string]any{}, false)
+		err := ValidateAssistantContentField(map[string]any{}, false)
 		if err == nil || !strings.Contains(err.Error(), "tool_calls or function_call") {
 			t.Fatalf("want hint about tool_calls/function_call, got %v", err)
 		}
 	})
 	t.Run("nil-with-canBeEmpty-ok", func(t *testing.T) {
-		err := ValidateAssistantContent(map[string]any{"content": nil}, true)
+		err := ValidateAssistantContentField(map[string]any{"content": nil}, true)
 		if err != nil {
 			t.Fatalf("want no error, got %v", err)
 		}
 	})
 	t.Run("non-empty-content-still-validated", func(t *testing.T) {
 		// Even when canBeEmpty=true, present content must not be empty/wrong shape.
-		err := ValidateAssistantContent(map[string]any{"content": ""}, true)
+		err := ValidateAssistantContentField(map[string]any{"content": ""}, true)
 		if err == nil {
 			t.Fatal("empty string content must still be rejected")
 		}

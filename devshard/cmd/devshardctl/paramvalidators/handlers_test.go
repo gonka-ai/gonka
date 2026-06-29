@@ -4,10 +4,9 @@ import (
 	"math"
 	"strings"
 	"testing"
-)
 
-// floatPtr is local to tests; the production code keeps its own.
-func floatPtr(v float64) *float64 { return &v }
+	"devshard/cmd/devshardctl/testutil"
+)
 
 // run is a tiny wrapper that builds a ParameterContext and dispatches the handler.
 func run(h ParameterHandler, doc map[string]any, param string) error {
@@ -148,7 +147,7 @@ func TestSanitizeStringListParameter_AbsentFieldNoop(t *testing.T) {
 
 func TestSanitizeFloatParameter_Clamps(t *testing.T) {
 	doc := map[string]any{"t": 5.0}
-	h := SanitizeFloatParameter{Min: floatPtr(0), Max: floatPtr(2.0)}
+	h := SanitizeFloatParameter{Min: testutil.FloatPtr(0), Max: testutil.FloatPtr(2.0)}
 	if err := run(h, doc, "t"); err != nil {
 		t.Fatal(err)
 	}
@@ -197,12 +196,12 @@ func TestSanitizeFloatParameter_StringNumericCoerced(t *testing.T) {
 
 func TestSanitizeFloatMapParameter_DropsOutOfRange(t *testing.T) {
 	doc := map[string]any{"logit_bias": map[string]any{
-		"a": 50.0,  // out of [-100, 100]? No, in range
-		"b": 150.0, // > 100 → drop
+		"a": 50.0,   // out of [-100, 100]? No, in range
+		"b": 150.0,  // > 100 → drop
 		"c": -200.0, // < -100 → drop
 		"d": 0.0,
 	}}
-	h := SanitizeFloatMapParameter{Min: floatPtr(-100), Max: floatPtr(100)}
+	h := SanitizeFloatMapParameter{Min: testutil.FloatPtr(-100), Max: testutil.FloatPtr(100)}
 	if err := run(h, doc, "logit_bias"); err != nil {
 		t.Fatal(err)
 	}

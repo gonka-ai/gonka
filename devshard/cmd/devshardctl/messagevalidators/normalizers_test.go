@@ -3,18 +3,9 @@ package messagevalidators
 import (
 	"strings"
 	"testing"
-)
 
-// asMap is a tiny test helper: takes a []any of messages and returns the i-th
-// message as map[string]any. Fails the test if the cast doesn't hold.
-func asMap(t *testing.T, msgs []any, i int) map[string]any {
-	t.Helper()
-	m, ok := msgs[i].(map[string]any)
-	if !ok {
-		t.Fatalf("messages[%d] is not a map: %T", i, msgs[i])
-	}
-	return m
-}
+	"devshard/cmd/devshardctl/testutil"
+)
 
 // ============================================================
 // OrphanToolMessageDropper
@@ -36,7 +27,7 @@ func TestOrphanToolMessageDropper_DropsToolWithUnmatchedID(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("want 2 surviving messages, got %d", len(out))
 	}
-	if asMap(t, out, 1)["role"] != "assistant" {
+	if testutil.MapAt(t, out, 1)["role"] != "assistant" {
 		t.Fatal("orphan tool message must be dropped, assistant survives")
 	}
 }
@@ -156,10 +147,10 @@ func TestMinimaxOrphanToolMessageDropper_EmptyToolCallsDoesNotOpenBlock(t *testi
 func TestEmptyAssistantTurnDropper(t *testing.T) {
 	msgs := []any{
 		map[string]any{"role": "user", "content": "hi"},
-		map[string]any{"role": "assistant"},                       // truly empty
-		map[string]any{"role": "assistant", "content": ""},        // empty string content
-		map[string]any{"role": "assistant", "content": "answer"},  // keep
-		map[string]any{"role": "user", "content": ""},             // user role NOT dropped here (validator job)
+		map[string]any{"role": "assistant"},                      // truly empty
+		map[string]any{"role": "assistant", "content": ""},       // empty string content
+		map[string]any{"role": "assistant", "content": "answer"}, // keep
+		map[string]any{"role": "user", "content": ""},            // user role NOT dropped here (validator job)
 		map[string]any{"role": "assistant", "tool_calls": []any{ // tool_calls makes it non-empty
 			map[string]any{"id": "c1"},
 		}},
@@ -270,22 +261,22 @@ func TestEmptyContentNormalizer_LeavesUserRoleAlone(t *testing.T) {
 
 func TestLegacyToolNameStripper(t *testing.T) {
 	msgs := []any{
-		map[string]any{"role": "user", "content": "hi", "name": "kept"},                // not tool — name kept
+		map[string]any{"role": "user", "content": "hi", "name": "kept"},                          // not tool — name kept
 		map[string]any{"role": "tool", "tool_call_id": "c1", "content": "r", "name": "stripped"}, // tool — name stripped
-		map[string]any{"role": "tool", "tool_call_id": "c2", "content": "r"},           // no name — no-op
-		map[string]any{"role": "assistant", "content": "x", "name": "assistant-name"},  // not tool — kept
+		map[string]any{"role": "tool", "tool_call_id": "c2", "content": "r"},                     // no name — no-op
+		map[string]any{"role": "assistant", "content": "x", "name": "assistant-name"},            // not tool — kept
 	}
 	_, changed, _ := LegacyToolNameStripper{}.Apply(msgs)
 	if !changed {
 		t.Fatal("must strip name from one tool message")
 	}
-	if _, has := asMap(t, msgs, 0)["name"]; !has {
+	if _, has := testutil.MapAt(t, msgs, 0)["name"]; !has {
 		t.Fatal("user.name must be preserved")
 	}
-	if _, has := asMap(t, msgs, 1)["name"]; has {
+	if _, has := testutil.MapAt(t, msgs, 1)["name"]; has {
 		t.Fatal("tool.name must be stripped")
 	}
-	if _, has := asMap(t, msgs, 3)["name"]; !has {
+	if _, has := testutil.MapAt(t, msgs, 3)["name"]; !has {
 		t.Fatal("assistant.name must be preserved")
 	}
 }
@@ -296,18 +287,18 @@ func TestLegacyToolNameStripper(t *testing.T) {
 
 func TestMinimaxToolCallIDStripper(t *testing.T) {
 	msgs := []any{
-		map[string]any{"role": "user", "tool_call_id": "weird-but-kept", "content": "hi"},     // not tool
-		map[string]any{"role": "tool", "tool_call_id": "c1", "content": []any{}},              // tool — stripped
-		map[string]any{"role": "tool", "content": []any{}},                                    // tool no id — no-op
+		map[string]any{"role": "user", "tool_call_id": "weird-but-kept", "content": "hi"}, // not tool
+		map[string]any{"role": "tool", "tool_call_id": "c1", "content": []any{}},          // tool — stripped
+		map[string]any{"role": "tool", "content": []any{}},                                // tool no id — no-op
 	}
 	_, changed, _ := MinimaxToolCallIDStripper{}.Apply(msgs)
 	if !changed {
 		t.Fatal("must strip from one tool message")
 	}
-	if _, has := asMap(t, msgs, 0)["tool_call_id"]; !has {
+	if _, has := testutil.MapAt(t, msgs, 0)["tool_call_id"]; !has {
 		t.Fatal("non-tool role: tool_call_id preserved (validator's problem)")
 	}
-	if _, has := asMap(t, msgs, 1)["tool_call_id"]; has {
+	if _, has := testutil.MapAt(t, msgs, 1)["tool_call_id"]; has {
 		t.Fatal("tool message: tool_call_id must be stripped")
 	}
 }

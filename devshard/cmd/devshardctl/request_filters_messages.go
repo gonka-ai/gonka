@@ -208,7 +208,7 @@ func (p ChatMessageProcessor) ValidateDocument(document *ChatRequestDocument, ro
 func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int, policy MessageRolePolicy, pendingToolCalls map[string]struct{}) error {
 	switch policy.Role {
 	case MessageRoleDeveloper, MessageRoleSystem, MessageRoleUser:
-		if err := messagevalidators.ValidateRequiredContent(message); err != nil {
+		if err := messagevalidators.ValidateRequiredContentField(message); err != nil {
 			return badChatRequest("messages[%d].content: %v", i, err)
 		}
 	case MessageRoleAssistant:
@@ -220,7 +220,7 @@ func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int
 		if err != nil {
 			return badChatRequest("messages[%d].%v", i, err)
 		}
-		if err := messagevalidators.ValidateAssistantContent(message, hasToolCalls || hasFunctionCall); err != nil {
+		if err := messagevalidators.ValidateAssistantContentField(message, hasToolCalls || hasFunctionCall); err != nil {
 			return badChatRequest("messages[%d].content: %v", i, err)
 		}
 		for _, id := range toolCallIDs {
@@ -245,7 +245,7 @@ func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int
 			if err := policy.ContentValidator.Validate(content); err != nil {
 				return badChatRequest("messages[%d].%v", i, err)
 			}
-		} else if err := messagevalidators.ValidateRequiredContent(message); err != nil {
+		} else if err := messagevalidators.ValidateRequiredContentField(message); err != nil {
 			return badChatRequest("messages[%d].content: %v", i, err)
 		}
 	case MessageRoleFunction:
@@ -254,7 +254,7 @@ func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int
 				return badChatRequest("messages[%d].name: %v", i, err)
 			}
 		}
-		if err := messagevalidators.ValidateRequiredContent(message); err != nil {
+		if err := messagevalidators.ValidateRequiredContentField(message); err != nil {
 			return badChatRequest("messages[%d].content: %v", i, err)
 		}
 	}

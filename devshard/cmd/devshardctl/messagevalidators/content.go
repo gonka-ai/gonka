@@ -37,7 +37,7 @@ func ValidateNonEmptyContent(content any) error {
 	}
 }
 
-func ValidateRequiredContent(message map[string]any) error {
+func ValidateRequiredContentField(message map[string]any) error {
 	content, exists := message["content"]
 	if !exists || content == nil {
 		return fmt.Errorf("is required")
@@ -45,7 +45,7 @@ func ValidateRequiredContent(message map[string]any) error {
 	return ValidateNonEmptyContent(content)
 }
 
-func ValidateAssistantContent(message map[string]any, canBeEmpty bool) error {
+func ValidateAssistantContentField(message map[string]any, canBeEmpty bool) error {
 	content, exists := message["content"]
 	if !exists || content == nil {
 		if canBeEmpty {
