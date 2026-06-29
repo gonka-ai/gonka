@@ -789,6 +789,49 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 	require.Equal(t, 1, settleAttempts)
 }
 
+func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST: "http://node:1317", DefaultModel: "m", DefaultRequestMaxTokens: 1000,
+	}.WithTuningDefaults(), []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+	}}))
+
+	// Default is not pending.
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+
+	// Set pending → persisted and survives reload.
+	require.NoError(t, store.SetDevshardSettlementPending("12", true))
+	state, _, err = store.LoadState()
+	require.NoError(t, err)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+
+	// An unrelated upsert must NOT wipe the pending marker.
+	require.NoError(t, store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
+		Active:        false,
+	}))
+	state, _, err = store.LoadState()
+	require.NoError(t, err)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+
+	// Clear pending.
+	require.NoError(t, store.SetDevshardSettlementPending("12", false))
+	state, _, err = store.LoadState()
+	require.NoError(t, err)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+
+	// Unknown id errors.
+	require.Error(t, store.SetDevshardSettlementPending("nope", true))
+}
+
 func gatewayDevshardsByID(devshards []GatewayDevshardState) map[string]GatewayDevshardState {
 	byID := make(map[string]GatewayDevshardState, len(devshards))
 	for _, devshard := range devshards {
