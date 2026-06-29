@@ -84,6 +84,13 @@ type devshardRuntime struct {
 	activeRequests atomic.Int64
 	reservedTokens atomic.Int64
 
+	// settlementPending marks an escrow that has been deactivated and must
+	// be settled once its in-flight requests drain. settlementReason is
+	// written before the flag and read after it in the lock-free drain hook;
+	// the atomic Store→Load pair supplies the happens-before.
+	settlementPending atomic.Bool
+	settlementReason  string
+
 	activeConfigured bool
 }
 
@@ -97,6 +104,7 @@ type runtimeStatus struct {
 	ProtocolVersion      string `json:"protocol_version,omitempty"`
 	ActiveRequests       int64  `json:"active_requests"`
 	ReservedTokens       int64  `json:"reserved_tokens"`
+	SettlementPending    bool   `json:"settlement_pending,omitempty"`
 	ChainPhase           string `json:"chain_phase,omitempty"`
 	ConfirmationPoCPhase string `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool   `json:"requests_blocked"`
@@ -406,11 +414,12 @@ func sessionPhaseLabel(phase types.SessionPhase) string {
 
 func (rt *devshardRuntime) snapshot() runtimeStatus {
 	status := runtimeStatus{
-		ID:             rt.id,
-		Model:          rt.model,
-		Active:         rt.active.Load(),
-		ActiveRequests: rt.activeRequests.Load(),
-		ReservedTokens: rt.reservedTokens.Load(),
+		ID:                rt.id,
+		Model:             rt.model,
+		Active:            rt.active.Load(),
+		ActiveRequests:    rt.activeRequests.Load(),
+		ReservedTokens:    rt.reservedTokens.Load(),
+		SettlementPending: rt.settlementPending.Load(),
 	}
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
@@ -536,6 +545,10 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		g.attachEscrowChecker(rt)
 	}
 	g.startEscrowRotatorIfEnabled()
+	// Settle escrows left pending by a pre-restart drain. Runs synchronously
+	// so the store read completes before the gateway serves traffic; the
+	// settlements it schedules run in their own goroutines.
+	g.reconcilePendingSettlements()
 	go g.balanceCheckLoop()
 	return g
 }
@@ -1591,8 +1604,15 @@ func (g *Gateway) reserveRuntimeLocked(rt *devshardRuntime, inputTokens int64) {
 }
 
 func (g *Gateway) releaseRuntime(rt *devshardRuntime, inputTokens int64) {
-	rt.activeRequests.Add(-1)
+	remaining := rt.activeRequests.Add(-1)
 	rt.reservedTokens.Add(-inputTokens)
+	// active=false (set during enqueue) blocks new reservations, so the count
+	// only drains downward — remaining==0 is the exact "last request finished"
+	// edge. scheduleAutoSettlement dedups, so a double-fire is harmless.
+	if remaining == 0 && rt.settlementPending.Load() {
+		log.Printf("settlement_drain_complete escrow=%s reason=%s", rt.id, rt.settlementReason)
+		g.scheduleAutoSettlement(rt.id, rt.settlementReason)
+	}
 }
 
 func (rt *devshardRuntime) validateRequestedModel(requestModel string) error {
@@ -3388,11 +3408,103 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 	return true
 }
 
+// deactivateAndSettleDevshardByID stops new traffic to an escrow and settles
+// it. If requests are still in flight it marks the escrow settlement-pending
+// and returns; the drain hook in releaseRuntime settles once the last request
+// finishes. Otherwise it settles immediately.
 func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 	if !g.deactivateDevshardByIDWithReason(id, reason) {
 		return
 	}
+	g.markSettlementPending(id, reason)
+
+	g.mu.Lock()
+	rt, ok := g.runtimes[id]
+	g.mu.Unlock()
+	if ok && rt.activeRequests.Load() > 0 {
+		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d",
+			id, reason, rt.activeRequests.Load())
+		return
+	}
 	g.scheduleAutoSettlement(id, reason)
+}
+
+// markSettlementPending records that an escrow must be settled once its
+// in-flight requests drain. The reason is stored before the flag so the
+// lock-free drain hook in releaseRuntime reads a consistent value.
+func (g *Gateway) markSettlementPending(id, reason string) {
+	g.mu.Lock()
+	rt, ok := g.runtimes[id]
+	if ok {
+		rt.settlementReason = reason
+		rt.settlementPending.Store(true)
+	}
+	g.mu.Unlock()
+	if g.store != nil {
+		if err := g.store.SetDevshardSettlementPending(id, true); err != nil {
+			log.Printf("settlement_pending_persist_failed escrow=%s error=%v", id, err)
+		}
+	}
+}
+
+// reconcilePendingSettlements settles escrows that were marked pending before
+// a restart. After a restart no requests are in flight, so each such escrow
+// can settle immediately. Hydrates the in-memory marker too.
+func (g *Gateway) reconcilePendingSettlements() {
+	if g.store == nil {
+		return
+	}
+	state, ok, err := g.store.LoadState()
+	if err != nil || !ok {
+		if err != nil {
+			log.Printf("settlement_reconcile_load_failed error=%v", err)
+		}
+		return
+	}
+	// Honor the operator's config: when settlement is disabled, never settle on
+	// startup. Leave the marker intact so a later re-enable still settles it.
+	if !state.Settings.EscrowRotation.SettlementEnabled {
+		for _, devshard := range state.Devshards {
+			if !devshard.Active && devshard.SettlementPending {
+				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
+			}
+		}
+		return
+	}
+	for _, devshard := range state.Devshards {
+		if devshard.Active || !devshard.SettlementPending {
+			continue
+		}
+		g.mu.Lock()
+		rt, exists := g.runtimes[devshard.ID]
+		if exists {
+			rt.settlementReason = "startup_reconcile"
+			rt.settlementPending.Store(true)
+		}
+		g.mu.Unlock()
+		if !exists {
+			log.Printf("settlement_reconcile_skipped escrow=%s reason=runtime_not_loaded", devshard.ID)
+			continue
+		}
+		log.Printf("settlement_reconcile_queued escrow=%s", devshard.ID)
+		g.scheduleAutoSettlement(devshard.ID, "startup_reconcile")
+	}
+}
+
+// clearSettlementPending is called after a successful settlement so a
+// restart-time reconcile does not re-settle the escrow.
+func (g *Gateway) clearSettlementPending(id string) {
+	g.mu.Lock()
+	rt, ok := g.runtimes[id]
+	if ok {
+		rt.settlementPending.Store(false)
+	}
+	g.mu.Unlock()
+	if g.store != nil {
+		if err := g.store.SetDevshardSettlementPending(id, false); err != nil {
+			log.Printf("settlement_pending_clear_failed escrow=%s error=%v", id, err)
+		}
+	}
 }
 
 func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
@@ -3518,6 +3630,7 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 			result, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{})
 			cancel()
 			if err == nil {
+				g.clearSettlementPending(id)
 				log.Printf("auto_settle_submitted escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
 				return
