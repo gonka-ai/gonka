@@ -60,7 +60,8 @@ class ClaimRecipientTests : TestermintTest() {
             .`as`("configured recipient receives the claim payout")
             .isGreaterThan(recipientBalanceBefore)
         assertThat(genesis.node.listClaimRecipients(participant).entries)
-            .noneMatch { it.epoch == targetEpoch && it.recipient == recipient }
+            .`as`("recipient entry is retained after claim for late same-epoch payouts")
+            .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
     }
 
     @Test
@@ -104,7 +105,7 @@ class ClaimRecipientTests : TestermintTest() {
             .anyMatch { it.epoch == targetEpoch && it.recipient == recipient }
 
         logSection("Advance until target epoch is past the pruning threshold")
-        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 3) {
+        while (genesis.getEpochData().latestEpoch.index < targetEpoch + 5) {
             genesis.waitForNextEpoch()
         }
         genesis.node.waitForNextBlock(2)
