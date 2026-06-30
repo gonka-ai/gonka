@@ -50,6 +50,38 @@ func TestDelegationRewardTransferSnapshotForEpoch(t *testing.T) {
 	require.Empty(t, penalties)
 }
 
+func TestDelegationRewardTransferSnapshotKeepsMultipleEpochs(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: 7,
+		Transfers:  []*types.DelegationRewardTransfer{{ModelId: "m", From: "a", To: "b", Share: types.DecimalFromFloat(0.1)}},
+	}))
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: 8,
+		Transfers:  []*types.DelegationRewardTransfer{{ModelId: "m", From: "c", To: "d", Share: types.DecimalFromFloat(0.2)}},
+	}))
+
+	transfers7, err := k.GetDelegationRewardTransfersForEpoch(ctx, 7)
+	require.NoError(t, err)
+	require.Len(t, transfers7, 1)
+	require.Equal(t, "a", transfers7[0].From)
+
+	transfers8, err := k.GetDelegationRewardTransfersForEpoch(ctx, 8)
+	require.NoError(t, err)
+	require.Len(t, transfers8, 1)
+	require.Equal(t, "c", transfers8[0].From)
+
+	require.NoError(t, k.RemoveDelegationRewardTransferSnapshot(ctx, 7))
+	transfers7, err = k.GetDelegationRewardTransfersForEpoch(ctx, 7)
+	require.NoError(t, err)
+	require.Empty(t, transfers7)
+
+	transfers8, err = k.GetDelegationRewardTransfersForEpoch(ctx, 8)
+	require.NoError(t, err)
+	require.Len(t, transfers8, 1)
+}
+
 func BenchmarkDelegationRewardTransferSnapshot1000Participants10Models(b *testing.B) {
 	k, ctx := keepertest.InferenceKeeper(b)
 	const (

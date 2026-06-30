@@ -845,6 +845,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
 		return
 	}
+	if upcomingEpoch.Index > 3 {
+		if err := am.keeper.RemoveDelegationRewardTransferSnapshot(ctx, upcomingEpoch.Index-2); err != nil {
+			am.LogWarn("onEndOfPoCValidationStage: Unable to clear old delegation reward transfer snapshot", types.EpochGroup, "epochIndex", upcomingEpoch.Index-2, "error", err.Error())
+		}
+	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)

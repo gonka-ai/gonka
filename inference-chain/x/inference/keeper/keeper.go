@@ -133,7 +133,7 @@ type (
 		PoCDirectIntents                 collections.KeySet[collections.Pair[string, string]]
 		DelegationSnapshot               collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot      collections.Item[types.BootstrapDelegationSnapshot]
-		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
+		DelegationRewardTransferSnapshot collections.Map[uint64, types.DelegationRewardTransferSnapshot]
 		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
 		// Set by cold key via MsgSetClaimRecipients; consumed on successful
 		// claim payout (in finishSettle).
@@ -656,10 +656,11 @@ func NewKeeper(
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
 		),
-		DelegationRewardTransferSnapshot: collections.NewItem(
+		DelegationRewardTransferSnapshot: collections.NewMap(
 			sb,
 			types.DelegationRewardTransferSnapshotPrefix,
 			"delegation_reward_transfer_snapshot",
+			collections.Uint64Key,
 			codec.CollValue[types.DelegationRewardTransferSnapshot](cdc),
 		),
 		ClaimRecipients: collections.NewMap(

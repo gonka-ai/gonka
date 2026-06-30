@@ -27,6 +27,9 @@ func (k Keeper) EstimateBitcoinReward(ctx context.Context, req *types.QueryEstim
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	if _, snapshotFound := k.GetDelegationRewardTransferSnapshot(ctx, req.EpochIndex); !snapshotFound {
+		return nil, status.Error(codes.NotFound, "delegation reward snapshot not found for epoch")
+	}
 
 	amounts, _, err := GetBitcoinSettleAmountsWithTransfers(
 		inputs.Participants,
