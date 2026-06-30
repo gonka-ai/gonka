@@ -46,6 +46,7 @@ func TestToolChoiceValidatorRejects(t *testing.T) {
 		{name: "object function not object", body: `{"tool_choice":{"type":"function","function":"x"}}`, wantErr: ErrToolChoiceFunctionShape},
 		{name: "object missing name", body: `{"tool_choice":{"type":"function","function":{}}}`, wantErr: ErrToolChoiceFunctionShape},
 		{name: "object empty name", body: `{"tool_choice":{"type":"function","function":{"name":""}}}`, wantErr: ErrToolChoiceFunctionShape},
+		{name: "object whitespace name", body: `{"tool_choice":{"type":"function","function":{"name":"   "}}}`, wantErr: ErrToolChoiceFunctionShape},
 		{name: "object non-string name", body: `{"tool_choice":{"type":"function","function":{"name":42}}}`, wantErr: ErrToolChoiceFunctionShape},
 		{name: "name exceeds length cap", body: `{"tool_choice":{"type":"function","function":{"name":"` + longString(65) + `"}}}`, wantErr: ErrToolChoiceFunctionShape},
 	}
