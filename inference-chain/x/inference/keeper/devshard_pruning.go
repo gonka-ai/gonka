@@ -40,7 +40,7 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Devs
 		recipient, err := k.ResolveClaimRecipientAddress(ctx, addr, escrow.EpochIndex)
 		if err != nil {
 			k.LogError("failed to resolve unsettled escrow recipient", types.Pruning,
-				"escrow_id", escrow.Id, "address", addr)
+				"escrow_id", escrow.Id, "address", addr, "epoch", escrow.EpochIndex, "error", err)
 			continue
 		}
 		coins, err := types.GetCoins(int64(amountByAddr[addr]))
