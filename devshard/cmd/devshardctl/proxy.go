@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -349,8 +350,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// drained through devshard_meta even if the client disconnects.
 	// metaDrainTimeout (via withMetaDrain in redundancy) bounds how long
 	// upstream may run after the client is gone.
+	// Propagate the proxy's request ID so the runner shares the same ID —
+	// this ensures /v1/requests/{id} accounting is findable by proxy ID.
 	var doneWriteErr error
-	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	err := p.redundancy.RunInference(logging.PropagateRequestID(context.Background(), r.Context()), params, dw, flag)
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -510,7 +513,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	flag := newCancelFlag()
 	watchClientCancel(r, flag)
 
-	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	// Propagate the proxy's request ID so the runner shares the same ID —
+	// this ensures /v1/requests/{id} accounting is findable by proxy ID.
+	err := p.redundancy.RunInference(logging.PropagateRequestID(context.Background(), r.Context()), params, &buf, flag)
 	if flag.Gone() {
 		return
 	}
