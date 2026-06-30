@@ -134,37 +134,19 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	}, nil
 }
 
-// resolvePayoutAddress returns the destination address for a claim payout:
-// the on-chain scheduled recipient for (participant, epoch) when one has been
-// set by the cold key, otherwise the participant's own address. participant
-// is assumed to be a valid bech32 string — it has already been verified by
-// validateRequest / validateClaim.
+// resolvePayoutAddress returns the destination address for a claim payout.
 func (ms msgServer) resolvePayoutAddress(ctx context.Context, participant string, epoch uint64) (string, error) {
-	addr, err := sdk.AccAddressFromBech32(participant)
+	addr, err := ms.ResolveClaimRecipientAddress(ctx, participant, epoch)
 	if err != nil {
-		return participant, nil
+		return "", fmt.Errorf("failed to resolve claim recipient for participant %s epoch %d: %w", participant, epoch, err)
 	}
-	recipient, found, err := ms.GetClaimRecipientForEpoch(ctx, addr, epoch)
-	if err != nil {
-		return "", fmt.Errorf("failed to lookup claim recipient for participant %s epoch %d: %w", participant, epoch, err)
+	if addr.String() != participant {
+		ms.LogInfo("Using scheduled claim recipient", types.Claims, "participant", participant, "epoch", epoch, "recipient", addr.String())
 	}
-	if !found {
-		return participant, nil
-	}
-	ms.LogInfo("Using scheduled claim recipient", types.Claims, "participant", participant, "epoch", epoch, "recipient", recipient)
-	return recipient, nil
+	return addr.String(), nil
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
-	// Consume the schedule entry after payout so per-participant state stays
-	// bounded: without removal, entries would accumulate indefinitely as
-	// epochs advance. Pairs with MaxClaimRecipientLookahead which caps writes;
-	// together they bound how many entries any one participant can hold.
-	if addr, err := sdk.AccAddressFromBech32(settleAmount.Participant); err == nil {
-		if err := ms.RemoveClaimRecipientForEpoch(ctx, addr, settleAmount.EpochIndex); err != nil {
-			ms.LogError("Error removing claim recipient override", types.Claims, "error", err, "participant", settleAmount.Participant, "epoch", settleAmount.EpochIndex)
-		}
-	}
 	ms.RemoveSettleAmount(ctx, settleAmount.Participant)
 	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.EpochIndex, settleAmount.Participant)
 	if found {

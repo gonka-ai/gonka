@@ -134,8 +134,9 @@ type (
 		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
 		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
-		// Set by cold key via MsgSetClaimRecipients; consumed on successful
-		// claim payout (in finishSettle).
+		// Set by cold key via MsgSetClaimRecipients; retained after claim so
+		// late same-epoch payouts can resolve the same recipient, then pruned
+		// once the epoch is safely stale.
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
