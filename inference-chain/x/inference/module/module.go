@@ -1440,6 +1440,7 @@ func GetTxCmd() *cobra.Command {
 
 	cmd.AddCommand(GrantMLOpsPermissionsCmd())
 	cmd.AddCommand(SettleDevshardEscrowCmd())
+	cmd.AddCommand(SetClaimRecipientsCmd())
 
 	return cmd
 }

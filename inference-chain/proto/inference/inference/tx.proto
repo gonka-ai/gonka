@@ -14,6 +14,7 @@ import "inference/inference/poc_v2.proto";
 import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/claim_recipient.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -32,6 +33,7 @@ service Msg {
   rpc InvalidateInference              (MsgInvalidateInference) returns (MsgInvalidateInferenceResponse);
   rpc RevalidateInference              (MsgRevalidateInference) returns (MsgRevalidateInferenceResponse);
   rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
+  rpc SetClaimRecipients               (MsgSetClaimRecipients) returns (MsgSetClaimRecipientsResponse);
   rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
   // PoC v2 validation messages
   rpc SubmitPocValidationsV2           (MsgSubmitPocValidationsV2) returns (MsgSubmitPocValidationsV2Response);
@@ -202,6 +204,18 @@ message MsgClaimRewardsResponse {
   uint64 amount = 1;
   string result = 2;
 }
+
+// MsgSetClaimRecipients lets the account owner (cold key) batch-configure
+// per-epoch recipient overrides for MsgClaimRewards. Must be signed by the
+// participant's own key; it is intentionally NOT granted to warm keys via
+// authz, so an operational key cannot redirect rewards.
+message MsgSetClaimRecipients {
+  option (cosmos.msg.v1.signer) = "creator";
+  string                       creator = 1;
+  repeated ClaimRecipientEntry entries = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgSetClaimRecipientsResponse {}
 
 message MsgSubmitPocBatch {
   option (cosmos.msg.v1.signer) = "creator";

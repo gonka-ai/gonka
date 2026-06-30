@@ -342,6 +342,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Estimate Bitcoin-style reward for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "participant"}},
 				},
+				{
+					RpcMethod:      "ListClaimRecipients",
+					Use:            "list-claim-recipients [participant]",
+					Short:          "List the scheduled per-epoch claim recipient overrides for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -420,6 +426,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "claim-rewards [seed] [poc-start-height]",
 					Short:          "Send a claimRewards tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "epoch_index"}},
+				},
+				{
+					RpcMethod: "SetClaimRecipients",
+					Use:       "set-claim-recipients [entries-json]",
+					Short:     "Configure per-epoch claim recipient overrides (cold key only)",
+					Long: "Batch-configures recipient overrides for MsgClaimRewards on future epochs. " +
+						"Pass a JSON array of {epoch, recipient} entries via --entries. " +
+						"An empty recipient clears the override for that epoch.",
 				},
 				{
 					RpcMethod:      "SubmitPocBatch",
