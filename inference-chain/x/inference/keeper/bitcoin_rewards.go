@@ -739,8 +739,12 @@ func CalculateParticipantBitcoinRewards(
 				if result.IsUint64() {
 					rewardCoins = result.Uint64()
 				} else {
-					// If still too large, participant gets maximum possible uint64
-					rewardCoins = ^uint64(0) // Max uint64
+					logger.Error("bitcoin reward division exceeded uint64; capping to MaxInt64",
+						"participant", participant.Address,
+						"participantWeight", participantWeight,
+						"fixedEpochReward", fixedEpochReward,
+						"totalFullWeight", totalPoCWeightBeforeDowntime)
+					rewardCoins = uint64(math.MaxInt64)
 				}
 				totalDistributed += rewardCoins
 			}

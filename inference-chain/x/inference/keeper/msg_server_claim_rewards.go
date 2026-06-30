@@ -69,14 +69,32 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	// persists for retry.
 	cacheCtx, writeFn := ctx.CacheContext()
 
-	// Pay for work from escrow
-	escrowPayment := settleAmount.GetWorkCoins()
 	params, err := ms.GetParams(cacheCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
+
+	escrowPayment, err := safeInt64FromUint64(settleAmount.GetWorkCoins())
+	if err != nil {
+		ms.LogError("Work coin amount exceeds int64 payment range", types.Claims, "error", err, "settleAmount", settleAmount)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Work coin amount exceeds int64 payment range",
+		}, err
+	}
+
+	rewardPayment, err := safeInt64FromUint64(settleAmount.GetRewardCoins())
+	if err != nil {
+		ms.LogError("Reward coin amount exceeds int64 payment range", types.Claims, "error", err, "settleAmount", settleAmount)
+		return &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "Reward coin amount exceeds int64 payment range",
+		}, err
+	}
+
+	// Pay for work from escrow
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -96,7 +114,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Pay rewards from module
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, rewardPayment, types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -327,7 +345,7 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 	return wasValidated
 }
 
-func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint64, modelId string) (*types.EpochGroupData, map[string]types.ValidationWeight, int64, bool) {
+func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint64, modelId string) (*types.EpochGroupData, map[string]types.ValidationWeight, int64, bool, error) {
 	epochData, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
 		if modelId == "" {
@@ -335,7 +353,7 @@ func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint6
 		} else {
 			k.LogWarn("Sub epoch data not found", types.Claims, "height", pocStartHeight, "modelId", modelId)
 		}
-		return nil, nil, 0, false
+		return nil, nil, 0, false, nil
 	}
 
 	// Build weight map and total weight for the epoch group
@@ -347,19 +365,33 @@ func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint6
 			continue
 		}
 
-		totalWeight += weight.Weight
+		nextTotalWeight, err := checkedAddInt64(totalWeight, weight.Weight)
+		if err != nil {
+			k.LogError("Validation total weight overflow", types.Claims,
+				"height", pocStartHeight,
+				"modelId", modelId,
+				"totalWeight", totalWeight,
+				"weight", weight.Weight,
+				"error", err,
+			)
+			return nil, nil, 0, false, err
+		}
+		totalWeight = nextTotalWeight
 		weightMap[weight.MemberAddress] = *weight
 	}
 
 	k.LogInfo("Epoch group weight data", types.Claims, "height", pocStartHeight, "modelId", modelId, "totalWeight", totalWeight)
 
-	return &epochData, weightMap, totalWeight, true
+	return &epochData, weightMap, totalWeight, true, nil
 }
 
 //nolint:forbidigo // different use of "Must"
 func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) ([]string, error) {
 	// Get the main epoch data
-	mainEpochData, mainWeightMap, mainTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.EpochIndex, "")
+	mainEpochData, mainWeightMap, mainTotalWeight, found, err := k.getEpochGroupWeightData(ctx, msg.EpochIndex, "")
+	if err != nil {
+		return nil, err
+	}
 	if !found {
 		return nil, types.ErrCurrentEpochGroupNotFound
 	}
@@ -401,7 +433,10 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 	// Get sub models from the main epoch data
 	for _, subModelId := range mainEpochData.SubGroupModels {
-		_, subWeightMap, subTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.EpochIndex, subModelId)
+		_, subWeightMap, subTotalWeight, found, err := k.getEpochGroupWeightData(ctx, msg.EpochIndex, subModelId)
+		if err != nil {
+			return nil, err
+		}
 		if !found {
 			k.LogWarn("Sub epoch data not found", types.Claims, "epoch", msg.EpochIndex, "modelId", subModelId)
 			continue
@@ -482,21 +517,21 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 
 		k.LogDebug("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
-		safeTotalWeight, err := safeUint32FromInt64(totalWeight)
+		safeTotalWeight, err := safeUint64FromInt64(totalWeight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"totalWeight", totalWeight, "error", err, "inference", inference.InferenceId)
 			continue // Skip this inference -- can't compute validation probability safely
 		}
-		safeValidatorWeight, err := safeUint32FromInt64(validatorPowerForModel.Weight)
+		safeValidatorWeight, err := safeUint64FromInt64(validatorPowerForModel.Weight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"validatorWeight", validatorPowerForModel.Weight, "error", err, "inference", inference.InferenceId)
 			continue
 		}
-		safeExecutorWeight, err := safeUint32FromInt64(executorPower.Weight)
+		safeExecutorWeight, err := safeUint64FromInt64(executorPower.Weight)
 		if err != nil {
-			k.LogError("Weight overflow in validation sampling", types.Claims,
+			k.LogError("Negative weight in validation sampling", types.Claims,
 				"executorWeight", executorPower.Weight, "error", err, "inference", inference.InferenceId)
 			continue
 		}

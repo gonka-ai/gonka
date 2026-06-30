@@ -24,6 +24,31 @@ func safeUint32FromInt64(v int64) (uint32, error) {
 	return uint32(v), nil
 }
 
+// safeUint64FromInt64 converts int64 to uint64, returning error if the value
+// is negative.
+func safeUint64FromInt64(v int64) (uint64, error) {
+	if v < 0 {
+		return 0, fmt.Errorf("int64 value %d cannot be cast to uint64 (negative)", v)
+	}
+	return uint64(v), nil
+}
+
+// safeInt64FromUint64 converts uint64 to int64, returning error if the value
+// exceeds MaxInt64.
+func safeInt64FromUint64(v uint64) (int64, error) {
+	if v > math.MaxInt64 {
+		return 0, fmt.Errorf("uint64 value %d overflows int64 range [0, %d]", v, uint64(math.MaxInt64))
+	}
+	return int64(v), nil
+}
+
+func checkedAddInt64(a, b int64) (int64, error) {
+	if (b > 0 && a > math.MaxInt64-b) || (b < 0 && a < math.MinInt64-b) {
+		return 0, fmt.Errorf("int64 addition overflow: %d + %d", a, b)
+	}
+	return a + b, nil
+}
+
 // safeUint32FromUint64 converts uint64 to uint32, returning error if the value
 // exceeds MaxUint32.
 func safeUint32FromUint64(v uint64) (uint32, error) {
