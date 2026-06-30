@@ -1,10 +1,11 @@
 # Gonka Chat Completions API
 
-OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B via vLLM. This doc covers universal parameter behavior. For per-model overrides see [Kimi-K2.6](kimi-k2.6.md) / [Qwen3-235B](qwen3-235b-a22b-instruct-2507.md).
+OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M2.7 via vLLM. This doc covers universal parameter behavior. For per-model overrides see [Kimi-K2.6](kimi-k2.6.md) / [Qwen3-235B](qwen3-235b-a22b-instruct-2507.md) / [MiniMax-M2.7](minimax-m2.7.md).
 
 ## Quick navigation
 - [Per-model overrides: Kimi-K2.6](kimi-k2.6.md)
 - [Per-model overrides: Qwen3-235B-A22B-Instruct-2507](qwen3-235b-a22b-instruct-2507.md)
+- [Per-model overrides: MiniMax-M2.7](minimax-m2.7.md)
 - [Why was my param stripped/rejected?](troubleshooting.md)
 - [Client agents compatibility](agents.md)
 - [Source citations](references.md)
@@ -46,7 +47,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B via vLLM. T
 | `top_logprobs` | int | — | force `5`; observability pipeline | — |
 | `return_token_ids` | bool | — | force `true`; required for stream-derived `enforced_tokens` reconstruction on Kimi-K2.6 reasoning routes (without it, `<think>`/`</think>` are silently dropped from SSE while still counted in `usage.completion_tokens`). Resulting `prompt_token_ids` / `choices[].token_ids` are stripped from the client-facing response | [[vLLM-19]](references.md#vllm), [[vLLM-20]](references.md#vllm) |
 | `response_format` | object | — | shape-bounded (depth ≤16, nodes ≤128, branch arms ≤16, enum ≤256, size ≤16 KiB); `$ref`/`$defs`/`definitions` forbidden; `pattern` ≤512 B + must compile as regex; `json_schema.name` non-empty ≤64 chars matching `^[A-Za-z0-9_.-]+$`; schema must be an object | [[OpenAI-1]](references.md#openai), [[CVE-2]](references.md#security-advisories) |
-| `structured_outputs` | object | — | validated against vLLM envelope (`json`/`regex`/`choice`/`grammar`/`json_object`/`structural_tag`); CVE-driven caps per sub-field — see [Qwen native extensions](qwen3-235b-a22b-instruct-2507.md#native-extensions); **rejected on Kimi-K2.6 route** ([why](troubleshooting.md#reject-structured_outputs-kimi)); **rejected if combined with `response_format`** ([why](troubleshooting.md#reject-structured_outputs-with-response_format)) | [[vLLM-16]](references.md#vllm), [[vLLM-18]](references.md#vllm), [[CVE-3]](references.md#security-advisories), [[CVE-4]](references.md#security-advisories), [[CVE-8]](references.md#security-advisories) |
+| `structured_outputs` | object | — | validated against vLLM envelope (`json`/`regex`/`choice`/`grammar`/`json_object`/`structural_tag`); CVE-driven caps per sub-field — see [Qwen native extensions](qwen3-235b-a22b-instruct-2507.md#native-extensions); **rejected on Kimi-K2.6 route** ([why](troubleshooting.md#reject-structured_outputs-kimi)); **accepted on MiniMax-M2.7 route** — vLLM enforces it ([details](troubleshooting.md#accept-structured_outputs-minimax)); `structural_tag` must be the object form (string form is rejected — crashes the engine); **rejected if combined with `response_format`** ([why](troubleshooting.md#reject-structured_outputs-with-response_format)) | [[vLLM-16]](references.md#vllm), [[vLLM-18]](references.md#vllm), [[CVE-3]](references.md#security-advisories), [[CVE-4]](references.md#security-advisories), [[CVE-8]](references.md#security-advisories) |
 | `tools` | array | — | shape-bounded: function schema depth ≤16, nodes ≤256, branch arms ≤16, enum ≤256, size ≤16 KiB; `$ref`/`$defs`/`definitions` forbidden; `pattern` ≤512 B + regex compile; `function.name` ≤64 B; `tools[].function.strict` silent-stripped (vLLM parsers ignore) | [[OpenAI-1]](references.md#openai), [[CVE-2]](references.md#security-advisories) |
 | `tool_choice` | string\|object | "auto" if tools | shape-strict; `function.name` ≤64 B; `"required"` coerced ([why](troubleshooting.md#coerce-tool-choice-required)) | [[OpenAI-1]](references.md#openai) |
 | `parallel_tool_calls` | bool | — | pass-through | [[OpenAI-1]](references.md#openai) |
@@ -103,6 +104,7 @@ Enforced by the gateway's message validator:
 - **Lenient SDK compat:** orphan `role: "tool"` messages — those whose `tool_call_id` was never emitted by a prior `assistant.tool_calls[].id` — are silently dropped before validation. Long agent conversations sometimes lose part of a multi-tool fan-out during client-side history compaction.
 - **Lenient SDK compat:** empty `role: "assistant"` turns — no `content` AND no `tool_calls` AND no `function_call` — are silently dropped. The model can't observe an informationless turn; the drop is a semantic no-op.
 - **Strict (no lenient compat):** duplicate `tool_calls[].id` within a single assistant message is rejected per OpenAI spec — see [troubleshooting](troubleshooting.md#reject-duplicate-tool-call-id).
+- **Route-specific shape:** the `MiniMaxAI/MiniMax-M2.7` route uses a different `role:"tool"` contract — `content` is a `{name,type,text}[]` array, `tool_call_id` is absent (silently stripped if present), and the orphan-drop policy is "no preceding assistant.tool_calls[] block" rather than "no matching tool_call_id". See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md).
 
 ## Errors
 

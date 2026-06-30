@@ -20,7 +20,7 @@ const (
 // wrappers (~9-10 levels) plus a small allowance for client-side structuring.
 const MaxRequestNestingDepth = 32
 
-// Per-parameter bounds wired into the catalog. Values match supported-params.md.
+// Per-parameter bounds wired into the catalog. Values match docs/chat-api/README.md.
 const (
 	MessagesMaxEntries = 2048
 
@@ -83,10 +83,20 @@ const (
 
 	// Below this floor Kimi-K2.6 emits only </think> (special token vLLM drops from content).
 	kimiMaxTokensMin uint64 = 16
+
+	MinimaxToolMessageMaxEntries = 16
+	MinimaxToolMessageNameMaxLen = 64
+	// 64 KiB per-entry defensive cap; no vendor recommendation (MiniMax-4 fixes shape,
+	// not size). Sized to fit common agent tool-results (file reads, build logs).
+	MinimaxToolMessageTextMaxSize = 64 * 1024
 )
 
-// Routed model identifiers. The catalog wires per-model behavior keyed on these strings.
-const kimiK26ModelID = "moonshotai/Kimi-K2.6"
+// Routed model identifiers. The parameter catalog and the message processor
+// both dispatch on these strings.
+const (
+	kimiK26ModelID    = "moonshotai/Kimi-K2.6"
+	miniMaxM27ModelID = "MiniMaxAI/MiniMax-M2.7"
+)
 
 // Sentinel content used by message normalization when an upstream tool result is empty.
 const emptyToolResultContent = "<empty tool result>"

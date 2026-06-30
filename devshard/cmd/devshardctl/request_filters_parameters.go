@@ -3,13 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
 	"devshard"
+	"devshard/cmd/devshardctl/filtercore"
 	"devshard/cmd/devshardctl/paramvalidators"
 )
 
@@ -41,137 +40,28 @@ type ParameterHandler interface {
 	Apply(*RequestFilterContext, VLLMParameter) error
 }
 
-type StripParameterHandler struct{}
-
-func (StripParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	ctx.Document.Delete(parameter.Name)
-	return nil
+// ParameterHandlerAdapter wraps a paramvalidators.ParameterHandler (which operates on a
+// raw map[string]any) so the catalog can drive it through the standard ParameterHandler
+// contract. Mirrors DocumentValidatorHandler's role for DocumentValidator.
+type ParameterHandlerAdapter struct {
+	Handler paramvalidators.ParameterHandler
 }
 
-type ConditionalStripParameterHandler struct {
-	Predicate func(*RequestFilterContext) bool
-}
-
-func (h ConditionalStripParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	if h.Predicate != nil && h.Predicate(ctx) {
-		ctx.Document.Delete(parameter.Name)
-	}
-	return nil
-}
-
-type SanitizeStringListParameterHandler struct {
-	Keep             func(string) bool
-	DropFieldIfEmpty bool
-}
-
-func (h SanitizeStringListParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	raw, ok := ctx.Document.Array(parameter.Name)
-	if !ok {
+func (h ParameterHandlerAdapter) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
+	if h.Handler == nil {
 		return nil
 	}
-	cleaned := raw[:0]
-	for _, item := range raw {
-		value, ok := item.(string)
-		if !ok {
-			cleaned = append(cleaned, item)
-			continue
-		}
-		if h.Keep == nil || h.Keep(value) {
-			cleaned = append(cleaned, value)
-		}
+	var handlerErr error
+	ctx.Document.LockedScope(func(raw map[string]any) {
+		handlerErr = h.Handler.HandleParameter(paramvalidators.ParameterContext{
+			Document:    raw,
+			Parameter:   parameter.Name,
+			RoutedModel: ctx.RoutedModel,
+		})
+	})
+	if handlerErr != nil {
+		return wrapBadChatRequest(handlerErr)
 	}
-	if len(cleaned) == 0 && h.DropFieldIfEmpty {
-		ctx.Document.Delete(parameter.Name)
-		return nil
-	}
-	ctx.Document.Set(parameter.Name, cleaned)
-	return nil
-}
-
-// SanitizeFloatParameterHandler normalizes numeric knobs from either JSON numbers or string-encoded numbers.
-type SanitizeFloatParameterHandler struct {
-	StripNonFinite bool
-	Min            *float64
-	Max            *float64
-}
-
-func (h SanitizeFloatParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	value, ok := ctx.Document.Get(parameter.Name)
-	if !ok {
-		return nil
-	}
-	number, ok := numericJSONValueAsFloat64(value)
-	if !ok {
-		ctx.Document.Delete(parameter.Name)
-		return nil
-	}
-	if h.StripNonFinite && (math.IsNaN(number) || math.IsInf(number, 0)) {
-		ctx.Document.Delete(parameter.Name)
-		return nil
-	}
-	if h.Min != nil && number < *h.Min {
-		number = *h.Min
-	}
-	if h.Max != nil && number > *h.Max {
-		number = *h.Max
-	}
-	ctx.Document.Set(parameter.Name, number)
-	return nil
-}
-
-type SanitizeFloatMapParameterHandler struct {
-	StripNonFinite   bool
-	Min              *float64
-	Max              *float64
-	DropFieldIfEmpty bool
-	MaxEntries       int
-}
-
-func (h SanitizeFloatMapParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	raw, ok := ctx.Document.Object(parameter.Name)
-	if !ok {
-		return nil
-	}
-	if h.MaxEntries > 0 && len(raw) > h.MaxEntries {
-		return badChatRequest("%s: map size %d exceeds limit %d", parameter.Name, len(raw), h.MaxEntries)
-	}
-	for key, value := range raw {
-		number, ok := numericJSONValueAsFloat64(value)
-		if !ok {
-			continue
-		}
-		if h.StripNonFinite && (math.IsNaN(number) || math.IsInf(number, 0)) {
-			delete(raw, key)
-			continue
-		}
-		if h.Min != nil && number < *h.Min {
-			delete(raw, key)
-			continue
-		}
-		if h.Max != nil && number > *h.Max {
-			delete(raw, key)
-		}
-	}
-	if len(raw) == 0 && h.DropFieldIfEmpty {
-		ctx.Document.Delete(parameter.Name)
-		return nil
-	}
-	ctx.Document.Set(parameter.Name, raw)
-	return nil
-}
-
-type ForceLiteralParameterHandler struct {
-	Value any
-	OverwriteOnly bool
-}
-
-func (h ForceLiteralParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	if h.OverwriteOnly {
-		if _, exists := ctx.Document.Get(parameter.Name); !exists {
-			return nil
-		}
-	}
-	ctx.Document.Set(parameter.Name, h.Value)
 	return nil
 }
 
@@ -185,13 +75,11 @@ type ModelScopedParameterHandler struct {
 }
 
 func (h ModelScopedParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	for _, m := range h.Models {
-		if m == ctx.RoutedModel {
-			if h.Handler == nil {
-				return nil
-			}
-			return h.Handler.Apply(ctx, parameter)
+	if filtercore.MatchesModel(ctx.RoutedModel, h.Models) {
+		if h.Handler == nil {
+			return nil
 		}
+		return h.Handler.Apply(ctx, parameter)
 	}
 	if h.UnmatchedHandler == nil {
 		return nil
@@ -199,48 +87,20 @@ func (h ModelScopedParameterHandler) Apply(ctx *RequestFilterContext, parameter 
 	return h.UnmatchedHandler.Apply(ctx, parameter)
 }
 
-type CapUintParameterHandler struct {
-	Max uint64
-}
-
-func (h CapUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	value, ok := numericJSONValueAsUint64FromDocument(&ctx.Document, parameter.Name)
-	if !ok {
-		return nil
-	}
-	if value > h.Max {
-		ctx.Document.Set(parameter.Name, h.Max)
-	}
-	return nil
-}
-
-type ClampUintToFieldParameterHandler struct {
-	MaxField string
-}
-
-func (h ClampUintToFieldParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	value, ok := numericJSONValueAsUint64FromDocument(&ctx.Document, parameter.Name)
-	if !ok {
-		return nil
-	}
-	maxValue, ok := numericJSONValueAsUint64FromDocument(&ctx.Document, h.MaxField)
-	if !ok || maxValue == 0 {
-		return nil
-	}
-	if value > maxValue {
-		ctx.Document.Set(parameter.Name, maxValue)
-	}
-	return nil
-}
-
 // MinUintParameterHandler clamps a uint parameter UP to Min when the value is present
 // and below the floor. Pass-through when the field is absent or already >= Min.
+// Used by the Kimi-K2.6 max_tokens floor; lives here (rather than in paramvalidators)
+// because it has only one call-site and was added after the bulk-handler migration.
 type MinUintParameterHandler struct {
 	Min uint64
 }
 
 func (h MinUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	value, ok := numericJSONValueAsUint64FromDocument(&ctx.Document, parameter.Name)
+	raw, ok := ctx.Document.Get(parameter.Name)
+	if !ok {
+		return nil
+	}
+	value, ok := devshard.JSONNumericUint64(raw)
 	if !ok {
 		return nil
 	}
@@ -250,55 +110,6 @@ func (h MinUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLM
 	return nil
 }
 
-// ValidateUintParameterHandler rejects the request if the field is present but its value
-// cannot be parsed as a non-negative integer that fits in uint64. Pass-through when the
-// field is absent. Used for fields like `seed` where vLLM expects a uint64 and we want to
-// catch garbage types at the gateway boundary rather than relying on the upstream's error
-// path.
-type ValidateUintParameterHandler struct{}
-
-func (h ValidateUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	raw, exists := ctx.Document.Get(parameter.Name)
-	if !exists || raw == nil {
-		return nil
-	}
-	if _, ok := devshard.JSONNumericUint64(raw); !ok {
-		return badChatRequest("%s: must be a non-negative integer", parameter.Name)
-	}
-	return nil
-}
-
-// LengthCapListParameterHandler bounds the number of entries in a JSON array, and
-// optionally the byte length of each string entry. Used for fields like `stop`,
-// `stop_token_ids`, and `bad_words` -- vLLM scans every entry against every generated
-// token, so unbounded arrays linearly slow inference. MaxEntries=0 disables the array cap,
-// MaxEntryLen=0 disables the per-string cap (use 0 for int-only arrays).
-type LengthCapListParameterHandler struct {
-	MaxEntries  int
-	MaxEntryLen int
-}
-
-func (h LengthCapListParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	raw, ok := ctx.Document.Array(parameter.Name)
-	if !ok {
-		return nil
-	}
-	if h.MaxEntries > 0 && len(raw) > h.MaxEntries {
-		return badChatRequest("%s: array length %d exceeds limit %d", parameter.Name, len(raw), h.MaxEntries)
-	}
-	if h.MaxEntryLen > 0 {
-		for i, item := range raw {
-			s, ok := item.(string)
-			if !ok {
-				continue
-			}
-			if len(s) > h.MaxEntryLen {
-				return badChatRequest("%s[%d]: string length %d exceeds limit %d", parameter.Name, i, len(s), h.MaxEntryLen)
-			}
-		}
-	}
-	return nil
-}
 
 // DocumentValidator: validators in paramvalidators expose this contract. May mutate
 // vctx.Document for per-model rewrites alongside shape checks.
@@ -546,7 +357,7 @@ func (ctx *RequestFilterContext) DecodeRequest() error {
 //     TestNormalizeChatRequestDefaultsAndCapsOutputTokens.
 //
 // Other fields are re-read so caps applied by PostLimits rules (for example `n` via
-// CapUintParameterHandler) propagate into the projection.
+// paramvalidators.CapUintParameter through the adapter) propagate into the projection.
 func (ctx *RequestFilterContext) SyncRequestView() error {
 	var req chatRequest
 	if err := readChatRequestFields(&ctx.Document, &req); err != nil {
@@ -610,24 +421,24 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 	parameters := slices.Concat(
 		[]VLLMParameter{
 			newParameter("messages").
-				withRule(RequestFilterStagePreValidation, LengthCapListParameterHandler{MaxEntries: MessagesMaxEntries}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: MessagesMaxEntries}}),
 			newParameter("seed").
-				withRule(RequestFilterStagePreValidation, ValidateUintParameterHandler{}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}),
 			newParameter("n").
-				withRule(RequestFilterStagePostLimits, CapUintParameterHandler{Max: MaxChatRequestChoices}).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Max: MaxChatRequestChoices}}).
 				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
 					Validator: paramvalidators.GreedySamplingValidator{},
 				}),
 			newParameter("temperature").
-				withRule(RequestFilterStagePostLimits, SanitizeFloatParameterHandler{StripNonFinite: true, Max: floatPointer(MaxTemperature)}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxTemperature)}}),
 			newParameter("repetition_penalty").
-				withRule(RequestFilterStagePostLimits, SanitizeFloatParameterHandler{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}}),
 			newParameter("logit_bias").
-				withRule(RequestFilterStagePostLimits, SanitizeFloatMapParameterHandler{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatMapParameter{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries}}),
 			newParameter("stop").
-				withRule(RequestFilterStagePreValidation, LengthCapListParameterHandler{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
 			newParameter("stop_token_ids").
-				withRule(RequestFilterStagePreValidation, LengthCapListParameterHandler{MaxEntries: StopTokenIdsMaxEntries}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopTokenIdsMaxEntries}}),
 			newParameter("reasoning").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},
@@ -641,13 +452,26 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				}).
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models:           nil,
-					UnmatchedHandler: StripParameterHandler{},
+					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}),
+			// MiniMax-M2.7 has no chat_template knob for enable_thinking (vLLM #36778);
+			// strip on this route before EnableThinkingValidator runs.
 			newParameter("enable_thinking").
+				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
+					Models:  []string{miniMaxM27ModelID},
+					Handler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
+				}).
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.EnableThinkingValidator{},
 				}),
+			// thinking: Kimi mirrors to chat_template_kwargs.thinking; MiniMax-M2.7 has no
+			// equivalent knob (interleaved thinking is structural to the chat template) so
+			// strip the field before ThinkingValidator runs. Other routes normalize+keep.
 			newParameter("thinking").
+				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
+					Models:  []string{miniMaxM27ModelID},
+					Handler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
+				}).
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ThinkingValidator{
 						MirrorToTemplateKwargsForModels: []string{kimiK26ModelID},
@@ -664,7 +488,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("thinking_token_budget").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models:           []string{kimiK26ModelID},
-					UnmatchedHandler: StripParameterHandler{},
+					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}).
 				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
 					Models: []string{kimiK26ModelID},
@@ -674,8 +498,8 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						},
 					},
 				}).
-				withRule(RequestFilterStagePostLimits, CapUintParameterHandler{Max: kimiThinkingTokenBudgetMax}).
-				withRule(RequestFilterStagePostLimits, ClampUintToFieldParameterHandler{MaxField: "max_tokens"}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Max: kimiThinkingTokenBudgetMax}}).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ClampUintToFieldParameter{MaxField: "max_tokens"}}),
 			newParameter("tools").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolsValidator{
@@ -693,20 +517,21 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
 			newParameter("min_tokens").
-				withRule(RequestFilterStagePreValidation, ConditionalStripParameterHandler{
-					Predicate: func(ctx *RequestFilterContext) bool {
-						return ctx.Document.Has("stop_token_ids")
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ConditionalStripParameter{
+					Predicate: func(ctx paramvalidators.ParameterContext) bool {
+						_, ok := ctx.Document["stop_token_ids"]
+						return ok
 					},
-				}).
-				withRule(RequestFilterStagePostLimits, ClampUintToFieldParameterHandler{MaxField: "max_tokens"}),
+				}}).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ClampUintToFieldParameter{MaxField: "max_tokens"}}),
 			newParameter("bad_words").
-				withRule(RequestFilterStagePreValidation, SanitizeStringListParameterHandler{
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{
 					Keep: func(value string) bool {
 						return strings.TrimSpace(value) != ""
 					},
 					DropFieldIfEmpty: true,
-				}).
-				withRule(RequestFilterStagePreValidation, LengthCapListParameterHandler{MaxEntries: BadWordsMaxEntries, MaxEntryLen: BadWordsMaxEntryLen}),
+				}}).
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: BadWordsMaxEntries, MaxEntryLen: BadWordsMaxEntryLen}}),
 			// OpenAI Chat Completions standard observability fields. No inference-side
 			// semantics on the vLLM upstream; clients send them for end-user tracking,
 			// distributed tracing, agent control, and streaming token accounting.
@@ -736,11 +561,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					Validator: paramvalidators.StreamOptionsValidator{},
 				}),
 			newParameter("return_token_ids").
-				withRule(RequestFilterStagePostLimits, ForceLiteralParameterHandler{Value: true}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
 			newParameter("logprobs").
-				withRule(RequestFilterStagePostLimits, ForceLiteralParameterHandler{Value: true}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
 			newParameter("top_logprobs").
-				withRule(RequestFilterStagePostLimits, ForceLiteralParameterHandler{Value: TopLogprobsForcedValue}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: TopLogprobsForcedValue}}),
 			newParameter("response_format").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ResponseFormatValidator{
@@ -779,7 +604,17 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 							DefaultMaxLen: SafetyIdentifierMaxLen,
 						},
 					},
-					UnmatchedHandler: StripParameterHandler{},
+					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
+				}),
+			// MiniMax-M2.7 native extension lifted from extra_body. On the MiniMax
+			// route the field passes through to vLLM verbatim (controls whether
+			// reasoning is emitted as inline <think>...</think> in content or as a
+			// separate reasoning_details[] array). Stripped on other routes since
+			// Kimi/Qwen vLLM serves don't know the field. See docs/chat-api/minimax-m2.7.md.
+			newParameter("reasoning_split").
+				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
+					Models:           []string{miniMaxM27ModelID},
+					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}),
 		},
 		[]VLLMParameter{
@@ -806,11 +641,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 		newParameters([]string{"top_p", "top_k", "min_p"},
 			ParameterRule{
 				Stage:   RequestFilterStagePostLimits,
-				Handler: SanitizeFloatParameterHandler{StripNonFinite: true},
+				Handler: ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true}},
 			},
 		),
 		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "cache_key", "extra_headers", "thinking_config", "think"},
-			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: StripParameterHandler{}},
+			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}},
 		),
 		// frequency_penalty / presence_penalty share identical rules: catalog clamp
 		// [-2, 2] for all models + per-Kimi force-rewrite to 0.0 (Moonshot's K2.6 wire
@@ -818,13 +653,13 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 		newParameters([]string{"frequency_penalty", "presence_penalty"},
 			ParameterRule{
 				Stage:   RequestFilterStagePostLimits,
-				Handler: SanitizeFloatParameterHandler{StripNonFinite: true, Min: floatPointer(PenaltyMin), Max: floatPointer(PenaltyMax)},
+				Handler: ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Min: floatPointer(PenaltyMin), Max: floatPointer(PenaltyMax)}},
 			},
 			ParameterRule{
 				Stage: RequestFilterStagePostLimits,
 				Handler: ModelScopedParameterHandler{
 					Models:  []string{kimiK26ModelID},
-					Handler: ForceLiteralParameterHandler{Value: KimiK2PenaltyForcedValue, OverwriteOnly: true},
+					Handler: ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: KimiK2PenaltyForcedValue, OverwriteOnly: true}},
 				},
 			},
 		),
@@ -929,33 +764,4 @@ func newParameters(names []string, rules ...ParameterRule) []VLLMParameter {
 
 func floatPointer(value float64) *float64 {
 	return &value
-}
-
-func numericJSONValueAsFloat64(value any) (float64, bool) {
-	switch v := value.(type) {
-	case float64:
-		return v, true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	case json.Number:
-		number, err := v.Float64()
-		return number, err == nil
-	case string:
-		number, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		return number, err == nil
-	default:
-		return 0, false
-	}
-}
-
-func numericJSONValueAsUint64FromDocument(document *ChatRequestDocument, field string) (uint64, bool) {
-	value, ok := document.Get(field)
-	if !ok {
-		return 0, false
-	}
-	return devshard.JSONNumericUint64(value)
 }
