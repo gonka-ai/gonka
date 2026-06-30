@@ -196,13 +196,12 @@ class DelegationTests : TestermintTest() {
         // secondModel is bootstrap-only and not pre-eligible here.
         // It contributes zero consensus weight.
         // A declared bootstrap intent, which is acceptable while preEligible=false.
-        // B refused and C made no choice, so both are punished as NONE.
-        // A keeps model A only -> 50
-        // B serves A only -> floor(50 * 0.5) penalty -> 25
-        // C serves A only -> floor(50 * 0.5) penalty -> 25
+        // B refused and C made no choice, but penalties are reward-only and
+        // do not modify consensus weights.
+        // All three keep model A only -> 50 consensus weight each.
         assertThat(pA.weight).isEqualTo(50)
-        assertThat(pB.weight).isEqualTo(25)
-        assertThat(pC.weight).isEqualTo(25)
+        assertThat(pB.weight).isEqualTo(50)
+        assertThat(pC.weight).isEqualTo(50)
 
         // Voting powers only exist for model A because secondModel never entered validation.
         assertThat(pA.votingPowers).isNotNull
@@ -215,13 +214,13 @@ class DelegationTests : TestermintTest() {
         val vpB = pB.votingPowers!!.associateBy { it.modelId }
         assertThat(vpB).containsKey(defaultModel)
         assertThat(vpB).doesNotContainKey(secondModel)
-        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(25)
+        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(50)
 
         assertThat(pC.votingPowers).isNotNull
         val vpC = pC.votingPowers!!.associateBy { it.modelId }
         assertThat(vpC).containsKey(defaultModel)
         assertThat(vpC).doesNotContainKey(secondModel)
-        assertThat(vpC[defaultModel]!!.votingPower).isEqualTo(25)
+        assertThat(vpC[defaultModel]!!.votingPower).isEqualTo(50)
     }
 
     @Test
@@ -267,11 +266,12 @@ class DelegationTests : TestermintTest() {
             logSection("Node ${p.first}: weight=${p.second.weight}, votingPowers=${p.second.votingPowers}")
         }
 
-        // A, D serve both models -> consensusWeight = 50 + 10 = 60, no penalty.
-        // B declared intent for secondModel but doesn't serve it -> no_participation_penalty on consensusWeight.
-        // C delegated for secondModel -> no penalty.
+        // A, D serve both models -> consensusWeight = 50 + 10 = 60.
+        // B declared intent for secondModel but doesn't serve it, but penalties
+        // are reward-only and do not change consensusWeight.
+        // C delegated for secondModel -> no consensus penalty.
         assertThat(pA.weight).isEqualTo(60)
-        assertThat(pB.weight).isEqualTo(25) // 50 - floor(50*0.5) = 25
+        assertThat(pB.weight).isEqualTo(50)
         assertThat(pC.weight).isEqualTo(50)
         assertThat(pD.weight).isEqualTo(60)
 
@@ -281,7 +281,7 @@ class DelegationTests : TestermintTest() {
         val vpD = pD.votingPowers!!.associateBy { it.modelId }
 
         assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(60)
-        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(25)
+        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(50)
         assertThat(vpC[defaultModel]!!.votingPower).isEqualTo(50)
         assertThat(vpD[defaultModel]!!.votingPower).isEqualTo(60)
 
@@ -458,12 +458,11 @@ class DelegationTests : TestermintTest() {
 
         // Model B ineligible -> no consensus contribution from model B.
         // Both get base weight from model A only: pocWeightA * coeffA = 50.
-        // Bootstrap penalty for non-pre-eligible model B: direct committers are
-        // exempt (BootstrapPenaltyDirect), only non-committers get penalized.
-        // Node A committed to model B -> no penalty -> 50.
-        // Node B did not commit to model B -> BootstrapPenaltyNone -> 50*0.5 = 25.
+        // Bootstrap penalties are reward-only and do not change consensus
+        // weights. Model B is ineligible, so only model A contributes.
+        // Node A and node B both keep 50 consensus weight.
         assertThat(pA.weight).isEqualTo(50)
-        assertThat(pB.weight).isEqualTo(25)
+        assertThat(pB.weight).isEqualTo(50)
 
         // Voting powers: only model A entries (model B ineligible -> no VP computed)
         val vpA = pA.votingPowers!!.associateBy { it.modelId }
@@ -475,7 +474,7 @@ class DelegationTests : TestermintTest() {
         assertThat(vpB).doesNotContainKey(secondModel)
 
         assertThat(vpA[defaultModel]!!.votingPower).isEqualTo(50)
-        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(25)
+        assertThat(vpB[defaultModel]!!.votingPower).isEqualTo(50)
     }
 
     @Test
@@ -525,12 +524,11 @@ class DelegationTests : TestermintTest() {
         logSection("At penalty_start_epoch: epoch=${atGate.activeParticipants.epochId}, A=${atGateA.weight}, B=${atGateB.weight}")
 
         // The runtime compares against the upcoming epoch being formed, so the
-        // active set for penaltyStartEpoch is the first one where the penalty applies.
-        // Node A committed to model B -> exempt from no-participation penalty (Direct).
-        // Node B did not commit to model B -> penalized: 50 * 0.5 = 25.
+        // active set for penaltyStartEpoch is the first one where reward-only
+        // penalty accounting applies. Consensus weights stay unchanged.
         assertThat(atGate.activeParticipants.epochId).isEqualTo(penaltyStartEpoch)
         assertThat(atGateA.weight).isEqualTo(50)
-        assertThat(atGateB.weight).isEqualTo(25)
+        assertThat(atGateB.weight).isEqualTo(50)
     }
 
     @Test

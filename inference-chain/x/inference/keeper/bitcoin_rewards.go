@@ -43,6 +43,7 @@ func GetBitcoinSettleAmounts(
 		settleParams,
 		participantMLNodes,
 		nil,
+		nil,
 		logger,
 	)
 }
@@ -55,6 +56,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
+	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	if participants == nil {
@@ -84,6 +86,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 		validationParams,
 		participantMLNodes,
 		delegationRewardTransfers,
+		delegationRewardPenalties,
 		logger,
 	)
 	if err != nil {
@@ -174,6 +177,41 @@ func delegationShareOfWeight(share *types.Decimal, weight uint64) uint64 {
 	}
 	amount := shareDec.MulInt64(int64(weight)).TruncateInt64()
 	return positiveUint64(amount)
+}
+
+func applyDelegationRewardPenalties(
+	participantWeights map[string]uint64,
+	penalties []*types.DelegationRewardPenalty,
+	logger log.Logger,
+) {
+	if len(penalties) == 0 {
+		return
+	}
+
+	baseRewardable := make(map[string]uint64, len(participantWeights))
+	for addr, w := range participantWeights {
+		baseRewardable[addr] = w
+	}
+
+	for _, penalty := range penalties {
+		if penalty == nil || penalty.Participant == "" {
+			continue
+		}
+		if _, ok := participantWeights[penalty.Participant]; !ok {
+			continue
+		}
+		removed := delegationShareOfWeight(penalty.PenaltyFraction, baseRewardable[penalty.Participant])
+		if removed > participantWeights[penalty.Participant] {
+			removed = participantWeights[penalty.Participant]
+		}
+		if removed == 0 {
+			continue
+		}
+		participantWeights[penalty.Participant] -= removed
+		logger.Info("Bitcoin Rewards: applied reward-only penalty",
+			"participant", penalty.Participant,
+			"removed", removed)
+	}
 }
 
 // applyDelegationRewardTransfers makes delegation reward sharing source-aware so
@@ -649,6 +687,7 @@ func CalculateParticipantBitcoinRewards(
 		validationParams,
 		participantMLNodes,
 		nil,
+		nil,
 		logger,
 	)
 }
@@ -660,6 +699,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
+	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	// Parameter validation
@@ -812,6 +852,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		logger.Info("Bitcoin Rewards: Skipping downtime punishment (outage circuit breaker)", "epoch", currentEpoch)
 	}
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
+	applyDelegationRewardPenalties(participantWeights, delegationRewardPenalties, logger)
 	applyDelegationRewardTransfers(participantWeights, delegationRewardTransfers, logger)
 	logger.Info("Bitcoin Rewards: weights after delegation reward transfers", "participants", participantWeights)
 	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,

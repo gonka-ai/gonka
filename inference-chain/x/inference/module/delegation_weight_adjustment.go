@@ -20,7 +20,7 @@ func (p DelegationAdjustmentParams) IsNoOp() bool {
 }
 
 // PenaltyAccumulator collects penalty fractions from all sources (delegation +
-// bootstrap) and emits them as reward-only burn transfers capped at 1.0.
+// bootstrap) and emits them as reward-only penalties capped at 1.0.
 //
 // DIRECT participants are never penalized. For non-DIRECT participants:
 //   - REFUSE:   fraction += refusal_penalty per model
@@ -67,11 +67,11 @@ func (pa *PenaltyAccumulator) AddPenalty(addr string, fraction mathsdk.LegacyDec
 	}
 }
 
-func (pa *PenaltyAccumulator) RewardTransfers() []*types.DelegationRewardTransfer {
+func (pa *PenaltyAccumulator) RewardPenalties() []*types.DelegationRewardPenalty {
 	if pa == nil {
 		return nil
 	}
-	transfers := make([]*types.DelegationRewardTransfer, 0, len(pa.penalties))
+	penalties := make([]*types.DelegationRewardPenalty, 0, len(pa.penalties))
 	for _, addr := range sortedKeys(pa.penalties) {
 		if pa.originalWeight[addr] <= 0 {
 			continue
@@ -80,12 +80,12 @@ func (pa *PenaltyAccumulator) RewardTransfers() []*types.DelegationRewardTransfe
 		if fraction.IsZero() {
 			continue
 		}
-		transfers = append(transfers, &types.DelegationRewardTransfer{
-			From:  addr,
-			Share: legacyDecToProto(fraction),
+		penalties = append(penalties, &types.DelegationRewardPenalty{
+			Participant:     addr,
+			PenaltyFraction: legacyDecToProto(fraction),
 		})
 	}
-	return transfers
+	return penalties
 }
 
 type DelegationRewardTransfers struct {

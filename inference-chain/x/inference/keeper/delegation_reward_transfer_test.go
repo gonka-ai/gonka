@@ -23,6 +23,12 @@ func TestDelegationRewardTransferSnapshotForEpoch(t *testing.T) {
 				Share:   types.DecimalFromFloat(0.05),
 			},
 		},
+		Penalties: []*types.DelegationRewardPenalty{
+			{
+				Participant:     "carol",
+				PenaltyFraction: types.DecimalFromFloat(0.2),
+			},
+		},
 	}))
 	transfers, err := k.GetDelegationRewardTransfersForEpoch(ctx, 7)
 	require.NoError(t, err)
@@ -30,9 +36,18 @@ func TestDelegationRewardTransferSnapshotForEpoch(t *testing.T) {
 	require.Equal(t, "alice", transfers[0].From)
 	require.Equal(t, "bob", transfers[0].To)
 
+	penalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, 7)
+	require.NoError(t, err)
+	require.Len(t, penalties, 1)
+	require.Equal(t, "carol", penalties[0].Participant)
+
 	transfers, err = k.GetDelegationRewardTransfersForEpoch(ctx, 8)
 	require.NoError(t, err)
 	require.Empty(t, transfers)
+
+	penalties, err = k.GetDelegationRewardPenaltiesForEpoch(ctx, 8)
+	require.NoError(t, err)
+	require.Empty(t, penalties)
 }
 
 func BenchmarkDelegationRewardTransferSnapshot1000Participants10Models(b *testing.B) {

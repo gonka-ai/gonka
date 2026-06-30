@@ -69,9 +69,15 @@ message DelegationRewardTransfer {
   Decimal share = 4;
 }
 
+message DelegationRewardPenalty {
+  string participant = 1;
+  Decimal penalty_fraction = 2;
+}
+
 message DelegationRewardTransferSnapshot {
   uint64 epoch_index = 1;
   repeated DelegationRewardTransfer transfers = 2;
+  repeated DelegationRewardPenalty penalties = 3;
 }
 
 // --- Transaction messages ---

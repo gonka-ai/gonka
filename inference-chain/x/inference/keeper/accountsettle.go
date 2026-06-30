@@ -43,6 +43,7 @@ type bitcoinRewardInputs struct {
 	SettleParameters   *SettleParameters
 	ParticipantMLNodes map[string]map[string][]*types.MLNodeInfo
 	RewardTransfers    []*types.DelegationRewardTransfer
+	RewardPenalties    []*types.DelegationRewardPenalty
 }
 
 func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64) (*bitcoinRewardInputs, bool, error) {
@@ -76,6 +77,10 @@ func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64)
 	if err != nil {
 		return nil, true, err
 	}
+	rewardPenalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, epochIndex)
+	if err != nil {
+		return nil, true, err
+	}
 	validationParams := params.ValidationParams
 	if validationParams == nil {
 		validationParams = types.DefaultValidationParams()
@@ -97,6 +102,7 @@ func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64)
 		SettleParameters:   settleParameters,
 		ParticipantMLNodes: participantMLNodes,
 		RewardTransfers:    rewardTransfers,
+		RewardPenalties:    rewardPenalties,
 	}, true, nil
 }
 
@@ -208,6 +214,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		settleParameters,
 		inputs.ParticipantMLNodes,
 		inputs.RewardTransfers,
+		inputs.RewardPenalties,
 		k.Logger(),
 	)
 	if err != nil {

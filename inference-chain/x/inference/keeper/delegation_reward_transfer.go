@@ -27,3 +27,13 @@ func (k Keeper) GetDelegationRewardTransfersForEpoch(ctx context.Context, epochI
 	copy(transfers, snapshot.Transfers)
 	return transfers, nil
 }
+
+func (k Keeper) GetDelegationRewardPenaltiesForEpoch(ctx context.Context, epochIndex uint64) ([]*types.DelegationRewardPenalty, error) {
+	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	if !found || snapshot.EpochIndex != epochIndex {
+		return nil, nil
+	}
+	penalties := make([]*types.DelegationRewardPenalty, len(snapshot.Penalties))
+	copy(penalties, snapshot.Penalties)
+	return penalties, nil
+}

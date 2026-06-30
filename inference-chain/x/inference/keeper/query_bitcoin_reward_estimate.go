@@ -36,6 +36,7 @@ func (k Keeper) EstimateBitcoinReward(ctx context.Context, req *types.QueryEstim
 		inputs.SettleParameters,
 		inputs.ParticipantMLNodes,
 		inputs.RewardTransfers,
+		inputs.RewardPenalties,
 		k.Logger(),
 	)
 	if err != nil {

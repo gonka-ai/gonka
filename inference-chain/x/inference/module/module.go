@@ -750,7 +750,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	penaltyTransfers := acc.RewardTransfers()
+	penalties := acc.RewardPenalties()
 	rewardTransfers := BuildDelegationRewardTransfers(
 		participationState.calculator,
 		participationState.eligibleModels,
@@ -759,8 +759,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	allRewardTransfers := append(penaltyTransfers, rewardTransfers.Records()...)
-	sortDelegationRewardTransfers(allRewardTransfers)
+	allRewardTransfers := rewardTransfers.Records()
 
 	beforeCollateral := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
@@ -841,6 +840,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: upcomingEpoch.Index,
 		Transfers:  allRewardTransfers,
+		Penalties:  penalties,
 	}); err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
 		return

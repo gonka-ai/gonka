@@ -81,19 +81,19 @@ func TestApplyDelegationRewardTransfers_RewardOnlyTransfer(t *testing.T) {
 	require.Equal(t, uint64(600), weights["bob"])
 }
 
-func TestApplyDelegationRewardTransfers_BurnTransferReducesSourceOnly(t *testing.T) {
+func TestApplyDelegationRewardPenalties_ReducesSourceOnly(t *testing.T) {
 	weights := map[string]uint64{
 		"alice": 1000,
 		"bob":   500,
 	}
-	transfers := []*types.DelegationRewardTransfer{
+	penalties := []*types.DelegationRewardPenalty{
 		{
-			From:  "alice",
-			Share: types.DecimalFromFloat(0.1),
+			Participant:     "alice",
+			PenaltyFraction: types.DecimalFromFloat(0.1),
 		},
 	}
 
-	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
 
 	require.Equal(t, uint64(900), weights["alice"])
 	require.Equal(t, uint64(500), weights["bob"])
@@ -140,23 +140,42 @@ func TestApplyDelegationRewardTransfers_RewardOnlyMultipleTransfersUseSourceSnap
 	require.Equal(t, uint64(600), weights["carol"])
 }
 
-func TestApplyDelegationRewardTransfers_CombinedOutgoingCappedBySourceWeight(t *testing.T) {
+func TestApplyDelegationRewardPenalties_DuplicateEntriesAreAdditiveAndClamped(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   400,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.7)},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+
+	require.Equal(t, uint64(0), weights["alice"])
+	require.Equal(t, uint64(400), weights["bob"])
+}
+
+func TestApplyDelegationRewardPenaltiesThenTransfers_PenaltyReducesTransferBase(t *testing.T) {
 	weights := map[string]uint64{
 		"alice": 1000,
 		"bob":   500,
 	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.8)},
+	}
 	transfers := []*types.DelegationRewardTransfer{
-		{From: "alice", Share: types.DecimalFromFloat(0.8)},
 		{ModelId: "model1", From: "alice", To: "bob", Share: types.DecimalFromFloat(0.3)},
 	}
 
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
 	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
 
-	require.Equal(t, uint64(0), weights["alice"])
-	require.Equal(t, uint64(700), weights["bob"])
+	require.Equal(t, uint64(140), weights["alice"])
+	require.Equal(t, uint64(560), weights["bob"])
 }
 
-func TestCalculateBitcoinRewards_BurnTransferDoesNotRenormalizeDenominator(t *testing.T) {
+func TestCalculateBitcoinRewards_PenaltyDoesNotRenormalizeDenominator(t *testing.T) {
 	bitcoinParams := &types.BitcoinRewardParams{
 		GenesisEpoch:       1,
 		InitialEpochReward: 1000,
@@ -173,8 +192,8 @@ func TestCalculateBitcoinRewards_BurnTransferDoesNotRenormalizeDenominator(t *te
 		{Address: "alice", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
 		{Address: "bob", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
 	}
-	transfers := []*types.DelegationRewardTransfer{
-		{From: "alice", Share: types.DecimalFromFloat(0.5)},
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
 	}
 
 	results, bitcoinResult, err := CalculateParticipantBitcoinRewardsWithTransfers(
@@ -183,7 +202,8 @@ func TestCalculateBitcoinRewards_BurnTransferDoesNotRenormalizeDenominator(t *te
 		bitcoinParams,
 		nil,
 		modelNodesAndScales(epochGroupData),
-		transfers,
+		nil,
+		penalties,
 		createTestLogger(t),
 	)
 	require.NoError(t, err)
