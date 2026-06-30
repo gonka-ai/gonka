@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -263,6 +264,12 @@ func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySet
 		}
 	}
 	result.ExistingCount = count
+	if count < target {
+		if served, known := g.rotationModelServedByNetwork(model.ModelID); known && !served {
+			log.Printf("escrow_rotation_skip_model_absent role=%s epoch=%d model=%q reason=model_not_in_network", role, epoch, model.ModelID)
+			return result, nil
+		}
+	}
 	if count < target && g.rotationCreateFailed(model.ModelID, role, epoch) {
 		return result, errEscrowRotationCreateSuppressed
 	}
@@ -275,6 +282,22 @@ func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySet
 		result.CreatedCount++
 	}
 	return result, nil
+}
+
+// rotationModelServedByNetwork reports whether the model is served; known is false on cold start (empty model set) so callers don't skip a genuinely-served model.
+func (g *Gateway) rotationModelServedByNetwork(modelID string) (served bool, known bool) {
+	if g == nil || g.capacity == nil {
+		return false, false
+	}
+	networkModels := g.capacity.Models()
+	if len(networkModels) == 0 {
+		return false, false
+	}
+	modelID = strings.TrimSpace(modelID)
+	if slices.Contains(networkModels, modelID) {
+		return true, true
+	}
+	return false, true
 }
 
 func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64) (*CreateDevshardEscrowResult, error) {
