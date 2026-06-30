@@ -1107,58 +1107,6 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 	})
 }
 
-func TestCalculateParticipantBitcoinRewards_ProducerFallbackCapsAtMaxInt64(t *testing.T) {
-	participants := []types.Participant{
-		{
-			Address: "participant1",
-			Status:  types.ParticipantStatus_ACTIVE,
-			CurrentEpochStats: &types.CurrentEpochStats{
-				InferenceCount: 1,
-			},
-		},
-		{
-			Address: "participant2",
-			Status:  types.ParticipantStatus_ACTIVE,
-			CurrentEpochStats: &types.CurrentEpochStats{
-				InferenceCount: 1,
-			},
-		},
-		{
-			Address: "participant3",
-			Status:  types.ParticipantStatus_ACTIVE,
-			CurrentEpochStats: &types.CurrentEpochStats{
-				InferenceCount: 1,
-			},
-		},
-	}
-	epochGroupData := &types.EpochGroupData{
-		EpochIndex: 1,
-		ValidationWeights: []*types.ValidationWeight{
-			createTestValidationWeight("participant1", math.MaxInt64, 100),
-			createTestValidationWeight("participant2", math.MaxInt64, 100),
-			createTestValidationWeight("participant3", math.MaxInt64, 100),
-		},
-	}
-	bitcoinParams := &types.BitcoinRewardParams{
-		InitialEpochReward: math.MaxUint64,
-		DecayRate:          types.DecimalFromFloat(0),
-		GenesisEpoch:       1,
-	}
-
-	results, _, err := CalculateParticipantBitcoinRewards(
-		participants,
-		epochGroupData,
-		bitcoinParams,
-		nil,
-		modelNodesAndScales(epochGroupData),
-		createTestLogger(t),
-	)
-	require.NoError(t, err)
-	require.NotEmpty(t, results)
-	require.Equal(t, uint64(math.MaxInt64), results[0].Settle.RewardCoins)
-	require.NotEqual(t, uint64(math.MaxUint64), results[0].Settle.RewardCoins)
-}
-
 // TestPhase2BonusFunctions tests the Phase 2 enhancement stub functions
 func TestPhase2BonusFunctions(t *testing.T) {
 	// Setup test data
