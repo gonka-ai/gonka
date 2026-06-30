@@ -11,13 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClaimRewards_WeightAggregationAboveUint32_StillSamples(t *testing.T) {
+func TestClaimRewards_WeightAggregationAboveUint32_UsesUint64Weights(t *testing.T) {
 	k, ms, ctx, _ := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	epochIndex := uint64(100)
 	epoch := types.Epoch{Index: epochIndex, PocStartBlockHeight: 1000}
 	k.SetEpoch(sdkCtx, &epoch)
-	require.NoError(t, k.SetParams(sdkCtx, types.DefaultParams()))
+	params := types.DefaultParams()
+	params.ValidationParams.MinValidationAverage = types.DecimalFromFloat(1.0)
+	params.ValidationParams.MaxValidationAverage = types.DecimalFromFloat(1.0)
+	require.NoError(t, k.SetParams(sdkCtx, params))
 
 	const each = int64(2_200_000_000)
 	require.LessOrEqual(t, each, int64(math.MaxUint32))

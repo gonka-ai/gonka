@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSettleAccountsZeroPaymentGuard_DistinguishesWrapFromGenuineZero(t *testing.T) {
+func TestZeroPaymentGuardCondition_DistinguishesWrapFromGenuineZero(t *testing.T) {
 	wrapSum, wrapCarry := bits.Add64(math.MaxUint64, 1, 0)
 	require.Equal(t, uint64(0), wrapSum)
 	require.Equal(t, uint64(1), wrapCarry)
