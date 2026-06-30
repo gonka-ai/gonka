@@ -67,6 +67,86 @@ func TestSafeUint32FromInt64(t *testing.T) {
 	}
 }
 
+func TestSafeUint64FromInt64(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   int64
+		want    uint64
+		wantErr bool
+	}{
+		{"zero", 0, 0, false},
+		{"one", 1, 1, false},
+		{"MaxInt64", math.MaxInt64, math.MaxInt64, false},
+		{"negative one", -1, 0, true},
+		{"MinInt64", math.MinInt64, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safeUint64FromInt64(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, uint64(0), got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestSafeInt64FromUint64(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   uint64
+		want    int64
+		wantErr bool
+	}{
+		{"zero", 0, 0, false},
+		{"MaxInt64", math.MaxInt64, math.MaxInt64, false},
+		{"MaxInt64+1", uint64(math.MaxInt64) + 1, 0, true},
+		{"MaxUint64", math.MaxUint64, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safeInt64FromUint64(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, int64(0), got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestCheckedAddInt64(t *testing.T) {
+	tests := []struct {
+		name    string
+		a       int64
+		b       int64
+		want    int64
+		wantErr bool
+	}{
+		{"normal sum", 1, 2, 3, false},
+		{"max plus zero", math.MaxInt64, 0, math.MaxInt64, false},
+		{"positive overflow", math.MaxInt64, 1, 0, true},
+		{"negative overflow", math.MinInt64, -1, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := checkedAddInt64(tt.a, tt.b)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, int64(0), got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestSafeUint32FromUint64(t *testing.T) {
 	tests := []struct {
 		name    string

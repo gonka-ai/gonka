@@ -4,12 +4,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
-	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -199,6 +200,58 @@ func TestClaimRewards_RewardPaymentFails_SettleRecordPreserved(t *testing.T) {
 	perf, found := k.GetEpochPerformanceSummary(sdkCtx, msg.EpochIndex, testutil.Creator)
 	require.True(t, found)
 	require.False(t, perf.Claimed, "claim must not be marked as completed on payment failure")
+}
+
+func TestClaimRewards_WorkPaymentOverflowsInt64_SettleRecordPreserved(t *testing.T) {
+	k, ms, ctx, _, msg := claimRewardsAtomicitySetup(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	sa, found := k.GetSettleAmount(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	sa.WorkCoins = uint64(math.MaxInt64) + 1
+	require.NoError(t, k.SetSettleAmount(sdkCtx, sa))
+
+	resp, err := ms.ClaimRewards(ctx, msg)
+
+	require.NoError(t, err, "ClaimRewards handler returns nil error by convention")
+	require.NotNil(t, resp)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Contains(t, resp.Result, "Work coin amount exceeds int64 payment range")
+
+	sa, found = k.GetSettleAmount(sdkCtx, testutil.Creator)
+	require.True(t, found, "settle record must be preserved when work payment cannot fit int64")
+	require.Equal(t, uint64(math.MaxInt64)+1, sa.WorkCoins)
+	require.Equal(t, uint64(500), sa.RewardCoins)
+
+	perf, found := k.GetEpochPerformanceSummary(sdkCtx, msg.EpochIndex, testutil.Creator)
+	require.True(t, found)
+	require.False(t, perf.Claimed, "claim must not be marked as completed on conversion failure")
+}
+
+func TestClaimRewards_RewardPaymentOverflowsInt64_SettleRecordPreserved(t *testing.T) {
+	k, ms, ctx, _, msg := claimRewardsAtomicitySetup(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	sa, found := k.GetSettleAmount(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	sa.RewardCoins = uint64(math.MaxInt64) + 1
+	require.NoError(t, k.SetSettleAmount(sdkCtx, sa))
+
+	resp, err := ms.ClaimRewards(ctx, msg)
+
+	require.NoError(t, err, "ClaimRewards handler returns nil error by convention")
+	require.NotNil(t, resp)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Contains(t, resp.Result, "Reward coin amount exceeds int64 payment range")
+
+	sa, found = k.GetSettleAmount(sdkCtx, testutil.Creator)
+	require.True(t, found, "settle record must be preserved when reward payment cannot fit int64")
+	require.Equal(t, uint64(1000), sa.WorkCoins)
+	require.Equal(t, uint64(math.MaxInt64)+1, sa.RewardCoins)
+
+	perf, found := k.GetEpochPerformanceSummary(sdkCtx, msg.EpochIndex, testutil.Creator)
+	require.True(t, found)
+	require.False(t, perf.Claimed, "claim must not be marked as completed on conversion failure")
 }
 
 // TestClaimRewards_HappyPath_SettleRecordConsumed proves the normal success
