@@ -26,18 +26,27 @@ type fakeFetcher struct {
 type fakeFetchResponse struct {
 	snap Snapshot
 	err  error
+	wait <-chan struct{}
 }
 
 func (f *fakeFetcher) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 	atomic.AddInt32(&f.calls, 1)
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if len(f.responses) == 0 {
+		f.mu.Unlock()
 		return Snapshot{}, errors.New("fakeFetcher: no responses scripted")
 	}
 	r := f.responses[0]
 	if len(f.responses) > 1 {
 		f.responses = f.responses[1:]
+	}
+	f.mu.Unlock()
+	if r.wait != nil {
+		select {
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		case <-r.wait:
+		}
 	}
 	return r.snap, r.err
 }
@@ -75,15 +84,15 @@ func TestChainProvider_InitialFetchPopulatesSnapshot_v0_2_13Chain(t *testing.T) 
 	f := &fakeFetcher{
 		responses: []fakeFetchResponse{
 			{snap: Snapshot{
-				ParamsBlockHeight:                 42,
-				CurrentEpochID:                    7,
-				LogprobsMode:                      "raw",
-				DevshardRequestsEnabled:           true,
-				MaxNonce:                          1500,
-				RefusalTimeout:                    60,
-				ExecutionTimeout:                  1200,
-				ValidationRate:                    5000,
-				VoteThresholdFactor: 50,
+				ParamsBlockHeight:       42,
+				CurrentEpochID:          7,
+				LogprobsMode:            "raw",
+				DevshardRequestsEnabled: true,
+				MaxNonce:                1500,
+				RefusalTimeout:          60,
+				ExecutionTimeout:        1200,
+				ValidationRate:          5000,
+				VoteThresholdFactor:     50,
 			}},
 		},
 	}
@@ -191,11 +200,12 @@ func TestChainProvider_InitialFetchErrorKeepsDefaultsAndRetries(t *testing.T) {
 }
 
 func TestChainProvider_OnEpochChangeFiresOnTransition(t *testing.T) {
+	releaseThird := make(chan struct{})
 	f := &fakeFetcher{
 		responses: []fakeFetchResponse{
 			{snap: Snapshot{ParamsBlockHeight: 10, CurrentEpochID: 1, DevshardRequestsEnabled: true}},
 			{snap: Snapshot{ParamsBlockHeight: 11, CurrentEpochID: 2, DevshardRequestsEnabled: true}},
-			{snap: Snapshot{ParamsBlockHeight: 12, CurrentEpochID: 3, DevshardRequestsEnabled: true}},
+			{snap: Snapshot{ParamsBlockHeight: 12, CurrentEpochID: 3, DevshardRequestsEnabled: true}, wait: releaseThird},
 		},
 	}
 
@@ -216,9 +226,19 @@ func TestChainProvider_OnEpochChangeFiresOnTransition(t *testing.T) {
 	})
 	defer cancelListen()
 
+	waitChainHeight(t, p, 11)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fires) == 1
+	}, time.Second, 10*time.Millisecond)
+	close(releaseThird)
 	waitChainHeight(t, p, 12)
-	// give listener goroutines a chance to land
-	time.Sleep(50 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fires) == 2
+	}, time.Second, 10*time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
