@@ -967,27 +967,25 @@ func TestMergePreservedWithValidationCapable(t *testing.T) {
 	}
 }
 
-func TestParticipantHasPocValidationInference(t *testing.T) {
+func TestParticipantValidationInferenceWeights(t *testing.T) {
 	nodes := []participantNode{
 		{model: "m", nodeID: "n1", weight: 30},
 		{model: "m", nodeID: "n2", weight: 20},
+		{model: "other", nodeID: "n3", weight: 40},
 	}
 
-	// Test: at least one capable node returns true
-	capable := func(miner, nodeID string) bool { return nodeID == "n1" }
-	if !participantHasPocValidationInference(nodes, "p1", capable) {
-		t.Fatalf("expected true when node n1 is capable")
+	capable := func(miner, nodeID string) bool { return nodeID == "n1" || nodeID == "n3" }
+	weights, total := participantValidationInferenceWeights(nodes, "p1", capable)
+	if total != 70 {
+		t.Fatalf("total = %v want 70", total)
+	}
+	if weights["m"] != 30 || weights["other"] != 40 {
+		t.Fatalf("weights = %v want m=30 other=40", weights)
 	}
 
-	// Test: no capable nodes returns false
-	incapable := func(miner, nodeID string) bool { return false }
-	if participantHasPocValidationInference(nodes, "p1", incapable) {
-		t.Fatalf("expected false when no nodes are capable")
-	}
-
-	// Test: nil capable returns false
-	if participantHasPocValidationInference(nodes, "p1", nil) {
-		t.Fatalf("expected false when capable == nil")
+	weights, total = participantValidationInferenceWeights(nodes, "p1", nil)
+	if total != 0 || len(weights) != 0 {
+		t.Fatalf("nil capable weights=%v total=%v, want empty/0", weights, total)
 	}
 }
 
