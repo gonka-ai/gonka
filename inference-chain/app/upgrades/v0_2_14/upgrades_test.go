@@ -225,3 +225,23 @@ func TestSeedDelegationRewardSnapshotForEffectiveEpoch_DoesNotOverrideExisting(t
 	require.Len(t, snapshot.Transfers, 1)
 	require.Len(t, snapshot.Penalties, 1)
 }
+
+func TestUpdateGenesisTransferParams(t *testing.T) {
+	gtKeeper, ctx := keepertest.GenesistransferKeeper(t)
+
+	// Ensure initial params are default (whitelist disabled, empty list)
+	initParams, err := gtKeeper.GetParams(ctx)
+	require.NoError(t, err)
+	require.False(t, initParams.RestrictToList)
+	require.Empty(t, initParams.AllowedAccounts)
+
+	// Run the migration function
+	err = updateGenesisTransferParams(ctx, gtKeeper)
+	require.NoError(t, err)
+
+	// Verify params were updated correctly
+	migratedParams, err := gtKeeper.GetParams(ctx)
+	require.NoError(t, err)
+	require.True(t, migratedParams.RestrictToList)
+	require.Len(t, migratedParams.AllowedAccounts, 43)
+}

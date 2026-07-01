@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -38,10 +37,10 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Devs
 	}
 
 	for _, addr := range order {
-		recipient, err := sdk.AccAddressFromBech32(addr)
+		recipient, err := k.ResolveClaimRecipientAddress(ctx, addr, escrow.EpochIndex)
 		if err != nil {
-			k.LogError("invalid address in unsettled escrow", types.Pruning,
-				"escrow_id", escrow.Id, "address", addr)
+			k.LogError("failed to resolve unsettled escrow recipient", types.Pruning,
+				"escrow_id", escrow.Id, "address", addr, "epoch", escrow.EpochIndex, "error", err)
 			continue
 		}
 		coins, err := types.GetCoins(int64(amountByAddr[addr]))

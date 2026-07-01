@@ -10,7 +10,7 @@ import (
 
 const (
 	LookbackMultiplier               = int64(5)
-	ClaimRecipientPruningThreshold   = uint64(3)
+	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
 )
 

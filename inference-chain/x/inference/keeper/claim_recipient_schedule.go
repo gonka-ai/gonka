@@ -29,6 +29,23 @@ func (k Keeper) GetClaimRecipientForEpoch(ctx context.Context, participant sdk.A
 	return v, true, nil
 }
 
+// ResolveClaimRecipientAddress returns the payout address configured for
+// (participant, epoch), or the participant address when no override exists.
+func (k Keeper) ResolveClaimRecipientAddress(ctx context.Context, participant string, epoch uint64) (sdk.AccAddress, error) {
+	participantAddr, err := sdk.AccAddressFromBech32(participant)
+	if err != nil {
+		return nil, err
+	}
+	recipient, found, err := k.GetClaimRecipientForEpoch(ctx, participantAddr, epoch)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return participantAddr, nil
+	}
+	return sdk.AccAddressFromBech32(recipient)
+}
+
 // SetClaimRecipientForEpoch writes the primary schedule entry and pruning index
 // atomically. All claim-recipient writes must use this helper to keep the two
 // collections in sync.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"decentralized-api/poc/earlyshare"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -28,6 +30,7 @@ type Config struct {
 	PoCParams                PoCParamsCache           `koanf:"poc_params" json:"poc_params"`
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
 	DevshardVersionsCache    DevshardVersionsCache    `koanf:"-" json:"-"` // not persisted, synced from chain
+	EarlyShareGuard          EarlyShareGuardConfig    `koanf:"early_share_guard" json:"early_share_guard"`
 }
 
 type NatsServerConfig struct {
@@ -280,4 +283,38 @@ type DevshardVersion struct {
 type TransferAgentAccessCache struct {
 	AllowedAddresses map[string]struct{} // O(1) lookup
 	IsEnabled        bool                // true if whitelist is non-empty
+}
+
+// EarlyShareGuardConfig configures the DAPI-only early PoC share guard. It is
+// disabled by default; see proposals/poc/early-share-guard-dapi.md. The guard
+// captures early on-chain PoC v2 commitments near the first fraction of the
+// generation window and compares them to final commitments during validation.
+type EarlyShareGuardConfig struct {
+	// Mode is one of "disabled", "observe", or "enforce". Empty means disabled.
+	Mode string `koanf:"mode" json:"mode"`
+	// FirstFraction is the fraction of the generation window at which the early
+	// checkpoint is captured (default 1/3). Must be in (0,1).
+	FirstFraction float64 `koanf:"first_fraction" json:"first_fraction"`
+	// ThresholdRatio multiplies the weighted-median early share to derive the
+	// per-stage pass threshold (default 0.5).
+	ThresholdRatio float64 `koanf:"threshold_ratio" json:"threshold_ratio"`
+	// RequirePrefixProof enables the early-vs-final shared-leaf prefix check.
+	// Defaults to true (set during config load via key existence); set
+	// require_prefix_proof=false explicitly to disable.
+	RequirePrefixProof bool `koanf:"require_prefix_proof" json:"require_prefix_proof"`
+}
+
+// DefaultEarlyShareGuardConfig returns the guard defaults. It is used to
+// pre-seed the config before koanf unmarshalling so that any field absent from
+// yaml/env keeps its default, while explicitly-set values (including
+// require_prefix_proof=false) override. Defaults live once in the earlyshare
+// package to keep a single source of truth.
+func DefaultEarlyShareGuardConfig() EarlyShareGuardConfig {
+	d := earlyshare.DefaultConfig()
+	return EarlyShareGuardConfig{
+		Mode:               string(d.Mode),
+		FirstFraction:      d.FirstFraction,
+		ThresholdRatio:     d.ThresholdRatio,
+		RequirePrefixProof: d.RequirePrefixProof,
+	}
 }

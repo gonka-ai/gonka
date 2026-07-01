@@ -1233,10 +1233,11 @@ func TestPayoutClaim_WithSchedule(t *testing.T) {
 	require.Equal(t, uint64(1500), resp.Amount)
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
 
-	// Entry must be consumed after successful claim.
+	// Entry is retained after successful claim so late/direct payouts for the
+	// same epoch can still resolve the configured recipient.
 	_, found, err := k.GetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex)
 	require.NoError(t, err)
-	require.False(t, found, "claim recipient entry must be removed after successful claim")
+	require.True(t, found, "claim recipient entry must remain until pruning")
 }
 
 func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
