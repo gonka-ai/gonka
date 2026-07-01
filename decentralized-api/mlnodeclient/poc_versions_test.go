@@ -9,7 +9,7 @@ import (
 
 func TestGetPocVersions_ParsesFlag(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/inference/pow/versions" {
+		if r.URL.Path != "/api/v1/versions" {
 			http.Error(w, "bad path", http.StatusNotFound)
 			return
 		}
