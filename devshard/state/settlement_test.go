@@ -22,23 +22,24 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 	}
 
 	st := types.EscrowState{
-		Balance:    9700,
-		Fees:       33,
-		Version:    "dev",
-		HostStats:  hostStats,
-		Inferences: inferences,
+		Balance:                     9700,
+		Fees:                        33,
+		StateRootAndProtocolVersion: "dev",
+		HostStats:                   hostStats,
+		Inferences:                  inferences,
 	}
 
 	payload, err := BuildSettlement("escrow-1", st, map[uint32][]byte{0: {1}, 1: {2}}, 10)
 	require.NoError(t, err)
 
 	require.Equal(t, "escrow-1", payload.EscrowID)
-	require.Equal(t, "dev", payload.Version)
+	require.Equal(t, "dev", payload.StateRootAndProtocolVersion)
 	require.Equal(t, uint64(10), payload.Nonce)
 	require.Equal(t, st.Fees, payload.Fees)
 
 	// RestHash should match independently computed value.
-	restHash, err := ComputeRestHash(st.Balance, st.Inferences, st.WarmKeys)
+	acc := sealedAccBytes32(st.SealedAcc)
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
 	require.NoError(t, err)
 	require.Equal(t, restHash, payload.RestHash)
 }
@@ -66,7 +67,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
-	st := types.EscrowState{Balance: 9900, Version: "dev", HostStats: hostStats, Inferences: inferences}
+	st := types.EscrowState{Balance: 9900, StateRootAndProtocolVersion: "dev", HostStats: hostStats, Inferences: inferences}
 
 	escrowID := "escrow-test"
 	nonce := uint64(5)
@@ -77,7 +78,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 	// Recompute state root to sign it.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -108,7 +109,7 @@ func TestVerifySettlement_Success(t *testing.T) {
 	// Independently recompute and compare.
 	hostStatsHash, err := ComputeHostStatsHash(payload.HostStats)
 	require.NoError(t, err)
-	expected := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	expected := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
 	require.Equal(t, expected, root)
 }
 
@@ -160,7 +161,7 @@ func TestVerifySettlement_WrongPhase(t *testing.T) {
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
-	st := types.EscrowState{Balance: 9900, Version: "dev", HostStats: hostStats, Inferences: inferences}
+	st := types.EscrowState{Balance: 9900, StateRootAndProtocolVersion: "dev", HostStats: hostStats, Inferences: inferences}
 
 	escrowID := "escrow-test"
 	nonce := uint64(5)
@@ -176,7 +177,7 @@ func TestVerifySettlement_WrongPhase(t *testing.T) {
 		payload.RestHash,
 		payload.Fees,
 		types.PhaseFinalizing, // wrong phase
-		payload.Version,
+		payload.StateRootAndProtocolVersion,
 	)
 
 	sigContent := &types.StateSignatureContent{
@@ -219,7 +220,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
-	st := types.EscrowState{Balance: 9900, Version: "dev", HostStats: hostStats, Inferences: inferences}
+	st := types.EscrowState{Balance: 9900, StateRootAndProtocolVersion: "dev", HostStats: hostStats, Inferences: inferences}
 
 	escrowID := "escrow-warm"
 	nonce := uint64(5)
@@ -229,7 +230,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	// Recompute state root for signing.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,
@@ -276,7 +277,7 @@ func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
 	inferences := map[uint64]*types.InferenceRecord{
 		1: {Status: types.StatusFinished, ExecutorSlot: 0, ActualCost: 100},
 	}
-	st := types.EscrowState{Balance: 9900, Version: "dev", HostStats: hostStats, Inferences: inferences}
+	st := types.EscrowState{Balance: 9900, StateRootAndProtocolVersion: "dev", HostStats: hostStats, Inferences: inferences}
 
 	escrowID := "escrow-warm"
 	nonce := uint64(5)
@@ -285,7 +286,7 @@ func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
 
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.Version)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
 
 	sigContent := &types.StateSignatureContent{
 		StateRoot: stateRoot,

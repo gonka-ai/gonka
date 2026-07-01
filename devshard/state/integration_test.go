@@ -32,7 +32,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	escrowID := "escrow-integration"
 	initialBalance := uint64(100000)
 
-	sm, err := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier)
+	sm, err := NewStateMachine(escrowID, config, group, initialBalance, user.Address(), verifier, testutil.MustMemoryStore(t, escrowID, user.Address(), config, group, initialBalance))
 	require.NoError(t, err)
 
 	// Track pending operations from previous diffs that need to be included.
@@ -217,13 +217,13 @@ func TestFullSession_HappyPath(t *testing.T) {
 		require.Equal(t, hosts[slot].Address(), recovered, "slot %d sig", slot)
 	}
 
-	// Verify Merkle structure.
+	// Verify Merkle structure (v2 rest_hash: sealed_acc + live set).
 	hostStatsHash, err := ComputeHostStatsHash(state.HostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHash(state.Balance, state.Inferences, state.WarmKeys)
+	acc := sealedAccBytes32(state.SealedAcc)
+	restHash, err := ComputeRestHashV2(state.Balance, acc, state.Inferences, state.WarmKeys)
 	require.NoError(t, err)
-	recomputedRoot, err := ComputeStateRoot(state.Balance, state.HostStats, state.Inferences, state.Phase, state.WarmKeys, state.Fees)
-	require.NoError(t, err)
+	recomputedRoot := ComputeStateRootFromRestHash(hostStatsHash, restHash, state.Fees, state.Phase, state.StateRootAndProtocolVersion)
 	require.Equal(t, finalStateRoot, recomputedRoot)
 
 	// Settlement payload verification: mainnet would verify
