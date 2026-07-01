@@ -50,7 +50,14 @@ func (m *ManagedArtifactStore) runPruneHooks(stageHeight int64) {
 		hooks = append(hooks, m.pruneHooks...)
 	})
 	for _, fn := range hooks {
-		fn(stageHeight)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Warn("ManagedArtifactStore: prune hook panicked", types.PoC, "stage", stageHeight, "panic", r)
+				}
+			}()
+			fn(stageHeight)
+		}()
 	}
 }
 
