@@ -36,7 +36,7 @@ SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR-API-KEY
 ETHERSCAN_API_KEY=your_etherscan_api_key
 
 # Bridge configuration
-GENESIS_GROUP_PUBLIC_KEY=0x123456...  # 96-byte hex string
+GENESIS_GROUP_PUBLIC_KEY=0x123456...  # 256-byte uncompressed G2 public key
 ADMIN_ADDRESS=0x742d35Cc6639C0532fBb5Bc...
 ```
 
@@ -125,7 +125,7 @@ const withdrawalCommand = {
     recipient: "0x...",
     tokenContract: "0x...",
     amount: ethers.utils.parseEther("10"),
-    signature: "0x..." // 48-byte BLS signature
+    signature: "0x..." // 128-byte uncompressed G1 BLS signature
 };
 
 await bridge.withdraw(withdrawalCommand);
@@ -187,9 +187,8 @@ bridge.on("AdminControlActivated", (timestamp, reason) => {
 
 **If Contract Stuck in Admin Control:**
 1. Check why: `bridge.getCurrentState()`
-2. Resolve conflicts (if any)
-3. Submit missing epochs
-4. Call `resetToNormalOperation()`
+2. Submit the required epoch group key(s)
+3. Call `resetToNormalOperation()`
 
 **If Funds Stuck:**
 1. Funds can only be withdrawn via valid BLS signatures

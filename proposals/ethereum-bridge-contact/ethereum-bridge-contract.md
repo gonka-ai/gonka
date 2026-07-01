@@ -48,7 +48,7 @@ This document describes the Ethereum smart contract that serves as the bridge en
 
 **Group Key Transitions:**
 
-- Each epoch has an associated BLS group public key (G2 point, 96 bytes)
+- Each epoch has an associated BLS group public key (G2 point, 256 bytes)
 - Group keys represent the consensus validator set for that epoch
 - Transitions must be submitted sequentially by epoch number
 - Each transition includes validation signature from previous epoch (chain of trust)
@@ -56,18 +56,24 @@ This document describes the Ethereum smart contract that serves as the bridge en
 **Optimized Storage:**
 
 ```solidity
-// Optimized group key storage (3 slots instead of 4)
+// Group key storage (8 slots)
 struct GroupKey {
+    // Uncompressed G2 point: X.c0, X.c1, Y.c0, Y.c1 (each 64 bytes → 8 x bytes32)
     bytes32 part0;  // bytes 0-31
-    bytes32 part1;  // bytes 32-63  
+    bytes32 part1;  // bytes 32-63
     bytes32 part2;  // bytes 64-95
+    bytes32 part3;  // bytes 96-127
+    bytes32 part4;  // bytes 128-159
+    bytes32 part5;  // bytes 160-191
+    bytes32 part6;  // bytes 192-223
+    bytes32 part7;  // bytes 224-255
 }
 
-// Simple mapping: epochId => groupPublicKey (96 bytes G2 point, 3 storage slots)
+// Simple mapping: epochId => groupPublicKey (256 bytes G2 point, 8 storage slots)
 mapping(uint64 => GroupKey) public epochGroupKeys;
 
 enum ContractState {
-    ADMIN_CONTROL,      // 0 - Initial state, conflict resolution, and timeout recovery
+    ADMIN_CONTROL,      // 0 - Initial state and timeout recovery
     NORMAL_OPERATION    // 1 - Standard bridge operations
 }
 // Note: Enums compile to uint8 - same efficiency as constants but with type safety
@@ -102,20 +108,23 @@ Since **1 epoch = 1 day**, the timestamp is needed for:
 
 ```solidity
 uint64 public constant MAX_STORED_EPOCHS = 365;  // 365 epochs = 365 days
-uint64 public oldestStoredEpoch = 1;
 
-function submitGroupKey(uint64 epochId, bytes calldata groupPublicKey, bytes calldata validationSig) external {
+function submitGroupKey(uint64 epochId, bytes calldata groupPublicKey, bytes calldata validationSig) public onlyNormalOperation {
+    require(epochId > 1, "Epoch 1 must be set via Admin");
+
     // Verify sequential submission
     require(epochId == epochMeta.latestEpochId + 1, "Must be next epoch");
+    require(groupPublicKey.length == 256, "Invalid group key length");
+
+    GroupKey memory newGroupKeyStruct = _bytesToGroupKey(groupPublicKey);
     
-    // Verify validation signature against previous epoch (if not genesis)
-    if (epochId > 1) {
-        bytes memory prevGroupKey = epochGroupKeys[epochId - 1];
-        require(_verifyTransitionSignature(prevGroupKey, groupPublicKey, validationSig), "Invalid signature");
-    }
+    // Verify validation signature against previous epoch
+    GroupKey memory prevGroupKeyStruct = epochGroupKeys[epochId - 1];
+    require(!_isGroupKeyEmpty(prevGroupKeyStruct), "Previous epoch not found");
+    require(_verifyTransitionSignature(prevGroupKeyStruct, newGroupKeyStruct, validationSig, epochId - 1), "Invalid signature");
     
     // Store only the group public key
-    epochGroupKeys[epochId] = groupPublicKey;
+    epochGroupKeys[epochId] = newGroupKeyStruct;
     
     // Update metadata in packed storage (single SSTORE)
     epochMeta = EpochMetadata({
@@ -125,18 +134,24 @@ function submitGroupKey(uint64 epochId, bytes calldata groupPublicKey, bytes cal
         reserved: 0
     });
     
-    // Clean up old epochs (keep last 365 epochs = 365 days)
-    if (epochId - oldestStoredEpoch >= MAX_STORED_EPOCHS) {
-        delete epochGroupKeys[oldestStoredEpoch];
-        oldestStoredEpoch++;
-    }
+    _cleanupOldEpochs(epochId);
     
-    emit GroupKeySubmitted(epochId, block.timestamp);
+    emit GroupKeySubmitted(epochId, groupPublicKey, block.timestamp);
+}
+
+function _cleanupOldEpochs(uint64 newEpochId) internal {
+    if (newEpochId <= MAX_STORED_EPOCHS) {
+        return;
+    }
+
+    uint64 epochToDelete = newEpochId - MAX_STORED_EPOCHS;
+    delete epochGroupKeys[epochToDelete];
+    emit EpochCleaned(epochToDelete);
 }
 
 // Check for timeout (no new transitions)
-function checkTimeout() external view returns (bool) {
-    return block.timestamp - epochMeta.submissionTimestamp > 30 days;
+function isTimeoutReached() external view returns (bool) {
+    return block.timestamp - epochMeta.submissionTimestamp > TIMEOUT_DURATION;
 }
 ```
 
@@ -149,12 +164,12 @@ function checkTimeout() external view returns (bool) {
 - No validation signature required for genesis epoch (no previous epoch exists)
 - Only after genesis setup can contract transition to `NORMAL_OPERATION`
 
-**Conflict Resolution:**
+**Admin Recovery:**
 
-- If two different group keys submitted for same epoch → contract returns to `ADMIN_CONTROL` state
-- Admin gains temporary control to resolve conflicts
-- Admin can submit correct group key and reset to `NORMAL_OPERATION` state
-- All withdrawal operations suspended during admin control
+- Out-of-sequence group key submissions are rejected
+- Admin can submit the next valid group key while the contract is in `ADMIN_CONTROL`
+- Admin can reset the contract to `NORMAL_OPERATION` once a genesis/latest epoch exists
+- All withdrawal and mint operations are suspended during admin control
 
 **Stuck Epoch Recovery:**
 
@@ -166,16 +181,16 @@ function checkTimeout() external view returns (bool) {
 **Operational Behavior:**
 
 - **ADMIN_CONTROL state automatically suspends all bridge operations** (withdrawals, group key transitions by validators)
-- Only admin functions available: `submitGroupKey()`, `resetToNormalOperation()`
+- Only admin functions available: `setGroupKey()`, `resetToNormalOperation()`
 - **No arbitrary pause power** - admin cannot suspend operations outside of predefined failure scenarios
-- Bridge operations only resume when admin resolves conflicts and transitions to `NORMAL_OPERATION`
+- Bridge operations only resume when admin restores `NORMAL_OPERATION`
 
 **Admin Capabilities in Control State:**
 
 ```solidity
 // Admin functions (only available in ADMIN_CONTROL state):
-function submitGroupKey(uint64 epochId, bytes calldata groupPublicKey) external onlyAdmin;
-function resetToNormalOperation() external onlyAdmin;
+function setGroupKey(uint64 epochId, bytes calldata groupPublicKey) external onlyOwner onlyAdminControl;
+function resetToNormalOperation() external onlyOwner onlyAdminControl;
 // Note: No arbitrary emergency triggers - admin control only activated by predefined conditions
 ```
 
@@ -183,19 +198,21 @@ function resetToNormalOperation() external onlyAdmin;
 
 ```solidity
 // ADMIN_CONTROL → NORMAL_OPERATION (only admin transition)
-function resetToNormalOperation() external onlyAdmin {
-    require(epochMeta.currentState == ContractState.ADMIN_CONTROL, "Must be in admin control");
-    require(hasValidGenesisEpoch(), "Genesis epoch required");
+function resetToNormalOperation() external onlyOwner onlyAdminControl {
+    if (epochMeta.latestEpochId == 0) {
+        revert NoValidGenesisEpoch();
+    }
     
     // Update state in packed storage
     epochMeta.currentState = ContractState.NORMAL_OPERATION;
+
+    emit NormalOperationRestored(epochMeta.latestEpochId, block.timestamp);
 }
 
 // NORMAL_OPERATION → ADMIN_CONTROL (automatic triggers only)
 // Triggered by:
-// 1. Epoch conflict detection (two different keys for same epoch)
-// 2. Timeout (30 days without new group key transition)
-// 3. Initial contract deployment state
+// 1. Timeout (30 days without new group key transition)
+// 2. Initial contract deployment state
 function _triggerAdminControl(string memory reason) internal {
     epochMeta.currentState = ContractState.ADMIN_CONTROL;
     emit AdminControlActivated(block.timestamp, reason);
@@ -203,30 +220,33 @@ function _triggerAdminControl(string memory reason) internal {
 
 // Timeout check function
 function checkAndHandleTimeout() external {
-    require(epochMeta.currentState == ContractState.NORMAL_OPERATION, "Already in admin control");
-    
-    if (block.timestamp - epochMeta.submissionTimestamp > 30 days) {
-        _triggerAdminControl("Timeout: No new epochs for 30 days");
+    if (epochMeta.currentState != ContractState.NORMAL_OPERATION) {
+        return;
     }
+    
+    if (block.timestamp - epochMeta.submissionTimestamp <= TIMEOUT_DURATION) {
+        revert TimeoutNotReached();
+    }
+
+    _triggerAdminControl("Timeout: No new epochs for 30 days");
 }
 ```
 
 **Operations Allowed by State:**
 
-- **ADMIN_CONTROL**: Only admin functions (submitGroupKey, resetToNormalOperation) - **ALL user operations suspended**
-- **NORMAL_OPERATION**: All functions (withdrawals, group key transitions from validators, admin functions)
+- **ADMIN_CONTROL**: Only admin functions (`setGroupKey`, `resetToNormalOperation`) - **ALL user operations suspended**
+- **NORMAL_OPERATION**: Withdrawals, minting, validator `submitGroupKey`, and timeout checks
 
 **State Usage:**
 
 ```solidity
 // Example usage in withdrawal function
-function withdraw(WithdrawalCommand calldata cmd) external {
-    require(epochMeta.currentState == ContractState.NORMAL_OPERATION, "Bridge not operational");
+function withdraw(WithdrawalCommand calldata cmd) external nonReentrant onlyNormalOperation {
     // ... rest of withdrawal logic
 }
 
 // Contract deployment initialization
-constructor() {
+constructor(bytes32 _gonkaChainId, bytes32 _ethereumChainId) {
     epochMeta.currentState = ContractState.ADMIN_CONTROL;  // Start in admin control
 }
 ```
@@ -235,10 +255,9 @@ constructor() {
 
 - **No arbitrary admin pause power** - admin cannot suspend operations at will or trigger emergency stops
 - **Automatic protection only** - system enters admin control only for predefined failure conditions:
-  - Epoch conflicts (two different keys for same epoch)
   - Timeout conditions (30 days without new epochs)
   - Initial deployment state
-- **Limited admin scope** - admin can only resolve conflicts and restore normal operation
+- **Limited admin scope** - admin can only set group keys during admin control and restore normal operation
 - **Transparent triggers** - all transitions to admin control are event-logged with clear reasons
 - **Trustless design** - no manual override mechanisms that could be abused
 
@@ -255,7 +274,7 @@ constructor() {
 
 ```solidity
 // Efficient storage: only what's needed
-mapping(uint64 => bytes) public epochGroupKeys;  // epochId => 96-byte G2 public key
+mapping(uint64 => GroupKey) public epochGroupKeys;  // epochId => 256-byte G2 public key (8 slots)
 mapping(uint64 => mapping(bytes32 => bool)) public processedRequests;  // epochId => requestId => processed
 
 // Packed metadata (single 32-byte storage slot)
@@ -269,26 +288,26 @@ EpochMetadata public epochMeta;
 
 // Constants
 uint64 public constant MAX_STORED_EPOCHS = 365;  // 365 epochs = 365 days
-uint64 public oldestStoredEpoch = 1;
+uint64 public constant TIMEOUT_DURATION = 30 days;
 
-function cleanupOldEpochs(uint64 newEpochId) internal {
-    // Remove old epochs if we exceed the 365 epoch limit
-    while (newEpochId - oldestStoredEpoch >= MAX_STORED_EPOCHS) {
-        // Clean up group key (96 bytes freed)
-        delete epochGroupKeys[oldestStoredEpoch];
-        
-        // Clean up processed requests for this epoch
-        // Note: Individual request deletions would be expensive
-        // Better to use a different storage pattern for large request sets
-        
-        oldestStoredEpoch++;
+function _cleanupOldEpochs(uint64 newEpochId) internal {
+    if (newEpochId <= MAX_STORED_EPOCHS) {
+        return;
     }
+
+    uint64 epochToDelete = newEpochId - MAX_STORED_EPOCHS;
+    delete epochGroupKeys[epochToDelete];
+
+    // Note: Individual request deletions would be expensive
+    // Better to use a different storage pattern for large request sets
+
+    emit EpochCleaned(epochToDelete);
 }
 ```
 
 **Benefits of optimized storage:**
 
-- **Storage efficient**: GroupKey struct uses 3 slots instead of 4 (25% savings per epoch)
+- **Fixed layout**: GroupKey struct uses 8 slots (256-byte uncompressed G2 point)
 - **Gas efficient**: Single SSTORE for metadata update (latestEpochId + timestamp + state)
 - **Contract state included**: Current state stored in same slot for free
 - **Minimal storage**: Only stores essential data (group keys, not validation signatures)
