@@ -18,15 +18,20 @@ The capability travels from the ML node to the developer-facing gateway over the
 
 ### ML Node Side
 
-**vLLM (`mlnode/.../pow/routes.py`)**:
+**vLLM (`vllm/.../poc/routes.py`)**:
 - The `/api/v1/pow/versions` route returns the build version and a `poc_validation_inference` flag.
 - The flag is `true` when the build can answer inference requests while PoC validation runs in the same process.
+
+**MLNode API (`mlnode/packages/api/src/api/routes.py`)**:
+- The `/api/v1/state` route includes `poc_validation_inference` alongside the existing node heartbeat fields, so the broker learns capability without an extra per-node polling request.
+- The `/api/v1/versions` route is also available on `poc_port` for direct capability inspection.
+- Both routes use vLLM's `/api/v1/pow/versions` response from a healthy backend. The first successful response is cached because it is a build capability. Unknown capability, no healthy backend, and vLLM errors fail closed to `poc_validation_inference: false`.
 
 ### Decentralized API Side
 
 **Per-node tracking (`decentralized-api/broker/broker.go`)**:
-- `queryNodeStatus` calls `mlnodeclient.GetPocVersions` against each managed node during the regular status poll. The client hits `/api/v1/inference/pow/versions`, which the node proxy rewrites to the vLLM route above.
-- The result is stored on `NodeState.PoCValidationInference`. A 404 from an older node, a transport error, or any non-2xx response sets the flag to `false`.
+- `queryNodeStatus` reads `poc_validation_inference` from the regular `mlnodeclient.NodeState` response. Older MLNodes omit the field, which decodes to `false`.
+- The result is stored on `NodeState.PoCValidationInference`. A failed state request also leaves the flag false.
 - The flag flows through the same path as the node version: `statusQueryResult` to `StatusUpdate` to `NodeState`. The reconcile step emits an update when only this flag changes, so a flip is not held back until an unrelated status change.
 
 **Public reporting (`decentralized-api/internal/server/public/app_info_handlers.go`)**:
@@ -75,7 +80,7 @@ The gateway scales its concurrency cap by `PoCMaxConcurrentPer10000Weight` when 
 
 Every unknown resolves to "not capable", so a miner or node is never offered traffic it cannot serve:
 
-- A node that does not expose the versions route (older build) reports `false`.
+- A node whose `/api/v1/state` response does not include `poc_validation_inference` reports `false`.
 - A miner whose `/v1/versions` cannot be reached or parsed contributes no capable nodes.
 - A cache entry past its TTL is treated as unknown until the next poll refreshes it.
 - A nil broker or a missing node returns `false`.
@@ -83,10 +88,12 @@ Every unknown resolves to "not capable", so a miner or node is never offered tra
 ## Key Implementation Files
 
 ### ML Node
-- `mlnode/.../pow/routes.py` - the `/api/v1/pow/versions` route and the `poc_validation_inference` flag
+- `vllm/.../poc/routes.py` - the vLLM `/api/v1/pow/versions` route and the `poc_validation_inference` flag
+- `mlnode/packages/api/src/api/routes.py` - the MLNode `/api/v1/state` and `/api/v1/versions` endpoints that proxy vLLM capability
 
 ### Decentralized API
-- `decentralized-api/mlnodeclient/poc_v2_requests.go` - `GetPocVersions` and the `PoCVersionsResponse` type
+- `decentralized-api/mlnodeclient/client.go` - `StateResponse` with `poc_validation_inference`
+- `decentralized-api/mlnodeclient/poc_v2_requests.go` - `GetPocVersions` and the `PoCVersionsResponse` type for direct MLNode `/api/v1/versions` probing
 - `decentralized-api/broker/broker.go` - per-node capability in `queryNodeStatus` and `NodeState`
 - `decentralized-api/internal/server/public/app_info_handlers.go` - the per-node `mlnodes` list on `/v1/versions`
 

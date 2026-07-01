@@ -1377,6 +1377,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	prevStatus := state.CurrentStatus
 	var currentStatus types.HardwareNodeStatus
 	mlNodeVersion := state.MlNodeVersion
+	pocValidationInference := false
 	if err != nil {
 		logging.Error("queryNodeStatus. Failed to query node status. Assuming currentStatus = FAILED", types.Nodes,
 			"nodeId", nodeId, "error", err)
@@ -1384,6 +1385,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	} else {
 		currentStatus = toStatus(*status)
 		mlNodeVersion = status.Version
+		pocValidationInference = status.PoCValidationInference
 	}
 
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
@@ -1424,17 +1426,6 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 				}
 			}
 		}
-	}
-
-	pocValidationInference := state.PoCValidationInference
-	vctx, vcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
-	defer vcancel()
-	if versions, verr := client.GetPocVersions(vctx); verr != nil {
-		// Fail-closed: older nodes (404) or unreachable nodes are not advertised.
-		pocValidationInference = false
-		logging.Debug("queryNodeStatus. GetPocVersions failed", types.Nodes, "nodeId", nodeId, "error", verr)
-	} else if versions != nil {
-		pocValidationInference = versions.PoCValidationInference
 	}
 
 	return &statusQueryResult{
