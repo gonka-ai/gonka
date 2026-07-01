@@ -15,6 +15,8 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
+	genesistransferkeeper "github.com/productscience/inference/x/genesistransfer/keeper"
+	genesistransfertypes "github.com/productscience/inference/x/genesistransfer/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -23,6 +25,7 @@ func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
+	gtKeeper genesistransferkeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -43,6 +46,11 @@ func CreateUpgradeHandler(
 		}
 		if err := backfillDevshardEscrowInferenceSealGrace(ctx, k); err != nil {
 			return nil, err
+		}
+
+		// Update genesistransfer params to enable the whitelist and restrict to founders
+		if err := updateGenesisTransferParams(ctx, gtKeeper); err != nil {
+			return nil, fmt.Errorf("update genesistransfer params: %w", err)
 		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
@@ -225,4 +233,58 @@ func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keep
 		"default_inference_seal_grace_seconds", ep.DefaultInferenceSealGraceSeconds,
 	)
 	return nil
+}
+
+// updateGenesisTransferParams updates the genesistransfer parameters to enable the whitelist of founders.
+func updateGenesisTransferParams(ctx context.Context, gtKeeper genesistransferkeeper.Keeper) error {
+	allowedAccounts := []string{
+		"gonka18299ldv2cym0gh5spmm6yncv3at3qgn0t7km5w",
+		"gonka16fdw9ve0xj5yy42asg85wgykr4y4kw2l37rkfp",
+		"gonka1dtvqtnq6fjvetajs25kuc9f3944fctveuukxpx",
+		"gonka1k4rnc2e9upscac85tkjwa43wr6kqpfyqcmdwej",
+		"gonka1s7jy6fajstlxzhtxgqmdh4a2cgq26uxcu7jptk",
+		"gonka1rusnaafgmk0h464fthswch3pzh0zzpsegrda09",
+		"gonka12tz8qs5kxjp6qsdgj2u3rzx009z2qf6hjrwrrl",
+		"gonka1n7ph0qezwcr666kp6tesylw4eqnyqwd0g76u7d",
+		"gonka1ld2e89rhfmdlke69m444jcd99h7fra4whksdk4",
+		"gonka1a0rh2dej6lrnj5zkx005f5jrxem0tpdh4cpcmg",
+		"gonka18qmj244rxzt3274357jd2mp45tv8n4508g29r8",
+		"gonka1v86vj8e8eqd3gk5zlf9zawrg0w7c7tfa7x9k25",
+		"gonka108eh38a2pelplqz2lh3ujjnvk7ucdylql6gfmg",
+		"gonka1cpxpnskkf6hlpldu76tya7d53rklnjlqu4uars",
+		"gonka17u7kemct38fx3cuj2yh0x5j2fd9zxkuwkes6q7",
+		"gonka1th0qvf05sqdd09p9rgq69nlchw5xzpc3ddply8",
+		"gonka1pq9r54md9zrd9xqyxx9f3h7as9kfgnp2c0ucat",
+		"gonka1gvx5swzrur89kg5r0z5jn9a0krvmhvzx3f2fea",
+		"gonka1x29n95z989ycxymqw60w56dpz7kcdxpp8w8y6x",
+		"gonka1327uf364ql39e63fax5n8t8y5e8lag4xjl7e49",
+		"gonka1tyfdmaulndss4wqpxr24e8reytj03aw338sphz",
+		"gonka1akmamql0z9vnd48tfw3d75zexu3dswqcawtnxa",
+		"gonka13t3cvaeke9z5vlwps3z7eyp9uj98z2xkt02352",
+		"gonka19cw7kkrkdcxkxmkz56hjatfwrunn79fsyvfky5",
+		"gonka1689695npe7amwyunaaj9dwz58v8n7cgkw5emn4",
+		"gonka1fxls283es0m7cymxky9xuml9x74flfjhkfrz4q",
+		"gonka179nv57lqeana9nvgeul8twegj58ccrd2hm5uzc",
+		"gonka1ucl3pfq6sy9ggxuxahvjhm52hgl3qu4wg46hsk",
+		"gonka1jle7z5mmfczkvy76gvsxud6kjryzhr8c3cpyal",
+		"gonka1xn25n0hphw8tkfg6r3hjvh8d6nerpzqjpql3nx",
+		"gonka1z5a69mz9gzhphf4eu6yznzru2la0em89xutepm",
+		"gonka1lrwu2czkxwaadqnvsttfa5uvc6mshv8wjd3wyz",
+		"gonka1469wnu47q925a4ekazp09tx9k5phyj2nv67jv3",
+		"gonka1h78hmsvknwp86qzu9xftv9znwga7u0sjghmz20",
+		"gonka1qm66c5gqyew27nefdknspf2x5nwvetsk80zvay",
+		"gonka1qgstmj6k2xwx5p8s2p0ch2qd32lkgegqkcsljs",
+		"gonka1g02qwpgju9xu8lwtqpgrzfqrj7x45tnnhgh3xz",
+		"gonka1clvs7fyag6zjkpnvapjj6m0jn38mgsn63tdnhc",
+		"gonka18weyd0tlmtvnn47c0fqg0p8jj3q6s2hz3w67nc",
+		"gonka1l4z4swg3e0pf937qm08u0cnkszss34kpe32y52",
+		"gonka10k4rmsg3e9xrmm2my9dp6lal4nxlenck9uur39",
+		"gonka1vthfz8j7gkeu04jx2ju6akcyv6s9apc497x2e3",
+		"gonka19xcrqllduyr6ur3l5ldln4qj0jfpaqfx20280q",
+	}
+	params := genesistransfertypes.Params{
+		AllowedAccounts: allowedAccounts,
+		RestrictToList:  true,
+	}
+	return gtKeeper.SetParams(ctx, params)
 }
