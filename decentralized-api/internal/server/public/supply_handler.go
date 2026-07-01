@@ -35,7 +35,7 @@ func (s *Server) getTotalSupply(c echo.Context) error {
 
 	client := s.httpClient
 	if client == nil {
-		client = http.DefaultClient
+		client = NewNoRedirectClient(httpClientTimeout)
 	}
 
 	supply, err := fetchTotalSupplyGonka(c.Request().Context(), client, chainRESTURL)
