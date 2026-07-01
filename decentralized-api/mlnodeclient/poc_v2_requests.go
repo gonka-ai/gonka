@@ -234,7 +234,7 @@ func (c *Client) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, erro
 	return &resp, nil
 }
 
-// PoCVersionsResponse is the response from /api/v1/inference/pow/versions.
+// PoCVersionsResponse is the response from /api/v1/versions.
 // PoCValidationInference reports whether the MLNode can serve inference while
 // PoC validation runs inside vLLM. Self-reported; used only for routing.
 type PoCVersionsResponse struct {
@@ -244,7 +244,7 @@ type PoCVersionsResponse struct {
 
 // GetPocVersions retrieves the MLNode PoC capability/version info.
 func (c *Client) GetPocVersions(ctx context.Context) (*PoCVersionsResponse, error) {
-	requestUrl, err := url.JoinPath(c.pocUrl, "/api/v1/inference/pow/versions")
+	requestUrl, err := url.JoinPath(c.pocUrl, "/api/v1/versions")
 	if err != nil {
 		return nil, err
 	}
