@@ -1374,12 +1374,18 @@ func (rw *raceWriter) replaceClassify(buf []byte) bool {
 	return true
 }
 
-// dropClassify zeroes the per-attempt buffer and releases its bytes globally.
+// dropClassify releases the per-attempt buffer and its global bytes.
 func (rw *raceWriter) dropClassify() {
-	if n := len(rw.inf.classifyPartial); n > 0 {
+	rw.inf.releaseClassifyPartial()
+}
+
+// releaseClassifyPartial frees the reassembly buffer's backing array and
+// decrements the global gauge. Nils the slice so cap doesn't outlive the gauge.
+func (inf *inflight) releaseClassifyPartial() {
+	if n := len(inf.classifyPartial); n > 0 {
 		classifyPartialBytes.Add(-int64(n))
 	}
-	rw.inf.classifyPartial = rw.inf.classifyPartial[:0]
+	inf.classifyPartial = nil
 }
 
 func (rw *raceWriter) ctxErr() error {
@@ -2554,12 +2560,7 @@ func (e *Redundancy) escalationDelay(stage string, params user.InferenceParams) 
 }
 
 func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *raceGroup) {
-	defer func() {
-		if n := len(inf.classifyPartial); n > 0 {
-			classifyPartialBytes.Add(-int64(n))
-			inf.classifyPartial = nil
-		}
-	}()
+	defer inf.releaseClassifyPartial()
 	ticker := time.NewTicker(LogHeartbeatInterval)
 	defer ticker.Stop()
 

@@ -133,6 +133,32 @@ func TestSseRaceWriterReplaceClassifyGlobalCapDrops(t *testing.T) {
 	require.Equal(t, maxClassifyPartialGlobal, classifyPartialBytes.Load())
 }
 
+// Dropping the buffer must free its backing array, not just shrink len — else
+// real memory outlives the gauge and can exceed the global cap.
+func TestSseRaceWriterDropReleasesBackingArray(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	_, err := rw.Write(bytes.Repeat([]byte("x"), maxClassifyPartial-10))
+	require.NoError(t, err)
+	require.Greater(t, cap(inf.classifyPartial), 0)
+	_, err = rw.Write(bytes.Repeat([]byte("x"), 20))
+	require.NoError(t, err)
+	require.Equal(t, 0, cap(inf.classifyPartial), "drop must release the backing array")
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
+// releaseClassifyPartial frees a len-0-but-large-cap buffer (the monitorInflight
+// cleanup case) and leaves the gauge unchanged when len is already 0.
+func TestReleaseClassifyPartialFreesLenZeroBuffer(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	inf := mkRaceWriterInflight(t)
+	inf.classifyPartial = make([]byte, 0, maxClassifyPartial)
+	inf.releaseClassifyPartial()
+	require.Nil(t, inf.classifyPartial)
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
 // Realistic transport shape: arbitrary chunk boundaries from TLS/proxy flushes.
 func TestSseRaceWriterRandomChunking(t *testing.T) {
 	for fxIndex, fx := range sseEmbeddedFixtures {
