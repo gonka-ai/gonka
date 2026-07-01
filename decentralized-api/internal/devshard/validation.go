@@ -18,19 +18,21 @@ import (
 // ValidationAdapter implements devshard.ValidationEngine by re-executing inference
 // with enforced tokens and comparing logits.
 type ValidationAdapter struct {
-	broker       *broker.Broker
-	nodeVersion  string
-	phaseTracker *chainphase.ChainPhaseTracker
-	httpClient   *http.Client
-	bridge       bridge.MainnetBridge
-	recorder     PayloadAuthClient
-	chainParams  ChainParamsProvider
-	thresholds   *ValidationThresholdResolver
+	broker         *broker.Broker
+	nodeVersion    string
+	phaseTracker   *chainphase.ChainPhaseTracker
+	httpClient     *http.Client
+	bridge         bridge.MainnetBridge
+	recorder       PayloadAuthClient
+	chainParams    ChainParamsProvider
+	thresholds     *ValidationThresholdResolver
+	runtimeVersion string
 }
 
 func NewValidationAdapter(
 	b *broker.Broker,
 	nodeVersion string,
+	runtimeVersion string,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	httpClient *http.Client,
 	br bridge.MainnetBridge,
@@ -38,14 +40,15 @@ func NewValidationAdapter(
 	chainParams ChainParamsProvider,
 ) *ValidationAdapter {
 	return &ValidationAdapter{
-		broker:       b,
-		nodeVersion:  nodeVersion,
-		phaseTracker: phaseTracker,
-		httpClient:   httpClient,
-		bridge:       br,
-		recorder:     recorder,
-		chainParams:  chainParams,
-		thresholds:   NewValidationThresholdResolver(br, ValidationThresholdCacheTTL),
+		broker:         b,
+		nodeVersion:    nodeVersion,
+		phaseTracker:   phaseTracker,
+		httpClient:     httpClient,
+		bridge:         br,
+		recorder:       recorder,
+		chainParams:    chainParams,
+		thresholds:     NewValidationThresholdResolver(br, ValidationThresholdCacheTTL),
+		runtimeVersion: runtimeVersion,
 	}
 }
 
@@ -57,12 +60,16 @@ func (v *ValidationAdapter) Validate(ctx context.Context, req devshard.ValidateR
 		v.bridge,
 		v.recorder,
 		req.EpochID,
-		devshard.VersionedSessionPayloadPath("v1", req.EscrowID),
+		v.sessionPayloadPath(req),
 		v.executeMLRequest,
 		"devshard",
 		v.chainParams,
 		v.thresholds,
 	)
+}
+
+func (v *ValidationAdapter) sessionPayloadPath(req devshard.ValidateRequest) string {
+	return devshard.VersionedSessionPayloadPath(v.runtimeVersion, req.EscrowID)
 }
 
 func (v *ValidationAdapter) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {

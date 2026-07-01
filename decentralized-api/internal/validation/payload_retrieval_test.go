@@ -12,9 +12,9 @@ import (
 )
 
 func TestBuildPayloadRequestURL_VersionedDevshardPath(t *testing.T) {
-	url, err := BuildPayloadRequestURL("https://executor.example.com", devshardpkg.VersionedSessionPayloadPath("v1", "escrow-123"), "456")
+	url, err := BuildPayloadRequestURL("https://executor.example.com", devshardpkg.VersionedSessionPayloadPath("dev", "escrow-123"), "456")
 	require.NoError(t, err)
-	assert.Contains(t, url, devshardpkg.VersionedSessionPayloadPath("v1", "escrow-123"))
+	assert.Contains(t, url, devshardpkg.VersionedSessionPayloadPath("dev", "escrow-123"))
 	assert.Contains(t, url, "inference_id=456")
 }
 

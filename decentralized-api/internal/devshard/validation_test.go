@@ -45,6 +45,14 @@ func TestCompareLogitsMatching(t *testing.T) {
 	assert.True(t, result.IsSuccessful())
 }
 
+func TestValidationAdapterPayloadPathUsesRuntimeVersion(t *testing.T) {
+	adapter := &ValidationAdapter{runtimeVersion: "dev"}
+
+	path := adapter.sessionPayloadPath(devshardpkg.ValidateRequest{EscrowID: "escrow-123"})
+
+	require.Equal(t, "devshard/dev/sessions/escrow-123/payloads", path)
+}
+
 func TestCompareLogitsDifferentTokens(t *testing.T) {
 	original := []completionapi.Logprob{
 		{

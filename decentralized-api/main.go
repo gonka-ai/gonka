@@ -35,6 +35,7 @@ import (
 	devshardlogging "devshard/logging"
 	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
+	devshardtypes "devshard/types"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -307,8 +308,9 @@ func main() {
 		devshardBridge := internaldevshard.NewChainBridge(recorder)
 		httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
 		chainParams := &configParamsProvider{cm: configManager}
+		devshardRuntimeVersion := devshardtypes.SessionVersionV1
 		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
-		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
+		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), devshardRuntimeVersion, chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
 
 		// Per-epoch SQLite under /root/.dapi/data/devshard/, or shared Postgres
 		// (same PG vars as payloadstorage) when PGHOST is set. ManagedStorage
@@ -327,7 +329,7 @@ func main() {
 				devshardStore.PruneOnceAsync(ctx)
 			})
 
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, "v1", devshardBridge, payloadStore, recorder)
+			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardRuntimeVersion, devshardBridge, payloadStore, recorder)
 			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
 			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
 			hostManager.SetRuntimeParamsProvider(internaldevshard.ConfigManagerRuntimeParams(configManager))
