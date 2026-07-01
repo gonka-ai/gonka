@@ -36,6 +36,17 @@ var sseEmbeddedFixtures = []struct {
 	{"delta.tool_calls", sseToolCallsStream, "delta.tool_calls"},
 }
 
+// Stream whose final content event carries no trailing newline (truncated
+// upstream, mid-event proxy close). Write only classifies up to the last '\n',
+// so the "ok" event lands in classifyPartial and is recovered by flushClassify.
+const sseNewlineLessFinalContent = "" +
+	`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":3,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}` + "\n\n" +
+	`data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":3,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`
+
+// Same shape, but the newline-less final event is a non-retriable error.
+const sseNewlineLessFinalError = "" +
+	`data: {"error":{"message":"boom","type":"server_error","code":"internal"}}`
+
 func TestSseBlobClassifierNotEmpty(t *testing.T) {
 	for _, fx := range sseEmbeddedFixtures {
 		t.Run(fx.name, func(t *testing.T) {
@@ -84,6 +95,44 @@ func TestSseRaceWriterClassifyCapDrops(t *testing.T) {
 	require.Equal(t, before, classifyPartialBytes.Load())
 }
 
+// replaceClassify drops the trailing fragment when it exceeds the per-attempt cap.
+func TestSseRaceWriterReplaceClassifyPerAttemptCapDrops(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	chunk := append([]byte("\n"), bytes.Repeat([]byte("x"), maxClassifyPartial+1)...)
+	_, err := rw.Write(chunk)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
+// growClassify drops a newline-less chunk when the global cap is already reached.
+func TestSseRaceWriterGrowClassifyGlobalCapDrops(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	defer classifyPartialBytes.Store(before)
+	classifyPartialBytes.Store(maxClassifyPartialGlobal)
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	_, err := rw.Write([]byte("data: partial-no-newline"))
+	require.NoError(t, err)
+	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Equal(t, maxClassifyPartialGlobal, classifyPartialBytes.Load())
+}
+
+// replaceClassify drops the trailing fragment when the global cap is reached.
+func TestSseRaceWriterReplaceClassifyGlobalCapDrops(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	defer classifyPartialBytes.Store(before)
+	classifyPartialBytes.Store(maxClassifyPartialGlobal)
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	_, err := rw.Write([]byte("\ntail"))
+	require.NoError(t, err)
+	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Equal(t, maxClassifyPartialGlobal, classifyPartialBytes.Load())
+}
+
 // Realistic transport shape: arbitrary chunk boundaries from TLS/proxy flushes.
 func TestSseRaceWriterRandomChunking(t *testing.T) {
 	for fxIndex, fx := range sseEmbeddedFixtures {
@@ -110,6 +159,78 @@ func TestSseRaceWriterRandomChunking(t *testing.T) {
 			require.Equal(t, fx.wantSource, inf.contentSource)
 		})
 	}
+}
+
+// Regression: a content event delivered as the final, newline-less write is
+// stashed in classifyPartial during Write and would leave the attempt looking
+// empty. flushClassify (run once the upstream stream ends) must recover it.
+func TestSseRaceWriterFlushRecoversNewlineLessContent(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseNewlineLessFinalContent))
+	require.NoError(t, err)
+	// Before the flush the trailing content event is unclassified.
+	require.True(t, isEmptyStreamAttempt(inf),
+		"precondition: newline-less final event should be unclassified until flush")
+
+	rw.flushClassify()
+
+	require.False(t, isEmptyStreamAttempt(inf),
+		"flush must classify the newline-less final content event")
+	require.Equal(t, "delta.content", inf.contentSource)
+	require.Equal(t, 0, len(inf.classifyPartial), "flush must release the buffer")
+}
+
+// Regression: the same recovery must apply to a newline-less final error event
+// so the attempt is classified as an error stream, not an empty one.
+func TestSseRaceWriterFlushRecoversNewlineLessError(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseNewlineLessFinalError))
+	require.NoError(t, err)
+
+	rw.flushClassify()
+
+	require.True(t, isErrorStreamAttempt(inf), "flush must classify the final error event")
+	require.False(t, isEmptyStreamAttempt(inf))
+	require.Equal(t, "error.server_error", inf.errorSource)
+}
+
+// flushClassify is a no-op when nothing was buffered (normal newline-terminated
+// stream) and stays balanced against the global counter.
+func TestSseRaceWriterFlushNoBufferedTail(t *testing.T) {
+	before := classifyPartialBytes.Load()
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseContentStream))
+	require.NoError(t, err)
+	require.False(t, isEmptyStreamAttempt(inf))
+	source := inf.contentSource
+	contentChunks := inf.contentChunks.Load()
+
+	rw.flushClassify()
+
+	require.Equal(t, source, inf.contentSource, "flush must not change an already-classified attempt")
+	require.Equal(t, contentChunks, inf.contentChunks.Load(), "flush must not double-count content")
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
+// A probe attempt never classifies content, so flushClassify must leave it untouched.
+func TestSseRaceWriterFlushProbeNoop(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	inf.probe = true
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseNewlineLessFinalContent))
+	require.NoError(t, err)
+
+	rw.flushClassify()
+
+	require.Equal(t, int64(0), inf.contentChunks.Load(), "probe flush must not count content")
+	require.Equal(t, "", inf.contentSource)
 }
 
 func mkRaceWriterInflight(t testing.TB) *inflight {

@@ -1281,6 +1281,47 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
+// classifyParseable records the first content/non-retriable-error signal for
+// this attempt, returning whether the buffer carried either.
+func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
+	if len(parseable) == 0 {
+		return false, false
+	}
+	if src, ok := sseChunkContentSource(parseable); ok {
+		hasContent = true
+		if rw.inf.contentSource == "" {
+			rw.inf.contentSource = src
+		}
+	} else if details, ok := sseChunkErrorDetails(parseable); ok {
+		src := "error"
+		if details.Type != "" {
+			src = "error." + details.Type
+		}
+		hasError = !isRetriableCapabilityErrorMessage(details.Message)
+		if rw.inf.errorSource == "" {
+			rw.inf.errorSource = src
+			rw.inf.errorCode = details.Code
+			rw.inf.errorType = details.Type
+			rw.inf.errorMessage = details.Message
+			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
+		}
+	}
+	return hasContent, hasError
+}
+
+// flushClassify classifies a newline-less final SSE event left in classifyPartial
+// once the stream ends, so a truncated tail isn't misread as empty_stream.
+func (rw *raceWriter) flushClassify() {
+	if rw.inf.probe || len(rw.inf.classifyPartial) == 0 {
+		return
+	}
+	hasContent, hasError := rw.classifyParseable(rw.inf.classifyPartial)
+	rw.dropClassify()
+	if hasContent || hasError {
+		rw.inf.contentChunks.Add(1)
+	}
+}
+
 // logClassifyDrop reports the first reassembly-buffer drop for this attempt.
 // Capped at once per attempt so a persistently newline-less or oversized
 // transport can't spam the log.
@@ -1369,28 +1410,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
-		parseable := rw.takeParseable(p)
-		if len(parseable) > 0 {
-			if src, ok := sseChunkContentSource(parseable); ok {
-				chunkHasContent = true
-				if rw.inf.contentSource == "" {
-					rw.inf.contentSource = src
-				}
-			} else if details, ok := sseChunkErrorDetails(parseable); ok {
-				src := "error"
-				if details.Type != "" {
-					src = "error." + details.Type
-				}
-				chunkHasError = !isRetriableCapabilityErrorMessage(details.Message)
-				if rw.inf.errorSource == "" {
-					rw.inf.errorSource = src
-					rw.inf.errorCode = details.Code
-					rw.inf.errorType = details.Type
-					rw.inf.errorMessage = details.Message
-					rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
-				}
-			}
-		}
+		chunkHasContent, chunkHasError = rw.classifyParseable(rw.takeParseable(p))
 	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
@@ -1747,6 +1767,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	go func() {
 		defer close(inf.done)
 		defer cancel()
+		defer rw.flushClassify()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
