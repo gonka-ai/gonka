@@ -82,12 +82,12 @@ func fetchTotalSupplyGonka(ctx context.Context, client *http.Client, chainRESTUR
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", fmt.Errorf("read total supply response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("chain total supply query failed: status=%d body=%s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("chain total supply query failed: status=%d", resp.StatusCode)
 	}
 
 	var parsed bankSupplyByDenomResponse
